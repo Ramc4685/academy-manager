@@ -692,6 +692,9 @@ class AdminWaitlistEntry(BaseModel):
     session_id: str
     student_id: str
     parent_id: str
+    # #860: the queue rendered `parent_id` verbatim. The read joins the
+    # parent's display name; null when the user doc no longer resolves.
+    parent_name: str | None = None
     joined_at: datetime
     full_name: str = "(unknown)"
     position: int = 0
@@ -1476,10 +1479,23 @@ class AdminMessageView(BaseModel):
     scope_label: str | None = None
     recipient_count: int | None = None
     delivery_status: str | None = None
+    #: The other party in a DM, from the reading admin's point of view (#864).
+    #: ``recipient_id`` is the admin on everything a family sends in, so it is
+    #: the wrong key to group a conversation by; this is the right one. ``None``
+    #: on an announcement, which has no counterparty.
+    counterparty_id: str | None = None
+    #: ``False`` only for a DM someone else sent this admin that they have not
+    #: opened yet. Broadcasts and the admin's own sends are never unread, so
+    #: the default is the safe one for any view that does not compute it.
+    is_read: bool = True
 
 
 class AdminMessageList(BaseModel):
     messages: list[AdminMessageView]
+
+
+class AdminMarkMessageReadResponse(BaseModel):
+    status: Literal["ok"] = "ok"
 
 
 AdminWaiverStatus = Literal["signed", "pending", "expiring", "outdated"]
@@ -1577,6 +1593,8 @@ class AdminRegistrationRowView(BaseModel):
     parent_name: str | None = None
     student_name: str | None = None
     selected_session_id: str | None = None
+    # Issue #891: the class the family asked for, on the list row itself.
+    session_title: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
     zero_quote_period: str | None = None
@@ -1598,7 +1616,6 @@ class AdminRegistrationDetailView(AdminRegistrationRowView):
     student_id: str | None = None
     enrollment_id: str | None = None
     waitlist_id: str | None = None
-    session_title: str | None = None
     session_capacity: int | None = None
     waiver_template_id: str | None = None
     waiver_title: str | None = None

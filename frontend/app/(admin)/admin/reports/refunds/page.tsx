@@ -39,7 +39,7 @@ export default function AdminRefundsReportPage() {
               type="month"
               value={period}
               onChange={(event) => setPeriod(event.target.value || currentPeriod())}
-              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
+              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-950"
             />
           </label>
           <Button

@@ -22,6 +22,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminMarkMessageReadResponse,
     AdminMessageList,
     AdminMessageView,
     BroadcastRequest,
@@ -56,7 +57,23 @@ async def list_messages(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminMessageList:
     msgs = await use_cases.comms.list_for(claims.user_id)
-    return AdminMessageList(messages=[_message_view(m) for m in msgs])
+    return AdminMessageList(messages=[_message_view(m, claims.user_id) for m in msgs])
+
+
+@router.post("/messages/{message_id}/read", response_model=AdminMarkMessageReadResponse)
+async def mark_message_read(
+    message_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminMarkMessageReadResponse:
+    """Clear the unread marker on one DM (#864).
+
+    The same shape as the parent and coach endpoints, and the same write: the
+    store scopes the update to what this viewer may actually see, so an id
+    that is not theirs is a silent no-op rather than an existence oracle.
+    """
+    await use_cases.comms.mark_read_for_admin(message_id, claims.user_id)
+    return AdminMarkMessageReadResponse()
 
 
 @router.post("/messages/broadcast", response_model=AdminMessageView)
@@ -71,7 +88,7 @@ async def broadcast(
         scope_type=body.scope_type,
         scope_label=body.scope_label,
     )
-    return _message_view(m)
+    return _message_view(m, claims.user_id)
 
 
 @router.post("/messages/dm", response_model=AdminMessageView)
@@ -86,7 +103,7 @@ async def dm(
         recipient_id=body.recipient_id,
         body=body.body,
     )
-    return _message_view(m)
+    return _message_view(m, claims.user_id)
 
 
 @router.post("/campaigns", response_model=SendCampaignResponse, status_code=201)
@@ -191,7 +208,11 @@ async def get_coach_digest_log(
     )
 
 
-def _message_view(m: Message) -> AdminMessageView:
+def _message_view(m: Message, viewer_id: str) -> AdminMessageView:
+    # An inbound DM is one this admin did not send. It is the only thing that
+    # can be unread, and the only thing whose `recipient_id` is the admin
+    # themselves — so the thread it belongs to is keyed by its *sender*.
+    inbound = m.kind == "dm" and m.sender_id != viewer_id
     return AdminMessageView(
         message_id=m.message_id,
         kind=m.kind,
@@ -208,4 +229,8 @@ def _message_view(m: Message) -> AdminMessageView:
         ),
         recipient_count=m.recipient_count,
         delivery_status=m.delivery_status or "recorded",
+        counterparty_id=(
+            None if m.kind == "announcement" else (m.sender_id if inbound else m.recipient_id)
+        ),
+        is_read=(not inbound) or viewer_id in m.read_by,
     )

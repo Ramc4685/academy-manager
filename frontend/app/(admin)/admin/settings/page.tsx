@@ -21,6 +21,7 @@ import {
   SettingsTabs,
   type SettingsPanelKey,
 } from "@/components/admin/settings/settings-tabs";
+import { SettingsDirtyProvider } from "@/components/admin/settings/settings-dirty-context";
 import { OwnerOnlyPanel, useIsOwner } from "@/components/admin/owner-context";
 
 const validPanels = new Set<SettingsPanelKey>(SETTINGS_TABS.map((tab) => tab.key));
@@ -66,23 +67,27 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <section data-testid="admin-settings" className="space-y-6">
-      <SettingsTabs active={active} hrefFor={hrefForPanel} tabs={tabs} />
-      {ownerOnlyHere && <OwnerOnlyPanel />}
-      {active === "academy" && <AcademyPanel />}
-      {active === "billing-rules" && isOwner && <BillingRulesPanel />}
-      {active === "gateway" && isOwner && <GatewayPanel />}
-      {active === "notify" && <NotifyPanel />}
-      {active === "roles" && <RolesPanel />}
-      {active === "branding" && <BrandingPanel />}
-      {active === "data" && <DataPanel />}
-      {active === "self-service" && (
-        <div className="space-y-6">
-          <SelfServicePanel />
-          <DeparturePolicyPanel />
-        </div>
-      )}
-      {active === "session-types" && <SessionTypesPanel />}
-    </section>
+    // Only the active panel is mounted, so an unmount throws its draft away.
+    // The provider lets the tab strip see that draft and confirm first (#863).
+    <SettingsDirtyProvider>
+      <section data-testid="admin-settings" className="space-y-6">
+        <SettingsTabs active={active} hrefFor={hrefForPanel} tabs={tabs} />
+        {ownerOnlyHere && <OwnerOnlyPanel />}
+        {active === "academy" && <AcademyPanel />}
+        {active === "billing-rules" && isOwner && <BillingRulesPanel />}
+        {active === "gateway" && isOwner && <GatewayPanel />}
+        {active === "notify" && <NotifyPanel />}
+        {active === "roles" && <RolesPanel />}
+        {active === "branding" && <BrandingPanel />}
+        {active === "data" && <DataPanel />}
+        {active === "self-service" && (
+          <div className="space-y-6">
+            <SelfServicePanel />
+            <DeparturePolicyPanel />
+          </div>
+        )}
+        {active === "session-types" && <SessionTypesPanel />}
+      </section>
+    </SettingsDirtyProvider>
   );
 }

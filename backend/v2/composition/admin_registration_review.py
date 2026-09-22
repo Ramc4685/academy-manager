@@ -193,6 +193,9 @@ class AdminRegistrationRow(BaseModel):
     parent_name: str | None = None
     student_name: str | None = None
     selected_session_id: str | None = None
+    # Issue #891: the class this family asked for, so the queue row answers
+    # "who wants which class" without opening the application.
+    session_title: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
     zero_quote_period: str | None = None
@@ -209,7 +212,6 @@ class AdminRegistrationDetail(AdminRegistrationRow):
     student_id: str | None = None
     enrollment_id: str | None = None
     waitlist_id: str | None = None
-    session_title: str | None = None
     session_capacity: int | None = None
     waiver_template_id: str | None = None
     waiver_title: str | None = None
@@ -302,24 +304,39 @@ class AdminRegistrationReview:
         # Fetch the waiver template once for the whole page instead of once
         # per row -- it does not vary per application.
         template = await self._registration_template()
+        # Issue #891: class titles are Mongo reads too, and a page of
+        # applications usually points at a handful of classes -- resolve each
+        # distinct one once for the whole page, not once per row.
+        titles: dict[str, str | None] = {}
         rows: list[AdminRegistrationRow] = []
         for app in apps:
             if app.status != "PENDING_APPROVAL" and not self._review_claim_is_stale(app):
                 continue
+            session_title = await self._cached_session_title(app.selected_session_id, titles)
             try:
                 existing_student_id = await self._active_existing_student_id(app)
             except ApplicationNotEditable:
                 # Keep ambiguous legacy identities visible to academy staff
                 # without guessing which child record should be changed.
                 rows.append(
-                    (await self._row(app, template=template)).model_copy(
-                        update={"status": "MANUAL_REVIEW"}
-                    )
+                    (
+                        await self._row(app, template=template, session_title=session_title)
+                    ).model_copy(update={"status": "MANUAL_REVIEW"})
                 )
                 continue
             if existing_student_id is None:
-                rows.append(await self._row(app, template=template))
+                rows.append(await self._row(app, template=template, session_title=session_title))
         return rows
+
+    async def _cached_session_title(
+        self, session_id: str | None, cache: dict[str, str | None]
+    ) -> str | None:
+        if not session_id:
+            return None
+        if session_id not in cache:
+            session = await self._sessions.get(session_id)
+            cache[session_id] = session.title if session else None
+        return cache[session_id]
 
     async def detail(self, application_id: str) -> AdminRegistrationDetail:
         app = await self._get(application_id)
@@ -830,6 +847,7 @@ class AdminRegistrationReview:
         app: Application,
         *,
         template: AdminWaiverTemplateRecord | None = _UNSET,  # type: ignore[assignment]
+        session_title: str | None = None,
     ) -> AdminRegistrationRow:
         if template is _UNSET:
             template = await self._registration_template()
@@ -840,6 +858,7 @@ class AdminRegistrationReview:
             parent_name=self._parent_name(app) or None,
             student_name=self._student_name(app) or None,
             selected_session_id=app.selected_session_id,
+            session_title=session_title,
             waiver_required=template is not None,
             waiver_satisfied=template is None or app.waiver_acceptance is not None,
             zero_quote_period=app.zero_quote_period,
@@ -854,11 +873,15 @@ class AdminRegistrationReview:
                 await self._registration_student_id(app)
             except ApplicationNotEditable:
                 display_app = app.model_copy(update={"status": "MANUAL_REVIEW"})
-        row = await self._row(display_app)
         template = await self._registration_template()
         session: Session | None = None
         if app.selected_session_id:
             session = await self._sessions.get(app.selected_session_id)
+        row = await self._row(
+            display_app,
+            template=template,
+            session_title=session.title if session else None,
+        )
         return AdminRegistrationDetail(
             **row.model_dump(),
             parent_user_id=app.parent_user_id,
@@ -869,7 +892,6 @@ class AdminRegistrationReview:
             student_id=app.student_id,
             enrollment_id=app.enrollment_id,
             waitlist_id=app.waitlist_id,
-            session_title=session.title if session else None,
             session_capacity=session.capacity if session else None,
             waiver_template_id=template.waiver_template_id if template else None,
             waiver_title=template.title if template else None,

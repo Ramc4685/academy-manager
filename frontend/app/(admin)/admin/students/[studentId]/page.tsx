@@ -7,15 +7,16 @@
  * fields. No raw internal ids are rendered in normal UI.
  */
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   ArrowLeft,
   CalendarCheck,
   FileCheck,
+  MoreVertical,
   ShieldCheck,
   UserRound,
   Wallet,
@@ -34,7 +35,15 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
 import { Chip } from "@/components/ds/chip";
+import { ContactLinks } from "@/components/ds/contact-links";
+import { OverflowMenu } from "@/components/ds/menu";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
+import {
+  STUDENT_TABS,
+  resolveStudentTab,
+  studentDocumentTitle,
+  type StudentTab,
+} from "@/lib/admin/student-tabs";
 
 import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { DetailList } from "./DetailList";
@@ -44,22 +53,24 @@ import { SessionsPanel } from "./SessionsPanel";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
 import { ChangeParentPanel, StudentEditForm } from "./StudentEditForm";
 
-type StudentTab = "overview" | "training" | "sessions" | "billing" | "family";
-
-const STUDENT_TABS: Array<{ id: StudentTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "training", label: "Training" },
-  { id: "sessions", label: "Sessions" },
-  { id: "billing", label: "Billing" },
-  { id: "family", label: "Family & Compliance" },
-];
-
 export default function AdminStudentDetailPage() {
   const params = useParams<{ studentId: string }>();
   const studentId = params?.studentId ?? "";
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<StudentTab>("overview");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // #839: the tab is in the URL, so a link to a student's Billing is a link
+  // to their Billing and a reload does not drop back to Overview.
+  const activeTab = resolveStudentTab(searchParams.get("tab"));
   const [stopAllClassesOpen, setStopAllClassesOpen] = useState(false);
+
+  function setActiveTab(next: StudentTab) {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    if (next === "overview") nextParams.delete("tab");
+    else nextParams.set("tab", next);
+    const query = nextParams.toString();
+    router.replace(query ? `?${query}` : "?", { scroll: false });
+  }
 
   const departurePolicyQuery = useQuery({
     queryKey: queryKeys.admin.departurePolicy(),
@@ -77,6 +88,17 @@ export default function AdminStudentDetailPage() {
     queryFn: () => listAdminUsers("parent"),
     enabled: Boolean(studentId),
   });
+
+  // #839: every open student tab said "Students", so a row of them was
+  // unreadable. The shell title is static, so the page names itself.
+  const studentName = studentQuery.data?.full_name ?? null;
+  useEffect(() => {
+    const previous = document.title;
+    document.title = studentDocumentTitle(studentName);
+    return () => {
+      document.title = previous;
+    };
+  }, [studentName]);
 
   if (!studentId) {
     return (
@@ -305,8 +327,11 @@ function StudentSummaryStrip({ student }: { student: AdminStudentDetail }) {
       : `${Math.round(Math.max(0, Math.min(student.attendance_rate, 1)) * 100)}%`;
 
   return (
+    // #897: below `sm` this was one column, so four ~110px cards stacked
+    // between the header and the tabs and pushed the tabs off a 400x860
+    // first screen. Two-up on a phone, unchanged from `sm` up.
     <div
-      className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+      className="grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4"
       data-testid="admin-student-summary-strip"
     >
       <SummaryMetric
@@ -357,14 +382,16 @@ function SummaryMetric({
   detail: string;
 }) {
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+    <div className="rounded-lg border border-neutral-200 bg-white p-3 sm:p-4">
       <div className="flex items-center gap-2 text-rally-muted">
         {icon}
         <span className="font-mono text-[10px] font-bold uppercase tracking-overline">
           {label}
         </span>
       </div>
-      <div className="mt-3 font-mono text-2xl font-semibold tabular-nums text-rally-ink">
+      {/* #896: the figure is a display numeral (Outfit), not a code token —
+          only the label above it stays mono, as an Overline caption. */}
+      <div className="mt-2 font-display text-2xl font-semibold tabular-nums text-rally-ink sm:mt-3">
         {value}
       </div>
       <div className="mt-1 truncate text-xs text-rally-muted">{detail}</div>
@@ -383,6 +410,7 @@ function StudentTabs({
     <div
       role="tablist"
       aria-label="Student record sections"
+      data-testid="admin-student-tabs"
       className="flex gap-1 overflow-x-auto border-b border-neutral-200"
     >
       {STUDENT_TABS.map((tab) => {
@@ -397,7 +425,7 @@ function StudentTabs({
             id={`student-tab-${tab.id}`}
             className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 ${
               selected
-                ? "border-rally-blue text-rally-ink"
+                ? "border-rally-cobalt-600 text-rally-ink"
                 : "border-transparent text-rally-muted hover:text-rally-ink"
             }`}
             onClick={() => onChange(tab.id)}
@@ -623,50 +651,74 @@ function Header({
 }) {
   return (
     <Card p={20}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4 min-w-0">
-          <Avatar name={student.full_name} size={56} />
-          <div className="min-w-0">
-            <h2 className="font-display text-xl font-semibold tracking-[-0.01em] text-rally-ink truncate">
-              {student.full_name}
-            </h2>
-            <div className="mt-1 flex items-center gap-2">
-              {/* Issue #773: the derived lifecycle, with its date. */}
-              {lifecycleLabel(student.lifecycle, student.lifecycle_as_of) && (
-                <Chip
-                  variant={lifecycleVariant(student.lifecycle)}
-                  label={lifecycleLabel(student.lifecycle, student.lifecycle_as_of)}
-                />
-              )}
+      {/* #897: on a phone "Stop all classes" sat directly beside the parent's
+          tel:/mailto: links, one mis-tap from ending every enrollment. It is
+          now an actions menu pinned to the card's top-right; the dialog and
+          everything it does are unchanged. */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
+            <Avatar name={student.full_name} size={56} />
+            <div className="min-w-0">
+              <h2 className="truncate font-display text-xl font-semibold tracking-[-0.01em] text-rally-ink">
+                {student.full_name}
+              </h2>
+              <div className="mt-1 flex items-center gap-2">
+                {/* Issue #773: the derived lifecycle, with its date. */}
+                {lifecycleLabel(student.lifecycle, student.lifecycle_as_of) && (
+                  <Chip
+                    variant={lifecycleVariant(student.lifecycle)}
+                    label={lifecycleLabel(student.lifecycle, student.lifecycle_as_of)}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
-        <div className="flex items-start gap-4">
-          <Button size="sm" variant="ghost" onClick={onStopAllClasses}>
-            Stop all classes
-          </Button>
           <div className="text-sm text-rally-muted">
-            <div className="font-medium text-rally-ink">
-              {student.parent_name ?? student.parent_email ?? "Parent on file"}
-            </div>
-            {student.parent_email && (
-              <a
-                href={`mailto:${student.parent_email}`}
-                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+            {/* #839: the parent was plain text here, so the family — and every
+                invoice on it — was two clicks away via the Billing tab. */}
+            {student.parent_id ? (
+              <Link
+                href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
+                className="block rounded font-medium text-rally-ink hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                data-testid="admin-student-parent-link"
               >
-                {student.parent_email}
-              </a>
+                {student.parent_name ?? student.parent_email ?? "Parent on file"}
+              </Link>
+            ) : (
+              <div className="font-medium text-rally-ink">
+                {student.parent_name ?? student.parent_email ?? "Parent on file"}
+              </div>
             )}
-            {student.parent_phone && (
-              <a
-                href={`tel:${student.parent_phone}`}
-                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-              >
-                {student.parent_phone}
-              </a>
-            )}
+            {/* #865: the one place that already had a `tel:`, now through the
+                shared component — so it gains WhatsApp with everywhere else. */}
+            <ContactLinks
+              data-testid="admin-student-parent-contacts"
+              name={student.parent_name ?? undefined}
+              email={student.parent_email}
+              phone={student.parent_phone}
+            />
           </div>
         </div>
+        <OverflowMenu
+          className="shrink-0"
+          triggerLabel={`Actions for ${student.full_name}`}
+          triggerTestId="admin-student-actions"
+          items={[
+            {
+              key: "stop-all-classes",
+              label: "Stop all classes",
+              description: "Ends every enrollment on the date you pick.",
+              danger: true,
+              onSelect: onStopAllClasses,
+            },
+          ]}
+          trigger={
+            <span className="flex min-h-touch min-w-touch items-center justify-center rounded-md text-rally-muted hover:bg-rally-paper">
+              <MoreVertical className="size-5" aria-hidden="true" />
+            </span>
+          }
+        />
       </div>
     </Card>
   );

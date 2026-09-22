@@ -52,6 +52,8 @@ export default function ParentRequestsPage() {
         <p className="text-sm mt-0.5 text-rally-muted">Absences, makeups &amp; trial classes</p>
       </div>
 
+      {/* #843: the inactive tab label was rally-muted (#64748b) on the
+          rally-line track (#e2e8f0) — 3.86:1, under AA. slate-600 clears it. */}
       <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
         {TABS.map((t) => (
           <button
@@ -63,7 +65,7 @@ export default function ParentRequestsPage() {
             className={`min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150 ${
               tab === t.id
                 ? "bg-white text-rally-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
-                : "bg-transparent text-rally-muted"
+                : "bg-transparent text-status-slate-600"
             }`}
           >
             {t.label}
@@ -114,6 +116,7 @@ function AbsencesPanel() {
   });
 
   const children = childrenQuery.data?.children ?? [];
+  const nameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
   const academyTimezone = academyQuery.data?.timezone ?? null;
   // A cancelled class cannot be missed, so it must not be offered as the
   // subject of an absence notice (#671).
@@ -227,6 +230,9 @@ function AbsencesPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
+                      <p className="text-xs font-semibold text-rally-subtle">
+                        {nameById.get(n.student_id) ?? "Your child"}
+                      </p>
                       <p className="text-sm font-semibold text-rally-ink">
                         {formatAcademyDateTime(n.submitted_at, academyTimezone)}
                       </p>
@@ -259,6 +265,10 @@ function MakeupsPanel() {
     queryKey: ["parent", "academy"],
     queryFn: getParentAcademy,
   });
+  const childrenQuery = useQuery({
+    queryKey: ["parent", "children"],
+    queryFn: listParentChildren,
+  });
   const absencesQuery = useQuery({
     queryKey: queryKeys.parent.absences(),
     queryFn: listParentAbsences,
@@ -289,6 +299,8 @@ function MakeupsPanel() {
   });
 
   const academyTimezone = academyQuery.data?.timezone ?? null;
+  const children = childrenQuery.data?.children ?? [];
+  const nameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
   const absences = absencesQuery.data?.notices ?? [];
   const makeups = makeupsQuery.data?.makeups ?? [];
   const targets = targetsQuery.data?.targets ?? [];
@@ -396,6 +408,9 @@ function MakeupsPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
+                      <p className="text-xs font-semibold text-rally-subtle">
+                        {nameById.get(m.student_id) ?? "Your child"}
+                      </p>
                       <p className="text-sm font-semibold text-rally-ink">
                         Requested {formatAcademyDate(m.created_at, academyTimezone)}
                       </p>

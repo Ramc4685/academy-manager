@@ -302,6 +302,8 @@ export interface AdminWaitlistEntry {
   session_id: string;
   student_id: string;
   parent_id: string;
+  /** #860: the parent's display name, so the row never prints `parent_id`. */
+  parent_name?: string | null;
   full_name: string;
   status: WaitlistStatus;
   position: number;
@@ -1116,6 +1118,14 @@ export interface AdminMessageView {
   scope_label?: string | null;
   recipient_count?: number | null;
   delivery_status?: string | null;
+  /**
+   * #864: the family on the other side of a DM, from the reading admin's
+   * point of view. `recipient_id` is the admin themselves on everything a
+   * family sends in, so it is the wrong key to group a thread by.
+   */
+  counterparty_id?: string | null;
+  /** #864: false only for an incoming DM this admin has not opened yet. */
+  is_read?: boolean;
 }
 
 export interface AdminMessageList {
@@ -1235,6 +1245,8 @@ export interface AdminRegistrationRow {
   parent_name: string | null;
   student_name: string | null;
   selected_session_id: string | null;
+  /** Issue #891: the class this family asked for, on the list row itself. */
+  session_title: string | null;
   waiver_required: boolean;
   waiver_satisfied: boolean;
   zero_quote_period: string | null;
@@ -2889,6 +2901,14 @@ export function broadcastMessage(payload: BroadcastRequest): Promise<AdminMessag
   });
 }
 
+/** #864: clear the unread marker on one incoming DM. Idempotent server-side. */
+export function markAdminMessageRead(messageId: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(
+    `/admin/messages/${encodeURIComponent(messageId)}/read`,
+    { method: "POST" },
+  );
+}
+
 export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
   return apiFetch<AdminMessageView>("/admin/messages/dm", {
     method: "POST",
@@ -3075,6 +3095,9 @@ export interface AbsenceNoticeAdminRow {
   student_full_name: string | null;
   /** True when an admin recorded the notice on the parent's behalf (#616). */
   recorded_by_admin?: boolean;
+  /** #860: which class on which date was missed. Null if it no longer resolves. */
+  occurrence_session_title?: string | null;
+  occurrence_start_at?: string | null;
 }
 
 export interface AbsencesAdminResponse {
@@ -3103,6 +3126,20 @@ export interface MakeupRequestAdminRow {
   approved_target_occurrence_id: string | null;
   created_at: string;
   student_full_name: string | null;
+  /**
+   * Issue #841: the class name and start instant behind each occurrence id, so
+   * the queue renders words and academy-local dates. Null when the occurrence
+   * no longer resolves — the UI then falls back to the id rather than a blank.
+   */
+  missed_session_id?: string | null;
+  missed_session_title?: string | null;
+  missed_start_at?: string | null;
+  requested_target_session_id?: string | null;
+  requested_target_session_title?: string | null;
+  requested_target_start_at?: string | null;
+  approved_target_session_id?: string | null;
+  approved_target_session_title?: string | null;
+  approved_target_start_at?: string | null;
 }
 
 export interface MakeupRequestsAdminResponse {
@@ -3133,6 +3170,11 @@ export interface TrialRequestAdminRow {
   decided_by: string | null;
   decided_at: string | null;
   created_at: string;
+  /** Issue #841: see MakeupRequestAdminRow — names and instants, not ids. */
+  requested_session_title?: string | null;
+  assigned_occurrence_start_at?: string | null;
+  /** Null for a prospective child, who has `prospective_child_name` instead. */
+  student_full_name?: string | null;
 }
 
 export interface TrialRequestsAdminResponse {

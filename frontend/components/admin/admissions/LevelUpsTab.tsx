@@ -9,9 +9,15 @@ import {
   rejectLevelUp,
   type LevelUpRecommendation,
 } from "@/lib/api/curriculum";
+import { listAdminUsers } from "@/lib/api/admin";
+import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import type { MenuItem } from "@/components/ds/menu";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 import { isWithdrawn, reviewErrorMessage, WITHDRAWN_APPROVE_HINT } from "./level-up-review";
@@ -31,9 +37,37 @@ function levelUpChipVariant(status: LevelUpRecommendation["status"]): ChipVarian
 
 const QUEUE_KEY = ["admin", "level-up-queue"];
 
+/**
+ * Issue #841: the confirm dialog added in #838 read "st-204 · prog-3 · from
+ * lvl-1". The queue read now resolves those names, so it says who is moving
+ * and where to; an unresolved name falls back to its id rather than a blank.
+ */
+function levelUpSubject(rec: LevelUpRecommendation): string {
+  const student = rec.student_name || rec.student_id;
+  const program = rec.program_name || rec.program_id;
+  const from = rec.from_level_name || rec.from_level_id;
+  const to = rec.to_level_name || rec.to_level_id;
+  return `${student} · ${program} · ${from} → ${to}`;
+}
+
+/**
+ * Who recommended a level-up, by name (#841). The staff directory is already
+ * an admin-visible read, so this resolves client-side rather than widening the
+ * queue DTO. Falls back to the id if the directory has no such user.
+ */
+function useStaffNames(): (userId: string) => string {
+  const { data } = useQuery({
+    queryKey: queryKeys.admin.users("coach"),
+    queryFn: () => listAdminUsers("coach"),
+  });
+  const byId = new Map((data?.users ?? []).map((u) => [u.user_id, u.display_name]));
+  return (userId: string) => byId.get(userId) || userId;
+}
+
 export function LevelUpsTab() {
   const queryClient = useQueryClient();
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const staffName = useStaffNames();
 
   const { data, isLoading, isError } = useQuery({
     queryKey: QUEUE_KEY,
@@ -115,54 +149,113 @@ export function LevelUpsTab() {
           No pending level-up recommendations.
         </p>
       ) : (
-        <Card p={0}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-                  {LEVEL_UP_HEADERS.map((h) => (
-                    <th
-                      key={h}
-                      className="px-4 pb-3 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                  <th
-                    className={`px-4 pb-3 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${actionHeaderClass}`}
-                  >
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data ?? []).map((rec) => (
-                  <QueueRow
-                    key={rec.rec_id}
-                    rec={rec}
-                    approvePending={approveMutation.isPending}
-                    rejectPending={rejectMutation.isPending}
-                    onApprove={() => approveMutation.mutate(rec.rec_id)}
-                    onReject={(reason) => rejectMutation.mutate({ recId: rec.rec_id, reason })}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <LevelUpList
+          recs={data ?? []}
+          staffName={staffName}
+          approvePending={approveMutation.isPending}
+          rejectPending={rejectMutation.isPending}
+          onApprove={(recId) => approveMutation.mutate(recId)}
+          onReject={(recId, reason) => rejectMutation.mutate({ recId, reason })}
+        />
       )}
     </div>
   );
 }
 
+/**
+ * #857: six columns plus a sticky action cell over a 760px minimum meant that
+ * on a phone the queue's whole point — Approve / Reject — sat behind a
+ * sideways scroll. One layout at a time (`lib/use-is-phone.ts`); the phone row
+ * reaches the SAME `QueueRow` state, so approve still goes through the #838
+ * confirm dialog rather than a second, shorter path.
+ */
+function LevelUpList({
+  recs,
+  staffName,
+  approvePending,
+  rejectPending,
+  onApprove,
+  onReject,
+}: {
+  recs: LevelUpRecommendation[];
+  staffName: (userId: string) => string;
+  approvePending: boolean;
+  rejectPending: boolean;
+  onApprove: (recId: string) => void;
+  onReject: (recId: string, reason: string) => void;
+}) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Level-up recommendations" data-testid="level-up-phone-list">
+        {recs.map((rec) => (
+          <QueueRow
+            key={rec.rec_id}
+            rec={rec}
+            phone
+            recommendedByName={staffName(rec.recommended_by)}
+            approvePending={approvePending}
+            rejectPending={rejectPending}
+            onApprove={() => onApprove(rec.rec_id)}
+            onReject={(reason) => onReject(rec.rec_id, reason)}
+          />
+        ))}
+      </PhoneList>
+    );
+  }
+  return (
+    <Card p={0}>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+              {LEVEL_UP_HEADERS.map((h) => (
+                <th
+                  key={h}
+                  className="px-4 pb-3 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted"
+                >
+                  {h}
+                </th>
+              ))}
+              <th
+                className={`px-4 pb-3 pt-4 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${actionHeaderClass}`}
+              >
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {recs.map((rec) => (
+              <QueueRow
+                key={rec.rec_id}
+                rec={rec}
+                recommendedByName={staffName(rec.recommended_by)}
+                approvePending={approvePending}
+                rejectPending={rejectPending}
+                onApprove={() => onApprove(rec.rec_id)}
+                onReject={(reason) => onReject(rec.rec_id, reason)}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 function QueueRow({
   rec,
+  phone = false,
+  recommendedByName,
   approvePending,
   rejectPending,
   onApprove,
   onReject,
 }: {
   rec: LevelUpRecommendation;
+  /** Render as a `PhoneListRow` instead of a `<tr>` (#857). */
+  phone?: boolean;
+  recommendedByName: string;
   approvePending: boolean;
   rejectPending: boolean;
   onApprove: () => void;
@@ -170,6 +263,8 @@ function QueueRow({
 }) {
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  // #838: approving moves the student's level for real, so it asks first.
+  const [confirmApprove, setConfirmApprove] = useState(false);
   const isPending = rec.status === "RECOMMENDED";
   const disabled = approvePending || rejectPending;
   // Issue #673: a withdrawn student stays listed so the admin can reject the
@@ -184,6 +279,123 @@ function QueueRow({
     }
   }
 
+  const rejectForm = (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="text"
+        value={rejectReason}
+        onChange={(e) => setRejectReason(e.target.value)}
+        placeholder="Reason for rejection"
+        className="w-40 rounded-md border border-neutral-300 px-2 py-1 text-xs focus:border-red-400 focus:outline-none"
+        autoFocus
+        data-testid={`level-up-reject-reason-${rec.rec_id}`}
+      />
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          setShowReject(false);
+          setRejectReason("");
+        }}
+      >
+        Cancel
+      </Button>
+      <Button
+        variant="primary"
+        size="sm"
+        disabled={!rejectReason.trim() || disabled}
+        onClick={handleReject}
+      >
+        {rejectPending ? "..." : "Confirm"}
+      </Button>
+    </div>
+  );
+
+  // #838 confirm dialog, mounted once per row and shared by both layouts: the
+  // phone menu item sets the SAME `confirmApprove`, so a phone approval asks
+  // exactly the question a desktop approval asks.
+  const confirmDialog = (
+    <ConfirmActionDialog
+      open={confirmApprove}
+      onOpenChange={setConfirmApprove}
+      overline="Approve level-up"
+      title="Move this student up a level?"
+      subject={levelUpSubject(rec)}
+      consequence={
+        <>
+          <p>
+            The student&apos;s pathway level changes for real: coaches mark them against the new
+            level&apos;s skills from now on, and the change shows on the family&apos;s progress
+            view. No seat, invoice or autopay is touched.
+          </p>
+          <p>
+            Recommended by {recommendedByName}. Undoing this means placing the student back by
+            hand.
+          </p>
+        </>
+      }
+      confirmLabel="Approve level-up"
+      confirmVariant="primary"
+      pending={approvePending}
+      onConfirm={() => {
+        onApprove();
+        setConfirmApprove(false);
+      }}
+    />
+  );
+
+  if (phone) {
+    const studentName = rec.student_name || "Unnamed student";
+    const actions: MenuItem[] = isPending
+      ? [
+          { key: "reject", label: "Reject", disabled, onSelect: () => setShowReject(true) },
+          {
+            key: "approve",
+            label: "Approve",
+            disabled: disabled || withdrawn,
+            // The reason lives on the row's Withdrawn chip, not in the item's
+            // label: `hint` renders inside the menu button, so it would join
+            // the item's accessible name and stop "Approve" resolving — the
+            // same trap the desktop cell avoids by using `title`.
+            onSelect: () => setConfirmApprove(true),
+          },
+        ]
+      : [];
+    return (
+      <PhoneListRow
+        data-testid={`level-up-row-${rec.rec_id}`}
+        title={studentName}
+        primary={<Chip variant={levelUpChipVariant(rec.status)} label={rec.status.toUpperCase()} />}
+        actionsLabel={`Actions for ${studentName}`}
+        actionsTestId={`level-up-actions-${rec.rec_id}`}
+        actions={actions}
+        secondary={
+          <>
+            {withdrawn && (
+              <div data-testid={`level-up-withdrawn-${rec.rec_id}`} title={WITHDRAWN_APPROVE_HINT}>
+                <Chip variant="expired" label="Withdrawn" />
+              </div>
+            )}
+            <div className="break-words">
+              {rec.program_name || rec.program_id} · from{" "}
+              {rec.from_level_name || rec.from_level_id}
+            </div>
+            <div>
+              {recommendedByName} ·{" "}
+              {new Date(rec.recommended_at).toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </div>
+            {isPending && showReject && rejectForm}
+            {confirmDialog}
+          </>
+        }
+      />
+    );
+  }
+
   return (
     <tr
       data-testid={`level-up-row-${rec.rec_id}`}
@@ -191,7 +403,7 @@ function QueueRow({
     >
       <td className="px-4 py-3 font-medium text-rally-base">
         <div className="flex items-center gap-2">
-          <span>{rec.student_id}</span>
+          <span>{rec.student_name || "Unnamed student"}</span>
           {withdrawn && (
             <span data-testid={`level-up-withdrawn-${rec.rec_id}`} title={WITHDRAWN_APPROVE_HINT}>
               <Chip variant="expired" label="Withdrawn" />
@@ -199,9 +411,9 @@ function QueueRow({
           )}
         </div>
       </td>
-      <td className="px-4 py-3 text-rally-subtle">{rec.program_id}</td>
-      <td className="px-4 py-3 text-rally-subtle">{rec.from_level_id}</td>
-      <td className="px-4 py-3 text-rally-subtle">{rec.recommended_by}</td>
+      <td className="px-4 py-3 text-rally-subtle">{rec.program_name || rec.program_id}</td>
+      <td className="px-4 py-3 text-rally-subtle">{rec.from_level_name || rec.from_level_id}</td>
+      <td className="px-4 py-3 text-rally-subtle">{recommendedByName}</td>
       <td className="px-4 py-3 text-rally-subtle">
         {new Date(rec.recommended_at).toLocaleDateString(undefined, {
           month: "short",
@@ -232,44 +444,18 @@ function QueueRow({
                     disabled={disabled || withdrawn}
                     aria-disabled={withdrawn || undefined}
                     title={withdrawn ? WITHDRAWN_APPROVE_HINT : undefined}
-                    onClick={onApprove}
+                    onClick={() => setConfirmApprove(true)}
                   >
                     {approvePending ? "..." : "Approve"}
                   </Button>
                 </span>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  placeholder="Reason for rejection"
-                  className="w-40 rounded-md border border-neutral-300 px-2 py-1 text-xs focus:border-red-400 focus:outline-none"
-                  autoFocus
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setShowReject(false);
-                    setRejectReason("");
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={!rejectReason.trim() || disabled}
-                  onClick={handleReject}
-                >
-                  {rejectPending ? "..." : "Confirm"}
-                </Button>
-              </div>
+              rejectForm
             )}
           </div>
         )}
+        {confirmDialog}
       </td>
     </tr>
   );

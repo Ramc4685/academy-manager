@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { MoreHorizontal } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -24,7 +25,8 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
-import { Button } from "@/components/ds/button";
+import { Button, type ButtonVariant } from "@/components/ds/button";
+import { OverflowMenu, type MenuItem } from "@/components/ds/menu";
 import { RallyModal as RallyDialog, DialogActions, Field } from "@/components/ds/dialog-chrome";
 import { TableSkeleton } from "@/components/ds/skeleton";
 
@@ -35,26 +37,71 @@ import {
   formatDate,
   invoiceActionId,
   isLedgerInvoiceRow,
+  paidCents,
+  formatPeriodLabel,
   paymentDisplayLabel,
   skipReasonLabel,
 } from "./format";
 
-export function PaymentActions({
-  payment,
-  canGovernMoney,
-  onDiscount,
-  onInvoice,
-  onPaid,
-  onRefund,
-  onSync,
-  onUndo,
-  onVoid,
-  undoPending,
-}: {
+/**
+ * Which row actions this invoice may take, derived once (#857).
+ *
+ * The desktop button strip and the phone row's overflow menu both read this,
+ * so an action can never be offered on one layout and withheld on the other —
+ * and neither layout gets its own idea of what "refundable" means.
+ */
+function paymentActionEligibility(payment: AdminPaymentView) {
+  const status = adminPaymentStatus(payment);
+  const invoiceRow = isLedgerInvoiceRow(payment);
+  const isPending = status === "pending" || status === "partially_paid";
+  const isPaid =
+    payment.status === "succeeded" ||
+    payment.status === "paid" ||
+    payment.status === "partially_refunded";
+  const isVoided = payment.status === "voided";
+  return {
+    status,
+    invoiceRow,
+    isPending,
+    isPaid,
+    isVoided,
+    // Refund eligibility: must be paid/partial AND have remaining balance
+    refundable: isPaid && payment.refunded_cents < finalCents(payment),
+    // Undo eligibility: only manual paid, not Stripe-linked
+    undoable: isPaid && !payment.stripe_linked,
+    // Void eligibility (#619): any ledger payment row that is not already
+    // void. Stripe money that actually settled has to go back through Refund,
+    // so the action is disabled there and says why — the backend refuses it
+    // too.
+    voidBlockedByStripe: isPaid && payment.stripe_linked,
+  };
+}
+
+/**
+ * One row action, in the one vocabulary both layouts read (#861).
+ *
+ * This replaces the pair of hand-kept lists `paymentMenuItems` and
+ * `PaymentActions` used to carry. `title` and `variant` are desktop-only
+ * presentation: a menu item deliberately keeps explanations out of its
+ * accessible name, so an exact `getByRole("menuitem", { name: "Void" })`
+ * keeps resolving.
+ */
+export interface PaymentRowAction {
+  key: string;
+  label: string;
+  onSelect: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  /** Desktop tooltip — never part of the accessible name. */
+  title?: string;
+  variant: ButtonVariant;
+}
+
+export interface PaymentRowActionArgs {
   payment: AdminPaymentView;
   /**
    * Owner scope. Discount / Refund / Undo-paid / Void are money governance and
-   * 404 for anyone else, so they are not rendered; Mark paid (recording a
+   * 404 for anyone else, so they are not offered; Mark paid (recording a
    * manual payment) stays an admin action.
    */
   canGovernMoney: boolean;
@@ -66,84 +113,174 @@ export function PaymentActions({
   onUndo: () => void;
   onVoid: () => void;
   undoPending: boolean;
-}) {
-  const status = adminPaymentStatus(payment);
-  const invoiceRow = isLedgerInvoiceRow(payment);
-  const isPending = status === "pending" || status === "partially_paid";
-  const isPaid =
-    payment.status === "succeeded" ||
-    payment.status === "paid" ||
-    payment.status === "partially_refunded";
-  const isVoided = payment.status === "voided";
-  // Refund eligibility: must be paid/partial AND have remaining balance
-  const refundable = isPaid && payment.refunded_cents < finalCents(payment);
-  // Undo eligibility: only manual paid, not Stripe-linked
-  const undoable = isPaid && !payment.stripe_linked;
-  // Void eligibility (#619): any ledger payment row that is not already void.
-  // Stripe money that actually settled has to go back through Refund, so the
-  // button is disabled there and says why — the backend refuses it too.
-  const voidBlockedByStripe = isPaid && payment.stripe_linked;
-  if (isVoided) {
-    return (
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
-      </div>
-    );
+}
+
+/**
+ * Every action this invoice offers, in reading order. The desktop strip and
+ * the phone menu both start here, so an action can never be offered on one
+ * layout and withheld on the other (#857) — and eligibility stays in
+ * `paymentActionEligibility` alone.
+ */
+export function paymentRowActions({
+  payment,
+  canGovernMoney,
+  onDiscount,
+  onInvoice,
+  onPaid,
+  onRefund,
+  onSync,
+  onUndo,
+  onVoid,
+  undoPending,
+}: PaymentRowActionArgs): PaymentRowAction[] {
+  const { invoiceRow, isPending, isPaid, isVoided, refundable, undoable, voidBlockedByStripe } =
+    paymentActionEligibility(payment);
+  const actions: PaymentRowAction[] = [
+    { key: "invoice", label: "Invoice", onSelect: onInvoice, variant: "secondary" },
+  ];
+  if (isVoided) return actions;
+  actions.push({ key: "sync", label: "Sync", onSelect: onSync, variant: "secondary" });
+  if (canGovernMoney && !invoiceRow) {
+    actions.push({
+      key: "void",
+      label: "Void",
+      onSelect: onVoid,
+      disabled: voidBlockedByStripe,
+      variant: "secondary",
+      title: voidBlockedByStripe
+        ? "Stripe payments that collected money must be refunded"
+        : "Void this payment (kept for audit, hidden from reports)",
+    });
   }
+  if (isPending && !invoiceRow) {
+    if (canGovernMoney) {
+      actions.push({
+        key: "discount",
+        label: "Discount",
+        onSelect: onDiscount,
+        variant: "secondary",
+      });
+    }
+    actions.push({ key: "paid", label: "Mark paid", onSelect: onPaid, variant: "primary" });
+  }
+  if (isPaid && !invoiceRow && canGovernMoney) {
+    actions.push({
+      key: "refund",
+      label: "Refund",
+      onSelect: onRefund,
+      disabled: !refundable,
+      danger: true,
+      variant: "danger",
+      title: refundable ? "Issue refund" : "Already fully refunded",
+    });
+    actions.push({
+      key: "undo",
+      label: "Undo",
+      onSelect: onUndo,
+      disabled: !undoable || undoPending,
+      variant: "secondary",
+      title: undoable ? "Undo manual mark-paid" : "Stripe payments must be refunded",
+    });
+  }
+  return actions;
+}
+
+/**
+ * How many actions stay as buttons in an invoice row (#861).
+ *
+ * Five buttons per row made the action column wider than the space the admin
+ * shell leaves for the table at 1280, so Status / Method / Paid-on — the three
+ * columns an admin scans this list for — sat past the right edge behind a
+ * horizontal scroll nobody discovers. Two, plus a More menu, fits.
+ */
+export const MAX_DIRECT_ROW_ACTIONS = 2;
+
+/**
+ * Which actions earn a button, most consequential first. Whatever a row's
+ * status makes possible, the one thing an admin came to do — settle it or give
+ * the money back — is never behind a menu; Invoice fills the second slot
+ * because it is the row's read-only detail view.
+ */
+const DIRECT_ACTION_PRIORITY = ["paid", "refund", "invoice"];
+
+export function splitPaymentRowActions(actions: PaymentRowAction[]): {
+  direct: PaymentRowAction[];
+  overflow: PaymentRowAction[];
+} {
+  const promoted = new Set<string>();
+  for (const key of DIRECT_ACTION_PRIORITY) {
+    if (promoted.size >= MAX_DIRECT_ROW_ACTIONS) break;
+    if (actions.some((action) => action.key === key)) promoted.add(key);
+  }
+  // Filtered, not re-ordered: the buttons keep the same left-to-right reading
+  // order they have in the menu, so the two surfaces never disagree about
+  // which action comes first.
+  return {
+    direct: actions.filter((action) => promoted.has(action.key)),
+    overflow: actions.filter((action) => !promoted.has(action.key)),
+  };
+}
+
+function toMenuItem({ key, label, onSelect, disabled, danger }: PaymentRowAction): MenuItem {
+  return { key, label, onSelect, disabled, danger };
+}
+
+/**
+ * The same actions as `PaymentActions`, as overflow-menu items for the phone
+ * row (#857). Every item calls the SAME handler the desktop button calls, so
+ * Void / Refund / Mark paid still open their #838 confirm dialogs — there is
+ * no second, shorter path to moving money.
+ *
+ * Owner-only actions are omitted rather than disabled for a non-owner: a menu
+ * has no room for the `OwnerOnlyHint` the button strip shows beside them, and
+ * the endpoints 404 for anyone else anyway.
+ */
+export function paymentMenuItems(args: PaymentRowActionArgs): MenuItem[] {
+  return paymentRowActions(args).map(toMenuItem);
+}
+
+/**
+ * The desktop row's action strip: at most `MAX_DIRECT_ROW_ACTIONS` buttons and
+ * a More menu holding the rest (#861). Everything is derived from
+ * `paymentRowActions`, so the menu is a second PLACE for an action, never a
+ * second decision about whether it is allowed.
+ */
+export function PaymentActions(props: PaymentRowActionArgs) {
+  const { payment, canGovernMoney } = props;
+  const { invoiceRow, isPending, isPaid, isVoided } = paymentActionEligibility(payment);
+  const { direct, overflow } = splitPaymentRowActions(paymentRowActions(props));
+  // A plain admin sees why Discount / Refund / Undo are missing, as before.
+  const ownerOnly = !canGovernMoney && !invoiceRow && !isVoided && (isPending || isPaid);
+
   return (
-    <div className="flex justify-end gap-2">
-      <Button variant="secondary" size="sm" onClick={onInvoice}>Invoice</Button>
-      <Button variant="secondary" size="sm" onClick={onSync}>Sync</Button>
-      {canGovernMoney && !invoiceRow && (
+    <div className="flex items-center justify-end gap-2">
+      {ownerOnly && <OwnerOnlyHint className="self-center" />}
+      {direct.map((action) => (
         <Button
-          variant="secondary"
+          key={action.key}
+          variant={action.variant}
           size="sm"
-          onClick={onVoid}
-          disabled={voidBlockedByStripe}
-          title={
-            voidBlockedByStripe
-              ? "Stripe payments that collected money must be refunded"
-              : "Void this payment (kept for audit, hidden from reports)"
-          }
+          onClick={action.onSelect}
+          disabled={action.disabled}
+          title={action.title}
         >
-          Void
+          {action.label}
         </Button>
-      )}
-      {isPending && !invoiceRow && (
-        <>
-          {canGovernMoney ? (
-            <Button variant="secondary" size="sm" onClick={onDiscount}>Discount</Button>
-          ) : (
-            <OwnerOnlyHint className="self-center" />
-          )}
-          <Button variant="primary" size="sm" onClick={onPaid}>Mark paid</Button>
-        </>
-      )}
-      {isPaid && !invoiceRow && (
-        canGovernMoney ? (
-          <>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={onRefund}
-              disabled={!refundable}
-              title={refundable ? "Issue refund" : "Already fully refunded"}
-            >
-              Refund
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onUndo}
-              disabled={!undoable || undoPending}
-              title={undoable ? "Undo manual mark-paid" : "Stripe payments must be refunded"}
-            >
-              Undo
-            </Button>
-          </>
-        ) : (
-          <OwnerOnlyHint className="self-center" />
-        )
+      ))}
+      {overflow.length > 0 && (
+        <OverflowMenu
+          className="shrink-0"
+          items={overflow.map(toMenuItem)}
+          // Not `payment-row-…`: a row-id prefix match must never pick the
+          // trigger up (#857).
+          triggerTestId={`payment-more-${payment.payment_id}`}
+          triggerLabel={`More actions for ${paymentDisplayLabel(payment)}`}
+          trigger={
+            <span className="flex size-[30px] items-center justify-center rounded-lg border border-rally-line bg-white text-rally-ink hover:bg-rally-paper">
+              <MoreHorizontal className="size-4" aria-hidden="true" />
+            </span>
+          }
+        />
       )}
     </div>
   );
@@ -228,7 +365,8 @@ export function GenerateDialog({
                   </span>
                   <span>
                     {" "}
-                    skipped for {detail.billing_period} · {skipReasonLabel(detail.reason_code)}
+                    skipped for {formatPeriodLabel(detail.billing_period)} ·{" "}
+                    {skipReasonLabel(detail.reason_code)}
                   </span>
                   <span className="block text-xs">
                     {detail.resume_on
@@ -966,6 +1104,62 @@ export function SyncStripeDialog({
   );
 }
 
+/** What is still refundable on this payment: the final amount less refunds. */
+export function refundableCents(payment: AdminPaymentView): number {
+  return Math.max(finalCents(payment) - payment.refunded_cents, 0);
+}
+
+/**
+ * The one line that says whose money this is (#861), in the shape the
+ * void-invoice dialog already uses (`ReasonDialog`'s `subject` in
+ * `app/(admin)/admin/families/[parentId]/family-dialogs.tsx`): family, student,
+ * invoice, period, amount paid. The refund dialog used to say only "Refund up
+ * to $X" — an admin two rows off target had nothing to catch it.
+ */
+export function refundSubject(payment: AdminPaymentView): string {
+  const settled = paidCents(payment);
+  return [
+    payment.parent_name || "Family on file",
+    payment.student_name || "Unassigned",
+    payment.invoice_number || paymentDisplayLabel(payment),
+    formatPeriodLabel(payment.period) || "No period",
+    `${formatCents(settled ?? finalCents(payment))} paid`,
+  ].join(" · ");
+}
+
+/** Dollars as typed → integer cents, or null when it is not a number. */
+export function refundAmountCents(input: string): number | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value * 100);
+}
+
+/**
+ * Blank used to be a silent full refund: the dialog sent `amount_cents:
+ * undefined` and `issue_refund.py` falls back to "everything still
+ * refundable". The amount is now required, so blank blocks the submit instead
+ * of moving the whole balance.
+ */
+export function refundAmountInvalid(input: string, maxCents: number): boolean {
+  const cents = refundAmountCents(input);
+  return cents === null || cents <= 0 || cents > maxCents;
+}
+
+/**
+ * #892: what a refund actually does, in the dialog that does it. The dialog
+ * said only "Refund up to $X" — nothing about where the money goes, when it
+ * lands, or that there is no undo. Stripe and manual refunds settle
+ * differently, so the timing sentence follows the money's route.
+ */
+export function refundConsequence(payment: AdminPaymentView): string {
+  const timing = payment.stripe_linked
+    ? "Stripe refunds usually take 5-10 business days to appear."
+    : "Record the transfer yourself — the academy sends the money.";
+  return `Money goes back to the original payment method. ${timing} A refund cannot be undone.`;
+}
+
 export function RefundDialog({
   payment,
   onClose,
@@ -988,6 +1182,18 @@ export function RefundDialog({
     onError: (err: Error) => setError(err.message ?? "Refund failed."),
   });
 
+  const maxCents = payment ? refundableCents(payment) : 0;
+  const fullAmount = (maxCents / 100).toFixed(2);
+  const amountInvalid = refundAmountInvalid(amountInput, maxCents);
+
+  // Prefilled with the full refundable amount the way the void/discount dialog
+  // prefills its cap — the common case stays one click, and the uncommon one
+  // is an edit the admin has to make on purpose.
+  useEffect(() => {
+    if (!payment) return;
+    setAmountInput((refundableCents(payment) / 100).toFixed(2));
+  }, [payment]);
+
   const close = () => {
     setAmountInput("");
     setReason("");
@@ -1002,7 +1208,7 @@ export function RefundDialog({
       onOpenChange={(open) => !open && close()}
       overline="Refund"
       title="Issue refund"
-      description={payment ? `Refund up to ${formatCents(finalCents(payment) - payment.refunded_cents)}.` : ""}
+      description={payment ? `Refund up to ${formatCents(maxCents)}.` : ""}
     >
       {result ? (
         <div className="space-y-4">
@@ -1026,25 +1232,49 @@ export function RefundDialog({
           onSubmit={(event) => {
             event.preventDefault();
             if (!payment) return;
+            const cents = refundAmountCents(amountInput);
+            if (cents === null || amountInvalid) return;
             mutation.mutate({
               payment_id: payment.payment_id,
-              amount_cents: amountInput ? Math.round(Number(amountInput) * 100) : undefined,
+              amount_cents: cents,
               reason,
             });
           }}
         >
           {error && <Alert tone="red">{error}</Alert>}
-          <Field label="Amount (USD)">
+          {payment && (
+            <>
+              <p className="text-sm text-rally-ink" data-testid="refund-subject">
+                {refundSubject(payment)}
+              </p>
+              <p className="text-sm text-rally-muted" data-testid="refund-consequence">
+                {refundConsequence(payment)}
+              </p>
+            </>
+          )}
+          <Field label={`Amount (USD, up to ${formatCents(maxCents)})`} required>
             <input
               type="number"
+              required
               min="0.01"
               step="0.01"
+              max={fullAmount}
               value={amountInput}
               onChange={(event) => setAmountInput(event.target.value)}
-              placeholder={payment ? (finalCents(payment) / 100).toFixed(2) : ""}
               className={inputClass}
+              data-testid="refund-amount"
             />
           </Field>
+          <div className="flex justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setAmountInput(fullAmount)}
+              data-testid="refund-full"
+            >
+              Full refund ({formatCents(maxCents)})
+            </Button>
+          </div>
           <Field label="Reason" required>
             <input
               type="text"
@@ -1054,7 +1284,23 @@ export function RefundDialog({
               className={inputClass}
             />
           </Field>
-          <DialogActions onCancel={close} submitLabel={mutation.isPending ? "Processing…" : "Refund"} />
+          <DialogActions>
+            <Button variant="secondary" size="sm" type="button" onClick={close}>
+              Cancel
+            </Button>
+            {/* #892: a refund is the one money action with no undo, so it
+                wears the same danger-outline confirm as Void rather than the
+                cobalt primary every harmless dialog uses. */}
+            <Button
+              variant="danger"
+              size="sm"
+              type="submit"
+              disabled={amountInvalid || reason.trim().length === 0 || mutation.isPending}
+              data-testid="refund-submit"
+            >
+              {mutation.isPending ? "Processing…" : "Refund"}
+            </Button>
+          </DialogActions>
         </form>
       )}
     </RallyDialog>

@@ -72,7 +72,13 @@ async function stubAdminAcademy(page: Page) {
       address: null,
     });
   });
+  // Issue #842: AdminLayout now feeds the Inbox nav badge from this endpoint
+  // on every admin page, so every shell stub must cover it.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
 }
+
 
 test.describe("admin students", () => {
   test("searches, filters, and loads the next cursor using BFF-rendered attendance and dues", async ({
@@ -185,7 +191,8 @@ test.describe("admin students", () => {
     await page.goto("/admin/students");
     await expect(page.getByTestId("admin-students-row-student-1")).toContainText("Amit Rao");
     await expect(page.getByTestId("admin-students-row-student-1")).toContainText("91%");
-    await expect(page.getByTestId("admin-students-row-student-1")).toContainText("CURRENT");
+    // #897: People chips are Title Case everywhere, from lib/people-status.
+    await expect(page.getByTestId("admin-students-row-student-1")).toContainText("Current");
     await expect(requests[0]).toContain("limit=25");
 
     await page.getByRole("button", { name: /^next page$/i }).click();
@@ -425,6 +432,30 @@ test.describe("admin students", () => {
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("$110");
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("91%");
     await expect(page.getByRole("tab", { name: "Training" })).toBeVisible();
+
+    // #897, the two geometry acceptance criteria. This test runs on
+    // chromium-mobile and chromium-desktop, so each branch is really
+    // exercised: a phone must give the parent's number a 44px tap target and
+    // must show the tabs without scrolling; a desktop must NOT inflate an
+    // inline link to 44px (the `md:min-h-0` collapse).
+    const viewport = page.viewportSize();
+    const call = page
+      .getByTestId("admin-student-parent-contacts")
+      .getByRole("link", { name: /^Call/ });
+    await expect(call).toBeVisible();
+    const callBox = await call.boundingBox();
+    expect(callBox).not.toBeNull();
+    if (viewport && viewport.width < 768) {
+      expect(callBox!.height).toBeGreaterThanOrEqual(44);
+      const tabsBox = await page.getByTestId("admin-student-tabs").boundingBox();
+      expect(tabsBox).not.toBeNull();
+      expect(tabsBox!.y + tabsBox!.height).toBeLessThanOrEqual(viewport.height);
+    } else {
+      expect(callBox!.height).toBeLessThan(44);
+    }
+
+    // The high-impact action moved off the header row and into the menu.
+    await expect(page.getByTestId("admin-student-actions")).toBeVisible();
 
     await page.getByRole("tab", { name: "Training" }).click();
     await expect(page.getByTestId("admin-student-training-tab")).toContainText(

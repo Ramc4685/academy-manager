@@ -91,7 +91,11 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
             >
               A
             </div>
-            <span className="font-semibold text-white text-[15px] tracking-tight">Academy</span>
+            {/* #843 added a fifth header control; at 320px the wordmark is
+                what has to give, not the touch targets. */}
+            <span className="hidden min-[360px]:inline font-semibold text-white text-[15px] tracking-tight">
+              Academy
+            </span>
           </Link>
         </div>
         <div className="flex items-center gap-2">
@@ -117,6 +121,16 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
                 style={{ background: "#facc15" }}
               />
             )}
+          </Link>
+          {/* #843: Profile was reachable only from the dismissible
+              profile-gap banner. It belongs in the shell chrome. */}
+          <Link
+            href="/parent/profile"
+            data-testid="nav-profile"
+            aria-label="Profile"
+            className="min-h-touch min-w-touch flex items-center justify-center rounded-lg p-2 text-slate-400 hover:bg-white/10"
+          >
+            <ProfileIcon />
           </Link>
           <PersonaSwitcher current="parent" variant="dark" />
           {!online && (
@@ -156,10 +170,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         }}
       >
         <div className="mx-auto flex max-w-md">
-          <BottomTab href="/parent/dashboard" label="Home" active={pathname === "/parent/dashboard"} icon={<HomeIcon />} />
-          <BottomTab href="/parent/children" label="Children" active={pathname?.startsWith("/parent/children") ?? false} icon={<ChildrenIcon />} />
-          <BottomTab href="/parent/payments" label="Payments" active={pathname?.startsWith("/parent/payments") ?? false} icon={<PaymentsIcon />} />
-          <BottomTab href="/parent/progress" label="Progress" active={pathname?.startsWith("/parent/progress") ?? false} icon={<ProgressIcon />} />
+          <BottomTab testId="nav-home" href="/parent/dashboard" label="Home" active={pathname === "/parent/dashboard"} icon={<HomeIcon />} />
+          <BottomTab testId="nav-children" href="/parent/children" label="Children" active={pathname?.startsWith("/parent/children") ?? false} icon={<ChildrenIcon />} />
+          <BottomTab testId="nav-payments" href="/parent/payments" label="Payments" active={pathname?.startsWith("/parent/payments") ?? false} icon={<PaymentsIcon />} />
+          {/* #843: "request a makeup" used to be a card low on Home only. */}
+          <BottomTab testId="nav-requests" href="/parent/requests" label="Requests" active={pathname?.startsWith("/parent/requests") ?? false} icon={<RequestsIcon />} />
+          <BottomTab testId="nav-progress" href="/parent/progress" label="Progress" active={pathname?.startsWith("/parent/progress") ?? false} icon={<ProgressIcon />} />
         </div>
       </nav>
     </div>
@@ -172,17 +188,21 @@ function BottomTab({
   label,
   active,
   icon,
+  testId,
 }: {
   href: string;
   label: string;
   active: boolean;
   icon: React.ReactNode;
+  testId: string;
 }) {
   return (
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
+      data-testid={testId}
       className="relative flex flex-1 min-h-touch flex-col items-center justify-center gap-0.5 transition-all duration-200"
-      style={{ color: active ? "#facc15" : "#475569" }}
+      // #94a3b8 on the night bar is 7.5:1; the old #475569 was 2.5:1 (WCAG AA fail).
+      style={{ color: active ? "#facc15" : "#94a3b8" }}
     >
       {active && (
         <span
@@ -234,6 +254,24 @@ function ProgressIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    </svg>
+  );
+}
+
+function RequestsIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 11l3 3L22 4" />
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+    </svg>
+  );
+}
+
+function ProfileIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
     </svg>
   );
 }

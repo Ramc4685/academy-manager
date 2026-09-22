@@ -14,6 +14,10 @@
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 
+import { useIsPhone } from "@/lib/use-is-phone";
+
+import styles from "./persona-calendar-view.module.css";
+
 export interface CalendarViewEvent {
   id: string;
   title: string;
@@ -32,20 +36,33 @@ interface Props {
 
 export default function PersonaCalendarView({ events, onEventClick }: Props) {
   const byId = new Map(events.map((e) => [e.id, e]));
+  /**
+   * #896: a month grid on a 400px phone is 7 columns of ~50px — the coach
+   * and parent calendars were unreadable and untappable one-handed. Below
+   * the `md:` breakpoint the calendar opens on a single day instead, with
+   * the month still one tap away in the toolbar.
+   *
+   * The day view comes from the daygrid plugin the component already loads,
+   * so the persona bundle does not grow by a second FullCalendar plugin.
+   */
+  const phone = useIsPhone();
 
   return (
     <div
       data-testid="calendar-grid"
-      className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4"
+      className={`${styles.wrap} rounded-lg border border-rally-line bg-white p-4`}
     >
       <FullCalendar
+        // `initialView` is read once at mount, so crossing the breakpoint has
+        // to remount rather than re-render. The events prop is unchanged.
+        key={phone ? "phone" : "wide"}
         plugins={[dayGridPlugin]}
-        initialView="dayGridMonth"
+        initialView={phone ? "dayGridDay" : "dayGridMonth"}
         events={events}
         headerToolbar={{
           left: "prev,next today",
           center: "title",
-          right: "dayGridMonth,dayGridWeek",
+          right: phone ? "dayGridDay,dayGridMonth" : "dayGridMonth,dayGridWeek",
         }}
         height="auto"
         eventClick={(info) => {

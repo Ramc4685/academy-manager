@@ -937,7 +937,7 @@ function MarkPaidDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-rally-line bg-white text-rally-muted shadow-sm transition hover:bg-rally-paper hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-accent/25 dark:bg-neutral-900"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-rally-line bg-white text-rally-muted shadow-sm transition hover:bg-rally-paper hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 focus:ring-offset-2 dark:bg-neutral-900"
             aria-label="Close payment dialog"
           >
             <X className="size-4" aria-hidden="true" />
@@ -952,7 +952,7 @@ function MarkPaidDialog({
               id="mark-paid-method"
               value={method}
               onChange={(e) => setMethod(e.target.value as MarkPayoutPaidInput["method"])}
-              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-900 dark:text-neutral-50"
             >
               <option value="bank_transfer">Bank transfer</option>
               <option value="cash">Cash</option>
@@ -970,7 +970,7 @@ function MarkPaidDialog({
               value={paidAt}
               onChange={(e) => setPaidAt(e.target.value)}
               required
-              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-900 dark:text-neutral-50"
             />
           </div>
           <div>
@@ -985,7 +985,7 @@ function MarkPaidDialog({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               required
-              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-900 dark:text-neutral-50"
             />
           </div>
           <div>
@@ -998,7 +998,7 @@ function MarkPaidDialog({
               value={reference}
               onChange={(e) => setReference(e.target.value)}
               placeholder="e.g. transaction ID"
-              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm placeholder:text-rally-muted focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-900 dark:text-neutral-50"
+              className="mt-1.5 h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm placeholder:text-rally-muted focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-900 dark:text-neutral-50"
             />
           </div>
         </div>
@@ -1006,14 +1006,14 @@ function MarkPaidDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="inline-flex h-10 items-center justify-center rounded-md border border-rally-line bg-white px-4 text-sm font-semibold text-rally-ink shadow-sm transition hover:bg-rally-paper focus:outline-none focus:ring-2 focus:ring-rally-accent/25 dark:bg-neutral-900 dark:text-neutral-50"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-rally-line bg-white px-4 text-sm font-semibold text-rally-ink shadow-sm transition hover:bg-rally-paper focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 focus:ring-offset-2 dark:bg-neutral-900 dark:text-neutral-50"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={pending}
-            className="inline-flex h-10 items-center justify-center rounded-md bg-rally-ink px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-rally-ink/90 focus:outline-none focus:ring-2 focus:ring-rally-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-rally-ink px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-rally-ink/90 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {pending ? "Saving…" : "Confirm payment"}
           </button>

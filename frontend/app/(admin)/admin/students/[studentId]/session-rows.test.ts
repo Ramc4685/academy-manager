@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions.logic";
 import {
   autopayChip,
+  enrolledSessionActions,
   familyBillingHref,
   pastEnrollmentRow,
   sessionRosterHref,
@@ -149,5 +151,51 @@ describe("re-enrolling a past row (#827)", () => {
 
   it("encodes an id that would otherwise break the path", () => {
     expect(sessionRosterHref("sess/1")).toBe("/admin/sessions/sess%2F1");
+  });
+});
+
+/**
+ * Issue #865: the Sessions tab was the last admin list still rendering a bare
+ * `<table>` at every width, so on a phone Fee, Discount, Hold and Transfer sat
+ * off-screen behind a sideways scroll. The phone row puts them in one 44px
+ * menu — and it must offer exactly what the desktop row offers, so the two
+ * layouts cannot disagree about what can be done to an enrollment.
+ */
+describe("enrolledSessionActions (#865)", () => {
+  const active = { status: "active", discount: null };
+
+  it("offers Hold, Transfer, Fee and Discount on an active enrollment", () => {
+    expect(enrolledSessionActions(active).map((a) => a.label)).toEqual([
+      "Hold",
+      "Transfer",
+      "Fee",
+      "Discount",
+    ]);
+  });
+
+  it("swaps Hold for Return once the enrollment is held, exactly like the roster", () => {
+    expect(
+      enrolledSessionActions({ status: "held", discount: null }).map((a) => a.key),
+    ).toEqual(["return", "transfer", "fee", "discount"]);
+  });
+
+  it("a status with no hold pair still gets Transfer, Fee and Discount", () => {
+    expect(
+      enrolledSessionActions({ status: "paused", discount: null }).map((a) => a.key),
+    ).toEqual(["transfer", "fee", "discount"]);
+  });
+
+  it("says Edit discount once one is attached, matching the table's button", () => {
+    const labels = enrolledSessionActions({
+      status: "active",
+      discount: { label: "Scholarship" },
+    }).map((a) => a.label);
+    expect(labels).toContain("Edit discount");
+    expect(labels).not.toContain("Discount");
+  });
+
+  it("carries the shared seat/billing/family wording for the departure actions", () => {
+    const hold = enrolledSessionActions(active).find((a) => a.key === "hold");
+    expect(hold?.description).toBe(DEPARTURE_ACTION_DESCRIPTION.hold);
   });
 });

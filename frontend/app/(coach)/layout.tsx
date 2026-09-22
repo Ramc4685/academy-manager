@@ -10,6 +10,7 @@ import { COACH_SURFACE_ROLES, canSuperviseCoaching, isAssistantCoach } from "@/l
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
+import { useNeedsReviewCount } from "@/lib/offline/use-needs-review-count";
 import { CoachInstallCard } from "@/components/coach/install-card";
 import { CoachSurfaceProvider } from "@/components/coach/coach-surface-context";
 import { ToastProvider } from "@/components/ds/toast";
@@ -53,6 +54,10 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
     refetchInterval: 30_000,
   });
   const unreadCount = (messagesData?.messages ?? []).filter((m) => !m.read).length;
+  // #841: marks that failed and are waiting in the tray. The entry only
+  // appears when there is something to resolve — an always-on "Needs review"
+  // link reads as a standing chore on a shell this small.
+  const needsReviewCount = useNeedsReviewCount(auth.authorized);
 
   useEffect(() => startAutoSync(), []);
 
@@ -110,32 +115,13 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
             </span>
           </Link>
         </div>
-        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
-          <Link
-            href="/coach/calendar"
-            data-testid="nav-calendar"
-            aria-label="Calendar"
-            className="min-h-touch min-w-touch flex items-center justify-center rounded-md p-2 text-slate-300 hover:bg-white/10"
-          >
-            <CalendarIcon />
-          </Link>
-          {!assistant && (
-            <Link
-              href="/coach/messages"
-              data-testid="nav-messages"
-              aria-label="Messages"
-              className="relative min-h-touch min-w-touch flex items-center justify-center rounded-md p-2 text-slate-300 hover:bg-white/10"
-            >
-              <MessagesIcon />
-              {unreadCount > 0 && (
-                <span
-                  data-testid="messages-unread-badge"
-                  className="absolute top-1 right-1 h-2 w-2 rounded-full"
-                  style={{ background: "#facc15" }}
-                />
-              )}
-            </Link>
-          )}
+        <div className="ml-auto flex min-w-0 items-center justify-end gap-2">
+          {/*
+            #866: Calendar/Messages/Needs review moved to the bottom nav —
+            they're thumb-reach destinations, not header decoration, and
+            keeping them here is what forced this row to wrap at 400px once
+            the Needs review badge appeared.
+          */}
           <PersonaSwitcher current="coach" variant="dark" />
           {!online && (
             <span className="rounded-full px-2 py-0.5 text-xs font-medium text-amber-300" style={{ background: "rgba(251,191,36,0.15)" }}>
@@ -195,6 +181,31 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         <div className="mx-auto flex max-w-md">
           <BottomTab href="/coach/today" label="Today" active={pathname?.startsWith("/coach/today") ?? false} />
           <BottomTab href="/coach/sessions" label="Sessions" active={pathname?.startsWith("/coach/sessions") ?? false} />
+          <BottomTab
+            href="/coach/calendar"
+            label="Calendar"
+            active={pathname?.startsWith("/coach/calendar") ?? false}
+            testId="nav-calendar"
+          />
+          {!assistant && (
+            <BottomTab
+              href="/coach/messages"
+              label="Messages"
+              active={pathname?.startsWith("/coach/messages") ?? false}
+              testId="nav-messages"
+              badge={unreadCount > 0 ? { testId: "messages-unread-badge", kind: "dot" } : undefined}
+            />
+          )}
+          {needsReviewCount > 0 && (
+            <BottomTab
+              href="/coach/needs-review"
+              label="Review"
+              active={pathname?.startsWith("/coach/needs-review") ?? false}
+              testId="nav-needs-review"
+              ariaLabel={`Needs review: ${needsReviewCount} ${needsReviewCount === 1 ? "mark" : "marks"}`}
+              badge={{ testId: "needs-review-count", kind: "count", count: needsReviewCount }}
+            />
+          )}
           <BottomTab href="/coach/profile" label="Profile" active={pathname?.startsWith("/coach/profile") ?? false} />
         </div>
       </nav>
@@ -204,36 +215,58 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
   );
 }
 
-function BottomTab({ href, label, active }: { href: string; label: string; active: boolean }) {
+interface BottomTabBadge {
+  testId: string;
+  kind: "dot" | "count";
+  count?: number;
+}
+
+function BottomTab({
+  href,
+  label,
+  active,
+  testId,
+  ariaLabel,
+  badge,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  testId?: string;
+  ariaLabel?: string;
+  badge?: BottomTabBadge;
+}) {
   return (
     <Link
       href={href as Parameters<typeof Link>[0]["href"]}
-      className="flex min-h-[var(--coach-bottom-nav-height)] flex-1 items-center justify-center text-sm font-medium transition-colors"
+      data-testid={testId}
+      aria-label={ariaLabel}
+      className="relative flex min-h-[var(--coach-bottom-nav-height)] flex-1 items-center justify-center text-[13px] font-medium transition-colors"
       style={{
-        color: active ? "#facc15" : "#64748b",
+        // rally.subtle-ink (#94a3b8) is the night-surface muted token: 7.5:1 on
+        // the #0a0f1c nav, where rally.muted (#64748b) was only 4.0:1 (#844).
+        color: active ? "#facc15" : "#94a3b8",
         borderTop: `2px solid ${active ? "#facc15" : "transparent"}`,
       }}
     >
       {label}
+      {badge?.kind === "dot" && (
+        <span
+          data-testid={badge.testId}
+          className="absolute top-2 right-[calc(50%-22px)] h-2 w-2 rounded-full"
+          style={{ background: "#facc15" }}
+        />
+      )}
+      {badge?.kind === "count" && (
+        <span
+          data-testid={badge.testId}
+          className="absolute top-1.5 right-[calc(50%-26px)] flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-bold"
+          style={{ background: "#facc15", color: "#0a0f1c" }}
+        >
+          {badge.count}
+        </span>
+      )}
     </Link>
   );
 }
 
-function CalendarIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
-  );
-}
-
-function MessagesIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  );
-}

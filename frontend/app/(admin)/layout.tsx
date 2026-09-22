@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getAdminAcademy } from "@/lib/api/admin";
+import { getAdminAcademy, getAdminInboxCounts } from "@/lib/api/admin";
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
@@ -32,6 +32,8 @@ import {
   AdminActionSlotOutlet,
   AdminActionSlotProvider,
 } from "@/components/admin/admin-action-slot";
+import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes-guard";
+import { PeopleSearch } from "@/components/admin/PeopleSearch";
 import { TenantSwitcher } from "@/components/admin/tenant-switcher";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
@@ -66,6 +68,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     queryFn: getAdminAcademy,
     enabled: auth.checked && auth.authorized,
   });
+  // Issue #842: feed the Inbox nav badge from the same queue-counts endpoint
+  // and cache key the Inbox page itself uses (lib/api/admin.ts), so this adds
+  // no new polling — React Query dedupes the request across the shell and
+  // the page.
+  const inboxCountsQuery = useQuery({
+    queryKey: queryKeys.admin.inboxCounts(),
+    queryFn: getAdminInboxCounts,
+    enabled: auth.checked && auth.authorized,
+  });
 
   if (!auth.checked) {
     return (
@@ -94,7 +105,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // Owner-only destinations are dropped from the nav for admins without the
   // scope, and landing on one directly shows the owner-only panel instead of a
   // page whose every request would 404.
-  const nav = navForRoles(ADMIN_NAV, auth.isOwner);
+  const inboxPending = inboxCountsQuery.data?.total ?? 0;
+  const nav = navForRoles(ADMIN_NAV, auth.isOwner).map((group) => ({
+    ...group,
+    items: group.items.map((item) =>
+      item.href === "/admin/inbox"
+        ? { ...item, count: inboxPending || undefined }
+        : item,
+    ),
+  }));
   const ownerOnlyHere = isOwnerOnlyRoute(pathname) && !auth.isOwner;
 
   return (
@@ -103,6 +122,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <ToastProvider>
       <TenantChangeInvalidator />
       <AdminActionSlotProvider>
+      {/* #893: the unsaved-changes guard wraps the SHELL, not one page, so a
+          sidebar/drawer link or a reload asks before it discards a draft. */}
+      <UnsavedChangesProvider>
       <div className="min-h-screen flex bg-rally-paper">
         {/* Exactly one sidebar tree is mounted at a time. Both carry the
             account controls (switchers, logout) with the same testids, so
@@ -146,6 +168,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </main>
         </div>
       </div>
+      </UnsavedChangesProvider>
       </AdminActionSlotProvider>
       </ToastProvider>
       </OwnerProvider>
@@ -209,8 +232,7 @@ function DesktopSidebar({
           <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
         ))}
       </nav>
-      <SidebarAccountSection />
-      <SidebarUserPill name={adminName} role={adminRole} />
+      <SidebarAccountSection name={adminName} role={adminRole} />
     </aside>
   );
 }
@@ -255,9 +277,9 @@ function NavGroup({
   pathname: string;
 }) {
   return (
-    <div className="pt-3.5 pb-1">
+    <div className="pt-2 pb-1">
       <div
-        className="px-[18px] pb-2 font-mono text-[9px] font-bold tracking-[0.22em]"
+        className="px-[18px] pb-1.5 font-mono text-[9px] font-bold tracking-[0.22em]"
         style={{ color: "var(--rally-subtle-ink)" }}
       >
         {group}
@@ -274,7 +296,16 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
     <Link
       href={item.href as Parameters<typeof Link>[0]["href"]}
       data-testid={`admin-nav-${slug(item.label)}`}
-      className="flex items-center gap-2.5 px-[18px] py-[9px] text-[13px] transition-colors"
+      // Issue #842: py-1.5 (was py-[9px]) is part of closing the ~99px fold
+      // gap at a 1280x900 viewport once the account block below was
+      // compacted — the row still clears the icon's own 16px box plus 13px
+      // text, well above the app's smallest existing tap targets.
+      //
+      // Issue #896: the same component is the phone drawer's row, where 32px
+      // is under the 44px touch minimum. `min-h-touch lg:min-h-0` gives the
+      // drawer (rendered only below lg) a 44px row while the desktop sidebar
+      // (only at lg:) keeps #842's density, with no prop threading.
+      className="flex min-h-touch items-center gap-2.5 px-[18px] py-1.5 text-[13px] transition-colors lg:min-h-0"
       style={{
         background: active ? "var(--rally-night-line)" : "transparent",
         borderLeft: `2px solid ${active ? "var(--rally-volt)" : "transparent"}`,
@@ -290,7 +321,18 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
         <span
           className="font-mono text-[10px] font-bold tracking-[0.05em] px-1.5 rounded-[3px]"
           style={{
-            background: item.urgent ? "var(--rally-volt)" : "rgba(255,255,255,0.08)",
+            // #896: the non-urgent fill was an 8%-white overlay. An alpha
+            // overlay has no contrast ratio of its own — read literally it is
+            // near-white, which is how the critique measured 1.48:1 against
+            // the bright text. Both opaque fills below clear AA against
+            // --rally-bright (night-line 9.9:1, night 12.9:1), and swapping
+            // them by `active` keeps the badge reading as a pill on either
+            // row background (an active row is itself night-line).
+            background: item.urgent
+              ? "var(--rally-volt)"
+              : active
+                ? "var(--rally-night)"
+                : "var(--rally-night-line)",
             color: item.urgent ? "var(--rally-ink)" : "var(--rally-bright)",
             padding: "1px 6px",
           }}
@@ -313,18 +355,24 @@ function slug(label: string): string {
 }
 
 /**
- * Account-level controls (view switcher, academy switcher, logout). Lives in
- * the navigation surface on every width so the topbar keeps only the menu,
- * back button, title and one page action.
+ * Account-level controls (view switcher, academy switcher, logout) plus the
+ * signed-in user row. Lives in the navigation surface on every width so the
+ * topbar keeps only the menu, back button, title and one page action.
  *
  * The section sits at the bottom of a scroll container, so both switcher
  * menus are flipped to open upward and stretch to the section's width; a
  * downward, right-anchored menu would be clipped by the aside's overflow.
+ *
+ * Issue #842: this used to be two separate bordered/padded blocks
+ * (switchers+logout, then the user pill). At a 1280x900 viewport their
+ * combined footprint pushed COMMS · OPS below the fold. Merging them into one
+ * block with a single border and tighter padding gets the whole nav back
+ * inside the viewport without shrinking touch targets below `min-h-touch`.
  */
-function SidebarAccountSection() {
+function SidebarAccountSection({ name, role }: { name: string; role: string }) {
   return (
     <div
-      className="p-3.5 border-t shrink-0 flex flex-col gap-2 [&_[role=listbox]]:bottom-full [&_[role=listbox]]:top-auto [&_[role=listbox]]:mb-1 [&_[role=listbox]]:mt-0 [&_[role=listbox]]:left-0 [&_[role=listbox]]:right-0 [&_[role=listbox]]:w-auto"
+      className="p-2.5 border-t shrink-0 flex flex-col gap-2 [&_[role=listbox]]:bottom-full [&_[role=listbox]]:top-auto [&_[role=listbox]]:mb-1 [&_[role=listbox]]:mt-0 [&_[role=listbox]]:left-0 [&_[role=listbox]]:right-0 [&_[role=listbox]]:w-auto"
       style={{ borderColor: "var(--rally-night-line)" }}
       data-testid="admin-sidebar-account"
     >
@@ -333,18 +381,12 @@ function SidebarAccountSection() {
       <PersonaLogoutButton
         className="w-full min-h-touch rounded-md border border-white/20 bg-white/10 px-3 text-[13px] font-semibold text-white hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/40"
       />
-    </div>
-  );
-}
-
-function SidebarUserPill({ name, role }: { name: string; role: string }) {
-  return (
-    <div className="p-3.5 border-t shrink-0" style={{ borderColor: "var(--rally-night-line)" }}>
       <div
-        className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg"
-        style={{ background: "var(--rally-night-panel)" }}
+        className="flex items-center gap-2.5 px-1 pt-2 mt-0.5 border-t"
+        style={{ borderColor: "var(--rally-night-line)" }}
+        data-testid="admin-sidebar-user"
       >
-        <Avatar name={name} size={32} />
+        <Avatar name={name} size={28} />
         <div className="flex-1 min-w-0">
           <div className="text-[13px] font-semibold text-white tracking-[-0.005em] truncate">{name}</div>
           <div
@@ -410,8 +452,7 @@ function MobileDrawer({
         {/* Outside the closing <nav>: opening a switcher menu must not close
             the drawer. Navigation from a menu closes it via the pathname
             effect in AdminLayout. */}
-        <SidebarAccountSection />
-        <SidebarUserPill name={adminName} role={adminRole} />
+        <SidebarAccountSection name={adminName} role={adminRole} />
       </aside>
     </div>
   );
@@ -471,6 +512,9 @@ function RallyTopbar({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* #865: one search for students, families and staff, at every
+              width. It is a dialog, not a route — see PeopleSearch.tsx. */}
+          <PeopleSearch />
           <AdminActionSlotOutlet />
           {!online && (
             <span

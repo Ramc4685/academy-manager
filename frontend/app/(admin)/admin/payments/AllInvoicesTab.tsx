@@ -24,16 +24,21 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { matchesInvoiceStatusFilter, type InvoiceStatusFilter } from "@/lib/billing-status";
+import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Field, Th } from "@/components/ds/dialog-chrome";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { Overline } from "@/components/ds/typography";
+import { useIsPhone } from "@/lib/use-is-phone";
+import { webhookEventLabel } from "@/lib/billing-health";
 
 import {
   formatCents,
+  formatPeriodLabel,
   methodChip,
   paidCents,
   paymentDisplayLabel,
@@ -51,6 +56,7 @@ import {
   InvoiceDialog,
   MarkPaidDialog,
   PaymentActions,
+  paymentMenuItems,
   RefundDialog,
   SyncStripeDialog,
   VoidPaymentDialog,
@@ -61,6 +67,7 @@ const STATUS_FILTER_WINDOW = 200;
 
 export function AllInvoicesTab() {
   const isOwner = useIsOwner();
+  const isPhone = useIsPhone();
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminPaymentView | null>(null);
   const [discountTarget, setDiscountTarget] = useState<AdminPaymentView | null>(null);
@@ -205,7 +212,12 @@ export function AllInvoicesTab() {
                 <div key={event.event_id} className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_auto]">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-rally-ink">{event.event_type}</span>
+                      {/* #892: Stripe's own event name is a key, not a sentence.
+                          The queue says what happened; the raw type and ids stay
+                          one disclosure away for support. */}
+                      <span className="font-medium text-rally-ink" title={event.event_type}>
+                        {webhookEventLabel(event.event_type)}
+                      </span>
                       <Chip
                         variant={event.status === "quarantined" ? "failed" : "pending"}
                         label={event.status.toUpperCase()}
@@ -215,9 +227,15 @@ export function AllInvoicesTab() {
                       {event.error_message || "No error detail recorded."}
                     </p>
                   </div>
-                  <div className="font-mono text-xs text-rally-subtle sm:text-right">
-                    <div>{event.event_id}</div>
-                    {event.object_id && <div>{event.object_id}</div>}
+                  <div className="text-xs text-rally-subtle sm:text-right">
+                    <details data-testid={`webhook-ids-${event.event_id}`}>
+                      <summary className="cursor-pointer">Stripe details</summary>
+                      <div className="mt-1 break-all font-mono">
+                        <div>{event.event_type}</div>
+                        <div>{event.event_id}</div>
+                        {event.object_id && <div>{event.object_id}</div>}
+                      </div>
+                    </details>
                   </div>
                 </div>
               ))}
@@ -396,9 +414,94 @@ export function AllInvoicesTab() {
           <p className="p-8 text-center text-sm text-rally-subtle" data-testid="payments-filter-empty">
             No payments match these filters.
           </p>
+        ) : isPhone ? (
+          /* #857: ten columns over a 980px minimum. On a phone the amount, the
+             status and the money actions were all past the right edge — the
+             three things this list is read for. Same chips and the same
+             `formatCents` the table uses; the menu items call the same
+             handlers, so Void / Refund / Mark paid still open their #838
+             confirm dialogs. */
+          <PhoneList aria-label="Invoices" data-testid="admin-payments-phone-list">
+            {filteredPayments.map((p) => {
+              const chip = statusChip(p.status);
+              const method = methodChip(p);
+              const rowPaidCents = paidCents(p);
+              const reconciliation = reconciliationLabel(p);
+              const stripeSummary = stripeIdSummary(p);
+              const label = paymentDisplayLabel(p);
+              return (
+                <PhoneListRow
+                  key={p.payment_id}
+                  data-testid={`payment-row-${p.payment_id}`}
+                  title={p.student_name || "Unassigned"}
+                  primary={
+                    <span className="font-mono text-sm font-semibold tabular-nums text-rally-ink">
+                      {formatCents(p.amount_cents)}
+                    </span>
+                  }
+                  actionsLabel={`Actions for ${label}`}
+                  actionsTestId={`payment-actions-${p.payment_id}`}
+                  actions={paymentMenuItems({
+                    payment: p,
+                    canGovernMoney: isOwner,
+                    onDiscount: () => setDiscountTarget(p),
+                    onInvoice: () => setInvoiceTarget(p),
+                    onPaid: () => setPaidTarget(p),
+                    onRefund: () => setRefundTarget(p),
+                    onSync: () => {
+                      setSyncTarget(p);
+                      setSyncOpen(true);
+                    },
+                    onUndo: () => undoMutation.mutate(p.payment_id),
+                    onVoid: () => setVoidTarget(p),
+                    undoPending: undoMutation.isPending,
+                  })}
+                  secondary={
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Chip variant={chip.variant} label={chip.label} />
+                        {method && <Chip variant={method.variant} label={method.label} />}
+                      </div>
+                      <div className="break-words">
+                        {label} · {p.parent_name || "Parent on file"}
+                      </div>
+                      <div>
+                        {formatPeriodLabel(p.period) || "No period"} · paid{" "}
+                        {rowPaidCents === null ? "—" : formatCents(rowPaidCents)}
+                        {p.discount_cents ? ` · less ${formatCents(p.discount_cents)}` : ""}
+                      </div>
+                      {p.status === "voided" && (
+                        <div data-testid={`payment-void-note-${p.payment_id}`}>
+                          {p.void_reason || "Voided"}
+                          {p.voided_at ? ` · ${new Date(p.voided_at).toLocaleDateString()}` : ""}
+                        </div>
+                      )}
+                      {/* The Stripe ids and the reconciliation note are the
+                          evidence `billing-trust-recovery.spec.ts` reads off
+                          the row, so the phone layout carries them too — the
+                          trail must not depend on screen width. #892 folds the
+                          ids themselves into a disclosure: the trail stays,
+                          the `pi_…` noise stops being the default reading. */}
+                      {stripeSummary && (
+                        <StripeIdDetails summary={stripeSummary} paymentId={p.payment_id} />
+                      )}
+                      {reconciliation && (
+                        <div className="font-medium text-amber-700">{reconciliation}</div>
+                      )}
+                    </>
+                  }
+                />
+              );
+            })}
+          </PhoneList>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-sm" data-testid="admin-payments-table">
+            {/* #861: the floor used to be 980px, which on its own was wider
+                than the ~944px the admin shell leaves for the table at 1280 —
+                before the five-button action column added another ~200. The
+                columns still set their own natural widths; this only stops the
+                table demanding room the screen does not have. */}
+            <table className="w-full min-w-[720px] text-sm" data-testid="admin-payments-table">
               <thead>
                 <tr className="border-b border-rally-line text-left">
                   <Th>Payment</Th>
@@ -410,7 +513,16 @@ export function AllInvoicesTab() {
                   <Th>Status</Th>
                   <Th>Method</Th>
                   <Th>Paid on</Th>
-                  <Th><span className="sr-only">Actions</span></Th>
+                  {/* #847: ten columns over a 980px minimum put the row menu
+                      past the right edge at 1280 inside the admin shell, so
+                      voiding or refunding an invoice needed a sideways scroll
+                      first. Same sticky column the approval queues use.
+                      #861: capped, because an uncapped `justify-end` strip of
+                      up to five buttons was what pushed Status / Method /
+                      Paid-on off the screen in the first place. */}
+                  <Th className={`${actionHeaderClass} w-[232px]`}>
+                    <span className="sr-only">Actions</span>
+                  </Th>
                 </tr>
               </thead>
               <tbody>
@@ -436,9 +548,7 @@ export function AllInvoicesTab() {
                         {(stripeSummary || reconciliation) && (
                           <div className="mt-1 max-w-[280px] space-y-0.5 text-xs text-rally-subtle">
                             {stripeSummary && (
-                              <div className="truncate font-mono" title={stripeSummary}>
-                                {stripeSummary}
-                              </div>
+                              <StripeIdDetails summary={stripeSummary} paymentId={p.payment_id} />
                             )}
                             {reconciliation && (
                               <div className="font-medium text-amber-700">
@@ -456,7 +566,9 @@ export function AllInvoicesTab() {
                           {p.parent_name || "Parent on file"}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-rally-muted">{p.period || "—"}</td>
+                      <td className="px-4 py-3 text-rally-muted">
+                        {formatPeriodLabel(p.period) || "—"}
+                      </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums">{formatCents(p.amount_cents)}</td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-rally-subtle">
                         {p.discount_cents ? formatCents(p.discount_cents) : "—"}
@@ -484,7 +596,7 @@ export function AllInvoicesTab() {
                       <td className="px-4 py-3 text-rally-muted">
                         {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "—"}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className={`${actionCellClass} w-[232px] bg-white`}>
                         <PaymentActions
                           payment={p}
                           canGovernMoney={isOwner}
@@ -591,3 +703,20 @@ export function AllInvoicesTab() {
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
+
+/**
+ * #892: the Stripe object ids behind a disclosure. They are the reconciliation
+ * trail `billing-trust-recovery.spec.ts` reads off a row, so they stay in the
+ * row — but "pi_3QwT…" is not what an admin reads an invoice list for, and it
+ * was the first thing the list said. Collapsed by default, one tap away.
+ */
+function StripeIdDetails({ summary, paymentId }: { summary: string; paymentId: string }) {
+  return (
+    <details data-testid={`stripe-ids-${paymentId}`}>
+      <summary className="cursor-pointer text-xs text-rally-subtle">Stripe details</summary>
+      <div className="mt-1 break-all font-mono text-[11px] text-rally-subtle" title={summary}>
+        {summary}
+      </div>
+    </details>
+  );
+}

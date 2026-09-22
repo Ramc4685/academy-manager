@@ -19,14 +19,16 @@ import {
   type TuitionDiscountKind,
 } from "@/lib/api/v2/students";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
+import type { MenuItem } from "@/components/ds/menu";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Overline } from "@/components/ds/typography";
 import { useIsOwner } from "@/components/admin/owner-context";
 import {
   DepartureActions,
-  holdActionsFor,
   type DepartureAction,
 } from "@/components/admin/enrollment/departure-actions";
 import {
@@ -44,9 +46,11 @@ import {
 } from "./format";
 import {
   autopayChip,
+  enrolledSessionActions,
   familyBillingHref,
   pastEnrollmentRow,
   sessionRosterHref,
+  type EnrolledSessionActionKey,
 } from "./session-rows";
 import { StatusChip } from "./StatusChip";
 
@@ -84,6 +88,8 @@ function SessionsPanel({
 }) {
   const billingHref = familyBillingHref(parentId);
   const isOwner = useIsOwner();
+  // #865: one layout at a time, like every other admin list since #847.
+  const isPhone = useIsPhone();
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
   const [holding, setHolding] = useState<AdminStudentSessionSummary | null>(
     null,
@@ -226,6 +232,57 @@ function SessionsPanel({
     Boolean(billingOverride) &&
     (overrideAmount.trim() === "" || overridePriceCents < 0);
 
+  /**
+   * #865: the ONE place an action on an enrolled session is carried out.
+   * The desktop table's buttons, its `DepartureActions` menu and the phone
+   * row's 44px menu all call this — so the layouts cannot drift into opening
+   * different dialogs, or pre-filling them differently, for the same row.
+   */
+  const runSessionAction = (
+    session: AdminStudentSessionSummary,
+    key: EnrolledSessionActionKey,
+  ) => {
+    switch (key) {
+      case "hold":
+        setHolding(session);
+        return;
+      case "return":
+        setReturning(session);
+        return;
+      case "transfer":
+        setMoving(session);
+        setTargetSessionId("");
+        setReason("");
+        setEffectiveDate(new Date().toISOString().slice(0, 10));
+        return;
+      case "fee":
+        setBillingOverride(session);
+        setOverrideAmount(
+          session.amount_cents == null ? "" : centsToDollarInput(session.amount_cents),
+        );
+        return;
+      case "discount": {
+        setDiscounting(session);
+        const d = session.discount;
+        setDiscountCategory(d?.category ?? "scholarship");
+        setDiscountLabel(d?.category_label ?? "");
+        setDiscountKind(d?.kind ?? "waiver");
+        setDiscountValue("");
+        setDiscountStart(d?.effective_start ?? new Date().toISOString().slice(0, 10));
+        setDiscountNote("");
+        return;
+      }
+    }
+  };
+
+  const phoneMenuItems = (session: AdminStudentSessionSummary): MenuItem[] =>
+    enrolledSessionActions(session).map((action) => ({
+      key: action.key,
+      label: action.label,
+      description: action.description,
+      onSelect: () => runSessionAction(session, action.key),
+    }));
+
   return (
     <>
       <Card p={20} className="lg:col-span-2">
@@ -242,6 +299,68 @@ function SessionsPanel({
           >
             No session enrollments.
           </p>
+        ) : isPhone ? (
+          <div className="-mx-5 mt-3" data-testid="admin-student-enrolled-sessions">
+            <PhoneList aria-label="Enrolled sessions">
+              {sessions.map((session) => (
+                <PhoneListRow
+                  key={session.enrollment_id}
+                  data-testid={`admin-student-enrollment-${session.enrollment_id}`}
+                  title={session.session_title}
+                  primary={<StatusChip status={session.status} />}
+                  actionsLabel={`Actions for ${session.session_title}`}
+                  actionsTestId={`admin-student-enrollment-actions-${session.enrollment_id}`}
+                  actions={phoneMenuItems(session)}
+                  secondary={
+                    <>
+                      <div>{session.location ?? session.session_id}</div>
+                      <div>{formatDateTimeRange(session.start_at, session.end_at)}</div>
+                      {/* The table's derived money, not a second derivation. */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {session.discount ? (
+                          <>
+                            <span className="font-mono tabular-nums text-rally-ink">
+                              {formatCurrencyCents(session.discount.net_cents)}
+                            </span>
+                            {session.discount.discount_cents > 0 && (
+                              <span className="font-mono text-xs tabular-nums line-through">
+                                {formatCurrencyCents(session.discount.gross_cents)}
+                              </span>
+                            )}
+                            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                              {session.discount.label}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-mono tabular-nums text-rally-ink">
+                              {session.amount_cents == null
+                                ? "—"
+                                : formatCurrencyCents(session.amount_cents)}
+                            </span>
+                            <span>
+                              {session.payment_mode ?? session.subscription_status ?? "—"}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {session.subscription_status &&
+                          session.subscription_status !== session.status && (
+                            <StatusChip status={session.subscription_status} />
+                          )}
+                        <AutopayChipLink
+                          status={session.autopay_status}
+                          href={billingHref}
+                          enrollmentId={session.enrollment_id}
+                        />
+                      </div>
+                    </>
+                  }
+                />
+              ))}
+            </PhoneList>
+          </div>
         ) : (
           <div
             className="mt-3 overflow-x-auto"
@@ -259,7 +378,12 @@ function SessionsPanel({
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {sessions.map((session) => (
-                  <tr key={session.enrollment_id}>
+                  <tr
+                    key={session.enrollment_id}
+                    // #865: the same row id the phone row carries, so a spec
+                    // names one enrollment at either width.
+                    data-testid={`admin-student-enrollment-${session.enrollment_id}`}
+                  >
                     <td className="py-3 pr-4 align-top">
                       <div className="font-medium text-rally-ink">
                         {session.session_title}
@@ -319,63 +443,35 @@ function SessionsPanel({
                     </td>
                     <td className="py-3 align-top">
                       <div className="flex items-center justify-end gap-3">
-                        <button
-                          className="text-xs font-medium text-rally-blue hover:underline"
-                          onClick={() => {
-                            setBillingOverride(session);
-                            setOverrideAmount(
-                              session.amount_cents == null
-                                ? ""
-                                : centsToDollarInput(session.amount_cents),
-                            );
-                          }}
-                        >
-                          Fee
-                        </button>
-                        <button
-                          className="text-xs font-medium text-rally-blue hover:underline"
-                          onClick={() => {
-                            setDiscounting(session);
-                            const d = session.discount;
-                            setDiscountCategory(d?.category ?? "scholarship");
-                            setDiscountLabel(d?.category_label ?? "");
-                            setDiscountKind(d?.kind ?? "waiver");
-                            setDiscountValue("");
-                            setDiscountStart(
-                              d?.effective_start ??
-                                new Date().toISOString().slice(0, 10),
-                            );
-                            setDiscountNote("");
-                          }}
-                        >
-                          {session.discount ? "Edit discount" : "Discount"}
-                        </button>
+                        {/* #865: the same list the phone menu renders, so the
+                            two layouts offer one set of actions. */}
+                        {enrolledSessionActions(session)
+                          .filter(
+                            (action) => action.key === "fee" || action.key === "discount",
+                          )
+                          .map((action) => (
+                            <button
+                              key={action.key}
+                              className="text-xs font-medium text-rally-cobalt-600 hover:underline"
+                              onClick={() => runSessionAction(session, action.key)}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
                         <DepartureActions
                           enrollmentId={session.enrollment_id}
                           studentName={session.session_title}
                           status={session.status}
                           layout="inline"
                           isOwner={isOwner}
-                          actions={[
-                            ...holdActionsFor(session.status),
-                            "transfer",
-                          ]}
-                          onAction={(action: DepartureAction) => {
-                            if (action === "hold") {
-                              setHolding(session);
-                              return;
-                            }
-                            if (action === "return") {
-                              setReturning(session);
-                              return;
-                            }
-                            setMoving(session);
-                            setTargetSessionId("");
-                            setReason("");
-                            setEffectiveDate(
-                              new Date().toISOString().slice(0, 10),
-                            );
-                          }}
+                          actions={enrolledSessionActions(session)
+                            .filter(
+                              (action) => action.key !== "fee" && action.key !== "discount",
+                            )
+                            .map((action) => action.key as DepartureAction)}
+                          onAction={(action: DepartureAction) =>
+                            runSessionAction(session, action as EnrolledSessionActionKey)
+                          }
                         />
                       </div>
                     </td>
@@ -442,7 +538,7 @@ function SessionsPanel({
                   New session
                 </label>
                 <select
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={targetSessionId}
                   onChange={(e) => setTargetSessionId(e.target.value)}
                   disabled={sessionsQuery.isPending}
@@ -464,7 +560,7 @@ function SessionsPanel({
                 </label>
                 <input
                   type="date"
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={effectiveDate}
                   onChange={(e) => setEffectiveDate(e.target.value)}
                 />
@@ -475,7 +571,7 @@ function SessionsPanel({
                   Reason (optional)
                 </label>
                 <textarea
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   rows={2}
                   placeholder="e.g. schedule conflict"
                   value={reason}
@@ -537,7 +633,7 @@ function SessionsPanel({
                   Category
                 </label>
                 <select
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={discountCategory}
                   onChange={(e) =>
                     setDiscountCategory(e.target.value as TuitionDiscountCategory)
@@ -557,7 +653,7 @@ function SessionsPanel({
                     Custom label
                   </label>
                   <input
-                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                     placeholder="e.g. Founding family rate"
                     value={discountLabel}
                     onChange={(e) => setDiscountLabel(e.target.value)}
@@ -570,7 +666,7 @@ function SessionsPanel({
                   Type
                 </label>
                 <select
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={discountKind}
                   onChange={(e) =>
                     setDiscountKind(e.target.value as TuitionDiscountKind)
@@ -596,7 +692,7 @@ function SessionsPanel({
                   <input
                     type="number"
                     min="0"
-                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                    className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                     value={discountValue}
                     onChange={(e) => setDiscountValue(e.target.value)}
                   />
@@ -609,7 +705,7 @@ function SessionsPanel({
                 </label>
                 <input
                   type="date"
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={discountStart}
                   onChange={(e) => setDiscountStart(e.target.value)}
                 />
@@ -620,7 +716,7 @@ function SessionsPanel({
                   Private note (optional)
                 </label>
                 <textarea
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   rows={2}
                   value={discountNote}
                   onChange={(e) => setDiscountNote(e.target.value)}
@@ -726,7 +822,7 @@ function SessionsPanel({
                   type="number"
                   min="0"
                   step="0.01"
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-blue dark:bg-neutral-800"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
                   value={overrideAmount}
                   onChange={(event) => setOverrideAmount(event.target.value)}
                 />
@@ -799,7 +895,7 @@ function AutopayChipLink({
   return (
     <Link
       href={href as Route}
-      className="rounded-full focus:outline-none focus:ring-2 focus:ring-rally-blue"
+      className="rounded-full focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
       title="Manage autopay on the family billing page"
       data-testid={testId}
       data-autopay-status={status ?? "none"}
@@ -872,7 +968,7 @@ function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) 
                       <Link
                         href={sessionRosterHref(row.sessionId) as Parameters<typeof Link>[0]["href"]}
                         data-testid={`admin-student-re-enroll-${row.enrollmentId}`}
-                        className="text-xs font-medium text-rally-blue hover:underline"
+                        className="text-xs font-medium text-rally-cobalt-600 hover:underline"
                       >
                         Re-enroll
                       </Link>

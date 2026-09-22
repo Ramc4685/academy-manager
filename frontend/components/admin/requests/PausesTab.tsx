@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -11,10 +12,17 @@ import {
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
+
+/** #838: approving or declining a pause is one click away from the family's bill. */
+type PauseDecision = { request: AdminPauseRequestView; decision: "approve" | "decline" };
 
 export function PausesTab() {
   const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState<PauseDecision | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["admin", "pause-requests"],
     queryFn: listAdminPauseRequests,
@@ -43,7 +51,140 @@ export function PausesTab() {
           No pending pause requests.
         </p>
       ) : (
-        <Card p={20}>
+        <PausesList
+          requests={requests}
+          disabled={approveMutation.isPending || declineMutation.isPending}
+          onApprove={(request) => setConfirming({ request, decision: "approve" })}
+          onDecline={(request) => setConfirming({ request, decision: "decline" })}
+        />
+      )}
+
+      {confirming && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && setConfirming(null)}
+          overline={confirming.decision === "approve" ? "Approve pause" : "Decline pause"}
+          title={
+            confirming.decision === "approve"
+              ? "Approve this pause request?"
+              : "Decline this pause request?"
+          }
+          subject={`${confirming.request.student_name || confirming.request.student_id || "Student"} · ${
+            confirming.request.session_title || confirming.request.session_id || "session pending"
+          } · ${pauseLabel(confirming.request)}`}
+          consequence={
+            confirming.decision === "approve" ? (
+              <>
+                <p>
+                  The seat is released for the pause, so the student stops attending.{" "}
+                  {billingImpactLabel(confirming.request)}.
+                </p>
+                <p>
+                  {confirming.request.parent_name ||
+                    confirming.request.parent_email ||
+                    "The family"}{" "}
+                  is emailed that the pause was approved.
+                </p>
+              </>
+            ) : (
+              <>
+                <p>
+                  Nothing changes: the seat stays, attendance continues and the family keeps being
+                  invoiced as usual.
+                </p>
+                <p>
+                  {confirming.request.parent_name ||
+                    confirming.request.parent_email ||
+                    "The family"}{" "}
+                  is emailed that the request was declined.
+                </p>
+              </>
+            )
+          }
+          confirmLabel={confirming.decision === "approve" ? "Approve pause" : "Decline pause"}
+          confirmVariant={confirming.decision === "approve" ? "primary" : "danger"}
+          pending={approveMutation.isPending || declineMutation.isPending}
+          onConfirm={() => {
+            if (confirming.decision === "approve") {
+              approveMutation.mutate(confirming.request.pause_request_id);
+            } else {
+              declineMutation.mutate(confirming.request.pause_request_id);
+            }
+            setConfirming(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * #860: on a phone the sticky Decline/Approve cell sat on top of the session,
+ * the pause dates and the reason — the admin was deciding blind. The shared
+ * phone row (#847) puts every one of those facts above a 44px actions menu, so
+ * the decision is made from what the family actually asked for.
+ *
+ * Both layouts call the same `onApprove`/`onDecline` the table already used:
+ * one confirm dialog, one derivation of the labels, two layouts.
+ */
+function PausesList({
+  requests,
+  disabled,
+  onApprove,
+  onDecline,
+}: {
+  requests: AdminPauseRequestView[];
+  disabled: boolean;
+  onApprove: (request: AdminPauseRequestView) => void;
+  onDecline: (request: AdminPauseRequestView) => void;
+}) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <Card p={0}>
+        <PhoneList aria-label="Pause requests" data-testid="admin-pause-requests-phone-list">
+          {requests.map((request) => {
+            const who = request.parent_name || request.parent_email || "Parent";
+            return (
+              <PhoneListRow
+                key={request.pause_request_id}
+                data-testid={`admin-pause-requests-row-${request.pause_request_id}`}
+                title={who}
+                primary={
+                  <Chip variant={mapStatus(request.status)} label={request.status.toUpperCase()} />
+                }
+                actionsLabel={`Actions for ${who}`}
+                actionsTestId={`admin-pause-requests-actions-${request.pause_request_id}`}
+                actions={
+                  request.status === "pending" && !disabled
+                    ? [
+                        { key: "decline", label: "Decline", onSelect: () => onDecline(request) },
+                        { key: "approve", label: "Approve", onSelect: () => onApprove(request) },
+                      ]
+                    : []
+                }
+                secondary={
+                  <>
+                    <div>Student: {request.student_name || request.student_id || "Unknown"}</div>
+                    <div className="text-rally-base">
+                      {request.session_title || request.session_id || "Session pending"}
+                    </div>
+                    <div>{sessionDetail(request)}</div>
+                    <div className="text-rally-base">{pauseLabel(request)}</div>
+                    <div>{billingImpactLabel(request)}</div>
+                    <div>Requested {formatDateTime(request.created_at)}</div>
+                    <div>{request.reason || "No reason given"}</div>
+                  </>
+                }
+              />
+            );
+          })}
+        </PhoneList>
+      </Card>
+    );
+  }
+  return (
+    <Card p={20}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[840px] text-sm">
               <thead>
@@ -61,17 +202,15 @@ export function PausesTab() {
                   <PauseRow
                     key={request.pause_request_id}
                     request={request}
-                    disabled={approveMutation.isPending || declineMutation.isPending}
-                    onApprove={() => approveMutation.mutate(request.pause_request_id)}
-                    onDecline={() => declineMutation.mutate(request.pause_request_id)}
+                    disabled={disabled}
+                    onApprove={() => onApprove(request)}
+                    onDecline={() => onDecline(request)}
                   />
                 ))}
               </tbody>
             </table>
           </div>
         </Card>
-      )}
-    </div>
   );
 }
 
@@ -178,10 +317,12 @@ function formatDateTime(value: string): string {
 }
 
 function sessionDetail(request: AdminPauseRequestView): string {
+  // #860: the enrollment id used to be appended here. Location and start time
+  // already identify the class; the id was an internal handle an admin has no
+  // way to act on.
   const parts = [
     request.session_location,
     request.session_start_at ? formatDateTime(request.session_start_at) : null,
-    request.enrollment_id ? `Enrollment ${request.enrollment_id}` : null,
   ].filter(Boolean);
   return parts.join(" · ") || "No session details";
 }

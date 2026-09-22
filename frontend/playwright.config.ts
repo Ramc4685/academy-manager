@@ -52,7 +52,15 @@ export default defineConfig({
     // and deterministically on webkit-mobile in admin-shell.spec.ts). It is a
     // dev-server artifact, not app behaviour: nothing in the shell navigates.
     // Turbopack applies those updates without a full reload.
-    command: "pnpm dev",
+    //
+    // Launch next directly, not via `pnpm dev`. pnpm 11.27.1 (2026-09-20)
+    // changed `pnpm run` to forward signals to the script and then WAIT for
+    // it to finish shutting down; Playwright's webServer teardown killed
+    // pnpm, pnpm waited on `next dev`, the stdio pipes never closed, and
+    // every CI e2e job hung after its last test until timeout-minutes
+    // (CI resolves the floating `pnpm/action-setup` `version: 11`, so the
+    // bump arrived without a lockfile change). Same flags as `pnpm dev`.
+    command: "node_modules/.bin/next dev --turbopack -p ${PORT}",
     url: `http://localhost:${PORT}/login`,
     reuseExistingServer: !process.env.CI,
     // Cold `next dev` in a fresh worktree can exceed 60s before /login responds.
@@ -91,7 +99,16 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         viewport: { width: 1280, height: 800 },
       },
-      testMatch: /admin-(shell|students|registrations|level-ups-lifecycle)\.spec\.ts/,
+      // month-close joins the list for #862: its collapsible groups default
+      // open on desktop and closed on a phone, so the default only gets
+      // exercised by running the spec under both viewports. messages joins
+      // for #864, where a phone replaces the thread list with the open
+      // thread and a desktop shows both at once. family-billing joins for
+      // #890: the invoice row's direct-vs-More-menu split and the "one home
+      // per money action" rule are a 1280px claim, and the row renders a
+      // different branch (table vs PhoneListRow) on each viewport.
+      testMatch:
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing)\.spec\.ts/,
     },
   ],
 });

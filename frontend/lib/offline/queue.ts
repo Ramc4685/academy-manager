@@ -11,10 +11,23 @@ import { getAll, put, remove } from "./idb";
 
 export type QueuedStatus = "queued" | "in_flight" | "needs_review";
 
+/**
+ * Display text captured on the device when the mutation was queued (#841), so
+ * the Needs-review tray can name the student and the class instead of echoing
+ * the payload's ids. Deliberately OUTSIDE `payload`: only `payload` is sent to
+ * the server, so these never leave the phone. Optional — mutations queued
+ * before this field existed simply have none.
+ */
+export interface QueuedMutationLabels {
+  student_full_name?: string;
+  session_title?: string;
+}
+
 export interface QueuedMutation {
   mutation_id: string;            // ULID — also the server idempotency key
   endpoint: "/coach/attendance";  // single endpoint for Wave 1B
   payload: Record<string, unknown>;
+  labels?: QueuedMutationLabels;
   status: QueuedStatus;
   attempts: number;
   created_at: string;             // ISO

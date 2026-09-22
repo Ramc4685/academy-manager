@@ -8,6 +8,8 @@
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { rowActionControl } from "../helpers/row-actions";
+
 const ADMIN_ME = {
   user_id: "admin-level-ups-e2e",
   email: "admin@example.com",
@@ -107,13 +109,34 @@ test("withdrawn student is flagged and cannot be approved, live student can", as
   const gone = page.getByTestId("level-up-row-rec-gone");
   await expect(gone.getByTestId("level-up-withdrawn-rec-gone")).toBeVisible();
   await expect(gone.getByText("Withdrawn")).toBeVisible();
-  await expect(gone.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
+
+  // #857: below md the row's actions live behind its 44px menu trigger, so
+  // these resolve through the shared helper rather than a row-scoped button.
+  await expect(
+    await rowActionControl(page, {
+      rowTestId: "level-up-row-rec-gone",
+      actionsTestId: "level-up-actions-rec-gone",
+      label: "Approve",
+    }),
+  ).toBeDisabled();
   // Reject stays available so the admin can clear the row.
-  await expect(gone.getByRole("button", { name: "Reject", exact: true })).toBeEnabled();
+  await expect(
+    await rowActionControl(page, {
+      rowTestId: "level-up-row-rec-gone",
+      actionsTestId: "level-up-actions-rec-gone",
+      label: "Reject",
+    }),
+  ).toBeEnabled();
 
   const live = page.getByTestId("level-up-row-rec-live");
   await expect(live.getByTestId("level-up-withdrawn-rec-live")).toHaveCount(0);
-  await expect(live.getByRole("button", { name: "Approve", exact: true })).toBeEnabled();
+  await expect(
+    await rowActionControl(page, {
+      rowTestId: "level-up-row-rec-live",
+      actionsTestId: "level-up-actions-rec-live",
+      label: "Approve",
+    }),
+  ).toBeEnabled();
 });
 
 test("approve refused by the backend after a withdrawal shows the lifecycle message", async ({
@@ -139,8 +162,14 @@ test("approve refused by the backend after a withdrawal shows the lifecycle mess
   );
 
   await page.goto("/admin/inbox?tab=level-ups");
-  const live = page.getByTestId("level-up-row-rec-live");
-  await live.getByRole("button", { name: "Approve", exact: true }).click();
+  const approve = await rowActionControl(page, {
+    rowTestId: "level-up-row-rec-live",
+    actionsTestId: "level-up-actions-rec-live",
+    label: "Approve",
+  });
+  await approve.click();
+  // #838: approving a level-up now confirms first — from either layout.
+  await page.getByTestId("confirm-action-submit").click();
 
   const alert = page.getByTestId("level-up-review-error");
   await expect(alert).toBeVisible();

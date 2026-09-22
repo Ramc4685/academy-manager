@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 
-import { Button, Card, Chip, Overline } from "@/components/ds";
+import { Button, Card, Chip, ContactLinks, Overline } from "@/components/ds";
 import type { AdminFamilyBillingView } from "@/lib/api/admin-families";
 import { formatCents, formatInstantDay } from "@/lib/money";
 
-import { autopayToggle, registrationChip, undeliverableChip } from "./family-view";
+import { describeCardDeclineCode } from "@/lib/people-status";
+
+import { autopayToggle, registrationChips, undeliverableChip } from "./family-view";
 
 export function FamilyHeader({
   view,
@@ -25,7 +27,7 @@ export function FamilyHeader({
 }) {
   const { parent, header, actions } = view;
   const toggle = autopayToggle(header.autopay);
-  const reg = registrationChip(header.registration.state);
+  const reg = registrationChips(header.registration.state);
   const undeliverable = undeliverableChip(header.email_delivery);
   const studentCount = view.students.length;
   return (
@@ -36,13 +38,25 @@ export function FamilyHeader({
             {parent.name ?? "Parent"}
           </h1>
           <p className="text-sm text-rally-muted">
-            {parent.email ?? "no email"} · {studentCount}{" "}
-            {studentCount === 1 ? "student" : "students"}
-            {parent.phone ? ` · ${parent.phone}` : ""}
+            {studentCount} {studentCount === 1 ? "student" : "students"}
           </p>
+          {/* #865: the email and the number were plain text here, so the one
+              thing an admin opens this page to do — reach the family about the
+              money on it — started with a copy-paste. */}
+          <ContactLinks
+            className="mt-0.5 text-sm text-rally-muted"
+            data-testid="family-contacts"
+            name={parent.name ?? undefined}
+            email={parent.email}
+            phone={parent.phone}
+            fallback="No contact details on file"
+          />
           <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span data-testid="family-login-chip">
+              <Chip variant={reg.login.variant} label={reg.login.label} />
+            </span>
             <span data-testid="family-registration-chip">
-              <Chip variant={reg.variant} label={reg.label} />
+              <Chip variant={reg.card.variant} label={reg.card.label} />
             </span>
             {undeliverable && (
               <span data-testid="family-undeliverable-chip">
@@ -65,6 +79,16 @@ export function FamilyHeader({
               className="text-sm text-rally-cobalt-700 hover:underline"
             >
               Message
+            </Link>
+            {/* #839: the family page owned the money but had no way through to
+                the login account behind it — the chips above name its state,
+                and this is where you go to do something about it. */}
+            <Link
+              href={`/admin/users/${encodeURIComponent(parent.parent_id)}`}
+              className="rounded text-sm text-rally-cobalt-700 hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+              data-testid="family-account-link"
+            >
+              Account &amp; login
             </Link>
           </div>
           {undeliverable && (
@@ -134,10 +158,32 @@ export function FamilyHeader({
           <p className="mt-1 text-xs text-rally-muted" data-testid="family-autopay-hint">
             {toggle.hint}
           </p>
-          {header.autopay.last_failure?.code && (
-            <p className="mt-1 text-xs text-status-red-600">
-              Last failure: {header.autopay.last_failure.code}
-            </p>
+          {/* #840: "Last failure: card_declined" was a Stripe developer string
+              with nothing to do about it. Say what happened, then offer the way
+              out that belongs to the card — the invite that replaces it.
+
+              #890: this card used to carry a second "Record payment" on the
+              same `onRecordPayment` handler as the header's primary button, so
+              the page offered the action three times (here, the header, and
+              every owing invoice row). Recording a payment is not specific to
+              the autopay failure, so it stays where it is general: the header. */}
+          {header.autopay.last_failure && (
+            <div className="mt-1" data-testid="family-autopay-failure">
+              <p className="text-xs text-status-red-600">
+                {describeCardDeclineCode(header.autopay.last_failure.code)}
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  data-testid="family-failure-resend-invite"
+                  onClick={onSendInvite}
+                  disabled={busy}
+                >
+                  Resend card invite
+                </Button>
+              </div>
+            </div>
           )}
         </div>
         <Tile

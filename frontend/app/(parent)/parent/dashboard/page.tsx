@@ -51,6 +51,7 @@ import {
   type ParentHomeAction,
   type ParentHomeActivity,
 } from "@/lib/parent-home";
+import { ErrorNotice } from "@/components/ds/error-notice";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -178,12 +179,15 @@ export default function ParentDashboardPage() {
       {coreLoading ? (
         <DashboardSkeleton />
       ) : homeQuery.isError ? (
-        <p
-          data-testid="parent-home-error"
-          className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm font-semibold text-status-red-800"
-        >
-          We couldn&apos;t load your children right now. Pull down to refresh, or try again in a moment.
-        </p>
+        // #837: "pull down to refresh" is not an instruction a desktop or
+        // keyboard user can follow — give the retry a button.
+        <ErrorNotice
+          testId="parent-home-error"
+          className="rounded-xl font-semibold"
+          message="We couldn't load your children right now."
+          onRetry={() => void homeQuery.refetch()}
+          retrying={homeQuery.isFetching}
+        />
       ) : (
         <>
           {showBanner && balance && <BalanceBanner balance={balance} />}
@@ -231,9 +235,9 @@ function BalanceBanner({ balance }: { balance: ParentHomeBalance }) {
     ? "border-status-red-500/30 bg-status-red-50 text-status-red-800"
     : "border-status-amber-500/30 bg-status-amber-50 text-status-amber-800";
   const iconTone = failed ? "bg-status-red-500/15" : "bg-status-amber-500/15";
-  const payTone = failed
-    ? "bg-status-red-600 text-white"
-    : "bg-status-amber-800 text-white";
+  // #843: the card keeps its alert tone, but the action is the one pay style
+  // the whole app uses — the DS primary cobalt.
+  const payTone = "bg-rally-cobalt-600 text-white hover:bg-rally-cobalt-700";
 
   return (
     <div

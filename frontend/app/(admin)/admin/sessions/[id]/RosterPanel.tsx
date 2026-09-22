@@ -16,6 +16,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Avatar } from "@/components/ds/avatar";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Th } from "@/components/ds/dialog-chrome";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { useIsOwner } from "@/components/admin/owner-context";
 import {
   DepartureActions,
@@ -181,6 +183,7 @@ export function RosterTable({
   sessionId,
   pathwayLevels,
   updatingPlacementStudentId,
+  pendingPlacement,
   onPathwayLevelChange,
   onDelete,
   onHold,
@@ -201,6 +204,11 @@ export function RosterTable({
   academyTimezone: string | null;
   pathwayLevels: Level[];
   updatingPlacementStudentId: string | null;
+  /** #859: a pathway-level change waiting out its undo window. Overrides the
+   * displayed value for that one student's row so the select shows the pick
+   * the admin just made instead of snapping back to the server value while
+   * the change is held (see `lib/admin/pathway-placement-undo.ts`). */
+  pendingPlacement?: { studentId: string; levelId: string } | null;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onHold: (enrollment: AdminEnrollmentView) => void;
@@ -224,6 +232,133 @@ export function RosterTable({
     queryFn: getDeparturePolicy,
   });
   const deleteRequiresOwner = departurePolicyQuery.data?.delete_enrollment_requires_owner;
+  const isPhone = useIsPhone();
+
+  /**
+   * The row's actions, identical on both layouts (#857). Reusing
+   * `DepartureActions layout="menu"` rather than rebuilding the list as
+   * `PhoneListRow`'s own `actions` keeps `departure-actions-<id>` and "More
+   * actions for <name>" resolving at every width, so the roster specs need no
+   * viewport branch — and keeps #741's owner gating in one place.
+   */
+  function rowActions(e: AdminEnrollmentView) {
+    return (
+      <DepartureActions
+        leadingLink={{
+          key: "pathway",
+          label: "Pathway",
+          href: buildStudentProgressHref({
+            studentId: e.student_id,
+            programId: e.pathway_program_id,
+            returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
+            returnLabel: "Back to session",
+          }) as Parameters<typeof Link>[0]["href"],
+        }}
+        enrollmentId={e.enrollment_id}
+        studentName={e.full_name}
+        status={e.status}
+        layout="menu"
+        isOwner={isOwner}
+        deleteRequiresOwner={deleteRequiresOwner}
+        actions={rosterActionsFor(e.status, {
+          dropScheduled: Boolean(e.pending_cancellation_at),
+        })}
+        onAction={(action, enrollmentId) =>
+          dispatchRosterAction(action, enrollmentId, e, {
+            onDelete,
+            onHold,
+            onPause,
+            onResume,
+            onReturn,
+            onTransfer,
+            onWithdraw,
+            onUndoScheduledDrop,
+            onReEnroll,
+          })
+        }
+      />
+    );
+  }
+
+  if (isPhone) {
+    /* #857: six columns over an 840px minimum, and the action column is
+       `sticky right-0` — so on a phone Status and Fees, the two things that
+       decide what to do about a student, were the first to slide off. */
+    return (
+      <PhoneList aria-label="Roster" data-testid="admin-roster-phone-list">
+        {enrollments.map((e) => {
+          const chip = ENROLL_CHIP[e.status];
+          return (
+            <PhoneListRow
+              key={e.enrollment_id}
+              data-testid={`enrollment-row-${e.enrollment_id}`}
+              leading={<Avatar name={e.full_name} size={28} />}
+              title={e.full_name}
+              primary={
+                <div className="flex items-center gap-2">
+                  <DuesChip status={e.dues_status ?? "current"} />
+                  {rowActions(e)}
+                </div>
+              }
+              secondary={
+                <>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Chip variant={chip.variant} label={chip.label} />
+                    {e.pending_cancellation_at && (
+                      <Chip
+                        variant="pending"
+                        label={
+                          pendingCancellationLabel(e.pending_cancellation_at, academyTimezone) ??
+                          "ENDING"
+                        }
+                      />
+                    )}
+                  </div>
+                  <LevelSelect
+                    value={
+                      pendingPlacement && pendingPlacement.studentId === e.student_id
+                        ? pendingPlacement.levelId
+                        : (e.pathway_level_id ?? "")
+                    }
+                    levels={pathwayLevels}
+                    disabled={
+                      updatingPlacementStudentId === e.student_id ||
+                      !e.pathway_program_id ||
+                      pathwayLevels.length === 0
+                    }
+                    onChange={(levelId) => onPathwayLevelChange(e, levelId)}
+                  />
+                  <div>
+                    {e.pathway_level_name ? (
+                      <Link
+                        href={
+                          `/admin/sessions/${sessionId}/skill-board${
+                            e.pathway_program_id
+                              ? `?program_id=${encodeURIComponent(e.pathway_program_id)}`
+                              : ""
+                          }` as Parameters<typeof Link>[0]["href"]
+                        }
+                        className="text-blue-600 underline-offset-2 hover:underline"
+                      >
+                        {e.pathway_skills_completed ?? 0}/{e.pathway_skills_total ?? 0} skills
+                      </Link>
+                    ) : (
+                      "Placement needed"
+                    )}
+                  </div>
+                  <div className="font-mono text-[11px]">
+                    {formatEnrollmentDate(e.enrolled_at)}
+                    <EnrollmentHistory enrollmentId={e.enrollment_id} />
+                  </div>
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[840px] text-sm">
@@ -262,7 +397,11 @@ export function RosterTable({
                 </td>
                 <td className="px-4 py-3">
                   <LevelSelect
-                    value={e.pathway_level_id ?? ""}
+                    value={
+                      pendingPlacement && pendingPlacement.studentId === e.student_id
+                        ? pendingPlacement.levelId
+                        : (e.pathway_level_id ?? "")
+                    }
                     levels={pathwayLevels}
                     disabled={
                       updatingPlacementStudentId === e.student_id ||
@@ -313,42 +452,7 @@ export function RosterTable({
                   {formatEnrollmentDate(e.enrolled_at)}
                   <EnrollmentHistory enrollmentId={e.enrollment_id} />
                 </td>
-                <td className={`${actionCellClass} ${rowToneClass}`}>
-                  <DepartureActions
-                    leadingLink={{
-                      key: "pathway",
-                      label: "Pathway",
-                      href: buildStudentProgressHref({
-                        studentId: e.student_id,
-                        programId: e.pathway_program_id,
-                        returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
-                        returnLabel: "Back to session",
-                      }) as Parameters<typeof Link>[0]["href"],
-                    }}
-                    enrollmentId={e.enrollment_id}
-                    studentName={e.full_name}
-                    status={e.status}
-                    layout="menu"
-                    isOwner={isOwner}
-                    deleteRequiresOwner={deleteRequiresOwner}
-                    actions={rosterActionsFor(e.status, {
-                      dropScheduled: Boolean(e.pending_cancellation_at),
-                    })}
-                    onAction={(action, enrollmentId) =>
-                      dispatchRosterAction(action, enrollmentId, e, {
-                        onDelete,
-                        onHold,
-                        onPause,
-                        onResume,
-                        onReturn,
-                        onTransfer,
-                        onWithdraw,
-                        onUndoScheduledDrop,
-                        onReEnroll,
-                      })
-                    }
-                  />
-                </td>
+                <td className={`${actionCellClass} ${rowToneClass}`}>{rowActions(e)}</td>
               </tr>
             );
           })}

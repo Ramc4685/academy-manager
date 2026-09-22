@@ -34,9 +34,12 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDateTime } from "@/lib/format/academy-time";
+import { formatPlainDateRange } from "@/lib/format/plain-date";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { Modal } from "@/components/ds/modal";
 import { TableSkeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
@@ -46,6 +49,34 @@ type StatusFilter = "all" | "pending" | "approved" | "denied" | "expired" | "con
 
 const MAKEUP_STATUS_FILTERS: StatusFilter[] = ["all", "pending", "approved", "denied", "expired"];
 const TRIAL_STATUS_FILTERS: StatusFilter[] = ["all", "pending", "approved", "denied", "converted"];
+
+/**
+ * One dated class, as an admin reads it (issue #841): "U10 Tuesday" over
+ * "Thu, Jul 2 · 6:00 PM CDT". Falls back to the occurrence id only when the
+ * backend could not resolve it — a deleted class, not the normal path — so a
+ * broken join still leaves something to search for rather than a blank cell.
+ */
+function ClassMoment({
+  title,
+  startAt,
+  fallbackId,
+}: {
+  title: string | null | undefined;
+  startAt: string | null | undefined;
+  fallbackId: string | null | undefined;
+}) {
+  if (!startAt && !title) {
+    return <span className="text-rally-subtle">{fallbackId || "—"}</span>;
+  }
+  return (
+    <span className="block">
+      {title && <span className="block text-rally-base">{title}</span>}
+      {startAt && (
+        <span className="block text-rally-subtle">{formatAcademyDateTime(startAt, null)}</span>
+      )}
+    </span>
+  );
+}
 
 function statusChipVariant(status: string): ChipVariant {
   switch (status) {
@@ -135,58 +166,7 @@ export function MakeupsTab() {
       ) : makeups.length === 0 ? (
         <EmptyState title="No makeup requests." data-testid="admin-makeups-empty" compact />
       ) : (
-        <Card p={20}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-                  <Th>Student</Th>
-                  <Th>Missed class</Th>
-                  <Th>Requested target</Th>
-                  <Th>Expires</Th>
-                  <Th>Status</Th>
-                  <Th className={actionHeaderClass}>Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {makeups.map((m) => (
-                  <tr
-                    key={m.request_id}
-                    data-testid={`admin-makeups-row-${m.request_id}`}
-                    className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
-                  >
-                    <td className="px-2 py-3 font-medium text-rally-base">
-                      {m.student_full_name || m.student_id}
-                    </td>
-                    <td className="px-2 py-3 text-rally-subtle">{m.missed_occurrence_id}</td>
-                    <td className="px-2 py-3 text-rally-subtle">
-                      {m.approved_target_occurrence_id ?? m.requested_target_occurrence_id ?? "—"}
-                    </td>
-                    <td className="px-2 py-3 text-rally-subtle">{formatAcademyDateTime(m.expires_at, null)}</td>
-                    <td className="px-2 py-3">
-                      <Chip variant={statusChipVariant(m.status)} label={m.status.toUpperCase()} />
-                      {m.status === "denied" && m.denial_reason && (
-                        <p className="mt-1 text-xs text-rally-subtle">{m.denial_reason}</p>
-                      )}
-                    </td>
-                    <td className={`${actionCellClass} bg-white`}>
-                      {m.status === "pending" ? (
-                        <div className="flex justify-end gap-2">
-                          <Button variant="secondary" size="sm" onClick={() => setDenyTarget(m)}>
-                            Deny
-                          </Button>
-                          <Button variant="primary" size="sm" onClick={() => setApproveTarget(m)}>
-                            Approve
-                          </Button>
-                        </div>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <MakeupsList makeups={makeups} onDeny={setDenyTarget} onApprove={setApproveTarget} />
       )}
 
       {approveTarget && (
@@ -215,11 +195,167 @@ export function MakeupsTab() {
 }
 
 /**
- * Approve dialog for makeups. `MakeupRequestAdminRow` carries no
- * `session_id` (only `missed_occurrence_id`), so there is no admin
- * sessions/occurrences endpoint we can key off of here without adding a
- * new backend lookup. Falls back to a labeled text input for the target
- * occurrence id, per plan Task 11 guidance.
+ * #857: six columns over a 760px minimum, with Approve/Deny in the sticky
+ * trailing cell — on a phone the two buttons this queue exists for were off
+ * screen. One layout at a time (`lib/use-is-phone.ts`); both reach the same
+ * approve/deny dialogs.
+ */
+function MakeupsList({
+  makeups,
+  onDeny,
+  onApprove,
+}: {
+  makeups: MakeupRequestAdminRow[];
+  onDeny: (row: MakeupRequestAdminRow) => void;
+  onApprove: (row: MakeupRequestAdminRow) => void;
+}) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Makeup requests" data-testid="admin-makeups-phone-list">
+        {makeups.map((m) => {
+          const name = m.student_full_name || m.student_id;
+          return (
+            <PhoneListRow
+              key={m.request_id}
+              data-testid={`admin-makeups-row-${m.request_id}`}
+              title={name}
+              primary={<Chip variant={statusChipVariant(m.status)} label={m.status.toUpperCase()} />}
+              actionsLabel={`Actions for ${name}`}
+              actionsTestId={`admin-makeups-actions-${m.request_id}`}
+              actions={
+                m.status === "pending"
+                  ? [
+                      { key: "deny", label: "Deny", onSelect: () => onDeny(m) },
+                      { key: "approve", label: "Approve", onSelect: () => onApprove(m) },
+                    ]
+                  : []
+              }
+              secondary={
+                <>
+                  <div>
+                    Missed:{" "}
+                    <ClassMoment
+                      title={m.missed_session_title}
+                      startAt={m.missed_start_at}
+                      fallbackId={m.missed_occurrence_id}
+                    />
+                  </div>
+                  <div>
+                    Target:{" "}
+                    {m.approved_target_occurrence_id ? (
+                      <ClassMoment
+                        title={m.approved_target_session_title}
+                        startAt={m.approved_target_start_at}
+                        fallbackId={m.approved_target_occurrence_id}
+                      />
+                    ) : m.requested_target_occurrence_id ? (
+                      <ClassMoment
+                        title={m.requested_target_session_title}
+                        startAt={m.requested_target_start_at}
+                        fallbackId={m.requested_target_occurrence_id}
+                      />
+                    ) : (
+                      <span className="text-rally-subtle">No date proposed</span>
+                    )}
+                  </div>
+                  <div>Expires {formatAcademyDateTime(m.expires_at, null)}</div>
+                  {m.status === "denied" && m.denial_reason && <div>{m.denial_reason}</div>}
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <Card p={20}>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+                  <Th>Student</Th>
+                  <Th>Missed class</Th>
+                  <Th>Requested target</Th>
+                  <Th>Expires</Th>
+                  <Th>Status</Th>
+                  <Th className={actionHeaderClass}>Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {makeups.map((m) => (
+                  <tr
+                    key={m.request_id}
+                    data-testid={`admin-makeups-row-${m.request_id}`}
+                    className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
+                  >
+                    <td className="px-2 py-3 font-medium text-rally-base">
+                      {m.student_full_name || m.student_id}
+                    </td>
+                    <td className="px-2 py-3 text-sm">
+                      <ClassMoment
+                        title={m.missed_session_title}
+                        startAt={m.missed_start_at}
+                        fallbackId={m.missed_occurrence_id}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-sm">
+                      {m.approved_target_occurrence_id ? (
+                        <ClassMoment
+                          title={m.approved_target_session_title}
+                          startAt={m.approved_target_start_at}
+                          fallbackId={m.approved_target_occurrence_id}
+                        />
+                      ) : m.requested_target_occurrence_id ? (
+                        <ClassMoment
+                          title={m.requested_target_session_title}
+                          startAt={m.requested_target_start_at}
+                          fallbackId={m.requested_target_occurrence_id}
+                        />
+                      ) : (
+                        <span className="text-rally-subtle">No date proposed</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-3 text-rally-subtle">{formatAcademyDateTime(m.expires_at, null)}</td>
+                    <td className="px-2 py-3">
+                      <Chip variant={statusChipVariant(m.status)} label={m.status.toUpperCase()} />
+                      {m.status === "denied" && m.denial_reason && (
+                        <p className="mt-1 text-xs text-rally-subtle">{m.denial_reason}</p>
+                      )}
+                    </td>
+                    <td className={`${actionCellClass} bg-white`}>
+                      {m.status === "pending" ? (
+                        <div className="flex justify-end gap-2">
+                          <Button variant="secondary" size="sm" onClick={() => onDeny(m)}>
+                            Deny
+                          </Button>
+                          <Button variant="primary" size="sm" onClick={() => onApprove(m)}>
+                            Approve
+                          </Button>
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+  );
+}
+
+/**
+ * Approve dialog for makeups (issue #841).
+ *
+ * This used to ask the admin to paste an occurrence id copied from another
+ * screen. The list read now resolves the session behind each occurrence, so
+ * the dialog can offer the same real picker the trials dialog uses: the class
+ * dates of the makeup's own session, by date.
+ *
+ * The session it picks from is the one the parent proposed a target in, or —
+ * when they proposed nothing — the session they missed, which is where a
+ * makeup normally lands.
  */
 function ApproveMakeupDialog({
   request,
@@ -234,28 +370,65 @@ function ApproveMakeupDialog({
   onCancel: () => void;
   onConfirm: (targetOccurrenceId: string) => void;
 }) {
+  const sessionId =
+    request.approved_target_session_id ??
+    request.requested_target_session_id ??
+    request.missed_session_id ??
+    "";
   const [occurrenceId, setOccurrenceId] = useState(request.requested_target_occurrence_id ?? "");
+  const occurrencesQuery = useQuery({
+    queryKey: queryKeys.admin.sessionOccurrences(sessionId),
+    queryFn: () => listSessionOccurrences(sessionId),
+    enabled: sessionId !== "",
+  });
+  const occurrences = (occurrencesQuery.data?.occurrences ?? []).filter(
+    (o: AdminSessionOccurrenceView) => o.status !== "cancelled",
+  );
 
   return (
     <DialogShell title="Approve makeup request" onCancel={onCancel}>
       <p className="text-sm text-rally-subtle">
-        Student: {request.student_full_name || request.student_id}
+        {request.student_full_name || request.student_id} missed{" "}
+        {request.missed_session_title ?? "a class"}
+        {request.missed_start_at ? ` on ${formatAcademyDateTime(request.missed_start_at, null)}` : ""}.
       </p>
       <label className="block text-xs font-semibold text-rally-muted">
-        Target occurrence id
-        <input
-          type="text"
+        Class date to attend instead
+        <select
           className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
           style={{ borderColor: "var(--rally-line)" }}
           value={occurrenceId}
           onChange={(e) => setOccurrenceId(e.target.value)}
-          placeholder="occ_..."
-          data-testid="approve-makeup-occurrence-input"
-        />
+          disabled={sessionId === "" || occurrencesQuery.isLoading}
+          data-testid="approve-makeup-occurrence-select"
+        >
+          <option value="">
+            {sessionId === ""
+              ? "No class found for this request"
+              : occurrencesQuery.isLoading
+                ? "Loading dates…"
+                : occurrences.length === 0
+                  ? "No dates found"
+                  : "Select a date"}
+          </option>
+          {occurrences.map((o: AdminSessionOccurrenceView) => (
+            <option key={o.occurrence_id} value={o.occurrence_id}>
+              {formatAcademyDateTime(o.start_at, null)}
+            </option>
+          ))}
+        </select>
       </label>
-      <p className="text-xs text-rally-subtle">
-        No occurrence picker is available for makeups yet — copy the occurrence id from the
-        session&apos;s schedule (Admin → Sessions → occurrences) and paste it here.
+      {occurrencesQuery.isError && (
+        <p className="text-xs text-red-700">Could not load the class dates for this request.</p>
+      )}
+      {/* #860: the pause and registration dialogs say what the family is told,
+          so this one must too — and the honest answer today is "nothing is
+          sent". `ApproveMakeupRequest` takes no notifier (it is billing- and
+          notification-free by design), so the decision only shows up when the
+          parent next opens their account. An admin who assumes an email went
+          out would never follow up. */}
+      <p className="text-xs text-rally-muted" data-testid="approve-makeup-notice">
+        No email is sent. The family sees the new date in their parent account.
       </p>
       {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
       <div className="flex justify-end gap-2 pt-2">
@@ -265,8 +438,8 @@ function ApproveMakeupDialog({
         <Button
           variant="primary"
           size="sm"
-          disabled={pending || !occurrenceId.trim()}
-          onClick={() => onConfirm(occurrenceId.trim())}
+          disabled={pending || !occurrenceId}
+          onClick={() => onConfirm(occurrenceId)}
         >
           {pending ? "Approving…" : "Approve"}
         </Button>
@@ -318,56 +491,7 @@ export function TrialsTab() {
       ) : trials.length === 0 ? (
         <EmptyState title="No trial requests." data-testid="admin-trials-empty" compact />
       ) : (
-        <Card p={20}>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-                  <Th>Student</Th>
-                  <Th>Preferred window</Th>
-                  <Th>Assigned occurrence</Th>
-                  <Th>Status</Th>
-                  <Th className={actionHeaderClass}>Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {trials.map((t) => (
-                  <tr
-                    key={t.request_id}
-                    data-testid={`admin-trials-row-${t.request_id}`}
-                    className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
-                  >
-                    <td className="px-2 py-3 font-medium text-rally-base">
-                      {t.prospective_child_name || t.student_id || "Existing child"}
-                    </td>
-                    <td className="px-2 py-3 text-rally-subtle">
-                      {t.preferred_start} – {t.preferred_end}
-                    </td>
-                    <td className="px-2 py-3 text-rally-subtle">{t.assigned_occurrence_id ?? "—"}</td>
-                    <td className="px-2 py-3">
-                      <Chip variant={statusChipVariant(t.status)} label={t.status.toUpperCase()} />
-                      {t.status === "denied" && t.denial_reason && (
-                        <p className="mt-1 text-xs text-rally-subtle">{t.denial_reason}</p>
-                      )}
-                    </td>
-                    <td className={`${actionCellClass} bg-white`}>
-                      {t.status === "pending" ? (
-                        <div className="flex justify-end gap-2">
-                          <Button variant="secondary" size="sm" onClick={() => setDenyTarget(t)}>
-                            Deny
-                          </Button>
-                          <Button variant="primary" size="sm" onClick={() => setApproveTarget(t)}>
-                            Approve
-                          </Button>
-                        </div>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <TrialsList trials={trials} onDeny={setDenyTarget} onApprove={setApproveTarget} />
       )}
 
       {approveTarget && (
@@ -392,6 +516,126 @@ export function TrialsTab() {
         />
       )}
     </div>
+  );
+}
+
+/** #857, same shape as the makeups queue. */
+function TrialsList({
+  trials,
+  onDeny,
+  onApprove,
+}: {
+  trials: TrialRequestAdminRow[];
+  onDeny: (row: TrialRequestAdminRow) => void;
+  onApprove: (row: TrialRequestAdminRow) => void;
+}) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Trial requests" data-testid="admin-trials-phone-list">
+        {trials.map((t) => {
+          const name = t.prospective_child_name || t.student_full_name || "Existing child";
+          return (
+            <PhoneListRow
+              key={t.request_id}
+              data-testid={`admin-trials-row-${t.request_id}`}
+              title={name}
+              primary={<Chip variant={statusChipVariant(t.status)} label={t.status.toUpperCase()} />}
+              actionsLabel={`Actions for ${name}`}
+              actionsTestId={`admin-trials-actions-${t.request_id}`}
+              actions={
+                t.status === "pending"
+                  ? [
+                      { key: "deny", label: "Deny", onSelect: () => onDeny(t) },
+                      { key: "approve", label: "Approve", onSelect: () => onApprove(t) },
+                    ]
+                  : []
+              }
+              secondary={
+                <>
+                  <div className="break-words">
+                    {t.requested_session_title || t.requested_session_id}
+                  </div>
+                  <div>
+                    Preferred {formatPlainDateRange(t.preferred_start, t.preferred_end)}
+                  </div>
+                  <div>
+                    {t.assigned_occurrence_start_at
+                      ? `Assigned ${formatAcademyDateTime(t.assigned_occurrence_start_at, null)}`
+                      : t.assigned_occurrence_id
+                        ? `Assigned ${t.assigned_occurrence_id}`
+                        : "Not scheduled"}
+                  </div>
+                  {t.status === "denied" && t.denial_reason && <div>{t.denial_reason}</div>}
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <Card p={20}>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
+                  <Th>Student</Th>
+                  <Th>Class</Th>
+                  <Th>Preferred window</Th>
+                  <Th>Assigned date</Th>
+                  <Th>Status</Th>
+                  <Th className={actionHeaderClass}>Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {trials.map((t) => (
+                  <tr
+                    key={t.request_id}
+                    data-testid={`admin-trials-row-${t.request_id}`}
+                    className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
+                  >
+                    <td className="px-2 py-3 font-medium text-rally-base">
+                      {t.prospective_child_name || t.student_full_name || "Existing child"}
+                    </td>
+                    <td className="px-2 py-3 text-rally-subtle">
+                      {t.requested_session_title || t.requested_session_id}
+                    </td>
+                    <td className="px-2 py-3 text-rally-subtle">
+                      {formatPlainDateRange(t.preferred_start, t.preferred_end)}
+                    </td>
+                    <td className="px-2 py-3 text-rally-subtle">
+                      {t.assigned_occurrence_start_at
+                        ? formatAcademyDateTime(t.assigned_occurrence_start_at, null)
+                        : t.assigned_occurrence_id
+                          ? t.assigned_occurrence_id
+                          : "Not scheduled"}
+                    </td>
+                    <td className="px-2 py-3">
+                      <Chip variant={statusChipVariant(t.status)} label={t.status.toUpperCase()} />
+                      {t.status === "denied" && t.denial_reason && (
+                        <p className="mt-1 text-xs text-rally-subtle">{t.denial_reason}</p>
+                      )}
+                    </td>
+                    <td className={`${actionCellClass} bg-white`}>
+                      {t.status === "pending" ? (
+                        <div className="flex justify-end gap-2">
+                          <Button variant="secondary" size="sm" onClick={() => onDeny(t)}>
+                            Deny
+                          </Button>
+                          <Button variant="primary" size="sm" onClick={() => onApprove(t)}>
+                            Approve
+                          </Button>
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
   );
 }
 
@@ -425,11 +669,12 @@ function ApproveTrialDialog({
   return (
     <DialogShell title="Approve trial request" onCancel={onCancel}>
       <p className="text-sm text-rally-subtle">
-        {request.prospective_child_name || request.student_id || "Existing child"} · preferred{" "}
-        {request.preferred_start} – {request.preferred_end}
+        {request.prospective_child_name || request.student_full_name || "Existing child"} ·{" "}
+        {request.requested_session_title || request.requested_session_id} · preferred{" "}
+        {formatPlainDateRange(request.preferred_start, request.preferred_end)}
       </p>
       <label className="block text-xs font-semibold text-rally-muted">
-        Occurrence
+        Class date
         <select
           className="mt-1 min-h-touch w-full rounded-lg border px-3 text-sm"
           style={{ borderColor: "var(--rally-line)" }}
@@ -440,10 +685,10 @@ function ApproveTrialDialog({
         >
           <option value="">
             {occurrencesQuery.isLoading
-              ? "Loading occurrences…"
+              ? "Loading dates…"
               : occurrences.length === 0
-                ? "No occurrences found"
-                : "Select an occurrence"}
+                ? "No dates found"
+                : "Select a date"}
           </option>
           {occurrences.map((o: AdminSessionOccurrenceView) => (
             <option key={o.occurrence_id} value={o.occurrence_id}>
@@ -455,6 +700,11 @@ function ApproveTrialDialog({
       {occurrencesQuery.isError && (
         <p className="text-xs text-red-700">Could not load occurrences for this session.</p>
       )}
+      {/* #860, same as the makeup dialog: `ApproveTrialRequest` has no
+          notifier either, so say so rather than let the admin assume. */}
+      <p className="text-xs text-rally-muted" data-testid="approve-trial-notice">
+        No email is sent. The family sees the trial date in their parent account.
+      </p>
       {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
@@ -541,12 +791,57 @@ export function AbsencesTab() {
       {absences.length === 0 ? (
         <EmptyState title="No absence notices." data-testid="admin-absences-empty" compact />
       ) : (
-        <Card p={20}>
+        <AbsencesList absences={absences} />
+      )}
+      {dialog}
+    </div>
+  );
+}
+
+/** #857: a four-column 640px table on a 400px screen. Read-only, so no menu. */
+function AbsencesList({ absences }: { absences: AbsenceNoticeAdminRow[] }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Absence notices" data-testid="admin-absences-phone-list">
+        {absences.map((a) => (
+          <PhoneListRow
+            key={a.notice_id}
+            data-testid={`admin-absences-row-${a.notice_id}`}
+            title={a.student_full_name || a.student_id}
+            primary={
+              <Chip
+                variant={a.notice_window_met ? "approved" : "pending"}
+                label={a.notice_window_met ? "ON TIME" : "LATE"}
+              />
+            }
+            secondary={
+              <>
+                <div>
+                  Missing:{" "}
+                  <ClassMoment
+                    title={a.occurrence_session_title}
+                    startAt={a.occurrence_start_at}
+                    fallbackId="Class unavailable"
+                  />
+                </div>
+                <div>Submitted {formatAcademyDateTime(a.submitted_at, null)}</div>
+                <div>{a.recorded_by_admin ? "Recorded by admin" : "Parent"}</div>
+              </>
+            }
+          />
+        ))}
+      </PhoneList>
+    );
+  }
+  return (
+    <Card p={20}>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
                   <Th>Student</Th>
+                  <Th>Class missed</Th>
                   <Th>Submitted</Th>
                   <Th>Source</Th>
                   <Th>Notice window</Th>
@@ -562,6 +857,13 @@ export function AbsencesTab() {
                     <td className="px-2 py-3 font-medium text-rally-base">
                       {a.student_full_name || a.student_id}
                     </td>
+                    <td className="px-2 py-3">
+                      <ClassMoment
+                        title={a.occurrence_session_title}
+                        startAt={a.occurrence_start_at}
+                        fallbackId="Class unavailable"
+                      />
+                    </td>
                     <td className="px-2 py-3 text-rally-subtle">{formatAcademyDateTime(a.submitted_at, null)}</td>
                     <td className="px-2 py-3 text-rally-subtle">
                       {a.recorded_by_admin ? "Recorded by admin" : "Parent"}
@@ -575,9 +877,6 @@ export function AbsencesTab() {
             </table>
           </div>
         </Card>
-      )}
-      {dialog}
-    </div>
   );
 }
 
@@ -743,7 +1042,28 @@ function RecordAbsenceDialog({
 
 // --- Cancellations (read-only audit) ---
 
+/**
+ * The cancellation fee is line 1's primary slot (#857): on a phone it was the
+ * fourth column of a 760px table, and it is the one number an admin is here
+ * for. Read from the same policy snapshot the table reads.
+ */
+function cancellationFee(c: SelfCancellationAdminRow): {
+  label: string;
+  billingError: string | null;
+} {
+  const snapshot = c.cancellation_policy_snapshot ?? {};
+  const feeBillingError =
+    typeof snapshot.fee_billing_error === "string" ? snapshot.fee_billing_error : null;
+  const feeCents =
+    typeof snapshot.cancellation_fee_cents === "number" ? snapshot.cancellation_fee_cents : null;
+  return {
+    label: feeCents !== null ? `$${(feeCents / 100).toFixed(2)}` : "—",
+    billingError: feeBillingError,
+  };
+}
+
 export function CancellationsTab() {
+  const isPhone = useIsPhone();
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.admin.selfServiceCancellations(),
     queryFn: listAdminCancellations,
@@ -754,6 +1074,42 @@ export function CancellationsTab() {
   if (isLoading) return <TableSkeleton rows={3} />;
   if (cancellations.length === 0)
     return <EmptyState title="No self-service cancellations." data-testid="admin-cancellations-empty" compact />;
+
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Cancellations" data-testid="admin-cancellations-phone-list">
+        {cancellations.map((c: SelfCancellationAdminRow) => {
+          const fee = cancellationFee(c);
+          return (
+            <PhoneListRow
+              key={c.enrollment_id}
+              data-testid={`admin-cancellations-row-${c.enrollment_id}`}
+              title={c.student_full_name || c.student_id}
+              primary={
+                <span className="font-mono text-sm font-semibold tabular-nums text-rally-base">
+                  {fee.label}
+                </span>
+              }
+              secondary={
+                <>
+                  <div className="break-words">{c.session_title || c.session_id}</div>
+                  <div>
+                    Cancelled{" "}
+                    {c.cancelled_at ? formatAcademyDateTime(c.cancelled_at, null) : "—"}
+                  </div>
+                  {fee.billingError && (
+                    <div title={fee.billingError}>
+                      <Chip variant="failed" label="FEE BILLING FAILED" />
+                    </div>
+                  )}
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
 
   return (
     <Card p={20}>
@@ -769,9 +1125,7 @@ export function CancellationsTab() {
           </thead>
           <tbody>
             {cancellations.map((c: SelfCancellationAdminRow) => {
-              const snapshot = c.cancellation_policy_snapshot ?? {};
-              const feeBillingError = typeof snapshot.fee_billing_error === "string" ? snapshot.fee_billing_error : null;
-              const feeCents = typeof snapshot.cancellation_fee_cents === "number" ? snapshot.cancellation_fee_cents : null;
+              const fee = cancellationFee(c);
               return (
                 <tr
                   key={c.enrollment_id}
@@ -787,11 +1141,9 @@ export function CancellationsTab() {
                   </td>
                   <td className="px-2 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-rally-subtle">
-                        {feeCents !== null ? `$${(feeCents / 100).toFixed(2)}` : "—"}
-                      </span>
-                      {feeBillingError && (
-                        <span title={feeBillingError}>
+                      <span className="text-rally-subtle">{fee.label}</span>
+                      {fee.billingError && (
+                        <span title={fee.billingError}>
                           <Chip variant="failed" label="FEE BILLING FAILED" />
                         </span>
                       )}
@@ -862,6 +1214,11 @@ function DenyDialog({
           data-testid="deny-reason-textarea"
         />
       </FormField>
+      {/* #860: both callers are makeup/trial denials, neither of which
+          notifies. The reason is stored and shown in the parent's account. */}
+      <p className="text-xs text-rally-muted" data-testid="deny-notice">
+        No email is sent. The family sees this reason in their parent account.
+      </p>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
           Cancel

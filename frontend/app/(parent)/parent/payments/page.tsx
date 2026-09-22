@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { Button } from "@/components/ds/button";
 import {
-  createParentPauseRequest,
   getParentInvoice,
   getCheckoutStatus,
   listParentEnrollments,
@@ -187,13 +188,6 @@ export default function ParentPaymentsPage() {
   // minute webhook window is what made paid invoices look PENDING.
   const returnedFromCheckout = Boolean(checkoutSessionId);
   const [checkoutPollTimedOut, setCheckoutPollTimedOut] = useState(false);
-  const [pauseEnrollmentId, setPauseEnrollmentId] = useState("");
-  const [pauseKind, setPauseKind] = useState<"fixed" | "indefinite">("fixed");
-  // Blank by default: resuming "today" is never a valid pause, so force an
-  // explicit future choice (the submit button stays disabled until set).
-  const [resumeOn, setResumeOn] = useState("");
-  const [reviewOn, setReviewOn] = useState(dateFromOffset(14));
-  const [pauseReason, setPauseReason] = useState("");
   const [portalError, setPortalError] = useState<string | null>(null);
   const [autopayError, setAutopayError] = useState<string | null>(null);
   const [invoicePaymentError, setInvoicePaymentError] = useState<string | null>(null);
@@ -349,26 +343,6 @@ export default function ParentPaymentsPage() {
     },
   });
 
-  const pauseMutation = useMutation({
-    mutationFn: () =>
-      createParentPauseRequest({
-        enrollment_id: pauseEnrollmentId,
-        period: pauseKind === "fixed" ? resumeOn.slice(0, 7) : undefined,
-        pause_kind: pauseKind,
-        resume_on: pauseKind === "fixed" ? resumeOn : null,
-        review_on: pauseKind === "indefinite" ? reviewOn : null,
-        reason: pauseReason || undefined,
-      }),
-    onSuccess: () => {
-      setPauseEnrollmentId("");
-      setPauseKind("fixed");
-      setResumeOn("");
-      setReviewOn(dateFromOffset(14));
-      setPauseReason("");
-      void pauseRequestsQuery.refetch();
-    },
-  });
-
   useEffect(() => {
     if (!returnedFromCheckout) return;
     void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
@@ -446,9 +420,10 @@ export default function ParentPaymentsPage() {
         <h1 className="text-xl font-semibold text-rally-ink">Payments</h1>
         <button
           type="button"
+          data-testid="billing-portal"
           onClick={() => portalMutation.mutate()}
           disabled={portalMutation.isPending}
-          className="flex items-center gap-1.5 text-sm font-medium text-rally-cobalt-700 disabled:opacity-60"
+          className="-mr-2 flex min-h-touch min-w-touch items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-medium text-rally-cobalt-700 disabled:opacity-60"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -534,8 +509,13 @@ export default function ParentPaymentsPage() {
               ? "autopay on"
               : "autopay off"}
           </p>
-          <button
+          {/* #843: one pay style across the app — the DS primary. */}
+          <Button
             type="button"
+            data-testid="pay-balance"
+            variant="primary"
+            size="lg"
+            full
             onClick={() =>
               balancePaymentMutation.mutate({
                 enrollAutopay:
@@ -543,11 +523,13 @@ export default function ParentPaymentsPage() {
               })
             }
             disabled={balancePaymentMutation.isPending}
-            className="mt-4 w-full rounded-xl py-3 text-sm font-semibold text-rally-ink disabled:opacity-60 active:scale-95 transition-transform"
-            style={{ background: "linear-gradient(135deg,#facc15,#f59e0b)" }}
+            className="mt-4 rounded-xl disabled:opacity-60"
           >
             {balancePaymentMutation.isPending ? "Starting…" : `Pay balance · ${money(currentBalance)}`}
-          </button>
+          </Button>
+          <p className="mt-2 text-xs text-rally-subtle" data-testid="pay-balance-reassurance">
+            Secure checkout via Stripe
+          </p>
           {showAutopayOptinForBalance(invoices, enrollments) && (
             <label
               data-testid="balance-autopay-optin"
@@ -611,8 +593,11 @@ export default function ParentPaymentsPage() {
                   {payable && (
                     <>
                       <div className="mt-2.5 flex gap-2">
-                        <button
+                        <Button
                           type="button"
+                          data-testid={`pay-invoice-${invoice.invoice_id}`}
+                          variant="primary"
+                          size="lg"
                           disabled={invoicePaymentMutation.isPending || settling}
                           onClick={() =>
                             invoicePaymentMutation.mutate({
@@ -622,24 +607,33 @@ export default function ParentPaymentsPage() {
                                 resolveEnrollAutopayChecked(invoiceAutopayOptins[invoice.invoice_id]),
                             })
                           }
-                          className="flex-1 rounded-xl border border-rally-volt-400 bg-rally-volt-100 py-2 text-sm font-medium text-status-amber-800 disabled:opacity-60 active:scale-95 transition-transform"
+                          className="flex-1 rounded-xl disabled:opacity-60"
                         >
                           {settling
                             ? "Processing…"
                             : payingInvoiceId === invoice.invoice_id
                               ? "Starting…"
                               : `Pay ${money(invoice.balance_due_cents, invoice.currency.toUpperCase())}`}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          data-testid={`invoice-detail-toggle-${invoice.invoice_id}`}
+                          variant="secondary"
+                          size="lg"
                           onClick={() =>
                             setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
                           }
-                          className="rounded-xl border border-rally-line bg-white px-4 py-2 text-sm text-rally-muted"
+                          className="rounded-xl"
                         >
                           {selectedInvoiceId === invoice.invoice_id ? "Close" : "View"}
-                        </button>
+                        </Button>
                       </div>
+                      <p
+                        className="mt-2 text-xs text-rally-subtle"
+                        data-testid={`pay-invoice-${invoice.invoice_id}-reassurance`}
+                      >
+                        Secure checkout via Stripe
+                      </p>
                       {showAutopayOptinForInvoice(invoice, enrollments) && (
                         <label
                           data-testid={`invoice-autopay-optin-${invoice.invoice_id}`}
@@ -664,10 +658,11 @@ export default function ParentPaymentsPage() {
                   {!payable && (
                     <button
                       type="button"
+                      data-testid={`invoice-detail-toggle-${invoice.invoice_id}`}
                       onClick={() =>
                         setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
                       }
-                      className="mt-2 text-xs font-medium text-rally-subtle"
+                      className="-ml-2 mt-1 inline-flex min-h-touch min-w-touch items-center justify-center rounded-lg px-2 text-sm font-medium text-rally-cobalt-700"
                     >
                       {selectedInvoiceId === invoice.invoice_id ? "Hide detail" : "View detail"}
                     </button>
@@ -747,13 +742,14 @@ export default function ParentPaymentsPage() {
                     <p className="mt-2 text-xs text-status-amber-800">{helperText}</p>
                   )}
                   <div className="mt-3 flex gap-2">
-                    <button
+                    <Button
                       type="button"
+                      data-testid={`start-autopay-${enrollment.enrollment_id}`}
+                      variant={enabled ? "secondary" : "primary"}
+                      size="lg"
                       disabled={enabled || autopayMutation.isPending}
                       onClick={() => autopayMutation.mutate(enrollment.enrollment_id)}
-                      className={`flex-1 rounded-xl py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 active:scale-95 transition-transform ${
-                        enabled ? "bg-rally-line text-rally-subtle" : "bg-rally-ink text-white"
-                      }`}
+                      className="flex-1 rounded-xl disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {enabled
                         ? "Autopay on"
@@ -762,14 +758,16 @@ export default function ParentPaymentsPage() {
                           : enrollment.autopay_enrollment_status === "setup_started"
                             ? "Retry autopay"
                             : "Set up autopay"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPauseEnrollmentId(enrollment.enrollment_id)}
-                      className="rounded-xl border border-rally-line bg-white px-4 py-2.5 text-sm text-rally-muted"
+                    </Button>
+                    {/* #843: pausing a class is not a money action. It lives
+                        with the class, on Children, next to cancel. */}
+                    <Link
+                      href="/parent/children"
+                      data-testid={`manage-enrollment-${enrollment.enrollment_id}`}
+                      className="inline-flex min-h-touch shrink-0 items-center justify-center rounded-xl border border-rally-line bg-white px-4 text-sm font-medium text-rally-ink hover:bg-rally-paper"
                     >
-                      Pause enrollment
-                    </button>
+                      Manage class
+                    </Link>
                   </div>
                 </div>
               );
@@ -777,101 +775,6 @@ export default function ParentPaymentsPage() {
           </div>
         )}
       </div>
-
-      {/* Pause form */}
-      {pauseEnrollmentId && (
-        <div className="rounded-2xl border border-rally-line bg-white p-4">
-          <p className="mb-3 text-sm font-semibold text-rally-ink">Pause enrollment</p>
-          <p className="mb-3 text-xs text-rally-muted">
-            This pauses your child&apos;s class enrollment (and its billing) — it does not change your autopay payment method.
-          </p>
-          <div className="space-y-3">
-            <fieldset className="space-y-2">
-              <legend className="text-xs font-medium text-rally-muted">Pause type</legend>
-              <div className="grid grid-cols-2 gap-2">
-                <label
-                  className={`flex min-h-touch items-center gap-2 rounded-xl border px-3 text-sm ${
-                    pauseKind === "fixed" ? "border-rally-volt-400" : "border-rally-line"
-                  }`}
-                >
-                  <input type="radio" name="pause-kind" value="fixed" checked={pauseKind === "fixed"} onChange={() => setPauseKind("fixed")} />
-                  Fixed date
-                </label>
-                <label
-                  className={`flex min-h-touch items-center gap-2 rounded-xl border px-3 text-sm ${
-                    pauseKind === "indefinite" ? "border-rally-volt-400" : "border-rally-line"
-                  }`}
-                >
-                  <input type="radio" name="pause-kind" value="indefinite" checked={pauseKind === "indefinite"} onChange={() => setPauseKind("indefinite")} />
-                  Indefinite
-                </label>
-              </div>
-            </fieldset>
-            {pauseKind === "fixed" ? (
-              <label className="block text-xs font-medium text-rally-muted">
-                Resume date
-                <input
-                  type="date"
-                  value={resumeOn}
-                  min={dateFromOffset(1)}
-                  onChange={(e) => setResumeOn(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-xl border border-rally-line px-3 text-sm"
-                />
-              </label>
-            ) : (
-              <label className="block text-xs font-medium text-rally-muted">
-                Review date
-                <input
-                  type="date"
-                  value={reviewOn}
-                  onChange={(e) => setReviewOn(e.target.value)}
-                  className="mt-1 h-11 w-full rounded-xl border border-rally-line px-3 text-sm"
-                />
-              </label>
-            )}
-            <p className="text-xs text-rally-subtle">
-              {pauseKind === "fixed"
-                ? "We will attempt to resume this enrollment on the requested date if a seat is available."
-                : "The academy will review this pause on the selected date so billing cannot remain deferred without follow-up."}
-            </p>
-            <label className="block text-xs font-medium text-rally-muted">
-              Reason
-              <textarea
-                value={pauseReason}
-                onChange={(e) => setPauseReason(e.target.value)}
-                rows={3}
-                className="mt-1 w-full rounded-xl border border-rally-line px-3 py-2 text-sm"
-              />
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => pauseMutation.mutate()}
-                disabled={
-                  pauseMutation.isPending ||
-                  (pauseKind === "fixed" ? !resumeOn || resumeOn <= currentDate() : !reviewOn)
-                }
-                className="min-h-touch flex-1 rounded-xl text-sm font-semibold text-white bg-rally-ink disabled:opacity-60"
-              >
-                {pauseMutation.isPending ? "Sending…" : "Submit"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPauseEnrollmentId("");
-                  setPauseKind("fixed");
-                  setResumeOn("");
-                  setReviewOn(dateFromOffset(14));
-                  setPauseReason("");
-                }}
-                className="min-h-touch rounded-xl border border-rally-line px-4 text-sm"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Pause requests (collapsible) */}
       <CollapsibleSection
@@ -992,17 +895,6 @@ function CollapsibleSection({
       {open && <div className="mt-2">{children}</div>}
     </div>
   );
-}
-
-function currentDate(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
-function dateFromOffset(days: number): string {
-  const value = new Date();
-  value.setDate(value.getDate() + days);
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
 function formatDate(value: string | null): string {

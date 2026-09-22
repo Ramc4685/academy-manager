@@ -25,19 +25,24 @@ import {
   sendDuesReminders,
 } from "@/lib/api/admin";
 import { formatCents, formatDateOnly } from "@/lib/money";
+import { NO_DATA_TEXT, finiteText, isSettled, statText } from "@/lib/ui/load-state";
 import { invoiceStatusChip } from "@/lib/billing-status";
 import {
   autopayRunBox,
   formatCollectionRate,
   monthCloseTiles,
+  monthCloseVerdict,
   normalizeMonthClose,
   oddRows,
   warningLine,
 } from "@/lib/month-close-view";
+import type { MonthCloseTile } from "@/lib/month-close-view";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { BigNum, Overline } from "@/components/ds/typography";
+import { CollapsibleSection } from "@/components/admin/reports/collapsible-section";
 import { FunnelPanel } from "@/components/admin/reports/funnel-panel";
 import { AttendanceTrendsPanel } from "@/components/admin/reports/attendance-trends-panel";
 import { CoachUtilizationPanel } from "@/components/admin/reports/coach-utilization-panel";
@@ -135,6 +140,12 @@ export default function AdminMonthClosePage() {
     [monthCloseQuery.data, period],
   );
   const tiles = monthCloseTiles(close);
+  // #862: the page leads with a verdict and the three money figures; the
+  // invoice-run counts move into the Invoices group.
+  const verdict = monthCloseVerdict(close);
+  const closeSettled = isSettled(monthCloseQuery);
+  const headlineTiles = tiles.filter((tile) => tile.cents != null);
+  const invoiceTiles = tiles.filter((tile) => tile.cents == null);
   const runBox = autopayRunBox(close);
   const odd = oddRows(close);
   const warning = warningLine(close);
@@ -170,6 +181,33 @@ export default function AdminMonthClosePage() {
   const projected = projectedIncomeQuery.data;
   const projectedSessions = projected?.by_session ?? [];
 
+  // One tile renderer for both grids: the money tiles that lead the page and
+  // the invoice-run counts inside the Invoices group. #837's rule holds in
+  // both — a query that is loading or failed prints a dash, never a zero.
+  const tileGrid = (list: MonthCloseTile[], testId: string) => (
+    <div data-testid={testId} className="grid gap-4 sm:grid-cols-3">
+      {list.map((tile) => (
+        <Card key={tile.key} p={20} className="flex flex-col">
+          <div data-testid={`month-close-tile-${tile.key}`}>
+            <Overline>{tile.label}</Overline>
+            <BigNum size={28}>
+              <span data-testid={`month-close-tile-${tile.key}-value`}>
+                {closeLoading
+                  ? "Loading"
+                  : // #837: `normalizeMonthClose` zero-fills a payload that
+                    // never arrived; a dash says so.
+                    statText(monthCloseQuery, () =>
+                      tile.cents != null ? formatMoney(tile.cents) : (tile.value ?? NO_DATA_TEXT),
+                    )}
+              </span>
+            </BigNum>
+            <p className="mt-2 text-[12px] text-rally-muted">{tile.hint}</p>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+
   return (
     <section data-testid="admin-month-close" className="space-y-5">
       <div className="space-y-3">
@@ -189,7 +227,7 @@ export default function AdminMonthClosePage() {
                 value={period}
                 onChange={(event) => setPeriod(event.target.value || currentPeriod())}
                 data-testid="month-close-period"
-                className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
+                className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-950"
               />
             </label>
             <Button
@@ -218,9 +256,12 @@ export default function AdminMonthClosePage() {
         )}
 
         {monthCloseQuery.isError && (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-            Could not load month close.
-          </p>
+          <ErrorNotice
+            testId="admin-reports-month-close-error"
+            message="Could not load month close. The tiles above are unknown, not zero."
+            onRetry={() => void monthCloseQuery.refetch()}
+            retrying={monthCloseQuery.isFetching}
+          />
         )}
 
         {warning && (
@@ -229,62 +270,67 @@ export default function AdminMonthClosePage() {
           </p>
         )}
 
-        <div data-testid="month-close-tiles" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {tiles.map((tile) => (
-            <Card key={tile.key} p={20} className="flex flex-col">
-              <div data-testid={`month-close-tile-${tile.key}`}>
-                <Overline>{tile.label}</Overline>
-                <BigNum size={28}>
-                  <span data-testid={`month-close-tile-${tile.key}-value`}>
-                    {closeLoading
-                      ? "Loading"
-                      : tile.cents != null
-                        ? formatCents(tile.cents)
-                        : tile.value}
-                  </span>
-                </BigNum>
-                <p className="mt-2 text-[12px] text-rally-muted">{tile.hint}</p>
-              </div>
-            </Card>
-          ))}
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card p={24} data-testid="autopay-run-box">
-            <Overline>Autopay run</Overline>
-            <p className="mt-1 text-sm text-rally-subtle" data-testid="autopay-run-headline">
-              {runBox.state === "none"
-                ? "No autopay invoices this month."
-                : `${runBox.hasRun ? "Ran" : "Runs on"} ${formatDateOnly(runBox.chargeOn)}${
-                    runBox.chargeOnVaries ? " and later" : ""
-                  }.`}
-            </p>
-            <dl className="mt-4 space-y-2">
-              {runBox.rows.map((row) => (
-                <div
-                  key={row.key}
-                  className="flex items-baseline justify-between gap-3 text-sm"
-                  data-testid={`autopay-run-${row.key}`}
-                >
-                  <dt className="text-rally-muted">{row.label}</dt>
-                  <dd className="font-mono tabular-nums font-semibold text-rally-ink">
-                    {row.countLabel} · {formatCents(row.cents)}
-                  </dd>
-                </div>
+        {/*
+          * #862: the answer first. Everything below is the evidence for this
+          * one sentence, so it leads — and on a phone it is the whole first
+          * screen, with the money figures right under it.
+          */}
+        <Card
+          p={20}
+          data-testid="month-close-verdict"
+          className={`border-l-4 ${
+            !closeSettled
+              ? "border-l-rally-line"
+              : verdict.ok
+                ? "border-l-status-green-500"
+                : "border-l-status-amber-500"
+          }`}
+        >
+          <Overline>Verdict</Overline>
+          <h2
+            className="mt-1 font-display text-[24px] font-bold leading-tight tracking-[-0.02em] text-rally-ink"
+            data-testid="month-close-verdict-headline"
+          >
+            {closeLoading
+              ? "Checking this month…"
+              : // #837 again: an unread payload normalizes to zeros, and zero
+                // issues would read as "ready to close". A dash says we do
+                // not know; the error notice above says why.
+                statText(monthCloseQuery, () =>
+                  verdict.ok
+                    ? `${formatMonth(period)} is ready to close`
+                    : `${verdict.issueCount} thing${verdict.issueCount === 1 ? "" : "s"} need${
+                        verdict.issueCount === 1 ? "s" : ""
+                      } attention`,
+                )}
+          </h2>
+          {closeSettled && verdict.issues.length > 0 ? (
+            <ul
+              className="mt-3 space-y-1 text-sm text-rally-subtle"
+              data-testid="month-close-verdict-issues"
+            >
+              {verdict.issues.map((line) => (
+                <li key={line}>{line}</li>
               ))}
-            </dl>
-            {runBox.hasRun && close.autopay_run.failed.count > 0 ? (
-              <Link
-                href="/admin/payments"
-                data-testid="autopay-run-failed-link"
-                className="mt-4 inline-block text-sm font-medium text-rally-accent hover:underline"
-              >
-                Work the Failed autopay bucket
-              </Link>
-            ) : null}
-          </Card>
+            </ul>
+          ) : null}
+          {closeSettled ? (
+            <p className="mt-3 text-[12px] text-rally-muted">
+              {verdict.ok
+                ? "The four checks came back clean, every invoice went out, and no autopay charge failed."
+                : "Anything odd, below, links to each row."}
+            </p>
+          ) : null}
+        </Card>
 
-          <Card p={24} data-testid="anything-odd-box">
+        {tileGrid(headlineTiles, "month-close-tiles")}
+
+        {/*
+          * Always visible, never grouped: these four checks are the evidence
+          * behind a non-ok verdict, so hiding them behind a click would make
+          * the headline unanswerable.
+          */}
+        <Card p={24} data-testid="anything-odd-box">
             <Overline>Anything odd</Overline>
             <p className="mt-1 text-sm text-rally-subtle">
               Four checks over this month&apos;s invoices. A zero is the answer you want.
@@ -322,7 +368,7 @@ export default function AdminMonthClosePage() {
                         <li key={`${item.kind}:${item.id}`} className="px-3 py-2 text-sm">
                           <Link
                             href={item.href as Route}
-                            className="font-medium text-rally-accent hover:underline"
+                            className="font-medium text-rally-cobalt-600 hover:underline"
                           >
                             {item.label}
                           </Link>
@@ -336,10 +382,16 @@ export default function AdminMonthClosePage() {
                 </li>
               ))}
             </ul>
-          </Card>
-        </div>
+        </Card>
 
-        {close.invoices.void_reasons.length > 0 ? (
+        <CollapsibleSection
+          id="invoices"
+          title="Invoices"
+          summary="What the invoice run generated, emailed and voided."
+        >
+          {tileGrid(invoiceTiles, "month-close-invoice-tiles")}
+
+          {close.invoices.void_reasons.length > 0 ? (
           <Card p={20} data-testid="void-reasons">
             <div className="flex items-center gap-3">
               <Overline>Why invoices were voided</Overline>
@@ -353,11 +405,57 @@ export default function AdminMonthClosePage() {
               ))}
             </ul>
             <p className="mt-2 text-xs text-rally-muted">
-              {formatCents(close.invoices.voided_cents)} voided in total.
+              {formatMoney(close.invoices.voided_cents)} voided in total.
             </p>
           </Card>
-        ) : null}
+          ) : null}
+        </CollapsibleSection>
 
+        <CollapsibleSection
+          id="autopay-run"
+          title="Autopay run"
+          summary="What the autopay worker charged this month, or is about to."
+        >
+          <Card p={24} data-testid="autopay-run-box">
+            <Overline>Autopay run</Overline>
+            <p className="mt-1 text-sm text-rally-subtle" data-testid="autopay-run-headline">
+              {runBox.state === "none"
+                ? "No autopay invoices this month."
+                : `${runBox.hasRun ? "Ran" : "Runs on"} ${formatDateOnly(runBox.chargeOn)}${
+                    runBox.chargeOnVaries ? " and later" : ""
+                  }.`}
+            </p>
+            <dl className="mt-4 space-y-2">
+              {runBox.rows.map((row) => (
+                <div
+                  key={row.key}
+                  className="flex items-baseline justify-between gap-3 text-sm"
+                  data-testid={`autopay-run-${row.key}`}
+                >
+                  <dt className="text-rally-muted">{row.label}</dt>
+                  <dd className="font-mono tabular-nums font-semibold text-rally-ink">
+                    {row.countLabel} · {formatMoney(row.cents)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {runBox.hasRun && close.autopay_run.failed.count > 0 ? (
+              <Link
+                href="/admin/payments"
+                data-testid="autopay-run-failed-link"
+                className="mt-4 inline-block text-sm font-medium text-rally-cobalt-600 hover:underline"
+              >
+                Work the Failed autopay bucket
+              </Link>
+            ) : null}
+          </Card>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="discounts"
+          title="Discounts"
+          summary="Gross tuition against the discounts granted this month."
+        >
         <Card p={24} data-testid="tuition-discounts-section" className="space-y-4">
           <div>
             <Overline>Tuition discounts</Overline>
@@ -372,12 +470,12 @@ export default function AdminMonthClosePage() {
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-3">
-                <DashboardTerm label="Gross tuition" value={formatCents(discounts.gross_cents)} />
+                <DashboardTerm label="Gross tuition" value={formatMoney(discounts.gross_cents)} />
                 <DashboardTerm
                   label="Total discounts"
-                  value={formatCents(discounts.discount_cents)}
+                  value={formatMoney(discounts.discount_cents)}
                 />
-                <DashboardTerm label="Net tuition" value={formatCents(discounts.net_cents)} />
+                <DashboardTerm label="Net tuition" value={formatMoney(discounts.net_cents)} />
               </div>
               {discounts.by_category.length === 0 ? (
                 <p data-testid="tuition-discounts-empty" className="text-sm text-neutral-500">
@@ -408,7 +506,7 @@ export default function AdminMonthClosePage() {
                         >
                           <td className="px-4 py-3 font-medium">{row.category}</td>
                           <td className="px-4 py-3 text-right font-mono tabular-nums">
-                            {formatCents(row.amount_cents)}
+                            {formatMoney(row.amount_cents)}
                           </td>
                           <td className="px-4 py-3 text-right font-mono tabular-nums">
                             {discounts.gross_cents > 0
@@ -424,7 +522,13 @@ export default function AdminMonthClosePage() {
             </>
           )}
         </Card>
+        </CollapsibleSection>
 
+        <CollapsibleSection
+          id="analytics"
+          title="Analytics"
+          summary="Attendance, capacity, profit and loss, payroll and the trailing trends."
+        >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Attendance rate"
@@ -455,7 +559,7 @@ export default function AdminMonthClosePage() {
           />
           <KpiCard
             label="Expenses"
-            value={expenses ? formatCents(expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
+            value={expenses ? formatMoney(expenses.total_cents) : dashboardQuery.isLoading ? "Loading" : "No data"}
             description="Recorded rent, equipment, salary, marketing, and other spend."
           />
           <KpiCard
@@ -471,9 +575,12 @@ export default function AdminMonthClosePage() {
         </div>
 
         {dashboardQuery.isError && (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-            Could not load the reports dashboard.
-          </p>
+          <ErrorNotice
+            testId="admin-reports-dashboard-error"
+            message="Could not load the reports dashboard. The figures above are unknown, not zero."
+            onRetry={() => void dashboardQuery.refetch()}
+            retrying={dashboardQuery.isFetching}
+          />
         )}
 
         {dashboardEmptyStates.length ? (
@@ -519,10 +626,10 @@ export default function AdminMonthClosePage() {
           <Card p={24}>
             <Overline>Profit and loss</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Revenue" value={profitAndLoss ? formatCents(profitAndLoss.revenue_cents) : "No data"} />
+              <DashboardTerm label="Revenue" value={profitAndLoss ? formatMoney(profitAndLoss.revenue_cents) : "No data"} />
               <DashboardTerm label="Coach payroll" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.coach_payroll_cents) : "No data"} />
-              <DashboardTerm label="Rent" value={profitAndLoss ? formatCents(profitAndLoss.rent_cents) : "No data"} />
-              <DashboardTerm label="Misc expenses" value={profitAndLoss ? formatCents(profitAndLoss.misc_expenses_cents) : "No data"} />
+              <DashboardTerm label="Rent" value={profitAndLoss ? formatMoney(profitAndLoss.rent_cents) : "No data"} />
+              <DashboardTerm label="Misc expenses" value={profitAndLoss ? formatMoney(profitAndLoss.misc_expenses_cents) : "No data"} />
               <DashboardTerm label="Net profit" value={profitAndLoss ? formatNullableCurrency(profitAndLoss.net_profit_cents) : "No data"} />
               <DashboardTerm label="Margin" value={profitAndLoss ? formatNullablePercent(profitAndLoss.profit_margin) : "No data"} />
             </dl>
@@ -540,7 +647,7 @@ export default function AdminMonthClosePage() {
             <Overline>Collections risk</Overline>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
               <DashboardTerm label="Families due" value={collectionsRisk ? formatInteger(collectionsRisk.overdue_family_count) : "No data"} />
-              <DashboardTerm label="Amount due" value={collectionsRisk ? formatCents(collectionsRisk.overdue_cents) : "No data"} />
+              <DashboardTerm label="Amount due" value={collectionsRisk ? formatMoney(collectionsRisk.overdue_cents) : "No data"} />
               <DashboardTerm label="Failed payments" value={collectionsRisk ? formatInteger(collectionsRisk.failed_payment_count) : "No data"} />
               <DashboardTerm label="Partial payments" value={collectionsRisk ? formatInteger(collectionsRisk.partial_payment_count) : "No data"} />
             </dl>
@@ -559,7 +666,7 @@ export default function AdminMonthClosePage() {
                     >
                       <span className="font-medium text-rally-ink">{bucket.label}</span>
                       <span className="text-rally-muted">
-                        {formatCents(bucket.amount_cents)} · {formatInteger(bucket.family_count)}{" "}
+                        {formatMoney(bucket.amount_cents)} · {formatInteger(bucket.family_count)}{" "}
                         {bucket.family_count === 1 ? "family" : "families"}
                         {bucket.family_count > 0 ? (
                           <span className="ml-2 text-xs">
@@ -580,7 +687,7 @@ export default function AdminMonthClosePage() {
                                 {family.family_name || family.family_id}
                               </span>
                               <span className="ml-2 text-rally-muted">
-                                {formatCents(family.amount_cents)}
+                                {formatMoney(family.amount_cents)}
                               </span>
                               {actionNote && actionNote.key === `notify:${family.family_id}` ? (
                                 <p
@@ -628,7 +735,7 @@ export default function AdminMonthClosePage() {
                     {expenseCategories.map((category) => (
                       <tr key={category.category}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{category.category}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCents(category.amount_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatMoney(category.amount_cents)}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(category.count)}</td>
                       </tr>
                     ))}
@@ -661,7 +768,7 @@ export default function AdminMonthClosePage() {
           <div className="mt-2">
             <BigNum size={32}>
               {projected
-                ? formatCents(projected.total_cents)
+                ? formatMoney(projected.total_cents)
                 : projectedIncomeQuery.isLoading
                   ? "Loading"
                   : "No data"}
@@ -694,11 +801,11 @@ export default function AdminMonthClosePage() {
                 <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                   <DashboardTerm
                     label={`Autopay (${formatInteger(projected.autopay_enrollment_count)})`}
-                    value={formatCents(projected.autopay_cents)}
+                    value={formatMoney(projected.autopay_cents)}
                   />
                   <DashboardTerm
                     label={`Manual (${formatInteger(projected.manual_enrollment_count)})`}
-                    value={formatCents(projected.manual_cents)}
+                    value={formatMoney(projected.manual_cents)}
                   />
                 </dl>
               </div>
@@ -717,8 +824,8 @@ export default function AdminMonthClosePage() {
                       <tr key={row.session_id}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCents(row.monthly_fee_cents)}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatCents(row.expected_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatMoney(row.monthly_fee_cents)}</td>
+                        <td className="px-2 py-2 text-rally-muted">{formatMoney(row.expected_cents)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -754,7 +861,7 @@ export default function AdminMonthClosePage() {
                     fontSize={12}
                     width={56}
                   />
-                  <Tooltip formatter={(value) => formatCents(Number(value ?? 0) * 100)} />
+                  <Tooltip formatter={(value) => formatMoney(Number(value ?? 0) * 100)} />
                   <Legend />
                   <Bar
                     dataKey="prior"
@@ -777,40 +884,31 @@ export default function AdminMonthClosePage() {
             </p>
           )}
         </Card>
-      </div>
 
-      <div className="space-y-3">
-        <div>
-          <Overline>Analytics</Overline>
-          <p className="mt-1 text-sm text-neutral-500">
-            Enrollment, attendance, and coach utilization over the trailing three months.
-          </p>
-        </div>
         <div className="grid gap-4">
           <FunnelPanel period={period} />
           <AttendanceTrendsPanel periods={trailingPeriods} />
           <CoachUtilizationPanel periods={trailingPeriods} />
         </div>
-      </div>
+        </CollapsibleSection>
 
-      <div className="space-y-3">
-        <div>
-          <Overline>Financial reports</Overline>
-          <p className="mt-1 text-sm text-neutral-500">
-            Monthly reports over the billing ledger.
-          </p>
-        </div>
+        <CollapsibleSection
+          id="report-links"
+          title="Report links"
+          summary="Session economics, refunds, revenue by category, deposit slip and leaving."
+        >
         <div className="grid gap-4 lg:grid-cols-3">
           {FINANCIAL_REPORTS.map((report) => (
             <Link key={report.href} href={report.href} className="block">
-              <Card p={20} className="flex h-full flex-col transition-colors hover:border-rally-accent">
+              <Card p={20} className="flex h-full flex-col transition-colors hover:border-rally-cobalt-600">
                 <h2 className="font-semibold text-lg">{report.title}</h2>
                 <p className="mt-1 min-h-[3rem] text-sm text-neutral-500 flex-1">{report.description}</p>
-                <span className="mt-4 text-sm font-medium text-rally-accent">Open report</span>
+                <span className="mt-4 text-sm font-medium text-rally-cobalt-600">Open report</span>
               </Card>
             </Link>
           ))}
         </div>
+        </CollapsibleSection>
       </div>
     </section>
   );
@@ -843,17 +941,30 @@ function DashboardTerm({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatInteger(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+/*
+ * Issue #837: these panels read fields straight off the analytics payload, and
+ * an endpoint that answers with an incomplete body (or `{}`) used to reach
+ * `Intl.NumberFormat` with `undefined` — the panels printed "$NaN" and "NaN%"
+ * at families and owners. Every formatter below refuses a non-finite number
+ * and says "No data" instead.
+ */
+
+/** Money from a payload that may be missing the field entirely. */
+function formatMoney(cents: number | null | undefined, opts?: { whole?: boolean }): string {
+  return finiteText(cents, (value) => formatCents(value, opts));
+}
+
+function formatInteger(value: number | null | undefined): string {
+  return finiteText(value, (n) => new Intl.NumberFormat("en-US").format(n));
 }
 
 /** A share the backend already computed; `null` means "no records", not 0%. */
-function formatNullablePercent(value: number | null): string {
-  return value == null ? "No records" : formatCollectionRate(value);
+function formatNullablePercent(value: number | null | undefined): string {
+  return value == null ? "No records" : finiteText(value, formatCollectionRate);
 }
 
-function formatNullableCurrency(cents: number | null) {
-  return cents == null ? "Not available" : formatCents(cents);
+function formatNullableCurrency(cents: number | null | undefined) {
+  return cents == null ? "Not available" : finiteText(cents, formatCents);
 }
 
 function formatMonth(value: string) {

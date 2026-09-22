@@ -9,13 +9,19 @@ import {
   invoiceActionLabel,
   invoiceDueDays,
   periodLabel,
-  registrationChip,
+  registrationChips,
   shortDate,
   timelineTone,
   tuitionLineDescription,
   undeliverableChip,
 } from "./family-view";
 import type { FamilyEnrollment, FamilyStudent } from "@/lib/api/admin-families";
+import {
+  CARD_LABELS,
+  LOGIN_LABELS,
+  cardChip,
+  cardStateFromRegistration,
+} from "@/lib/people-status";
 
 describe("autopayToggle", () => {
   const base = {
@@ -81,10 +87,29 @@ describe("labels and chips", () => {
     expect(invoiceActionLabel("charge_card")).toBe("Charge card now");
     expect(invoiceActionLabel("discount_once")).toBe("One-time discount");
   });
-  it("maps registration states onto real Chip variants", () => {
-    expect(registrationChip("registered")).toEqual({ label: "Card on file", variant: "paid" });
-    expect(registrationChip("invited")).toEqual({ label: "Invited", variant: "pending" });
-    expect(registrationChip("not_invited")).toEqual({ label: "Not invited", variant: "manual" });
+  it("splits registration into the two shared People facts (#840)", () => {
+    expect(registrationChips("registered")).toEqual({
+      login: { label: "Active", variant: "enrolled" },
+      card: { label: "Card on file", variant: "paid" },
+    });
+    expect(registrationChips("invited")).toEqual({
+      login: { label: "Invited", variant: "pending" },
+      card: { label: "No card", variant: "manual" },
+    });
+    expect(registrationChips("not_invited")).toEqual({
+      login: { label: "Not invited", variant: "manual" },
+      card: { label: "No card", variant: "manual" },
+    });
+  });
+  it("takes its wording from the one map the families list uses", () => {
+    // The guarantee the issue asks for: the list page and this page cannot
+    // drift because neither owns the strings.
+    expect(registrationChips("registered").card.label).toBe(CARD_LABELS.on_file);
+    expect(registrationChips("invited").card.label).toBe(CARD_LABELS.no_card);
+    expect(registrationChips("not_invited").login.label).toBe(LOGIN_LABELS.not_invited);
+    expect(registrationChips("registered").card).toEqual(
+      cardChip(cardStateFromRegistration("card_on_file")),
+    );
   });
   it("mutes comms rows", () => {
     expect(timelineTone({ kind: "comms", muted: true })).toBe("muted");

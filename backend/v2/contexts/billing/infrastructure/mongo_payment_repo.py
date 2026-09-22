@@ -241,14 +241,20 @@ class MongoPaymentRepository(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def get_by_stripe_pi(self, stripe_pi: str) -> Payment | None:
-        pi_query: dict[str, Any] = {
-            "$or": [{"stripe_payment_intent_id": stripe_pi}, {"stripe_payment_intent": stripe_pi}]
-        }
-        doc = await self._find_one(pi_query)
-        if doc is None:
+        # One equality lookup per field name, not a single ``$or``: each is
+        # served by its partial (academy_id, <field>) index, while production's
+        # planner scans the academy's documents for the ``$or`` form (#878).
+        # ``stripe_payment_intent`` is the pre-v2 field name.
+        queries = [{"stripe_payment_intent_id": stripe_pi}, {"stripe_payment_intent": stripe_pi}]
+        for pi_query in queries:
+            doc = await self._find_one(pi_query)
+            if doc is not None:
+                return self._to_domain(doc)
+        for pi_query in queries:
             docs = await self._ledger_legacy_shape_docs(pi_query, limit=1)
-            doc = docs[0] if docs else None
-        return self._to_domain(doc) if doc else None
+            if docs:
+                return self._to_domain(docs[0])
+        return None
 
     async def get_by_checkout_session(self, checkout_session_id: str) -> Payment | None:
         session_query = {"stripe_checkout_session_id": checkout_session_id}

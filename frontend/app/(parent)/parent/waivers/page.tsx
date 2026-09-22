@@ -144,7 +144,7 @@ export default function ParentWaiversPage() {
             <input
               value={signerName}
               onChange={(event) => setSignerName(event.target.value)}
-              className="mt-2 h-11 w-full rounded-xl px-3 text-sm outline-none transition-colors border border-rally-line text-rally-ink"
+              className="mt-2 h-11 w-full rounded-xl px-3 text-sm outline-none transition-colors border border-rally-line text-rally-ink focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
               placeholder="Parent or guardian name"
             />
           </label>
@@ -166,7 +166,7 @@ export default function ParentWaiversPage() {
             onClick={() => acceptMutation.mutate()}
             disabled={acceptMutation.isPending}
             full
-            variant="volt"
+            variant="primary"
             className="mt-4 disabled:opacity-60"
           >
             {acceptMutation.isPending ? "Accepting..." : "Accept waiver"}

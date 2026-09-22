@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ulid } from "ulid";
 
@@ -24,6 +24,8 @@ import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { Chip } from "@/components/ds/chip";
 import { formatCents } from "@/lib/money";
 import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
+import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
+import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import { markProgress } from "@/lib/coach/marking";
 import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
@@ -140,6 +142,19 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // (lib/offline/attendance-queue.ts). Hydrated from IndexedDB.
   const [queuedMarks, setQueuedMarks] = useState<Record<string, QueuedMark>>({});
   const [queueingAll, setQueueingAll] = useState(false);
+  // #846: "Mark rest present" is HELD on this phone for a few seconds before
+  // anything is sent. These are the students in the held batch — their rows
+  // show a pending style and the bottom bar offers Undo. Undo inside the
+  // window means nothing was ever sent: no notification, no billing sync.
+  const [pendingBulkIds, setPendingBulkIds] = useState<readonly string[]>([]);
+  const pendingBulkSet = useMemo(() => new Set(pendingBulkIds), [pendingBulkIds]);
+  const undoWindowRef = useRef<BulkMarkUndoWindow | null>(null);
+  const undoWindow = (): BulkMarkUndoWindow =>
+    (undoWindowRef.current ??= new BulkMarkUndoWindow());
+  // The commit closure must see the CURRENT connectivity and roster: the
+  // coach can walk out of signal during the window, and the batch has to go
+  // to whichever path is right when it actually leaves.
+  const commitBulkRef = useRef<(studentIds: string[]) => void>(() => undefined);
   // Why the last "Mark all present" was refused as a whole (#672): the bulk
   // endpoint saves nothing when any row is ineligible, so name the rows.
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -165,6 +180,15 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
   const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
   const [noteShare, setNoteShare] = useState<Record<string, boolean>>({});
+  /**
+   * #895: this is the marking screen. The announcements composer — a 3-row
+   * textarea, an urgency checkbox and a Post button — sat open under the
+   * roster on every visit, so the thing the coach actually came for competed
+   * with a form most visits never use. It now opens on request. The shared
+   * AnnouncementsPanel is untouched, so the admin session page still renders
+   * the composer open, which is right for the surface it is on.
+   */
+  const [announcementsOpen, setAnnouncementsOpen] = useState(false);
 
   const progressNotesKey = queryKeys.coach.progressNotes(sessionId);
   const { data: notesData } = useQuery({
@@ -198,6 +222,25 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   useEffect(() => {
     hydrateQueued();
   }, [hydrateQueued, online]);
+
+  // Never lose a held batch (#846). Every exit that is not Undo sends it:
+  // the phone locking or the app backgrounding (visibilitychange hidden on
+  // Android/desktop, pagehide on iOS Safari — the two fire inconsistently,
+  // so both are wired), and leaving the route, which unmounts this page and
+  // runs the cleanup below.
+  useEffect(() => {
+    const flush = (): void => undoWindowRef.current?.flush();
+    const onVisibility = (): void => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+      flush();
+    };
+  }, []);
 
   // Follow the sync: a replayed mark becomes a saved one; a 4xx moves it to
   // the tray and the row says so.
@@ -477,10 +520,20 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       (student) =>
         !hasServerMark(student) &&
         !queuedMarks[student.student_id] &&
+        // Already inside a held "Mark rest present" batch (#846): the bar
+        // owns them until the window closes, so a second batch can never
+        // cover the same student.
+        !pendingBulkSet.has(student.student_id) &&
         // Named ineligible by the last bulk attempt (#672): leave them out
         // of the retry; the row keeps its own explanation. Other rows' own
         // errors (a failed single tap) never shrink the retry.
-        !ineligibleIds.has(student.student_id),
+        !ineligibleIds.has(student.student_id) &&
+        // #866: and the two lifecycle facts the roster already shows — an
+        // ON HOLD seat, a parent's absence notice — so the count stops
+        // promising a number the server would refuse (or a parent already
+        // withdrew). The line above stays the authority for everything this
+        // cannot predict; nothing about the save path changes.
+        isBulkMarkEligible(student),
     )
     .map((student) => student.student_id);
   const queuedCount = Object.keys(queuedMarks).length;
@@ -506,6 +559,10 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         student_id,
         status,
         client_app_version: CLIENT_APP_VERSION,
+        // #841: the roster and the class title are on screen right now; the
+        // Needs-review tray has no way to look them up later, so capture them.
+        student_full_name: roster.find((s) => s.student_id === student_id)?.full_name,
+        session_title: session?.title,
       });
       setQueuedMarks((prev) => ({ ...prev, [student_id]: { status, mutation_id: m.mutation_id } }));
       setLocalMarks((m2) => {
@@ -558,19 +615,48 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     attendanceMutation.mutate({ student_id: student.student_id, status });
   }
 
-  async function handleMarkAll(): Promise<void> {
+  /**
+   * Send a held batch for real. Unchanged from what the tap used to do
+   * directly (#846 only moved it behind the undo window): the bulk endpoint
+   * online, one queued mark per student offline — same payloads, same
+   * idempotency keys, same #841 labels.
+   */
+  function commitBulkMark(studentIds: string[]): void {
+    setPendingBulkIds([]);
     if (online) {
-      bulkAttendanceMutation.mutate(unmarkedStudentIds);
+      bulkAttendanceMutation.mutate(studentIds);
       return;
     }
     setQueueingAll(true);
-    try {
-      for (const student_id of unmarkedStudentIds) {
-        await queueLocally(student_id, "present");
+    void (async () => {
+      try {
+        for (const student_id of studentIds) {
+          await queueLocally(student_id, "present");
+        }
+      } finally {
+        setQueueingAll(false);
       }
-    } finally {
-      setQueueingAll(false);
-    }
+    })();
+  }
+  // Re-pointed after every render, so a batch that leaves late still uses
+  // the latest connectivity and roster. No dependency array on purpose.
+  useEffect(() => {
+    commitBulkRef.current = commitBulkMark;
+  });
+
+  function handleMarkAll(): void {
+    const batch = unmarkedStudentIds;
+    if (batch.length === 0) return;
+    setBulkError(null);
+    setPendingBulkIds(batch);
+    undoWindow().schedule(batch, (ids) => commitBulkRef.current(ids));
+  }
+
+  function handleUndoMarkAll(): void {
+    // cancel() returns nothing once the batch has gone out, so a tap a beat
+    // too late is a no-op rather than a half-undone class.
+    undoWindow().cancel();
+    setPendingBulkIds([]);
   }
 
   if (isLoading)
@@ -678,20 +764,6 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               </span>
             )}
           </div>
-          {roster.length > 0 && (
-            <button
-              data-testid="mark-all-present"
-              disabled={markAllPending || unmarkedStudentIds.length === 0}
-              onClick={() => void handleMarkAll()}
-              className="min-h-[44px] rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-green-700 disabled:opacity-50"
-            >
-              {markAllPending
-                ? "Marking all…"
-                : unmarkedStudentIds.length === 0
-                  ? "All marked"
-                  : `Mark all present (${unmarkedStudentIds.length})`}
-            </button>
-          )}
         </div>
         {bulkError && (
           <p
@@ -715,6 +787,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                 sessionId={session.session_id}
                 local={localMarks[student.student_id]}
                 queued={queuedMarks[student.student_id]}
+                pendingPresent={pendingBulkSet.has(student.student_id)}
                 online={online}
                 noteOpen={noteOpen === student.student_id}
                 noteText={noteTexts[student.student_id] ?? ""}
@@ -761,23 +834,115 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       */}
       {!assistant && (
         <section className="mt-6">
-          <h2
-            className="mb-2 text-sm font-semibold uppercase tracking-wide"
-            style={{ color: "var(--rally-muted)" }}
-          >
-            Announcements
+          <h2 className="mb-2">
+            <button
+              type="button"
+              data-testid="announcements-toggle"
+              aria-expanded={announcementsOpen}
+              aria-controls="coach-session-announcements"
+              onClick={() => setAnnouncementsOpen((open) => !open)}
+              className="min-h-touch w-full rounded-lg border px-3 text-left text-sm font-semibold uppercase tracking-wide"
+              style={{
+                color: "var(--rally-muted)",
+                borderColor: "var(--rally-line)",
+              }}
+            >
+              Announcements
+              <span aria-hidden="true" className="float-right font-normal">
+                {announcementsOpen ? "−" : "+"}
+              </span>
+            </button>
           </h2>
-          <AnnouncementsPanel persona="coach" sessionId={session.session_id} />
+          {announcementsOpen && (
+            <div id="coach-session-announcements">
+              <AnnouncementsPanel
+                persona="coach"
+                sessionId={session.session_id}
+              />
+            </div>
+          )}
         </section>
+      )}
+
+      {/*
+        #846: the batch action lives in the thumb arc, not in the top-right
+        corner a coach has to shift grip to reach, and it is the same place
+        the Undo answer appears — a coach who mis-taps looks where their
+        thumb already is. Pinned above the shell's bottom nav; the spacer
+        below keeps it off the last roster row.
+      */}
+      {roster.length > 0 && (
+        <>
+          <div aria-hidden="true" className="h-20" />
+          <div
+            className="fixed inset-x-0 z-20 px-4"
+            style={{
+              bottom:
+                "calc(var(--coach-bottom-nav-height, 0px) + env(safe-area-inset-bottom, 0px) + 0.5rem)",
+            }}
+          >
+            <div
+              data-testid="mark-all-bar"
+              className="mx-auto w-full max-w-md rounded-lg border p-2 shadow-lg"
+              style={{
+                background: "var(--rally-paper)",
+                borderColor: "var(--rally-line)",
+              }}
+            >
+              {pendingBulkIds.length > 0 ? (
+                <div
+                  data-testid="mark-all-undo-bar"
+                  role="status"
+                  className="flex items-center gap-2"
+                >
+                  <p
+                    className="min-w-0 flex-1 px-1 text-sm font-semibold"
+                    style={{ color: "var(--rally-ink)" }}
+                  >
+                    Marked {pendingBulkIds.length} present
+                  </p>
+                  <button
+                    data-testid="mark-all-undo"
+                    onClick={handleUndoMarkAll}
+                    className="min-h-[44px] shrink-0 rounded-md border-2 px-5 text-sm font-bold transition-colors"
+                    style={{
+                      borderColor: "var(--rally-ink)",
+                      color: "var(--rally-ink)",
+                    }}
+                  >
+                    Undo
+                  </button>
+                </div>
+              ) : (
+                <button
+                  data-testid="mark-all-present"
+                  disabled={markAllPending || unmarkedStudentIds.length === 0}
+                  onClick={handleMarkAll}
+                  className="min-h-[44px] w-full rounded-md bg-status-green-800 px-4 text-sm font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                >
+                  {markAllPending
+                    ? "Marking…"
+                    : unmarkedStudentIds.length === 0
+                      ? "All marked"
+                      : `Mark rest present (${unmarkedStudentIds.length})`}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </section>
   );
 }
 
+// border-2, not border: the 1px --rally-line hairline disappeared in outdoor
+// glare, which is exactly where coaches mark attendance (#844).
 const MARK_BUTTON_BASE =
-  "min-h-[44px] min-w-[44px] flex-1 rounded-md border px-3 py-1 text-sm font-medium transition-colors disabled:opacity-50 sm:flex-none sm:min-w-[88px]";
+  "min-h-[44px] min-w-[44px] flex-1 rounded-md border-2 px-2 text-sm font-medium transition-colors disabled:opacity-50 sm:min-w-[88px]";
+// #846: the secondary pair no longer claims a row of its own. They keep 44px
+// targets but stop competing with Present/Absent for width.
 const SECONDARY_BUTTON_BASE =
-  "inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 sm:flex-none";
+  "inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md border px-2 text-xs font-medium transition-colors disabled:opacity-50";
 
 /**
  * The single lifecycle chip a roster row may show, or null.
@@ -811,6 +976,7 @@ function RosterRow({
   sessionId,
   local,
   queued,
+  pendingPresent,
   online,
   noteOpen,
   noteText,
@@ -831,6 +997,8 @@ function RosterRow({
   sessionId: string;
   local?: OptimisticEntry;
   queued?: QueuedMark;
+  /** In a held "Mark rest present" batch: shown as pending, not as saved (#846). */
+  pendingPresent: boolean;
   online: boolean;
   noteOpen: boolean;
   noteText: string;
@@ -859,7 +1027,10 @@ function RosterRow({
   const savedOnServer = Boolean(local?.status) || Boolean(student.attendance_status);
   // Offline, only first marks can be queued: a saved mark would need a
   // correction, which the queue cannot replay (docs/offline-policy.md).
-  const markDisabled = Boolean(local?.pending) || (!online && savedOnServer);
+  // A row in a held batch is frozen until the window closes: the one control
+  // that applies to it is Undo, in the bar (#846).
+  const markDisabled =
+    Boolean(local?.pending) || pendingPresent || (!online && savedOnServer);
   const passportParams = new URLSearchParams({
     from_session: sessionId,
     student_name: student.full_name,
@@ -870,11 +1041,18 @@ function RosterRow({
   return (
     <li
       data-testid={`roster-${student.student_id}`}
-      className="rounded-lg border bg-white p-3"
+      data-mark-pending={pendingPresent ? "true" : undefined}
+      className="rounded-lg border bg-white px-3 py-2"
       style={{ borderColor: "var(--rally-line)" }}
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      {/*
+        #846: name and tags own a line, the four controls share the next one.
+        The old row stacked THREE blocks on a phone (~116px each, ~2,700px of
+        scroll for a twelve-student class) and, on desktop, let the name wrap
+        underneath the Present button.
+      */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <p className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
             {student.full_name}
           </p>
@@ -914,11 +1092,11 @@ function RosterRow({
             </span>
           )}
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-2">
           <div
             role="group"
             aria-label={`Attendance for ${student.full_name}`}
-            className="flex gap-2"
+            className="flex min-w-0 flex-1 gap-2"
           >
             {/* Present */}
             <button
@@ -928,20 +1106,38 @@ function RosterRow({
               onClick={() => onMark("present")}
               className={MARK_BUTTON_BASE}
               style={
-                marked === "present"
+                pendingPresent
                   ? {
-                      background: "#16a34a",
-                      borderColor: "#16a34a",
-                      color: "#fff",
+                      // Held, not saved (#846). Deliberately NOT the solid
+                      // green of a recorded mark: a coach must be able to see
+                      // at a glance that this one is still cancellable. Same
+                      // #844 ink (7.8:1 on this tint), hollow and dashed.
+                      background: "#ecfdf5",
+                      borderColor: "#065f46",
+                      borderStyle: "dashed",
+                      color: "#065f46",
                       fontWeight: 700,
                     }
-                  : {
-                      borderColor: "var(--rally-line)",
-                      color: "var(--rally-muted)",
-                    }
+                  : marked === "present"
+                    ? {
+                        // status-green-800: 7.8:1 with white, where green-600 was 3.3:1.
+                        background: "#065f46",
+                        borderColor: "#065f46",
+                        color: "#fff",
+                        fontWeight: 700,
+                      }
+                    : {
+                        borderColor: "var(--rally-muted)",
+                        color: "var(--rally-muted)",
+                      }
               }
             >
-              {marked === "present" ? (
+              {pendingPresent ? (
+                <>
+                  <span aria-hidden="true">✓ </span>Present
+                  <span className="sr-only"> — not saved yet, undo below</span>
+                </>
+              ) : marked === "present" ? (
                 <>
                   <span aria-hidden="true">✓ </span>Present
                 </>
@@ -959,13 +1155,14 @@ function RosterRow({
               style={
                 marked === "absent"
                   ? {
+                      // red-600 on white is already 4.8:1 — left as shipped.
                       background: "#dc2626",
                       borderColor: "#dc2626",
                       color: "#fff",
                       fontWeight: 700,
                     }
                   : {
-                      borderColor: "var(--rally-line)",
+                      borderColor: "var(--rally-muted)",
                       color: "var(--rally-muted)",
                     }
               }
@@ -979,7 +1176,7 @@ function RosterRow({
               )}
             </button>
           </div>
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-1.5">
             <Link
               href={passportHref as Parameters<typeof Link>[0]["href"]}
               className={SECONDARY_BUTTON_BASE}

@@ -241,6 +241,45 @@ test.describe("calendar smoke", () => {
     await expect(page.getByTestId("calendar-grid")).toContainText("Junior A");
   });
 
+  test("coach calendar toolbar wraps (not overlaps) at 400px and uses the Rally accent (#866)", async ({
+    page,
+  }) => {
+    await stubIdentity(page, ["coach"]);
+    await stubMessages(page, "coach");
+    await page.route("**/api/v2/coach/sessions", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sessions: [] }) });
+    });
+
+    await page.setViewportSize({ width: 400, height: 800 });
+    await page.goto("/coach/calendar");
+    await expect(page.getByTestId("calendar-grid")).toBeVisible();
+
+    const toolbar = page.locator(".fc-toolbar");
+    await expect(toolbar).toHaveCSS("flex-wrap", "wrap");
+
+    // #866 item 3: one Rally primary color per screen, not FullCalendar's
+    // stock blue (#3b82f6/rgb(59,130,246)) mixed in with the app's cobalt.
+    const nextButton = page.locator(".fc-next-button");
+    await expect(nextButton).toBeVisible();
+    await expect(nextButton).toHaveCSS("background-color", "rgb(37, 99, 235)");
+
+    // #896: at 400px a 7-column month grid is neither readable nor tappable,
+    // so the phone opens on a single day with 44px toolbar buttons. The month
+    // stays one tap away.
+    await expect(page.locator(".fc-dayGridDay-view")).toBeVisible();
+    await expect(page.locator(".fc-dayGridMonth-view")).toHaveCount(0);
+    const buttons = page.locator(".fc-button");
+    const buttonCount = await buttons.count();
+    expect(buttonCount).toBeGreaterThan(0);
+    for (let index = 0; index < buttonCount; index += 1) {
+      const box = await buttons.nth(index).boundingBox();
+      expect(box, `toolbar button ${index} has no box`).not.toBeNull();
+      expect(box?.height ?? 0, `toolbar button ${index} is under 44px`).toBeGreaterThanOrEqual(44);
+    }
+    await expect(page.getByRole("button", { name: "month" })).toBeVisible();
+  });
+
   test("parent calendar merges every child's schedule", async ({ page }) => {
     await stubIdentity(page, ["parent"]);
     await stubMessages(page, "parent");

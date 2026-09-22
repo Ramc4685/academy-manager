@@ -48,7 +48,7 @@ export default function CoachSessionsPage() {
       <div className="space-y-6">
         {grouped.map(({ label, sessions: daySessions }) => (
           <div key={label}>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-400">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-rally-muted">
               {label}
             </h2>
             <ul className="space-y-3">

@@ -18,6 +18,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
+import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
@@ -55,7 +57,7 @@ function formatHour(hour: number): string {
 export function NotifyPanel() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminNotificationsView>(() => normalize(null));
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const query = useQuery({
     queryKey: queryKeys.admin.notifications(),
     queryFn: getAdminNotifications,
@@ -68,12 +70,12 @@ export function NotifyPanel() {
 
   const payload = toPayload(original, form);
   const dirty = Object.keys(payload).length > 0;
+  useReportSettingsDirty("notify", dirty);
   const mutation = useMutation({
     mutationFn: () => updateAdminNotifications(payload),
     onSuccess: () => {
-      setSaved(true);
+      setSavedAt(savedAtNow());
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.notifications() });
-      window.setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -164,7 +166,7 @@ export function NotifyPanel() {
           >
             {mutation.isPending ? "Saving..." : "Save changes"}
           </Button>
-          {saved && <p className="text-sm font-medium text-emerald-700">Saved.</p>}
+          <SavedNote at={savedAt} />
           {(query.isError || mutation.isError) && (
             <p className="text-sm font-medium text-red-700">
               {(mutation.error ?? query.error)?.message}

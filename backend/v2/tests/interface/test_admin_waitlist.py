@@ -77,6 +77,28 @@ def test_normalize_waitlist_recomputes_positions_after_filtering():
     assert [row.position for row in rows] == [1]
 
 
+def test_normalize_waitlist_carries_the_parent_name():
+    """#860: the waitlist row printed a raw ``parent_id``. The read now joins
+    the parent's name, so the entry DTO has to carry it through — an unknown
+    field would be silently dropped by Pydantic and the UI would be back to
+    the id."""
+    rows = _normalize_waitlist_entries(
+        [
+            {
+                "waitlist_id": "w1",
+                "session_id": "sess-1",
+                "student_id": "st-1",
+                "parent_id": "68b0f2c1a0b1c2d3e4f50011",
+                "parent_name": "Amit Rao",
+                "joined_at": datetime(2026, 5, 16, 8, 0, tzinfo=UTC),
+                "status": "waiting",
+            }
+        ]
+    )
+
+    assert [row.parent_name for row in rows] == ["Amit Rao"]
+
+
 def test_list_waitlist_wrong_persona_404(coach_on_admin_client):
     r = coach_on_admin_client.get("/api/v2/admin/sessions/sess-1/waitlist")
     assert r.status_code == 404

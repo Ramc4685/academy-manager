@@ -4,6 +4,8 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
+import { openMonthCloseSection } from "../helpers/month-close-sections";
+import { rowActionControl } from "../helpers/row-actions";
 import {
   ACADEMY_A,
   ADMIN_USER_A,
@@ -416,6 +418,11 @@ test.describe("tuition discounts", () => {
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
     ]);
     await stubAcademy(page, ACADEMY_A);
+    // Issue #842: AdminLayout now feeds the Inbox nav badge from this
+    // endpoint on every admin page, so every shell stub must cover it.
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
     await stubAdminStudentDiscounts(page, student);
     await page.route("**/api/v2/admin/enrollments/*/tuition-discount", (route) => {
       if (route.request().method() !== "PUT") return route.fallback();
@@ -456,22 +463,27 @@ test.describe("tuition discounts", () => {
 
     await page.goto("/admin/students/student-discounts");
     await page.getByRole("tab", { name: "Sessions" }).click();
-    const sessions = page.getByTestId("admin-student-enrolled-sessions");
-    const scholarshipRow = sessions
-      .locator("tbody tr")
-      .filter({ hasText: "Scholarship Singles" });
-    const coachChildRow = sessions
-      .locator("tbody tr")
-      .filter({ hasText: "Coach Kids Doubles" });
+    await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
+    // #865: the Sessions tab is a table on desktop and PhoneListRows below
+    // `md:`, so rows are named by id and the action is reached through the
+    // shared helper rather than a `tbody tr` that only exists at one width.
+    const scholarshipRow = page.getByTestId("admin-student-enrollment-enr-scholarship");
+    const coachChildRow = page.getByTestId("admin-student-enrollment-enr-coach-child");
+    const discountControl = (enrollmentId: string, label: string) =>
+      rowActionControl(page, {
+        rowTestId: `admin-student-enrollment-${enrollmentId}`,
+        actionsTestId: `admin-student-enrollment-actions-${enrollmentId}`,
+        label,
+      });
 
-    await scholarshipRow.getByRole("button", { name: "Discount" }).click();
+    await (await discountControl("enr-scholarship", "Discount")).click();
     await expect(page.getByRole("dialog", { name: "Tuition discount" })).toBeVisible();
     await page.getByRole("button", { name: "Save discount" }).click();
     await expect(page.getByRole("dialog", { name: "Tuition discount" })).toHaveCount(0);
     await expect(scholarshipRow).toContainText("Scholarship");
     await expect(scholarshipRow).toContainText("$0");
 
-    await coachChildRow.getByRole("button", { name: "Discount", exact: true }).click();
+    await (await discountControl("enr-coach-child", "Discount")).click();
     const dialog = page.getByRole("dialog", { name: "Tuition discount" });
     await dialog.locator("select").nth(0).selectOption("coach_child");
     await dialog.locator("select").nth(1).selectOption("percent");
@@ -561,6 +573,8 @@ test.describe("tuition discounts", () => {
     );
 
     await page.goto("/admin/reports");
+    // The discount card sits in a collapsed group on a phone viewport (#862).
+    await openMonthCloseSection(page, "discounts");
     const card = page.getByTestId("tuition-discounts-section");
     await expect(card).toBeVisible({ timeout: 45_000 });
     await expect(card).toContainText("$220.00");

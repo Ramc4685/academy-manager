@@ -48,7 +48,10 @@ from backend.v2.composition.email_adapters import (
     LoginInviteEmailAdapter,
 )
 from backend.v2.composition.event_handlers import install_dunning_notifier
-from backend.v2.composition.invoice_naming import build_invoice_naming_resolver
+from backend.v2.composition.invoice_naming import (
+    build_invoice_naming_resolver,
+    find_invoice_by_id_or_number,
+)
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     build_void_billing_invoice,
@@ -885,6 +888,8 @@ def compose_admin(
     list_makeup_requests_for_admin = ListMakeupRequestsForAdmin(
         makeups=makeup_requests_repo,
         students=students_r,
+        occurrences=occurrences_r,
+        sessions=sessions_r,
     )
     approve_makeup_request = ApproveMakeupRequest(
         makeups=makeup_requests_repo,
@@ -902,6 +907,10 @@ def compose_admin(
     list_absences_for_admin = ListAbsencesForAdmin(
         notices=absence_notices_repo,
         students=students_r,
+        # #860: same tenant-scoped occurrence/session ports the makeup queue
+        # already uses, so an absence row names the class and date.
+        occurrences=occurrences_r,
+        sessions=sessions_r,
     )
     record_absence_notice_for_student = RecordAbsenceNoticeForStudent(
         students=students_r,
@@ -912,7 +921,12 @@ def compose_admin(
     )
     expire_makeup_requests = ExpireMakeupRequests(makeups=makeup_requests_repo)
     trial_requests_repo = MongoTrialRequestRepository(db)
-    list_trial_requests_for_admin = ListTrialRequestsForAdmin(trials=trial_requests_repo)
+    list_trial_requests_for_admin = ListTrialRequestsForAdmin(
+        trials=trial_requests_repo,
+        sessions=sessions_r,
+        occurrences=occurrences_r,
+        students=students_r,
+    )
     approve_trial_request = ApproveTrialRequest(
         trials=trial_requests_repo,
         occurrences=occurrences_r,
@@ -3128,7 +3142,9 @@ def compose_admin(
                     "full_name": student.full_name if student else "(unknown)",
                 }
             )
-        return rows
+        # #860: the waitlist row printed the raw parent id. Same batched,
+        # tenant-scoped join the dunning reads already use.
+        return await _enrich_parent_names(rows)
 
     async def list_payments_recent(fetch_cap: int = 200, *, include_voided: bool = False):
         from backend.v2.shared.tenancy import current_academy_id
@@ -3954,12 +3970,7 @@ def compose_admin(
             return payload
 
         request_academy_id = current_academy_id()
-        invoice = await db["invoices"].find_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            }
-        )
+        invoice = await find_invoice_by_id_or_number(db, request_academy_id, invoice_id)
         if invoice is not None:
             inv_id = str(invoice.get("invoice_id") or invoice_id)
             lines = [
@@ -4066,12 +4077,8 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
-        owned_invoice = await db["invoices"].find_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            },
-            {"_id": 1},
+        owned_invoice = await find_invoice_by_id_or_number(
+            db, request_academy_id, invoice_id, {"_id": 1}
         )
         owned_payment = await db["payments"].find_one(
             {
@@ -4096,13 +4103,11 @@ def compose_admin(
             }
         )
         field = "receipt_artifact_id" if artifact_type == "receipt" else "invoice_pdf_artifact_id"
-        await db["invoices"].update_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            },
-            {"$set": {field: artifact_id, "updated_at": now}},
-        )
+        if owned_invoice is not None:
+            await db["invoices"].update_one(
+                {"academy_id": request_academy_id, "_id": owned_invoice["_id"]},
+                {"$set": {field: artifact_id, "updated_at": now}},
+            )
         await db["payments"].update_one(
             {
                 "academy_id": request_academy_id,

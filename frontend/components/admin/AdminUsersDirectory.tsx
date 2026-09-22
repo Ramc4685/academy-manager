@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +15,9 @@ import {
   type AdminUserRole,
   type AdminUserView,
 } from "@/lib/api/admin";
+import { assignableRoles } from "@/lib/auth/assignable-roles";
+import { filterUsersBySearch } from "@/lib/admin/user-search";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
@@ -21,6 +25,13 @@ import { roleToChipVariant } from "@/lib/admin/role-chip";
 import { roleLabel } from "@/lib/admin/role-label";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
+import { ErrorNotice } from "@/components/ds/error-notice";
+import { ContactLinks } from "@/components/ds/contact-links";
+import { FilterBar, FilterChip, ToolbarSearch } from "@/components/ds/list-toolbar";
+import { Th } from "@/components/ds/dialog-chrome";
+import { userLoginChip } from "@/lib/people-status";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
 import { BulkInviteDialog } from "@/components/admin/bulk-invite-dialog";
 
@@ -32,8 +43,8 @@ const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
   { label: "Admins", value: "admin" },
 ];
 
-/** Roles the directory's create form may mint: the operations roles. */
-type CreatableRole = Extract<AdminUserRole, "coach" | "assistant_coach" | "parent">;
+/** How long a keystroke waits before it narrows the table. */
+const SEARCH_DEBOUNCE_MS = 150;
 
 function parseRoleParam(value: string | null): AdminUserRole | undefined {
   return value === "coach" ||
@@ -52,11 +63,30 @@ export function AdminUsersDirectory({
   const queryClient = useQueryClient();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [createOpen, setCreateOpen] = useState(false);
+  // #839: `/admin/users/new` was a second add-user form. It now forwards here
+  // with `?add=1`, so there is one form and the old bookmark still works.
+  const [createOpen, setCreateOpen] = useState(() => searchParams.get("add") === "1");
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   // URL is the single source of truth for the active role tab.
   const role = fixedRole ?? parseRoleParam(searchParams.get("role"));
+
+  function setCreateDialogOpen(open: boolean) {
+    setCreateOpen(open);
+    if (!open && searchParams.get("add")) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("add");
+      const query = params.toString();
+      router.replace(query ? `?${query}` : "?", { scroll: false });
+    }
+  }
 
   function selectRole(next: AdminUserRole | undefined) {
     const params = new URLSearchParams(searchParams.toString());
@@ -66,12 +96,14 @@ export function AdminUsersDirectory({
     router.replace(query ? `?${query}` : "?", { scroll: false });
   }
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: queryKeys.admin.users(role),
     queryFn: () => listAdminUsers(role),
   });
 
-  const users = data?.users ?? [];
+  const allUsers = useMemo(() => data?.users ?? [], [data]);
+  // `listAdminUsers` takes only a role, so the search narrows what is loaded.
+  const users = useMemo(() => filterUsersBySearch(allUsers, search), [allUsers, search]);
   const createLabel = fixedRole === "coach" ? "Add coach" : fixedRole === "parent" ? "Add parent" : "Add user";
   // The bulk endpoint mints parents only (role is hardcoded server-side), so
   // the action is offered on the parent tab and on the unfiltered directory.
@@ -80,26 +112,32 @@ export function AdminUsersDirectory({
   return (
     <section data-testid="admin-users" className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {/* #897: the same ink filter chips the Students list uses — this row
+            was a third pill shape (rounded-full, neutral-900) for no reason. */}
         {!fixedRole ? (
-          <div className="flex gap-2">
+          <FilterBar label="Users by role" testId="admin-users-filters">
             {roles.map((r) => (
-              <button
+              <FilterChip
                 key={r.label}
-                type="button"
+                active={role === r.value}
+                label={r.label}
+                testId={`admin-users-filter-${r.value ?? "all"}`}
                 onClick={() => selectRole(r.value)}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                  role === r.value
-                    ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                    : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700"
-                }`}
-              >
-                {r.label}
-              </button>
+              />
             ))}
-          </div>
+          </FilterBar>
         ) : (
           <div />
         )}
+        {/* #839: role tabs were the only way to narrow the directory, so
+            finding one person meant scrolling. Same control as Students. */}
+        <ToolbarSearch
+          id="admin-users-search"
+          label="Search users"
+          value={searchInput}
+          onChange={setSearchInput}
+          placeholder="Search name, email or phone"
+        />
         <div className="flex flex-wrap gap-2">
           {canBulkInvite && (
             <Button
@@ -129,10 +167,10 @@ export function AdminUsersDirectory({
 
       <CreateUserDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={setCreateDialogOpen}
         fixedRole={fixedRole}
         onCreated={() => {
-          setCreateOpen(false);
+          setCreateDialogOpen(false);
           void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
         }}
       />
@@ -146,18 +184,22 @@ export function AdminUsersDirectory({
       />
 
       {isError ? (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not load users.
-        </p>
+        // #837: a dead end. The directory now offers the request again.
+        <ErrorNotice
+          testId="admin-users-error"
+          message="Could not load users."
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : isLoading ? (
         <Skeleton />
       ) : users.length === 0 ? (
         <p className="text-sm text-rally-subtle" data-testid="admin-users-empty">
-          No users found.
+          {search ? `No users match “${search}”.` : "No users found."}
         </p>
       ) : (
-        <Card p={20}>
-          <UsersTable users={users} />
+        <Card p={0}>
+          <UsersList users={users} />
         </Card>
       )}
     </section>
@@ -175,7 +217,11 @@ function CreateUserDialog({
   fixedRole?: Extract<AdminUserRole, "coach" | "parent">;
   onCreated: () => void;
 }) {
-  const [role, setRole] = useState<CreatableRole>(fixedRole ?? "parent");
+  // #839: this dialog is now the only add-user form, so it offers exactly the
+  // roles the current user may grant — the standalone page's rule, which the
+  // BFF enforces anyway (`ensure_can_assign_role`).
+  const roleOptions = assignableRoles(useIsOwner());
+  const [role, setRole] = useState<AdminUserRole>(fixedRole ?? "parent");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -212,6 +258,14 @@ function CreateUserDialog({
           <Dialog.Title className="font-display text-xl font-bold text-rally-ink">
             {fixedRole === "coach" ? "Add coach" : fixedRole === "parent" ? "Add parent" : "Add user"}
           </Dialog.Title>
+          {(fixedRole ?? role) === "parent" && (
+            // Carried over from the retired /admin/users/new page (#839): this
+            // is the one fact about adding a parent that is not obvious.
+            <Dialog.Description className="mt-2 text-sm text-rally-muted">
+              Parents get a “set your password” email automatically, so they can
+              log in with any email address — no Google account needed.
+            </Dialog.Description>
+          )}
           <form
             className="mt-4 space-y-4"
             onSubmit={(event) => {
@@ -224,19 +278,23 @@ function CreateUserDialog({
               <Field label="Role" htmlFor="create-user-role">
                 <select
                   id="create-user-role"
+                  data-testid="new-user-role"
                   value={role}
-                  onChange={(event) => setRole(event.target.value as CreatableRole)}
+                  onChange={(event) => setRole(event.target.value as AdminUserRole)}
                   className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
                 >
-                  <option value="parent">Parent</option>
-                  <option value="coach">Coach</option>
-                  <option value="assistant_coach">Assistant coach</option>
+                  {roleOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {roleLabel(option)}
+                    </option>
+                  ))}
                 </select>
               </Field>
             )}
             <Field label="Name" htmlFor="create-user-name">
               <input
                 id="create-user-name"
+                data-testid="new-user-name"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
@@ -247,6 +305,7 @@ function CreateUserDialog({
             <Field label="Email" htmlFor="create-user-email">
               <input
                 id="create-user-email"
+                data-testid="new-user-email"
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -313,17 +372,89 @@ function Field({
   );
 }
 
+/**
+ * #847: one list, two layouts, exactly one mounted — see
+ * `lib/use-is-phone.ts`. The phone rows keep the table's `data-testid`s.
+ *
+ * #857: the actions trigger is `admin-users-actions-<id>`, deliberately NOT
+ * the row testid with `actions-` appended — an id that starts with the row's
+ * own `admin-users-row-` prefix is matched by every prefix selector that means
+ * to pick rows.
+ */
+function UsersList({ users }: { users: AdminUserView[] }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    return (
+      <PhoneList aria-label="Users" data-testid="admin-users-phone-list">
+        {users.map((user) => {
+          const href = `/admin/users/${encodeURIComponent(user.user_id)}` as Route;
+          return (
+            <PhoneListRow
+              key={user.user_id}
+              data-testid={`admin-users-row-${user.user_id}`}
+              leading={<Avatar name={user.display_name} size={32} />}
+              title={user.display_name}
+              href={href}
+              titleTestId={`admin-users-link-${user.user_id}`}
+              primary={
+                <Chip
+                  variant={statusChip(user.status).variant}
+                  label={statusChip(user.status).label}
+                />
+              }
+              actionsLabel={`Actions for ${user.display_name}`}
+              actionsTestId={`admin-users-actions-${user.user_id}`}
+              actions={[{ key: "open", label: "Open user", href }]}
+              contact={{ phone: user.phone, email: user.email }}
+              secondary={
+                <>
+                  <div>
+                    <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role)} />
+                  </div>
+                  {/* #865: the same ContactLinks the desktop cell uses, so the
+                      two layouts cannot disagree about what is tappable. */}
+                  <ContactLinks
+                    name={user.display_name}
+                    email={user.email}
+                    phone={user.phone}
+                    fallback="No phone on file"
+                  />
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+  return (
+    <div className="p-5">
+      <UsersTable users={users} />
+    </div>
+  );
+}
+
+/**
+ * #897: these chips used to shout the wire value verbatim ("ACTIVE",
+ * "INVITED") and guessed a chip colour from `=== "active"`. The People
+ * vocabulary already maps every known status onto a login state, in the same
+ * Title Case the Families list beside this one uses.
+ */
+function statusChip(status: string) {
+  return userLoginChip(status);
+}
+
 function UsersTable({ users }: { users: AdminUserView[] }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Name</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Email</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Phone</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Role</th>
-            <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
+            <Th padding="px-2 pb-3">Name</Th>
+            <Th padding="px-2 pb-3">Email</Th>
+            <Th padding="px-2 pb-3">Phone</Th>
+            <Th padding="px-2 pb-3">Role</Th>
+            <Th padding="px-2 pb-3">Status</Th>
           </tr>
         </thead>
         <tbody>
@@ -341,13 +472,21 @@ function UsersTable({ users }: { users: AdminUserView[] }) {
                   </div>
                 </Link>
               </td>
-              <td className="px-2 py-3 text-rally-base">{user.email}</td>
-              <td className="px-2 py-3 text-rally-muted">{user.phone || "-"}</td>
-              <td className="px-2 py-3">
-                <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role).toUpperCase()} />
+              {/* #865: both cells were plain text, so reaching a coach or a
+                  parent from the directory meant copying the number out. */}
+              <td className="px-2 py-3 text-rally-base">
+                <ContactLinks name={user.display_name} email={user.email} />
+              </td>
+              <td className="px-2 py-3 text-rally-muted">
+                <ContactLinks name={user.display_name} phone={user.phone} fallback="-" />
               </td>
               <td className="px-2 py-3">
-                <Chip variant={user.status === "active" ? "enrolled" : "expired"} label={user.status.toUpperCase()} />
+                {/* #897: Title Case, like every other People chip — and the
+                    login state goes through the one shared vocabulary. */}
+                <Chip variant={roleToChipVariant(user.role)} label={roleLabel(user.role)} />
+              </td>
+              <td className="px-2 py-3">
+                <Chip variant={statusChip(user.status).variant} label={statusChip(user.status).label} />
               </td>
             </tr>
           ))}
