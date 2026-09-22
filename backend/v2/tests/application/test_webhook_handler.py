@@ -19,6 +19,8 @@ from backend.v2.contexts.billing.application.use_cases import (
     handle_webhook_event as handle_webhook_event_module,
 )
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
+    QUARANTINE_UNATTRIBUTED,
+    UNATTRIBUTED_QUARANTINE_ACADEMY,
     HandleWebhookEvent,
     _QuarantineStripeEvent,
 )
@@ -5024,12 +5026,138 @@ async def test_accept_resolves_connect_events_via_account_resolver() -> None:
     assert dedup.events["evt_connect_b"]["academy_id"] == "academy-b"
 
 
+_PLAIN_UNMARKED_EVENT = json.dumps(
+    {
+        "id": "evt_plain",
+        "type": "checkout.session.completed",
+        "data": {"object": {"id": "cs_x"}},
+    }
+).encode()
+_UNKNOWN_ACCOUNT_EVENT = json.dumps(
+    {
+        "id": "evt_unknown_acct",
+        "type": "account.updated",
+        "account": "acct_unknown",
+        "data": {"object": {"id": "acct_unknown", "object": "account"}},
+    }
+).encode()
+
+
+def _build_ingest_handler(dedup, *, repo=None, outbox=None, **kwargs):
+    return HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=dedup,
+        payments=repo or FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=outbox or FakeOutbox(),
+        academy_id="acad",
+        connected_accounts=_FakeAccountResolver({}),
+        **kwargs,
+    )
+
+
 @pytest.mark.asyncio
-async def test_accept_falls_back_to_handler_academy_without_tenant_markers() -> None:
-    """Platform events with neither metadata.academy_id nor a Connect account
-    keep today's behavior: stored under the handler's academy. Unknown
-    accounts also fall back — the processing-side guards stay the authority
-    and quarantine (with alerting) anything genuinely misattributed."""
+async def test_accept_falls_back_to_handler_academy_in_single_academy_mode() -> None:
+    """In single_academy mode there is exactly one tenant by construction, so a
+    platform event with neither metadata.academy_id nor a Connect account is
+    safely the handler's own. Unknown accounts also fall back at ingest — the
+    processing-side guards stay the authority there and quarantine (with
+    alerting) anything genuinely misattributed."""
+    dedup = FakeDedup()
+    uc = _build_ingest_handler(dedup, tenancy_mode="single_academy")
+
+    plain = await uc.accept(_PLAIN_UNMARKED_EVENT, "test_signature")
+    unknown = await uc.accept(_UNKNOWN_ACCOUNT_EVENT, "test_signature")
+
+    assert plain == {"received": True, "stored": True, "type": "checkout.session.completed"}
+    assert unknown == {"received": True, "stored": True, "type": "account.updated"}
+    assert dedup.events["evt_plain"]["academy_id"] == "acad"
+    assert dedup.events["evt_plain"]["status"] == "received"
+    assert dedup.events["evt_unknown_acct"]["academy_id"] == "acad"
+    assert dedup.events["evt_unknown_acct"]["status"] == "received"
+
+
+@pytest.mark.asyncio
+async def test_accept_default_tenancy_mode_keeps_fallback() -> None:
+    """The constructor default is single_academy: every existing caller that
+    never passes the mode keeps today's behavior; the composition roots pass
+    the real setting explicitly."""
+    dedup = FakeDedup()
+    uc = _build_ingest_handler(dedup)
+
+    await uc.accept(_PLAIN_UNMARKED_EVENT, "test_signature")
+
+    assert dedup.events["evt_plain"]["academy_id"] == "acad"
+    assert dedup.events["evt_plain"]["status"] == "received"
+
+
+@pytest.mark.asyncio
+async def test_accept_quarantines_unmarked_events_in_multi_academy_mode(
+    monkeypatch, caplog
+) -> None:
+    """With several tenants behind one /webhooks/stripe endpoint, an event with
+    neither marker cannot be attributed. It must be persisted (dedup intact),
+    quarantined under a sentinel no per-academy drain ever claims, alerted
+    once, and acknowledged with 200 — never credited to the boot academy."""
+    alerts: list[str] = []
+    monkeypatch.setattr(
+        handle_webhook_event_module,
+        "capture_message",
+        lambda msg, **_: alerts.append(msg) or True,
+    )
+    caplog.set_level("ERROR", logger=handle_webhook_event_module.log.name)
+    dedup = FakeDedup()
+    uc = _build_ingest_handler(dedup, tenancy_mode="multi_academy")
+
+    res = await uc.accept(_PLAIN_UNMARKED_EVENT, "test_signature")
+
+    assert res == {
+        "received": True,
+        "stored": True,
+        "type": "checkout.session.completed",
+        "status": "quarantined",
+    }
+    row = dedup.events["evt_plain"]
+    assert row["status"] == "quarantined"
+    assert row["academy_id"] == UNATTRIBUTED_QUARANTINE_ACADEMY
+    assert row["quarantine_reason"] == QUARANTINE_UNATTRIBUTED
+    assert "acad" not in row["academy_id"]
+    # Nobody can claim it: not the boot academy, not even the sentinel bucket.
+    assert await dedup.claim_next(academy_id="acad", processor_id="w") is None
+    assert (
+        await dedup.claim_next(academy_id=UNATTRIBUTED_QUARANTINE_ACADEMY, processor_id="w") is None
+    )
+    assert len(alerts) == 1
+    assert "evt_plain" in alerts[0]
+    assert QUARANTINE_UNATTRIBUTED in alerts[0]
+    # The structured alert log must name the bucket the row was stored under,
+    # not the boot academy, so ops correlate it with the Mongo filter.
+    quarantine_logs = [
+        r for r in caplog.records if r.getMessage() == "stripe_webhook_event_quarantined"
+    ]
+    assert len(quarantine_logs) == 1
+    assert quarantine_logs[0].academy_id == UNATTRIBUTED_QUARANTINE_ACADEMY
+
+
+@pytest.mark.asyncio
+async def test_accept_multi_academy_unknown_account_still_defers_to_processing_guard() -> None:
+    """An event that DOES carry a Connect account marker is out of scope for
+    ingest-time quarantine even when the account is unknown: it is stored under
+    the handler's academy and the existing processing-side guard rejects it
+    (with its own alert). No double quarantine machinery."""
+    dedup = FakeDedup()
+    uc = _build_ingest_handler(dedup, tenancy_mode="multi_academy")
+
+    res = await uc.accept(_UNKNOWN_ACCOUNT_EVENT, "test_signature")
+
+    assert res == {"received": True, "stored": True, "type": "account.updated"}
+    assert dedup.events["evt_unknown_acct"]["academy_id"] == "acad"
+    assert dedup.events["evt_unknown_acct"]["status"] == "received"
+
+
+@pytest.mark.asyncio
+async def test_accept_multi_academy_marked_events_are_not_quarantined() -> None:
+    """Both trusted markers still attribute normally in multi_academy mode."""
     dedup = FakeDedup()
     uc = HandleWebhookEvent(
         stripe=FakeStripeGateway(),
@@ -5038,26 +5166,90 @@ async def test_accept_falls_back_to_handler_academy_without_tenant_markers() -> 
         subscriptions=FakeSubscriptionRepo(),
         outbox=FakeOutbox(),
         academy_id="acad",
-        connected_accounts=_FakeAccountResolver({}),
+        connected_accounts=_FakeAccountResolver({"acct_b": "academy-b"}),
+        tenancy_mode="multi_academy",
     )
-    plain = json.dumps(
+    by_metadata = json.dumps(
         {
-            "id": "evt_plain",
+            "id": "evt_meta",
             "type": "checkout.session.completed",
-            "data": {"object": {"id": "cs_x"}},
+            "data": {"object": {"id": "cs_m", "metadata": {"academy_id": "academy-b"}}},
         }
     ).encode()
-    unknown_account = json.dumps(
+    by_account = json.dumps(
         {
-            "id": "evt_unknown_acct",
+            "id": "evt_acct",
             "type": "account.updated",
-            "account": "acct_unknown",
-            "data": {"object": {"id": "acct_unknown", "object": "account"}},
+            "account": "acct_b",
+            "data": {"object": {"id": "acct_b", "object": "account"}},
         }
     ).encode()
 
-    await uc.accept(plain, "test_signature")
-    await uc.accept(unknown_account, "test_signature")
+    await uc.accept(by_metadata, "test_signature")
+    await uc.accept(by_account, "test_signature")
 
-    assert dedup.events["evt_plain"]["academy_id"] == "acad"
-    assert dedup.events["evt_unknown_acct"]["academy_id"] == "acad"
+    assert dedup.events["evt_meta"]["academy_id"] == "academy-b"
+    assert dedup.events["evt_meta"]["status"] == "received"
+    assert dedup.events["evt_acct"]["academy_id"] == "academy-b"
+    assert dedup.events["evt_acct"]["status"] == "received"
+    claimed = await dedup.claim_next(academy_id="academy-b", processor_id="w")
+    assert claimed is not None and claimed["event_id"] == "evt_meta"
+
+
+@pytest.mark.asyncio
+async def test_replay_of_quarantined_unmarked_event_is_a_noop(monkeypatch) -> None:
+    """A Stripe retry of an already-quarantined event: dedup returns stored=False,
+    no second row, no second quarantine mark, no second alert."""
+    alerts: list[str] = []
+    monkeypatch.setattr(
+        handle_webhook_event_module,
+        "capture_message",
+        lambda msg, **_: alerts.append(msg) or True,
+    )
+    dedup = FakeDedup()
+    uc = _build_ingest_handler(dedup, tenancy_mode="multi_academy")
+
+    first = await uc.accept(_PLAIN_UNMARKED_EVENT, "test_signature")
+    second = await uc.accept(_PLAIN_UNMARKED_EVENT, "test_signature")
+
+    assert first["stored"] is True and first["status"] == "quarantined"
+    assert second == {"received": True, "stored": False, "type": "checkout.session.completed"}
+    assert len(dedup.events) == 1
+    assert dedup.events["evt_plain"]["status"] == "quarantined"
+    assert len(alerts) == 1
+
+
+@pytest.mark.asyncio
+async def test_quarantined_unmarked_event_never_reaches_payment_or_ledger_writes(
+    monkeypatch,
+) -> None:
+    """Draining after an ingest-time quarantine must find nothing to process,
+    for the boot academy and for a processor scoped to the sentinel bucket
+    alike, and no payment/outbox write may have happened."""
+    monkeypatch.setattr(handle_webhook_event_module, "capture_message", lambda msg, **_: True)
+    dedup = FakeDedup()
+    repo = FakePaymentRepo()
+    outbox = FakeOutbox()
+    uc = _build_ingest_handler(dedup, repo=repo, outbox=outbox, tenancy_mode="multi_academy")
+    sentinel_uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=dedup,
+        payments=repo,
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=outbox,
+        academy_id=UNATTRIBUTED_QUARANTINE_ACADEMY,
+        tenancy_mode="multi_academy",
+    )
+
+    await uc.accept(_PLAIN_UNMARKED_EVENT, "test_signature")
+
+    assert await uc.process_next(processor_id="test-worker") == {
+        "processed": False,
+        "empty": True,
+    }
+    assert await sentinel_uc.process_next(processor_id="test-worker") == {
+        "processed": False,
+        "empty": True,
+    }
+    assert repo.by_id == {}
+    assert outbox.events == []
