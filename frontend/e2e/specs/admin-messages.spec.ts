@@ -135,6 +135,84 @@ async function stubMessagesPage(page: Page): Promise<{ readCalls: string[] }> {
   return { readCalls };
 }
 
+/**
+ * #892: a DM from a family whose contact is NOT in the `role=parent` roster.
+ * The thread list used to title it with the literal word "Parent"; the admin
+ * directory already knows the name.
+ */
+const OTHER_ID = "usr-2";
+const OTHER_NAME = "Priya Menon";
+
+async function stubMessagesWithNonParentContact(page: Page): Promise<void> {
+  const messages = [
+    ...seedMessages(),
+    {
+      message_id: "m-other",
+      kind: "dm",
+      sender_id: OTHER_ID,
+      recipient_id: ADMIN_USER_A.user_id,
+      counterparty_id: OTHER_ID,
+      body: "Is Saturday practice still on?",
+      created_at: "2026-09-19T10:00:00Z",
+      sent_at: "2026-09-19T10:00:00Z",
+      is_broadcast: false,
+      is_read: true,
+    },
+  ];
+
+  await stubMe(page, ADMIN_USER_A);
+  await stubMemberships(page, [
+    { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+  ]);
+  await stubAcademy(page, ACADEMY_A);
+
+  await page.route("**/api/v2/admin/**", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {});
+  });
+  await page.route("**/api/v2/admin/inbox/counts*", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
+  // The parent-role roster has only the one parent; the whole directory knows
+  // the family's other contact. Before #892 the second thread read "Parent".
+  await page.route("**/api/v2/admin/users*", (route) => {
+    const parentOnly = route.request().url().includes("role=parent");
+    return fulfillJson(route, {
+      users: parentOnly
+        ? [
+            {
+              user_id: PARENT_ID,
+              display_name: PARENT_NAME,
+              email: "dana@example.com",
+              roles: ["parent"],
+              status: "active",
+            },
+          ]
+        : [
+            {
+              user_id: PARENT_ID,
+              display_name: PARENT_NAME,
+              email: "dana@example.com",
+              roles: ["parent"],
+              status: "active",
+            },
+            {
+              user_id: OTHER_ID,
+              display_name: OTHER_NAME,
+              email: "priya@example.com",
+              roles: ["guardian"],
+              status: "active",
+            },
+          ],
+    });
+  });
+
+  await page.route("**/api/v2/admin/messages", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { messages });
+  });
+}
+
 test.describe("admin direct messages (#864)", () => {
   test("thread row shows unread and the LATEST message, and opening clears it", async ({
     page,
@@ -195,6 +273,26 @@ test.describe("admin direct messages (#864)", () => {
     await back.click();
     await expect(page.getByTestId("dm-list-panel")).toBeVisible();
     await expect(page.getByTestId("dm-thread-panel")).toHaveCount(0);
+  });
+
+  test("a thread from outside the parent roster still shows the family name (#892)", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    await stubMessagesWithNonParentContact(page);
+
+    await page.goto("/admin/messages");
+    await expect(page.getByTestId("admin-messages")).toBeVisible();
+
+    const rows = page.getByTestId("dm-thread-row");
+    await expect(rows).toHaveCount(2);
+    await expect(page.getByTestId("dm-thread-list")).toContainText(PARENT_NAME);
+    await expect(page.getByTestId("dm-thread-list")).toContainText(OTHER_NAME);
+    // The literal fallback is the last resort, not the default for anyone the
+    // parent-role roster happens to miss.
+    await expect(
+      page.getByTestId("dm-thread-list").getByText("Parent", { exact: true }),
+    ).toHaveCount(0);
   });
 
   test("the ?dm= deep link marks the thread read too, not just a row click", async ({

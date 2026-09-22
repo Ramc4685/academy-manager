@@ -38,6 +38,7 @@ import {
   invoiceActionId,
   isLedgerInvoiceRow,
   paidCents,
+  formatPeriodLabel,
   paymentDisplayLabel,
   skipReasonLabel,
 } from "./format";
@@ -364,7 +365,8 @@ export function GenerateDialog({
                   </span>
                   <span>
                     {" "}
-                    skipped for {detail.billing_period} · {skipReasonLabel(detail.reason_code)}
+                    skipped for {formatPeriodLabel(detail.billing_period)} ·{" "}
+                    {skipReasonLabel(detail.reason_code)}
                   </span>
                   <span className="block text-xs">
                     {detail.resume_on
@@ -1120,7 +1122,7 @@ export function refundSubject(payment: AdminPaymentView): string {
     payment.parent_name || "Family on file",
     payment.student_name || "Unassigned",
     payment.invoice_number || paymentDisplayLabel(payment),
-    payment.period || "No period",
+    formatPeriodLabel(payment.period) || "No period",
     `${formatCents(settled ?? finalCents(payment))} paid`,
   ].join(" · ");
 }
@@ -1143,6 +1145,19 @@ export function refundAmountCents(input: string): number | null {
 export function refundAmountInvalid(input: string, maxCents: number): boolean {
   const cents = refundAmountCents(input);
   return cents === null || cents <= 0 || cents > maxCents;
+}
+
+/**
+ * #892: what a refund actually does, in the dialog that does it. The dialog
+ * said only "Refund up to $X" — nothing about where the money goes, when it
+ * lands, or that there is no undo. Stripe and manual refunds settle
+ * differently, so the timing sentence follows the money's route.
+ */
+export function refundConsequence(payment: AdminPaymentView): string {
+  const timing = payment.stripe_linked
+    ? "Stripe refunds usually take 5-10 business days to appear."
+    : "Record the transfer yourself — the academy sends the money.";
+  return `Money goes back to the original payment method. ${timing} A refund cannot be undone.`;
 }
 
 export function RefundDialog({
@@ -1228,9 +1243,14 @@ export function RefundDialog({
         >
           {error && <Alert tone="red">{error}</Alert>}
           {payment && (
-            <p className="text-sm text-rally-ink" data-testid="refund-subject">
-              {refundSubject(payment)}
-            </p>
+            <>
+              <p className="text-sm text-rally-ink" data-testid="refund-subject">
+                {refundSubject(payment)}
+              </p>
+              <p className="text-sm text-rally-muted" data-testid="refund-consequence">
+                {refundConsequence(payment)}
+              </p>
+            </>
           )}
           <Field label={`Amount (USD, up to ${formatCents(maxCents)})`} required>
             <input
@@ -1268,8 +1288,11 @@ export function RefundDialog({
             <Button variant="secondary" size="sm" type="button" onClick={close}>
               Cancel
             </Button>
+            {/* #892: a refund is the one money action with no undo, so it
+                wears the same danger-outline confirm as Void rather than the
+                cobalt primary every harmless dialog uses. */}
             <Button
-              variant="primary"
+              variant="danger"
               size="sm"
               type="submit"
               disabled={amountInvalid || reason.trim().length === 0 || mutation.isPending}

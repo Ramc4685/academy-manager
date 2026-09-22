@@ -62,11 +62,28 @@ function AdminMessagesContent() {
   // #841: every thread used to be titled "Direct conversation". The parent
   // directory is already an admin-visible read, so the family's name comes
   // from there rather than from a widened message DTO.
+  // #892: the parent-role roster is not the whole academy. A family whose
+  // contact is filed under another role — or any thread opened before that
+  // roster lands — fell through to the literal word "Parent" while the
+  // directory already knew the name. The directory read is the same
+  // `listAdminUsers()` People search and the roles panel already make.
   const parentsQuery = useParents();
-  const parents = parentsQuery.data?.users ?? [];
-  const parentNameById = new Map(parents.map((u) => [u.user_id, u.display_name]));
+  const directoryQuery = useQuery({
+    queryKey: queryKeys.admin.users(),
+    queryFn: () => listAdminUsers(),
+  });
+  const nameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const u of directoryQuery.data?.users ?? []) {
+      if (u.display_name) map.set(u.user_id, u.display_name);
+    }
+    for (const u of parentsQuery.data?.users ?? []) {
+      if (u.display_name) map.set(u.user_id, u.display_name);
+    }
+    return map;
+  }, [directoryQuery.data, parentsQuery.data]);
   const nameFor = (userId: string | null): string =>
-    (userId && parentNameById.get(userId)) || "Parent";
+    (userId && nameById.get(userId)) || "Parent";
 
   const dmThreads = useMemo(() => buildDmThreads(dms), [dms]);
 

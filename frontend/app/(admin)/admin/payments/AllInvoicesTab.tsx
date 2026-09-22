@@ -37,6 +37,7 @@ import { useIsPhone } from "@/lib/use-is-phone";
 
 import {
   formatCents,
+  formatPeriodLabel,
   methodChip,
   paidCents,
   paymentDisplayLabel,
@@ -453,7 +454,7 @@ export function AllInvoicesTab() {
                         {label} · {p.parent_name || "Parent on file"}
                       </div>
                       <div>
-                        {p.period || "No period"} · paid{" "}
+                        {formatPeriodLabel(p.period) || "No period"} · paid{" "}
                         {rowPaidCents === null ? "—" : formatCents(rowPaidCents)}
                         {p.discount_cents ? ` · less ${formatCents(p.discount_cents)}` : ""}
                       </div>
@@ -466,9 +467,11 @@ export function AllInvoicesTab() {
                       {/* The Stripe ids and the reconciliation note are the
                           evidence `billing-trust-recovery.spec.ts` reads off
                           the row, so the phone layout carries them too — the
-                          trail must not depend on screen width. */}
+                          trail must not depend on screen width. #892 folds the
+                          ids themselves into a disclosure: the trail stays,
+                          the `pi_…` noise stops being the default reading. */}
                       {stripeSummary && (
-                        <div className="break-all font-mono text-[11px]">{stripeSummary}</div>
+                        <StripeIdDetails summary={stripeSummary} paymentId={p.payment_id} />
                       )}
                       {reconciliation && (
                         <div className="font-medium text-amber-700">{reconciliation}</div>
@@ -533,9 +536,7 @@ export function AllInvoicesTab() {
                         {(stripeSummary || reconciliation) && (
                           <div className="mt-1 max-w-[280px] space-y-0.5 text-xs text-rally-subtle">
                             {stripeSummary && (
-                              <div className="truncate font-mono" title={stripeSummary}>
-                                {stripeSummary}
-                              </div>
+                              <StripeIdDetails summary={stripeSummary} paymentId={p.payment_id} />
                             )}
                             {reconciliation && (
                               <div className="font-medium text-amber-700">
@@ -553,7 +554,9 @@ export function AllInvoicesTab() {
                           {p.parent_name || "Parent on file"}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-rally-muted">{p.period || "—"}</td>
+                      <td className="px-4 py-3 text-rally-muted">
+                        {formatPeriodLabel(p.period) || "—"}
+                      </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums">{formatCents(p.amount_cents)}</td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-rally-subtle">
                         {p.discount_cents ? formatCents(p.discount_cents) : "—"}
@@ -688,3 +691,20 @@ export function AllInvoicesTab() {
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
+
+/**
+ * #892: the Stripe object ids behind a disclosure. They are the reconciliation
+ * trail `billing-trust-recovery.spec.ts` reads off a row, so they stay in the
+ * row — but "pi_3QwT…" is not what an admin reads an invoice list for, and it
+ * was the first thing the list said. Collapsed by default, one tap away.
+ */
+function StripeIdDetails({ summary, paymentId }: { summary: string; paymentId: string }) {
+  return (
+    <details data-testid={`stripe-ids-${paymentId}`}>
+      <summary className="cursor-pointer text-xs text-rally-subtle">Stripe details</summary>
+      <div className="mt-1 break-all font-mono text-[11px] text-rally-subtle" title={summary}>
+        {summary}
+      </div>
+    </details>
+  );
+}

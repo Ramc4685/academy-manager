@@ -304,15 +304,24 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByText("invoice.payment_failed")).toBeVisible();
     await expect(page.getByText("QUARANTINED")).toBeVisible();
     await expect(page.getByText("duplicate obligation")).toBeVisible();
-    await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
-      "in_test_failed_1",
-    );
-    await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
-      "pi_test_failed_1",
-    );
+    // #892: the reconciliation trail stays on the row, but the raw Stripe ids
+    // are no longer the first thing the row says — they sit behind a
+    // disclosure. The note an admin has to act on stays visible.
     await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
       "missing allocation",
     );
+    const stripeIds = page.getByTestId("stripe-ids-pmt_failed_1");
+    await expect(stripeIds).toBeVisible();
+    // Closed disclosure: the ids are in the DOM (and in the trail) but nothing
+    // on the row renders them until an admin asks for them.
+    await expect(stripeIds).toContainText("in_test_failed_1");
+    await expect(stripeIds).toContainText("pi_test_failed_1");
+    await expect(stripeIds.getByText("in_test_failed_1")).toBeHidden();
+    await expect(stripeIds.getByText("pi_test_failed_1")).toBeHidden();
+
+    await stripeIds.getByText("Stripe details").click();
+    await expect(stripeIds.getByText("in_test_failed_1")).toBeVisible();
+    await expect(stripeIds.getByText("pi_test_failed_1")).toBeVisible();
 
     // Payments points at Billing Health rather than carrying the lookup.
     await expect(page.getByTestId("billing-health-pointer")).toBeVisible();

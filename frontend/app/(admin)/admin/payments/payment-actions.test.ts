@@ -10,6 +10,7 @@ import {
   paymentRowActions,
   refundAmountCents,
   refundAmountInvalid,
+  refundConsequence,
   refundSubject,
   refundableCents,
   splitPaymentRowActions,
@@ -191,7 +192,8 @@ describe("the refund dialog names the family and demands an amount (#861)", () =
     expect(subject).toContain("Rina Rao");
     expect(subject).toContain("Ananya Rao");
     expect(subject).toContain("INV-1042");
-    expect(subject).toContain("2026-09");
+    // #892 renders the same period as a month name — still named, no longer a key.
+    expect(subject).toContain("September 2026");
     expect(subject).toContain("$120.00");
   });
 
@@ -256,5 +258,80 @@ describe("money lists stay readable at 1280 and tappable at 400 (#861)", () => {
     expect(src).toContain("min-h-touch");
     expect(src).toContain("OverflowMenu");
     expect(src).toContain("useIsPhone");
+  });
+});
+
+/**
+ * Issue #892 — the refund dialog never said what a refund does.
+ *
+ * "Refund up to $X" is a cap, not a consequence: it omits where the money
+ * goes, when it lands and that there is no undo. The confirm was the ordinary
+ * cobalt primary every harmless dialog wears.
+ */
+describe("the refund dialog states destination, timing and finality (#892)", () => {
+  const stripePayment = {
+    payment_id: "pmt_1",
+    period: "2026-09",
+    stripe_linked: true,
+    amount_cents: 12000,
+    discount_cents: 0,
+    paid_amount_cents: 12000,
+    refunded_cents: 0,
+    status: "succeeded",
+  } as AdminPaymentView;
+
+  it("names the destination and the finality on a Stripe payment", () => {
+    const line = refundConsequence(stripePayment);
+    expect(line).toMatch(/original payment method/i);
+    expect(line).toMatch(/cannot be undone/i);
+    expect(line).toMatch(/5-10 business days/i);
+  });
+
+  it("does not promise Stripe timing for a manual payment", () => {
+    const manual = { ...stripePayment, stripe_linked: false } as AdminPaymentView;
+    const line = refundConsequence(manual);
+    expect(line).toMatch(/original payment method/i);
+    expect(line).toMatch(/cannot be undone/i);
+    expect(line).not.toMatch(/business days/i);
+  });
+
+  it("reads the period as a month, not as a key", () => {
+    expect(refundSubject(stripePayment)).toContain("September 2026");
+    expect(refundSubject(stripePayment)).not.toContain("2026-09");
+  });
+
+  it("renders the consequence and a danger-outline confirm, not a cobalt one", () => {
+    const src = source("dialogs.tsx");
+    expect(src).toContain('data-testid="refund-consequence"');
+    expect(src).toMatch(/variant="danger"[\s\S]{0,240}data-testid="refund-submit"/);
+    expect(src).not.toMatch(/variant="primary"[\s\S]{0,240}data-testid="refund-submit"/);
+  });
+});
+
+describe("Payments speaks academy, not Stripe (#892)", () => {
+  it("puts the raw Stripe ids behind a disclosure on both layouts", () => {
+    const src = source("AllInvoicesTab.tsx");
+    expect(src).toContain("<details");
+    expect(src).toContain("StripeIdDetails");
+    // Two renders — the phone row and the table cell — and neither prints the
+    // summary straight into the row any more.
+    expect(src.match(/<StripeIdDetails /g)?.length).toBe(2);
+    expect(src).not.toMatch(/>\{stripeSummary\}</);
+    // The disclosure carries its own test id prefix, never the row's.
+    expect(src).toMatch(/data-testid=\{`stripe-ids-\$\{paymentId\}`\}/);
+    expect(src).not.toMatch(/data-testid=\{`payment-row-\$\{[^}]+\}-stripe/);
+  });
+
+  it("formats every period the invoices list shows", () => {
+    const src = source("AllInvoicesTab.tsx");
+    expect(src).toContain("formatPeriodLabel");
+    expect(src).not.toMatch(/\{p\.period \|\| "No period"\}/);
+    expect(src).not.toMatch(/\{p\.period \|\| "—"\}/);
+  });
+
+  it("formats the period on the skipped-deferral list too", () => {
+    const src = source("dialogs.tsx");
+    expect(src).not.toContain("{detail.billing_period}");
+    expect(src).toContain("formatPeriodLabel(detail.billing_period)");
   });
 });

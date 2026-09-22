@@ -12,8 +12,53 @@ export function formatDate(value: string): string {
   });
 }
 
+/**
+ * #892: a period is money wording, not a key. The list, the table, the refund
+ * dialog and the skipped-deferral list all said "2026-09"; an admin reading a
+ * refund has to recognise the month at a glance. Anything that is not a
+ * `YYYY-MM` key is handed back untouched so a period never silently vanishes.
+ */
+export function formatPeriodLabel(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})$/.exec(value.trim());
+  if (!match) return value;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return value;
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * #892: the skipped-deferral list printed the raw code ("skipped by admin",
+ * "enrollment paused"). These are the codes `MonthlyGenerationSkippedDetail`
+ * carries — the deferral types plus the three the monthly run stamps itself.
+ * An unknown code still reads as a sentence rather than throwing, because the
+ * backend can add one without the UI shipping again.
+ */
+const SKIP_REASON_LABELS: Readonly<Record<string, string>> = {
+  skipped_by_admin: "Skipped this month",
+  legacy_skip_period: "Skipped this month",
+  manual_skip: "Skipped by hand",
+  enrollment_paused: "Enrollment paused",
+  pending_cancellation: "Leaving at the end of the period",
+  admin_hold: "On hold",
+  admin_pause: "Paused by the academy",
+  fixed_pause: "Paused until a set date",
+  stale_pause: "Pause needs review",
+  capacity_blocked_resume: "Class is full, cannot resume",
+  active_stripe_subscription_mismatch: "Subscription does not match",
+};
+
 export function skipReasonLabel(value: string): string {
-  return value.replaceAll("_", " ");
+  const known = SKIP_REASON_LABELS[value];
+  if (known) return known;
+  const words = value.replaceAll("_", " ").trim();
+  if (!words) return value;
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export function finalCents(payment: AdminPaymentView): number {
@@ -21,7 +66,7 @@ export function finalCents(payment: AdminPaymentView): number {
 }
 
 export function paymentDisplayLabel(payment: AdminPaymentView): string {
-  if (payment.period) return `Tuition for ${payment.period}`;
+  if (payment.period) return `Tuition for ${formatPeriodLabel(payment.period)}`;
   return payment.stripe_linked ? "Stripe payment" : "Manual payment";
 }
 
