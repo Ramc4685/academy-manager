@@ -79,6 +79,19 @@ export const Icon: Record<string, IconFactory> = {
       s,
       c,
     ),
+  // A lanyard badge: the staff who work here, as opposed to the families
+  // they serve (sidebar regroup spec §2.2 row 7).
+  badge: (s = 16, c = "currentColor") =>
+    stroke(
+      <>
+        <rect x="5" y="7" width="14" height="14" rx="2" />
+        <path d="M10 7V4.5A1.5 1.5 0 0 1 11.5 3h1A1.5 1.5 0 0 1 14 4.5V7" />
+        <circle cx="12" cy="12.5" r="2" />
+        <path d="M8.5 18c0-1.7 1.6-2.8 3.5-2.8s3.5 1.1 3.5 2.8" />
+      </>,
+      s,
+      c,
+    ),
   filter: (s = 16, c = "currentColor") =>
     stroke(<path d="M3 5h18M6 12h12M10 19h4" />, s, c),
   dl: (s = 16, c = "currentColor") =>
