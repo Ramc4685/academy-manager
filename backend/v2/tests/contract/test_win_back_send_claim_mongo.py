@@ -52,7 +52,7 @@ async def test_a_fresh_claim_succeeds_and_can_be_marked_sent(db, with_index: boo
             dropped_event_id="evt-0",
         )
         assert claim is not None, "try_claim returned None — the digest_date claim key is missing"
-        await repo.mark_sent(claim["send_id"])
+        await repo.mark_sent(ACADEMY_ID, claim["send_id"])
 
     sent = await db["win_back_notice_sends"].find_one({"send_id": claim["send_id"]})
     assert sent is not None
@@ -74,7 +74,7 @@ async def test_two_ticks_same_milestone_send_exactly_once(db, with_index: bool) 
             dropped_event_id="evt-1",
         )
         assert first_claim is not None
-        await repo.mark_sent(first_claim["send_id"])
+        await repo.mark_sent(ACADEMY_ID, first_claim["send_id"])
 
         # A second tick for the SAME milestone AND SAME departure event
         # (e.g. a late-running job on the next day, before the 60-day
@@ -110,7 +110,7 @@ async def test_a_later_milestone_gets_its_own_claim(db, with_index: bool) -> Non
             dropped_event_id="evt-1",
         )
         assert first is not None
-        await repo.mark_sent(first["send_id"])
+        await repo.mark_sent(ACADEMY_ID, first["send_id"])
 
         second = await repo.try_claim(
             academy_id=ACADEMY_ID,
@@ -140,7 +140,7 @@ async def test_a_second_departure_cycle_gets_its_own_claim(db, with_index: bool)
             dropped_event_id="evt-cycle-1",
         )
         assert first is not None
-        await repo.mark_sent(first["send_id"])
+        await repo.mark_sent(ACADEMY_ID, first["send_id"])
 
         second = await repo.try_claim(
             academy_id=ACADEMY_ID,
@@ -152,7 +152,7 @@ async def test_a_second_departure_cycle_gets_its_own_claim(db, with_index: bool)
             "second departure cycle's claim was blocked by the first cycle's "
             "row — dropped_event_id is not part of the claim key"
         )
-        await repo.mark_sent(second["send_id"])
+        await repo.mark_sent(ACADEMY_ID, second["send_id"])
 
     sent_count = await db["win_back_notice_sends"].count_documents(
         {"academy_id": ACADEMY_ID, "student_id": "stu-2", "milestone_key": "30", "status": "sent"}

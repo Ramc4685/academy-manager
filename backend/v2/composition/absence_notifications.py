@@ -153,15 +153,17 @@ class MongoAbsenceNoticeSendRepository(TenantScopedRepository):
             digest_date=audience,
         )
 
-    async def mark_sent(self, send_id: str) -> None:
+    async def mark_sent(self, academy_id: str, send_id: str) -> None:
         await self.collection.update_one(
-            {"send_id": send_id},
+            {"academy_id": academy_id, "send_id": send_id},
             {"$set": {"status": str(DigestSendStatus.SENT), "failed_reason": None}},
         )
 
-    async def mark_failed(self, send_id: str, reason: str, *, retryable: bool = True) -> None:
+    async def mark_failed(
+        self, academy_id: str, send_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         await self.collection.update_one(
-            {"send_id": send_id},
+            {"academy_id": academy_id, "send_id": send_id},
             {
                 "$set": {
                     "status": str(DigestSendStatus.FAILED),
@@ -538,7 +540,9 @@ class AbsenceNoticeNotificationAdapter:
 
         resolved = await recipients()
         if not resolved:
-            await self._notice_sends.mark_failed(send_id, "no_recipient", retryable=False)
+            await self._notice_sends.mark_failed(
+                academy_id, send_id, "no_recipient", retryable=False
+            )
             return
 
         failure: str | None = None
@@ -552,9 +556,9 @@ class AbsenceNoticeNotificationAdapter:
             )
             failure = failure or reason
         if failure is None:
-            await self._notice_sends.mark_sent(send_id)
+            await self._notice_sends.mark_sent(academy_id, send_id)
         else:
-            await self._notice_sends.mark_failed(send_id, failure)
+            await self._notice_sends.mark_failed(academy_id, send_id, failure)
 
     async def _send_one(
         self,

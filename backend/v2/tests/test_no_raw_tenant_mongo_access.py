@@ -19,6 +19,14 @@ Scope (tightened by MT4, 2026-07-21):
   filter/parameter, or a ``TenantScopedRepository._scoped(...)`` helper call.
   Reaching into *another* object's ``.collection`` (bypassing its scoped
   methods) is always flagged.
+- A repository's OWN ``self.collection`` is also inspected for the mutating
+  methods (update / replace / delete / find_one_and_*): inside a class that
+  declares a literal ``collection_name`` not listed in ``GLOBAL_COLLECTIONS``,
+  such a call must carry a scoping signal (issue #880: the digest mark_*
+  updates filtered on a bare ``digest_id`` and nothing here noticed, because
+  ``self.collection`` was never looked at). Reads on ``self.collection`` are
+  left alone to keep the ratchet from over-firing on already-scoped list
+  queries. See docs/agent/backend-api-rules.md, "Tenant-scope guard test".
 
 The heuristic deliberately over-approves (a function that merely mentions
 ``academy_id`` is trusted). That is acceptable for a ratchet: it reliably
@@ -82,6 +90,13 @@ TENANT_OWNED_COLLECTIONS = {
     "level_up_recommendations",
     "skill_certificates",
     "coach_skill_notes",
+    # curriculum (migration 0124) — added by #881
+    "lesson_cards",
+    "curriculum_video_refs",
+    # digest sends: per-academy rows, written from a cron path that scopes
+    # explicitly rather than through the ContextVar (#880)
+    "coach_digest_sends",
+    "parent_digest_sends",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
@@ -123,6 +138,22 @@ MONGO_METHODS = {
     "update_many",
     "update_one",
 }
+
+# Methods that write. An unscoped one of these on a repository's own
+# ``self.collection`` can change another tenant's row (#880); unscoped reads
+# are a leak too, but are left to the collection-literal check above so this
+# ratchet does not fire on list queries that scope by their own filter.
+MUTATING_METHODS = {
+    "delete_many",
+    "delete_one",
+    "find_one_and_delete",
+    "find_one_and_replace",
+    "find_one_and_update",
+    "replace_one",
+    "update_many",
+    "update_one",
+}
+assert MUTATING_METHODS <= MONGO_METHODS
 
 # Substrings whose presence at a call site or in the enclosing function marks an
 # access as tenant-scoped. ``academy_id`` also matches ``current_academy_id(``.
@@ -339,6 +370,105 @@ def test_reaching_into_foreign_repo_collection_is_flagged(tmp_path) -> None:
     assert ".collection" in accesses[0].detail
 
 
+def test_unscoped_mutation_on_own_collection_is_flagged(tmp_path) -> None:
+    # The #880 shape: a repository updating its own collection by a bare id.
+    path = tmp_path / "bad_own.py"
+    path.write_text(
+        "class BadRepo(TenantScopedRepository):\n"
+        '    collection_name = "coach_digest_sends"\n'
+        "    async def mark(self, digest_id):\n"
+        "        await self.collection.update_one({'digest_id': digest_id}, {'$set': {}})\n",
+        encoding="utf-8",
+    )
+    accesses = _raw_mongo_accesses(path, Path("bad_own.py"))
+    assert len(accesses) == 1
+    assert accesses[0].detail == (
+        "unscoped `self.collection.update_one` in the repository for `coach_digest_sends`"
+    )
+
+
+def test_unscoped_mutation_is_flagged_for_an_unregistered_collection_too(tmp_path) -> None:
+    # A NEW collection needs no registration to be guarded: any declared
+    # repository collection that is not listed as global is treated as tenant-owned.
+    path = tmp_path / "bad_new.py"
+    path.write_text(
+        "class NewRepo(TenantScopedRepository):\n"
+        '    collection_name = "brand_new_things"\n'
+        "    async def drop(self, thing_id):\n"
+        "        await self.collection.delete_one({'thing_id': thing_id})\n",
+        encoding="utf-8",
+    )
+    accesses = _raw_mongo_accesses(path, Path("bad_new.py"))
+    assert len(accesses) == 1
+    assert "brand_new_things" in accesses[0].detail
+
+
+def test_explicitly_scoped_mutation_on_own_collection_is_clean(tmp_path) -> None:
+    # The cron-path pattern: academy_id threaded through as a parameter.
+    path = tmp_path / "ok_own_explicit.py"
+    path.write_text(
+        "class Repo(TenantScopedRepository):\n"
+        '    collection_name = "coach_digest_sends"\n'
+        "    async def mark(self, academy_id, digest_id):\n"
+        "        await self.collection.update_one(\n"
+        "            {'academy_id': academy_id, 'digest_id': digest_id}, {'$set': {}}\n"
+        "        )\n",
+        encoding="utf-8",
+    )
+    assert _raw_mongo_accesses(path, Path("ok_own_explicit.py")) == []
+
+
+def test_helper_scoped_mutation_on_own_collection_is_clean(tmp_path) -> None:
+    # The request-path pattern: the TenantScopedRepository helpers inject
+    # academy_id via _scoped(); they never touch self.collection directly here.
+    path = tmp_path / "ok_own_helper.py"
+    path.write_text(
+        "class Repo(TenantScopedRepository):\n"
+        '    collection_name = "lesson_cards"\n'
+        "    async def rename(self, card_id, title):\n"
+        "        await self._update_one({'card_id': card_id}, {'$set': {'title': title}})\n"
+        "    async def raw(self, card_id):\n"
+        "        await self.collection.update_one(self._scoped({'card_id': card_id}), {})\n",
+        encoding="utf-8",
+    )
+    assert _raw_mongo_accesses(path, Path("ok_own_helper.py")) == []
+
+
+def test_unscoped_mutation_on_a_global_collection_is_clean(tmp_path) -> None:
+    path = tmp_path / "ok_global_repo.py"
+    path.write_text(
+        "class Users(TenantScopedRepository):\n"
+        '    collection_name = "users"\n'
+        "    async def touch(self, user_id):\n"
+        "        await self.collection.update_one({'user_id': user_id}, {'$set': {}})\n",
+        encoding="utf-8",
+    )
+    assert _raw_mongo_accesses(path, Path("ok_global_repo.py")) == []
+
+
+def test_own_collection_reads_are_not_flagged(tmp_path) -> None:
+    # Reads are covered by the collection-literal check, not this one: a
+    # list query scoped by its own filter must not trip the ratchet.
+    path = tmp_path / "ok_own_read.py"
+    path.write_text(
+        "class Repo(TenantScopedRepository):\n"
+        '    collection_name = "coach_digest_sends"\n'
+        "    def recent(self, limit):\n"
+        "        return self.collection.find({}).limit(limit)\n",
+        encoding="utf-8",
+    )
+    assert _raw_mongo_accesses(path, Path("ok_own_read.py")) == []
+
+
+def test_issue_881_collections_are_registered_as_tenant_owned() -> None:
+    assert {
+        "lesson_cards",
+        "curriculum_video_refs",
+        "coach_digest_sends",
+        "parent_digest_sends",
+    } <= TENANT_OWNED_COLLECTIONS
+
+
 def _is_approved_path(rel_path: Path) -> bool:
     parts = rel_path.parts
     if "tests" in parts or "migrations" in parts:
@@ -377,6 +507,13 @@ class _RawMongoAccessVisitor(ast.NodeVisitor):
         self.aliases: dict[str, str] = {}
         self.accesses: list[RawMongoAccess] = []
         self._func_stack: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        # Literal ``collection_name`` of each enclosing class (None when absent).
+        self._class_collection_stack: list[str | None] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._class_collection_stack.append(_declared_collection_name(node))
+        self.generic_visit(node)
+        self._class_collection_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._func_stack.append(node)
@@ -421,7 +558,23 @@ class _RawMongoAccessVisitor(ast.NodeVisitor):
                             detail=f"raw repository `.collection` access via `{node.func.attr}`",
                         )
                     )
+            elif node.func.attr in MUTATING_METHODS and _is_own_collection(node.func.value):
+                own = self._own_collection_name()
+                if own is not None and own not in GLOBAL_COLLECTIONS and not self._is_scoped(node):
+                    self.accesses.append(
+                        RawMongoAccess(
+                            path=self.rel_path,
+                            line=node.lineno,
+                            detail=(
+                                f"unscoped `self.collection.{node.func.attr}` in the "
+                                f"repository for `{own}`"
+                            ),
+                        )
+                    )
         self.generic_visit(node)
+
+    def _own_collection_name(self) -> str | None:
+        return self._class_collection_stack[-1] if self._class_collection_stack else None
 
     def _is_scoped(self, node: ast.Call) -> bool:
         segment = ast.get_source_segment(self.source, node) or ""
@@ -451,6 +604,30 @@ class _RawMongoAccessVisitor(ast.NodeVisitor):
         if not (isinstance(node, ast.Attribute) and node.attr == "collection"):
             return False
         return not (isinstance(node.value, ast.Name) and node.value.id == "self")
+
+
+def _is_own_collection(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "collection"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+def _declared_collection_name(node: ast.ClassDef) -> str | None:
+    """The class's literal ``collection_name = "<name>"``, if it declares one."""
+    for stmt in node.body:
+        targets: list[ast.expr] = []
+        value: ast.expr | None = None
+        if isinstance(stmt, ast.Assign):
+            targets, value = list(stmt.targets), stmt.value
+        elif isinstance(stmt, ast.AnnAssign):
+            targets, value = [stmt.target], stmt.value
+        if any(isinstance(t, ast.Name) and t.id == "collection_name" for t in targets):
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+    return None
 
 
 def _is_collection_lookup(node: ast.Subscript) -> bool:

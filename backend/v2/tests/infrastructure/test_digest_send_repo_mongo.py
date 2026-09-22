@@ -13,6 +13,9 @@ from backend.v2.contexts.communications.domain.models import DigestSendStatus
 from backend.v2.contexts.communications.infrastructure.mongo_digest_send_repo import (
     MongoDigestSendRepository,
 )
+from backend.v2.contexts.communications.infrastructure.mongo_parent_digest_send_repo import (
+    MongoParentDigestSendRepository,
+)
 from backend.v2.shared.tenancy.context import tenant_scope
 from mongomock_motor import AsyncMongoMockClient
 
@@ -64,7 +67,7 @@ async def test_mark_transitions() -> None:
 
         sent = await repo.try_claim(ACADEMY_ID, "coach-sent", DIGEST_DATE)
         assert sent is not None
-        await repo.mark_sent(sent.digest_id, "prov-123")
+        await repo.mark_sent(ACADEMY_ID, sent.digest_id, "prov-123")
         assert await _status(db, sent.digest_id) == DigestSendStatus.SENT
         doc = await db["coach_digest_sends"].find_one({"digest_id": sent.digest_id})
         assert doc["provider_message_id"] == "prov-123"
@@ -72,14 +75,14 @@ async def test_mark_transitions() -> None:
 
         failed = await repo.try_claim(ACADEMY_ID, "coach-failed", DIGEST_DATE)
         assert failed is not None
-        await repo.mark_failed(failed.digest_id, "bounced")
+        await repo.mark_failed(ACADEMY_ID, failed.digest_id, "bounced")
         assert await _status(db, failed.digest_id) == DigestSendStatus.FAILED
         doc = await db["coach_digest_sends"].find_one({"digest_id": failed.digest_id})
         assert doc["failed_reason"] == "bounced"
 
         skipped = await repo.try_claim(ACADEMY_ID, "coach-skip", DIGEST_DATE)
         assert skipped is not None
-        await repo.mark_skipped_empty(skipped.digest_id)
+        await repo.mark_skipped_empty(ACADEMY_ID, skipped.digest_id)
         assert await _status(db, skipped.digest_id) == DigestSendStatus.SKIPPED_EMPTY
 
 
@@ -117,7 +120,7 @@ async def test_list_recent_returns_newest_first_with_display_date() -> None:
 
         daily = await repo.try_claim(ACADEMY_ID, "coach-1", DIGEST_DATE)
         assert daily is not None
-        await repo.mark_sent(daily.digest_id, "prov-1")
+        await repo.mark_sent(ACADEMY_ID, daily.digest_id, "prov-1")
         await repo.record_test_send(ACADEMY_ID, "coach-1", DIGEST_DATE)
 
         # A row for another academy must not leak in.
@@ -133,3 +136,56 @@ async def test_list_recent_returns_newest_first_with_display_date() -> None:
             assert r.digest_date == DIGEST_DATE
         kinds = {r.kind for r in rows}
         assert kinds == {"daily", "test"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mark", ["mark_sent", "mark_failed", "mark_skipped_empty"])
+@pytest.mark.parametrize(
+    ("repo_cls", "collection"),
+    [
+        (MongoDigestSendRepository, "coach_digest_sends"),
+        (MongoParentDigestSendRepository, "parent_digest_sends"),
+    ],
+)
+async def test_mark_from_another_academy_leaves_the_row_untouched(
+    repo_cls: type, collection: str, mark: str
+) -> None:
+    """Issue #880: the mark_* filter is ``(academy_id, digest_id)``, not ``digest_id``.
+
+    A caller holding academy B's id must not be able to flip a row that belongs
+    to academy A, even when it knows A's ``digest_id``.
+    """
+    db = AsyncMongoMockClient()["digest_test"]
+
+    async def status() -> str:
+        doc = await db[collection].find_one({"digest_id": own.digest_id})
+        return str(doc["status"])
+
+    with tenant_scope(ACADEMY_ID):
+        repo = repo_cls(db)
+        own = await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE)
+        assert own is not None
+
+    with tenant_scope("other-acad"):
+        other_repo = repo_cls(db)
+        if mark == "mark_sent":
+            await other_repo.mark_sent("other-acad", own.digest_id, "prov-x")
+        elif mark == "mark_failed":
+            await other_repo.mark_failed("other-acad", own.digest_id, "bounced")
+        else:
+            await other_repo.mark_skipped_empty("other-acad", own.digest_id)
+
+    assert await status() == DigestSendStatus.QUEUED
+
+    # The same call with the owning academy's id does take effect.
+    with tenant_scope(ACADEMY_ID):
+        if mark == "mark_sent":
+            await repo.mark_sent(ACADEMY_ID, own.digest_id, "prov-x")
+            expected = DigestSendStatus.SENT
+        elif mark == "mark_failed":
+            await repo.mark_failed(ACADEMY_ID, own.digest_id, "bounced")
+            expected = DigestSendStatus.FAILED
+        else:
+            await repo.mark_skipped_empty(ACADEMY_ID, own.digest_id)
+            expected = DigestSendStatus.SKIPPED_EMPTY
+    assert await status() == expected

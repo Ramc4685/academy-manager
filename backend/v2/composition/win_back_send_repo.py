@@ -68,15 +68,17 @@ class MongoWinBackSendRepository(TenantScopedRepository):
             digest_date=digest_date,
         )
 
-    async def mark_sent(self, send_id: str) -> None:
+    async def mark_sent(self, academy_id: str, send_id: str) -> None:
         await self.collection.update_one(
-            {"send_id": send_id},
+            {"academy_id": academy_id, "send_id": send_id},
             {"$set": {"status": str(DigestSendStatus.SENT), "failed_reason": None}},
         )
 
-    async def mark_failed(self, send_id: str, reason: str, *, retryable: bool = True) -> None:
+    async def mark_failed(
+        self, academy_id: str, send_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         await self.collection.update_one(
-            {"send_id": send_id},
+            {"academy_id": academy_id, "send_id": send_id},
             {
                 "$set": {
                     "status": str(DigestSendStatus.FAILED),
