@@ -81,6 +81,9 @@ class FakeWinBackSendRepository:
 
     def __init__(self) -> None:
         self._claimed: set[tuple[str, str, str, str]] = set()
+        #: send_id -> owning academy_id, so mark_sent can mirror the Mongo
+        #: ``{"academy_id": ..., "send_id": ...}`` filter (#880 pattern).
+        self._owner_by_send_id: dict[str, str] = {}
         self.sent_ids: list[str] = []
 
     async def try_claim(
@@ -91,10 +94,13 @@ class FakeWinBackSendRepository:
             return None
         self._claimed.add(key)
         send_id = f"send-{student_id}-{milestone_key}-{dropped_event_id}"
+        self._owner_by_send_id[send_id] = academy_id
         return {"send_id": send_id}
 
     async def mark_sent(self, academy_id: str, send_id: str) -> None:
-        if not any(k[0] == academy_id for k in self._claimed):  # (academy_id, send_id) filter
+        # Mirror Mongo: an update filtered on (academy_id, send_id) that matches
+        # no row is a silent no-op, never a cross-academy write (#880).
+        if self._owner_by_send_id.get(send_id) != academy_id:
             return
         self.sent_ids.append(send_id)
 
@@ -316,3 +322,24 @@ async def test_second_departure_cycle_gets_its_own_claim_namespace():
     assert len(notifier_two.sent) == 1
     assert (ACADEMY_ID, "stu-1", "30", "evt-stu-1") in send_repo._claimed
     assert (ACADEMY_ID, "stu-1", "30", "evt-stu-1-cycle-2") in send_repo._claimed
+
+
+@pytest.mark.asyncio
+async def test_fake_mark_calls_from_another_academy_are_no_ops():
+    """Fake fidelity (#880): the real repo filters on ``(academy_id, send_id)``,
+    so a mark issued with another academy's id must leave the row untouched,
+    even when that other academy holds unrelated claims of its own."""
+    repo = FakeWinBackSendRepository()
+    own = await repo.try_claim(
+        academy_id=ACADEMY_ID, student_id="stu-1", milestone_key="30", dropped_event_id="evt-1"
+    )
+    other = await repo.try_claim(
+        academy_id="acad-2", student_id="stu-2", milestone_key="30", dropped_event_id="evt-2"
+    )
+    assert own is not None and other is not None
+
+    await repo.mark_sent("acad-2", own["send_id"])
+    assert repo.sent_ids == []
+
+    await repo.mark_sent(ACADEMY_ID, own["send_id"])
+    assert repo.sent_ids == [own["send_id"]]

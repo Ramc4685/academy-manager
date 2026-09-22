@@ -41,6 +41,10 @@ TARGETS: dict[str, tuple[str, str]] = {
 
 
 async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
+    # Deploy-order note: this migration cannot tell whether the #880 code that
+    # updates by (academy_id, digest_id) is already running; it only checks
+    # that the per-academy index exists. The "code first, then 0191" order is
+    # enforced by the release note / manual apply step, not by this function.
     for collection, (stopgap, per_academy) in TARGETS.items():
         coll = db[collection]
         existing = await coll.index_information()
