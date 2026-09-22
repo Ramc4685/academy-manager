@@ -11,6 +11,7 @@ PR: #917
 - Messages page: in-page lane anchors (`#direct`, `#broadcast`, `#campaign`) with a labelled jump nav, so the page can be entered mid-way on a phone. The design-system `Card` gains an optional `id` prop for this.
 - Billing setup roster (`backend/v2/composition/admin.py`): students with an empty `parent_id` no longer produce a parent row keyed on nothing. The file stays at 4,485 lines against the 4,500 structural cap.
 - No routes added or removed; the route count stays at 92.
+- Tests: `backend/v2/tests/unit/test_billing_setup_roster_adapter.py` pins the empty-parent guard against the real composition roster (fails on the pre-fix line); Playwright assertions in `admin-session-creation-ui.spec.ts` (Waitlist link href) and `admin-messages.spec.ts` (lane jump links resolve to the three lane cards).
 
 ## Deploy notes
 
