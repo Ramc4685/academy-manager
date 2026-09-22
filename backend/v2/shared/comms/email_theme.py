@@ -19,6 +19,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from backend.v2.shared.comms.colour import readable_button_colors
+
 FONT_STACK = (
     "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 )
@@ -113,7 +115,10 @@ def button(
     safe_url = _html.escape(url, quote=True)
     safe_label = _html.escape(label)
     if variant == "primary":
-        style = f"background:{accent};color:#ffffff;border:1px solid {accent};"
+        # Text on the tenant's brand colour must clear WCAG AA (4.5:1): white
+        # on a light accent does not, so the pair is derived, not assumed.
+        fill, text = readable_button_colors(accent)
+        style = f"background:{fill};color:{text};border:1px solid {fill};"
     else:
         style = f"background:#ffffff;color:{INK};border:1px solid #cbd5e1;"
     return (

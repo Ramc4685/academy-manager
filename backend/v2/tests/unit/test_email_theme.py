@@ -40,6 +40,36 @@ def test_button_variants() -> None:
     assert "background:#ffffff" in secondary
     custom = t.button("Go", "https://x.test", accent="#abcdef")
     assert "background:#abcdef" in custom
+    # Light blue: white text fails AA (1.65:1), so the button switches to ink.
+    assert f"color:{t.INK}" in custom
+    assert "color:#ffffff" not in custom
+
+
+def test_primary_button_text_colour_meets_aa_on_brand_colour() -> None:
+    light = {"#FFD400": "#ffd400", "#F5F5F5": "#f5f5f5", t.VOLT: t.VOLT}
+    for accent, background in light.items():
+        out = t.button("Go", "https://x.test", accent=accent)
+        assert f"background:{background};color:{t.INK};border:1px solid {background};" in out
+    dark = {"#1F2937": "#1f2937", "#000000": "#000000", t.COBALT: t.COBALT}
+    for accent, background in dark.items():
+        out = t.button("Go", "https://x.test", accent=accent)
+        assert f"background:{background};color:#ffffff;border:1px solid {background};" in out
+    # Mid-tones that pass with one of the two text colours keep their fill.
+    assert f"background:#3b82f6;color:{t.INK};" in t.button(
+        "Go", "https://x.test", accent="#3B82F6"
+    )
+    assert "background:#e11d48;color:#ffffff;" in t.button("Go", "https://x.test", accent="#E11D48")
+
+
+def test_primary_button_darkens_fill_when_neither_text_colour_passes() -> None:
+    out = t.button("Go", "https://x.test", accent="#7a7a7a")
+    assert "background:#7a7a7a" not in out
+    assert "background:#767677;color:#ffffff;border:1px solid #767677;" in out
+
+
+def test_secondary_button_ignores_accent() -> None:
+    out = t.button("Join", "https://x.test", accent="#FFD400", variant="secondary")
+    assert f"background:#ffffff;color:{t.INK};" in out
 
 
 def test_format_money() -> None:
