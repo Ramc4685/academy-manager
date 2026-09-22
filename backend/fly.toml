@@ -21,11 +21,26 @@ primary_region = "ord"
   # TODO(#779): both flags stay false; owner rollup and student login are parked future enhancements.
   ENABLE_OWNER_ROLE = "false"
   ENABLE_STUDENT_LOGIN = "false"
-  V2_RUN_MIGRATIONS_ON_BOOT = "true"
+  # Migrations are owned by the deploy pipeline, not by boot: the
+  # migrate-production job in .github/workflows/production.yml dry-runs them
+  # and the [deploy] release_command below applies them on the new image
+  # before traffic moves (docs/runbooks/migrations-rollout.md). A Fly secret
+  # with this same name currently also forces "false"; the owner should remove
+  # it after the first supervised run (`fly secrets unset V2_RUN_MIGRATIONS_ON_BOOT`)
+  # so this file is the single source of truth.
+  V2_RUN_MIGRATIONS_ON_BOOT = "false"
 
 # In-flight Stripe webhook handlers and outbox work get 30s to finish on
 # deploy/restart instead of the 5s default.
 kill_timeout = "30s"
+
+[deploy]
+  # Fly runs this on a temporary machine built from the NEW image, with the
+  # app's env and secrets, before any app machine is replaced. A non-zero exit
+  # aborts the deploy and the old machine keeps serving. The CLI's own
+  # --timeout-seconds (default 20 min) sits inside the deploy step's
+  # --release-command-timeout so a stuck migrations lease fails cleanly.
+  release_command = "python -m backend.v2.migrations"
 
 [http_service]
   internal_port = 8001
@@ -38,8 +53,9 @@ kill_timeout = "30s"
   [[http_service.checks]]
     interval = "30s"
     timeout = "5s"
-    # Boot runs pending migrations in-process (V2_RUN_MIGRATIONS_ON_BOOT);
-    # give a slow one room before the first health probe counts.
+    # Migrations no longer run on boot (see [deploy] release_command), but the
+    # single machine still warms the scheduler and Mongo indexes on start;
+    # keep some room before the first health probe counts.
     grace_period = "60s"
     method = "GET"
     path = "/api/v2/healthz"

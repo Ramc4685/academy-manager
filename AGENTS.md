@@ -216,7 +216,7 @@ Run backend commands from `backend/` (or repo root with `PYTHONPATH=.`); modules
 - **DDD layering** in `backend/v2`: `contexts/<name>/{domain,application,infrastructure}`; Protocols in `application/ports.py`; one class per use case in `application/use_cases/`. Enforced by import-linter + structural pytest tests — if `lint-imports` or `tests/structural/` fails, fix your layering, don't loosen the contract.
 - **BFF routes are persona-shaped** (`interfaces/{admin,coach,parent,platform}`), never generic CRUD. Routes call use cases from `request.app.state.*`; they never touch Mongo. Wrong-persona access returns **404, not 403** (deliberate; see `docs/security-matrix.md`).
 - **Tenancy:** every tenant-owned repo extends `TenantScopedRepository` (`backend/v2/shared/tenancy/repository.py`); application code never sees `academy_id`. Read tenant at execution time via `current_academy_id()` / `tenant_scope(...)` — **never capture academy_id in a composition-time closure** (past prod-bug class) and never use `default_academy_id` in SaaS request paths.
-- **Migrations** (`backend/v2/migrations/NNNN_*.py`, `version` + `async up(db)`) are the only way to create indexes/validators; they run on production boot. New migration = next unused 4-digit prefix, version string must equal the filename stem.
+- **Migrations** (`backend/v2/migrations/NNNN_*.py`, `version` + `async up(db)`) are the only way to create indexes/validators; in production they are applied by the deploy pipeline, not on boot: the `migrate-production` job in `.github/workflows/production.yml` dry-runs `python -m backend.v2.migrations` on the new image and Fly's `release_command` (`backend/fly.toml`) applies them before traffic moves; `V2_RUN_MIGRATIONS_ON_BOOT` is `false` in prod (see `docs/runbooks/migrations-rollout.md`). New migration = next unused 4-digit prefix, version string must equal the filename stem.
 - **New/changed v2 routes must be registered** in the audit inventory manifest (see `backend/v2/tests/unit/test_audit_inventory_manifest.py`) or tests fail.
 - **Frontend:** everything is effectively client components + TanStack Query v5 (query keys centralized in `frontend/lib/query/keys.ts`); all API calls go through `lib/api/client.ts` `apiFetch`; forms are plain controlled state; styling should use Tailwind `rally-*` tokens (inline hex styles exist but are debt — don't add more).
 - **Money is integer cents** (`amount_cents`); ids are string ULIDs (`backend/v2/shared/ids.py`); scheduler timezone `America/Chicago`.
@@ -366,8 +366,10 @@ PR: #<number>
 
 Keep each file terse — this is a deploy log, not a design doc. Link related
 PRs when several land in the same batch. If a PR includes a migration, the
-file must say whether it runs automatically (`run_migrations_on_boot`) or
-needs a manual step, since that isn't tracked anywhere else today.
+file must say so and note anything the owner should look for in the
+`migrate-production` dry-run and the deploy's release_command log (see
+`docs/runbooks/migrations-rollout.md`); migrations apply automatically there,
+so call out only a migration that needs a manual step or a long backfill.
 
 After every complete production deployment and successful smoke check,
 `.github/workflows/production.yml` aggregates the notes added since the last

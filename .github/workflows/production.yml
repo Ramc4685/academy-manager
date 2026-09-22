@@ -664,14 +664,141 @@ jobs:
       - name: Confirm production deployment
         run: echo "Production deployment approved for ${GITHUB_SHA}"
 
-  deploy-backend:
-    name: Deploy Backend
+  migrate-production:
+    name: Migrate Production
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs: [production-approval]
     if: >
       always() &&
       needs.production-approval.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_APP: courtmastr-academy-api
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      # Build the backend image ONCE and push it under a label derived from the
+      # SHA. The dry run below and deploy-backend both use this exact image, so
+      # what was dry-run is what gets deployed. --build-only never touches the
+      # running machine and never runs the release_command.
+      - name: Build and push backend image
+        id: build
+        working-directory: backend
+        run: |
+          label="migrate-${GITHUB_SHA::12}"
+          flyctl deploy --build-only --push --remote-only \
+            --image-label "${label}" --app "${FLY_APP}"
+          image="registry.fly.io/${FLY_APP}:${label}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Backend image for this deploy: ${image}"
+
+      # Dry run on a throwaway machine of the app (it receives the app's
+      # secrets, so MONGO_URL is available). `flyctl machine run` only waits
+      # for the machine to START and never reports the process exit code, so
+      # the machine is created detached without --rm, waited on until it
+      # stops, its exit code read from `machine status`, its output printed
+      # from the log buffer, and then destroyed. The step fails when the exit
+      # code is non-zero or cannot be read. The real apply happens inside
+      # deploy-backend's `flyctl deploy` via fly.toml's [deploy]
+      # release_command, which Fly aborts the deploy on when it exits non-zero.
+      #
+      # Runs from the repo root on purpose: in backend/ flyctl would auto-load
+      # fly.toml and could copy its [http_service] onto this machine. Without
+      # fly.toml the machine gets the app's secret values only, so DB_NAME (an
+      # [env] value) is read from fly.toml and passed explicitly; APP_ENV is
+      # deliberately not set, so the CLI runs with the non-prod settings
+      # validators (it needs nothing but the Mongo connection).
+      - name: Dry-run pending migrations on the new image
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          db_name="$(sed -n 's/^ *DB_NAME *= *"\(.*\)"/\1/p' backend/fly.toml | head -n1)"
+          if [ -z "${db_name}" ]; then
+            echo "::error::Could not read DB_NAME from backend/fly.toml"
+            exit 1
+          fi
+          machine_name="migrate-dry-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          machine_id=""
+          # The machine is found by its deterministic name through
+          # `machine list --json` (flyctl v0.4.96 has no --json on `machine
+          # run` or `machine status`), so cleanup and the exit-code read do
+          # not depend on flyctl's human-readable text. The trap is armed
+          # BEFORE the machine is created: a failed id parse must never leak
+          # a machine in the production app.
+          find_machine() {
+            flyctl machine list --app "${FLY_APP}" --json \
+              | jq -r --arg name "${machine_name}" '.[] | select(.name == $name) | .id' \
+              | head -n1
+          }
+          cleanup() {
+            local id="${machine_id}"
+            if [ -z "${id}" ]; then
+              id="$(find_machine || true)"
+            fi
+            if [ -n "${id}" ]; then
+              flyctl machine destroy "${id}" --app "${FLY_APP}" --force || true
+            fi
+          }
+          trap cleanup EXIT
+          out="$(flyctl machine run "${IMAGE}" --app "${FLY_APP}" --region ord \
+            --name "${machine_name}" \
+            --restart no --detach --vm-memory 1024 \
+            --env "DB_NAME=${db_name}" \
+            -- python -m backend.v2.migrations --dry-run 2>&1 | tee /dev/stderr)"
+          machine_id="$(printf '%s\n' "${out}" | sed -n 's/.*Machine ID: *\([0-9a-f]\{14\}\).*/\1/p' | head -n1)"
+          if [ -z "${machine_id}" ]; then
+            machine_id="$(find_machine || true)"
+          fi
+          if [ -z "${machine_id}" ]; then
+            echo "::error::Could not find the dry-run machine ${machine_name} (flyctl output above, machine list by name empty)"
+            exit 1
+          fi
+          echo "dry-run machine: ${machine_id} (${machine_name})"
+          flyctl machine wait "${machine_id}" --app "${FLY_APP}" --state stopped --wait-timeout 10m
+          echo "--- dry-run output ---"
+          flyctl logs --app "${FLY_APP}" --machine "${machine_id}" --no-tail || true
+          echo "--- machine status ---"
+          status="$(flyctl machine status "${machine_id}" --app "${FLY_APP}" | tee /dev/stderr)"
+          # Exit code: the machine's newest `exit` event from the JSON machine
+          # list; the text status table is only the fallback.
+          exit_code="$(flyctl machine list --app "${FLY_APP}" --json \
+            | jq -r --arg id "${machine_id}" \
+              '[.[] | select(.id == $id) | (.events // [])[] | select(.type == "exit") | .request.exit_event.exit_code | select(. != null)] | first // empty' \
+            || true)"
+          if [ -z "${exit_code}" ]; then
+            exit_code="$(printf '%s\n' "${status}" | grep -o 'exit_code=[0-9]*' | tail -n1 | cut -d= -f2)"
+          fi
+          if [ -z "${exit_code}" ]; then
+            echo "::error::Could not read the dry-run exit code from machine list or machine status"
+            exit 1
+          fi
+          if [ "${exit_code}" != "0" ]; then
+            echo "::error::Migrations dry run exited ${exit_code}; deploy-backend is skipped"
+            exit "${exit_code}"
+          fi
+          echo "Migrations dry run passed on ${IMAGE}"
+
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    # Includes the migrations apply (release_command, up to 25 min) on top of
+    # the deploy itself; the image was already built by migrate-production.
+    timeout-minutes: 40
+    needs: [production-approval, migrate-production]
+    if: >
+      always() &&
+      needs.production-approval.result == 'success' &&
+      needs.migrate-production.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     steps:
@@ -685,14 +812,22 @@ jobs:
         working-directory: backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # --ha=false: this app runs one machine on purpose (in-process scheduler,
-        # boot-time migrations). The default --ha would create two machines
-        # whenever the group is at zero, doubling the bill and the jobs.
+        # --image: deploy the SAME image migrate-production built and dry-ran;
+        # nothing is rebuilt here. Fly runs fly.toml's [deploy] release_command
+        # (python -m backend.v2.migrations) on this image first and aborts the
+        # deploy if it exits non-zero, leaving the old machine serving.
+        # --release-command-timeout: above the CLI's own 20 min budget so a
+        # stuck migrations lease fails inside the CLI with a readable log.
+        # --ha=false: this app runs one machine on purpose (in-process
+        # scheduler). The default --ha would create two machines whenever the
+        # group is at zero, doubling the bill and the jobs.
         # SENTRY_RELEASE: resolve_release() in backend/v2/shared/observability/
         # errors.py reads this before FLY_IMAGE_REF, so every deploy reports the
         # same release name the sentry-release job below creates.
         run: >
-          flyctl deploy --remote-only --ha=false --app courtmastr-academy-api
+          flyctl deploy --image ${{ needs.migrate-production.outputs.image }}
+          --release-command-timeout 25m
+          --ha=false --app courtmastr-academy-api
           --env SENTRY_RELEASE=courtmastr-fastapi@${{ github.sha }}
 
   deploy-frontend:
