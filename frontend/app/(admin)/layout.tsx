@@ -277,9 +277,12 @@ function NavGroup({
   pathname: string;
 }) {
   return (
-    <div className="pt-2 pb-1">
+    // Six groups (sidebar regroup spec §2) means six captions where there were
+    // three; the caption chrome is trimmed (pt-1.5, leading-[10px], pb-1) so
+    // the whole nav still fits a 1280x900 viewport without scrolling.
+    <div className="pt-1.5">
       <div
-        className="px-[18px] pb-1.5 font-mono text-[9px] font-bold tracking-[0.22em]"
+        className="px-[18px] pb-1 font-mono text-[9px] leading-[10px] font-bold tracking-[0.22em]"
         style={{ color: "var(--rally-subtle-ink)" }}
       >
         {group}
@@ -305,7 +308,7 @@ function NavRow({ item, active }: { item: AdminNavItem; active: boolean }) {
       // is under the 44px touch minimum. `min-h-touch lg:min-h-0` gives the
       // drawer (rendered only below lg) a 44px row while the desktop sidebar
       // (only at lg:) keeps #842's density, with no prop threading.
-      className="flex min-h-touch items-center gap-2.5 px-[18px] py-1.5 text-[13px] transition-colors lg:min-h-0"
+      className="flex min-h-touch items-center gap-2.5 px-[18px] py-1.5 text-[13px] transition-colors lg:min-h-0 lg:py-[5px]"
       style={{
         background: active ? "var(--rally-night-line)" : "transparent",
         borderLeft: `2px solid ${active ? "var(--rally-volt)" : "transparent"}`,
