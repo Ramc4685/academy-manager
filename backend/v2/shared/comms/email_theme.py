@@ -117,7 +117,10 @@ def button(
     if variant == "primary":
         # Text on the tenant's brand colour must clear WCAG AA (4.5:1): white
         # on a light accent does not, so the pair is derived, not assumed.
-        fill, text = readable_button_colors(accent)
+        # EmailBrand.accent() is the validating path, but a caller that hands
+        # in a raw setting must still get a readable button, not a ValueError.
+        safe_accent = accent.strip().lower() if _HEX_COLOUR.match(accent.strip()) else COBALT
+        fill, text = readable_button_colors(safe_accent)
         style = f"background:{fill};color:{text};border:1px solid {fill};"
     else:
         style = f"background:#ffffff;color:{INK};border:1px solid #cbd5e1;"

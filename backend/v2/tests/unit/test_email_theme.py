@@ -67,6 +67,14 @@ def test_primary_button_darkens_fill_when_neither_text_colour_passes() -> None:
     assert "background:#767677;color:#ffffff;border:1px solid #767677;" in out
 
 
+def test_primary_button_falls_back_to_cobalt_for_junk_accent() -> None:
+    # A caller that skips EmailBrand.accent() must still get a readable button,
+    # never a ValueError at send time and never an unstyled link.
+    for junk in ("red", "", "ffd400", "#ggg"):
+        out = t.button("Go", "https://x.test", accent=junk)
+        assert f"background:{t.COBALT};color:#ffffff;" in out
+
+
 def test_secondary_button_ignores_accent() -> None:
     out = t.button("Join", "https://x.test", accent="#FFD400", variant="secondary")
     assert f"background:#ffffff;color:{t.INK};" in out

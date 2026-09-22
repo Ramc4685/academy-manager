@@ -9,6 +9,14 @@ fallback-to-cobalt decision belongs to whoever owns the setting
 
 Mirrors ``frontend/lib/design/contrast.mjs`` so a future TypeScript twin
 derives the same pair from the same hex.
+
+This function *is* the ``brand-fill`` / ``brand-on`` rule for every surface.
+The public academy page brief (docs/design/public-tenant-page/brief.md,
+"Contrast guardrails") words rule 3 as "darken toward ink until white passes";
+the implemented rule nudges toward whichever text colour is nearer to passing,
+which moves the fill less and is what the email ticket specified. Reuse this
+function rather than re-deriving from the brief, and align the brief's rule 3
+wording to it when that page is built, so both surfaces cannot drift apart.
 """
 
 from __future__ import annotations
