@@ -101,9 +101,9 @@ describe("a row-actions testid never shares a prefix with its row testid (#857)"
     });
   }
 
-  it("Families uses admin-families-actions-<parentId>", () => {
+  it("Families uses admin-families-actions-<familyId>", () => {
     expect(appSource("(admin)/admin/families/page.tsx")).toContain(
-      "admin-families-actions-${row.parent_id}",
+      "admin-families-actions-${family.family_id}",
     );
   });
 
@@ -213,9 +213,9 @@ describe("phone rows keep the table's row ids, so mobile specs still resolve (#8
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it("Families rows keep family-link-<parentId> on the phone row too", () => {
+  it("Families rows keep family-link-<familyId> on the phone row too", () => {
     const src = appSource("(admin)/admin/families/page.tsx");
-    expect(src.match(/family-link-\$\{row\.parent_id\}/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(src.match(/family-link-\$\{family\.family_id\}/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it("Users rows keep admin-users-row-<userId>", () => {
