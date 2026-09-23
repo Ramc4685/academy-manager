@@ -1,43 +1,73 @@
 "use client";
 
 /**
- * Admin Families list.
+ * Admin Families: the People CRM Families view (engineering-spec §3.2).
  *
- * Every paying parent with their registration state (card on file, account
- * but no card, not invited), autopay counts and outstanding balance. Actions
- * — invites, charging, autopay — live on the per-family page
- * (`/admin/families/[parentId]`, spec 2026-09-05-family-billing §6).
+ * One row per family record from the family index (`GET /admin/families`):
+ * the parent and how to reach them, each child with their lifecycle chip,
+ * the rolled-up family stage, card and login state, and the balance when the
+ * server says this caller may see money. Scope tiles come from
+ * `GET /admin/families/summary`, over the unfiltered index.
+ *
+ * Filtering, sorting and paging are the backend's; this page only keeps the
+ * filter state in the URL and renders what comes back. Money is never
+ * computed here: a `null` money block (or `money_visible: false`) hides the
+ * amount, it never becomes a zero. Actions (invites, charging, autopay) live
+ * on the per-family page (`/admin/families/[parentId]`), except the one bulk
+ * invite #897 put on this list.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
-import { Mail } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, ArrowUpDown, Mail } from "lucide-react";
 
 import {
   fetchBillingSetup,
   inviteBillingSetupParent,
-  type BillingSetupRegistrationState,
+  listAdminSessions,
   type BillingSetupRow,
 } from "@/lib/api/admin";
-import { queryKeys } from "@/lib/query/keys";
 import {
-  CARD_LABELS,
-  LOGIN_LABELS,
-  cardChip,
-  cardStateFromRegistration,
-  loginChip,
-  loginStateFromRegistration,
-} from "@/lib/people-status";
-import { UNKNOWN_TEXT, finiteText } from "@/lib/ui/load-state";
-import { visibleFamilyRows, type FamilySort } from "@/lib/admin/family-rows";
+  fetchFamilyIndex,
+  fetchFamilyIndexSummary,
+  type FamilyIndexChild,
+  type FamilyIndexRow,
+  type FamilyIndexSort,
+  type FamilyScope,
+} from "@/lib/api/admin-families";
+import { queryKeys } from "@/lib/query/keys";
+import { cardChip, loginChip, loginStateFromRegistration } from "@/lib/people-status";
+import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
+import {
+  FALLBACK_PRESETS,
+  ariaSort,
+  classOptions,
+  clearFilterChips,
+  familyClasses,
+  familyDisplayName,
+  familyHref,
+  familyResultRows,
+  hasFilterChips,
+  isPresetActive,
+  nextSort,
+  parseFamilyIndexState,
+  studentHref,
+  toFamilyIndexParams,
+  togglePreset,
+  writeFamilyIndexState,
+  type FamilyIndexState,
+  type FamilyResultRow,
+} from "@/lib/admin/family-index-view";
 import { useIsPhone } from "@/lib/use-is-phone";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
-import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip } from "@/components/ds/chip";
+import { ContactLinks } from "@/components/ds/contact-links";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { BigNum, Overline } from "@/components/ds/typography";
 import {
@@ -49,97 +79,319 @@ import {
 import { Th } from "@/components/ds/dialog-chrome";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
+const PAGE_SIZE = 50;
+/** Bounded walk of the Billing Setup pages for the bulk invite's recipients. */
+const MAX_INVITE_PAGES = 20;
+
 function formatCents(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     cents / 100,
   );
 }
 
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-/**
- * #840: the filter used to say "Chargeable" for the state the chip beside it
- * called "REGISTERED" and the family page called "Card on file". All three now
- * read the one map in `lib/people-status`.
- */
-const FILTERS: { value: "all" | BillingSetupRegistrationState; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "no_account", label: LOGIN_LABELS.not_invited },
-  { value: "account_no_card", label: CARD_LABELS.no_card },
-  { value: "card_on_file", label: CARD_LABELS.on_file },
+const TILES: { scope: FamilyScope; label: string; caption: string; accent: string }[] = [
+  { scope: "active", label: "Active", caption: "At least one child attending", accent: "#10b981" },
+  { scope: "leaving", label: "Leaving", caption: "At risk, on hold, paused or ending", accent: "#f59e0b" },
+  { scope: "left", label: "Left", caption: "No child on the books", accent: "#64748b" },
 ];
 
-const familyHref = (parentId: string) =>
-  `/admin/families/${encodeURIComponent(parentId)}` as Route;
+const WARNING_COPY: Record<string, string> = {
+  money_unavailable: "Balances could not be read just now. They show as unknown, not zero.",
+  classes_unavailable: "Class names could not be read just now, so the class chips may be missing.",
+};
 
 export default function FamiliesPage() {
-  const [status, setStatus] = useState<"all" | BillingSetupRegistrationState>("all");
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
-  // #865: both run over the rows already loaded — see `lib/admin/family-rows`
-  // for why they are deliberately not a backend filter.
-  const [owesOnly, setOwesOnly] = useState(false);
-  const [sort, setSort] = useState<FamilySort>("default");
+  // `useSearchParams` needs a Suspense boundary for the static build.
+  return (
+    <Suspense fallback={<div className="flex flex-col gap-6" />}>
+      <FamiliesView />
+    </Suspense>
+  );
+}
 
+function FamiliesView() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+
+  const urlKey = searchParams.toString();
+  const state = useMemo(() => parseFamilyIndexState(new URLSearchParams(urlKey)), [urlKey]);
+
+  // The URL is the filter state (spec §3.2: "kept in the URL"). Only a click
+  // or a settled search writes it; landing on the page never rewrites it, so
+  // `/admin/families?view=families` from the /admin/parents redirect stays.
+  const setState = useCallback(
+    (next: FamilyIndexState) => {
+      const query = writeFamilyIndexState(new URLSearchParams(urlKey), next).toString();
+      if (query === urlKey) return;
+      router.replace(`${pathname}${query ? `?${query}` : ""}` as Route, { scroll: false });
+    },
+    [pathname, router, urlKey],
+  );
+
+  const [q, setQ] = useState(state.q);
+  const stateRef = useRef(state);
+  const setStateRef = useRef(setState);
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
+    stateRef.current = state;
+    setStateRef.current = setState;
+  });
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const current = stateRef.current;
+      if (q.trim() !== current.q.trim()) setStateRef.current({ ...current, q });
+    }, 300);
     return () => window.clearTimeout(timer);
   }, [q]);
 
-  const params = useMemo(
-    () => ({ status, q: debouncedQ || undefined }),
-    [status, debouncedQ],
-  );
-  const {
-    data,
-    isLoading,
-    isError,
-    isFetching,
-    refetch,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery({
-    queryKey: queryKeys.admin.billingSetup(params),
-    queryFn: ({ pageParam }) =>
-      fetchBillingSetup({ ...params, cursor: pageParam || undefined }),
-    initialPageParam: "",
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+  const params = useMemo(() => toFamilyIndexParams(state, 1, PAGE_SIZE), [state]);
+  const indexQuery = useInfiniteQuery({
+    queryKey: queryKeys.admin.familyIndex({ ...params, page: undefined }),
+    queryFn: ({ pageParam }) => fetchFamilyIndex({ ...params, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.page * last.page_size < last.total ? last.page + 1 : undefined,
+    retry: false,
+  });
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.admin.familyIndexSummary(),
+    queryFn: fetchFamilyIndexSummary,
+    retry: false,
+  });
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions("upcoming"),
+    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
+    retry: false,
   });
 
-  const summary = data?.pages[0]?.summary;
-  const loadedRows = useMemo(
-    () => data?.pages.flatMap((page) => page.rows) ?? [],
-    [data],
+  const firstPage = indexQuery.data?.pages[0];
+  const families = useMemo(
+    () => indexQuery.data?.pages.flatMap((page) => page.families ?? []) ?? [],
+    [indexQuery.data],
   );
-  const rows = useMemo(
-    () => visibleFamilyRows(loadedRows, { owesOnly, sort }),
-    [loadedRows, owesOnly, sort],
+  const moneyVisible = firstPage?.money_visible ?? false;
+  const searching = state.q.trim().length > 0;
+  const rows = useMemo(() => familyResultRows(families, searching), [families, searching]);
+  const warnings = useMemo(
+    () =>
+      Array.from(
+        new Set([...(firstPage?.warnings ?? []), ...(summaryQuery.data?.warnings ?? [])]),
+      ),
+    [firstPage, summaryQuery.data],
   );
-  const hiddenByOwesFilter = owesOnly && loadedRows.length > 0 && rows.length === 0;
 
-  // #897: the one bulk action this list was missing. `no_account` is the
-  // state `LOGIN_LABELS.not_invited` names — a family with no login at all —
-  // and it is computed from the rows already loaded, like the owes filter and
-  // the sort beside it, so the button can never claim more recipients than
-  // this page can see.
+  const summary = summaryQuery.data;
+  // A money preset only ever arrives from a server that cleared this caller
+  // for money; without the summary the chips fall back to the no-money set.
+  const presets = summary?.presets ?? FALLBACK_PRESETS;
+  const classes = useMemo(
+    () => classOptions(sessionsQuery.data?.sessions ?? [], families, state.classId),
+    [sessionsQuery.data, families, state.classId],
+  );
+
+  const onSort = (column: FamilyIndexSort) => setState(nextSort(state, column, moneyVisible));
+  const refreshAll = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.families() });
+  };
+
+  return (
+    <div className="flex flex-col gap-6" data-testid="admin-families">
+      <p className="text-sm text-rally-muted">
+        Families · every family, their children and where they stand; open one for the full
+        picture
+      </p>
+
+      {summaryQuery.isError ? (
+        <ErrorNotice
+          testId="admin-families-summary-error"
+          message="Could not load the family counts. They are unknown, not zero."
+          onRetry={() => void summaryQuery.refetch()}
+          retrying={summaryQuery.isFetching}
+        />
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4" data-testid="admin-families-tiles">
+        <Card p={20} accent="#2563eb">
+          <Overline>Families</Overline>
+          <BigNum>
+            <span data-testid="admin-families-tile-total">{summary?.total_families ?? "—"}</span>
+          </BigNum>
+          <p className="mt-1 text-[11px] text-rally-subtle">Everyone on record</p>
+        </Card>
+        {TILES.map((tile) => (
+          <Card key={tile.scope} p={20} accent={tile.accent}>
+            <Overline>{tile.label}</Overline>
+            <BigNum>
+              <span data-testid={`admin-families-tile-${tile.scope}`}>
+                {summary?.tiles[tile.scope] ?? "—"}
+              </span>
+            </BigNum>
+            <p className="mt-1 text-[11px] text-rally-subtle">{tile.caption}</p>
+          </Card>
+        ))}
+      </div>
+
+      <BulkInviteNotInvited onInvited={refreshAll} />
+
+      <Card p={0}>
+        <ListToolbar>
+          {/* Presets are toggles applied on click (aria-pressed), never a
+              select that commits on change (critique P1). */}
+          <FilterBar label="Family views" testId="admin-families-filters">
+            <FilterChip
+              active={!hasFilterChips(state)}
+              label="All"
+              count={summary?.total_families ?? null}
+              testId="admin-families-filter-all"
+              onClick={() => setState(clearFilterChips(state))}
+            />
+            {presets.map((preset) => {
+              const scope = preset.params.scope as FamilyScope | undefined;
+              const onlyScope = scope && Object.keys(preset.params).length === 1;
+              return (
+                <FilterChip
+                  key={preset.id}
+                  active={isPresetActive(preset, state)}
+                  label={preset.label}
+                  count={onlyScope ? (summary?.tiles[scope] ?? null) : null}
+                  testId={`admin-families-preset-${preset.id}`}
+                  onClick={() => setState(togglePreset(state, preset))}
+                />
+              );
+            })}
+          </FilterBar>
+
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            <label htmlFor="admin-families-class" className="text-sm text-rally-muted">
+              Class
+            </label>
+            <select
+              id="admin-families-class"
+              data-testid="admin-families-class"
+              value={state.classId ?? ""}
+              onChange={(e) => setState({ ...state, classId: e.target.value || null })}
+              className="h-10 max-w-[14rem] rounded-md border border-neutral-200 bg-white px-2 font-body text-sm text-rally-base"
+            >
+              <option value="">All classes</option>
+              {classes.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <ToolbarSearch
+              id="admin-families-search"
+              label="Search families"
+              value={q}
+              onChange={setQ}
+              placeholder="Search parent, child, email or phone"
+              busy={indexQuery.isFetching && !indexQuery.isFetchingNextPage}
+              busyLabel="Refreshing families"
+            />
+          </div>
+        </ListToolbar>
+
+        {warnings.map((code) => (
+          <p
+            key={code}
+            role="status"
+            data-testid={`admin-families-warning-${code}`}
+            className="border-b border-rally-line bg-status-amber-50 px-5 py-2 text-sm text-status-amber-800"
+          >
+            {WARNING_COPY[code] ?? "Part of this list could not be read just now."}
+          </p>
+        ))}
+
+        {indexQuery.isLoading ? (
+          <div className="p-8 text-center text-sm text-rally-muted">Loading…</div>
+        ) : indexQuery.isError ? (
+          <ErrorNotice
+            testId="admin-families-error"
+            className="m-5"
+            message="Could not load families. The list is unknown, not empty."
+            onRetry={() => void indexQuery.refetch()}
+            retrying={indexQuery.isFetching}
+          />
+        ) : (
+          <>
+            {/* A stable anchor: it stays put whatever the filters do to the rows. */}
+            <h2
+              id="admin-families-results"
+              tabIndex={-1}
+              data-testid="admin-families-count"
+              aria-live="polite"
+              className="px-5 pt-4 text-sm font-semibold text-rally-base focus:outline-none"
+            >
+              {firstPage?.total ?? 0} {firstPage?.total === 1 ? "family" : "families"}
+              {searching ? " match this search" : ""}
+            </h2>
+            {rows.length === 0 ? (
+              <div className="p-8 text-center text-sm text-rally-muted">
+                {searching || hasFilterChips(state) || state.classId
+                  ? "No families match these filters."
+                  : "No families yet."}
+              </div>
+            ) : (
+              <FamiliesList
+                rows={rows}
+                moneyVisible={moneyVisible}
+                state={state}
+                onSort={onSort}
+              />
+            )}
+          </>
+        )}
+        {indexQuery.hasNextPage && (
+          <div className="border-t border-rally-line p-4 text-center">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => indexQuery.fetchNextPage()}
+              disabled={indexQuery.isFetchingNextPage}
+            >
+              {indexQuery.isFetchingNextPage ? "Loading…" : "Load more families"}
+            </Button>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/**
+ * #897: the one bulk action this list carries. Recipients come from the
+ * Billing Setup read the invite endpoint itself resolves against (the family
+ * index keys families by canonical user id, which is not always the id the
+ * invite endpoint knows), walked page by page with a hard cap.
+ */
+function BulkInviteNotInvited({ onInvited }: { onInvited: () => void }) {
+  const notInvitedQuery = useQuery({
+    queryKey: queryKeys.admin.familiesNotInvited(),
+    queryFn: async () => {
+      const rows: BillingSetupRow[] = [];
+      let cursor: string | undefined;
+      for (let i = 0; i < MAX_INVITE_PAGES; i += 1) {
+        const page = await fetchBillingSetup({ status: "no_account", cursor });
+        rows.push(...(page.rows ?? []));
+        if (!page.next_cursor) return { rows, complete: true };
+        cursor = page.next_cursor;
+      }
+      return { rows, complete: false };
+    },
+    retry: false,
+  });
   const notInvited = useMemo(
-    () => loadedRows.filter((row) => row.registration_state === "no_account"),
-    [loadedRows],
+    () =>
+      (notInvitedQuery.data?.rows ?? []).filter((row) => row.registration_state === "no_account"),
+    [notInvitedQuery.data],
   );
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkNote, setBulkNote] = useState<string | null>(null);
 
   const bulkInvite = useMutation({
     // One request per family through the existing per-family endpoint: there
-    // is no bulk invite for parents who already exist (`/users/bulk-invite`
-    // mints new ones), and inventing one is backend work this issue does not
-    // carry.
+    // is no bulk invite for parents who already exist.
     mutationFn: async (parentIds: string[]) => {
       let sent = 0;
       let failed = 0;
@@ -161,55 +413,35 @@ export default function FamiliesPage() {
           ? `Invited ${sent} ${sent === 1 ? "family" : "families"}.`
           : `Invited ${sent}; ${failed} could not be invited.`,
       );
-      void refetch();
+      void notInvitedQuery.refetch();
+      onInvited();
     },
   });
 
   return (
-    <div className="flex flex-col gap-6" data-testid="admin-families">
-      <p className="text-sm text-rally-muted">
-        Families · every parent, their card and autopay state; open one for the full picture
-      </p>
-
-      {/* #897: accent-top cards with a caption, the shape the Students list
-          already uses — these four were the same numbers in a different tile. */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Card p={20} accent="#2563eb">
-          <Overline>Families</Overline>
-          <BigNum>{summary?.families_total ?? "—"}</BigNum>
-          <p className="mt-1 text-[11px] text-rally-subtle">Everyone on record</p>
-        </Card>
-        <Card p={20} accent="#10b981">
-          <Overline>{CARD_LABELS.on_file}</Overline>
-          <BigNum className="text-rally-cobalt-700">{summary?.families_registered ?? "—"}</BigNum>
-          <p className="mt-1 text-[11px] text-rally-subtle">Chargeable today</p>
-        </Card>
-        <Card p={20} accent="#f59e0b">
-          <Overline>{CARD_LABELS.no_card}</Overline>
-          <BigNum className="text-rally-volt-700">{summary?.families_no_card ?? "—"}</BigNum>
-          <p className="mt-1 text-[11px] text-rally-subtle">Cannot be charged</p>
-        </Card>
-        <Card p={20} accent="#ef4444">
-          <Overline>Outstanding</Overline>
-          {/* #837: "$0.00" for a payload that never arrived reads as "nobody
-              owes anything"; the sibling tiles already dash out. */}
-          <BigNum size={28}>
-            {finiteText(summary?.outstanding_total_cents, formatCents, UNKNOWN_TEXT)}
-          </BigNum>
-          <p className="mt-1 text-[11px] text-rally-subtle">Owed across all families</p>
-        </Card>
-      </div>
-
-      {bulkNote && (
-        <p
-          role="status"
-          data-testid="admin-families-bulk-invite-result"
-          className="text-sm text-rally-muted"
+    <>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          data-testid="admin-families-bulk-invite"
+          icon={<Mail className="size-4" aria-hidden="true" />}
+          disabled={notInvited.length === 0 || bulkInvite.isPending}
+          onClick={() => setBulkOpen(true)}
         >
-          {bulkNote}
-        </p>
-      )}
-
+          Invite all not invited ({notInvitedQuery.isSuccess ? notInvited.length : "—"})
+        </Button>
+        {bulkNote && (
+          <p
+            role="status"
+            data-testid="admin-families-bulk-invite-result"
+            className="text-sm text-rally-muted"
+          >
+            {bulkNote}
+          </p>
+        )}
+      </div>
       <ConfirmActionDialog
         open={bulkOpen}
         onOpenChange={setBulkOpen}
@@ -219,13 +451,12 @@ export default function FamiliesPage() {
         consequence={
           <>
             <p>
-              Each one is emailed a login invite now. Nothing is charged and no card is
-              asked for.
+              Each one is emailed a login invite now. Nothing is charged and no card is asked
+              for.
             </p>
-            <p>
-              Only the families loaded on this page are included — load more first to
-              reach the rest.
-            </p>
+            {notInvitedQuery.data && !notInvitedQuery.data.complete ? (
+              <p>Only the first {notInvited.length} are included; run it again for the rest.</p>
+            ) : null}
           </>
         }
         confirmLabel="Send invites"
@@ -233,101 +464,7 @@ export default function FamiliesPage() {
         pending={bulkInvite.isPending}
         onConfirm={() => bulkInvite.mutate(notInvited.map((row) => row.parent_id))}
       />
-
-      <Card p={0}>
-        {/* #897: the Students toolbar's shape, from the design system — this
-            filter row used to be its own bordered slate pill group. */}
-        <ListToolbar>
-          <FilterBar label="Families by registration" testId="admin-families-filters">
-            {FILTERS.map((f) => (
-              <FilterChip
-                key={f.value}
-                active={status === f.value}
-                label={f.label}
-                testId={`admin-families-filter-${f.value}`}
-                onClick={() => setStatus(f.value)}
-              />
-            ))}
-            {/* #865: chasing money was the one thing this list could not be
-                asked for, though every row already carried the balance. */}
-            <FilterChip
-              active={owesOnly}
-              label="Owes money"
-              testId="admin-families-owes-filter"
-              onClick={() => setOwesOnly((on) => !on)}
-            />
-          </FilterBar>
-
-          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              data-testid="admin-families-bulk-invite"
-              icon={<Mail className="size-4" aria-hidden="true" />}
-              disabled={notInvited.length === 0 || bulkInvite.isPending}
-              onClick={() => setBulkOpen(true)}
-            >
-              Invite all not invited ({notInvited.length})
-            </Button>
-            <label htmlFor="admin-families-sort" className="text-sm text-rally-muted">
-              Sort
-            </label>
-            <select
-              id="admin-families-sort"
-              data-testid="admin-families-sort"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as FamilySort)}
-              className="h-10 rounded-md border border-neutral-200 bg-white px-2 font-body text-sm text-rally-base"
-            >
-              <option value="default">Default</option>
-              <option value="outstanding_desc">Owed, highest first</option>
-            </select>
-            <ToolbarSearch
-              id="admin-families-search"
-              label="Search families"
-              value={q}
-              onChange={setQ}
-              placeholder="Search parent name or email"
-              busy={isFetching && !isFetchingNextPage}
-              busyLabel="Refreshing families"
-            />
-          </div>
-        </ListToolbar>
-
-        {isLoading ? (
-          <div className="p-8 text-center text-sm text-slate-500">Loading…</div>
-        ) : isError ? (
-          <ErrorNotice
-            testId="admin-families-error"
-            className="m-5"
-            message="Could not load Billing Setup. The counts above are unknown, not zero."
-            onRetry={() => void refetch()}
-            retrying={isFetching}
-          />
-        ) : rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            {hiddenByOwesFilter
-              ? "No family loaded so far owes anything. Load more families to keep looking."
-              : "No families match this filter."}
-          </div>
-        ) : (
-          <FamiliesList rows={rows} />
-        )}
-        {hasNextPage && (
-          <div className="border-t border-rally-line p-4 text-center">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => fetchNextPage()}
-              disabled={isFetchingNextPage}
-            >
-              {isFetchingNextPage ? "Loading…" : "Load more families"}
-            </Button>
-          </div>
-        )}
-      </Card>
-    </div>
+    </>
   );
 }
 
@@ -335,170 +472,353 @@ export default function FamiliesPage() {
  * #847: one list, two layouts. Exactly one is mounted, so `family-link-<id>`
  * is a single node at every width — see `lib/use-is-phone.ts`.
  */
-function FamiliesList({ rows }: { rows: BillingSetupRow[] }) {
+function FamiliesList({
+  rows,
+  moneyVisible,
+  state,
+  onSort,
+}: {
+  rows: FamilyResultRow[];
+  moneyVisible: boolean;
+  state: FamilyIndexState;
+  onSort: (column: FamilyIndexSort) => void;
+}) {
   const isPhone = useIsPhone();
   if (isPhone) {
     return (
       <PhoneList aria-label="Families" data-testid="admin-families-phone-list">
-        {rows.map((row) => (
-          <FamilyPhoneRow key={row.parent_id} row={row} />
-        ))}
+        {rows.map((row) =>
+          row.kind === "child" ? (
+            <ChildPhoneRow key={row.key} family={row.family} child={row.child} />
+          ) : (
+            <FamilyPhoneRow key={row.key} family={row.family} moneyVisible={moneyVisible} />
+          ),
+        )}
       </PhoneList>
     );
   }
+  const sortHeader = (column: FamilyIndexSort, label: string, align?: "right") => {
+    const sort = ariaSort(state, column, moneyVisible);
+    const Icon = sort === "ascending" ? ArrowUp : sort === "descending" ? ArrowDown : ArrowUpDown;
+    return (
+      <Th ariaSort={sort} align={align}>
+        <button
+          type="button"
+          data-testid={`admin-families-sort-${column}`}
+          onClick={() => onSort(column)}
+          className="inline-flex items-center gap-1 rounded uppercase hover:text-rally-base focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+        >
+          {label}
+          <Icon className="size-3" aria-hidden="true" />
+          <span className="sr-only">
+            {sort === "none" ? ", not sorted" : `, sorted ${sort}`}
+          </span>
+        </button>
+      </Th>
+    );
+  };
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
+      <table className="w-full text-left text-sm" data-testid="admin-families-table">
         <thead>
-          {/* #897: the mono header the Students and Users tables already
-              share — this row was a third, non-mono style. */}
           <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
-            <Th>Parent</Th>
-            <Th>Login</Th>
-            <Th>Card</Th>
-            <Th>Autopay</Th>
-            <Th>Outstanding</Th>
-            <Th>Invited</Th>
+            {sortHeader("name", "Family")}
+            {sortHeader("children", "Children")}
+            {sortHeader("stage", "Stage")}
+            <Th>Card and login</Th>
+            {moneyVisible ? sortHeader("balance", "Balance", "right") : null}
             <Th>Actions</Th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <FamilyTableRow key={row.parent_id} row={row} />
-          ))}
+          {rows.map((row) =>
+            row.kind === "child" ? (
+              <ChildTableRow
+                key={row.key}
+                family={row.family}
+                child={row.child}
+                moneyVisible={moneyVisible}
+              />
+            ) : (
+              <FamilyTableRow key={row.key} family={row.family} moneyVisible={moneyVisible} />
+            ),
+          )}
         </tbody>
       </table>
     </div>
   );
 }
 
-/**
- * The outstanding balance is line 1's primary slot: on a phone it was the
- * fifth column of seven and never on screen, which is the one number that
- * decides whether this family needs chasing today.
- */
+function StageChip({ state, asOf }: { state: string | null | undefined; asOf?: string | null }) {
+  const label = lifecycleLabel(state, asOf);
+  if (!label) return <span className="text-xs text-rally-subtle">—</span>;
+  return <Chip variant={lifecycleVariant(state)} label={label} />;
+}
+
+function NoAccountChip() {
+  return (
+    <span
+      className="rounded-full bg-status-slate-100 px-2 py-0.5 text-[11px] font-semibold text-status-slate-700"
+      title="No login account matches this parent yet, so there is no Billing page."
+    >
+      No account
+    </span>
+  );
+}
+
+function ChildrenChips({ kids }: { kids: FamilyIndexChild[] }) {
+  if (kids.length === 0) return <span className="text-xs text-rally-subtle">No children</span>;
+  return (
+    <ul className="flex flex-col gap-1">
+      {kids.map((child) => (
+        <li key={child.student_id} className="flex flex-wrap items-center gap-2">
+          <Link
+            href={studentHref(child.student_id)}
+            className="text-sm text-rally-base hover:underline"
+          >
+            {child.name}
+          </Link>
+          <StageChip state={child.lifecycle} asOf={child.lifecycle_as_of} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CardLogin({ family }: { family: FamilyIndexRow }) {
+  const login = family.registration
+    ? loginChip(loginStateFromRegistration(family.registration))
+    : null;
+  const card =
+    family.card_on_file === null ? null : cardChip(family.card_on_file ? "on_file" : "no_card");
+  if (!login && !card) return <span className="text-xs text-rally-subtle">—</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {card ? <Chip variant={card.variant} label={card.label} /> : null}
+      {login ? <Chip variant={login.variant} label={login.label} /> : null}
+    </div>
+  );
+}
+
+/** Rendered only when the server sent money: `null` reads as unknown, never $0.00. */
+function Balance({ family }: { family: FamilyIndexRow }) {
+  const money = family.money;
+  if (!money) {
+    return <span className="text-rally-subtle" title="Balance unknown">—</span>;
+  }
+  return (
+    <span className="flex flex-col items-end">
+      <span
+        className={`font-mono tabular-nums ${
+          money.balance_cents > 0 ? "font-semibold text-status-red-800" : "text-rally-muted"
+        }`}
+      >
+        {formatCents(money.balance_cents)}
+      </span>
+      {money.overdue_invoice_count > 0 ? (
+        <span className="text-[11px] text-status-red-800">
+          {formatCents(money.overdue_cents)} overdue
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function FamilyName({ family }: { family: FamilyIndexRow }) {
+  const href = familyHref(family);
+  const name = familyDisplayName(family);
+  return href ? (
+    <Link
+      href={href}
+      data-testid={`family-link-${family.family_id}`}
+      className="font-medium text-rally-base hover:underline"
+    >
+      {name}
+    </Link>
+  ) : (
+    <span data-testid={`family-name-${family.family_id}`} className="font-medium text-rally-base">
+      {name}
+    </span>
+  );
+}
+
+function FamilyTableRow({
+  family,
+  moneyVisible,
+}: {
+  family: FamilyIndexRow;
+  moneyVisible: boolean;
+}) {
+  const href = familyHref(family);
+  return (
+    <tr
+      data-testid={`admin-families-row-${family.family_id}`}
+      className="border-b border-neutral-100 align-top last:border-0"
+    >
+      <td className="px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <FamilyName family={family} />
+          {!family.has_account ? <NoAccountChip /> : null}
+        </div>
+        <ContactLinks
+          phone={family.phone}
+          email={family.email}
+          name={familyDisplayName(family)}
+          fallback={<span className="text-xs text-rally-subtle">No contact on file</span>}
+          className="mt-1 text-xs"
+        />
+      </td>
+      <td className="px-4 py-3">
+        <ChildrenChips kids={family.children} />
+      </td>
+      <td className="px-4 py-3">
+        <StageChip state={family.stage} />
+      </td>
+      <td className="px-4 py-3">
+        <CardLogin family={family} />
+      </td>
+      {moneyVisible ? (
+        <td className="px-4 py-3 text-right">
+          <Balance family={family} />
+        </td>
+      ) : null}
+      <td className="px-4 py-3">
+        {href ? (
+          <Link href={href} className="text-sm font-medium text-rally-cobalt-700 hover:underline">
+            Open
+          </Link>
+        ) : (
+          <span className="text-xs text-rally-subtle">No Billing page</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+/** Spec §3.2: a child match is its own result row, linking to the child. */
+function ChildTableRow({
+  family,
+  child,
+  moneyVisible,
+}: {
+  family: FamilyIndexRow;
+  child: FamilyIndexChild;
+  moneyVisible: boolean;
+}) {
+  const classes = child.classes.map((c) => c.title).filter(Boolean);
+  return (
+    <tr
+      data-testid={`admin-families-child-row-${child.student_id}`}
+      className="border-b border-neutral-100 align-top last:border-0"
+    >
+      <td className="px-4 py-3">
+        <Link
+          href={studentHref(child.student_id)}
+          data-testid={`admin-families-child-link-${child.student_id}`}
+          className="font-medium text-rally-base hover:underline"
+        >
+          {child.name}
+        </Link>
+        <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-rally-muted">
+          <span>Family:</span>
+          <FamilyName family={family} />
+          {!family.has_account ? <NoAccountChip /> : null}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-xs text-rally-muted">
+        {classes.length > 0 ? classes.join(", ") : "No class"}
+      </td>
+      <td className="px-4 py-3">
+        <StageChip state={child.lifecycle} asOf={child.lifecycle_as_of} />
+      </td>
+      <td className="px-4 py-3">
+        <CardLogin family={family} />
+      </td>
+      {moneyVisible ? (
+        <td className="px-4 py-3 text-right">
+          <Balance family={family} />
+        </td>
+      ) : null}
+      <td className="px-4 py-3">
+        <Link
+          href={studentHref(child.student_id)}
+          className="text-sm font-medium text-rally-cobalt-700 hover:underline"
+        >
+          Open
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
 /*
  * #857: the actions trigger is `admin-families-actions-<id>`, deliberately NOT
  * the row testid with `actions-` appended — an id that starts with the row's
  * own `admin-families-row-` prefix is matched by every prefix selector that
  * means to pick rows.
  */
-function FamilyPhoneRow({ row }: { row: BillingSetupRow }) {
-  const login = loginChip(loginStateFromRegistration(row.registration_state));
-  const card = cardChip(cardStateFromRegistration(row.registration_state));
-  const href = familyHref(row.parent_id);
-  const outstanding = row.outstanding_balance_cents;
-
+function FamilyPhoneRow({
+  family,
+  moneyVisible,
+}: {
+  family: FamilyIndexRow;
+  moneyVisible: boolean;
+}) {
+  const href = familyHref(family);
+  const name = familyDisplayName(family);
+  const classes = familyClasses(family);
   return (
     <PhoneListRow
-      data-testid={`admin-families-row-${row.parent_id}`}
-      title={row.parent_name}
-      href={href}
-      titleTestId={`family-link-${row.parent_id}`}
-      primary={
-        <span
-          className={`font-mono text-sm font-semibold tabular-nums ${
-            outstanding > 0 ? "text-status-red-800" : "text-rally-muted"
-          }`}
-        >
-          {formatCents(outstanding)}
-        </span>
-      }
-      actionsLabel={`Actions for ${row.parent_name}`}
-      actionsTestId={`admin-families-actions-${row.parent_id}`}
-      actions={[{ key: "open", label: "Open family", href }]}
-      // #865: chasing a balance starts with reaching the family.
-      contact={{ email: row.parent_email }}
+      data-testid={`admin-families-row-${family.family_id}`}
+      title={name}
+      href={href ?? undefined}
+      titleTestId={href ? `family-link-${family.family_id}` : undefined}
+      primary={moneyVisible ? <Balance family={family} /> : <StageChip state={family.stage} />}
+      actionsLabel={`Actions for ${name}`}
+      actionsTestId={`admin-families-actions-${family.family_id}`}
+      actions={href ? [{ key: "open", label: "Open family", href }] : []}
+      contact={{ email: family.email, phone: family.phone }}
       secondary={
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <Chip variant={login.variant} label={login.label} />
-            <Chip variant={card.variant} label={card.label} />
+            {moneyVisible ? <StageChip state={family.stage} /> : null}
+            {!family.has_account ? <NoAccountChip /> : null}
+            <CardLogin family={family} />
           </div>
-          <div className="break-words">{row.parent_email ?? "No email on file"}</div>
-          {row.card_label && (
-            <div>
-              {row.card_label} ···· {row.card_last4 ?? "????"}
-            </div>
-          )}
-          <div>
-            {row.autopay_active_count > 0 || row.autopay_eligible_count > 0
-              ? `${row.autopay_active_count} on autopay · ${row.autopay_eligible_count} eligible to resume`
-              : "No autopay"}
-            {row.last_invited_at ? ` · invited ${formatDate(row.last_invited_at)}` : ""}
-          </div>
-          {row.students.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {row.students.map((s) => (
-                <span
-                  key={s.student_id}
-                  className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
-                >
-                  {s.full_name}
-                </span>
-              ))}
-            </div>
-          )}
+          <ChildrenChips kids={family.children} />
+          {classes.length > 0 ? (
+            <div className="break-words">{classes.map((c) => c.title).join(", ")}</div>
+          ) : null}
         </>
       }
     />
   );
 }
 
-function FamilyTableRow({ row }: { row: BillingSetupRow }) {
-  const login = loginChip(loginStateFromRegistration(row.registration_state));
-  const card = cardChip(cardStateFromRegistration(row.registration_state));
-  const href = familyHref(row.parent_id);
-
+function ChildPhoneRow({ family, child }: { family: FamilyIndexRow; child: FamilyIndexChild }) {
+  const name = familyDisplayName(family);
   return (
-    <tr className="border-b border-slate-100 last:border-0">
-      <td className="px-4 py-3">
-        <Link
-          href={href}
-          data-testid={`family-link-${row.parent_id}`}
-          className="font-medium text-slate-900 hover:underline"
-        >
-          {row.parent_name}
-        </Link>
-        <div className="text-xs text-slate-500">{row.parent_email ?? "—"}</div>
-        <div className="mt-1 flex flex-wrap gap-1">
-          {row.students.map((s) => (
-            <span
-              key={s.student_id}
-              className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
-            >
-              {s.full_name}
-            </span>
-          ))}
+    <PhoneListRow
+      data-testid={`admin-families-child-row-${child.student_id}`}
+      title={child.name}
+      href={studentHref(child.student_id)}
+      titleTestId={`admin-families-child-link-${child.student_id}`}
+      primary={<StageChip state={child.lifecycle} asOf={child.lifecycle_as_of} />}
+      actionsLabel={`Actions for ${child.name}`}
+      actionsTestId={`admin-families-child-actions-${child.student_id}`}
+      actions={[
+        { key: "open-child", label: "Open student", href: studentHref(child.student_id) },
+        ...(familyHref(family)
+          ? [{ key: "open", label: "Open family", href: familyHref(family)! }]
+          : []),
+      ]}
+      contact={{ email: family.email, phone: family.phone }}
+      secondary={
+        <div className="flex flex-wrap items-center gap-1">
+          <span>Family: {name}</span>
+          {!family.has_account ? <NoAccountChip /> : null}
         </div>
-      </td>
-      <td className="px-4 py-3">
-        <Chip variant={login.variant} label={login.label} />
-      </td>
-      <td className="px-4 py-3 text-slate-700">
-        <Chip variant={card.variant} label={card.label} />
-        {row.card_label && (
-          <div className="mt-1 text-xs text-slate-500">
-            {row.card_label} ···· {row.card_last4 ?? "????"}
-          </div>
-        )}
-      </td>
-      <td className="px-4 py-3 text-slate-700">
-        {/* #840: "resumable" was the autopay-eligibility predicate's own name
-            leaking into the page; say what an admin would say. */}
-        {row.autopay_active_count > 0 || row.autopay_eligible_count > 0
-          ? `${row.autopay_active_count} on autopay · ${row.autopay_eligible_count} eligible to resume`
-          : "—"}
-      </td>
-      <td className="px-4 py-3 text-slate-700">{formatCents(row.outstanding_balance_cents)}</td>
-      <td className="px-4 py-3 text-slate-500">
-        {row.last_invited_at ? formatDate(row.last_invited_at) : "—"}
-      </td>
-      <td className="px-4 py-3">
-        <Link href={href} className="text-sm font-medium text-rally-cobalt-700 hover:underline">
-          Open
-        </Link>
-      </td>
-    </tr>
+      }
+    />
   );
 }

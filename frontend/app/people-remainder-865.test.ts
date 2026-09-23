@@ -28,26 +28,28 @@ const FRONTEND = path.resolve(__dirname, "..");
 const appSource = (rel: string) => readFileSync(path.join(APP, rel), "utf8");
 const source = (rel: string) => readFileSync(path.join(FRONTEND, rel), "utf8");
 
-describe("Families can be filtered and sorted by what is owed (#865)", () => {
+describe("Families can be filtered and sorted by what is owed (#865, People CRM §3.2)", () => {
+  // The Families view now reads the family index (`GET /admin/families`),
+  // which filters and sorts on the server, before pagination. The #865
+  // client-side narrowing over loaded rows (`visibleFamilyRows`) is gone: it
+  // could only ever rank the pages already loaded.
   const page = () => appSource("(admin)/admin/families/page.tsx");
 
-  it("derives the visible rows through the shared, tested helper", () => {
-    expect(page()).toContain("visibleFamilyRows");
+  it("sorts by balance on the server through a sortable column header", () => {
+    expect(page()).toContain('sortHeader("balance", "Balance", "right")');
+    expect(page()).toContain("admin-families-sort-${column}");
+    expect(page()).toContain("ariaSort={sort}");
   });
 
-  it("offers an Owes money toggle with a stable testid", () => {
-    expect(page()).toContain("admin-families-owes-filter");
-    expect(page()).toContain("Owes money");
-  });
-
-  it("offers a sort control for the outstanding column", () => {
-    expect(page()).toContain("admin-families-sort");
-    expect(page()).toContain("outstanding_desc");
-  });
-
-  it("keeps the client-side narrowing out of the query key, so no new request is made", () => {
-    // `status`/`q` go to the backend; owes/sort run over rows already loaded.
+  it("offers the owed filter as a server preset chip, not a client-side narrowing", () => {
+    expect(page()).toContain("admin-families-preset-${preset.id}");
+    expect(page()).not.toContain("visibleFamilyRows");
     expect(page()).not.toContain("owes_only");
+  });
+
+  it("renders the balance only when the server sent money", () => {
+    expect(page()).toContain("moneyVisible ? sortHeader(");
+    expect(page()).not.toMatch(/balance_cents\s*[-+*/]/);
   });
 });
 

@@ -191,3 +191,126 @@ export function pauseFamilyAutopay(
     { method: "POST", body: JSON.stringify(payload) },
   );
 }
+
+// ---------------------------------------------------------------------------
+// People CRM family index — `GET /admin/families` and `/admin/families/summary`.
+// Spec: docs/design/people-crm/engineering-spec.md §3.2. Shapes mirror
+// backend/v2/interfaces/admin/family_index_views.py exactly.
+// ---------------------------------------------------------------------------
+
+export type FamilyStage =
+  | "pending_cancel"
+  | "active"
+  | "at_risk"
+  | "on_hold"
+  | "paused"
+  | "trial"
+  | "never_enrolled"
+  | "left";
+
+export type FamilyScope = "active" | "leaving" | "left";
+export type FamilyIndexSort = "name" | "stage" | "balance" | "children";
+
+export interface FamilyIndexClass {
+  session_id: string;
+  title: string;
+}
+
+export interface FamilyIndexChild {
+  student_id: string;
+  name: string;
+  lifecycle: FamilyStage;
+  lifecycle_as_of: string | null;
+  classes: FamilyIndexClass[];
+  /** The search matched this child: the child is the result row (spec §3.2). */
+  matched: boolean;
+}
+
+export interface FamilyIndexMoney {
+  balance_cents: number;
+  open_invoice_count: number;
+  overdue_invoice_count: number;
+  overdue_cents: number;
+  oldest_overdue_due_on: string | null;
+  last_failed_payment_at: string | null;
+}
+
+export interface FamilyIndexRow {
+  /** The id `/admin/families/{family_id}` opens. */
+  family_id: string;
+  parent_name: string | null;
+  email: string | null;
+  phone: string | null;
+  /** False when no users document answers to the parent id: no Billing tab. */
+  has_account: boolean;
+  stage: FamilyStage;
+  children: FamilyIndexChild[];
+  card_on_file: boolean | null;
+  registration: RegistrationState | null;
+  /** Null when money is hidden from this caller or could not be read. */
+  money: FamilyIndexMoney | null;
+  matched_parent: boolean;
+}
+
+export interface FamilyIndexPage {
+  generated_at: string;
+  families: FamilyIndexRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  money_visible: boolean;
+  warnings: string[];
+}
+
+export interface FamilyViewPreset {
+  id: string;
+  label: string;
+  params: Record<string, string>;
+  money: boolean;
+}
+
+export interface FamilyIndexSummary {
+  generated_at: string;
+  total_families: number;
+  tiles: Partial<Record<FamilyScope, number>>;
+  counts_by_stage: Partial<Record<FamilyStage, number>>;
+  presets: FamilyViewPreset[];
+  warnings: string[];
+}
+
+export interface FamilyIndexParams {
+  search?: string;
+  scope?: FamilyScope;
+  stage?: FamilyStage[];
+  class_id?: string;
+  card_on_file?: boolean;
+  overdue?: boolean;
+  sort?: FamilyIndexSort;
+  order?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
+
+export function familyIndexQueryString(params: FamilyIndexParams): string {
+  const search = new URLSearchParams();
+  if (params.search) search.set("search", params.search);
+  if (params.scope) search.set("scope", params.scope);
+  for (const stage of params.stage ?? []) search.append("stage", stage);
+  if (params.class_id) search.set("class_id", params.class_id);
+  if (params.card_on_file !== undefined) search.set("card_on_file", String(params.card_on_file));
+  if (params.overdue !== undefined) search.set("overdue", String(params.overdue));
+  if (params.sort) search.set("sort", params.sort);
+  if (params.order) search.set("order", params.order);
+  if (params.page) search.set("page", String(params.page));
+  if (params.page_size) search.set("page_size", String(params.page_size));
+  return search.toString();
+}
+
+export function fetchFamilyIndex(params: FamilyIndexParams = {}): Promise<FamilyIndexPage> {
+  const qs = familyIndexQueryString(params);
+  return apiFetch<FamilyIndexPage>(`/admin/families${qs ? `?${qs}` : ""}`, { method: "GET" });
+}
+
+export function fetchFamilyIndexSummary(): Promise<FamilyIndexSummary> {
+  return apiFetch<FamilyIndexSummary>("/admin/families/summary", { method: "GET" });
+}

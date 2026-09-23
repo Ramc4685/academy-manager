@@ -66,6 +66,11 @@ export const queryKeys = {
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
     globalWaitlist: () => ["admin", "waitlist", "global"] as const,
     families: () => ["admin", "families"] as const,
+    // People CRM family index (spec §3.2). Under `families()` so any
+    // invalidation of the family pages also refreshes the list.
+    familyIndex: (params: Record<string, unknown>) =>
+      ["admin", "families", "index", params] as const,
+    familyIndexSummary: () => ["admin", "families", "index-summary"] as const,
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
     registrations: () => ["admin", "registrations"] as const,
@@ -124,6 +129,9 @@ export const queryKeys = {
     // #865: the shell's people search reads the same families endpoint with a
     // much smaller `limit`, so it must NOT share `billingSetup`'s key — the
     // Families page would otherwise render whichever of the two answered last.
+    // The Families page's bulk invite walks every not-invited Billing Setup
+    // row; its own key so the list's paging never shares a cache entry.
+    familiesNotInvited: () => [...queryKeys.admin.billingSetupAll(), "not-invited-all"] as const,
     peopleSearchFamilies: (q: string) => ["admin", "people-search", "families", q] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
     departurePolicy: () => ["admin", "enrollment", "departure-policy"] as const,

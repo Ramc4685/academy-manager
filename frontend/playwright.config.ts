@@ -107,8 +107,10 @@ export default defineConfig({
       // #890: the invoice row's direct-vs-More-menu split and the "one home
       // per money action" rule are a 1280px claim, and the row renders a
       // different branch (table vs PhoneListRow) on each viewport.
+      // families-index joins for the People CRM Families view: its sortable
+      // headers and money column exist only in the desktop table.
       testMatch:
-        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing)\.spec\.ts/,
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index)\.spec\.ts/,
     },
   ],
 });

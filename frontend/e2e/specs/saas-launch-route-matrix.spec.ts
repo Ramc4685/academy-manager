@@ -12,6 +12,7 @@ import {
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
 import { openMonthCloseSection } from "../helpers/month-close-sections";
+import { stubEmptyBillingSetup, stubFamilyIndex } from "../fixtures/family-index";
 import {
   ACADEMY_A,
   fulfillJson,
@@ -136,6 +137,7 @@ const ADMIN_ROUTE_MATRIX = [
   { label: "sessions", href: "/admin/sessions", testId: "admin-sessions" },
   { label: "students", href: "/admin/students", testId: "admin-students" },
   { label: "users", href: "/admin/users", testId: "admin-users" },
+  { label: "families", href: "/admin/families", testId: "admin-families" },
   {
     label: "inbox",
     href: "/admin/inbox",
@@ -196,6 +198,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/users*", (route) =>
     fulfillJson(route, { users: [] })
   );
+  // People CRM family index (engineering-spec §3.2 / §7 Phase 2).
+  await stubFamilyIndex(page, { families: [] });
+  await stubEmptyBillingSetup(page);
   await page.route("**/api/v2/admin/inbox/counts", (route) =>
     fulfillJson(route, { counts: {}, total: 0 }),
   );
