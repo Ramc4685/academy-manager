@@ -2186,3 +2186,32 @@ async def test_same_occurrence_id_in_another_academy_never_reaches_the_summary(d
     # other tenant's rows would give 1 of 2 (or 1 of 3) and a last_seen_at.
     assert row.attendance_rate == pytest.approx(0.0)
     assert row.last_seen_at is None
+
+
+@pytest.mark.asyncio
+async def test_recent_attendance_carries_the_occurrence_and_correction_trail(db, acad) -> None:
+    """The family record drawer corrects a mark by (occurrence, student), so
+    each recent row names its occurrence and, once corrected, what it replaced."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_student(db, acad, "st-trail")
+    await _seed_mark(
+        db,
+        acad,
+        student_id="st-trail",
+        occurrence_id="occ-trail",
+        start_at=now - timedelta(days=3),
+        marked_at=now - timedelta(days=3),
+        status="absent",
+    )
+    await db["attendance"].update_one(
+        {"academy_id": acad, "attendance_id": "att-occ-trail-st-trail"},
+        {"$set": {"previous_status": "present", "corrected_at": now - timedelta(days=1)}},
+    )
+
+    detail = await MongoStudentRepository(db).get_admin_student("st-trail")
+
+    assert detail is not None
+    [row] = detail.recent_attendance
+    assert row.occurrence_id == "occ-trail"
+    assert row.previous_status == "present"
+    assert row.corrected_at == now - timedelta(days=1)

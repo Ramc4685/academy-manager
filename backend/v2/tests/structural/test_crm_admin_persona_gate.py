@@ -11,9 +11,11 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from backend.v2.interfaces.admin.owner_gate import OWNER_ONLY_ROUTE_PATHS
 from backend.v2.tests.structural.test_owner_gate_policy import (
     _admin_app,
     _dependant_calls,
+    _is_owner_guarded,
     _iter_routes,
 )
 
@@ -51,3 +53,36 @@ def test_the_family_index_routes_are_registered() -> None:
 def test_every_crm_route_requires_the_admin_persona() -> None:
     ungated = sorted(key for key, route in _crm_routes().items() if "admin" not in _personas(route))
     assert not ungated, f"People CRM routes without require_persona('admin'): {ungated}"
+
+
+#: The family record page (Lane A4) calls these beyond ``/families``: the
+#: child drawer's coach notes and its attendance Correct action (the #517
+#: admin correction route). Every admin may use them; none is owner-only, and
+#: none moves money, so none is in ``OWNER_ONLY_ROUTE_PATHS``.
+_FAMILY_RECORD_ROUTES = (
+    ("GET", "/api/v2/admin/families/{family_id}/record"),
+    ("GET", "/api/v2/admin/families/{parent_id}/billing"),
+    ("GET", "/api/v2/admin/students/{student_id}/coach-notes"),
+    ("PATCH", "/api/v2/admin/session-occurrences/{occurrence_id}/attendance/{student_id}"),
+)
+
+
+def _all_admin_routes() -> dict[tuple[str, str], Any]:
+    routes: dict[tuple[str, str], Any] = {}
+    for path, route in _iter_routes(_admin_app().routes):
+        if not hasattr(route, "dependant"):
+            continue
+        for method in getattr(route, "methods", None) or ():
+            if method != "HEAD":
+                routes[(method, path)] = route
+    return routes
+
+
+def test_family_record_routes_are_admin_gated_and_not_owner_only() -> None:
+    routes = _all_admin_routes()
+    for key in _FAMILY_RECORD_ROUTES:
+        assert key in routes, f"family record route missing: {key}"
+        route = routes[key]
+        assert "admin" in _personas(route), f"{key} is not require_persona('admin')"
+        assert not _is_owner_guarded(route), f"{key} must not be owner-only"
+        assert key not in OWNER_ONLY_ROUTE_PATHS, f"{key} is listed as owner-only"

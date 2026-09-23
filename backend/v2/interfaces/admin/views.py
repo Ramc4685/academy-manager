@@ -165,6 +165,9 @@ class AdminStudentRecentAttendanceView(BaseModel):
     date: str | None = None
     status: str
     marked_at: datetime | None = None
+    occurrence_id: str | None = None
+    previous_status: str | None = None
+    corrected_at: datetime | None = None
 
 
 class AdminStudentDetailView(AdminStudentView):

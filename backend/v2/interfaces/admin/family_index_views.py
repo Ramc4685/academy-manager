@@ -25,6 +25,7 @@ from backend.v2.contexts.crm.application.family_index import (
     FamilyIndexRow,
     FamilyIndexSummary,
     FamilyMoney,
+    FamilyRecord,
 )
 
 FamilyStageName = Literal[
@@ -92,6 +93,19 @@ class AdminFamilyIndexPage(_View):
     total: int
     page: int
     page_size: int
+    money_visible: bool
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AdminFamilyRecordView(_View):
+    """``GET /admin/families/{family_id}/record``: the family's index row.
+
+    The family record page's Overview header and Details tab read this, so
+    the stage, children and contact fields match the Families view exactly.
+    """
+
+    generated_at: datetime
+    family: AdminFamilyIndexRow
     money_visible: bool
     warnings: list[str] = Field(default_factory=list)
 
@@ -196,4 +210,19 @@ def summary_view(
         counts_by_stage=summary.counts_by_stage,
         presets=[p for p in VIEW_PRESETS if money_visible or not p.money],
         warnings=list(summary.warnings),
+    )
+
+
+def record_view(
+    record: FamilyRecord,
+    *,
+    generated_at: datetime,
+    money_visible: bool,
+    warnings: tuple[str, ...] = (),
+) -> AdminFamilyRecordView:
+    return AdminFamilyRecordView(
+        generated_at=generated_at,
+        family=_row(FamilyIndexRow(record=record), money_visible=money_visible),
+        money_visible=money_visible,
+        warnings=list(warnings),
     )

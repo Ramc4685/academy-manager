@@ -44,6 +44,7 @@ __all__ = [
     "FamilyIndexUnavailable",
     "FamilyMoney",
     "FamilyRecord",
+    "find_family_record",
     "normalize_stages",
     "query_family_index",
     "summarize_family_index",
@@ -192,3 +193,13 @@ def normalize_stages(values: Sequence[str]) -> tuple[str, ...]:
     for value in values:
         out.extend(part.strip() for part in value.split(",") if part.strip())
     return tuple(dict.fromkeys(out))
+
+
+def find_family_record(index: FamilyIndex, family_id: str) -> FamilyRecord | None:
+    """One family record by its canonical id: the family record page's
+    Overview header and stage (People CRM spec §4), read from the same index
+    row the Families view shows so the two can never disagree."""
+    wanted = family_id.strip()
+    if not wanted:
+        return None
+    return next((record for record in index.families if record.family_id == wanted), None)

@@ -1575,6 +1575,9 @@ class MongoStudentRepository(TenantScopedRepository):
                     date=self._attendance_date_label(doc.get("date")),
                     status=str(doc.get("status") or "unknown"),
                     marked_at=self._coerce_datetime(doc.get("marked_at")),
+                    occurrence_id=self._optional_str(doc.get("occurrence_id")),
+                    previous_status=self._optional_str(doc.get("previous_status")),
+                    corrected_at=self._coerce_datetime(doc.get("corrected_at")),
                 )
             )
         return rows

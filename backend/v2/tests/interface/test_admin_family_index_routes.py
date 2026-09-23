@@ -223,3 +223,41 @@ def test_non_admin_personas_are_404(services: FakeServices, roles: tuple[str, ..
 def test_summary_is_not_read_as_a_parent_id(admin: TestClient) -> None:
     """``/families/summary`` must never fall through to ``/families/{parent_id}/…``."""
     assert admin.get("/api/v2/admin/families/summary").json()["total_families"] == 2
+
+
+# --- Lane A4: the family record page reads its Overview/Details from the row ---
+
+
+def test_family_record_returns_the_index_row(admin: TestClient, services: FakeServices) -> None:
+    res = admin.get("/api/v2/admin/families/u-alpha/record")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert services.index.calls == ["acad"]
+    assert body["money_visible"] is True
+    family = body["family"]
+    assert family["family_id"] == "u-alpha"
+    assert family["stage"] == "active"
+    assert family["email"] == "alpha@example.test"
+    assert [c["student_id"] for c in family["children"]] == ["s-1"]
+    assert family["money"]["balance_cents"] == 6000
+
+
+def test_family_record_unknown_family_is_404(admin: TestClient) -> None:
+    assert admin.get("/api/v2/admin/families/u-nobody/record").status_code == 404
+
+
+def test_family_record_money_goes_through_the_seam(
+    services: FakeServices, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(family_index_routes, "can_view_family_money", lambda claims: False)
+    with _client(("admin",), services) as client:
+        body = client.get("/api/v2/admin/families/u-alpha/record").json()
+    assert body["money_visible"] is False
+    assert body["family"]["money"] is None
+
+
+@pytest.mark.parametrize("roles", [("coach",), ("parent",)])
+def test_family_record_is_admin_only(services: FakeServices, roles: tuple[str, ...]) -> None:
+    with _client(roles, services) as client:
+        assert client.get("/api/v2/admin/families/u-alpha/record").status_code == 404
+    assert services.index.calls == []

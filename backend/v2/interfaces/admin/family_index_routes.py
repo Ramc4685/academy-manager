@@ -5,7 +5,9 @@ People CRM spec §3.2 and §7 Phase 2. Two read routes, both
 
 * ``GET /admin/families``: search, scope/stage/class/card/overdue filters,
   sort (before pagination) and pagination over the academy's family index;
-* ``GET /admin/families/summary``: the scope tiles over the unfiltered index.
+* ``GET /admin/families/summary``: the scope tiles over the unfiltered index;
+* ``GET /admin/families/{family_id}/record``: one family's index row, the
+  family record page's Overview header and Details (spec §4, Lane A4).
 
 Services are attached at ``app.state.admin_family_index`` by
 ``composition/families_crm.py``. Every money field passes through
@@ -25,6 +27,7 @@ from backend.v2.contexts.crm.application.family_index import (
     FamilyIndex,
     FamilyIndexQuery,
     FamilyIndexUnavailable,
+    find_family_record,
     normalize_stages,
     query_family_index,
     summarize_family_index,
@@ -33,7 +36,9 @@ from backend.v2.contexts.crm.application.money_visibility import can_view_family
 from backend.v2.interfaces.admin.family_index_views import (
     AdminFamilyIndexPage,
     AdminFamilyIndexSummary,
+    AdminFamilyRecordView,
     page_view,
+    record_view,
     summary_view,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -122,4 +127,27 @@ async def family_index_summary(
         summarize_family_index(index),
         generated_at=index.generated_at,
         money_visible=can_view_family_money(claims),
+    )
+
+
+@router.get("/families/{family_id}/record", response_model=AdminFamilyRecordView)
+async def family_record(
+    family_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    services: AdminFamilyIndexServices = Depends(get_admin_family_index),
+) -> AdminFamilyRecordView:
+    """One family's index row: stage, children, contact, money (gated).
+
+    404 when the id is not a family of this academy: the index is built from
+    the caller's own tenant, so another academy's family is never found.
+    """
+    index = await _index(services, claims)
+    record = find_family_record(index, family_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="family not found")
+    return record_view(
+        record,
+        generated_at=index.generated_at,
+        money_visible=can_view_family_money(claims),
+        warnings=index.warnings,
     )
