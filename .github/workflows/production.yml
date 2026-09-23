@@ -690,12 +690,18 @@ jobs:
       # SHA. The dry run below and deploy-backend both use this exact image, so
       # what was dry-run is what gets deployed. --build-only never touches the
       # running machine and never runs the release_command.
+      # --depot=false: the first supervised run (run 35803117620, 2026-09-23)
+      # built with Depot, the push completed, yet `flyctl machine run` on the
+      # pushed tag failed with "failed to get manifest ... not found" because
+      # Depot-built images are not launchable by digest from registry.fly.io
+      # the way Fly-builder images are. The Fly remote builder pushes a plain
+      # registry image that both `machine run` and `deploy --image` can pull.
       - name: Build and push backend image
         id: build
         working-directory: backend
         run: |
           label="migrate-${GITHUB_SHA::12}"
-          flyctl deploy --build-only --push --remote-only \
+          flyctl deploy --build-only --push --remote-only --depot=false \
             --image-label "${label}" --app "${FLY_APP}"
           image="registry.fly.io/${FLY_APP}:${label}"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
@@ -750,15 +756,26 @@ jobs:
             fi
           }
           trap cleanup EXIT
-          out="$(flyctl machine run "${IMAGE}" --app "${FLY_APP}" --region ord \
-            --name "${machine_name}" \
-            --restart no --detach --vm-memory 1024 \
-            --env "DB_NAME=${db_name}" \
-            -- python -m backend.v2.migrations --dry-run 2>&1 | tee /dev/stderr)"
-          machine_id="$(printf '%s\n' "${out}" | sed -n 's/.*Machine ID: *\([0-9a-f]\{14\}\).*/\1/p' | head -n1)"
-          if [ -z "${machine_id}" ]; then
-            machine_id="$(find_machine || true)"
-          fi
+          # A freshly pushed tag can take a moment to become pullable by the
+          # VM host, so the launch is retried a few times before failing.
+          out=""
+          machine_id=""
+          for attempt in 1 2 3 4; do
+            out="$(flyctl machine run "${IMAGE}" --app "${FLY_APP}" --region ord \
+              --name "${machine_name}" \
+              --restart no --detach --vm-memory 1024 \
+              --env "DB_NAME=${db_name}" \
+              -- python -m backend.v2.migrations --dry-run 2>&1 | tee /dev/stderr)" || true
+            machine_id="$(printf '%s\n' "${out}" | sed -n 's/.*Machine ID: *\([0-9a-f]\{14\}\).*/\1/p' | head -n1)"
+            if [ -z "${machine_id}" ]; then
+              machine_id="$(find_machine || true)"
+            fi
+            if [ -n "${machine_id}" ]; then
+              break
+            fi
+            echo "machine run attempt ${attempt} did not produce a machine; retrying in 20s"
+            sleep 20
+          done
           if [ -z "${machine_id}" ]; then
             echo "::error::Could not find the dry-run machine ${machine_name} (flyctl output above, machine list by name empty)"
             exit 1
