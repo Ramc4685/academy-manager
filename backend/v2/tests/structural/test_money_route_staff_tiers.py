@@ -1,17 +1,24 @@
-"""Staff money tiers on the admin surface (owner decision 2026-09-22).
+"""Staff money tiers on the admin surface (People CRM engineering spec §4).
 
-Staff tiers are owner, billing and front desk. Billing staff may RECORD a
-payment (cash, cheque, bank transfer the family already made); every action
-that MOVES money (refunds, card charges, credits, discounts, payment voids)
-is owner-only, enforced on the backend by ``require_owner`` and listed in
-``OWNER_ONLY_ROUTE_PATHS``, and hidden from non-owners on the Billing tab
-through ``OWNER_ONLY_ACTIONS``. This walks the real admin router (the
-``test_owner_gate_policy`` walker) so a money route that drifts onto the
+Staff tiers are owner, billing and front desk (owner decision 2026-09-22).
+Per docs/design/people-crm/engineering-spec.md §4, every money-moving action
+is owner-only: Record payment, charge, refund, void, add charge, one-time
+discount, autopay on or off, "enforced on the backend with the existing owner
+gate". Owner-only routes are guarded by ``require_owner`` and listed in
+``OWNER_ONLY_ROUTE_PATHS``; the Billing tab hides owner-only actions from
+non-owners through ``OWNER_ONLY_ACTIONS``. This walks the real admin router
+(the ``test_owner_gate_policy`` walker) so a money route that drifts onto the
 wrong tier fails here.
 
-Two card-charge routes are admin-reachable today. They are pinned as strict
-xfails so the gap is visible in CI and flips to a failure (forcing the
-marker off) the moment it is closed.
+Known gaps, pinned as strict xfails so they are visible in CI and flip to a
+failure (forcing the marker off) the moment they are closed; the production
+fix is out of A5's test-only scope:
+
+* the two card-charge routes are admin-reachable;
+* Record payment (``/record-payment`` and ``/payments/{id}/mark-paid``) is
+  gated only by ``require_persona("admin")``. No billing-vs-front-desk tier
+  exists in code yet (#553), so today ANY admin-persona staff member can
+  record a manual payment.
 """
 
 from __future__ import annotations
@@ -52,7 +59,14 @@ CARD_CHARGE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/billing/setup/{{parent_id}}/charge"),
 )
 
-#: Recording money the family already paid: billing staff, i.e. the admin persona.
+_RECORD_PAYMENT_GAP = (
+    "Record payment is money-moving and owner-only per People CRM engineering "
+    "spec §4, but this route is require_persona('admin') only and not in "
+    "OWNER_ONLY_ROUTE_PATHS, so any admin-persona staff can record a manual "
+    "payment (A5 finding; production fix deferred)."
+)
+
+#: Recording money the family already paid: owner-only per the spec (known gap).
 RECORD_PAYMENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/record-payment"),
     ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
@@ -82,21 +96,36 @@ def test_card_charge_route_is_owner_only(key: tuple[str, str]) -> None:
     assert _is_owner_guarded(routes[key])
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param(k, marks=pytest.mark.xfail(strict=True, reason=_RECORD_PAYMENT_GAP))
+        for k in RECORD_PAYMENT_ROUTES
+    ],
+    ids=lambda k: f"{k[0]} {k[1]}",
+)
+def test_recording_a_payment_is_owner_only(key: tuple[str, str]) -> None:
+    routes = _admin_routes()
+    assert key in routes, f"record route not registered: {key}"
+    assert key in OWNER_ONLY_ROUTE_PATHS
+    assert _is_owner_guarded(routes[key])
+
+
 @pytest.mark.parametrize("key", RECORD_PAYMENT_ROUTES, ids=lambda k: f"{k[0]} {k[1]}")
-def test_recording_a_payment_is_open_to_billing_staff_and_no_one_else(
-    key: tuple[str, str],
-) -> None:
-    """Admin persona (billing staff) records; not owner-only, and never ungated."""
+def test_recording_a_payment_is_never_ungated(key: tuple[str, str]) -> None:
+    """Floor that holds today and after the fix: the admin persona gate stays."""
     routes = _admin_routes()
     assert key in routes, f"record route not registered: {key}"
     assert "admin" in _personas(routes[key])
-    assert key not in OWNER_ONLY_ROUTE_PATHS
-    assert not _is_owner_guarded(routes[key])
 
 
 def test_billing_tab_hides_money_moving_actions_from_non_owners() -> None:
     assert {"refund", "void", "discount_once", "recurring_discount"} <= OWNER_ONLY_ACTIONS
-    assert "record_payment" not in OWNER_ONLY_ACTIONS
+
+
+@pytest.mark.xfail(strict=True, reason=_RECORD_PAYMENT_GAP)
+def test_billing_tab_hides_record_payment_from_non_owners() -> None:
+    assert "record_payment" in OWNER_ONLY_ACTIONS
 
 
 @pytest.mark.xfail(strict=True, reason=_CHARGE_GAP)

@@ -9,8 +9,10 @@ the 0132 validators are the ones production has. Two concurrent submits only
 interleave the way they do in production on a real server, so none of this
 runs on mongomock.
 
-The contract pinned here (owner decision 2026-09-22: billing staff may
-record payments; People CRM spec §4):
+This drives the use-case closure below the route, so it pins the recording
+contract only, not who may call it (Record payment is owner-only per People
+CRM spec §4; the route's missing owner gate is a strict xfail in
+``structural/test_money_route_staff_tiers.py``). The contract pinned here:
 
 * same ``Idempotency-Key`` twice, one after the other: one payment, the second
   call replays the first result;
