@@ -16,16 +16,7 @@ import {
 } from "@/lib/api/curriculum";
 import { SkillNotesPanel } from "@/components/coach/skill-notes-panel";
 import { recommendErrorMessage } from "@/components/admin/admissions/level-up-review";
-
-const STATUS_LABELS: Record<SkillStatus, string> = {
-  NOT_STARTED: "Not started",
-  INTRODUCED: "Introduced",
-  LEARNING: "Learning",
-  PRACTICING: "Practicing",
-  TEST_READY: "Test ready",
-  PASSED: "Passed",
-  NEEDS_REVIEW: "Needs review",
-};
+import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillStatusChip";
 
 // Statuses a coach may set directly. PASSED is earned only through "Record
 // test" (the backend's CoachSettableStatus rejects it — offering it here
@@ -40,22 +31,6 @@ const COACH_SETTABLE_STATUSES: SkillStatus[] = [
 
 const TEST_ATTEMPT_HINT =
   "Attempts = total tries. Successes = correct tries. Examples: 1/1 means one correct try; 10/7 passes at 70%; 10/5 needs review.";
-
-function statusColor(status: SkillStatus): string {
-  switch (status) {
-    case "PASSED":
-      return "bg-green-100 text-green-800";
-    case "TEST_READY":
-      return "bg-blue-100 text-blue-800";
-    case "LEARNING":
-    case "PRACTICING":
-      return "bg-yellow-100 text-yellow-800";
-    case "NEEDS_REVIEW":
-      return "bg-red-100 text-red-800";
-    default:
-      return "bg-neutral-100 text-neutral-500";
-  }
-}
 
 export default function CoachStudentPassportPage() {
   const { studentId } = useParams<{ studentId: string }>();
@@ -215,11 +190,7 @@ function SkillCard({
             <p className="mt-0.5 text-xs text-rally-muted line-clamp-2">{entry.skill_description}</p>
           )}
         </div>
-        <span
-          className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${statusColor(entry.status)}`}
-        >
-          {STATUS_LABELS[entry.status]}
-        </span>
+        <SkillStatusChip status={entry.status} size="lg" />
       </div>
 
       {/* Test info */}
@@ -253,12 +224,12 @@ function SkillCard({
               cannot set by hand (Not started / Passed), so the select still shows it. */}
           {!COACH_SETTABLE_STATUSES.includes(entry.status) && (
             <option value={entry.status} disabled>
-              {STATUS_LABELS[entry.status]}
+              {SKILL_STATUS_LABELS[entry.status]}
             </option>
           )}
           {COACH_SETTABLE_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {STATUS_LABELS[s]}
+              {SKILL_STATUS_LABELS[s]}
             </option>
           ))}
         </select>

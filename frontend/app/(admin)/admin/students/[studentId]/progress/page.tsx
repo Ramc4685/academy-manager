@@ -27,16 +27,7 @@ import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { BigNum } from "@/components/ds/typography";
-
-const STATUS_LABELS: Record<SkillStatus, string> = {
-  NOT_STARTED: "Not started",
-  INTRODUCED: "Introduced",
-  LEARNING: "Learning",
-  PRACTICING: "Practicing",
-  TEST_READY: "Test ready",
-  PASSED: "Passed",
-  NEEDS_REVIEW: "Needs review",
-};
+import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillStatusChip";
 
 const ADMIN_SETTABLE_STATUSES: SkillStatus[] = [
   "INTRODUCED",
@@ -484,6 +475,7 @@ function AdminSkillRow({
             <span className="text-sm font-semibold text-rally-base">
               {entry.sequence}. {entry.skill_name}
             </span>
+            <SkillStatusChip status={entry.status} />
             {entry.is_required && (
               <span className="rounded-full bg-status-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-status-red-800">
                 Required
@@ -514,11 +506,11 @@ function AdminSkillRow({
             className="min-h-[36px] rounded-md border border-rally-line bg-white px-2 py-1.5 text-xs font-medium focus:border-rally-cobalt-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           >
             {!currentStatusIsSettable && (
-              <option value={entry.status}>{STATUS_LABELS[entry.status]}</option>
+              <option value={entry.status}>{SKILL_STATUS_LABELS[entry.status]}</option>
             )}
             {ADMIN_SETTABLE_STATUSES.map((status) => (
               <option key={status} value={status}>
-                {STATUS_LABELS[status]}
+                {SKILL_STATUS_LABELS[status]}
               </option>
             ))}
           </select>
