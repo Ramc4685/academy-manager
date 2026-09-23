@@ -275,6 +275,9 @@ export interface FamilyIndexSummary {
   tiles: Partial<Record<FamilyScope, number>>;
   counts_by_stage: Partial<Record<FamilyStage, number>>;
   presets: FamilyViewPreset[];
+  /** Families each non-scope preset keeps, by preset id (`no_card`; `overdue`
+   * only when money is visible). Optional: older responses omit it. */
+  preset_counts?: Partial<Record<string, number>>;
   warnings: string[];
 }
 
@@ -324,6 +327,8 @@ export function fetchFamilyIndexSummary(): Promise<FamilyIndexSummary> {
 /** `GET /admin/families/{familyId}/record`: the family's index row. */
 export interface FamilyRecordView {
   generated_at: string;
+  /** The canonical family id, whichever alias the request URL carried. */
+  family_id: string;
   family: FamilyIndexRow;
   money_visible: boolean;
   warnings: string[];

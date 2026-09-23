@@ -20,6 +20,7 @@ import { familyIndexRow } from "../fixtures/family-index";
 
 const RECORD = {
   generated_at: "2026-09-23T15:00:00Z",
+  family_id: "parent-1",
   family: familyIndexRow({
     family_id: "parent-1",
     parent_name: "Test Parent One",
@@ -196,6 +197,42 @@ async function setup(page: Page) {
 }
 
 test.describe("Family record (People CRM §4)", () => {
+  test("opened by a parent alias, it swaps to the canonical family and keeps the tab", async ({
+    page,
+  }) => {
+    const { errors } = await setup(page);
+    // Student pages link by the child's stored parent id (here a firebase uid).
+    await page.route("**/api/v2/admin/families/fb-alias-1/record", (route) =>
+      fulfillJson(route, RECORD),
+    );
+    await page.route("**/api/v2/admin/families/fb-alias-1/billing", (route) =>
+      fulfillJson(route, BILLING),
+    );
+    await page.goto("/admin/families/fb-alias-1?tab=details");
+    await expect(page).toHaveURL(/\/admin\/families\/parent-1\?tab=details$/);
+    await expect(page.getByTestId("family-details")).toBeVisible();
+    await expect(page.getByTestId("family-record-stage")).toBeVisible();
+    await expect(page.getByTestId("details-parent-email")).toHaveText("parent.one@example.test");
+    expect(errors, errors.join("\n")).toEqual([]);
+  });
+
+  test("a failed record read is a visible error, not empty cards", async ({ page }) => {
+    await setup(page);
+    await page.route("**/api/v2/admin/families/parent-9/record", (route) =>
+      route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "family not found" }),
+      }),
+    );
+    await page.route("**/api/v2/admin/families/parent-9/billing", (route) =>
+      fulfillJson(route, BILLING),
+    );
+    await page.goto("/admin/families/parent-9");
+    await expect(page.getByTestId("family-record-load-error")).toContainText("unknown, not blank");
+    await expect(page).toHaveURL(/\/admin\/families\/parent-9$/);
+  });
+
   test("opens on Overview and switches tabs through ?tab=", async ({ page }) => {
     const { errors } = await setup(page);
     await page.goto("/admin/families/parent-1");

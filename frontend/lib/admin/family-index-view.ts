@@ -348,3 +348,13 @@ export function classOptions(
     a.label.localeCompare(b.label),
   );
 }
+
+/**
+ * The results heading: "1 family", "3 families", and when searching
+ * "1 family matches this search" / "3 families match this search".
+ */
+export function familiesCountLabel(total: number, searching: boolean): string {
+  const noun = total === 1 ? "family" : "families";
+  if (!searching) return `${total} ${noun}`;
+  return `${total} ${noun} ${total === 1 ? "matches" : "match"} this search`;
+}

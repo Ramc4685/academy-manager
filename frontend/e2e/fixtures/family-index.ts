@@ -68,6 +68,8 @@ export interface FamilyIndexStubOptions {
   families?: FamilyIndexRowFixture[] | ((url: URL) => FamilyIndexRowFixture[]);
   moneyVisible?: boolean;
   tiles?: { active: number; leaving: number; left: number };
+  /** The Overdue / No card chip counts; `overdue` is dropped when money is hidden. */
+  presetCounts?: { overdue?: number; no_card?: number };
   warnings?: string[];
   onList?: (request: Request) => void;
 }
@@ -84,6 +86,9 @@ export async function stubFamilyIndex(page: Page, opts: FamilyIndexStubOptions =
       tiles,
       counts_by_stage: {},
       presets: FAMILY_PRESETS.filter((p) => moneyVisible || !p.money),
+      preset_counts: Object.fromEntries(
+        Object.entries(opts.presetCounts ?? {}).filter(([id]) => moneyVisible || id !== "overdue"),
+      ),
       warnings: opts.warnings ?? [],
     });
   });

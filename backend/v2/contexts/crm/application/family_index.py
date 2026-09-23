@@ -104,6 +104,11 @@ class FamilyIndexSummary:
     tiles: dict[str, int] = field(default_factory=dict)
     counts_by_stage: dict[str, int] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
+    #: The "No card" chip's count: the families ``card_on_file=false`` keeps.
+    no_card_families: int = 0
+    #: The Overdue chip's count: the families ``overdue=true`` keeps. Money
+    #: derived, so the view drops it for a caller who may not see money.
+    overdue_families: int = 0
 
 
 def _primary_key(sort: str, money_visible: bool) -> Callable[[FamilyIndexRow], Any] | None:
@@ -184,6 +189,11 @@ def summarize_family_index(index: FamilyIndex) -> FamilyIndexSummary:
         tiles=tiles,
         counts_by_stage=counts,
         warnings=index.warnings,
+        # The same predicates query_family_index applies for these chips.
+        no_card_families=sum(1 for r in index.families if r.card_on_file is False),
+        overdue_families=sum(
+            1 for r in index.families if r.money is not None and r.money.overdue_invoice_count > 0
+        ),
     )
 
 
@@ -196,10 +206,19 @@ def normalize_stages(values: Sequence[str]) -> tuple[str, ...]:
 
 
 def find_family_record(index: FamilyIndex, family_id: str) -> FamilyRecord | None:
-    """One family record by its canonical id: the family record page's
-    Overview header and stage (People CRM spec §4), read from the same index
-    row the Families view shows so the two can never disagree."""
+    """One family record by its canonical id or any alias of it.
+
+    The family record page's Overview header and stage (People CRM spec §4),
+    read from the same index row the Families view shows so the two can never
+    disagree. Student pages link to ``/admin/families/{student.parent_id}``,
+    which may be the parent's ``firebase_uid``, ``auth_uid`` or users ``_id``
+    rather than the canonical id, so the id is first resolved through the
+    index's own alias map (built from this academy's rows only: another
+    academy's alias is never found). The returned record carries the
+    canonical ``family_id``.
+    """
     wanted = family_id.strip()
     if not wanted:
         return None
-    return next((record for record in index.families if record.family_id == wanted), None)
+    canonical = index.family_by_alias.get(wanted, wanted)
+    return next((record for record in index.families if record.family_id == canonical), None)

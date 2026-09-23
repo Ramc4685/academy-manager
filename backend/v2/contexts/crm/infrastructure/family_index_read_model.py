@@ -245,6 +245,7 @@ class MongoFamilyIndexReadModel:
             generated_at=now,
             families=tuple(families),
             warnings=tuple(dict.fromkeys(warnings)),
+            family_by_alias=family_by_alias,
         )
 
     # ------------------------------------------------------------------ helpers

@@ -75,6 +75,7 @@ def _index(academy_id: str) -> FamilyIndex:
             ),
         ),
         warnings=(),
+        family_by_alias={"u-alpha": "u-alpha", "fb-alpha": "u-alpha", "u-bravo": "u-bravo"},
     )
 
 
@@ -194,6 +195,8 @@ def test_summary_tiles_and_presets(admin: TestClient) -> None:
     assert body["counts_by_stage"]["active"] == 1
     assert len(body["counts_by_stage"]) == 8
     assert [p["id"] for p in body["presets"]] == ["active", "leaving", "left", "overdue", "no_card"]
+    # The Overdue and No card chips carry counts (Lane A verify #4).
+    assert body["preset_counts"] == {"no_card": 1, "overdue": 1}
 
 
 def test_money_seam_hides_every_amount(
@@ -210,6 +213,7 @@ def test_money_seam_hides_every_amount(
         assert overdue["families"] == []
         summary = client.get("/api/v2/admin/families/summary").json()
         assert "overdue" not in [p["id"] for p in summary["presets"]]
+        assert summary["preset_counts"] == {"no_card": 1}
 
 
 @pytest.mark.parametrize("roles", [("coach",), ("parent",), ("owner",)])
@@ -235,6 +239,7 @@ def test_family_record_returns_the_index_row(admin: TestClient, services: FakeSe
     assert services.index.calls == ["acad"]
     assert body["money_visible"] is True
     family = body["family"]
+    assert body["family_id"] == "u-alpha"
     assert family["family_id"] == "u-alpha"
     assert family["stage"] == "active"
     assert family["email"] == "alpha@example.test"
@@ -261,3 +266,18 @@ def test_family_record_is_admin_only(services: FakeServices, roles: tuple[str, .
     with _client(roles, services) as client:
         assert client.get("/api/v2/admin/families/u-alpha/record").status_code == 404
     assert services.index.calls == []
+
+
+def test_family_record_by_alias_is_the_canonical_family(admin: TestClient) -> None:
+    """Student pages link by raw ``parent_id`` (e.g. the firebase uid): the
+    record answers with the same canonical family (Lane A verify #1)."""
+    canonical = admin.get("/api/v2/admin/families/u-alpha/record").json()
+    res = admin.get("/api/v2/admin/families/fb-alpha/record")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["family_id"] == "u-alpha"
+    assert body["family"] == canonical["family"]
+
+
+def test_family_record_alias_of_another_academy_is_404(admin: TestClient) -> None:
+    assert admin.get("/api/v2/admin/families/fb-foreign/record").status_code == 404

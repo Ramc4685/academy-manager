@@ -105,6 +105,9 @@ class AdminFamilyRecordView(_View):
     """
 
     generated_at: datetime
+    #: The canonical family id, whichever alias the URL carried: the page
+    #: replaces an alias URL with this one.
+    family_id: str
     family: AdminFamilyIndexRow
     money_visible: bool
     warnings: list[str] = Field(default_factory=list)
@@ -128,6 +131,9 @@ class AdminFamilyIndexSummary(_View):
     tiles: dict[Literal["active", "leaving", "left"], int]
     counts_by_stage: dict[FamilyStageName, int]
     presets: list[AdminFamilyViewPreset]
+    #: Families each non-scope preset chip keeps, keyed by preset id
+    #: (``no_card``; ``overdue`` only when money is visible).
+    preset_counts: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -200,6 +206,14 @@ def page_view(page: FamilyIndexPage, *, generated_at: datetime) -> AdminFamilyIn
     )
 
 
+def _preset_counts(summary: FamilyIndexSummary, *, money_visible: bool) -> dict[str, int]:
+    counts = {"no_card": summary.no_card_families}
+    if money_visible:
+        # Money derived: a caller who may not see money gets no Overdue count.
+        counts["overdue"] = summary.overdue_families
+    return counts
+
+
 def summary_view(
     summary: FamilyIndexSummary, *, generated_at: datetime, money_visible: bool
 ) -> AdminFamilyIndexSummary:
@@ -209,6 +223,7 @@ def summary_view(
         tiles=summary.tiles,
         counts_by_stage=summary.counts_by_stage,
         presets=[p for p in VIEW_PRESETS if money_visible or not p.money],
+        preset_counts=_preset_counts(summary, money_visible=money_visible),
         warnings=list(summary.warnings),
     )
 
@@ -222,6 +237,7 @@ def record_view(
 ) -> AdminFamilyRecordView:
     return AdminFamilyRecordView(
         generated_at=generated_at,
+        family_id=record.family_id,
         family=_row(FamilyIndexRow(record=record), money_visible=money_visible),
         money_visible=money_visible,
         warnings=list(warnings),
