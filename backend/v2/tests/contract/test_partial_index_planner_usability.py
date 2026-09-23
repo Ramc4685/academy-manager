@@ -109,6 +109,89 @@ HOT_LOOKUPS: list[tuple[str, dict[str, Any], str]] = [
 ]
 
 
+#: Batched and filtered lookup shapes the repositories issue on hot paths, as
+#: (collection, filter, indexes any one of which may win). ``ACADEMY_LED``
+#: means "any index whose first key is ``academy_id``": an academy-wide read
+#: bounded by the tenant, which is all the family index asks of it. These
+#: cannot be inserted verbatim (``$in``, ``$ne``), so rows are synthesised.
+#: The People CRM family index (spec §3.2) and the alias-aware Family billing
+#: page (spec §1) are listed in full; a rewrite of any of them into an
+#: ``$or`` across fields, or a dropped index, fails here (#894).
+ACADEMY_LED = "<any index led by academy_id>"
+HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
+    # resolve_parent_aliases: one $in per alias field, never an $or (0193).
+    ("users", {"user_id": {"$in": ["u-1", "u-2"]}}, {"users_user_id_lookup"}),
+    ("users", {"firebase_uid": {"$in": ["fb-1", "fb-2"]}}, {"users_firebase_uid_unique"}),
+    ("users", {"auth_uid": {"$in": ["au-1", "au-2"]}}, {"users_auth_uid_lookup"}),
+    ("users", {"_id": {"$in": ["legacy-id", "65f0000000000000000000a1"]}}, {"_id_"}),
+    # Family index: academy-wide reads.
+    ("students", {"academy_id": "acad_0", "is_deleted": {"$ne": True}}, {ACADEMY_LED}),
+    (
+        "academy_memberships",
+        {"academy_id": "acad_0", "roles": "parent", "status": {"$nin": ["removed", "suspended"]}},
+        {"membership_academy_roles_status"},
+    ),
+    (
+        "invoices",
+        {
+            "academy_id": "acad_0",
+            "status": {"$in": ["open", "partially_paid"]},
+            "is_deleted": {"$ne": True},
+        },
+        {ACADEMY_LED},
+    ),
+    ("parent_billing_customers", {"academy_id": "acad_0"}, {ACADEMY_LED}),
+    (
+        "payment_attempts",
+        {"academy_id": "acad_0", "invoice_id": {"$in": ["i-1", "i-2"]}, "status": {"$nin": ["x"]}},
+        {"academy_payment_attempt_invoice_history"},
+    ),
+    (
+        "sessions",
+        {"academy_id": "acad_0", "session_id": {"$in": ["s-1", "s-2"]}},
+        {"session_id_per_academy_uq"},
+    ),
+    (
+        "enrollments",
+        {"academy_id": "acad_0", "student_id": {"$in": ["st-1", "st-2"]}},
+        {"enrollments_for_student"},
+    ),
+    (
+        "attendance",
+        {"academy_id": "acad_0", "student_id": {"$in": ["st-1"]}, "status": {"$ne": "voided"}},
+        {"admin_student_attendance_lookup"},
+    ),
+    # Family billing page: one equality read per alias (spec §1).
+    ("students", {"academy_id": "acad_0", "parent_id": "p-1"}, {"parent_children"}),
+    (
+        "invoices",
+        {"academy_id": "acad_0", "parent_id": "p-1", "is_deleted": {"$ne": True}},
+        {"invoices_academy_parent_time", "academy_parent_invoice_status_period"},
+    ),
+    (
+        "academy_memberships",
+        {"academy_id": "acad_0", "user_id": "p-1", "roles": "parent"},
+        {"membership_academy_user_unique"},
+    ),
+    (
+        "parent_billing_customers",
+        {"academy_id": "acad_0", "parent_id": "p-1"},
+        {"academy_parent_billing_customer_unique"},
+    ),
+    # Existing parent-portal reads keyed by the parent.
+    (
+        "onboarding_applications",
+        {"academy_id": "acad_0", "parent_user_id": "p-1"},
+        {"parent_recent"},
+    ),
+    (
+        "trial_requests",
+        {"academy_id": "acad_0", "parent_user_id": "p-1"},
+        {"academy_id_1_parent_user_id_1_created_at_-1"},
+    ),
+]
+
+
 def _mongo_url() -> str:
     return (
         os.environ.get("V2_MONGO_URL") or os.environ.get("MONGO_URL") or "mongodb://127.0.0.1:27017"
@@ -284,6 +367,40 @@ async def test_hot_path_lookups_are_index_served(db: AsyncIOMotorDatabase[Any]) 
     assert not misserved, (
         "These hot-path lookups are not served by the index built for them (#878). "
         f"Expected the named index in the winning plan: {misserved}"
+    )
+
+
+def _equalities(query: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in query.items() if not isinstance(v, dict)}
+
+
+async def test_hot_shaped_lookups_are_index_served(db: AsyncIOMotorDatabase[Any]) -> None:
+    """Batched ``$in`` and academy-wide reads name a real index, never COLLSCAN."""
+    misserved: list[str] = []
+    for n, (collection, query, acceptable) in enumerate(HOT_SHAPED_LOOKUPS):
+        info = await db[collection].index_information()
+        keyed = {field for spec in info.values() for field, _direction in spec["key"]}
+        rows = []
+        for j in range(ROWS_PER_INDEX):
+            row: dict[str, Any] = {field: f"{field}-shaped-{n}-{j}" for field in keyed}
+            row.pop("_id", None)
+            if j == 1:  # one matching row; the others keep distinct keys
+                row.update(_equalities(query))
+            rows.append(row)
+        await db[collection].insert_many(rows, bypass_document_validation=True)
+        _candidates, winning = await _candidate_and_winning(db, collection, query)
+        academy_led = {
+            name for name, spec in info.items() if spec["key"] and spec["key"][0][0] == "academy_id"
+        }
+        allowed = (acceptable - {ACADEMY_LED}) | (
+            academy_led if ACADEMY_LED in acceptable else set()
+        )
+        if not winning & allowed:
+            misserved.append(f"{collection} {query} -> {sorted(winning) or 'COLLSCAN'}")
+
+    assert not misserved, (
+        "These batched or academy-wide lookups are not index-served (#894). "
+        f"Expected one of the named indexes in the winning plan: {misserved}"
     )
 
 
