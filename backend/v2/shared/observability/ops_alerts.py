@@ -214,3 +214,31 @@ def _checkin(
     except Exception:
         log.warning("sentry_cron_checkin_failed job_id=%s status=%s", job_id, status, exc_info=True)
         return None
+
+
+_ops_alert_email_warned = False
+
+
+def warn_if_ops_alert_email_missing(settings: Any) -> bool:
+    """Log one ``ops_alert_email_missing`` WARNING at startup when unset.
+
+    The daily ops digest (``send_ops_digest``) silently skips every cycle with
+    an INFO line when ``OPS_ALERT_EMAIL`` is empty, so an unconfigured
+    deployment looks healthy. This surfaces the gap once per process at boot,
+    at WARNING, with the environment name. It does not change the digest.
+
+    Returns ``True`` iff the warning was emitted by this call.
+    """
+    global _ops_alert_email_warned
+    if (getattr(settings, "ops_alert_email", None) or "").strip():
+        return False
+    if _ops_alert_email_warned:
+        return False
+    _ops_alert_email_warned = True
+    env = str(getattr(settings, "env", "") or "")
+    log.warning(
+        "ops_alert_email_missing: OPS_ALERT_EMAIL is not configured; the daily ops digest will be skipped (env=%s)",
+        env,
+        extra={"event": "ops_alert_email_missing", "env": env},
+    )
+    return True
