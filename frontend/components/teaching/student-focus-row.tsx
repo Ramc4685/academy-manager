@@ -11,34 +11,12 @@ import {
   type SkillStatus,
 } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
+import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillStatusChip";
 
 type SettableStatus = Extract<
   SkillStatus,
   "INTRODUCED" | "PRACTICING" | "NEEDS_REVIEW"
 >;
-
-const STATUS_LABEL: Record<string, string> = {
-  NOT_STARTED: "Not started",
-  INTRODUCED: "Introduced",
-  LEARNING: "Learning",
-  PRACTICING: "Practicing",
-  TEST_READY: "Test ready",
-  PASSED: "Passed",
-  NEEDS_REVIEW: "Needs review",
-};
-
-const STATUS_BADGE: Record<string, string> = {
-  NOT_STARTED:
-    "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
-  INTRODUCED:
-    "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300",
-  LEARNING: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-  PRACTICING:
-    "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-  TEST_READY: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-  PASSED: "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300",
-  NEEDS_REVIEW: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
-};
 
 /**
  * The one-tap outcomes, named with the SAME seven-state vocabulary the header
@@ -57,27 +35,27 @@ const OUTCOMES: {
 }[] = [
   {
     key: "introduced",
-    label: STATUS_LABEL.INTRODUCED,
+    label: SKILL_STATUS_LABELS.INTRODUCED,
     status: "INTRODUCED",
     className:
       "border-neutral-300 text-neutral-700 dark:border-neutral-700 dark:text-neutral-300",
   },
   {
     key: "practicing",
-    label: STATUS_LABEL.PRACTICING,
+    label: SKILL_STATUS_LABELS.PRACTICING,
     status: "PRACTICING",
     className:
       "border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300",
   },
   {
     key: "passed",
-    label: STATUS_LABEL.PASSED,
+    label: SKILL_STATUS_LABELS.PASSED,
     passed: true,
     className: "border-green-600 bg-green-600 text-white",
   },
   {
     key: "needs-review",
-    label: STATUS_LABEL.NEEDS_REVIEW,
+    label: SKILL_STATUS_LABELS.NEEDS_REVIEW,
     status: "NEEDS_REVIEW",
     className:
       "border-red-300 text-red-700 dark:border-red-800 dark:text-red-300",
@@ -222,7 +200,7 @@ export function StudentFocusRow({
               }}
               className="min-h-touch rounded-lg border border-neutral-300 px-2 text-xs font-semibold text-neutral-700 underline underline-offset-2 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300"
             >
-              Undo — back to {STATUS_LABEL[undoTo]}
+              Undo — back to {SKILL_STATUS_LABELS[undoTo]}
             </button>
           )}
         </p>
@@ -339,13 +317,7 @@ function StudentFocusHeader({
         <p className="text-sm font-semibold">{student.student_name}</p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-neutral-500">Next: {skill.name}</span>
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-              STATUS_BADGE[skill.status] ?? STATUS_BADGE.NOT_STARTED
-            }`}
-          >
-            {STATUS_LABEL[skill.status] ?? skill.status}
-          </span>
+          <SkillStatusChip status={skill.status} size="sm" />
           {isReview && (
             <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-semibold text-white">
               Review
