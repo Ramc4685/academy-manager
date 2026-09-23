@@ -276,6 +276,8 @@ Tabs: **Overview, Details, Messages, Billing, Timeline.**
 
 **Leads.** `crm_contacts`: `{contact_id, academy_id, name, phone_digits, email?, source, child_name?, child_age?, requested_session_id?, pipeline_status, pipeline_override?, referrer_parent_id?, converted_parent_id?, created_at}`. This is the shape the public tenant page writes (source `website`); the CRM adds `referrer_parent_id` and `pipeline_override` and reads everything else as written. One collection, one migration, one create-contact use case, owned by whichever PR lands first.
 
+**Built (2026-09-23):** the store, migration `0192_crm_contacts` and the `CreateContact` use case live in `backend/v2/contexts/crm`. Its README (`backend/v2/contexts/crm/README.md`) is the contract both consumers follow: fields, the `source` and `pipeline_status` (stage) vocabularies, indexes, dedupe and idempotency, and what a consumer must not do. It adds `linked_family_id`, `linked_user_id`, `consent`, `created_by`, `dedupe_key` and `updated_at` to the shape above.
+
 **Indexes and validators.** One migration (numbered after the latest applied on main at the time) adds:
 - `enrollment_events (academy_id, student_id, occurred_at)`
 - `audit_logs (academy_id, entity_type, entity_id, created_at)`

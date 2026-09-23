@@ -97,6 +97,8 @@ TENANT_OWNED_COLLECTIONS = {
     # explicitly rather than through the ContextVar (#880)
     "coach_digest_sends",
     "parent_digest_sends",
+    # People CRM leads shared with the public tenant page (migration 0192)
+    "crm_contacts",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
