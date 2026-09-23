@@ -22,8 +22,6 @@ from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from bson import ObjectId
-
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
@@ -55,6 +53,9 @@ from backend.v2.shared.tenancy import current_academy_id
 log = logging.getLogger(__name__)
 
 INVOICE_CAP = 200
+#: Fields a student or invoice may store its parent reference under.
+_STUDENT_PARENT_FIELDS = ("parent_id", "parent_user_id")
+_INVOICE_PARENT_FIELDS = ("parent_id", "parent_user_id")
 _UTC_NAME = "UTC"
 _WEEKDAY_SHORT = {
     "monday": "Mon",
@@ -186,11 +187,12 @@ class MongoFamilyBillingReadModel:
         warnings: list[str] = []
 
         try:
-            parent = await self._parent(academy_id, parent_id)
-            if parent is None:
+            resolved = await self._parent(academy_id, parent_id)
+            if resolved is None:
                 return None
-            student_docs = await self._students(academy_id, parent_id)
-            invoice_docs = await self._invoices(academy_id, parent_id)
+            parent, aliases = resolved
+            student_docs = await self._students(academy_id, aliases)
+            invoice_docs = await self._invoices(academy_id, aliases)
         except Exception as exc:  # primary sources
             raise FamilyBillingUnavailable(str(exc)) from exc
 
@@ -232,9 +234,9 @@ class MongoFamilyBillingReadModel:
             "events_unavailable", warnings, self._events(academy_id, enrollment_ids), []
         )
         available_credit = await self._secondary(
-            "credits_unavailable", warnings, self._credits.balance_for_parent(parent_id), 0
+            "credits_unavailable", warnings, self._available_credit(aliases), 0
         )
-        customer = await self._customer(academy_id, parent_id, warnings)
+        customer = await self._customer(academy_id, parent_id, aliases, warnings)
         connected_ready = await self._connected_account_ready()
 
         name_by_student = {s["student_id"]: _student_name(s) for s in student_docs}
@@ -430,45 +432,53 @@ class MongoFamilyBillingReadModel:
             return _UTC_NAME
         return name
 
-    async def _parent(self, academy_id: str, parent_id: str) -> ParentFacts | None:
-        raw_ids: list[Any] = [parent_id]
-        if ObjectId.is_valid(parent_id):
-            raw_ids.append(ObjectId(parent_id))
-        doc = await self._db["users"].find_one(
-            {"$or": [{"user_id": parent_id}, {"auth_uid": parent_id}, {"_id": {"$in": raw_ids}}]},
-            {
-                "user_id": 1,
-                "display_name": 1,
-                "name": 1,
-                "email": 1,
-                "phone": 1,
-                "roles": 1,
-                "role": 1,
-                "academy_id": 1,
-            },
-        )
-        if doc is None:
+    async def _parent(
+        self, academy_id: str, parent_id: str
+    ) -> tuple[ParentFacts, tuple[str, ...]] | None:
+        """The parent and every id their family's rows may be stored under.
+
+        People CRM spec §1: a student's ``parent_id`` may hold the roster
+        ``user_id``, the ``firebase_uid``, an ``auth_uid`` or the users
+        ``_id``. The users repository resolves them with one equality lookup
+        per field (never an ``$or`` across fields, #878/#894); every tenant
+        read below then asks one equality question per alias and merges.
+        """
+        found = (await self._users.resolve_parent_aliases([parent_id])).get(parent_id)
+        if found is None:
             return None
+        # The requested id first, then the canonical one, then the rest in a
+        # stable order: reads merge in this order, so results are deterministic.
+        aliases = tuple(dict.fromkeys([parent_id, found.canonical_id, *sorted(found.aliases)]))
         # A parent belongs to this tenant when they have a student here or a
         # membership here; the students query below is tenant-scoped, so a
         # user with no student AND no membership in this academy is a 404.
-        if not await self._belongs_to_tenant(academy_id, parent_id):
+        if not await self._belongs_to_tenant(academy_id, aliases):
             return None
         # ...and they must actually BE a parent (spec §3: "a user who is not a
         # parent" is a 404). Membership alone admits coaches, admins and owners,
         # whose PII and family actions this page must never expose. A user with
         # a student in this tenant counts even if the role is missing (legacy
         # rows), and a coach who is also a parent keeps access via the role.
-        if not await self._is_parent(academy_id, parent_id, doc):
+        if not await self._is_parent(
+            academy_id, aliases, home_academy_id=found.home_academy_id, roles=found.roles
+        ):
             return None
-        return ParentFacts(
+        parent = ParentFacts(
             parent_id=parent_id,
-            name=_opt_str(doc.get("display_name")) or _opt_str(doc.get("name")),
-            email=_opt_str(doc.get("email")),
-            phone=_opt_str(doc.get("phone")),
+            name=found.display_name,
+            email=found.email,
+            phone=found.phone,
         )
+        return parent, aliases
 
-    async def _is_parent(self, academy_id: str, parent_id: str, doc: dict[str, Any]) -> bool:
+    async def _is_parent(
+        self,
+        academy_id: str,
+        aliases: Sequence[str],
+        *,
+        home_academy_id: str | None,
+        roles: Sequence[str],
+    ) -> bool:
         """Is this user a parent *of this academy*?
 
         The role must come from the membership in the request tenant, never from
@@ -476,62 +486,74 @@ class MongoFamilyBillingReadModel:
         and coaches at academy B would otherwise pass B's gate on A's role, and
         B's admin would see their contact details and family actions.
         """
-        if await self._db["academy_memberships"].find_one(
-            {"academy_id": academy_id, "user_id": parent_id, "roles": "parent"}, {"_id": 1}
-        ):
-            return True
+        for alias in aliases:
+            if await self._db["academy_memberships"].find_one(
+                {"academy_id": academy_id, "user_id": alias, "roles": "parent"}, {"_id": 1}
+            ):
+                return True
         # A student of THIS academy is proof regardless of how roles are recorded.
-        if await self._db["students"].find_one(
-            {"academy_id": academy_id, "parent_id": parent_id}, {"_id": 1}
-        ):
+        if await self._has_student(academy_id, aliases):
             return True
         # Legacy fallback for rows predating per-academy membership roles. Gated
         # on the user's OWN academy stamp, so it stays tenant-scoped: a coach of
         # this academy whose home academy is another one cannot pass on a parent
         # role earned there.
-        if _opt_str(doc.get("academy_id")) != academy_id:
+        if home_academy_id != academy_id:
             return False
-        roles: list[str] = []
-        raw_roles = doc.get("roles")
-        if isinstance(raw_roles, str):
-            roles.append(raw_roles)
-        elif isinstance(raw_roles, list):
-            roles.extend(str(r) for r in raw_roles)
-        single = _opt_str(doc.get("role"))
-        if single:
-            roles.append(single)
         return "parent" in roles
 
-    async def _belongs_to_tenant(self, academy_id: str, parent_id: str) -> bool:
-        if await self._db["students"].find_one(
-            {"academy_id": academy_id, "parent_id": parent_id}, {"_id": 1}
-        ):
-            return True
-        if await self._db["academy_memberships"].find_one(
-            {"academy_id": academy_id, "user_id": parent_id}, {"_id": 1}
-        ):
-            return True
-        return bool(
-            await self._db["users"].find_one(
-                {"user_id": parent_id, "academy_id": academy_id}, {"_id": 1}
-            )
-        )
+    async def _has_student(self, academy_id: str, aliases: Sequence[str]) -> bool:
+        for alias in aliases:
+            for field_name in _STUDENT_PARENT_FIELDS:
+                if await self._db["students"].find_one(
+                    {"academy_id": academy_id, field_name: alias}, {"_id": 1}
+                ):
+                    return True
+        return False
 
-    async def _students(self, academy_id: str, parent_id: str) -> list[dict[str, Any]]:
-        cursor = self._db["students"].find(
-            {"academy_id": academy_id, "parent_id": parent_id, "is_deleted": {"$ne": True}},
-            {
-                "_id": 0,
-                "student_id": 1,
-                "full_name": 1,
-                "first_name": 1,
-                "last_name": 1,
-                "status": 1,
-            },
-        )
-        docs = [doc async for doc in cursor if doc.get("student_id")]
-        for doc in docs:
-            doc["student_id"] = str(doc["student_id"])
+    async def _belongs_to_tenant(self, academy_id: str, aliases: Sequence[str]) -> bool:
+        if await self._has_student(academy_id, aliases):
+            return True
+        for alias in aliases:
+            if await self._db["academy_memberships"].find_one(
+                {"academy_id": academy_id, "user_id": alias}, {"_id": 1}
+            ):
+                return True
+        for alias in aliases:
+            if await self._db["users"].find_one(
+                {"user_id": alias, "academy_id": academy_id}, {"_id": 1}
+            ):
+                return True
+        return False
+
+    async def _available_credit(self, aliases: Sequence[str]) -> int:
+        """Credit is keyed by whichever parent reference wrote it; sum them all."""
+        total = 0
+        for alias in aliases:
+            total += _int(await self._credits.balance_for_parent(alias))
+        return total
+
+    async def _students(self, academy_id: str, aliases: Sequence[str]) -> list[dict[str, Any]]:
+        """The family's children, stored under any alias (one equality read each)."""
+        by_id: dict[str, dict[str, Any]] = {}
+        for alias in aliases:
+            for field_name in _STUDENT_PARENT_FIELDS:
+                cursor = self._db["students"].find(
+                    {"academy_id": academy_id, field_name: alias, "is_deleted": {"$ne": True}},
+                    {
+                        "_id": 0,
+                        "student_id": 1,
+                        "full_name": 1,
+                        "first_name": 1,
+                        "last_name": 1,
+                        "status": 1,
+                    },
+                )
+                async for doc in cursor:
+                    if doc.get("student_id"):
+                        doc["student_id"] = str(doc["student_id"])
+                        by_id.setdefault(doc["student_id"], doc)
+        docs = list(by_id.values())
         docs.sort(key=lambda d: (_student_name(d), d["student_id"]))
         return docs
 
@@ -624,13 +646,27 @@ class MongoFamilyBillingReadModel:
         )
         return {str(doc["enrollment_id"]): doc async for doc in cursor}
 
-    async def _invoices(self, academy_id: str, parent_id: str) -> list[dict[str, Any]]:
-        cursor = self._db["invoices"].find(
-            {
-                "academy_id": academy_id,
-                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
-                "is_deleted": {"$ne": True},
-            },
+    async def _invoices(self, academy_id: str, aliases: Sequence[str]) -> list[dict[str, Any]]:
+        """The family's invoices under any alias and either parent field.
+
+        People CRM spec §1: this used to be ONE query with
+        ``$or: [{parent_id}, {parent_user_id}]`` on the exact id, the #878/#894
+        shape MongoDB 8.0 scans, and it missed every invoice stored under
+        another alias. Now one equality read per (alias, field), merged by
+        ``invoice_id``.
+        """
+        by_id: dict[str, dict[str, Any]] = {}
+        for alias in aliases:
+            for field_name in _INVOICE_PARENT_FIELDS:
+                async for doc in self._invoice_cursor(academy_id, field_name, alias):
+                    if doc.get("invoice_id"):
+                        doc["invoice_id"] = str(doc["invoice_id"])
+                        by_id.setdefault(doc["invoice_id"], doc)
+        return self._cap_invoices(list(by_id.values()))
+
+    def _invoice_cursor(self, academy_id: str, field_name: str, alias: str) -> Any:
+        return self._db["invoices"].find(
+            {"academy_id": academy_id, field_name: alias, "is_deleted": {"$ne": True}},
             {
                 "_id": 0,
                 "invoice_id": 1,
@@ -651,9 +687,9 @@ class MongoFamilyBillingReadModel:
                 "last_sent_at": 1,
             },
         )
-        docs = [doc async for doc in cursor if doc.get("invoice_id")]
-        for doc in docs:
-            doc["invoice_id"] = str(doc["invoice_id"])
+
+    @staticmethod
+    def _cap_invoices(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Period desc, then created desc; ties keep invoice_id ascending (reverse
         # sort is stable, so the ascending pre-sort survives).
         docs.sort(key=lambda d: d["invoice_id"])
@@ -813,7 +849,7 @@ class MongoFamilyBillingReadModel:
         return [doc async for doc in cursor]
 
     async def _customer(
-        self, academy_id: str, parent_id: str, warnings: list[str]
+        self, academy_id: str, parent_id: str, aliases: Sequence[str], warnings: list[str]
     ) -> CustomerFacts:
         has_login = False
         try:
@@ -823,9 +859,13 @@ class MongoFamilyBillingReadModel:
         except Exception:
             log.warning("family billing read model: login lookup failed", exc_info=True)
         try:
-            doc = await self._db["parent_billing_customers"].find_one(
-                {"academy_id": academy_id, "parent_id": parent_id}
-            )
+            doc = None
+            for alias in aliases:
+                doc = await self._db["parent_billing_customers"].find_one(
+                    {"academy_id": academy_id, "parent_id": alias}
+                )
+                if doc is not None:
+                    break
         except Exception:
             log.warning("family billing read model: customer lookup failed", exc_info=True)
             warnings.append("customer_unavailable")

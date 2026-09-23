@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final, cast
@@ -37,6 +38,7 @@ from backend.v2.contexts.enrollment.domain.lifecycle import (
     PERSON_LIFECYCLES,
     LifecycleEnrollment,
     PersonLifecycleState,
+    StudentLifecycleSnapshot,
     derive_lifecycle,
 )
 from backend.v2.contexts.enrollment.domain.models import (
@@ -2043,18 +2045,65 @@ class MongoStudentRepository(TenantScopedRepository):
         last_seen_by_student: dict[str, datetime | None] | None = None,
     ) -> dict[str, PersonLifecycleState]:
         """Derive one lifecycle per student. Three queries, not 3N."""
+        states, _live = await self._lifecycle_facts(
+            academy_id, student_ids, last_seen_by_student=last_seen_by_student
+        )
+        return states
+
+    async def _lifecycle_facts(
+        self,
+        academy_id: str,
+        student_ids: list[str],
+        *,
+        last_seen_by_student: dict[str, datetime | None] | None = None,
+    ) -> tuple[dict[str, PersonLifecycleState], dict[str, set[str]]]:
+        """Lifecycle per student plus their live (seat-holding) session ids."""
         if not student_ids:
-            return {}
+            return {}, {}
         rows, live_sessions = await self._enrollment_rows_by_student(academy_id, student_ids)
         cutoffs = await self._at_risk_cutoffs(academy_id, live_sessions)
         last_seen = last_seen_by_student or {}
-        return {
+        states = {
             student_id: derive_lifecycle(
                 rows.get(student_id, []),
                 last_seen_at=last_seen.get(student_id),
                 at_risk_cutoff=cutoffs.get(student_id),
             )
             for student_id in student_ids
+        }
+        return states, live_sessions
+
+    async def lifecycle_snapshots(
+        self, *, academy_id: str, student_ids: Sequence[str]
+    ) -> dict[str, StudentLifecycleSnapshot]:
+        """The directory's own lifecycle derivation, for a batch of students.
+
+        Exactly what ``/admin/students`` shows per child (same attendance
+        window, same at-risk cutoff, same ``derive_lifecycle``), so the People
+        CRM family index can never disagree with the Students page about a
+        child. A fixed number of queries however many ids are passed: one
+        attendance aggregation, one enrollment read, one occurrence
+        aggregation.
+        """
+        ids = list(dict.fromkeys(str(sid) for sid in student_ids if sid))
+        if not ids:
+            return {}
+        attendance = await self._attendance_summaries(academy_id, ids)
+        states, live_sessions = await self._lifecycle_facts(
+            academy_id,
+            ids,
+            last_seen_by_student={
+                sid: att.get("last_seen_at")  # type: ignore[misc]
+                for sid, att in attendance.items()
+            },
+        )
+        return {
+            sid: StudentLifecycleSnapshot(
+                state=state.state,
+                as_of=state.as_of,
+                live_session_ids=tuple(sorted(live_sessions.get(sid, ()))),
+            )
+            for sid, state in states.items()
         }
 
     async def _active_session_summaries(
