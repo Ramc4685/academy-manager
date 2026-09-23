@@ -1,6 +1,6 @@
 # Public tenant page B2: anonymous public academy read API (GET /api/v2/public/academy)
 
-PR: #TBD
+PR: #935
 
 ## What changed
 
