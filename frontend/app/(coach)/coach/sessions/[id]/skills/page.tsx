@@ -14,6 +14,7 @@ import {
 import { updateSkillStatus, type SkillStatus } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 const STATUS_OPTIONS: SkillStatus[] = [
   "INTRODUCED",
@@ -90,9 +91,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
       {isError && (
         <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>Couldn&apos;t load skill updates. Try again.</p>
-          <button onClick={() => void refetch()} className="mt-2 min-h-touch rounded-md border px-3">
-            Retry
-          </button>
+          <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 

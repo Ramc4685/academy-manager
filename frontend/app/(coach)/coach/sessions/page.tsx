@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getCoachSchedule, type CoachScheduleEntry } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 export default function CoachSessionsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -32,12 +33,7 @@ export default function CoachSessionsPage() {
           className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
         >
           <p>Couldn&apos;t load sessions.</p>
-          <button
-            onClick={() => void refetch()}
-            className="mt-2 min-h-touch rounded-md border border-red-200 px-3 dark:border-red-800"
-          >
-            Retry
-          </button>
+          <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 
