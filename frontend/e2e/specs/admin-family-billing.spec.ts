@@ -10,6 +10,7 @@ import {
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
+import { familyIndexRow, stubFamilyIndex } from "../fixtures/family-index";
 
 /** Family billing page (spec 2026-09-05-family-billing §6, §8) with a stubbed family. */
 
@@ -533,6 +534,11 @@ test.describe("Family billing", () => {
         next_cursor: null,
       }),
     );
+    // The Families view lists the family index; Billing Setup (stubbed
+    // above) now only feeds its bulk invite.
+    await stubFamilyIndex(page, {
+      families: [familyIndexRow({ family_id: "parent-1", parent_name: "Test Parent One" })],
+    });
     await page.goto("/admin/billing-setup");
     // Mobile redirects are slow under load in this suite (the same 5s
     // toHaveURL flake the /admin/parents and /admin/coaches redirect tests

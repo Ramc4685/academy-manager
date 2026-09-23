@@ -11,6 +11,7 @@ import {
   stubCoachMessages,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
+import { stubFamilyIndex } from "../fixtures/family-index";
 
 // Every pre-split admin was granted `owner` by migration 0165, so the default
 // admin fixture is an owner: it exercises the full shell (money nav, revenue,
@@ -254,11 +255,13 @@ function collectConsoleErrors(page: Page): string[] {
 }
 
 /**
- * The Families list reads `/admin/billing/setup`; the catch-all `{}` stub has
- * no `rows`, and the page trips over that before it paints. The redirect
- * specs that land on Families stub an empty page explicitly.
+ * The Families view reads the family index (`/admin/families` and its
+ * summary) and, for the bulk invite, `/admin/billing/setup`; the catch-all
+ * `{}` stub has neither `families` nor `rows`. The redirect specs that land
+ * on Families stub an empty index explicitly.
  */
 async function stubEmptyFamilies(page: Page) {
+  await stubFamilyIndex(page, { families: [] });
   await page.route("**/api/v2/admin/billing/setup*", (route) =>
     fulfillJson(route, {
       rows: [],
