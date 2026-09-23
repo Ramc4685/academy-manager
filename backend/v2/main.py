@@ -52,6 +52,7 @@ from backend.v2.composition.digests import (
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
 from backend.v2.composition.families import compose_admin_families
 from backend.v2.composition.families_crm import compose_admin_family_index
+from backend.v2.composition.family_record import compose_admin_family_record
 from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
@@ -713,6 +714,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_families = compose_admin_families(db)
     # People CRM family index (spec §7 Phase 2; outside admin.py's budget).
     app.state.admin_family_index = compose_admin_family_index(db)
+    app.state.admin_family_record = compose_admin_family_record(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)
