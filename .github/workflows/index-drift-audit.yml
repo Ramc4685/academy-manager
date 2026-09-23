@@ -1,0 +1,135 @@
+name: Index Drift Audit
+
+# Weekly read-only diff of production's live Mongo indexes against what the
+# migrations say they should be (backend/scripts/index_drift_audit.py, #836).
+# Gated on the PROD_MONGO_READONLY_URI secret: without it every run finishes
+# green and says "skipped" in the job summary. Runbook:
+# docs/runbooks/index-drift-audit.md
+
+on:
+  schedule:
+    # 06:00 UTC Monday.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: index-drift-audit
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  dump:
+    name: Dump live indexes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    steps:
+      # Secrets cannot be read in a job-level `if:`, so the gate is a step.
+      # Only a true/false comparison of the secret reaches this step's env.
+      - name: Check for the read-only URI secret
+        id: gate
+        env:
+          HAS_URI: ${{ secrets.PROD_MONGO_READONLY_URI != '' }}
+        run: |
+          if [ "$HAS_URI" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "skipped: PROD_MONGO_READONLY_URI not set" >> "$GITHUB_STEP_SUMMARY"
+            echo "skipped: PROD_MONGO_READONLY_URI not set"
+          fi
+
+      - name: Check out repository
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      # The URI reaches the script only through env (MONGO_URL), never argv,
+      # and is never echoed. GitHub also masks the secret value in logs.
+      - name: Dump live indexes
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          MONGO_URL: ${{ secrets.PROD_MONGO_READONLY_URI }}
+          DB_NAME: ${{ vars.PROD_MONGO_DB_NAME || 'academy_manager' }}
+        run: python backend/scripts/index_drift_audit.py --dump > live.json
+
+      - name: Upload live index dump
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: index-drift-live
+          path: live.json
+          retention-days: 7
+          if-no-files-found: error
+
+  check:
+    name: Check against migrations
+    needs: dump
+    if: needs.dump.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dev dependencies (mongomock)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
+
+      - name: Download live index dump
+        uses: actions/download-artifact@v7
+        with:
+          name: index-drift-live
+
+      # Exit 1 = drift that needs a decision; the job fails with the script.
+      - name: Diff live indexes against the migrations
+        run: |
+          set +e
+          python backend/scripts/index_drift_audit.py --check live.json > report.json
+          status=$?
+          set -e
+          cat report.json
+          {
+            if [ "$status" -eq 0 ]; then
+              echo "### Index drift audit: ok"
+            else
+              echo "### Index drift audit: drift found (exit $status)"
+              echo "See docs/runbooks/index-drift-audit.md for how to read this."
+            fi
+            echo
+            echo '```json'
+            cat report.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
