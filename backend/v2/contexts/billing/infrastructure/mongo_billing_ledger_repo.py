@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -1062,6 +1063,31 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [self._invoice_from_doc(doc) async for doc in cursor]
 
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: Sequence[str], *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        """Invoices stamped with ANY of one parent's ids, newest first (#932).
+
+        One tenant-scoped equality query per id, each served by the
+        ``(academy_id, parent_id, created_at)`` index, merged by ``invoice_id``.
+        Deliberately never ``{"parent_id": {"$in": ...}}`` across an ``$or`` of
+        fields (#878/#894). Callers pass ids of ONE parent (identity's
+        ``resolve_parent_aliases``); this method does no authorization itself.
+        """
+        merged: dict[str, LedgerInvoice] = {}
+        for parent_id in dict.fromkeys(pid for pid in parent_ids if pid):
+            cursor = self._find_many(
+                {"parent_id": parent_id},
+                sort=[("created_at", -1)],
+                limit=limit,
+            )
+            async for doc in cursor:
+                invoice = self._invoice_from_doc(doc)
+                merged.setdefault(invoice.invoice_id, invoice)
+        rows = sorted(merged.values(), key=lambda inv: inv.invoice_id, reverse=True)
+        rows.sort(key=lambda inv: _sort_instant(inv.created_at), reverse=True)
+        return rows[:limit]
+
     async def list_invoices_for_student(
         self, student_id: str, *, limit: int = 100
     ) -> list[LedgerInvoice]:
@@ -1841,3 +1867,10 @@ def _mongo_doc(model: Any) -> dict[str, Any]:
         if isinstance(due_date, date) and not isinstance(due_date, datetime):
             doc["due_date"] = datetime.combine(due_date, time.min, tzinfo=UTC)
     return doc
+
+
+def _sort_instant(value: datetime | None) -> datetime:
+    """Mongo hands back naive UTC datetimes; compare everything as aware UTC."""
+    if value is None:
+        return datetime.min.replace(tzinfo=UTC)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

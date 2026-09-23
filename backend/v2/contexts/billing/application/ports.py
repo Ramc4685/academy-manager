@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import date, datetime
 from typing import Any, Literal, Protocol, TypeVar
 
@@ -891,3 +891,34 @@ class AcademyFinancialSnapshotReader(Protocol):
     async def read(
         self, *, academy_id: str, months: tuple[str, ...] | None = None
     ) -> AcademyFinancialSnapshot: ...
+
+
+class ParentAliasSetView(Protocol):
+    """Identity: one users document and every id it may be referenced by."""
+
+    @property
+    def canonical_id(self) -> str: ...
+
+    @property
+    def aliases(self) -> frozenset[str]: ...
+
+
+class ParentIdentityAliases(Protocol):
+    """Identity: resolve a parent id to all of its aliases, one equality lookup
+    per identity field (never an ``$or`` across fields, #878/#894)."""
+
+    async def resolve_parent_aliases(
+        self, raw_ids: Sequence[str]
+    ) -> Mapping[str, ParentAliasSetView]: ...
+
+
+class ParentInvoiceLedger(Protocol):
+    """Tenant-scoped invoice reads for the parent portal (#932)."""
+
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: Sequence[str], *, limit: int = 100
+    ) -> list[LedgerInvoice]: ...
+
+    async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None: ...
+
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]: ...

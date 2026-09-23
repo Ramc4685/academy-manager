@@ -59,6 +59,10 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     StartSubscriptionCheckoutCommand,
     _success_url_with_checkout_session_placeholder,
 )
+from backend.v2.contexts.billing.application.use_cases.parent_invoices import (
+    GetParentInvoice,
+    ListParentInvoices,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -75,7 +79,6 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutResult,
 )
 from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable, QuoteExpired
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
 )
@@ -1781,19 +1784,19 @@ def compose_parent(
         page = rows[offset : offset + limit]
         return page, total
 
+    # #932: both reads key on every id the parent answers to (identity's
+    # per-field alias lookup), inside the tenant-scoped ledger.
+    _list_parent_invoices = ListParentInvoices(identity=users_query, ledger=billing_ledger_repo)
+    _get_parent_invoice = GetParentInvoice(identity=users_query, ledger=billing_ledger_repo)
+
     async def list_invoices_for_parent(parent_id: str):
-        return await billing_ledger_repo.list_invoices_for_parent(parent_id)
+        return await _list_parent_invoices.execute(parent_id)
 
     async def get_invoice_for_parent(*, parent_id: str, invoice_id: str):
-        academy_id = current_academy_id()  # request-time tenant (C4)
-        invoice = await billing_ledger_repo.get_invoice(invoice_id)
-        if invoice is None or invoice.parent_id != parent_id:
+        detail = await _get_parent_invoice.execute(parent_id=parent_id, invoice_id=invoice_id)
+        if detail is None:
             return None
-        lines_cursor = db["invoice_lines"].find(
-            {"academy_id": academy_id, "invoice_id": invoice_id}
-        )
-        lines = [InvoiceLine(**doc) async for doc in lines_cursor]
-        return {"invoice": invoice, "lines": lines}
+        return {"invoice": detail.invoice, "lines": detail.lines}
 
     def _validate_checkout_redirect_urls(*urls: str) -> None:
         # Static env-var origins PLUS the request's resolved tenant origins
