@@ -14,6 +14,7 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 function todayISO(offset = 0): string {
   const d = new Date();
@@ -77,12 +78,7 @@ export default function CoachTodayPage() {
           className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
         >
           <p>Couldn&apos;t load today.</p>
-          <button
-            onClick={() => void refetch()}
-            className="mt-2 min-h-touch rounded-md border px-3"
-          >
-            Retry
-          </button>
+          <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 

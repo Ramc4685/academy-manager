@@ -10,6 +10,7 @@ import type {
   SkillStatus,
 } from "@/lib/api/curriculum";
 import { Chip } from "@/components/ds/chip";
+import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 import { SkillCellEditor, type SkillCellTarget } from "./skill-cell-editor";
 
 export interface SkillBoardActions {
@@ -61,16 +62,6 @@ const STATUS_GLYPH: Record<SkillStatus, string> = {
   NEEDS_REVIEW: "!",
 };
 
-const STATUS_SHORT: Record<SkillStatus, string> = {
-  NOT_STARTED: "Not started",
-  INTRODUCED: "Introduced",
-  LEARNING: "Learning",
-  PRACTICING: "Practicing",
-  TEST_READY: "Test ready",
-  PASSED: "Passed",
-  NEEDS_REVIEW: "Needs review",
-};
-
 const STATUS_ORDER: SkillStatus[] = [
   "NOT_STARTED",
   "INTRODUCED",
@@ -115,7 +106,7 @@ function SkillStatusLegend() {
       {STATUS_ORDER.map((status) => (
         <span key={status} className="inline-flex items-center gap-1.5">
           <StatusMark status={status} size="sm" />
-          {STATUS_SHORT[status]}
+          {SKILL_STATUS_LABELS[status]}
         </span>
       ))}
     </div>
@@ -293,7 +284,7 @@ function LevelGroupSection({
                   return (
                     <td key={skill.skill_id} className="px-1 py-1 text-center">
                       <button
-                        aria-label={`${student.student_name} – ${skill.name}: ${STATUS_SHORT[status]}`}
+                        aria-label={`${student.student_name} – ${skill.name}: ${SKILL_STATUS_LABELS[status]}`}
                         onClick={() => onCellTap(student, skill)}
                         className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800"
                       >
@@ -350,7 +341,7 @@ function LevelGroupSection({
                       <button
                         key={skill.skill_id}
                         onClick={() => onCellTap(student, skill)}
-                        aria-label={`${skill.name}: ${STATUS_SHORT[status]}`}
+                        aria-label={`${skill.name}: ${SKILL_STATUS_LABELS[status]}`}
                         className="flex min-h-[44px] items-center gap-1.5 rounded-full border border-neutral-200 px-3 text-[11px] font-medium dark:border-neutral-700"
                       >
                         <StatusMark status={status} size="sm" />
@@ -392,7 +383,7 @@ function LevelGroupSection({
                         <span className="text-sm font-semibold">{student.student_name}</span>
                         <span className="flex items-center gap-2 text-xs text-rally-muted">
                           <StatusMark status={status} size="sm" />
-                          {STATUS_SHORT[status]}
+                          {SKILL_STATUS_LABELS[status]}
                         </span>
                       </button>
                     </li>

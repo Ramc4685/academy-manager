@@ -16,6 +16,7 @@ import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange } from "@/lib/time/session-time";
 import { LessonCardView } from "@/components/teaching/lesson-card";
 import { StudentFocusRow } from "@/components/teaching/student-focus-row";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 function todayISO(): string {
   const d = new Date();
@@ -65,12 +66,7 @@ export default function CoachTeachingPlanPage() {
           className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
         >
           <p>Couldn&apos;t load the teaching plan.</p>
-          <button
-            onClick={() => void refetch()}
-            className="mt-2 min-h-touch rounded-md border px-3"
-          >
-            Retry
-          </button>
+          <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 
