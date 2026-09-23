@@ -556,7 +556,9 @@ def _payment_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
                 },
             )
             slot["amount_cents"] += alloc.amount_cents
-            slot["invoice_ids"].append(inv.invoice_id)
+            if inv.invoice_id not in slot["invoice_ids"]:
+                # Two allocations of one payment to one invoice list it once.
+                slot["invoice_ids"].append(inv.invoice_id)
             if slot["paid_at"] is None:
                 slot["paid_at"] = alloc.paid_at
     entries: list[dict[str, Any]] = []

@@ -4,8 +4,11 @@ Creates a LedgerPayment (status=paid) and allocates it to the invoice.
 The invoice financial status updates from open/partially_paid to paid/partially_paid
 based on the allocated amount. Partial payments are allowed.
 
-Idempotency: the payment_id is ULID-generated per call; the caller deduplicates at the
-HTTP layer by inspecting the response (or by keying on an external reference_number).
+Idempotency: without ``payment_id`` a fresh ULID id is minted per call and the
+caller deduplicates (``manual_payment_idempotency``). With a ``payment_id`` derived
+from the client's Idempotency-Key the use case is itself idempotent: the ledger
+payment and its allocation are keyed on that id, so a retry, or a concurrent
+duplicate, converges on the one payment instead of recording another.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.billing.application.ports import LedgerRepository
-from backend.v2.contexts.billing.domain.ledger import LedgerPayment
+from backend.v2.contexts.billing.domain.ledger import LedgerAllocationResult, LedgerPayment
 from backend.v2.shared.ids import new_ulid
 
 ManualPaymentMethod = Literal["cash", "check", "zelle", "venmo", "bank_transfer", "other"]
@@ -32,6 +35,8 @@ class RecordManualPaymentCommand(BaseModel):
     payment_method: ManualPaymentMethod = "cash"
     reference_number: str | None = None
     notes: str = ""
+    #: Deterministic id derived from the client's Idempotency-Key, or None to mint one.
+    payment_id: str | None = None
 
 
 class RecordManualPaymentResult(BaseModel):
@@ -55,6 +60,19 @@ class RecordManualPayment:
         self._now = clock
 
     async def execute(self, cmd: RecordManualPaymentCommand) -> RecordManualPaymentResult:
+        if cmd.payment_id is not None:
+            # A retry of a submission whose money already moved (the process died
+            # before the caller cached the result): replay the allocation rather
+            # than tripping the "not payable" guard on the invoice it just paid.
+            alloc_key = f"alloc-{cmd.payment_id}"
+            if await self._ledger.get_payment_allocation_by_idempotency_key(alloc_key):
+                replayed = await self._ledger.allocate_payment(
+                    payment_id=cmd.payment_id,
+                    invoice_id=cmd.invoice_id,
+                    amount_cents=cmd.amount_cents,
+                    idempotency_key=alloc_key,
+                )
+                return _result(cmd.invoice_id, cmd.payment_id, replayed)
         invoice = await self._ledger.get_invoice(cmd.invoice_id)
         if invoice is None:
             raise ValueError(f"invoice {cmd.invoice_id!r} not found")
@@ -77,7 +95,7 @@ class RecordManualPayment:
         # path), so the manual and automated payment paths behave identically.
 
         now = self._now()
-        payment_id = f"manual-{new_ulid()}"
+        payment_id = cmd.payment_id or f"manual-{new_ulid()}"
         payment = LedgerPayment(
             payment_id=payment_id,
             academy_id=invoice.academy_id,
@@ -100,13 +118,18 @@ class RecordManualPayment:
             amount_cents=cmd.amount_cents,
             idempotency_key=f"alloc-{payment_id}",
         )
-        overpayment_credit_cents = (
+        return _result(cmd.invoice_id, payment_id, result)
+
+
+def _result(
+    invoice_id: str, payment_id: str, result: LedgerAllocationResult
+) -> RecordManualPaymentResult:
+    return RecordManualPaymentResult(
+        invoice_id=invoice_id,
+        payment_id=payment_id,
+        invoice_status=result.invoice.status,
+        balance_due_cents=result.invoice.balance_due_cents,
+        overpayment_credit_cents=(
             result.overpayment_credit.amount_cents if result.overpayment_credit else 0
-        )
-        return RecordManualPaymentResult(
-            invoice_id=cmd.invoice_id,
-            payment_id=payment_id,
-            invoice_status=result.invoice.status,
-            balance_due_cents=result.invoice.balance_due_cents,
-            overpayment_credit_cents=overpayment_credit_cents,
-        )
+        ),
+    )

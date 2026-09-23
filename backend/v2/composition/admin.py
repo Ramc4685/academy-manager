@@ -99,9 +99,7 @@ from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
 from backend.v2.contexts.billing.application.manual_payment_idempotency import (
-    check_manual_payment_idempotency,
-    manual_payment_keys,
-    store_manual_payment_idempotency,
+    record_manual_payment_once,
 )
 from backend.v2.contexts.billing.application.ports import (
     BillingSetupStudent,
@@ -156,10 +154,6 @@ from backend.v2.contexts.billing.application.use_cases.issue_refund import (
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
-)
-from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
-    RecordManualPayment,
-    RecordManualPaymentCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
     RemoveInvoiceLine,
@@ -1578,68 +1572,21 @@ def compose_admin(
         actor_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # Idempotency boundary (issue #511) — policy lives in the billing context
-        # (manual_payment_idempotency): keyed retries replay, key reuse with a
-        # different payload rejects (422), keyless payload-identical repeats
-        # conflict (409) instead of silently replaying.
-        manual_idem_key, payload_key, payload_fingerprint = manual_payment_keys(
+        # Idempotency, concurrency and audit policy (issue #511, A5) live in the
+        # billing context; the request tenant scopes the keys and the audit row.
+        return await record_manual_payment_once(
+            store=idempotency_store,
+            ledger=billing_ledger_repo,
+            audit=billing_audit_log,
+            academy_id=request_academy_id(),
             invoice_id=invoice_id,
             amount_cents=amount_cents,
             payment_method=payment_method,
             reference_number=reference_number,
             notes=notes,
+            actor_id=actor_id,
             idempotency_key=idempotency_key,
         )
-        cached_payload = await check_manual_payment_idempotency(
-            idempotency_store,
-            storage_key=manual_idem_key,
-            payload_fingerprint=payload_fingerprint,
-            keyed=bool(idempotency_key),
-        )
-        if cached_payload is not None:
-            return cached_payload
-        result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
-            RecordManualPaymentCommand(
-                invoice_id=invoice_id,
-                amount_cents=amount_cents,
-                payment_method=payment_method,
-                reference_number=reference_number,
-                notes=notes,
-            )
-        )
-        payload = result.model_dump(mode="python")
-        # Record the idempotency result right after the durable money movement and BEFORE
-        # the audit append, so an audit failure cannot drive a retry into a second payment.
-        await store_manual_payment_idempotency(
-            idempotency_store,
-            storage_key=manual_idem_key,
-            payload_key=payload_key,
-            payload_fingerprint=payload_fingerprint,
-            payload=payload,
-            keyed=bool(idempotency_key),
-        )
-        # P0-4: append-only audit of who recorded the manual payment (money movement),
-        # mirroring the refund audit. Overpayment that became an account credit is captured
-        # in `after` so the trail explains where the excess went.
-        await billing_audit_log.append(
-            BillingAuditEntry(
-                audit_id=f"baud-{new_ulid()}",
-                academy_id=academy_id,
-                action="manual_payment_recorded",
-                actor_id=actor_id or "system",
-                at=datetime.now(UTC),
-                invoice_id=invoice_id,
-                payment_id=result.payment_id,
-                reason=payment_method,
-                after={
-                    "amount_cents": amount_cents,
-                    "invoice_status": result.invoice_status,
-                    "balance_due_cents": result.balance_due_cents,
-                    "overpayment_credit_cents": result.overpayment_credit_cents,
-                },
-            )
-        )
-        return payload
 
     async def issue_invoice_refund(
         *,
@@ -1653,7 +1600,10 @@ def compose_admin(
         # is an unconditional increment — without this boundary, a retry would replay
         # the cached Stripe refund yet re-claim the invoice projection, double-counting
         # `refunded_cents`. Keyed on the logical request (invoice + amount + reason).
-        refund_idem_key = f"invoice_refund:{invoice_id}:{amount_cents}:{reason}"
+        # The request tenant, not the boot academy (C4): the allocation lookup,
+        # the idempotency key (#544, the store is global) and the audit row.
+        academy_id = request_academy_id()
+        refund_idem_key = f"invoice_refund:{academy_id}:{invoice_id}:{amount_cents}:{reason}"
         cached = await idempotency_store.get(refund_idem_key)
         if cached is not None:
             return cached["payload"]
