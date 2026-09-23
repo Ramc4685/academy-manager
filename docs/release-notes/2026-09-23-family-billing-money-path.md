@@ -1,0 +1,24 @@
+# Family billing money paths: one payment per Record-payment submission, tenant-scoped refunds, real-mongod money tests
+
+PR: #0000
+
+## What changed
+
+- **Record payment no longer records twice when submits race.** `POST /admin/billing/invoices/{id}/record-payment` checked its idempotency cache and then recorded, so two submits that both missed the cache both recorded: on a real mongod, four concurrent submits with one `Idempotency-Key` wrote four ledger payments, and concurrent keyless identical submits did the same. Each recording now claims its key first (an insert the unique `idempotency_keys.key` index lets one caller win). The loser replays the winner's result, or gets a 409: "already in progress" for a keyed submit, "possible duplicate" for a keyless one (unchanged wording). A keyed submission now records under a payment id derived from its key, so a retry after the process died between moving the money and caching the result converges on the same ledger payment and allocation instead of recording a second one. A keyed claim whose owner died is taken over after 60 seconds.
+- **Idempotency keys for record-payment and invoice refunds now include the academy** (#544: the store is global). Before, academy B sending academy A's invoice id got A's cached payment (keyed) or a 409 that confirmed the invoice exists (keyless) instead of a 404.
+- **Invoice refunds run in the request academy.** `issue_invoice_refund` read allocations, keyed its idempotency entry and stamped its audit row with the boot academy, so in multi-academy mode a refund in any other academy failed with "invoice has no refundable allocated payment" (C4). Production runs `single_academy`, where the two are the same academy. The record-payment audit row is also stamped with the request academy.
+- **Billing tab timeline:** a payment applied twice to one invoice listed that invoice twice in its "received" entry; it is listed once.
+- The record-payment policy moved out of `composition/admin.py` into `billing/application/manual_payment_idempotency.record_manual_payment_once` (admin.py shrinks by ~50 lines). `RecordManualPaymentCommand` takes an optional `payment_id`.
+- **Tests.** A new `real_db` contract fixture replays every migration once per session on a real mongod (the CI backend job's `mongo:8` service; locally whatever listens on 27017), so the production unique indexes and 0132/0133 validators apply; it skips when no mongod is reachable, like the #907 planner test. New suites: `test_record_manual_payment_money_path.py` (double submit keyed, concurrent keyed, keyless sequential and concurrent, distinct keys, key reuse with another payload, crash-then-retry, cross-academy recording and replay, same key in two academies, audit tenant); `test_family_billing_money_path.py` (one payment partially settling two invoices with the family list and the Billing tab agreeing on the balance, an alias-stored invoice included; concurrent allocations never spend one payment twice; refund visible on the Billing tab in the boot and a request academy); `test_family_billing_tenant_auth.py` (cross-academy by id and by alias, colliding parent ids, staff membership is not parenthood, parent persona sees only their own invoices); structural `test_money_route_staff_tiers.py` (money-moving routes owner-only, record payment on the admin persona, Billing tab hides money-moving actions from non-owners).
+- Known gaps pinned as strict xfails (follow-up issues): the two admin card-charge routes (`/billing/invoices/{id}/charge-autopay`, `/billing/setup/{parent_id}/charge`) and the `charge_card` Billing-tab action are reachable by non-owner admins, against the 2026-09-22 staff-tier decision; the Billing tab does not show how much was refunded.
+
+## Deploy notes
+
+- No migration, no environment variable, no feature flag. Uses the existing `idempotency_keys` unique index (migration 0001).
+- Record-payment and invoice-refund idempotency entries written before the deploy use the old key shape and are not found afterwards. For record-payment, a retry of a submission made just before the deploy (within the 7-day TTL) is recorded again instead of replayed; for refunds the invoice-level claim still caps cumulative refunds at the invoice total. Deploy outside the academy's payment-recording hours to make that window empty.
+
+## Risk / rollback
+
+- Low to medium: the change is on the money-recording path. The happy path (one submit) writes the same rows as before plus one small claim entry in `idempotency_keys`. The visible behaviour change is that a double-click now returns the same payment (or a 409 "already in progress") instead of recording a second payment.
+- If a keyed record-payment dies after claiming but before recording, the same key gets 409 "already in progress" for up to 60 seconds, then goes through.
+- Rollback: revert the PR. Claim entries left in `idempotency_keys` expire with the existing 7-day TTL and are ignored by the old code.
