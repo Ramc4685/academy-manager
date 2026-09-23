@@ -24,6 +24,17 @@ from backend.v2.contexts.communications.domain.models import (
 )
 from backend.v2.shared.tenancy.context import current_academy_id
 
+#: Enrollment statuses whose family hears about a session: the roster's own
+#: definition of "in this class" (``ROSTER_VISIBLE`` in
+#: contexts/enrollment/domain/models.py — "active" and "held" today). A held
+#: student keeps their seat and still shows on the roster, so their parent
+#: gets the class's messages; a paused or ended enrollment does not.
+#: Communications cannot import contexts.enrollment (Rule 5, no cross-context
+#: imports, tests/structural/test_layering.py), so the set is mirrored here
+#: and pinned to ROSTER_VISIBLE by
+#: tests/infrastructure/test_mongo_audience_resolver.py.
+SESSION_AUDIENCE_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"active", "held"})
+
 
 @dataclass
 class MongoAudienceResolver(AudienceResolver):
@@ -87,7 +98,11 @@ class MongoAudienceResolver(AudienceResolver):
     async def resolve_session_audience(self, audience: SessionAudience) -> list[ResolvedRecipient]:
         academy_id = current_academy_id()
         enrollment_cursor = self.db["enrollments"].find(
-            {"academy_id": academy_id, "session_id": audience.session_id, "status": "active"},
+            {
+                "academy_id": academy_id,
+                "session_id": audience.session_id,
+                "status": {"$in": sorted(SESSION_AUDIENCE_ENROLLMENT_STATUSES)},
+            },
             {"student_id": 1},
         )
         student_ids = [str(doc["student_id"]) async for doc in enrollment_cursor]
@@ -107,11 +122,10 @@ class MongoAudienceResolver(AudienceResolver):
         if not parent_ids:
             return []
 
-        user_cursor = self.db["users"].find(
-            {"academy_id": academy_id, "user_id": {"$in": list(parent_ids)}},
-            {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
-        )
-        return [self._user_to_recipient(doc) async for doc in user_cursor]
+        # A student's parent id may be the parent's user_id or their Firebase
+        # auth_uid alias; resolve both, deduped, current tenant (or legacy
+        # global doc) only — the same lookup every other parent audience uses.
+        return await self._resolve_users_for_ids(sorted(parent_ids))
 
     async def resolve_coach_audience(self, audience: CoachAudience) -> list[ResolvedRecipient]:
         if audience.session_id:
