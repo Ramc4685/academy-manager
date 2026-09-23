@@ -11,6 +11,7 @@ import { queryKeys } from "@/lib/query/keys";
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 // FullCalendar (~250 KB) is loaded client-side only, out of the initial
 // coach bundle — same pattern as AdminCalendarView.
@@ -50,9 +51,7 @@ export default function CoachCalendarPage() {
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
           <div role="alert" className="flex items-center justify-between gap-3">
             <p className="text-sm text-red-800">Failed to load your schedule.</p>
-            <button onClick={() => void refetch()} className="text-sm font-medium text-rally-cobalt">
-              Retry
-            </button>
+            <RetryButton onClick={() => void refetch()} />
           </div>
         </Card>
       )}
