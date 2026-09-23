@@ -12,6 +12,7 @@ import {
   type QueuedMutation,
 } from "@/lib/offline/queue";
 import { onSync, syncNow } from "@/lib/offline/sync";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 /**
  * Coach's "Needs review" tray.
@@ -156,15 +157,12 @@ export default function NeedsReviewPage() {
                 `tray-<id>` prefix, so a prefix match for rows never picks up
                 an action (see e2e/helpers/row-actions.ts).
               */}
-              <button
-                type="button"
+              <RetryButton
                 disabled={retrying !== null}
-                data-testid={`tray-retry-${m.mutation_id}`}
+                busy={retrying === m.mutation_id}
+                testId={`tray-retry-${m.mutation_id}`}
                 onClick={() => void retry(m)}
-                className="min-h-touch rounded-md border border-amber-600 bg-amber-600 px-3 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                {retrying === m.mutation_id ? "Retrying…" : "Retry"}
-              </button>
+              />
               <button
                 type="button"
                 disabled={retrying !== null}

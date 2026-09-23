@@ -78,6 +78,37 @@ async function seedTray(
   }, record);
 }
 
+/**
+ * WCAG 2.x contrast of the element's text against its own background, read
+ * from the rendered styles. Colours go through a canvas so any CSS colour
+ * syntax (rgb, oklch) resolves to sRGB bytes.
+ */
+async function textContrast(
+  locator: import("@playwright/test").Locator,
+): Promise<number> {
+  return locator.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    const rgb = (css: string): number[] => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data.slice(0, 3));
+    };
+    const lum = ([r, g, b]: number[]) => {
+      const f = (v: number) => {
+        const c = v / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const [hi, lo] = [lum(rgb(style.color)), lum(rgb(style.backgroundColor))].sort(
+      (a, b) => b - a,
+    );
+    return (hi + 0.05) / (lo + 0.05);
+  });
+}
+
 test.describe("Coach needs-review retry (#895)", () => {
   test("Retry re-sends the failed mark under its original idempotency key", async ({
     page,
@@ -95,6 +126,10 @@ test.describe("Coach needs-review retry (#895)", () => {
     // match for rows never picks up an action (see e2e/helpers/row-actions.ts).
     const retry = page.getByTestId(`tray-retry-${MUTATION_ID}`);
     await expect(retry).toBeVisible();
+    // UI-6: the tray Retry was white on amber-600 (3.2:1). The shared coach
+    // RetryButton must clear WCAG AA for normal text.
+    await expect(retry).toHaveAccessibleName("Retry");
+    expect(await textContrast(retry)).toBeGreaterThanOrEqual(4.5);
     await expect(
       row.getByRole("button", { name: "Dismiss", exact: true }),
     ).toBeVisible();

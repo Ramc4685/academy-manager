@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/curriculum";
 import { SkillNotesPanel } from "@/components/coach/skill-notes-panel";
 import { recommendErrorMessage } from "@/components/admin/admissions/level-up-review";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 const STATUS_LABELS: Record<SkillStatus, string> = {
   NOT_STARTED: "Not started",
@@ -123,12 +124,7 @@ export default function CoachStudentPassportPage() {
       {isError && (
         <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>Couldn&apos;t load skill passport. Try again.</p>
-          <button
-            onClick={() => void refetch()}
-            className="mt-2 min-h-touch rounded-md border border-red-200 px-3 text-sm font-medium"
-          >
-            Retry
-          </button>
+          <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 
