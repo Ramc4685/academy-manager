@@ -49,12 +49,20 @@
       "source": "frontend/app/page.tsx",
       "workflows": [
         "Landing entry",
-        "Navigate to auth"
+        "Navigate to auth",
+        "Tenant host public academy page",
+        "Book a free trial entry"
       ],
       "controls": {
         "buttons": [
           "Sign in",
-          "Register"
+          "Register",
+          "Book a free trial",
+          "See classes and prices",
+          "Try a class free",
+          "Join waitlist",
+          "Parent login",
+          "Try again"
         ],
         "inputs": [],
         "modals": []
@@ -62,19 +70,37 @@
       "states": [
         "default",
         "mobile",
-        "not-found guard"
+        "not-found guard",
+        "product host landing",
+        "loading",
+        "published",
+        "nothing published yet (not_published page, or published with no classes)",
+        "trials closed",
+        "all classes full",
+        "unknown host not found (404)",
+        "backend unavailable"
       ],
       "risk_edges": [
         "Broken primary auth links",
-        "Mobile hero overlap"
+        "Mobile hero overlap",
+        "Tenant data shown on the product host or another tenant host",
+        "Unpublished classes, exact seat counts or personal data on the public page",
+        "Brand colour below WCAG AA contrast"
       ],
       "acceptance": [
         "Primary auth navigation works",
         "No framework error overlay",
+        "On a product host (academy.courtmastr.com) / renders the CourtMastr landing page without calling the public API",
+        "On a tenant host / renders the academy page from GET /api/v2/public/academy with Book a free trial as the primary action",
         "Workflow evidence: \"Landing entry\" completes for the public route / with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Navigate to auth\" completes for the public route / with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Tenant host public academy page\" completes for the public route / with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Book a free trial entry\" completes for the public route / with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Broken primary auth links\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Mobile hero overlap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Mobile hero overlap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Tenant data shown on the product host or another tenant host\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Unpublished classes, exact seat counts or personal data on the public page\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Brand colour below WCAG AA contrast\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -3769,6 +3795,90 @@
         "Risk evidence: \"Wrong-role user driving tenant lifecycle\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Invalid lifecycle transition returning a conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Stale tenant status after a lifecycle mutation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/og-card",
+      "role": "public",
+      "source": "frontend/app/og-card/route.ts",
+      "workflows": [
+        "Share preview card for the tenant page"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "published card",
+        "not published card",
+        "unknown host not found (404)"
+      ],
+      "risk_edges": [
+        "Personal data or class detail on the card",
+        "Card served for a host no academy serves"
+      ],
+      "acceptance": [
+        "Returns a 1200x630 PNG with the academy name, age span and address on night with the brand lane line",
+        "Workflow evidence: \"Share preview card for the tenant page\" completes for the public route /og-card with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Personal data or class detail on the card\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Card served for a host no academy serves\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/robots.txt",
+      "role": "public",
+      "source": "frontend/app/robots.txt/route.ts",
+      "workflows": [
+        "Crawler reads robots.txt for the host"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "product host",
+        "tenant host",
+        "unknown host"
+      ],
+      "risk_edges": [
+        "App persona paths crawlable",
+        "Sitemap pointing at another host"
+      ],
+      "acceptance": [
+        "Allows /, disallows the persona and API prefixes, and names this host's sitemap",
+        "Workflow evidence: \"Crawler reads robots.txt for the host\" completes for the public route /robots.txt with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"App persona paths crawlable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Sitemap pointing at another host\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/sitemap.xml",
+      "role": "public",
+      "source": "frontend/app/sitemap.xml/route.ts",
+      "workflows": [
+        "Crawler reads sitemap.xml for the host"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "indexable page listed",
+        "unindexable page (not published, no classes) lists nothing",
+        "unknown host not found (404)"
+      ],
+      "risk_edges": [
+        "Unpublished page listed in the sitemap",
+        "Another host listed in the sitemap"
+      ],
+      "acceptance": [
+        "Lists this host's root only when the page is published with classes",
+        "Workflow evidence: \"Crawler reads sitemap.xml for the host\" completes for the public route /sitemap.xml with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Unpublished page listed in the sitemap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Another host listed in the sitemap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     }
   ],
