@@ -3827,8 +3827,11 @@ export function updateAdminPublicPageSettings(
   });
 }
 
-export function listAdminPrograms(): Promise<{ programs: AdminProgramView[] }> {
-  return apiFetch<{ programs: AdminProgramView[] }>("/admin/programs", { method: "GET" });
+export function listAdminPrograms(
+  options: { includeArchived?: boolean } = {}
+): Promise<{ programs: AdminProgramView[] }> {
+  const path = options.includeArchived ? "/admin/programs?include_archived=true" : "/admin/programs";
+  return apiFetch<{ programs: AdminProgramView[] }>(path, { method: "GET" });
 }
 
 export function createAdminProgram(payload: { name: string }): Promise<AdminProgramView> {

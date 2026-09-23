@@ -24,6 +24,7 @@ import {
   PRICE_PERIOD_LABEL,
   listableClasses,
   privacyUrlError,
+  programOptions,
   publicPagePayload,
   toPublicPageForm,
   viewPageHref,
@@ -243,7 +244,10 @@ function ProgramsCard() {
   const queryClient = useQueryClient();
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
-  const query = useQuery({ queryKey: queryKeys.admin.programs(), queryFn: listAdminPrograms });
+  const query = useQuery({
+    queryKey: queryKeys.admin.programs(),
+    queryFn: () => listAdminPrograms(),
+  });
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.admin.programs() });
 
@@ -271,7 +275,7 @@ function ProgramsCard() {
     mutationFn: (programId: string) => archiveAdminProgram(programId),
     onSuccess: () => {
       void invalidate();
-      // Classes keep their program_id; the class list shows them unassigned.
+      // Classes keep their program_id; the class list marks it "(archived)".
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.classPublicProfiles() });
     },
   });
@@ -411,7 +415,11 @@ function ClassesCard() {
     queryKey: queryKeys.admin.classPublicProfiles(),
     queryFn: listAdminClassPublicProfiles,
   });
-  const programs = useQuery({ queryKey: queryKeys.admin.programs(), queryFn: listAdminPrograms });
+  // Archived programs too, so a class still pointing at one says so.
+  const programs = useQuery({
+    queryKey: queryKeys.admin.programsWithArchived(),
+    queryFn: () => listAdminPrograms({ includeArchived: true }),
+  });
 
   const change = useMutation({
     mutationFn: (req: RowChange) =>
@@ -437,7 +445,7 @@ function ClassesCard() {
   }
 
   const rows = listableClasses(classes.data?.classes ?? []);
-  const activePrograms = programs.data?.programs ?? [];
+  const allPrograms = programs.data?.programs ?? [];
   const pendingId = change.isPending ? change.variables?.sessionId : undefined;
   const failedId = change.isError ? change.variables?.sessionId : undefined;
 
@@ -480,7 +488,7 @@ function ClassesCard() {
                 <ClassRow
                   key={row.session_id}
                   row={row}
-                  programs={activePrograms}
+                  programs={allPrograms}
                   pending={pendingId === row.session_id}
                   failed={failedId === row.session_id}
                   onChange={(req) => {
@@ -516,7 +524,7 @@ function ClassRow({
   onChange: (req: RowChange) => void;
 }) {
   const title = row.title ?? "Untitled class";
-  const programKnown = row.program_id === null || programs.some((p) => p.program_id === row.program_id);
+  const options = programOptions(programs, row.program_id);
   return (
     <tr
       data-testid="public-page-class-row"
@@ -540,6 +548,7 @@ function ClassRow({
         <label className="inline-flex min-h-11 items-center gap-2">
           <input
             type="checkbox"
+            role="switch"
             data-testid="public-page-class-published"
             checked={row.published}
             disabled={pending}
@@ -560,7 +569,7 @@ function ClassRow({
         <select
           aria-label={`Program for ${title}`}
           data-testid="public-page-class-program"
-          value={programKnown ? (row.program_id ?? "") : ""}
+          value={row.program_id ?? ""}
           disabled={pending}
           onChange={(event) =>
             onChange({
@@ -572,9 +581,9 @@ function ClassRow({
           className={SELECT_CLASS}
         >
           <option value="">No program</option>
-          {programs.map((program) => (
-            <option key={program.program_id} value={program.program_id}>
-              {program.name}
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>

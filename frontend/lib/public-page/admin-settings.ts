@@ -9,6 +9,7 @@
 
 import type {
   AdminClassPublicProfileView,
+  AdminProgramView,
   AdminPublicPageSettingsView,
   PublicCoachDisplay,
   PublicPricePeriod,
@@ -126,4 +127,32 @@ export function listableClasses(
         sensitivity: "base",
       })
     );
+}
+
+export interface ProgramOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * The program choices for one class row: every active program, plus the
+ * class's current program when it is archived (or no longer listed at all),
+ * so a class in an archived program never reads as "No program". Archiving
+ * a program keeps the class's program_id on the server.
+ */
+export function programOptions(
+  programs: ReadonlyArray<AdminProgramView>,
+  currentProgramId: string | null
+): ProgramOption[] {
+  const options: ProgramOption[] = programs
+    .filter((program) => !program.archived)
+    .map((program) => ({ value: program.program_id, label: program.name }));
+  if (currentProgramId !== null && !options.some((o) => o.value === currentProgramId)) {
+    const current = programs.find((program) => program.program_id === currentProgramId);
+    options.push({
+      value: currentProgramId,
+      label: current ? `${current.name} (archived)` : "Unknown program",
+    });
+  }
+  return options;
 }

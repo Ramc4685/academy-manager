@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { AdminClassPublicProfileView } from "@/lib/api/admin";
+import type { AdminClassPublicProfileView, AdminProgramView } from "@/lib/api/admin";
 import {
   listableClasses,
   privacyUrlError,
+  programOptions,
   publicPagePayload,
   toPublicPageForm,
   viewPageHref,
@@ -121,5 +122,42 @@ describe("listableClasses", () => {
       row({ session_id: "s-4", title: "Advanced", status: null }),
     ]);
     expect(out.map((r) => r.session_id)).toEqual(["s-4", "s-2", "s-3"]);
+  });
+});
+
+describe("programOptions", () => {
+  const program = (id: string, name: string, archived = false): AdminProgramView => ({
+    program_id: id,
+    name,
+    public_description: null,
+    level: null,
+    age_band: null,
+    sort_order: 0,
+    archived,
+    created_at: "2026-09-23T12:00:00Z",
+    updated_at: "2026-09-23T12:00:00Z",
+  });
+  const programs = [program("p-juniors", "Juniors"), program("p-old", "Winter Squad", true)];
+
+  it("offers only active programs to an unassigned class", () => {
+    expect(programOptions(programs, null)).toEqual([{ value: "p-juniors", label: "Juniors" }]);
+  });
+
+  it("keeps a class's archived program visible and marked", () => {
+    expect(programOptions(programs, "p-old")).toEqual([
+      { value: "p-juniors", label: "Juniors" },
+      { value: "p-old", label: "Winter Squad (archived)" },
+    ]);
+  });
+
+  it("never shows an unlisted program id as unassigned", () => {
+    expect(programOptions(programs, "p-gone")).toEqual([
+      { value: "p-juniors", label: "Juniors" },
+      { value: "p-gone", label: "Unknown program" },
+    ]);
+  });
+
+  it("does not duplicate an active current program", () => {
+    expect(programOptions(programs, "p-juniors")).toHaveLength(1);
   });
 });

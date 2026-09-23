@@ -55,11 +55,14 @@ interface Seen {
   programPosts: unknown[];
 }
 
-async function stub(page: Page): Promise<Seen> {
+async function stub(
+  page: Page,
+  seed: { programs?: Array<Record<string, unknown>>; rows?: ReturnType<typeof classes> } = {},
+): Promise<Seen> {
   const seen: Seen = { settingsPatches: [], fieldPatches: [], programPuts: [], programPosts: [] };
   let settings: Record<string, unknown> = { ...SETTINGS };
-  let rows = classes();
-  const programs: Array<Record<string, unknown>> = [];
+  let rows = seed.rows ?? classes();
+  const programs: Array<Record<string, unknown>> = [...(seed.programs ?? [])];
 
   // Catch-all first: Playwright matches the most recently registered route
   // first, so the specific stubs below win and shell polls get an empty shape.
@@ -113,9 +116,16 @@ async function stub(page: Page): Promise<Seen> {
   await page.route("**/api/v2/admin/class-public-profiles", (route) =>
     fulfillJson(route, { classes: rows }),
   );
-  await page.route("**/api/v2/admin/programs", (route) => {
+  // A regex, not a glob, so ?include_archived=true matches too. Like the real
+  // endpoint, archived programs come back only when asked for.
+  await page.route(/\/api\/v2\/admin\/programs(\?.*)?$/, (route) => {
     const request = route.request();
-    if (request.method() === "GET") return fulfillJson(route, { programs });
+    if (request.method() === "GET") {
+      const withArchived = new URL(request.url()).searchParams.get("include_archived") === "true";
+      return fulfillJson(route, {
+        programs: withArchived ? programs : programs.filter((p) => !p.archived),
+      });
+    }
     if (request.method() === "POST") {
       const body = request.postDataJSON() as { name: string };
       seen.programPosts.push(body);
@@ -280,5 +290,37 @@ test.describe("admin settings → public page", () => {
         body: { program_id: "prog-1" },
       },
     ]);
+  });
+
+  test("a class in an archived program says so instead of reading as unassigned", async ({
+    page,
+  }) => {
+    const archived = {
+      program_id: "prog-old",
+      name: "Winter Squad",
+      public_description: null,
+      level: null,
+      age_band: null,
+      sort_order: 0,
+      archived: true,
+      created_at: "2026-09-23T12:00:00Z",
+      updated_at: "2026-09-23T12:00:00Z",
+    };
+    const rows = classes().map((row) =>
+      row.session_id === "sess-juniors" ? { ...row, program_id: "prog-old" } : row,
+    );
+    await stub(page, { programs: [archived], rows });
+    await page.goto("/admin/settings?panel=public-page");
+
+    // The Programs card lists only active programs.
+    await expect(page.getByTestId("public-page-programs-empty")).toBeVisible();
+    const juniors = page.locator('[data-session-id="sess-juniors"]');
+    const select = juniors.getByTestId("public-page-class-program");
+    await expect(select).toHaveValue("prog-old");
+    await expect(select.locator("option:checked")).toHaveText("Winter Squad (archived)");
+    // Other classes are not offered the archived program.
+    const adults = page.locator('[data-session-id="sess-adults"]');
+    await expect(adults.getByTestId("public-page-class-program")).toHaveValue("");
+    await expect(adults.locator("option", { hasText: "Winter Squad" })).toHaveCount(0);
   });
 });
