@@ -194,6 +194,11 @@ test.describe("admin settings → public page", () => {
   test("a non-http privacy link blocks Save with an inline error", async ({ page }) => {
     const seen = await stub(page);
     await page.goto("/admin/settings?panel=public-page");
+    // Wait for the server copy so the edit below is made on loaded data.
+    await expect(page.getByTestId("public-page-view-link")).toHaveAttribute(
+      "href",
+      "https://riverside.example/",
+    );
     const url = page.getByTestId("public-page-privacy-url");
     await url.fill("javascript:alert(1)");
     await expect(page.getByText("Only http:// or https:// links are allowed.")).toBeVisible();

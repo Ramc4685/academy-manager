@@ -15,6 +15,8 @@ PR: #939
 - **Frontend.** `frontend/components/public-page/TrialRequestForm.tsx` fills B3's `#trial` slot while trials are open (the trials-closed state still renders no form). Posts same-origin through the existing BFF proxy `app/api/v2/[...path]/route.ts` (no new route). Labels tied to inputs, `aria-describedby` errors, an error summary that takes focus and links to each field, an `aria-live` acknowledgement and a focused confirmation, a honeypot hidden from people and assistive technology, the two consent checkboxes and the privacy notice link. Client logic in `frontend/lib/public-page/trial-request.ts`.
 - **Tests.** Backend unit/interface tests for the route (byte-identical new vs repeat, honeypot, host-only tenant, unpublished 404, trials closed, validation, oversized body, stage choice, email once and only for new, failing send does not change the answer), the notifier, class choice, the website inquiry use case, the message field and the rate limits; a real-mongod contract test for concurrent identical submissions (one row, one answer); the public no-leak structural test now covers the request allow-list and the acknowledgement DTO. Vitest for the form and client logic; Playwright `public-tenant-trial-form.spec.ts` (success, error summary, trials closed) against the extended e2e stub backend.
 
+- **Fix to the Settings > Public page panel (#938):** the panel used to replace the whole form when the settings finished loading or refetched, so anything the admin had already typed was wiped. It now keeps the fields the admin has changed. Its e2e spec also waits for the loaded settings before typing. The race failed this PR's desktop e2e run.
+
 ## Deploy notes
 
 - No migration (reuses `crm_contacts` and its indexes from 0192).

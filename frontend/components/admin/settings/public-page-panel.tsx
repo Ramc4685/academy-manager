@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -79,8 +79,24 @@ function PageSettingsCard() {
   });
   const original = useMemo(() => toPublicPageForm(query.data), [query.data]);
 
+  // When the server copy arrives or refetches, take its values but keep any
+  // field the admin has already edited, so a late load or a background
+  // refetch never wipes unsaved input.
+  const seededFrom = useRef<PublicPageForm>(toPublicPageForm(null));
   useEffect(() => {
-    if (query.data) setForm(toPublicPageForm(query.data));
+    if (!query.data) return;
+    const fresh = toPublicPageForm(query.data);
+    const previous = seededFrom.current;
+    seededFrom.current = fresh;
+    setForm((current) => {
+      const next = { ...fresh };
+      for (const key of Object.keys(current) as (keyof PublicPageForm)[]) {
+        if (current[key] !== previous[key]) {
+          (next as Record<keyof PublicPageForm, unknown>)[key] = current[key];
+        }
+      }
+      return next;
+    });
   }, [query.data]);
 
   useEffect(() => {
