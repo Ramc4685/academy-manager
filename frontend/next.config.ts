@@ -69,7 +69,10 @@ const RETIRED_ROUTE_REDIRECTS = [
   // Sidebar regroup PR 3: parents left the Staff list, so the bookmark lands on
   // Families. Temporary on purpose: the old 308 to `/admin/users?role=parent`
   // is pinned in some browsers, and a 307 keeps this move reversible.
-  { source: "/admin/parents", destination: "/admin/families", permanent: false },
+  // People CRM Phase 1: it lands on the Families view by name, because the
+  // bare `/admin/families` becomes the Today view once the People sub-nav
+  // lands (engineering spec §1 "Redirects"; the page ignores `?view=` until then).
+  { source: "/admin/parents", destination: "/admin/families?view=families", permanent: false },
   { source: "/admin/coaches", destination: "/admin/users?role=coach", permanent: true },
   // #839: the orphan add-user page. One form now — the directory's dialog,
   // which `?add=1` opens.
