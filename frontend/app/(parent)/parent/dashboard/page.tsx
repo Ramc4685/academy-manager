@@ -250,7 +250,9 @@ function BalanceBanner({ balance }: { balance: ParentHomeBalance }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold">{headline}</p>
-        <p className="mt-0.5 text-xs opacity-80">{detail}</p>
+        {/* No opacity on the detail line: amber-800 at 80% fell to 4.41:1 on
+            the amber-50 banner, under the 4.5:1 AA floor (D11 axe gate). */}
+        <p className="mt-0.5 text-xs">{detail}</p>
       </div>
       <Link
         href="/parent/payments"
@@ -359,15 +361,18 @@ function CardRow({
   meta: string | null;
 }) {
   return (
-    <div className="flex gap-2.5">
-      <span className="mt-0.5 shrink-0 text-rally-cobalt-600">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <dt className="text-[10px] font-bold uppercase tracking-widest text-rally-subtle">
-          {label}
-        </dt>
-        <dd className="text-sm font-semibold text-rally-ink">{value}</dd>
-        {meta && <p className="mt-0.5 truncate text-xs text-rally-muted">{meta}</p>}
-      </div>
+    // A <dl> may only hold <div>s whose children are <dt>/<dd> (axe
+    // definition-list / dlitem), so the icon rides inside the <dt>, pinned
+    // into the left gutter, and the meta line is a second <dd>.
+    <div className="relative min-w-0 pl-[25px]">
+      <dt className="text-[10px] font-bold uppercase tracking-widest text-rally-subtle">
+        <span className="absolute left-0 top-0.5 text-rally-cobalt-600" aria-hidden="true">
+          {icon}
+        </span>
+        {label}
+      </dt>
+      <dd className="text-sm font-semibold text-rally-ink">{value}</dd>
+      {meta && <dd className="mt-0.5 truncate text-xs text-rally-muted">{meta}</dd>}
     </div>
   );
 }
@@ -471,7 +476,9 @@ function PrimaryActionCard({ action }: { action: ParentHomeAction }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold">{action.title}</p>
-        <p className="mt-0.5 line-clamp-2 text-xs opacity-80">{action.body}</p>
+        {/* Full-strength text: at 80% opacity the amber-on-volt "register"
+            card fell to 4.27:1, under the 4.5:1 AA floor (D11 axe gate). */}
+        <p className="mt-0.5 line-clamp-2 text-xs">{action.body}</p>
       </div>
       <ChevronRight className="shrink-0" size={18} />
     </Link>

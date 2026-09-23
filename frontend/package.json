@@ -40,6 +40,7 @@
     "web-vitals": "6.2.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@fullcalendar/daygrid": "6.1.21",
     "@fullcalendar/react": "6.1.21",
     "@lhci/cli": "0.15.1",

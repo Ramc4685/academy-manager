@@ -5,6 +5,11 @@ name: Nightly E2E
 # WebKit-only regression has ever blocked a deploy. It still runs daily
 # against main, on demand, and on PRs that change the e2e suite itself so
 # browser-specific spec changes are verified before merge.
+#
+# The axe accessibility gate (D11, frontend/e2e/specs/a11y-*.spec.ts) runs
+# here as its own chromium-only job: daily, on demand, and on PRs that touch
+# shared components or the e2e suite. WebKit keeps its narrower PR trigger
+# through the `changes` job below.
 
 on:
   schedule:
@@ -16,6 +21,7 @@ on:
       - main
     paths:
       - "frontend/e2e/**"
+      - "frontend/components/**"
       - "frontend/playwright.config.ts"
       - ".github/workflows/nightly-e2e.yml"
 
@@ -77,10 +83,43 @@ jobs:
         working-directory: frontend
         run: bash "$GITHUB_WORKSPACE/scripts/ci/dependency_audit.sh" pnpm audit --audit-level=high
 
+  # PR runs only: did the diff touch what the WebKit job verifies? The
+  # workflow's `paths` also admits frontend/components/** for the a11y job,
+  # and a components-only PR should not pay for a WebKit run.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    outputs:
+      webkit: ${{ steps.diff.outputs.webkit }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Diff against the PR base
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Eq '^(frontend/e2e/|frontend/playwright\.config\.ts$|\.github/workflows/nightly-e2e\.yml$)'; then
+            echo "webkit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "webkit=false" >> "$GITHUB_OUTPUT"
+          fi
+
   frontend-e2e-webkit:
     name: Frontend E2E WebKit
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: changes
+    # `changes` is skipped outside PRs; !cancelled() keeps that skip from
+    # cascading into this job on the nightly schedule and manual runs.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.webkit == 'true') }}
     defaults:
       run:
         working-directory: frontend
@@ -127,5 +166,61 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-webkit
+          path: frontend/playwright-report
+          retention-days: 7
+
+  # D11: axe-core over the public page, parent home, admin dashboard and
+  # coach today; fails on serious/critical WCAG 2 A/AA violations outside
+  # the allowlist in the spec. Chromium only.
+  frontend-e2e-a11y:
+    name: Frontend E2E Accessibility (axe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+
+      - name: Install Playwright system dependencies
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install chromium
+
+      - name: Playwright axe gate
+        env:
+          CI: "1"
+        run: pnpm exec playwright test --project=a11y-chromium
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-a11y
           path: frontend/playwright-report
           retention-days: 7
