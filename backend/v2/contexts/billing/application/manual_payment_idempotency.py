@@ -233,7 +233,7 @@ async def record_manual_payment_once(
         RecordManualPaymentCommand(
             invoice_id=invoice_id,
             amount_cents=amount_cents,
-            payment_method=payment_method,  # type: ignore[arg-type]
+            payment_method=payment_method,
             reference_number=reference_number,
             notes=notes,
             payment_id=manual_payment_id(storage_key) if keyed else None,
