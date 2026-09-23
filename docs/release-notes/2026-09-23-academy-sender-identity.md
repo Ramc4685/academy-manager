@@ -1,10 +1,10 @@
-# academy-sender-identity
+# Per-academy email sender name and reply-to
 
-PR: #TBD
+PR: #948
 
 ## What changed
 
-- **Per-academy sender display name and reply-to (L9a).** Two optional academy settings, `email_sender_name` (max 80 characters, no line breaks or angle brackets) and `email_reply_to` (a valid email), are editable under Settings → Branding → Outbound email and through `PATCH /api/v2/admin/academy` (admin persona). Unsafe values are a 422.
+- **Per-academy sender display name and reply-to (L9a).** Two optional academy settings, `email_sender_name` (max 80 characters, no line breaks or angle brackets) and `email_reply_to` (a valid email, max 254 characters), are editable under Settings → Branding → Outbound email and through `PATCH /api/v2/admin/academy` (admin persona). Unsafe values are a 422.
 - **The From address does not change.** It is still the platform's verified `SENDER_EMAIL`. Only the display name changes: `"<sender name, else academy display name>" <SENDER_EMAIL>`. Non-ASCII names are RFC 2047 encoded. The send port now takes `sender_name` (a name only) and the Resend adapter builds the header around its own address, so an academy value can never change the address. `backend/v2/shared/comms/sender_identity.py` holds `resolve_sender(academy_doc)` and re-validates stored values when it reads them.
 - **Wired paths (non-billing):** parent and coach digests, admin-triggered coach test digest, campaigns, roster alerts, absence notices, session announcements, hold notices, win-back, registration decisions, enrollment welcome, public trial-request owner alert (reply-to stays the family's address), and admin/staff login invites. Each resolves the academy from the current tenant at send time.
 - **Reply-to:** `email_reply_to` wins when it is set. Otherwise each path keeps what it did before: digests use contact/owner email, and the other paths set no reply-to.
