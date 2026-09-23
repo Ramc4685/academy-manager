@@ -10,6 +10,7 @@ another. Consumers: the admin settings panel (B5) and the public read (B2).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -22,6 +23,7 @@ from backend.v2.contexts.identity.domain.public_page import (
 )
 
 __all__ = [
+    "GetPublicPageAddress",
     "GetPublicPageSettings",
     "PublicPageSettings",
     "UpdatePublicPageSettings",
@@ -45,6 +47,36 @@ class GetPublicPageSettings:
     async def execute(self, academy_id: str) -> PublicPageSettings:
         doc = await self._repo.find_by_id(academy_id)
         return PublicPageSettings.from_stored((doc or {}).get(PUBLIC_PAGE_FIELD))
+
+
+#: A bare DNS host name (no scheme, path, port or credentials).
+_HOST_RE = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+
+
+class GetPublicPageAddress:
+    """The academy's own web address, for the admin panel's "View page" link.
+
+    ``primary_domain`` (then the mirrored ``custom_domain``) on the academy
+    record. ``None`` when neither is set or the stored value is not a bare
+    host name: the panel then says the address is not set up yet instead of
+    guessing (in production the admin app runs on the product host, whose
+    ``/`` is the CourtMastr landing page, not the academy's page).
+    """
+
+    def __init__(self, academy_repo: AcademyPublicPageRepo) -> None:
+        self._repo = academy_repo
+
+    async def execute(self, academy_id: str) -> str | None:
+        doc = await self._repo.find_by_id(academy_id) or {}
+        for key in ("primary_domain", "custom_domain"):
+            raw = doc.get(key)
+            if isinstance(raw, str):
+                host = raw.strip().lower().rstrip(".")
+                if _HOST_RE.match(host):
+                    return f"https://{host}/"
+        return None
 
 
 class UpdatePublicPageSettings:

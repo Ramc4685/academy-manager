@@ -6,7 +6,8 @@ Attached at ``app.state.admin_public_page`` by ``main.py`` and read by
 
 * programs CRUD, class-to-program assignment and per-class public fields
   (Enrollment context, ``application/use_cases/programs.py``);
-* the academy-level ``public_page`` settings (Identity context,
+* the academy-level ``public_page`` settings and the academy's own web
+  address for the "View page" link (Identity context,
   ``application/public_page_settings.py``), for the B5 settings panel and
   the B2 public read.
 """
@@ -32,6 +33,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_program_repo import (
     MongoProgramRepository,
 )
 from backend.v2.contexts.identity.application.public_page_settings import (
+    GetPublicPageAddress,
     GetPublicPageSettings,
     UpdatePublicPageSettings,
 )
@@ -51,6 +53,7 @@ class AdminPublicPage:
     list_class_public_profiles: ListClassPublicProfiles
     get_public_page_settings: GetPublicPageSettings
     update_public_page_settings: UpdatePublicPageSettings
+    get_public_page_address: GetPublicPageAddress
 
 
 def compose_admin_public_page(db: Any) -> AdminPublicPage:
@@ -68,4 +71,5 @@ def compose_admin_public_page(db: Any) -> AdminPublicPage:
         list_class_public_profiles=ListClassPublicProfiles(profiles),
         get_public_page_settings=GetPublicPageSettings(academies),
         update_public_page_settings=UpdatePublicPageSettings(academies),
+        get_public_page_address=GetPublicPageAddress(academies),
     )

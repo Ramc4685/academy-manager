@@ -106,6 +106,10 @@ class ClassPublicProfile(BaseModel):
     model_config = {"frozen": True}
 
     session_id: str
+    #: The class title and status, carried for the admin list only (the
+    #: public read builds its own DTO and never copies these through).
+    title: str | None = None
+    status: str | None = None
     program_id: str | None = None
     published: bool = False
     #: None = follow the academy's ``public_page.price_period_default``.

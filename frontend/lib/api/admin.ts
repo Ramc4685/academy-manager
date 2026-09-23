@@ -3754,3 +3754,127 @@ export function overrideAdminBillingEnrollmentPrice(
     },
   );
 }
+
+// ---------------------------------------------------------------------------
+// Public page (Lane B5): academy settings, programs, per-class public fields
+// ---------------------------------------------------------------------------
+
+export type PublicPricePeriod = "month" | "class" | "term";
+export type PublicCoachDisplay = "full_name" | "first_name" | "hidden";
+
+export interface AdminPublicPageSettingsView {
+  published: boolean;
+  show_price: boolean;
+  show_availability: boolean;
+  price_period_default: PublicPricePeriod;
+  trials_open: boolean;
+  privacy_notice_url: string | null;
+  /** `https://<host>/` of the academy's own domain; null when none is on record. Read-only. */
+  public_url: string | null;
+}
+
+export type UpdateAdminPublicPageSettingsRequest = Partial<
+  Omit<AdminPublicPageSettingsView, "public_url">
+>;
+
+export interface AdminAgeBand {
+  min_age: number | null;
+  max_age: number | null;
+}
+
+export interface AdminProgramView {
+  program_id: string;
+  name: string;
+  public_description: string | null;
+  level: string | null;
+  age_band: AdminAgeBand | null;
+  sort_order: number;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminClassPublicProfileView {
+  session_id: string;
+  title: string | null;
+  status: string | null;
+  program_id: string | null;
+  published: boolean;
+  /** null = the academy's default price period. */
+  price_period: PublicPricePeriod | null;
+  coach_display: PublicCoachDisplay;
+  public_description: string | null;
+  level: string | null;
+  age_band: AdminAgeBand | null;
+}
+
+export interface UpdateAdminClassPublicFieldsRequest {
+  published?: boolean;
+  price_period?: PublicPricePeriod | null;
+  coach_display?: PublicCoachDisplay;
+}
+
+export function getAdminPublicPageSettings(): Promise<AdminPublicPageSettingsView> {
+  return apiFetch<AdminPublicPageSettingsView>("/admin/academy/public-page", { method: "GET" });
+}
+
+export function updateAdminPublicPageSettings(
+  payload: UpdateAdminPublicPageSettingsRequest
+): Promise<AdminPublicPageSettingsView> {
+  return apiFetch<AdminPublicPageSettingsView>("/admin/academy/public-page", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listAdminPrograms(): Promise<{ programs: AdminProgramView[] }> {
+  return apiFetch<{ programs: AdminProgramView[] }>("/admin/programs", { method: "GET" });
+}
+
+export function createAdminProgram(payload: { name: string }): Promise<AdminProgramView> {
+  return apiFetch<AdminProgramView>("/admin/programs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function renameAdminProgram(programId: string, name: string): Promise<AdminProgramView> {
+  return apiFetch<AdminProgramView>(`/admin/programs/${encodeURIComponent(programId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function archiveAdminProgram(programId: string): Promise<AdminProgramView> {
+  return apiFetch<AdminProgramView>(`/admin/programs/${encodeURIComponent(programId)}/archive`, {
+    method: "POST",
+  });
+}
+
+export function listAdminClassPublicProfiles(): Promise<{
+  classes: AdminClassPublicProfileView[];
+}> {
+  return apiFetch<{ classes: AdminClassPublicProfileView[] }>("/admin/class-public-profiles", {
+    method: "GET",
+  });
+}
+
+export function assignAdminClassProgram(
+  sessionId: string,
+  programId: string | null
+): Promise<AdminClassPublicProfileView> {
+  return apiFetch<AdminClassPublicProfileView>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/program`,
+    { method: "PUT", body: JSON.stringify({ program_id: programId }) }
+  );
+}
+
+export function updateAdminClassPublicFields(
+  sessionId: string,
+  payload: UpdateAdminClassPublicFieldsRequest
+): Promise<AdminClassPublicProfileView> {
+  return apiFetch<AdminClassPublicProfileView>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/public-fields`,
+    { method: "PATCH", body: JSON.stringify(payload) }
+  );
+}

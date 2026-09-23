@@ -14,6 +14,7 @@ import { RolesPanel } from "@/components/admin/settings/roles-panel";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
 import { DeparturePolicyPanel } from "@/components/admin/settings/departure-policy-panel";
 import { SessionTypesPanel } from "@/components/admin/settings/session-types-panel";
+import { PublicPagePanel } from "@/components/admin/settings/public-page-panel";
 import {
   OWNER_ONLY_SETTINGS_PANELS,
   RETIRED_SETTINGS_PANELS,
@@ -87,6 +88,7 @@ export default function AdminSettingsPage() {
           </div>
         )}
         {active === "session-types" && <SessionTypesPanel />}
+        {active === "public-page" && <PublicPagePanel />}
       </section>
     </SettingsDirtyProvider>
   );
