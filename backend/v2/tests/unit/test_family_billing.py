@@ -391,6 +391,8 @@ def test_view_header_next_charge_and_paid_cents() -> None:
     }
     assert header["last_payment"] == {
         "amount_cents": 6000,
+        "refunded_cents": 0,
+        "net_cents": 6000,
         "method": "card",
         "paid_at": "2026-08-04T14:00:00+00:00",
         "invoice_ids": ["inv-aug"],

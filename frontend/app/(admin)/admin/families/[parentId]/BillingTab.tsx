@@ -40,6 +40,7 @@ import {
   invoiceDueDays,
   mintRequestId,
   periodLabel,
+  refundableCents,
   tuitionLineDescription,
   type EnrollmentOption,
 } from "./family-view";
@@ -246,9 +247,7 @@ export function BillingTab({ parentId }: { parentId: string }) {
     : `${view.parent.name ?? "This family"} · ${view.header.autopay.active_count} enrollments on autopay`;
   const maxAmount =
     target && dialog?.kind === "refund"
-      ? target.allocations
-          .filter((a) => a.stripe_payment_intent_id)
-          .reduce((s, a) => s + a.amount_cents, 0)
+      ? refundableCents(target)
       : target && dialog?.kind === "discount_once"
         ? target.balance_due_cents
         : null;

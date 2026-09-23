@@ -11,7 +11,9 @@ validators and the allocation/ledger unique indexes are production's. Covers:
 * the payment's unapplied balance is the ceiling, sequentially and under
   concurrent allocation to two invoices (#518);
 * a refund is visible on the Billing tab, attached to its invoice, and does
-  not reopen the invoice balance;
+  not reopen the invoice balance; HOW MUCH was refunded shows per invoice,
+  per payment, per refund event and in the family totals (#929), including a
+  refund made in Stripe that left no audit row;
 * the refund path runs in the request academy, not the boot academy (C4).
 """
 
@@ -25,6 +27,7 @@ from typing import Any
 import pytest
 
 from backend.v2.composition.admin import compose_admin
+from backend.v2.contexts.billing.application.family_billing import strip_owner_actions
 from backend.v2.contexts.billing.domain.ledger import LedgerPayment
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.contexts.billing.infrastructure.family_billing_read_model import (
@@ -58,6 +61,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.interfaces.admin.families_views import AdminFamilyBillingView
 from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -403,16 +407,14 @@ async def test_refund_is_visible_on_the_billing_tab_of_its_own_academy(
     assert await real_db["billing_audit_log"].count_documents({"academy_id": other}) == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Billing tab does not show HOW MUCH was refunded: the invoice row has no "
-        "refunded_cents and the 'Refund issued' timeline entry carries no amount, so "
-        "an admin cannot tell a $5 refund from a full one without opening Stripe "
-        "(A5 finding; see deferred)."
-    ),
-)
+def _payment_entry(view: dict[str, Any], payment_id: str) -> dict[str, Any]:
+    return next(
+        e for e in view["timeline"] if e["code"] == "payment_received" and e["reason"] == payment_id
+    )
+
+
 async def test_refunded_amount_is_visible_on_the_billing_tab(real_db, boot_academy) -> None:
+    """#929: how much came back, per invoice, per payment and for the family."""
     await _seed_family(real_db)
     await _seed_card_payment(real_db, ACAD)
     admin = _admin(real_db)
@@ -427,5 +429,180 @@ async def test_refunded_amount_is_visible_on_the_billing_tab(real_db, boot_acade
 
     assert view is not None
     row = next(inv for inv in view["invoices"] if inv["invoice_id"] == "inv-refund")
+    assert row["paid_cents"] == 6_000
+    assert row["refunded_cents"] == 2_500
+    assert row["net_paid_cents"] == 3_500
+    # A refund gives money back; it does not reopen the balance.
+    assert row["balance_due_cents"] == 0
+    # 2,500 of the 6,000 is still refundable, so Refund stays on offer.
+    assert "refund" in row["actions"]
+
     refund_entry = next(e for e in view["timeline"] if e["code"] == "audit:refund_issued")
-    assert row.get("refunded_cents") == 2_500 or refund_entry["amount_cents"] == 2_500
+    assert refund_entry["amount_cents"] == 2_500
+    assert "$25" in refund_entry["summary"]
+
+    # The payment itself: the refund is visible on the payment, not only the invoice.
+    received = _payment_entry(view, "pay-refund")
+    assert received["amount_cents"] == 6_000
+    assert received["refunded_cents"] == 2_500
+    last = view["header"]["last_payment"]
+    assert (last["amount_cents"], last["refunded_cents"], last["net_cents"]) == (
+        6_000,
+        2_500,
+        3_500,
+    )
+
+    # Family totals.
+    header = view["header"]
+    assert (header["paid_cents"], header["refunded_cents"], header["net_paid_cents"]) == (
+        6_000,
+        2_500,
+        3_500,
+    )
+    assert header["balance_cents"] == 0
+
+
+async def test_two_partial_refunds_each_show_their_own_amount(real_db, boot_academy) -> None:
+    """The audit row's ``after`` is cumulative: each entry is the delta, not the running total."""
+    await _seed_family(real_db)
+    await _seed_card_payment(real_db, ACAD)
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        await admin.issue_invoice_refund(
+            invoice_id="inv-refund", amount_cents=1_000, reason="missed class", actor_id="owner-1"
+        )
+        await admin.issue_invoice_refund(
+            invoice_id="inv-refund", amount_cents=1_500, reason="coach absent", actor_id="owner-1"
+        )
+        view = await _billing_tab(real_db).build(PARENT)
+
+    assert view is not None
+    refunds = {
+        e["reason"]: e["amount_cents"]
+        for e in view["timeline"]
+        if e["code"] == "audit:refund_issued"
+    }
+    assert refunds == {"missed class": 1_000, "coach absent": 1_500}
+    row = next(inv for inv in view["invoices"] if inv["invoice_id"] == "inv-refund")
+    assert (row["refunded_cents"], row["net_paid_cents"]) == (2_500, 3_500)
+    assert _payment_entry(view, "pay-refund")["refunded_cents"] == 2_500
+    assert view["header"]["refunded_cents"] == 2_500
+
+
+async def test_fully_refunded_invoice_offers_no_further_refund(real_db, boot_academy) -> None:
+    await _seed_family(real_db)
+    await _seed_card_payment(real_db, ACAD)
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        await admin.issue_invoice_refund(
+            invoice_id="inv-refund", amount_cents=6_000, reason="withdrew", actor_id="owner-1"
+        )
+        view = await _billing_tab(real_db).build(PARENT)
+
+    assert view is not None
+    row = next(inv for inv in view["invoices"] if inv["invoice_id"] == "inv-refund")
+    assert (row["refunded_cents"], row["net_paid_cents"]) == (6_000, 0)
+    assert "refund" not in row["actions"]
+    assert view["header"]["net_paid_cents"] == 0
+
+
+async def test_refund_made_in_stripe_without_an_audit_row_still_shows(real_db) -> None:
+    """A Stripe-dashboard refund reaches Mongo through the webhook (invoice
+    ``refunded_cents`` via ``apply_invoice_refund``, the ledger payment via
+    ``mark_payment_refunded``) and writes no audit row. One ledger-only payment
+    settles two invoices; the family totals add both invoices up."""
+    await _seed_family(real_db)
+    await real_db["invoices"].insert_many(
+        [
+            _invoice(ACAD, "inv-dash-1", 4_000, status="paid"),
+            _invoice(ACAD, "inv-dash-2", 3_000, parent_id=ALIAS, status="paid"),
+        ]
+    )
+    repo = MongoBillingLedgerRepository(real_db)
+    with tenant_scope(ACAD):
+        await repo.record_payment(
+            _payment("pay-dash", 7_000).model_copy(
+                update={"stripe_payment_intent_id": "pi_fam_dash"}
+            ),
+            idempotency_key="pay-dash",
+        )
+        await real_db["payment_allocations"].insert_many(
+            [
+                {
+                    "allocation_id": "alloc-dash-1",
+                    "academy_id": ACAD,
+                    "payment_id": "pay-dash",
+                    "invoice_id": "inv-dash-1",
+                    "amount_cents": 4_000,
+                    "created_at": PAID_AT,
+                },
+                {
+                    "allocation_id": "alloc-dash-2",
+                    "academy_id": ACAD,
+                    "payment_id": "pay-dash",
+                    "invoice_id": "inv-dash-2",
+                    "amount_cents": 3_000,
+                    "created_at": PAID_AT,
+                },
+            ]
+        )
+        await repo.apply_invoice_refund(invoice_id="inv-dash-1", amount_cents=4_000)
+        await repo.apply_invoice_refund(invoice_id="inv-dash-2", amount_cents=1_000)
+        await repo.mark_payment_refunded(
+            "pay-dash", refunded_cents=5_000, status="partially_refunded", updated_at=NOW
+        )
+        view = await _billing_tab(real_db).build(PARENT)
+
+    assert view is not None
+    assert not [e for e in view["timeline"] if e["code"] == "audit:refund_issued"]
+    rows = {inv["invoice_id"]: inv for inv in view["invoices"]}
+    assert (rows["inv-dash-1"]["refunded_cents"], rows["inv-dash-1"]["net_paid_cents"]) == (
+        4_000,
+        0,
+    )
+    assert (rows["inv-dash-2"]["refunded_cents"], rows["inv-dash-2"]["net_paid_cents"]) == (
+        1_000,
+        2_000,
+    )
+    received = _payment_entry(view, "pay-dash")
+    assert (received["amount_cents"], received["refunded_cents"]) == (7_000, 5_000)
+    header = view["header"]
+    assert (header["paid_cents"], header["refunded_cents"], header["net_paid_cents"]) == (
+        7_000,
+        5_000,
+        2_000,
+    )
+    assert header["last_payment"]["net_cents"] == 2_000
+
+
+async def test_refund_amounts_survive_the_response_model_for_non_owner_admins(
+    real_db, boot_academy
+) -> None:
+    """The route validates through ``AdminFamilyBillingView`` (``extra="ignore"``)
+    and strips owner-only ACTIONS for non-owners. Amounts are not an owner-only
+    thing: billing staff see them (2026-09-22 staff-tier decision), and #553's
+    front-desk tier is not built, so no amount is hidden here. Only the Refund
+    button goes."""
+    await _seed_family(real_db)
+    await _seed_card_payment(real_db, ACAD)
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        await admin.issue_invoice_refund(
+            invoice_id="inv-refund", amount_cents=2_500, reason="class cancelled", actor_id="o-1"
+        )
+        view = await _billing_tab(real_db).build(PARENT)
+
+    assert view is not None
+    for shaped in (view, strip_owner_actions(view)):
+        body = AdminFamilyBillingView.model_validate(shaped).model_dump()
+        row = next(inv for inv in body["invoices"] if inv["invoice_id"] == "inv-refund")
+        assert (row["refunded_cents"], row["net_paid_cents"]) == (2_500, 3_500)
+        header = body["header"]
+        assert (header["refunded_cents"], header["net_paid_cents"]) == (2_500, 3_500)
+        assert header["last_payment"]["refunded_cents"] == 2_500
+        entries = {e["code"]: e for e in body["timeline"]}
+        assert entries["audit:refund_issued"]["amount_cents"] == 2_500
+        assert entries["payment_received"]["refunded_cents"] == 2_500
+    stripped = strip_owner_actions(view)
+    row = next(inv for inv in stripped["invoices"] if inv["invoice_id"] == "inv-refund")
+    assert "refund" not in row["actions"]

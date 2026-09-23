@@ -36,6 +36,9 @@ export interface FamilyAutopay {
 
 export interface FamilyLastPayment {
   amount_cents: number;
+  /** #929: this payment's cumulative refund and what the academy kept. */
+  refunded_cents?: number;
+  net_cents?: number | null;
   method: string | null;
   paid_at: string | null;
   invoice_ids: string[];
@@ -59,6 +62,10 @@ export interface FamilyHeader {
   balance_cents: number;
   open_invoice_count: number;
   available_credit_cents: number;
+  /** #929 family totals over the invoices on the page. Optional: older payloads omit them. */
+  paid_cents?: number;
+  refunded_cents?: number;
+  net_paid_cents?: number;
   last_payment: FamilyLastPayment | null;
   autopay: FamilyAutopay;
   registration: FamilyRegistration;
@@ -116,6 +123,10 @@ export interface FamilyInvoice {
   status: string;
   total_cents: number;
   paid_cents: number;
+  /** #929: cumulative refunds on this invoice (admin or Stripe dashboard). */
+  refunded_cents?: number;
+  /** #929: paid minus refunded, never below zero. */
+  net_paid_cents?: number;
   balance_due_cents: number;
   due_date: string | null;
   created_at: string | null;
@@ -142,6 +153,8 @@ export interface FamilyTimelineEntry {
   actor_id: string | null;
   reason: string | null;
   amount_cents: number | null;
+  /** #929: on a `payment_received` entry, how much of that payment went back. */
+  refunded_cents?: number | null;
   muted: boolean;
 }
 

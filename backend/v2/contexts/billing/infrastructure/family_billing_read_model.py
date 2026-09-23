@@ -48,6 +48,7 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -378,6 +379,7 @@ class MongoFamilyBillingReadModel:
             autopay_status=autopay_status,
             allocations=tuple(allocations),
             credits=tuple(credits),
+            refunded_cents=max(_int(inv.get("refunded_cents")), 0),
         )
 
     # ------------------------------------------------------------------ queries
@@ -677,6 +679,7 @@ class MongoFamilyBillingReadModel:
                 "status": 1,
                 "total_cents": 1,
                 "balance_due_cents": 1,
+                "refunded_cents": 1,
                 "due_date": 1,
                 "created_at": 1,
                 "paid_at": 1,
@@ -734,9 +737,11 @@ class MongoFamilyBillingReadModel:
                     "paid_at": 1,
                     "created_at": 1,
                     "stripe_payment_intent_id": 1,
+                    "refunded_cents": 1,
                 },
             )
             payments = {str(doc["payment_id"]): doc async for doc in pay_cursor}
+        refunded_by_payment = await self._payment_refunds(academy_id, payment_ids, payments)
         out: dict[str, list[AllocationFacts]] = {}
         for a in allocations:
             payment = payments.get(str(a["payment_id"]), {})
@@ -748,9 +753,38 @@ class MongoFamilyBillingReadModel:
                     paid_at=_to_datetime(payment.get("paid_at"))
                     or _to_datetime(payment.get("created_at")),
                     stripe_payment_intent_id=_opt_str(payment.get("stripe_payment_intent_id")),
+                    payment_refunded_cents=refunded_by_payment.get(str(a["payment_id"]), 0),
                 )
             )
         return out, payment_ids
+
+    async def _payment_refunds(
+        self,
+        academy_id: str,
+        payment_ids: list[str],
+        ledger_payments: dict[str, dict[str, Any]],
+    ) -> dict[str, int]:
+        """Each payment's cumulative refund (#929), from BOTH payment stores.
+
+        The admin refund route records the payment side on the legacy
+        ``payments`` row (``IssueRefund``); a Stripe-dashboard refund of a
+        ledger-only charge lands on ``ledger_payments`` (webhook). Both hold the
+        same Stripe payment intent's running total, so the larger one wins —
+        they are never added.
+        """
+        out = {pid: max(_int(doc.get("refunded_cents")), 0) for pid, doc in ledger_payments.items()}
+        if not payment_ids:
+            return out
+        cursor = self._db["payments"].find(
+            {"academy_id": academy_id, "payment_id": {"$in": payment_ids}},
+            {"_id": 0, "payment_id": 1, "refunded_cents": 1, "refunded_amount": 1},
+        )
+        async for doc in cursor:
+            pid = str(doc.get("payment_id") or "")
+            if pid:
+                legacy = max(MongoPaymentRepository._refunded_cents(doc), 0)
+                out[pid] = max(out.get(pid, 0), legacy)
+        return out
 
     async def _credit_applications(
         self, academy_id: str, invoice_ids: list[str]
