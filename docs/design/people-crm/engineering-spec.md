@@ -177,7 +177,7 @@ Tabs: **Overview, Details, Messages, Billing, Timeline.**
 | Send login invite | `/admin/users/{id}/login-invite` (directory_routes.py:307) | all staff |
 | Create trial | For a contact or a prospective child: an admin-created trial request | all staff |
 
-**Staff tiers (decided by the owner 2026-09-22): owner, billing, front desk.** Front desk sees an "Owes money" flag with no amounts, no Billing tab, no Record payment, no money report. Billing sees every amount, invoice and report. **Money-moving actions are owner-only:** Record payment, charge, refund, void, add charge, one-time discount, autopay on or off. Billing is read-and-report for the billing tier. This is narrower than the brief's "Billing and owner see everything" and is enforced on the backend with the existing owner gate (test_owner_gate_policy.py), not only hidden in the UI. A "Viewing as" switch exists only in the prototype.
+**Staff tiers (decided by the owner 2026-09-22): owner, billing, front desk.** Front desk sees an "Owes money" flag with no amounts, no Billing tab, no Record payment, no money report. Billing sees every amount, invoice and report and records payments the family already made (Record payment, mark paid), per roadmap section 6 item 2. **Money-moving actions are owner-only:** charge, refund, void, add charge, one-time discount, autopay on or off. This is narrower than the brief's "Billing and owner see everything" and is enforced on the backend with the existing owner gate (test_owner_gate_policy.py), not only hidden in the UI. A "Viewing as" switch exists only in the prototype.
 
 **Tabs.**
 

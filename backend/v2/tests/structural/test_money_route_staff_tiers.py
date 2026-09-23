@@ -1,24 +1,27 @@
-"""Staff money tiers on the admin surface (People CRM engineering spec §4).
+"""Staff money tiers on the admin surface.
 
-Staff tiers are owner, billing and front desk (owner decision 2026-09-22).
-Per docs/design/people-crm/engineering-spec.md §4, every money-moving action
-is owner-only: Record payment, charge, refund, void, add charge, one-time
-discount, autopay on or off, "enforced on the backend with the existing owner
-gate". Owner-only routes are guarded by ``require_owner`` and listed in
-``OWNER_ONLY_ROUTE_PATHS``; the Billing tab hides owner-only actions from
-non-owners through ``OWNER_ONLY_ACTIONS``. This walks the real admin router
-(the ``test_owner_gate_policy`` walker) so a money route that drifts onto the
-wrong tier fails here.
+Staff tiers are owner, billing and front desk. The owner decision of
+2026-09-22 (docs/roadmap/2026-09-22-product-roadmap.md section 6, item 2) is
+authoritative and newer than People CRM engineering spec section 4:
 
-Known gaps, pinned as strict xfails so they are visible in CI and flip to a
-failure (forcing the marker off) the moment they are closed; the production
-fix is out of A5's test-only scope:
+* owner-only: money-moving actions, i.e. refund, void, card charges,
+  discounts, undo-paid, adjustments and fees (plus payroll approval, role
+  management and Stripe disconnect);
+* billing: sees amounts and RECORDS payments the family already made
+  (record payment, mark paid);
+* front desk: an "owes money" flag only.
 
-* the two card-charge routes are admin-reachable;
-* Record payment (``/record-payment`` and ``/payments/{id}/mark-paid``) is
-  gated only by ``require_persona("admin")``. No billing-vs-front-desk tier
-  exists in code yet (#553), so today ANY admin-persona staff member can
-  record a manual payment.
+Known gap, pinned as strict xfails so it flips to a failure the moment it is
+closed: the two card-charge routes and the ``charge_card`` Billing-tab action
+are reachable by non-owner admins (production fix deferred to its own PR,
+since it removes a live capability and needs a frontend change).
+
+Only the owner tier exists in code today; billing and front desk are #553. So
+billing-tier routes are gated by the admin persona and must NOT be owner-gated
+(that would take a decided capability away from billing staff). When #553
+lands, these routes move from "admin persona" to "billing tier or owner".
+This walks the real admin router (the ``test_owner_gate_policy`` walker) so a
+money route that drifts onto the wrong tier fails here.
 """
 
 from __future__ import annotations
@@ -47,29 +50,23 @@ MONEY_MOVING_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/enrollments/{{enrollment_id}}/fee"),
 )
 
+#: Billing-tier routes: billing staff record payments the family already
+#: made (owner decision 2026-09-22). Admin-persona gated today, never owner-only.
+BILLING_TIER_ROUTES: tuple[tuple[str, str], ...] = (
+    ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/record-payment"),
+    ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
+)
+
 _CHARGE_GAP = (
-    "Card charges are money-moving and owner-only per the 2026-09-22 staff-tier "
+    "Card charges move money and are owner-only per the 2026-09-22 staff-tier "
     "decision, but this route is require_persona('admin') and not in "
-    "OWNER_ONLY_ROUTE_PATHS (A5 finding; see deferred)."
+    "OWNER_ONLY_ROUTE_PATHS (A5 finding; production fix deferred)."
 )
 
 #: Admin-reachable card charges: the known gap.
 CARD_CHARGE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/charge-autopay"),
     ("POST", f"{_ADMIN}/billing/setup/{{parent_id}}/charge"),
-)
-
-_RECORD_PAYMENT_GAP = (
-    "Record payment is money-moving and owner-only per People CRM engineering "
-    "spec §4, but this route is require_persona('admin') only and not in "
-    "OWNER_ONLY_ROUTE_PATHS, so any admin-persona staff can record a manual "
-    "payment (A5 finding; production fix deferred)."
-)
-
-#: Recording money the family already paid: owner-only per the spec (known gap).
-RECORD_PAYMENT_ROUTES: tuple[tuple[str, str], ...] = (
-    ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/record-payment"),
-    ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
 )
 
 
@@ -96,36 +93,21 @@ def test_card_charge_route_is_owner_only(key: tuple[str, str]) -> None:
     assert _is_owner_guarded(routes[key])
 
 
-@pytest.mark.parametrize(
-    "key",
-    [
-        pytest.param(k, marks=pytest.mark.xfail(strict=True, reason=_RECORD_PAYMENT_GAP))
-        for k in RECORD_PAYMENT_ROUTES
-    ],
-    ids=lambda k: f"{k[0]} {k[1]}",
-)
-def test_recording_a_payment_is_owner_only(key: tuple[str, str]) -> None:
+@pytest.mark.parametrize("key", BILLING_TIER_ROUTES, ids=lambda k: f"{k[0]} {k[1]}")
+def test_billing_tier_route_is_admin_gated_not_owner_only(key: tuple[str, str]) -> None:
     routes = _admin_routes()
-    assert key in routes, f"record route not registered: {key}"
-    assert key in OWNER_ONLY_ROUTE_PATHS
-    assert _is_owner_guarded(routes[key])
-
-
-@pytest.mark.parametrize("key", RECORD_PAYMENT_ROUTES, ids=lambda k: f"{k[0]} {k[1]}")
-def test_recording_a_payment_is_never_ungated(key: tuple[str, str]) -> None:
-    """Floor that holds today and after the fix: the admin persona gate stays."""
-    routes = _admin_routes()
-    assert key in routes, f"record route not registered: {key}"
+    assert key in routes, f"billing route not registered: {key}"
     assert "admin" in _personas(routes[key])
+    assert key not in OWNER_ONLY_ROUTE_PATHS
+    assert not _is_owner_guarded(routes[key])
 
 
 def test_billing_tab_hides_money_moving_actions_from_non_owners() -> None:
     assert {"refund", "void", "discount_once", "recurring_discount"} <= OWNER_ONLY_ACTIONS
 
 
-@pytest.mark.xfail(strict=True, reason=_RECORD_PAYMENT_GAP)
-def test_billing_tab_hides_record_payment_from_non_owners() -> None:
-    assert "record_payment" in OWNER_ONLY_ACTIONS
+def test_billing_tab_offers_record_payment_to_billing_staff() -> None:
+    assert "record_payment" not in OWNER_ONLY_ACTIONS
 
 
 @pytest.mark.xfail(strict=True, reason=_CHARGE_GAP)

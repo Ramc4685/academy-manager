@@ -10,8 +10,8 @@ interleave the way they do in production on a real server, so none of this
 runs on mongomock.
 
 This drives the use-case closure below the route, so it pins the recording
-contract only, not who may call it (Record payment is owner-only per People
-CRM spec §4; the route's missing owner gate is a strict xfail in
+contract only, not who may call it (billing staff record payments per the
+2026-09-22 owner decision; the tier is pinned in
 ``structural/test_money_route_staff_tiers.py``). The contract pinned here:
 
 * same ``Idempotency-Key`` twice, one after the other: one payment, the second
