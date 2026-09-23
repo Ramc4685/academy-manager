@@ -62,6 +62,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
 from backend.v2.contexts.billing.application.use_cases.parent_invoices import (
     GetParentInvoice,
     ListParentInvoices,
+    parent_owns_invoice,
 )
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
@@ -1839,8 +1840,10 @@ def compose_parent(
         enroll_autopay: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
+        # Tenant-scoped fetch first, then ownership against every id the
+        # parent answers to: the same set the list/detail reads show (#932).
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
-        if invoice is None or invoice.parent_id != parent_id:
+        if invoice is None or not await parent_owns_invoice(users_query, parent_id, invoice):
             return None
         if invoice.status not in {"open", "partially_paid"} or invoice.balance_due_cents <= 0:
             raise ValueError("invoice is not payable")
@@ -1894,7 +1897,9 @@ def compose_parent(
     ):
         academy_id = current_academy_id()  # request-time tenant (C4)
         _validate_checkout_redirect_urls(success_url, cancel_url)
-        all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
+        # Same alias-aware set the home banner and invoice list show (#932),
+        # so the Pay button never offers money no pay path can take.
+        all_invoices = await _list_parent_invoices.execute(parent_id)
         payable = [
             inv
             for inv in all_invoices

@@ -24,10 +24,12 @@ from typing import Any
 import pytest
 
 from backend.v2.composition.parent import compose_parent
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.tenancy.context import tenant_scope
 
@@ -276,3 +278,180 @@ async def test_merged_list_keeps_newest_first_and_the_cap(real_db: Any) -> None:
 
     assert [inv.invoice_id for inv in rows] == [f"inv-{day:02d}" for day in range(8, 0, -1)]
     assert [inv.invoice_id for inv in capped] == ["inv-08", "inv-07", "inv-06"]
+
+
+# ---------------------------------------------------------------------------
+# Pay paths (#932 review): the Pay button must take exactly the set the list,
+# detail and home banner show. Before, list/detail were alias-aware while
+# pay-balance and pay-invoice still matched parent_id exactly.
+# ---------------------------------------------------------------------------
+
+APP = "https://app.example.test"
+SUCCESS = f"{APP}/parent/payments?invoice=paid"
+CANCEL = f"{APP}/parent/payments?invoice=cancelled"
+
+
+class _CheckoutStripe(FakeStripeGateway):
+    """FakeStripeGateway plus the invoice checkout the pay paths call."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.invoice_checkout_calls: list[dict[str, Any]] = []
+
+    async def create_invoice_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+        self.invoice_checkout_calls.append(kwargs)
+        n = len(self.invoice_checkout_calls)
+        return f"cs_alias_{n}", f"https://checkout.stripe.test/alias/{n}"
+
+
+@pytest.fixture
+def app_origin(monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.setenv("V2_CORS_ORIGINS", APP)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+async def _seed_ready_account(db: Any, academy_id: str) -> None:
+    account = ConnectedAccount.new(academy_id=academy_id, stripe_account_id=f"acct_{academy_id}")
+    account = account.with_status(status="active", charges_enabled=True)
+    await db["academy_connected_accounts"].insert_one(account.model_dump(mode="python"))
+
+
+def _paying_parent(db: Any, stripe: _CheckoutStripe) -> Any:
+    return compose_parent(
+        db,
+        outbox=_Outbox(),  # type: ignore[arg-type]
+        idempotency_store=MongoIdempotencyStore(db),
+        stripe=stripe,
+        academy_id=ACAD,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pay_balance_totals_invoices_under_every_alias(real_db: Any, app_origin: Any) -> None:
+    """Banner shows $150 across two spellings; checkout must charge $150, not $100."""
+    await _seed_users(real_db)
+    await _seed_ready_account(real_db, ACAD)
+    await real_db["invoices"].insert_many(
+        [
+            _invoice(ACAD, "inv-bal-user-id", parent_id=PARENT, created_at=_at(3), total=10_000),
+            _invoice(ACAD, "inv-bal-alias", parent_id=ALIAS, created_at=_at(4), total=5_000),
+        ]
+    )
+    stripe = _CheckoutStripe()
+    parent = _paying_parent(real_db, stripe)
+
+    with tenant_scope(ACAD):
+        listed = await parent.list_invoices_for_parent(PARENT)
+        result = await parent.start_balance_payment_for_parent(
+            parent_id=PARENT, success_url=SUCCESS, cancel_url=CANCEL
+        )
+
+    assert sum(inv.balance_due_cents for inv in listed) == 15_000
+    assert result == {"redirect_url": "https://checkout.stripe.test/alias/1"}
+    assert len(stripe.invoice_checkout_calls) == 1
+    call = stripe.invoice_checkout_calls[0]
+    assert call["amount_cents"] == 15_000
+    assert call["metadata"]["invoice_ids"] == "inv-bal-alias,inv-bal-user-id"
+    assert call["metadata"]["parent_id"] == PARENT
+    assert call["connected_account_id"] == f"acct_{ACAD}"
+
+
+@pytest.mark.asyncio
+async def test_pay_balance_when_only_open_invoice_is_under_an_alias(
+    real_db: Any, app_origin: Any
+) -> None:
+    """Banner offers Pay; the single-invoice path must accept the alias-stamped invoice."""
+    await _seed_users(real_db)
+    await _seed_ready_account(real_db, ACAD)
+    await real_db["invoices"].insert_one(
+        _invoice(ACAD, "inv-only-alias", parent_id=ALIAS, created_at=_at(3), total=5_000)
+    )
+    stripe = _CheckoutStripe()
+    parent = _paying_parent(real_db, stripe)
+
+    with tenant_scope(ACAD):
+        result = await parent.start_balance_payment_for_parent(
+            parent_id=PARENT, success_url=SUCCESS, cancel_url=CANCEL
+        )
+
+    assert result["redirect_url"].startswith("https://checkout.stripe.test/alias/")
+    assert len(stripe.invoice_checkout_calls) == 1
+    call = stripe.invoice_checkout_calls[0]
+    assert call["amount_cents"] == 5_000
+    assert call["metadata"]["invoice_id"] == "inv-only-alias"
+
+
+@pytest.mark.asyncio
+async def test_pay_single_invoice_stored_under_an_alias(real_db: Any, app_origin: Any) -> None:
+    await _seed_users(real_db)
+    await _seed_ready_account(real_db, ACAD)
+    await real_db["invoices"].insert_many(
+        [
+            _invoice(ACAD, "inv-pay-alias", parent_id=ALIAS, created_at=_at(3), total=5_000),
+            _invoice(ACAD, "inv-pay-canonical", parent_id=PARENT, created_at=_at(4), total=7_000),
+        ]
+    )
+    stripe = _CheckoutStripe()
+    parent = _paying_parent(real_db, stripe)
+
+    with tenant_scope(ACAD):
+        # Signed in under the roster id, invoice stamped with the firebase uid ...
+        via_user_id = await parent.start_invoice_payment_for_parent(
+            parent_id=PARENT,
+            invoice_id="inv-pay-alias",
+            success_url=SUCCESS,
+            cancel_url=CANCEL,
+        )
+        # ... and the reverse direction.
+        via_alias = await parent.start_invoice_payment_for_parent(
+            parent_id=ALIAS,
+            invoice_id="inv-pay-canonical",
+            success_url=SUCCESS,
+            cancel_url=CANCEL,
+        )
+
+    assert via_user_id is not None and via_user_id["invoice_id"] == "inv-pay-alias"
+    assert via_alias is not None and via_alias["invoice_id"] == "inv-pay-canonical"
+    assert [c["amount_cents"] for c in stripe.invoice_checkout_calls] == [5_000, 7_000]
+
+
+@pytest.mark.asyncio
+async def test_other_family_and_other_tenant_invoices_stay_unpayable(
+    real_db: Any, app_origin: Any
+) -> None:
+    """Alias widening never reaches another family (#664) or another academy."""
+    await _seed_users(real_db)
+    await _seed_ready_account(real_db, ACAD)
+    await real_db["invoices"].insert_many(
+        [
+            _invoice(ACAD, "inv-theirs", parent_id=OTHER_PARENT, created_at=_at(3)),
+            _invoice(ACAD, "inv-theirs-alias", parent_id=OTHER_PARENT_ALIAS, created_at=_at(4)),
+            _invoice(OTHER, "inv-mine-elsewhere", parent_id=PARENT, created_at=_at(5)),
+            _invoice(OTHER, "inv-mine-elsewhere-alias", parent_id=ALIAS, created_at=_at(6)),
+        ]
+    )
+    stripe = _CheckoutStripe()
+    parent = _paying_parent(real_db, stripe)
+
+    with tenant_scope(ACAD):
+        single = [
+            await parent.start_invoice_payment_for_parent(
+                parent_id=pid, invoice_id=inv_id, success_url=SUCCESS, cancel_url=CANCEL
+            )
+            for pid in (PARENT, ALIAS)
+            for inv_id in (
+                "inv-theirs",
+                "inv-theirs-alias",
+                "inv-mine-elsewhere",
+                "inv-mine-elsewhere-alias",
+            )
+        ]
+        with pytest.raises(ValueError, match="no payable invoices"):
+            await parent.start_balance_payment_for_parent(
+                parent_id=PARENT, success_url=SUCCESS, cancel_url=CANCEL
+            )
+
+    assert single == [None] * 8
+    assert stripe.invoice_checkout_calls == []

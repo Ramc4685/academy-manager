@@ -44,6 +44,18 @@ async def parent_invoice_ids(identity: ParentIdentityAliases, parent_id: str) ->
     return tuple(dict.fromkeys([parent_id, found.canonical_id, *sorted(found.aliases)]))
 
 
+async def parent_owns_invoice(
+    identity: ParentIdentityAliases, parent_id: str, invoice: LedgerInvoice
+) -> bool:
+    """True when ``invoice`` is stamped with one of this parent's own ids.
+
+    The caller must have fetched ``invoice`` through the tenant-scoped ledger;
+    this only widens the identity side. The pay paths use it so a parent can
+    pay exactly the invoices the list and detail reads show them (#932).
+    """
+    return _owned_by(invoice, await parent_invoice_ids(identity, parent_id))
+
+
 class ListParentInvoices:
     """``GET /parent/invoices``: the family's invoices in the request tenant."""
 
