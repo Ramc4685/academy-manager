@@ -131,6 +131,12 @@ class AdminStudentRecentAttendance(BaseModel):
     date: str | None = None
     status: str
     marked_at: datetime | None = None
+    #: The dated occurrence the mark belongs to: the key an admin correction
+    #: (``PATCH /admin/session-occurrences/{id}/attendance/{student_id}``) takes.
+    occurrence_id: str | None = None
+    #: Set once the mark has been corrected (#517): what it replaced and when.
+    previous_status: str | None = None
+    corrected_at: datetime | None = None
 
 
 class AdminStudentDetail(AdminStudentSummary):
