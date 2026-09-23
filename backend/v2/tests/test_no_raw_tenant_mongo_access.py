@@ -99,6 +99,8 @@ TENANT_OWNED_COLLECTIONS = {
     "parent_digest_sends",
     # People CRM leads shared with the public tenant page (migration 0192)
     "crm_contacts",
+    # Public tenant page programs (migration 0194, Lane B1)
+    "programs",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

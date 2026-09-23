@@ -30,6 +30,7 @@ from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
 from .payroll_routes import router as payroll_router
 from .progress_routes import router as progress_router
+from .public_page_routes import router as public_page_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
 from .self_service_policy_routes import router as self_service_policy_router
@@ -51,6 +52,7 @@ router.include_router(dues_router)
 router.include_router(reports_router)
 router.include_router(month_close_router)
 router.include_router(sessions_router)
+router.include_router(public_page_router)
 router.include_router(teaching_plan_router)
 router.include_router(session_type_router)
 router.include_router(waitlist_router)
