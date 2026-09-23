@@ -17,6 +17,12 @@ import {
 } from "@/lib/api/admin";
 import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { filterUsersBySearch } from "@/lib/admin/user-search";
+import {
+  STAFF_ROLE_FILTERS,
+  parseRoleParam,
+  staffListOptions,
+  staffQueryRole,
+} from "@/lib/admin/staff-filters";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
@@ -35,25 +41,8 @@ import { useIsPhone } from "@/lib/use-is-phone";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
 import { BulkInviteDialog } from "@/components/admin/bulk-invite-dialog";
 
-const roles: Array<{ label: string; value: AdminUserRole | undefined }> = [
-  { label: "All", value: undefined },
-  { label: "Coaches", value: "coach" },
-  { label: "Assistant coaches", value: "assistant_coach" },
-  { label: "Parents", value: "parent" },
-  { label: "Admins", value: "admin" },
-];
-
 /** How long a keystroke waits before it narrows the table. */
 const SEARCH_DEBOUNCE_MS = 150;
-
-function parseRoleParam(value: string | null): AdminUserRole | undefined {
-  return value === "coach" ||
-    value === "assistant_coach" ||
-    value === "parent" ||
-    value === "admin"
-    ? value
-    : undefined;
-}
 
 export function AdminUsersDirectory({
   fixedRole,
@@ -69,6 +58,10 @@ export function AdminUsersDirectory({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  // Sidebar regroup PR 3: a parent added from the Staff page will not appear in
+  // the Staff list, so the success notice carries the link to the new account.
+  const [created, setCreated] = useState<AdminUserView | null>(null);
+  const isOwner = useIsOwner();
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput), SEARCH_DEBOUNCE_MS);
@@ -77,6 +70,10 @@ export function AdminUsersDirectory({
 
   // URL is the single source of truth for the active role tab.
   const role = fixedRole ?? parseRoleParam(searchParams.get("role"));
+  // `?role=parent` is the cached-308 landing from the retired /admin/parents
+  // redirect and the only list of parents with no children yet (spec §3.1).
+  const parentView = role === "parent";
+  const noun = parentView ? "parents" : "staff";
 
   function setCreateDialogOpen(open: boolean) {
     setCreateOpen(open);
@@ -97,8 +94,10 @@ export function AdminUsersDirectory({
   }
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
-    queryKey: queryKeys.admin.users(role),
-    queryFn: () => listAdminUsers(role),
+    queryKey: queryKeys.admin.users(staffQueryRole(role)),
+    // All staff drops parent-only accounts (`exclude_role=parent`, #918); a
+    // coach who is also a parent stays in the list.
+    queryFn: () => listAdminUsers(role, staffListOptions(role)),
   });
 
   const allUsers = useMemo(() => data?.users ?? [], [data]);
@@ -115,8 +114,8 @@ export function AdminUsersDirectory({
         {/* #897: the same ink filter chips the Students list uses — this row
             was a third pill shape (rounded-full, neutral-900) for no reason. */}
         {!fixedRole ? (
-          <FilterBar label="Users by role" testId="admin-users-filters">
-            {roles.map((r) => (
+          <FilterBar label="Staff by role" testId="admin-users-filters">
+            {STAFF_ROLE_FILTERS.map((r) => (
               <FilterChip
                 key={r.label}
                 active={role === r.value}
@@ -163,13 +162,76 @@ export function AdminUsersDirectory({
         </div>
       </div>
 
+      {!fixedRole && (
+        <p className="text-xs text-rally-muted" data-testid="admin-users-staff-help">
+          Pay rates and session assignment are on each coach&apos;s page.
+          {isOwner && (
+            <>
+              {" "}
+              Payout runs are in{" "}
+              <Link href="/admin/payouts" className="underline underline-offset-2">
+                Coach payouts
+              </Link>
+              .
+            </>
+          )}{" "}
+          Parent accounts live under{" "}
+          <Link
+            href="/admin/families"
+            className="underline underline-offset-2"
+            data-testid="admin-users-parents-link"
+          >
+            Families
+          </Link>
+          .
+        </p>
+      )}
+
+      {parentView && !fixedRole && (
+        // Nothing server-side can clear a browser's cached 308 from
+        // /admin/parents, so this URL stays a good landing: it still lists
+        // parents and says where they live now.
+        <p
+          className="rounded-md border border-rally-line bg-white px-3 py-2 text-sm text-rally-base"
+          role="status"
+          data-testid="admin-users-parents-banner"
+        >
+          Parents now live in{" "}
+          <Link href="/admin/families" className="font-medium underline underline-offset-2">
+            Families
+          </Link>
+          . This list shows parent accounts, including those with no children yet.
+        </p>
+      )}
+
       {!fixedRole && role === "coach" && <CoachEngagementStatsStrip />}
+
+      {created && (
+        <p
+          className="rounded-md border border-rally-line bg-white px-3 py-2 text-sm text-rally-base"
+          role="status"
+          data-testid="admin-users-created"
+        >
+          Added {created.display_name}.{" "}
+          <Link
+            href={`/admin/users/${encodeURIComponent(created.user_id)}`}
+            className="font-medium underline underline-offset-2"
+            data-testid="admin-users-created-link"
+          >
+            Open account
+          </Link>
+          {(created.roles ?? [created.role]).every((r) => r === "parent") && !parentView ? (
+            <> &mdash; parents are listed under Families, not here.</>
+          ) : null}
+        </p>
+      )}
 
       <CreateUserDialog
         open={createOpen}
         onOpenChange={setCreateDialogOpen}
         fixedRole={fixedRole}
-        onCreated={() => {
+        onCreated={(user) => {
+          setCreated(user);
           setCreateDialogOpen(false);
           void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
         }}
@@ -187,7 +249,7 @@ export function AdminUsersDirectory({
         // #837: a dead end. The directory now offers the request again.
         <ErrorNotice
           testId="admin-users-error"
-          message="Could not load users."
+          message={`Could not load ${noun}.`}
           onRetry={() => void refetch()}
           retrying={isFetching}
         />
@@ -195,7 +257,7 @@ export function AdminUsersDirectory({
         <Skeleton />
       ) : users.length === 0 ? (
         <p className="text-sm text-rally-subtle" data-testid="admin-users-empty">
-          {search ? `No users match “${search}”.` : "No users found."}
+          {search ? `No ${noun} match “${search}”.` : `No ${noun} found.`}
         </p>
       ) : (
         <Card p={0}>
@@ -215,7 +277,7 @@ function CreateUserDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   fixedRole?: Extract<AdminUserRole, "coach" | "parent">;
-  onCreated: () => void;
+  onCreated: (user: AdminUserView) => void;
 }) {
   // #839: this dialog is now the only add-user form, so it offers exactly the
   // roles the current user may grant — the standalone page's rule, which the
@@ -237,13 +299,13 @@ function CreateUserDialog({
         phone: phone.trim() || null,
         reason,
       }),
-    onSuccess: () => {
+    onSuccess: (user) => {
       setDisplayName("");
       setEmail("");
       setPhone("");
       setReason("Manual user onboarding");
       setError(null);
-      onCreated();
+      onCreated(user);
     },
     onError: (err: unknown) => {
       setError(err instanceof Error ? err.message : "Could not create user.");
@@ -385,7 +447,7 @@ function UsersList({ users }: { users: AdminUserView[] }) {
   const isPhone = useIsPhone();
   if (isPhone) {
     return (
-      <PhoneList aria-label="Users" data-testid="admin-users-phone-list">
+      <PhoneList aria-label="Staff" data-testid="admin-users-phone-list">
         {users.map((user) => {
           const href = `/admin/users/${encodeURIComponent(user.user_id)}` as Route;
           return (
