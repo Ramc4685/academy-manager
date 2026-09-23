@@ -134,8 +134,10 @@ export default defineConfig({
       // headers and money column exist only in the desktop table.
       // family-record joins for the People CRM family record: the child drawer
       // is a side panel on a desktop and full width on a phone.
+      // public-page-settings joins for Lane B5: the per-class list is a
+      // wide table that scrolls sideways on a phone and fits on a desktop.
       testMatch:
-        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record)\.spec\.ts/,
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record|public-page-settings)\.spec\.ts/,
     },
   ],
 });

@@ -13,7 +13,8 @@ export type SettingsPanelKey =
   | "branding"
   | "data"
   | "self-service"
-  | "session-types";
+  | "session-types"
+  | "public-page";
 
 export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "academy", label: "Academy" },
@@ -25,6 +26,7 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "data", label: "Data" },
   { key: "self-service", label: "Self-service" },
   { key: "session-types", label: "Session types" },
+  { key: "public-page", label: "Public page" },
 ];
 
 /**
@@ -66,7 +68,7 @@ export function SettingsTabs({ active, hrefFor, tabs = SETTINGS_TABS }: Settings
     });
   }, []);
 
-  // Nine tabs never fit a phone: without this a deep link (or a guarded
+  // Ten tabs never fit a phone: without this a deep link (or a guarded
   // switch) could leave the active tab scrolled off the strip with no hint
   // that it exists (#863).
   useEffect(() => {

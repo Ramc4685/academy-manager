@@ -107,6 +107,11 @@ export const queryKeys = {
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
+    publicPage: () => ["admin", "academy", "public-page"] as const,
+    programs: () => ["admin", "programs"] as const,
+    // Under the programs() prefix so a program change refetches it too.
+    programsWithArchived: () => ["admin", "programs", "with-archived"] as const,
+    classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
     // sessionTypes() is the invalidation prefix; sessionTypesList() is the

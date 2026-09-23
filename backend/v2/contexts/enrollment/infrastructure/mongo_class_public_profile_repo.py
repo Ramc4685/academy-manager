@@ -50,6 +50,8 @@ def class_public_profile_from_doc(doc: Mapping[str, Any]) -> ClassPublicProfile:
     coach_display = doc.get("coach_display")
     return ClassPublicProfile(
         session_id=str(doc.get("session_id") or doc.get("_id")),
+        title=_text(doc.get("title"), 200),
+        status=_text(doc.get("status"), 40),
         program_id=_text(doc.get("program_id"), 64),
         # Only a stored literal True publishes: a missing key, null, or a
         # hand-written "true" string all read as private.

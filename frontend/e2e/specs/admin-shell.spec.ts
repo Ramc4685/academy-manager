@@ -165,6 +165,7 @@ const SETTINGS_PANELS = [
     label: "Session types",
     testid: "admin-settings-session-types",
   },
+  { key: "public-page", label: "Public page", testid: "admin-settings-public-page" },
 ] as const;
 
 const SESSION_TYPE_E2E = {

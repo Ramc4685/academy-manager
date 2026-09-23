@@ -126,6 +126,8 @@ def test_classes_are_private_by_default_and_switch_on_explicitly(db: Any) -> Non
         assert res.json()["classes"] == [
             {
                 "session_id": "sess-juniors",
+                "title": "Juniors",
+                "status": None,
                 "program_id": None,
                 "published": False,
                 "price_period": None,
