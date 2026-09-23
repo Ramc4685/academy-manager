@@ -41,10 +41,11 @@ describe("next.config redirects", () => {
   // A static config redirect is matched before route resolution, so the
   // authenticated layout never runs for a URL that only forwards.
   // Sidebar regroup PR 3: parents left the Staff list, so /admin/parents lands
-  // on Families. It is a 307 on purpose — the old 308 to `?role=parent` is
-  // already pinned in some browsers, and this move must stay reversible.
+  // on the Families view (`?view=families`, People CRM Phase 1). It is a 307
+  // on purpose — the old 308 to `?role=parent` is already pinned in some
+  // browsers, and this move must stay reversible.
   it.each([
-    ["/admin/parents", "/admin/families", false],
+    ["/admin/parents", "/admin/families?view=families", false],
     ["/admin/coaches", "/admin/users?role=coach", true],
   ])("forwards the retired %s bookmark to %s", async (source, destination, permanent) => {
     const entry = (await resolveRedirects()).find((redirect) => redirect.source === source);

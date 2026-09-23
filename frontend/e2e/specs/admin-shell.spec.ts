@@ -1050,7 +1050,7 @@ test.describe("Rally admin shell", () => {
     await stubAdminBff(page);
     await stubEmptyFamilies(page);
     for (const [bookmark, landing] of [
-      ["/admin/parents", /\/admin\/families$/],
+      ["/admin/parents", /\/admin\/families\?view=families$/],
       ["/admin/coaches", /\/admin\/users\?role=coach$/],
     ] as const) {
       await page.goto(bookmark);
@@ -1108,7 +1108,9 @@ test.describe("Rally admin shell", () => {
     // Arm before navigating: the redirect fires during load and can abort
     // `page.goto` itself, and the 5s expect default is shorter than a cold
     // compile — the same race #683 armed for the other bookmark redirects.
-    const landed = page.waitForURL(/\/admin\/families$/, { timeout: 30_000 });
+    const landed = page.waitForURL(/\/admin\/families\?view=families$/, {
+      timeout: 30_000,
+    });
     await page.goto("/admin/parents", { waitUntil: "commit" }).catch(() => undefined);
     await landed;
     await expect(page.getByTestId("admin-families")).toBeVisible();

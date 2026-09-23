@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 
 /**
  * Parents live under Families (sidebar regroup PR 3). The Staff directory at
- * `/admin/users` lists coaches and admins only.
+ * `/admin/users` lists coaches and admins only. The bookmark opens the
+ * Families view by name (`?view=families`), not the People section's default.
  *
  * `/admin/parents` is forwarded by `RETIRED_ROUTE_REDIRECTS` in
  * `next.config.ts`, which is matched before route resolution — rendering the
@@ -12,5 +13,5 @@ import { redirect } from "next/navigation";
  * route-manifest equality test still passes.
  */
 export default function AdminParentsPage() {
-  redirect("/admin/families");
+  redirect("/admin/families?view=families");
 }
