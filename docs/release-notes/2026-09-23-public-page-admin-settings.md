@@ -1,6 +1,6 @@
 # Public tenant page B5: admin Settings → Public page panel
 
-PR: #TBD
+PR: #938
 
 ## What changed
 
