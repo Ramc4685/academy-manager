@@ -2,7 +2,8 @@
 
 PR #917: a student document with no parent (``parent_id`` missing or ``""``)
 used to yield a phantom parent row keyed on the empty string. The roster is
-built in ``compose_admin`` (``_BillingSetupRosterAdapter``), not in the billing
+built by ``composition/billing_setup_roster.py`` (``BillingSetupRosterAdapter``,
+wired in ``compose_admin``), not in the billing
 use case, so the guard has to be pinned against the real composition wiring
 over a real (mock) student collection — ``test_billing_setup_registration.py``
 only ever sees a fake roster.
@@ -110,3 +111,78 @@ async def test_list_parents_is_empty_when_no_student_has_a_parent(mongo_db) -> N
         parents = await roster.list_parents(academy_id=ACADEMY)
 
     assert parents == []
+
+
+@pytest.mark.asyncio
+async def test_one_row_per_parent_whatever_id_each_child_stores(mongo_db) -> None:
+    """Lane A verify #2: children stored under the parent's ``user_id`` and
+    under their ``firebase_uid`` are ONE Billing Setup row, so "Invite all not
+    invited (N)" counts and invites the family once. Another academy's child
+    of the same parent never reaches this academy's roster."""
+    await mongo_db["users"].insert_one(
+        {
+            "academy_id": ACADEMY,
+            "user_id": "u-fake-parent",
+            "firebase_uid": "fb-fake-parent",
+            "display_name": "Fakeparent Aliasfamily",
+            "email": "fakeparent@example.test",
+            "roles": ["parent"],
+        }
+    )
+    await mongo_db["students"].insert_many(
+        [
+            _student("stu-a", "Kiddo Useridchild", parent_id="u-fake-parent"),
+            _student("stu-b", "Kiddo Firebasechild", parent_id="fb-fake-parent"),
+            {
+                "student_id": "stu-foreign",
+                "academy_id": "acad-other",
+                "full_name": "Kiddo Foreign",
+                "status": "active",
+                "parent_id": "fb-fake-parent",
+            },
+        ]
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    roster = admin.list_billing_setup._roster
+    with tenant_scope(ACADEMY):
+        parents = await roster.list_parents(academy_id=ACADEMY)
+        page = await admin.list_billing_setup.execute(
+            academy_id=ACADEMY, status_filter="no_account"
+        )
+
+    assert [(p.parent_id, p.aliases) for p in parents] == [("u-fake-parent", ("fb-fake-parent",))]
+    assert [row.parent_id for row in page.rows] == ["u-fake-parent"]
+    assert sorted(s.student_id for s in page.rows[0].students) == ["stu-a", "stu-b"]
+    assert page.summary.families_total == 1
+
+
+@pytest.mark.asyncio
+async def test_row_id_is_a_stored_reference_when_no_child_stores_the_canonical_id(
+    mongo_db,
+) -> None:
+    """The invite endpoint finds a parent through the student rows, so the
+    grouped row keeps an id some child actually stores."""
+    await mongo_db["users"].insert_one(
+        {
+            "academy_id": ACADEMY,
+            "user_id": "u-fake-canon",
+            "firebase_uid": "fb-fake-canon",
+            "auth_uid": "auth-fake-canon",
+            "display_name": "Fakeparent Canon",
+            "email": "canon@example.test",
+            "roles": ["parent"],
+        }
+    )
+    await mongo_db["students"].insert_many(
+        [
+            _student("stu-c", "Kiddo Fb", parent_id="fb-fake-canon"),
+            _student("stu-d", "Kiddo Auth", parent_id="auth-fake-canon"),
+        ]
+    )
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        parents = await admin.list_billing_setup._roster.list_parents(academy_id=ACADEMY)
+    assert len(parents) == 1
+    assert parents[0].parent_id in {"fb-fake-canon", "auth-fake-canon"}
+    assert set((parents[0].parent_id, *parents[0].aliases)) == {"fb-fake-canon", "auth-fake-canon"}

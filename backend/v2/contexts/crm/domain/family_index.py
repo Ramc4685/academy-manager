@@ -11,6 +11,7 @@ and queried by ``application/family_index.py``.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -90,6 +91,11 @@ class FamilyIndex:
     #: Secondary sources that failed: ``money_unavailable``,
     #: ``classes_unavailable``. The UI shows a warning, never a zero.
     warnings: tuple[str, ...] = ()
+    #: Every stored parent reference and every alias of its resolved users
+    #: document (``user_id``, ``firebase_uid``, ``auth_uid``, users ``_id``)
+    #: -> the canonical family id. Built from this academy's own rows only,
+    #: so an alias of another academy's parent is never here.
+    family_by_alias: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -173,7 +173,7 @@ Tabs: **Overview, Details, Messages, Billing, Timeline.**
 | Log a call, Spoke in person | One tap plus a short note, writes `family_contact_log` | all staff |
 | Add note, Add follow-up | New | all staff |
 | **Add child** | New `POST /admin/families/{id}/students` taking name, DOB, emergency contact and medical notes, with `parent_id` filled in. It creates a student with no enrollment. Enrollment then goes through the existing admin Enroll dialog. | all staff |
-| Record payment | Opens `payments/buckets/RecordPaymentDialog` (families/[parentId]/page.tsx:31,352) for one invoice | owner only |
+| Record payment | Opens `payments/buckets/RecordPaymentDialog` (families/[parentId]/page.tsx:31,352) for one invoice | owner and billing (records a payment the family already made; see Staff tiers) |
 | Send login invite | `/admin/users/{id}/login-invite` (directory_routes.py:307) | all staff |
 | Create trial | For a contact or a prospective child: an admin-created trial request | all staff |
 
@@ -204,7 +204,7 @@ Tabs: **Overview, Details, Messages, Billing, Timeline.**
 **Messages compose.** Picks a channel. **Email** sends from the app after a preview. **WhatsApp** and **SMS** open the staff member's own app with the text pre-filled (`wa.me` and `sms:` links) and then ask "Did you send it?" to log it; a dismissed prompt leaves a "not logged" row the staff member can complete later. **Send from the app (coming)** is shown as a disabled channel with a one-line explanation, never as working (owner decision 2026-09-20: app-sent SMS and WhatsApp are a later phase). Saved templates.
 
 **Money summary.**
-- One row per open invoice: a line for each child and month, the due date, the reason the last charge failed, and a Record payment button (owner only).
+- One row per open invoice: a line for each child and month, the due date, the reason the last charge failed, and a Record payment button (owner and billing staff; front desk never sees it). Charge, refund, void, add charge, discounts and the autopay toggle stay owner-only (Staff tiers above).
 - Out of scope: splitting one payment across several invoices, and recording an advance payment as credit. The UI says so.
 
 **Attendance correction.** A new `PATCH /admin/occurrences/{id}/attendance/{student_id}` calls the existing correction use case (correct_attendance.py). Today that use case is reachable only from the coach surface (coach/attendance_routes.py:74-100).

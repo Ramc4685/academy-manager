@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -8,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 
 import { Card, Chip, Skeleton } from "@/components/ds";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import { fetchAdminFamilyBilling, fetchFamilyRecord } from "@/lib/api/admin-families";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
@@ -21,6 +29,7 @@ import {
   FAMILY_TABS,
   adjacentFamilyTab,
   childTriggerId,
+  canonicalFamilyHref,
   familyTabQuery,
   overviewChildren,
   resolveFamilyTab,
@@ -51,6 +60,17 @@ export default function FamilyRecordPage() {
     queryKey: queryKeys.admin.familyBilling(parentId),
     queryFn: () => fetchAdminFamilyBilling(parentId),
   });
+
+  // Student pages link by the child's stored parent id, which may be an
+  // alias (firebase uid, users _id). The record answers with the canonical
+  // family id; swap the URL for it, keeping the tab, so every tab, cache key
+  // and later link agree.
+  const canonicalId = record.data?.family_id ?? record.data?.family.family_id;
+  const query = searchParams.toString();
+  useEffect(() => {
+    const href = canonicalFamilyHref(parentId, canonicalId, query);
+    if (href) router.replace(href as Route, { scroll: false });
+  }, [canonicalId, parentId, query, router]);
 
   const setTab = (next: FamilyTab) => {
     router.replace(familyTabQuery(searchParams.toString(), next) as Route, { scroll: false });
@@ -142,6 +162,15 @@ export default function FamilyRecordPage() {
         aria-labelledby={`family-tab-${activeTab}`}
         className="min-w-0"
       >
+        {record.isError && (activeTab === "overview" || activeTab === "details") && (
+          <ErrorNotice
+            testId="family-record-load-error"
+            className="mb-4"
+            message="Could not load this family's stage, balance and contact details. They are unknown, not blank."
+            onRetry={() => void record.refetch()}
+            retrying={record.isFetching}
+          />
+        )}
         {activeTab === "billing" ? (
           <BillingTab parentId={parentId} />
         ) : activeTab === "timeline" ? (

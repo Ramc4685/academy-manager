@@ -7,6 +7,7 @@ import {
   SECOND_PARENT_SWITCHES,
   adjacentFamilyTab,
   attendanceStatusLabel,
+  canonicalFamilyHref,
   correctionConfirmCopy,
   correctionTargets,
   correctTriggerId,
@@ -187,5 +188,20 @@ describe("drawer attendance", () => {
     expect(attendanceStatusLabel("excused")).toBe("Excused");
     expect(attendanceStatusLabel(null)).toBe("Unknown");
     expect(correctTriggerId("occ-1")).toBe("drawer-correct-occ-1");
+  });
+});
+
+describe("canonicalFamilyHref (a record opened by a parent alias)", () => {
+  it("sends an alias URL to the canonical family, keeping the tab", () => {
+    expect(canonicalFamilyHref("fb-uid-1", "parent-1", "tab=billing")).toBe(
+      "/admin/families/parent-1?tab=billing",
+    );
+    expect(canonicalFamilyHref("fb-uid-1", "parent-1", "")).toBe("/admin/families/parent-1");
+  });
+
+  it("stays put when the URL is canonical or the record has not loaded", () => {
+    expect(canonicalFamilyHref("parent-1", "parent-1", "tab=details")).toBeNull();
+    expect(canonicalFamilyHref("fb-uid-1", undefined, "")).toBeNull();
+    expect(canonicalFamilyHref("fb-uid-1", null, "")).toBeNull();
   });
 });

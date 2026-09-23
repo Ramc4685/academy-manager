@@ -115,6 +115,7 @@ async function setup(page: Page, opts: { moneyVisible?: boolean } = {}) {
     families: serve,
     moneyVisible: opts.moneyVisible ?? true,
     tiles: { active: 1, leaving: 1, left: 0 },
+    presetCounts: { overdue: 1, no_card: 0 },
     onList: (req) => lists.push(new URL(req.url())),
   });
   await page.goto("/admin/families");
@@ -134,6 +135,10 @@ test.describe("admin Families view (People CRM §3.2)", () => {
       "/admin/families/parent-1",
     );
     await expect(page.getByTestId("admin-families-row-parent-1")).toContainText("$70.00");
+    // Lane A verify #4: the Overdue and No card chips carry their counts.
+    await expect(page.getByTestId("admin-families-preset-overdue-count")).toHaveText("1");
+    await expect(page.getByTestId("admin-families-preset-no_card-count")).toHaveText("0");
+    await expect(page.getByTestId("admin-families-count")).toHaveText("2 families");
     expect(errors, errors.join("\n")).toEqual([]);
   });
 
@@ -157,6 +162,9 @@ test.describe("admin Families view (People CRM §3.2)", () => {
       "/admin/students/stu-a",
     );
     await expect(page.getByTestId("admin-families-row-parent-2")).toHaveCount(0);
+    await expect(page.getByTestId("admin-families-count")).toHaveText(
+      "1 family matches this search",
+    );
     await expect(page).toHaveURL(/[?&]q=kid(&|$)/);
     // One request for the settled query, not one per keystroke.
     const searched = lists.filter((u) => u.searchParams.has("search"));
@@ -190,6 +198,7 @@ test.describe("admin Families view (People CRM §3.2)", () => {
     await setup(page, { moneyVisible: false });
     await expect(page.getByTestId("admin-families-preset-overdue")).toHaveCount(0);
     await expect(page.getByTestId("admin-families-preset-no_card")).toBeVisible();
+    await expect(page.getByTestId("admin-families-preset-no_card-count")).toHaveText("0");
     await expect(page.getByTestId("admin-families-sort-balance")).toHaveCount(0);
     await expect(page.getByTestId("admin-families-row-parent-1")).not.toContainText("$");
   });

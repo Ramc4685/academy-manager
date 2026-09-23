@@ -41,6 +41,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
 from backend.v2.contexts.crm.application.family_index import (
     FamilyIndexQuery,
     FamilyIndexUnavailable,
+    find_family_record,
     query_family_index,
     summarize_family_index,
 )
@@ -470,6 +471,45 @@ async def test_list_and_billing_tab_agree_for_a_child_stored_under_firebase_uid(
     three = await _billing_model(db).build("auth-three")
     assert three is not None
     assert three["header"]["balance_cents"] == 4000
+
+
+@pytest.mark.asyncio
+async def test_record_by_any_alias_is_the_canonical_family_and_tenant_scoped(db, acad) -> None:
+    """Student pages link ``/admin/families/{student.parent_id}``: any alias
+    must open the canonical family (Lane A verify #1), never another academy's."""
+    await _seed(db, acad)
+    await db["users"].insert_one(
+        {
+            "user_id": "u-foreign",
+            "firebase_uid": "fb-foreign",
+            "academy_id": "other-academy",
+            "display_name": "Testparent Foreign",
+            "roles": ["parent"],
+        }
+    )
+    await db["students"].insert_one(
+        {
+            "academy_id": "other-academy",
+            "student_id": "s-foreign-2",
+            "parent_id": "fb-foreign",
+            "full_name": "Kiddo Foreigntwo",
+        }
+    )
+    index = await _index_model(db).build(acad)
+    canonical = find_family_record(index, "u-one")
+    assert canonical is not None
+    for alias in ("fb-one", " fb-one "):
+        found = find_family_record(index, alias)
+        assert found is not None and found == canonical
+        assert found.family_id == "u-one"
+    two = find_family_record(index, "fb-two")
+    assert two is not None and two.family_id == str(USER_TWO_OID)
+    three = find_family_record(index, "auth-three")
+    assert three is not None and three.family_id == "u-three"
+    # Another academy's parent, by canonical id or alias: not a family here.
+    assert find_family_record(index, "fb-foreign") is None
+    assert find_family_record(index, "u-foreign") is None
+    assert find_family_record(index, "") is None
 
 
 @pytest.mark.asyncio

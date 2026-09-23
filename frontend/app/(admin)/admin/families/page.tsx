@@ -50,6 +50,7 @@ import {
   familyDisplayName,
   familyHref,
   familyResultRows,
+  familiesCountLabel,
   hasFilterChips,
   isPresetActive,
   nextSort,
@@ -254,8 +255,13 @@ function FamiliesView() {
                   key={preset.id}
                   active={isPresetActive(preset, state)}
                   label={preset.label}
-                  count={onlyScope ? (summary?.tiles[scope] ?? null) : null}
+                  count={
+                    onlyScope
+                      ? (summary?.tiles[scope] ?? null)
+                      : (summary?.preset_counts?.[preset.id] ?? null)
+                  }
                   testId={`admin-families-preset-${preset.id}`}
+                  countTestId={`admin-families-preset-${preset.id}-count`}
                   onClick={() => setState(togglePreset(state, preset))}
                 />
               );
@@ -323,8 +329,7 @@ function FamiliesView() {
               aria-live="polite"
               className="px-5 pt-4 text-sm font-semibold text-rally-base focus:outline-none"
             >
-              {firstPage?.total ?? 0} {firstPage?.total === 1 ? "family" : "families"}
-              {searching ? " match this search" : ""}
+              {familiesCountLabel(firstPage?.total ?? 0, searching)}
             </h2>
             {rows.length === 0 ? (
               <div className="p-8 text-center text-sm text-rally-muted">

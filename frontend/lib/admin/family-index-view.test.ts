@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { FamilyIndexRow, FamilyViewPreset } from "@/lib/api/admin-families";
 import {
+  familiesCountLabel,
   EMPTY_FAMILY_INDEX_STATE,
   FALLBACK_PRESETS,
   ariaSort,
@@ -257,5 +258,16 @@ describe("class filter options", () => {
 
   it("keeps an unknown class id from the URL selectable", () => {
     expect(classOptions([], [], "s-404")).toEqual([{ value: "s-404", label: "Selected class" }]);
+  });
+});
+
+describe("results heading copy", () => {
+  it("agrees in number with the count", () => {
+    expect(familiesCountLabel(1, false)).toBe("1 family");
+    expect(familiesCountLabel(0, false)).toBe("0 families");
+    expect(familiesCountLabel(3, false)).toBe("3 families");
+    expect(familiesCountLabel(1, true)).toBe("1 family matches this search");
+    expect(familiesCountLabel(0, true)).toBe("0 families match this search");
+    expect(familiesCountLabel(2, true)).toBe("2 families match this search");
   });
 });

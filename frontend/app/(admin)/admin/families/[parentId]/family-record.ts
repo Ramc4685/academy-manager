@@ -44,6 +44,21 @@ export function familyTabQuery(current: string, next: FamilyTab): string {
   return query ? `?${query}` : "?";
 }
 
+/**
+ * Where to send a record opened by a parent alias: the canonical family URL
+ * with the same query (so `?tab=` survives), or null when the URL is already
+ * canonical or the record has not loaded.
+ */
+export function canonicalFamilyHref(
+  urlId: string,
+  canonicalId: string | null | undefined,
+  query: string,
+): string | null {
+  if (!canonicalId || canonicalId === urlId) return null;
+  const path = `/admin/families/${encodeURIComponent(canonicalId)}`;
+  return query ? `${path}?${query}` : path;
+}
+
 /** Arrow-key movement across the tablist (WAI-ARIA tabs pattern). */
 export function adjacentFamilyTab(current: FamilyTab, key: string): FamilyTab | null {
   const index = FAMILY_TABS.findIndex((tab) => tab.id === current);
