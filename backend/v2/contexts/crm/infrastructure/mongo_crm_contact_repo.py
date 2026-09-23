@@ -29,6 +29,9 @@ class MongoCrmContactRepository(TenantScopedRepository):
         doc = contact.model_dump(mode="python")
         # Never trust a caller-built academy_id: the tenant context owns it.
         doc["academy_id"] = current_academy_id()
+        # No key: omit the field so the partial unique index skips the row.
+        if doc.get("dedupe_key") is None:
+            doc.pop("dedupe_key", None)
         return doc
 
     @staticmethod
@@ -62,7 +65,7 @@ class MongoCrmContactRepository(TenantScopedRepository):
             linked_user_id=doc.get("linked_user_id"),
             consent=ContactConsent(**consent_doc),
             created_by=doc.get("created_by"),
-            dedupe_key=str(doc["dedupe_key"]),
+            dedupe_key=doc.get("dedupe_key") or None,
             created_at=_utc(doc["created_at"]),
             updated_at=_utc(doc.get("updated_at") or doc["created_at"]),
         )
@@ -72,7 +75,7 @@ class MongoCrmContactRepository(TenantScopedRepository):
         try:
             await self._insert_one(doc)
         except DuplicateKeyError as exc:
-            if not _is_dedupe_collision(exc):
+            if contact.dedupe_key is None or not _is_dedupe_collision(exc):
                 raise
             existing = await self.find_by_dedupe_key(contact.dedupe_key)
             if existing is None:  # pragma: no cover - index says it exists

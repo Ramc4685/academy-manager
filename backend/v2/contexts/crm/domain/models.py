@@ -100,7 +100,11 @@ class CrmContact(BaseModel):
     linked_user_id: str | None = None
     consent: ContactConsent = ContactConsent()
     created_by: str | None = None
-    dedupe_key: str
+    #: Idempotency key, set ONLY for ``website`` rows (the anonymous
+    #: double-submit case). Staff quick-add sources leave it None: the key
+    #: ignores the person's own name, so two different people sharing a
+    #: household phone or email would otherwise collapse into one row.
+    dedupe_key: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -127,6 +131,11 @@ def normalize_phone_digits(value: str | None) -> str | None:
         return None
     digits = _NON_DIGIT.sub("", value)
     return digits or None
+
+
+#: Sources whose rows carry a ``dedupe_key``. Only the anonymous public form:
+#: staff quick-add rows are always new rows (see ``CrmContact.dedupe_key``).
+DEDUPED_SOURCES: frozenset[str] = frozenset({"website"})
 
 
 def compute_dedupe_key(

@@ -8,8 +8,9 @@ and the public tenant page's anonymous trial-request form (source
 New collection, no data to move: Mongo creates it on the first
 ``create_index``. Every index leads with ``academy_id`` (#849). The dedupe
 index is partial on ``{"dedupe_key": {"$gt": ""}}``, the planner-usable shape
-(#878 / 0188), never ``$type`` or ``$exists``; ``CreateContact`` always writes
-a non-empty key, so the filter only excludes hand-made rows.
+(#878 / 0188), never ``$type`` or ``$exists``; ``CreateContact`` writes a key
+only for ``website`` rows and omits the field for staff sources, so the
+filter leaves staff quick-add rows out of the unique index.
 
 No ``$jsonSchema`` validator yet: two consumers are still settling the shape
 and a dormant validator rejects writes anywhere (#657). Add one in a later

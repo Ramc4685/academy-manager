@@ -52,7 +52,7 @@ Collection `crm_contacts`, one document per inquiry.
 | `linked_user_id` | str or null | conversion flow | The user account this contact became, when that is not the parent (for example an adult player). |
 | `consent` | `ContactConsent` | both | `{contact_about_request: bool, marketing: bool, captured_at: datetime, privacy_notice_url: str or null}`. `captured_at` is stamped when not given. `marketing` defaults to false; never send marketing without it. |
 | `created_by` | str or null | CRM only | Staff user id. Always null for `website` (anonymous). |
-| `dedupe_key` | str (64 hex) | CreateContact | Idempotency key, see below. Always non-empty. |
+| `dedupe_key` | str (64 hex) or absent | CreateContact | Idempotency key, see below. Set only for `website` rows; absent on staff quick-add rows. |
 | `created_at`, `updated_at` | UTC datetime (ms) | CreateContact | |
 
 The conversion fields (`converted_parent_id`, `linked_family_id`,
@@ -94,6 +94,15 @@ Production applies 0192 through the deploy pipeline's migrate step
 
 ## Idempotency and dedupe
 
+Only `website` rows are deduped. Staff quick-add sources (`whatsapp_or_phone`,
+`referral`, `other`) get no `dedupe_key` (the field is absent, so the partial
+unique index skips them) and every call inserts a new row. The key ignores the
+person's own name, so applying it to staff entries would silently merge two
+different people who share a household phone or email. Staff double-submit
+protection belongs in the quick-add form (disable the button while saving).
+
+For `website` rows:
+
 `dedupe_key = sha256("\x1f".join([source, email, phone_digits, child_name, child_age, requested_session_id]))`
 over the **normalised** values: email lower-cased and trimmed, phone reduced to
 digits, child name and age whitespace-collapsed and case-folded, a missing
@@ -107,7 +116,7 @@ Semantics:
   the same class for the same child age a week later) in the same academy:
   **no second row.** `CreateContact` returns the existing row with
   `created=False`. It does not raise and does not update the existing row.
-- A different class, child age, child name, source, email or phone is a new
+- A different class, child age, child name, email or phone is a new
   lead (a second child is a second row).
 - The same inquiry in another academy is a separate row; dedupe is per
   academy.

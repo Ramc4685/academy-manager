@@ -157,6 +157,36 @@ async def test_staff_quick_add_by_phone_only() -> None:
     assert result.contact.created_by == "user-staff-1"
 
 
+@pytest.mark.parametrize("source", ["whatsapp_or_phone", "referral", "other"])
+async def test_staff_sources_never_collapse_two_people_into_one_row(source: str) -> None:
+    # Two different adults sharing a household phone and email, no child
+    # details: the dedupe key ignores the person's name, so if it applied to
+    # staff sources the second quick-add would silently return the first row.
+    db = await _db()
+    common: dict[str, Any] = {
+        "source": source,
+        "email": "household@example.test",
+        "phone": "555-010-4444",
+        "created_by": "user-staff-1",
+    }
+    if source == "referral":
+        common["referrer_parent_id"] = "parent-9"
+    with tenant_scope(ACADEMY):
+        use_case = _use_case(db)
+        first = await use_case.execute(CreateContactCommand(name="Pat Householdson", **common))
+        second = await use_case.execute(CreateContactCommand(name="Sam Householdson", **common))
+
+    assert first.created is True and second.created is True
+    assert first.contact.contact_id != second.contact.contact_id
+    assert first.contact.dedupe_key is None and second.contact.dedupe_key is None
+    assert second.contact.name == "Sam Householdson"
+    assert await db["crm_contacts"].count_documents({}) == 2
+    row = await db["crm_contacts"].find_one({"contact_id": second.contact.contact_id})
+    assert "dedupe_key" not in row  # absent, so the partial unique index skips it
+    with tenant_scope(ACADEMY):
+        assert await MongoCrmContactRepository(db).get(second.contact.contact_id) == second.contact
+
+
 async def test_referral_records_the_referrer() -> None:
     db = await _db()
     with tenant_scope(ACADEMY):

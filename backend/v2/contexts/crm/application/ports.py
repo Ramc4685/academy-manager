@@ -12,7 +12,8 @@ class CrmContactRepository(Protocol):
         """Insert ``contact`` unless a row with its ``dedupe_key`` already exists
         in the current academy. Returns ``(stored_row, created)``: the new row
         and True, or the EXISTING row and False. Race-safe: the unique
-        ``(academy_id, dedupe_key)`` index decides, never a read-then-insert."""
+        ``(academy_id, dedupe_key)`` index decides, never a read-then-insert.
+        A contact with no ``dedupe_key`` (staff sources) is always inserted."""
         ...
 
     async def get(self, contact_id: str) -> CrmContact | None: ...

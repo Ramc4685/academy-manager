@@ -4,11 +4,14 @@ Callers: the anonymous public trial-request endpoint (source ``website``) and
 the People CRM quick-add (staff sources). Both go through here so validation,
 normalisation and the dedupe key are identical. See ``contexts/crm/README.md``.
 
-Idempotent: a repeat of the same inquiry (same normalised source, email,
-phone digits, child name, child age and requested class) returns the row that
-already exists with ``created=False``; it never raises and never writes a
-second row. The unique ``(academy_id, dedupe_key)`` index decides, so two
-concurrent submissions cannot both insert.
+Idempotent for ``website`` only: a repeat of the same public inquiry (same
+normalised email, phone digits, child name, child age and requested class)
+returns the row that already exists with ``created=False``; it never raises
+and never writes a second row. The unique ``(academy_id, dedupe_key)`` index
+decides, so two concurrent submissions cannot both insert. Staff quick-add
+sources get no ``dedupe_key`` and always insert a new row: the key ignores
+the person's name, so it would merge two different people who share a
+household phone or email.
 """
 
 from __future__ import annotations
@@ -16,12 +19,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 from backend.v2.contexts.crm.application.ports import CrmContactRepository
 from backend.v2.contexts.crm.domain.errors import InvalidContact
 from backend.v2.contexts.crm.domain.models import (
     CONTACT_SOURCES,
     CREATABLE_PIPELINE_STATUSES,
+    DEDUPED_SOURCES,
     MAX_CHILD_AGE_LEN,
     MAX_EMAIL_LEN,
     MAX_ID_LEN,
@@ -30,7 +35,9 @@ from backend.v2.contexts.crm.domain.models import (
     MAX_URL_LEN,
     MIN_PHONE_DIGITS,
     ContactConsent,
+    ContactSource,
     CrmContact,
+    PipelineStatus,
     compute_dedupe_key,
     normalize_email,
     normalize_phone_digits,
@@ -123,21 +130,25 @@ class CreateContact:
             name=name,
             email=email,
             phone_digits=phone_digits,
-            source=cmd.source,  # checked by _validate
+            source=cast(ContactSource, cmd.source),  # checked by _validate
             child_name=child_name,
             child_age=child_age,
             requested_session_id=requested_session_id,
-            pipeline_status=cmd.pipeline_status,  # checked by _validate
+            pipeline_status=cast(PipelineStatus, cmd.pipeline_status),  # checked by _validate
             referrer_parent_id=referrer_parent_id,
             consent=consent,
             created_by=created_by,
-            dedupe_key=compute_dedupe_key(
-                source=cmd.source,
-                email=email,
-                phone_digits=phone_digits,
-                child_name=child_name,
-                child_age=child_age,
-                requested_session_id=requested_session_id,
+            dedupe_key=(
+                compute_dedupe_key(
+                    source=cmd.source,
+                    email=email,
+                    phone_digits=phone_digits,
+                    child_name=child_name,
+                    child_age=child_age,
+                    requested_session_id=requested_session_id,
+                )
+                if cmd.source in DEDUPED_SOURCES
+                else None
             ),
             created_at=now,
             updated_at=now,
