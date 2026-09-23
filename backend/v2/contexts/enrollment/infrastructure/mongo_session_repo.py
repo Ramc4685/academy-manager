@@ -12,7 +12,11 @@ from bson import ObjectId
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ParentAvailableSession,
 )
-from backend.v2.contexts.enrollment.domain.models import Session
+from backend.v2.contexts.enrollment.application.use_cases.public_catalog import (
+    MAX_PUBLIC_CLASSES,
+    PublicCatalogSession,
+)
+from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Session
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, ensure_utc
 
@@ -410,7 +414,107 @@ class MongoSessionRepository(TenantScopedRepository):
                 break
         return rows
 
-    async def _enrolled_counts_by_session(self, session_ids: list[str]) -> dict[str, int]:
+    async def available_for_public_catalog(self) -> list[PublicCatalogSession]:
+        """Published classes for the anonymous public page, FULL ONES INCLUDED.
+
+        Sibling of :meth:`available_for_parent_catalog`, deliberately not a
+        flag on it (public tenant page brief, "two things the parent catalog
+        cannot be reused for"): that read drops full classes and lists dated
+        occurrences 30 days ahead, whereas the public page lists the class
+        itself (a weekly class once, with its days and times) and shows a
+        full class as "Full, join waitlist".
+
+        Listable: ``published`` literally ``True``; not cancelled or
+        completed; a weekly class whose ``end_date`` has not passed; a one-off
+        class that has not started yet. Occupied seats count every
+        seat-holding enrollment (``SEAT_HOLDING``: active and held) and never
+        drop below ``reserved_seats``, the same floor the parent catalog uses.
+        The exact numbers stay inside Enrollment: the use case turns them
+        into a band before anything is serialised.
+        """
+        # Imported here: that module imports ``_session_filter`` from this one.
+        from backend.v2.contexts.enrollment.infrastructure.mongo_class_public_profile_repo import (
+            class_public_profile_from_doc,
+        )
+
+        now = datetime.now(UTC)
+        cursor = self._find_many(
+            {"published": True, "status": {"$nin": ["cancelled", "completed"]}},
+        )
+        docs = [doc async for doc in cursor]
+        academy_timezone = await academy_timezone_lookup(self._db)(current_academy_id())
+        listable: list[tuple[dict[str, Any], str | None, date | None, str | None, str | None]] = []
+        for doc in docs:
+            recurring = "days_of_week" in doc
+            zone = str(doc.get("timezone") or "").strip() or academy_timezone or None
+            if recurring:
+                end_date = _safe_template_date(doc.get("end_date"))
+                today = now.astimezone(_zone(zone)).date()
+                if end_date is not None and end_date < today:
+                    continue
+                listable.append(
+                    (
+                        doc,
+                        zone,
+                        None,
+                        _optional_str(doc.get("start_time")),
+                        _optional_str(doc.get("end_time")),
+                    )
+                )
+                continue
+            start_at = doc.get("start_at")
+            end_at = doc.get("end_at")
+            if not isinstance(start_at, datetime) or ensure_utc(start_at) < now:
+                continue
+            local_start = ensure_utc(start_at).astimezone(_zone(zone))
+            local_end = (
+                ensure_utc(end_at).astimezone(_zone(zone)) if isinstance(end_at, datetime) else None
+            )
+            listable.append(
+                (
+                    doc,
+                    zone,
+                    local_start.date(),
+                    _optional_str(doc.get("start_time")) or local_start.strftime("%H:%M"),
+                    _optional_str(doc.get("end_time"))
+                    or (local_end.strftime("%H:%M") if local_end else None),
+                )
+            )
+        listable = listable[:MAX_PUBLIC_CLASSES]
+        session_ids = [str(doc.get("session_id") or doc.get("_id")) for doc, *_ in listable]
+        held = await self._enrolled_counts_by_session(session_ids, statuses=SEAT_HOLDING)
+        rows: list[PublicCatalogSession] = []
+        for (doc, zone, starts_on, start_time, end_time), session_id in zip(
+            listable, session_ids, strict=True
+        ):
+            capacity = int(doc.get("capacity") or doc.get("max_students") or 1)
+            occupied = max(held.get(session_id, 0), int(doc.get("reserved_seats") or 0))
+            rows.append(
+                PublicCatalogSession(
+                    profile=class_public_profile_from_doc(doc),
+                    coach_id=_optional_str(doc.get("coach_id")),
+                    title=str(doc.get("title") or doc.get("name") or "Class").strip()[:120]
+                    or "Class",
+                    location=_optional_str(doc.get("location")),
+                    venue_address=_optional_str(doc.get("venue_address")),
+                    days_of_week=_string_tuple(doc.get("days_of_week")),
+                    start_time=start_time,
+                    end_time=end_time,
+                    timezone=zone,
+                    starts_on=starts_on,
+                    capacity=max(capacity, 0),
+                    occupied_seats=max(occupied, 0),
+                    amount_cents=_optional_amount_cents(doc),
+                )
+            )
+        return rows
+
+    async def _enrolled_counts_by_session(
+        self,
+        session_ids: list[str],
+        *,
+        statuses: frozenset[str] | None = None,
+    ) -> dict[str, int]:
         """Active-enrollment counts for every given session, in one query.
 
         Replaces the previous per-session ``count_documents`` fan with a
@@ -422,7 +526,14 @@ class MongoSessionRepository(TenantScopedRepository):
             return {}
         cursor = self._db["enrollments"].aggregate(
             [
-                {"$match": self._scoped({"session_id": {"$in": session_ids}, "status": "active"})},
+                {
+                    "$match": self._scoped(
+                        {
+                            "session_id": {"$in": session_ids},
+                            "status": ("active" if statuses is None else {"$in": sorted(statuses)}),
+                        }
+                    )
+                },
                 {"$group": {"_id": "$session_id", "n": {"$sum": 1}}},
             ]
         )
@@ -437,6 +548,20 @@ def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return default_amount_cents
+
+
+def _zone(name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or LEGACY_FALLBACK_TIMEZONE)
+    except (ValueError, KeyError):
+        return ZoneInfo(LEGACY_FALLBACK_TIMEZONE)
+
+
+def _safe_template_date(value: object) -> date | None:
+    try:
+        return _coerce_template_date(value)
+    except ValueError:
+        return None
 
 
 def _coach_or_assistant_filter(coach_id: str) -> dict[str, object]:

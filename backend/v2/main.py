@@ -58,6 +58,7 @@ from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.public_page_admin import compose_admin_public_page
+from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import compose_sweep_expired_waitlist_offers
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -182,6 +183,7 @@ from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.interfaces.platform.router import router as platform_router
+from backend.v2.interfaces.public.router import router as public_router
 from backend.v2.interfaces.registration_routes import router as registration_router
 from backend.v2.interfaces.student.router import router as student_router
 from backend.v2.interfaces.unsubscribe_routes import router as unsubscribe_router
@@ -718,6 +720,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_family_record = compose_admin_family_record(db)
     # Public tenant page programs + publish switches (Lane B1).
     app.state.admin_public_page = compose_admin_public_page(db)
+    # Anonymous public tenant page read (Lane B2), GET /api/v2/public/academy.
+    app.state.public_page = compose_public_page_read(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)
@@ -2164,6 +2168,8 @@ def create_app() -> FastAPI:
     app.include_router(magic_link_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
     app.include_router(email_webhook_router, prefix="/api/v2")
+    # Anonymous, host-resolved, rate limited (interfaces/public/__init__.py).
+    app.include_router(public_router, prefix="/api/v2")
     if settings.enable_platform_routes:
         app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
