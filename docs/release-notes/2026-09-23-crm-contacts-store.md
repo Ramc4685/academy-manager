@@ -1,6 +1,6 @@
 # crm_contacts lead store: model, repository, CreateContact use case, migration 0192
 
-PR: #0000
+PR: #923
 
 ## What changed
 
