@@ -57,7 +57,7 @@ export function SiteHeader({
   return (
     <header className={`${styles.top} ${styles.night}`}>
       <div className={`${styles.wrap} ${styles.topRow}`}>
-        <a className={styles.brandmark} href="#main">
+        <a className={styles.brandmark} href="/">
           {logo ? (
             <img className={styles.logoImage} src={logo} alt="" width={36} height={36} />
           ) : (

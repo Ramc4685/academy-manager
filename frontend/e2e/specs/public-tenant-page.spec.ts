@@ -37,6 +37,10 @@ test.describe("published page", () => {
     await expect(page.locator("header")).toHaveCount(1);
     await expect(page.locator("main")).toHaveCount(1);
     await expect(page.locator("footer")).toHaveCount(1);
+    // The brandmark is a home link; the separate skip link targets #main.
+    await expect(
+      page.locator("header").getByRole("link", { name: "Riverside Shuttle Club" }),
+    ).toHaveAttribute("href", "/");
 
     const primary = page.getByTestId("hero-primary-action");
     await expect(primary).toHaveText("Book a free trial");
