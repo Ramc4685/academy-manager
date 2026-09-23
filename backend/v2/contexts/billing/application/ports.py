@@ -74,6 +74,11 @@ class ParentRosterEntry(BaseModel):
     parent_id: str
     parent_name: str
     parent_email: str | None = None
+    #: Other stored references to the same parent (``firebase_uid``,
+    #: ``auth_uid``, users ``_id``) grouped into this row, so a family whose
+    #: students store different ids is one row, not two. Cards, balances and
+    #: autopay filed under any of them belong to this row.
+    aliases: tuple[str, ...] = ()
 
 
 class ParentBalanceSnapshot(BaseModel):

@@ -27,6 +27,9 @@ from backend.v2.contexts.billing.application.ports import (
     EnrollmentAutopaySnapshot,
     LoginAccountDirectory,
     OutstandingBalanceDirectory,
+    ParentBalanceSnapshot,
+    ParentBillingCustomerSnapshot,
+    ParentRosterEntry,
     ParentStudentRoster,
 )
 from backend.v2.contexts.billing.domain.autopay_status import AutopayEnrollmentStatus
@@ -87,6 +90,30 @@ def _registration_state(*, has_card: bool, has_login_account: bool) -> Registrat
     return "no_account"
 
 
+def _row_keys(parent: ParentRosterEntry) -> tuple[str, ...]:
+    """The row's own id first, then every other stored id grouped into it."""
+    return (parent.parent_id, *(a for a in parent.aliases if a != parent.parent_id))
+
+
+def _pick_customer(
+    customers: dict[str, ParentBillingCustomerSnapshot], keys: tuple[str, ...]
+) -> ParentBillingCustomerSnapshot | None:
+    """The first customer record with a card, else the first record at all."""
+    found = [customers[key] for key in keys if key in customers]
+    return next((c for c in found if c.card_label or c.card_last4), found[0] if found else None)
+
+
+def _merge_balances(snapshots: list[ParentBalanceSnapshot]) -> ParentBalanceSnapshot | None:
+    """One row's balance across its aliases: outstanding amounts add up; the
+    invoice offered for charging is the first alias's that has one."""
+    if len(snapshots) <= 1:
+        return snapshots[0] if snapshots else None
+    charge = next((b for b in snapshots if b.charge_invoice_id), snapshots[0])
+    return charge.model_copy(
+        update={"outstanding_cents": sum(b.outstanding_cents for b in snapshots)}
+    )
+
+
 class ListBillingSetup:
     """Assemble the Billing Setup admin page: one row per paying parent."""
 
@@ -138,9 +165,15 @@ class ListBillingSetup:
         else:
             parents = await self._roster.list_parents(academy_id=academy_id)
             parent_ids = [p.parent_id for p in parents]
-            students_by_parent = await self._roster.students_for_parents(
-                parent_ids, academy_id=academy_id
+            # A row groups every stored reference to one parent (its aliases):
+            # read students filed under any of them into the one row.
+            by_stored_id = await self._roster.students_for_parents(
+                [key for p in parents for key in _row_keys(p)], academy_id=academy_id
             )
+            students_by_parent = {
+                p.parent_id: [s for key in _row_keys(p) for s in by_stored_id.get(key, [])]
+                for p in parents
+            }
             login_account_ids = await self._login_accounts.login_account_parent_ids(
                 parent_ids, academy_id=academy_id
             )
@@ -157,14 +190,17 @@ class ListBillingSetup:
 
         rows: list[BillingSetupRow] = []
         for parent in parents:
-            customer = customers_by_parent.get(parent.parent_id)
+            keys = _row_keys(parent)
+            customer = _pick_customer(customers_by_parent, keys)
             has_card = bool(customer and (customer.card_label or customer.card_last4))
             state = _registration_state(
                 has_card=has_card,
                 has_login_account=parent.parent_id in login_account_ids,
             )
-            enrollments = autopay_by_parent.get(parent.parent_id, [])
-            balance = balances_by_parent.get(parent.parent_id)
+            enrollments = [e for key in keys for e in autopay_by_parent.get(key, [])]
+            balance = _merge_balances(
+                [balances_by_parent[k] for k in keys if k in balances_by_parent]
+            )
             active_count = sum(1 for e in enrollments if e.autopay_enrollment_status == "active")
             eligible_count = sum(
                 1

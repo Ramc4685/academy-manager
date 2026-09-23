@@ -30,6 +30,7 @@ from backend.v2.composition.autopay_comms import (
     build_dunning_worker,
     build_send_autopay_notice,
 )
+from backend.v2.composition.billing_setup_roster import BillingSetupRosterAdapter
 from backend.v2.composition.connected_account_adapters import (
     ConnectedAccountGatewayDisabler,
     ConnectedAccountGatewayReader,
@@ -102,12 +103,10 @@ from backend.v2.contexts.billing.application.manual_payment_idempotency import (
     record_manual_payment_once,
 )
 from backend.v2.contexts.billing.application.ports import (
-    BillingSetupStudent,
     EnrollmentAutopaySnapshot,
     ParentBalanceSnapshot,
     ParentBillingCustomerSnapshot,
     ParentContact,
-    ParentRosterEntry,
     StripeGateway,
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
@@ -1925,104 +1924,6 @@ def compose_admin(
     remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
 
-    class _BillingSetupRosterAdapter:
-        """Bridges enrollment's paginated admin student directory into the
-        parent roster the Billing Setup page needs. Composition may bridge
-        billing + enrollment; the billing context itself must not import
-        enrollment directly (see ``billing_setup_registration.py``)."""
-
-        def __init__(self, list_students: ListAdminStudents) -> None:
-            self._list_students = list_students
-
-        async def _all_students(self) -> list[Any]:
-            students: list[Any] = []
-            cursor: str | None = None
-            for _ in range(1000):  # safety cap against a runaway pagination loop
-                page = await self._list_students.execute(limit=200, cursor=cursor)
-                students.extend(page.students)
-                if not page.next_cursor:
-                    break
-                cursor = page.next_cursor
-            return students
-
-        async def list_parents(self, *, academy_id: str) -> list[ParentRosterEntry]:
-            seen: dict[str, ParentRosterEntry] = {}
-            for student in await self._all_students():
-                if student.parent_id and student.parent_id not in seen:
-                    seen[student.parent_id] = ParentRosterEntry(
-                        parent_id=student.parent_id,
-                        parent_name=student.parent_name or student.parent_id,
-                        parent_email=student.parent_email,
-                    )
-            return list(seen.values())
-
-        async def students_for_parents(
-            self, parent_ids: list[str], *, academy_id: str
-        ) -> dict[str, list[BillingSetupStudent]]:
-            wanted = set(parent_ids)
-            result: dict[str, list[BillingSetupStudent]] = {}
-            for student in await self._all_students():
-                if student.parent_id in wanted:
-                    result.setdefault(student.parent_id, []).append(
-                        BillingSetupStudent(
-                            student_id=student.student_id, full_name=student.full_name
-                        )
-                    )
-            return result
-
-        async def _direct_student_docs(self, parent_id: str) -> list[dict[str, Any]]:
-            from backend.v2.shared.tenancy import current_academy_id
-
-            cursor = db["students"].find(
-                {
-                    "academy_id": current_academy_id(),
-                    "$or": [
-                        {"parent_id": parent_id},
-                        {"parent_user_id": parent_id},
-                    ],
-                }
-            )
-            return [doc async for doc in cursor]
-
-        async def get_parent(self, parent_id: str, *, academy_id: str) -> ParentRosterEntry | None:
-            docs = await self._direct_student_docs(parent_id)
-            if not docs:
-                return None
-            user = await users_r.get_billing_setup_parent(parent_id, academy_id=academy_id)
-            if user is None:
-                # The scoped student row authorizes use of the global roster
-                # contact before a membership/login has been provisioned.
-                user = await users_r.get_by_id(parent_id)
-            first = docs[0]
-            fallback_name = str(first.get("parent_name") or first.get("guardian_name") or parent_id)
-            fallback_email = first.get("parent_email") or first.get("guardian_email")
-            return ParentRosterEntry(
-                parent_id=parent_id,
-                parent_name=user.display_name if user else fallback_name,
-                parent_email=str(user.email)
-                if user
-                else (str(fallback_email) if fallback_email else None),
-            )
-
-        async def students_for_parent(
-            self, parent_id: str, *, academy_id: str
-        ) -> list[BillingSetupStudent]:
-            rows: list[BillingSetupStudent] = []
-            for doc in await self._direct_student_docs(parent_id):
-                full_name = str(
-                    doc.get("full_name")
-                    or f"{doc.get('first_name', '')} {doc.get('last_name', '')}".strip()
-                    or doc.get("name")
-                    or "Student"
-                )
-                rows.append(
-                    BillingSetupStudent(
-                        student_id=str(doc.get("student_id") or doc["_id"]),
-                        full_name=full_name,
-                    )
-                )
-            return rows
-
     class _BillingSetupLoginAccountAdapter:
         def __init__(self, users: MongoUserRepository) -> None:
             self._users = users
@@ -2144,7 +2045,7 @@ def compose_admin(
             )
 
     list_billing_setup = ListBillingSetup(
-        roster=_BillingSetupRosterAdapter(list_admin_students),
+        roster=BillingSetupRosterAdapter(list_admin_students, db=db, users=users_r),
         login_accounts=_BillingSetupLoginAccountAdapter(users_r),
         customers=_BillingSetupCustomerAdapter(parent_customers_repo),
         autopay=_BillingSetupAutopayAdapter(student_billing_enrollment_repo),
