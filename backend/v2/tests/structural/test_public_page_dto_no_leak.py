@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 import backend.v2.interfaces.public as public_pkg
-from backend.v2.interfaces.public.dtos import PUBLIC_RESPONSE_MODELS
+from backend.v2.interfaces.public.dtos import PUBLIC_REQUEST_MODELS, PUBLIC_RESPONSE_MODELS
 from backend.v2.tests.fixtures.public_page import RIVERSIDE_HOST, SECRETS, build_app, seed
 
 #: Substrings no public field name may contain.
@@ -132,6 +132,9 @@ def test_every_pydantic_model_in_the_public_package_is_walked() -> None:
         and obj.__module__.startswith(public_pkg.__name__)
     }
     request_models = {m for m in defined if m.__name__.endswith("Request")}
+    assert request_models == set(PUBLIC_REQUEST_MODELS), (
+        "every public request body must be listed in PUBLIC_REQUEST_MODELS"
+    )
     unwalked = sorted(m.__name__ for m in defined - walked - request_models)
     assert not unwalked, f"public DTOs outside PUBLIC_RESPONSE_MODELS: {unwalked}"
 
@@ -168,3 +171,71 @@ def test_seeded_private_values_never_reach_the_response() -> None:
     for cls in [c for p in body["programs"] for c in p["classes"]] + body["ungrouped_classes"]:
         assert set(cls["seats"]) == {"band", "seats_left"}
         assert cls["seats"]["seats_left"] is None or cls["seats"]["seats_left"] <= 3
+
+
+# --- Lane B4: the anonymous trial form (the only public write) ---------------
+
+#: Exactly what a stranger may submit. Contact details are the point of the
+#: form; everything else a record could hold (the child's name, any academy,
+#: tenant, slug or internal id, staff attribution, pipeline stage) is absent,
+#: so no future field can quietly widen the public write.
+ALLOWED_TRIAL_FORM_FIELDS = {
+    "name",
+    "email",
+    "phone",
+    "player_age",
+    "class_id",
+    "message",
+    "contact_about_request",
+    "marketing_opt_in",
+    "website",  # honeypot
+}
+
+
+def test_trial_form_request_accepts_only_the_allow_listed_fields() -> None:
+    fields = {name for model in PUBLIC_REQUEST_MODELS for name in model.model_fields}
+    assert fields == ALLOWED_TRIAL_FORM_FIELDS
+    for banned in ("child_name", "academy_id", "tenant", "slug", "created_by", "pipeline_status"):
+        assert banned not in fields
+
+
+def test_trial_acknowledgement_carries_nothing_about_the_row() -> None:
+    from backend.v2.interfaces.public.dtos import PublicTrialRequestAckDto
+
+    assert set(PublicTrialRequestAckDto.model_fields) == {"state"}
+    assert PublicTrialRequestAckDto in PUBLIC_RESPONSE_MODELS
+
+
+def test_trial_request_responses_never_echo_submitted_private_values() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-trial-leak"]
+    asyncio.run(seed(db))
+    client = TestClient(build_app(db))
+    secret_email = "private.family@example.test"
+    secret_phone = "5550199887"
+    bodies = [
+        # accepted
+        {
+            "name": "Casey Example",
+            "email": secret_email,
+            "phone": secret_phone,
+            "player_age": "8",
+            "contact_about_request": True,
+        },
+        # rejected (bad class id + missing consent)
+        {
+            "name": "Casey Example",
+            "email": secret_email,
+            "phone": secret_phone,
+            "player_age": "8",
+            "class_id": "c_" + "x" * 16,
+        },
+    ]
+    for body in bodies:
+        response = client.post(
+            "/api/v2/public/trial-requests", json=body, headers={"host": RIVERSIDE_HOST}
+        )
+        assert response.status_code in {200, 422}
+        raw = response.text
+        for value in (secret_email, secret_phone, "Casey", *SECRETS.values()):
+            assert value not in raw, f"trial response echoed {value!r}"

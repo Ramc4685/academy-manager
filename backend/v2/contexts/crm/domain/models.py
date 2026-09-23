@@ -43,6 +43,9 @@ MAX_EMAIL_LEN = 254
 MAX_CHILD_AGE_LEN = 20
 MAX_ID_LEN = 64
 MAX_URL_LEN = 500
+#: Free-text note the person left with the inquiry (the public form's
+#: optional message). Plain text; never rendered as HTML.
+MAX_MESSAGE_LEN = 1000
 MIN_PHONE_DIGITS = 7
 MAX_PHONE_DIGITS = 15
 
@@ -92,6 +95,9 @@ class CrmContact(BaseModel):
     child_name: str | None = None
     child_age: str | None = None
     requested_session_id: str | None = None
+    #: Optional free-text note from the person (<= MAX_MESSAGE_LEN). Not part
+    #: of the dedupe key: a repeat with a reworded note is still a repeat.
+    message: str | None = None
     pipeline_status: PipelineStatus = "lead"
     pipeline_override: PipelineOverride | None = None
     referrer_parent_id: str | None = None

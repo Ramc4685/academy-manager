@@ -59,6 +59,7 @@ from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
+from backend.v2.composition.public_trial_requests import compose_public_trial_requests
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import compose_sweep_expired_waitlist_offers
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -722,6 +723,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_public_page = compose_admin_public_page(db)
     # Anonymous public tenant page read (Lane B2), GET /api/v2/public/academy.
     app.state.public_page = compose_public_page_read(db)
+    # Anonymous public trial request (Lane B4), POST /api/v2/public/trial-requests.
+    app.state.public_trial_requests = compose_public_trial_requests(db, settings)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)

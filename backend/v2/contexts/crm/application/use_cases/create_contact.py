@@ -30,6 +30,7 @@ from backend.v2.contexts.crm.domain.models import (
     MAX_CHILD_AGE_LEN,
     MAX_EMAIL_LEN,
     MAX_ID_LEN,
+    MAX_MESSAGE_LEN,
     MAX_NAME_LEN,
     MAX_PHONE_DIGITS,
     MAX_URL_LEN,
@@ -62,6 +63,7 @@ class CreateContactCommand:
     child_name: str | None = None
     child_age: str | None = None
     requested_session_id: str | None = None
+    message: str | None = None
     pipeline_status: str = "lead"
     referrer_parent_id: str | None = None
     consent: ContactConsent | None = None
@@ -102,6 +104,7 @@ class CreateContact:
         child_name = normalize_text(cmd.child_name)
         child_age = normalize_text(cmd.child_age)
         requested_session_id = normalize_text(cmd.requested_session_id)
+        message = _normalize_message(cmd.message)
         referrer_parent_id = normalize_text(cmd.referrer_parent_id)
         created_by = normalize_text(cmd.created_by)
 
@@ -113,6 +116,7 @@ class CreateContact:
             child_name=child_name,
             child_age=child_age,
             requested_session_id=requested_session_id,
+            message=message,
             referrer_parent_id=referrer_parent_id,
             created_by=created_by,
         )
@@ -134,6 +138,7 @@ class CreateContact:
             child_name=child_name,
             child_age=child_age,
             requested_session_id=requested_session_id,
+            message=message,
             pipeline_status=cast(PipelineStatus, cmd.pipeline_status),  # checked by _validate
             referrer_parent_id=referrer_parent_id,
             consent=consent,
@@ -157,6 +162,14 @@ class CreateContact:
         return CreateContactResult(contact=stored, created=created)
 
 
+def _normalize_message(value: str | None) -> str | None:
+    """Trim the ends and keep line breaks; blank becomes None."""
+    if value is None:
+        return None
+    text = "\n".join(line.rstrip() for line in str(value).strip().splitlines())
+    return text or None
+
+
 def _validate(
     cmd: CreateContactCommand,
     *,
@@ -168,6 +181,7 @@ def _validate(
     requested_session_id: str | None,
     referrer_parent_id: str | None,
     created_by: str | None,
+    message: str | None = None,
 ) -> None:
     if cmd.source not in CONTACT_SOURCES:
         raise InvalidContact("Unknown contact source.", field="source")
@@ -193,6 +207,8 @@ def _validate(
         raise InvalidContact("Child name is too long.", field="child_name")
     if child_age is not None and len(child_age) > MAX_CHILD_AGE_LEN:
         raise InvalidContact("Age is too long.", field="child_age")
+    if message is not None and len(message) > MAX_MESSAGE_LEN:
+        raise InvalidContact("Message is too long.", field="message")
     for field, value in (
         ("requested_session_id", requested_session_id),
         ("referrer_parent_id", referrer_parent_id),

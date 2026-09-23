@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from backend.v2.interfaces.public.academy_page_routes import router as academy_page_router
+from backend.v2.interfaces.public.trial_request_routes import router as trial_request_router
 
 router = APIRouter(prefix="/public", tags=["public"])
 router.include_router(academy_page_router)
+router.include_router(trial_request_router)
