@@ -110,7 +110,6 @@ describe("progress surfaces share the one chip", () => {
   const CALL_SITES = [
     "app/(student)/student/progress/page.tsx",
     "app/(parent)/parent/progress/page.tsx",
-    "app/(admin)/admin/students/[studentId]/progress/page.tsx",
     "app/(coach)/coach/students/[studentId]/passport/page.tsx",
     "components/teaching/student-focus-row.tsx",
   ];
@@ -130,6 +129,19 @@ describe("progress surfaces share the one chip", () => {
     const source = readFileSync(join(FRONTEND, file), "utf8");
     expect(source).toContain('from "@/components/skills/SkillStatusChip"');
     expect(source).toContain("<SkillStatusChip");
+    for (const retired of RETIRED) {
+      expect(source, `${file} still has ${retired}`).not.toContain(retired);
+    }
+  });
+
+  // The admin row edits status through a <select>, which already shows the
+  // current status, so it takes the shared labels but renders no chip.
+  it("admin progress row uses the shared labels and no second status display", () => {
+    const file = "app/(admin)/admin/students/[studentId]/progress/page.tsx";
+    const source = readFileSync(join(FRONTEND, file), "utf8");
+    expect(source).toContain("SKILL_STATUS_LABELS[");
+    expect(source).not.toContain("<SkillStatusChip");
+    expect(source).not.toContain("const STATUS_LABELS");
     for (const retired of RETIRED) {
       expect(source, `${file} still has ${retired}`).not.toContain(retired);
     }

@@ -27,7 +27,7 @@ import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { BigNum } from "@/components/ds/typography";
-import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillStatusChip";
+import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 
 const ADMIN_SETTABLE_STATUSES: SkillStatus[] = [
   "INTRODUCED",
@@ -475,7 +475,6 @@ function AdminSkillRow({
             <span className="text-sm font-semibold text-rally-base">
               {entry.sequence}. {entry.skill_name}
             </span>
-            <SkillStatusChip status={entry.status} />
             {entry.is_required && (
               <span className="rounded-full bg-status-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-status-red-800">
                 Required
