@@ -57,7 +57,7 @@ export function SiteHeader({
   return (
     <header className={`${styles.top} ${styles.night}`}>
       <div className={`${styles.wrap} ${styles.topRow}`}>
-        <a className={styles.brandmark} href="/">
+        <Link className={styles.brandmark} href="/">
           {logo ? (
             <img className={styles.logoImage} src={logo} alt="" width={36} height={36} />
           ) : (
@@ -66,7 +66,7 @@ export function SiteHeader({
             </span>
           )}
           <span className={styles.brandName}>{brand.name}</span>
-        </a>
+        </Link>
         {nav.length > 0 ? (
           <nav className={styles.topNav} aria-label="Page sections">
             {nav.map((item) => (
