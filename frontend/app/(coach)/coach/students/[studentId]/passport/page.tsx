@@ -17,6 +17,7 @@ import {
 import { SkillNotesPanel } from "@/components/coach/skill-notes-panel";
 import { recommendErrorMessage } from "@/components/admin/admissions/level-up-review";
 import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillStatusChip";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 // Statuses a coach may set directly. PASSED is earned only through "Record
 // test" (the backend's CoachSettableStatus rejects it — offering it here
@@ -98,12 +99,7 @@ export default function CoachStudentPassportPage() {
       {isError && (
         <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>Couldn&apos;t load skill passport. Try again.</p>
-          <button
-            onClick={() => void refetch()}
-            className="mt-2 min-h-touch rounded-md border border-red-200 px-3 text-sm font-medium"
-          >
-            Retry
-          </button>
+          <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 
