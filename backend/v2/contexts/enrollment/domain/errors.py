@@ -230,3 +230,30 @@ class WaitlistOfferNotOpen(DomainError):
 
     code = "Enrollment.WaitlistOfferNotOpen"
     status_code = 409
+
+
+class ProgramNotFound(DomainError):
+    """No program with that id in the caller's academy (Lane B1).
+
+    Same answer for "no such program" and "another academy's program", so a
+    guessed id never confirms that a row exists elsewhere.
+    """
+
+    code = "Enrollment.ProgramNotFound"
+    status_code = 404
+
+
+class InvalidProgram(DomainError):
+    """Program input failed server-side validation (blank name, over a size
+    cap, an age band whose minimum is above its maximum)."""
+
+    code = "Enrollment.InvalidProgram"
+    status_code = 422
+
+
+class InvalidClassPublicFields(DomainError):
+    """Per-class public-page fields failed validation (unknown price period
+    or coach display option, over a size cap, a bad age band)."""
+
+    code = "Enrollment.InvalidClassPublicFields"
+    status_code = 422

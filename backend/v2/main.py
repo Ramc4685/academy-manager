@@ -57,6 +57,7 @@ from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import compose_sweep_expired_waitlist_offers
 from backend.v2.contexts.billing.application.ports import StripeGateway
@@ -715,6 +716,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # People CRM family index (spec §7 Phase 2; outside admin.py's budget).
     app.state.admin_family_index = compose_admin_family_index(db)
     app.state.admin_family_record = compose_admin_family_record(db)
+    # Public tenant page programs + publish switches (Lane B1).
+    app.state.admin_public_page = compose_admin_public_page(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)

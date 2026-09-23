@@ -183,3 +183,11 @@ class MagicLinkExpired(DomainError):
 
     code = "Identity.MagicLinkExpired"
     status_code = 410
+
+
+class InvalidPublicPageSettings(DomainError):
+    """A public-page settings update failed validation (unknown key, wrong
+    type, unknown price period, a non-http(s) privacy link)."""
+
+    code = "Identity.InvalidPublicPageSettings"
+    status_code = 422
