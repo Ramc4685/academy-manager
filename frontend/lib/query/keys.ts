@@ -93,6 +93,9 @@ export const queryKeys = {
     revenue: () => ["admin", "finance", "revenue"] as const,
     enrollmentFunnel: (period?: string) =>
       ["admin", "reports", "funnel", period ?? "all"] as const,
+    moneyOwedByAge: () => ["admin", "reports", "people", "money-owed-by-age"] as const,
+    inquiryConversion: (from: string, to: string) =>
+      ["admin", "reports", "people", "inquiry-conversion", from || "default", to || "default"] as const,
     attendanceTrends: (periods: string[]) =>
       ["admin", "reports", "attendance-trends", ...periods] as const,
     coachUtilization: (periods: string[]) =>

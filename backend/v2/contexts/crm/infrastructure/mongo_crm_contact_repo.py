@@ -101,6 +101,37 @@ class MongoCrmContactRepository(TenantScopedRepository):
         cursor = self._find_many(query, sort=[("created_at", -1)], limit=limit)
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def count_by_source_and_status(
+        self, *, created_from: datetime, created_before: datetime
+    ) -> list[tuple[str, str, int]]:
+        """``(source, pipeline_status, count)`` for this academy's contacts
+        created in ``[created_from, created_before)`` (People reports, L5a).
+
+        One aggregation; the ``$match`` leads with ``academy_id`` and a
+        ``created_at`` range, served by ``crm_contacts_academy_created``.
+        A row with no ``pipeline_status`` counts as ``lead`` (the model default).
+        """
+        pipeline: list[dict[str, Any]] = [
+            {"$match": self._scoped({"created_at": {"$gte": created_from, "$lt": created_before}})},
+            {
+                "$group": {
+                    "_id": {"source": "$source", "status": "$pipeline_status"},
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+        out: list[tuple[str, str, int]] = []
+        async for doc in self.collection.aggregate(pipeline):
+            key = doc.get("_id") or {}
+            out.append(
+                (
+                    str(key.get("source") or "other"),
+                    str(key.get("status") or "lead"),
+                    int(doc.get("count") or 0),
+                )
+            )
+        return out
+
 
 def _is_dedupe_collision(exc: DuplicateKeyError) -> bool:
     details = exc.details or {}

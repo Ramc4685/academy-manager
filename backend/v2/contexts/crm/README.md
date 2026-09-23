@@ -29,6 +29,7 @@ consumer adds its own.
 | `application/use_cases/create_contact.py` | `CreateContact`, `CreateContactCommand`, `CreateContactResult` |
 | `infrastructure/mongo_crm_contact_repo.py` | `MongoCrmContactRepository(TenantScopedRepository)` |
 | `backend/v2/migrations/0192_crm_contacts.py` | the indexes |
+| `application/people_reports.py` | People reports (L5a): money owed by age band (billing's money rule asked at today, today-30, today-60) and inquiry conversion by source; read-only, routes in `interfaces/admin/people_reports_routes.py` |
 
 ## The record
 

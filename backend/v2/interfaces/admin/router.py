@@ -29,6 +29,7 @@ from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
 from .payroll_routes import router as payroll_router
+from .people_reports_routes import router as people_reports_router
 from .progress_routes import router as progress_router
 from .public_page_routes import router as public_page_router
 from .registration_routes import router as registration_router
@@ -49,6 +50,7 @@ router.include_router(directory_router)
 router.include_router(pause_router)
 router.include_router(registration_router)
 router.include_router(dues_router)
+router.include_router(people_reports_router)
 router.include_router(reports_router)
 router.include_router(month_close_router)
 router.include_router(sessions_router)
