@@ -1600,7 +1600,10 @@ def compose_admin(
         # is an unconditional increment — without this boundary, a retry would replay
         # the cached Stripe refund yet re-claim the invoice projection, double-counting
         # `refunded_cents`. Keyed on the logical request (invoice + amount + reason).
-        refund_idem_key = f"invoice_refund:{invoice_id}:{amount_cents}:{reason}"
+        # The request tenant, not the boot academy (C4): the allocation lookup,
+        # the idempotency key (#544, the store is global) and the audit row.
+        academy_id = request_academy_id()
+        refund_idem_key = f"invoice_refund:{academy_id}:{invoice_id}:{amount_cents}:{reason}"
         cached = await idempotency_store.get(refund_idem_key)
         if cached is not None:
             return cached["payload"]
