@@ -132,3 +132,7 @@ Reads `MONGO_URL` / `DB_NAME` (or `V2_MONGO_URL` / `V2_MONGO_DB`) through
 `mongodb://localhost:27017` / `academy_manager`. `backend/.env` is not read
 from the repo root, so export what you need. Exit codes: 0 ok, 1 a migration
 or the registry read failed, 2 timeout.
+
+### Seen on the first run (2026-09-23, run 35803117620)
+
+The dry-run step failed with `could not launch machine: failed to launch VM: failed to get manifest registry.fly.io/...:migrate-<sha>@sha256:... not found` even though the build step had pushed the manifest. The image had been built with Depot; Depot-built images are not launchable by digest from `registry.fly.io` by `flyctl machine run` (or `flyctl deploy --image`). The job now builds with `--depot=false` (Fly remote builder) and retries the launch four times, 20 s apart. `deploy-backend` was skipped as designed; `deploy-frontend` had already run, so the frontend was one release ahead of the backend until the next approved run.
