@@ -455,12 +455,18 @@ async def refund(
     body: IssueRefundRequest,
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
 ) -> dict[str, object]:
+    """Send an ``Idempotency-Key`` (one per refund attempt, reused on retry) so
+    a retry replays while a second real refund is still issued (#930). Without
+    it an identical repeat inside the TTL is a 409 to confirm; a key reused for
+    a different refund is a 422."""
     result = await use_cases.issue_refund.execute(
         IssueRefundCommand(
             payment_id=body.payment_id,
             amount_cents=body.amount_cents,
             reason=body.reason,
+            idempotency_key=idempotency_key or None,
         )
     )
     return result.model_dump()
@@ -1164,7 +1170,9 @@ async def refund_invoice(
     body: InvoiceRefundRequest,
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
 ) -> InvoiceRefundResponse:
+    """Same ``Idempotency-Key`` contract as ``POST /payments/refund`` (#930)."""
     issue_refund = _required_callable(use_cases.issue_invoice_refund, "Invoice refund")
     try:
         result = await issue_refund(  # type: ignore[operator]
@@ -1172,6 +1180,7 @@ async def refund_invoice(
             amount_cents=body.amount_cents,
             reason=body.reason,
             actor_id=claims.user_id,
+            idempotency_key=idempotency_key or None,
         )
     except ValueError as exc:
         msg = str(exc)

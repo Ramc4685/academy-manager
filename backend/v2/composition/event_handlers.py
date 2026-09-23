@@ -219,6 +219,9 @@ async def on_capacity_exceeded(event: CapacityExceededEvent) -> None:
                     payment_id=payload.payment_id,
                     amount_cents=None,
                     reason="capacity_failed",
+                    # One capacity auto-refund per payment: event redelivery
+                    # replays it (#930; the key is academy-scoped by IssueRefund).
+                    idempotency_key="capacity_failed",
                 )
             )
             try:

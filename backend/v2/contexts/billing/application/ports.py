@@ -514,8 +514,18 @@ class StripeGateway(Protocol):
         review and confirm a charge ↔ invoice match by hand (issue #242 WI-3).
         """
 
-    async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
-        """Returns Stripe refund id."""
+    async def issue_refund(
+        self,
+        payment_intent_id: str,
+        amount_cents: int | None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> str:
+        """Returns Stripe refund id.
+
+        ``idempotency_key`` is forwarded as Stripe's ``Idempotency-Key``: a
+        repeat with the same key returns the original refund, never a second.
+        """
 
     async def cancel_subscription(
         self, stripe_subscription_id: str, *, at_period_end: bool
