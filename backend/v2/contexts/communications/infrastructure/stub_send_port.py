@@ -33,6 +33,7 @@ class StubEmailSendPort(EmailSendPort):
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         record_id = f"stub-{len(self.sent) + 1:06d}"
         self.sent.append(
@@ -46,6 +47,7 @@ class StubEmailSendPort(EmailSendPort):
                 "bcc": list(bcc) if bcc else [],
                 "reply_to": reply_to,
                 "category": category,
+                "sender_name": sender_name,
             }
         )
         return SendOutcome(

@@ -28,6 +28,7 @@ from backend.v2.contexts.communications.application.ports import (
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
 from backend.v2.contexts.enrollment.domain.models import Session, Student
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,9 @@ class HoldNotificationAdapter:
         audiences: AudienceResolver,
         sender: EmailSendPort,
         notice_sends: MongoHoldNoticeSendRepository,
+        academies: Any | None = None,
     ) -> None:
+        self._academies = academies
         self._sessions = sessions
         self._students = students
         self._audiences = audiences
@@ -242,12 +245,15 @@ class HoldNotificationAdapter:
             return
 
         subject, body = build(session, student_name)
+        identity = await sender_identity_for_current_academy(self._academies)
         try:
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
                 body=body,
                 category=EmailCategory.TRANSACTIONAL,
+                reply_to=identity.reply_to,
+                sender_name=identity.sender_name,
             )
         except Exception:
             logger.exception("hold_notice_send_failed", extra={"enrollment_id": enrollment_id})
@@ -408,6 +414,9 @@ def compose_hold_notifications(db: Any, settings: Any) -> HoldNotificationAdapte
     from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
         MongoStudentRepository,
     )
+    from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
+        MongoAcademyRepository,
+    )
 
     return HoldNotificationAdapter(
         sessions=MongoSessionRepository(db),
@@ -415,4 +424,5 @@ def compose_hold_notifications(db: Any, settings: Any) -> HoldNotificationAdapte
         audiences=MongoAudienceResolver(db=db),
         sender=_build_email_sender(settings, db),
         notice_sends=MongoHoldNoticeSendRepository(db),
+        academies=MongoAcademyRepository(db),
     )

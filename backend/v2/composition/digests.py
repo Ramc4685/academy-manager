@@ -152,6 +152,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_teaching_foc
     GetTeachingFocus,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand, format_money
+from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
@@ -319,12 +320,15 @@ class _AcademyBrandLookup:
         doc = await self._academies.find_by_id(academy_id)
         if not doc:
             return None
+        identity = resolve_sender(doc)
         return EmailBrand(
             academy_name=str(doc.get("display_name") or academy_id),
             brand_color=doc.get("brand_color") or None,
             logo_url=doc.get("logo_url") or None,
             contact_email=doc.get("contact_email") or None,
             contact_phone=doc.get("contact_phone") or None,
+            sender_name=identity.sender_name,
+            reply_to=identity.reply_to,
         )
 
 
@@ -906,6 +910,11 @@ class _ParentDigestProvider:
         # ``_academy_and_program_for_run`` — no separate lookup here (#531).
         try:
             if academy_doc:
+                # The academy's explicit reply-to (Settings, L9a) wins over
+                # the contact-address chain the digest has always used.
+                explicit = resolve_sender(academy_doc).reply_to
+                if explicit:
+                    return explicit
                 for key in ("contact_email", "owner_email", "email"):
                     value = academy_doc.get(key)
                     if value:
@@ -1190,6 +1199,7 @@ def compose_send_campaign(
         sender=sender,
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
     )
 
 

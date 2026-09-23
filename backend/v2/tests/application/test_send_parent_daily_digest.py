@@ -124,6 +124,7 @@ class StubSendPort:
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         self.sent.append(
             {
@@ -132,6 +133,7 @@ class StubSendPort:
                 "body": body,
                 "reply_to": reply_to,
                 "category": category,
+                "sender_name": sender_name,
             }
         )
         return SendOutcome(
@@ -309,3 +311,37 @@ async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
 
     await repo.mark_failed(ACADEMY_ID, own.digest_id, "boom", retryable=False)
     assert repo.by_id[own.digest_id].status == DigestSendStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_parent_digest_carries_the_academy_sender_name() -> None:
+    """L9a: the From display name follows the academy; reply-to stays the
+    view's (which prefers the academy's explicit reply-to)."""
+    use_case, _digests, sender, _ = _build(
+        parents=[ResolvedRecipient(user_id="p1", email="p1@example.test")],
+        views={"p1": _view(reply_to="desk@example.com")},
+    )
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(
+            return_value=EmailBrand(academy_name="Brand Co", sender_name="Brand Co Desk")
+        )
+    )
+    await use_case.execute(
+        SendParentDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert sender.sent[0]["sender_name"] == "Brand Co Desk"
+    assert sender.sent[0]["reply_to"] == "desk@example.com"
+    use_case.brands.brand_for.assert_awaited_with(ACADEMY_ID)
+
+
+def test_digest_reply_to_prefers_the_academy_explicit_reply_to() -> None:
+    from backend.v2.composition.digests import _ParentDigestProvider
+
+    reply_to = _ParentDigestProvider._reply_to
+    doc = {"contact_email": "contact@example.com"}
+    assert reply_to("platform@example.com", doc) == "contact@example.com"
+    assert (
+        reply_to("platform@example.com", {**doc, "email_reply_to": "desk@example.com"})
+        == "desk@example.com"
+    )
+    assert reply_to("platform@example.com", None) == "platform@example.com"

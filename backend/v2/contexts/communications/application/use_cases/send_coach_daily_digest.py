@@ -223,7 +223,9 @@ class SendCoachDailyDigest:
                 subject=subject,
                 body=body,
                 bcc=bcc or None,
+                reply_to=brand.reply_to if brand else None,
                 category=EmailCategory.DIGEST,
+                sender_name=brand.sender_name if brand else None,
             )
             if outcome.ok:
                 await self.digests.mark_sent(

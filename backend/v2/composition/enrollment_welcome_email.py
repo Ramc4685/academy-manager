@@ -42,6 +42,7 @@ from backend.v2.contexts.communications.application.ports import (
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
 from backend.v2.contexts.enrollment.domain.models import Session
+from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.tenancy import current_academy_id
 
 logger = logging.getLogger(__name__)
@@ -308,6 +309,7 @@ class EnrollmentWelcomeEmailAdapter:
             coach_name=coach_name,
             academy_timezone=academy_timezone,
         )
+        identity = resolve_sender(academy_doc)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_user_id,
@@ -322,6 +324,8 @@ class EnrollmentWelcomeEmailAdapter:
             # everything) but is deliberately outside the #555 unsubscribable
             # categories, and therefore carries no CAN-SPAM footer.
             category=EmailCategory.TRANSACTIONAL,
+            reply_to=identity.reply_to,
+            sender_name=identity.sender_name,
         )
         if not outcome.ok and not outcome.suppressed:
             logger.warning(

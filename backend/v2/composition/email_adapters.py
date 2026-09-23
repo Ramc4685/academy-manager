@@ -19,6 +19,7 @@ import html
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -53,6 +54,7 @@ from backend.v2.shared.comms.email_theme import (
     format_money,
     shell,
 )
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -93,8 +95,11 @@ class LoginInviteEmailAdapter:
     `send_login_invite.py`.
     """
 
-    def __init__(self, *, sender: EmailSendPort) -> None:
+    def __init__(self, *, sender: EmailSendPort, academies: Any | None = None) -> None:
         self._sender = sender
+        # Sender display name / reply-to (L9a); ``None`` keeps the bare
+        # platform From header.
+        self._academies = academies
 
     async def send_invite_email(
         self,
@@ -105,6 +110,7 @@ class LoginInviteEmailAdapter:
         subject: str,
         body: str,
     ) -> InviteEmailOutcome:
+        identity = await sender_identity_for_current_academy(self._academies)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=user_id,
@@ -113,6 +119,8 @@ class LoginInviteEmailAdapter:
             ),
             subject=subject,
             body=body,
+            reply_to=identity.reply_to,
+            sender_name=identity.sender_name,
         )
         return InviteEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)
 
@@ -158,7 +166,11 @@ class UndeliverableInviteEmailAdapter:
 
 
 def build_user_facing_invite_sender(
-    *, sender: EmailSendPort, env: str, real_email_envs: frozenset[str]
+    *,
+    sender: EmailSendPort,
+    env: str,
+    real_email_envs: frozenset[str],
+    academies: Any | None = None,
 ) -> LoginInviteEmailAdapter | UndeliverableInviteEmailAdapter:
     """Wrap `sender` for a message a *user* is waiting on.
 
@@ -172,7 +184,7 @@ def build_user_facing_invite_sender(
         return UndeliverableInviteEmailAdapter(
             reason="email delivery is not configured for this environment"
         )
-    return LoginInviteEmailAdapter(sender=sender)
+    return LoginInviteEmailAdapter(sender=sender, academies=academies)
 
 
 class LastCharge(BaseModel):
