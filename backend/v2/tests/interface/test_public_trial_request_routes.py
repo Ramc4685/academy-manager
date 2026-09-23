@@ -177,6 +177,29 @@ def test_honeypot_hit_gets_the_same_answer_and_writes_nothing() -> None:
     assert len(app.state.sent_email.sent) == 1
 
 
+def test_honeypot_runs_the_same_validation_and_class_read_as_a_person() -> None:
+    """The honeypot is checked last so its response path matches a real one
+    (same validation, same published-class read); only the write is skipped."""
+    db = _db()
+    app = build_app(db)
+    deps = app.state.public_trial_requests
+    calls: list[Any] = []
+    real_execute = deps.resolve_class_choice.execute
+
+    async def _spy(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return await real_execute(*args, **kwargs)
+
+    deps.resolve_class_choice.execute = _spy  # type: ignore[method-assign]
+    bot = _post(app, _form(website="https://spam.example.test"))
+    assert bot.status_code == 200
+    assert len(calls) == 1
+    invalid_bot = _post(app, _form(website="https://spam.example.test", email="not-an-email"))
+    assert invalid_bot.status_code == 422
+    assert _rows(db) == []
+    assert app.state.sent_email.sent == []
+
+
 def test_tenant_comes_from_the_host_never_the_body() -> None:
     db = _db()
     app = build_app(db)

@@ -56,7 +56,8 @@ CACHE_CONTROL = "public, max-age=60"
 _NOT_FOUND_BODY = {"detail": "Not found"}
 
 
-def _not_found() -> JSONResponse:
+def not_found_response() -> JSONResponse:
+    """The one 404 for an unknown host or unpublished page (shared by every public route)."""
     return JSONResponse(status_code=404, content=_NOT_FOUND_BODY, headers={"Vary": "Host"})
 
 
@@ -68,12 +69,12 @@ def _not_found() -> JSONResponse:
 async def get_public_academy_page(request: Request, response: Response) -> Any:
     academy_id = getattr(request.state, "resolved_academy_id", None)
     if not academy_id:
-        return _not_found()
+        return not_found_response()
     public_page: PublicPageRead = request.app.state.public_page
     with tenant_scope(str(academy_id)):
         profile = await public_page.get_academy_profile.execute(str(academy_id))
         if profile is None:
-            return _not_found()
+            return not_found_response()
         response.headers["Cache-Control"] = CACHE_CONTROL
         response.headers["Vary"] = "Host"
         settings = profile.settings

@@ -9,11 +9,13 @@ The only public write. Order of decisions, each before the next can run:
    404 as ``GET /public/academy`` for an unknown host.
 2. **Trials switched off:** ``409 Public.TrialsClosed``, a clear message the
    page can show (B3 already hides the form in that state).
-3. **Honeypot filled:** the normal acknowledgement, nothing written.
-4. **Server-side validation** with per-field messages (``422
+3. **Server-side validation** with per-field messages (``422
    Public.InvalidTrialRequest``, ``details.fields``); submitted values are
    never echoed back. The optional class is resolved from its opaque
    ``public_id`` against the academy's PUBLISHED classes only.
+4. **Honeypot filled:** the normal acknowledgement, nothing written. It runs
+   after step 3 so a bot sees the same validation and the same reads as a
+   person; only the contact write is skipped.
 5. **One contact** through CRM's ``CreateContact`` (source ``website``), which
    dedupes a repeat to the row already on file.
 
@@ -37,7 +39,7 @@ from backend.v2.composition.public_trial_requests import PublicTrialRequests
 from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import (
     WebsiteInquiryForm,
 )
-from backend.v2.interfaces.public.academy_page_routes import _not_found
+from backend.v2.interfaces.public.academy_page_routes import not_found_response
 from backend.v2.interfaces.public.dtos import PublicTrialFormRequest, PublicTrialRequestAckDto
 from backend.v2.shared.tenancy.context import tenant_scope
 
@@ -143,13 +145,13 @@ def _form(body: PublicTrialFormRequest) -> WebsiteInquiryForm:
 async def submit_trial_request(request: Request, background_tasks: BackgroundTasks) -> Any:
     academy_id = getattr(request.state, "resolved_academy_id", None)
     if not academy_id:
-        return _not_found()
+        return not_found_response()
     academy_id = str(academy_id)
     deps: PublicTrialRequests = request.app.state.public_trial_requests
     with tenant_scope(academy_id):
         profile = await deps.get_academy_profile.execute(academy_id)
         if profile is None or not profile.settings.published:
-            return _not_found()
+            return not_found_response()
         if not profile.settings.trials_open:
             return _trials_closed()
         raw = await _read_capped(request)
@@ -158,16 +160,6 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
         body, errors = _parse(raw)
         if body is None:
             return _invalid(errors)
-        if _filled(body.website):
-            # Honeypot: same acknowledgement, same background hand-off, no write.
-            background_tasks.add_task(
-                deps.notifier.notify,
-                academy_id=academy_id,
-                contact=None,
-                created=False,
-                class_title=None,
-            )
-            return _ack()
         form = _form(body)
         errors = form.errors()
         if errors:
@@ -179,6 +171,20 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
                 {"class_id": "That class is not taking requests. Choose another or leave it blank."}
             )
         chosen = choice.chosen
+        if _filled(body.website):
+            # Honeypot: same acknowledgement, same background hand-off, no
+            # write. Checked only after the same validation and published-class
+            # read a real submission does, so the response path differs by the
+            # one skipped contact write (a timing gap of a single Mongo op; the
+            # per-IP/per-host rate limits are the real spam control).
+            background_tasks.add_task(
+                deps.notifier.notify,
+                academy_id=academy_id,
+                contact=None,
+                created=False,
+                class_title=None,
+            )
+            return _ack()
         # A trial needs a seat to try: a full chosen class, or an academy with
         # nothing open (or nothing listed yet), files the inquiry as a lead
         # (the waitlist and "tell me when classes open" variants).
