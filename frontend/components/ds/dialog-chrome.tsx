@@ -116,14 +116,18 @@ export function Th({
    */
   padding = "px-4 py-3",
   className,
+  ariaSort,
 }: {
   children: ReactNode;
   align?: "left" | "right";
   padding?: string;
   className?: string;
+  /** Set on a sortable column only; the header then holds a sort button. */
+  ariaSort?: "ascending" | "descending" | "none";
 }) {
   return (
     <th
+      aria-sort={ariaSort}
       className={`${padding} font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${
         align === "right" ? "text-right" : "text-left"
       } ${className ?? ""}`}
