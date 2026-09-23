@@ -1,6 +1,6 @@
 # Public academy page on the tenant host: server-rendered `/`, metadata, JSON-LD, OG card, robots and sitemap (Lane B3)
 
-PR: #TBD
+PR: #937
 
 ## What changed
 
