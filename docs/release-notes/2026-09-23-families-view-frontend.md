@@ -1,6 +1,6 @@
 # People CRM Families view: /admin/families reads the family index
 
-PR: #0000
+PR: #927
 
 ## What changed
 
