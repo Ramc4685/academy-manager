@@ -1,0 +1,505 @@
+{
+  "published": {
+    "state": "published",
+    "academy": {
+      "name": "Riverside Shuttle Club",
+      "logo_url": null,
+      "brand_color": "#0f766e",
+      "brand_fill": "#0f766e",
+      "brand_on_color": "#ffffff",
+      "venue": {
+        "address": "214 Millbrook Road, Riverside",
+        "hours_text": "Mon to Fri 4 to 9:30 PM, Sat 9 AM to 1 PM"
+      },
+      "timezone": "America/Chicago",
+      "currency": "USD"
+    },
+    "page": {
+      "trials_open": true,
+      "show_price": true,
+      "show_availability": true,
+      "price_period_default": "month",
+      "privacy_notice_url": null
+    },
+    "programs": [
+      {
+        "public_id": "pg_starters",
+        "name": "Shuttle Starters",
+        "description": "First steps with racket and shuttle.",
+        "level": "Beginner",
+        "age_band": {
+          "min_age": 6,
+          "max_age": 8
+        },
+        "classes": [
+          {
+            "public_id": "pc_starters_mw",
+            "title": "Starters Mon and Wed",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Mon",
+              "Wed"
+            ],
+            "start_time": "16:30",
+            "end_time": "17:30",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Alex Rivera",
+            "price": {
+              "amount_cents": 12000,
+              "period": "month"
+            },
+            "seats": {
+              "band": "open",
+              "seats_left": null
+            }
+          },
+          {
+            "public_id": "pc_starters_sat",
+            "title": "Starters Saturday",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Sat"
+            ],
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Sam Okafor",
+            "price": {
+              "amount_cents": 7000,
+              "period": "month"
+            },
+            "seats": {
+              "band": "few",
+              "seats_left": 2
+            }
+          }
+        ]
+      },
+      {
+        "public_id": "pg_match",
+        "name": "Match Play",
+        "description": null,
+        "level": "Intermediate",
+        "age_band": {
+          "min_age": 13,
+          "max_age": 18
+        },
+        "classes": [
+          {
+            "public_id": "pc_match_mw",
+            "title": "Match Play evenings",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Mon",
+              "Wed"
+            ],
+            "start_time": "18:00",
+            "end_time": "19:30",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Alex Rivera",
+            "price": {
+              "amount_cents": 16500,
+              "period": "month"
+            },
+            "seats": {
+              "band": "waitlist",
+              "seats_left": null
+            }
+          }
+        ]
+      }
+    ],
+    "ungrouped_classes": [
+      {
+        "public_id": "pc_adults_wed",
+        "title": "Adult coaching",
+        "description": null,
+        "level": null,
+        "age_band": {
+          "min_age": 18,
+          "max_age": null
+        },
+        "days_of_week": [
+          "Wed"
+        ],
+        "start_time": "19:45",
+        "end_time": "21:15",
+        "timezone": "America/Chicago",
+        "starts_on": null,
+        "location": "Courts 1 and 2",
+        "venue_address": null,
+        "coach_name": null,
+        "price": {
+          "amount_cents": 9000,
+          "period": "month"
+        },
+        "seats": {
+          "band": "open",
+          "seats_left": null
+        }
+      }
+    ]
+  },
+  "empty": {
+    "state": "published",
+    "academy": {
+      "name": "Riverside Shuttle Club",
+      "logo_url": null,
+      "brand_color": "#0f766e",
+      "brand_fill": "#0f766e",
+      "brand_on_color": "#ffffff",
+      "venue": {
+        "address": "214 Millbrook Road, Riverside",
+        "hours_text": "Mon to Fri 4 to 9:30 PM, Sat 9 AM to 1 PM"
+      },
+      "timezone": "America/Chicago",
+      "currency": "USD"
+    },
+    "page": {
+      "trials_open": true,
+      "show_price": true,
+      "show_availability": true,
+      "price_period_default": "month",
+      "privacy_notice_url": null
+    },
+    "programs": [],
+    "ungrouped_classes": []
+  },
+  "trials_closed": {
+    "state": "published",
+    "academy": {
+      "name": "Riverside Shuttle Club",
+      "logo_url": null,
+      "brand_color": "#0f766e",
+      "brand_fill": "#0f766e",
+      "brand_on_color": "#ffffff",
+      "venue": {
+        "address": "214 Millbrook Road, Riverside",
+        "hours_text": "Mon to Fri 4 to 9:30 PM, Sat 9 AM to 1 PM"
+      },
+      "timezone": "America/Chicago",
+      "currency": "USD"
+    },
+    "page": {
+      "trials_open": false,
+      "show_price": true,
+      "show_availability": true,
+      "price_period_default": "month",
+      "privacy_notice_url": null
+    },
+    "programs": [
+      {
+        "public_id": "pg_starters",
+        "name": "Shuttle Starters",
+        "description": "First steps with racket and shuttle.",
+        "level": "Beginner",
+        "age_band": {
+          "min_age": 6,
+          "max_age": 8
+        },
+        "classes": [
+          {
+            "public_id": "pc_starters_mw",
+            "title": "Starters Mon and Wed",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Mon",
+              "Wed"
+            ],
+            "start_time": "16:30",
+            "end_time": "17:30",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Alex Rivera",
+            "price": {
+              "amount_cents": 12000,
+              "period": "month"
+            },
+            "seats": {
+              "band": "open",
+              "seats_left": null
+            }
+          },
+          {
+            "public_id": "pc_starters_sat",
+            "title": "Starters Saturday",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Sat"
+            ],
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Sam Okafor",
+            "price": {
+              "amount_cents": 7000,
+              "period": "month"
+            },
+            "seats": {
+              "band": "few",
+              "seats_left": 2
+            }
+          }
+        ]
+      },
+      {
+        "public_id": "pg_match",
+        "name": "Match Play",
+        "description": null,
+        "level": "Intermediate",
+        "age_band": {
+          "min_age": 13,
+          "max_age": 18
+        },
+        "classes": [
+          {
+            "public_id": "pc_match_mw",
+            "title": "Match Play evenings",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Mon",
+              "Wed"
+            ],
+            "start_time": "18:00",
+            "end_time": "19:30",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Alex Rivera",
+            "price": {
+              "amount_cents": 16500,
+              "period": "month"
+            },
+            "seats": {
+              "band": "waitlist",
+              "seats_left": null
+            }
+          }
+        ]
+      }
+    ],
+    "ungrouped_classes": [
+      {
+        "public_id": "pc_adults_wed",
+        "title": "Adult coaching",
+        "description": null,
+        "level": null,
+        "age_band": {
+          "min_age": 18,
+          "max_age": null
+        },
+        "days_of_week": [
+          "Wed"
+        ],
+        "start_time": "19:45",
+        "end_time": "21:15",
+        "timezone": "America/Chicago",
+        "starts_on": null,
+        "location": "Courts 1 and 2",
+        "venue_address": null,
+        "coach_name": null,
+        "price": {
+          "amount_cents": 9000,
+          "period": "month"
+        },
+        "seats": {
+          "band": "open",
+          "seats_left": null
+        }
+      }
+    ]
+  },
+  "all_full": {
+    "state": "published",
+    "academy": {
+      "name": "Riverside Shuttle Club",
+      "logo_url": null,
+      "brand_color": "#0f766e",
+      "brand_fill": "#0f766e",
+      "brand_on_color": "#ffffff",
+      "venue": {
+        "address": "214 Millbrook Road, Riverside",
+        "hours_text": "Mon to Fri 4 to 9:30 PM, Sat 9 AM to 1 PM"
+      },
+      "timezone": "America/Chicago",
+      "currency": "USD"
+    },
+    "page": {
+      "trials_open": true,
+      "show_price": true,
+      "show_availability": true,
+      "price_period_default": "month",
+      "privacy_notice_url": null
+    },
+    "programs": [
+      {
+        "public_id": "pg_starters",
+        "name": "Shuttle Starters",
+        "description": "First steps with racket and shuttle.",
+        "level": "Beginner",
+        "age_band": {
+          "min_age": 6,
+          "max_age": 8
+        },
+        "classes": [
+          {
+            "public_id": "pc_starters_mw",
+            "title": "Starters Mon and Wed",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Mon",
+              "Wed"
+            ],
+            "start_time": "16:30",
+            "end_time": "17:30",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Alex Rivera",
+            "price": {
+              "amount_cents": 12000,
+              "period": "month"
+            },
+            "seats": {
+              "band": "waitlist",
+              "seats_left": null
+            }
+          },
+          {
+            "public_id": "pc_starters_sat",
+            "title": "Starters Saturday",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Sat"
+            ],
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Sam Okafor",
+            "price": {
+              "amount_cents": 7000,
+              "period": "month"
+            },
+            "seats": {
+              "band": "waitlist",
+              "seats_left": null
+            }
+          }
+        ]
+      },
+      {
+        "public_id": "pg_match",
+        "name": "Match Play",
+        "description": null,
+        "level": "Intermediate",
+        "age_band": {
+          "min_age": 13,
+          "max_age": 18
+        },
+        "classes": [
+          {
+            "public_id": "pc_match_mw",
+            "title": "Match Play evenings",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Mon",
+              "Wed"
+            ],
+            "start_time": "18:00",
+            "end_time": "19:30",
+            "timezone": "America/Chicago",
+            "starts_on": null,
+            "location": "Courts 1 and 2",
+            "venue_address": null,
+            "coach_name": "Coach Alex Rivera",
+            "price": {
+              "amount_cents": 16500,
+              "period": "month"
+            },
+            "seats": {
+              "band": "waitlist",
+              "seats_left": null
+            }
+          }
+        ]
+      }
+    ],
+    "ungrouped_classes": [
+      {
+        "public_id": "pc_adults_wed",
+        "title": "Adult coaching",
+        "description": null,
+        "level": null,
+        "age_band": {
+          "min_age": 18,
+          "max_age": null
+        },
+        "days_of_week": [
+          "Wed"
+        ],
+        "start_time": "19:45",
+        "end_time": "21:15",
+        "timezone": "America/Chicago",
+        "starts_on": null,
+        "location": "Courts 1 and 2",
+        "venue_address": null,
+        "coach_name": null,
+        "price": {
+          "amount_cents": 9000,
+          "period": "month"
+        },
+        "seats": {
+          "band": "waitlist",
+          "seats_left": null
+        }
+      }
+    ]
+  },
+  "not_published": {
+    "state": "not_published",
+    "academy": {
+      "name": "Riverside Shuttle Club",
+      "logo_url": null,
+      "brand_color": "#0f766e",
+      "brand_fill": "#0f766e",
+      "brand_on_color": "#ffffff"
+    }
+  }
+}

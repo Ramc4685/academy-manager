@@ -70,7 +70,10 @@ const inventoryManifest = JSON.parse(
   readFileSync(INVENTORY_MANIFEST_PATH, "utf8"),
 ) as InventoryManifest;
 
-const DIRECT_ROUTE_EXCLUSIONS = new Set(["/post-login"]);
+// /og-card, /robots.txt and /sitemap.xml are non-HTML route handlers (an
+// image, plain text, XML) with nothing for a "renders meaningful content"
+// sweep to find; public-tenant-page.spec.ts covers them.
+const DIRECT_ROUTE_EXCLUSIONS = new Set(["/post-login", "/og-card", "/robots.txt", "/sitemap.xml"]);
 
 const staticManifestRoutes = inventoryManifest.routes.filter(
   (entry) =>
