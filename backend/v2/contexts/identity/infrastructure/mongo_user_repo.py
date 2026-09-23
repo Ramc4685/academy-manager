@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -35,9 +35,12 @@ from backend.v2.contexts.identity.domain.errors import (
     UserOutsideAcademy,
 )
 from backend.v2.contexts.identity.domain.identity_aliases import (
+    PARENT_REFERENCE_FIELDS,
+    ParentAliasSet,
     aliases_from_doc,
     identity_aliases,
     membership_match_rank,
+    parent_alias_set,
 )
 from backend.v2.contexts.identity.domain.models import (
     GlobalUserStatus,
@@ -373,6 +376,66 @@ class MongoUserRepository:
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]
 
+    #: Projection for :meth:`resolve_parent_aliases`: ids plus the contact
+    #: fields a family row shows. Never the whole document.
+    _PARENT_ALIAS_PROJECTION: ClassVar[dict[str, int]] = {
+        "user_id": 1,
+        "firebase_uid": 1,
+        "auth_uid": 1,
+        "display_name": 1,
+        "name": 1,
+        "email": 1,
+        "phone": 1,
+        "roles": 1,
+        "role": 1,
+        "academy_id": 1,
+    }
+
+    async def resolve_parent_aliases(self, raw_ids: Sequence[str]) -> dict[str, ParentAliasSet]:
+        """Resolve stored parent references to their users document, in bulk.
+
+        A student's ``parent_id`` may hold the parent's roster ``user_id``,
+        their ``firebase_uid``, an old ``auth_uid`` or the users ``_id``
+        (People CRM spec §1). This asks ONE ``$in`` equality question per
+        field, in :data:`PARENT_REFERENCE_FIELDS` order and then ``_id``, and
+        each later field only asks about the ids still unresolved. It never
+        puts an ``$or`` across the fields: that is the #878/#886 shape MongoDB
+        8.0 answers with a collection scan (#894). At most four queries
+        however many ids are passed.
+
+        ``users`` is global (identity spans academies), so this widens only
+        the identity side: callers pass ids they read from their own tenant's
+        rows and keep ``academy_id`` on every tenant query they build from
+        the result. Ids no users document answers to are absent from the
+        result, never an error.
+        """
+        remaining = list(dict.fromkeys(str(raw) for raw in raw_ids if raw))
+        resolved: dict[str, ParentAliasSet] = {}
+        for field_name in PARENT_REFERENCE_FIELDS:
+            if not remaining:
+                break
+            matches: dict[str, dict[str, Any]] = {}
+            cursor = self.collection.find(
+                {field_name: {"$in": remaining}}, self._PARENT_ALIAS_PROJECTION
+            )
+            async for doc in cursor:
+                key = str(doc.get(field_name) or "")
+                # Deterministic when legacy rows share a value: lowest _id wins.
+                if key and (key not in matches or str(doc["_id"]) < str(matches[key]["_id"])):
+                    matches[key] = doc
+            for key, doc in matches.items():
+                resolved[key] = parent_alias_set(doc)
+            remaining = [raw for raw in remaining if raw not in resolved]
+        if remaining:
+            # ``_id`` is an ObjectId on most documents and a plain string on a
+            # few legacy ones; one ``$in`` over both spellings, served by _id_.
+            by_id: list[Any] = [*remaining]
+            by_id.extend(ObjectId(raw) for raw in remaining if ObjectId.is_valid(raw))
+            cursor = self.collection.find({"_id": {"$in": by_id}}, self._PARENT_ALIAS_PROJECTION)
+            async for doc in cursor:
+                resolved[str(doc["_id"])] = parent_alias_set(doc)
+        return resolved
+
     async def list_existing_user_ids(self, user_ids: list[str], *, academy_id: str) -> set[str]:
         """Which of ``user_ids`` (== parent_id, per this codebase's convention
         that a parent IS a User) already have a login account in this academy.
@@ -382,47 +445,30 @@ class MongoUserRepository:
         """
         if not user_ids:
             return set()
-        object_ids = [ObjectId(value) for value in user_ids if ObjectId.is_valid(value)]
-        aliases: list[dict[str, object]] = [
-            {"user_id": {"$in": user_ids}},
-            {"auth_uid": {"$in": user_ids}},
-            {"firebase_uid": {"$in": user_ids}},
-        ]
-        if object_ids:
-            aliases.append({"_id": {"$in": object_ids}})
-        cursor = self.collection.find(
-            {"$or": aliases},
-            {"user_id": 1, "auth_uid": 1, "firebase_uid": 1},
-        )
+        # One equality lookup per alias field (resolve_parent_aliases), not an
+        # $or across user_id/auth_uid/firebase_uid/_id (#878/#894).
+        resolved = await self.resolve_parent_aliases(user_ids)
         wanted = set(user_ids)
         found: set[str] = set()
-        async for doc in cursor:
-            firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
-            if not firebase_uid:
+        checked: dict[str, bool] = {}
+        for alias_set in resolved.values():
+            login_uid = alias_set.login_uid
+            if not login_uid:
                 continue
-            membership = await self._db["academy_memberships"].find_one(
-                {
-                    "academy_id": academy_id,
-                    "user_id": str(firebase_uid),
-                    "status": "active",
-                    "roles": "parent",
-                    "login_invite_pending": {"$ne": True},
-                },
-                {"_id": 1},
-            )
-            if membership is None:
-                continue
-            doc_aliases = {
-                str(value)
-                for value in (
-                    doc.get("user_id"),
-                    doc.get("auth_uid"),
-                    doc.get("firebase_uid"),
-                    doc.get("_id"),
+            if login_uid not in checked:
+                membership = await self._db["academy_memberships"].find_one(
+                    {
+                        "academy_id": academy_id,
+                        "user_id": login_uid,
+                        "status": "active",
+                        "roles": "parent",
+                        "login_invite_pending": {"$ne": True},
+                    },
+                    {"_id": 1},
                 )
-                if value
-            }
-            found.update(wanted & doc_aliases)
+                checked[login_uid] = membership is not None
+            if checked[login_uid]:
+                found.update(wanted & alias_set.aliases)
         return found
 
     async def get_billing_setup_parent(self, parent_id: str, *, academy_id: str) -> User | None:
