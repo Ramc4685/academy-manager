@@ -18,7 +18,7 @@ const FAMILY = {
   generated_at: "2026-09-10T15:00:00Z",
   timezone: "America/Chicago",
   today: "2026-09-10",
-  parent: { parent_id: "parent-1", name: "Sahaya Vinodh", email: "sahaya@example.com", phone: null },
+  parent: { parent_id: "parent-1", name: "Test Parent One", email: "parent.one@example.test", phone: null },
   header: {
     balance_cents: 7000,
     open_invoice_count: 1,
@@ -269,6 +269,15 @@ async function setup(
   let view: unknown = opts.view ?? FAMILY;
   await page.route("**/api/v2/admin/families/**", (route) => {
     const req = route.request();
+    // The family record shell (People CRM A4) also reads the index row.
+    if (req.method() === "GET" && new URL(req.url()).pathname.endsWith("/record")) {
+      return fulfillJson(route, {
+        generated_at: "2026-09-10T15:00:00Z",
+        family: familyIndexRow({ family_id: "parent-1", parent_name: "Test Parent One" }),
+        money_visible: true,
+        warnings: [],
+      });
+    }
     if (req.method() === "POST") {
       posts.push({ url: req.url(), body: req.postDataJSON() });
       return fulfillJson(route, { paused_count: 1, active_count_before: 1, warnings: [] });
@@ -324,7 +333,8 @@ async function setup(
       }),
     );
   });
-  await page.goto("/admin/families/parent-1");
+  // The billing page is now the family record's Billing tab (People CRM A4).
+  await page.goto("/admin/families/parent-1?tab=billing");
   await expect(page.getByTestId("admin-family-billing")).toBeVisible();
   return {
     errors,
@@ -348,6 +358,9 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("invoice-row-inv-sep")).toContainText("Sep 2026 · Arjun");
     await page.getByTestId("invoice-expand-inv-aug").click();
     await expect(page.getByTestId("invoice-allocations-inv-aug")).toContainText("pi_aug");
+    // The timeline moved to its own tab and reads the same response.
+    await page.getByTestId("family-tab-timeline").click();
+    await expect(page).toHaveURL(/\?tab=timeline$/);
     await expect(page.getByTestId("timeline-entry-autopay_notice_emailed")).toHaveAttribute(
       "data-tone",
       "muted",
@@ -510,8 +523,8 @@ test.describe("Family billing", () => {
         rows: [
           {
             parent_id: "parent-1",
-            parent_name: "Sahaya Vinodh",
-            parent_email: "sahaya@example.com",
+            parent_name: "Test Parent One",
+            parent_email: "parent.one@example.test",
             students: [{ student_id: "stu-arjun", full_name: "Arjun" }],
             registration_state: "card_on_file",
             card_label: "Visa",

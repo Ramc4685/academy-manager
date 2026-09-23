@@ -109,8 +109,10 @@ export default defineConfig({
       // different branch (table vs PhoneListRow) on each viewport.
       // families-index joins for the People CRM Families view: its sortable
       // headers and money column exist only in the desktop table.
+      // family-record joins for the People CRM family record: the child drawer
+      // is a side panel on a desktop and full width on a phone.
       testMatch:
-        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index)\.spec\.ts/,
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record)\.spec\.ts/,
     },
   ],
 });
