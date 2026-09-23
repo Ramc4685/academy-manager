@@ -56,6 +56,19 @@ describe("next.config redirects", () => {
     expect(entry?.has).toBeUndefined();
   });
 
+  // Lane A verify #3: an old per-parent bookmark opens that family's record
+  // (a 307, like the list rule above), keeping the id in the path.
+  it("forwards a retired /admin/parents/{id} bookmark to the family record", async () => {
+    const entry = (await resolveRedirects()).find(
+      (redirect) => redirect.source === "/admin/parents/:parentId",
+    );
+
+    expect(entry, "no redirect declared for /admin/parents/:parentId").toBeDefined();
+    expect(entry?.destination).toBe("/admin/families/:parentId");
+    expect(entry?.permanent).toBe(false);
+    expect(entry?.has).toBeUndefined();
+  });
+
   // #839: /admin/users/new was a second, differently-shaped add-user form
   // sitting beside the directory's own Add user dialog. One form now, and the
   // old URL forwards to it with the dialog open.

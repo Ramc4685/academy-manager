@@ -73,6 +73,11 @@ const RETIRED_ROUTE_REDIRECTS = [
   // bare `/admin/families` becomes the Today view once the People sub-nav
   // lands (engineering spec §1 "Redirects"; the page ignores `?view=` until then).
   { source: "/admin/parents", destination: "/admin/families?view=families", permanent: false },
+  // Lane A verify #3: old per-parent bookmarks (`/admin/parents/{id}`) 404ed.
+  // The family record opens by any parent id (the page swaps an alias for the
+  // canonical id), so the id carries straight over. Temporary for the same
+  // reason as the rule above; no app route is added for it.
+  { source: "/admin/parents/:parentId", destination: "/admin/families/:parentId", permanent: false },
   { source: "/admin/coaches", destination: "/admin/users?role=coach", permanent: true },
   // #839: the orphan add-user page. One form now — the directory's dialog,
   // which `?add=1` opens.
