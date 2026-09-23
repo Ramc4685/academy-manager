@@ -66,7 +66,10 @@ const RETIRED_ROUTE_REDIRECTS = [
   // paths (#689). Matched here, before route resolution, the layout never runs.
   // The page files stay as the fallback for anything that reaches route
   // resolution anyway, and so the route-manifest equality test still passes.
-  { source: "/admin/parents", destination: "/admin/users?role=parent", permanent: true },
+  // Sidebar regroup PR 3: parents left the Staff list, so the bookmark lands on
+  // Families. Temporary on purpose: the old 308 to `/admin/users?role=parent`
+  // is pinned in some browsers, and a 307 keeps this move reversible.
+  { source: "/admin/parents", destination: "/admin/families", permanent: false },
   { source: "/admin/coaches", destination: "/admin/users?role=coach", permanent: true },
   // #839: the orphan add-user page. One form now — the directory's dialog,
   // which `?add=1` opens.

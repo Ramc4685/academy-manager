@@ -253,6 +253,26 @@ function collectConsoleErrors(page: Page): string[] {
   return errors;
 }
 
+/**
+ * The Families list reads `/admin/billing/setup`; the catch-all `{}` stub has
+ * no `rows`, and the page trips over that before it paints. The redirect
+ * specs that land on Families stub an empty page explicitly.
+ */
+async function stubEmptyFamilies(page: Page) {
+  await page.route("**/api/v2/admin/billing/setup*", (route) =>
+    fulfillJson(route, {
+      rows: [],
+      summary: {
+        families_total: 0,
+        families_registered: 0,
+        families_no_card: 0,
+        outstanding_total_cents: 0,
+      },
+      next_cursor: null,
+    }),
+  );
+}
+
 function fulfillJson(route: Route, body: unknown) {
   return route.fulfill({
     status: 200,
@@ -1021,20 +1041,20 @@ test.describe("Rally admin shell", () => {
 
   // #827: the old people bookmarks. Same #689 shape as the dues pair — they
   // used to render the `(admin)` layout just to throw the redirect signal.
-  test("the parents and coaches bookmarks redirect into the Users directory", async ({
+  // Sidebar regroup PR 3: parents left the Staff list, so /admin/parents now
+  // lands on Families; /admin/coaches still opens the Coaches pill.
+  test("the parents and coaches bookmarks redirect to Families and Staff", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    for (const [bookmark, role] of [
-      ["/admin/parents", "parent"],
-      ["/admin/coaches", "coach"],
-    ]) {
+    await stubEmptyFamilies(page);
+    for (const [bookmark, landing] of [
+      ["/admin/parents", /\/admin\/families$/],
+      ["/admin/coaches", /\/admin\/users\?role=coach$/],
+    ] as const) {
       await page.goto(bookmark);
-      await expect(page).toHaveURL(
-        new RegExp(`/admin/users\\?role=${role}$`),
-        { timeout: 30_000 },
-      );
+      await expect(page).toHaveURL(landing, { timeout: 30_000 });
     }
     expect(
       errors,
@@ -1079,23 +1099,119 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("/admin/parents redirects into the Users directory on the parent tab", async ({
+  test("/admin/parents redirects to Families (sidebar regroup PR 3)", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
+    await stubEmptyFamilies(page);
     // Arm before navigating: the redirect fires during load and can abort
     // `page.goto` itself, and the 5s expect default is shorter than a cold
     // compile — the same race #683 armed for the other bookmark redirects.
-    const landed = page.waitForURL(/\/admin\/users\?role=parent$/, { timeout: 30_000 });
+    const landed = page.waitForURL(/\/admin\/families$/, { timeout: 30_000 });
     await page.goto("/admin/parents", { waitUntil: "commit" }).catch(() => undefined);
     await landed;
-    await expect(page.getByTestId("admin-users")).toBeVisible();
-    // Parent tab must NOT show the coach-only engagement strip.
-    await expect(page.getByTestId("coach-engagement-stats")).toHaveCount(0);
+    await expect(page.getByTestId("admin-families")).toBeVisible();
+    await expect(page.getByTestId("admin-users")).toHaveCount(0);
     expect(
       errors,
       `App console errors on /admin/parents redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  // A browser that cached the old 308 still lands on `/admin/users?role=parent`;
+  // nothing server-side can clear that, so the URL stays a working parent list
+  // with a banner pointing at Families and no pill selected (spec §3.1).
+  test("/admin/users?role=parent still lists parents behind a Families banner", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const seen: string[] = [];
+    await page.route("**/api/v2/admin/users?*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const url = new URL(route.request().url());
+      seen.push(url.search);
+      return fulfillJson(route, {
+        users:
+          url.searchParams.get("role") === "parent"
+            ? [
+                {
+                  user_id: "parent-e2e",
+                  email: "parent@example.com",
+                  display_name: "Parent E2E",
+                  role: "parent",
+                  roles: ["parent"],
+                  status: "active",
+                },
+              ]
+            : [],
+      });
+    });
+    await page.goto("/admin/users?role=parent");
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    await expect(page.getByTestId("admin-users-parents-banner")).toContainText("Families");
+    await expect(page.getByTestId("admin-users-row-parent-e2e")).toBeVisible();
+    // The banner replaces a pill: no Parents pill exists any more.
+    await expect(page.getByTestId("admin-users-filter-parent")).toHaveCount(0);
+    for (const pill of ["all", "coach", "assistant_coach", "admin"]) {
+      await expect(page.getByTestId(`admin-users-filter-${pill}`)).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+    }
+    // The parent list is asked for as-is, never with the staff exclusion.
+    expect(seen.some((q) => q.includes("role=parent"))).toBe(true);
+    expect(seen.some((q) => q.includes("exclude_role"))).toBe(false);
+    expect(
+      errors,
+      `App console errors on /admin/users?role=parent: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("Staff lists coaches and admins only, and keeps a coach who is also a parent", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const STAFF = [
+      { user_id: "coach-e2e", email: "coach@example.com", display_name: "Coach E2E", role: "coach", roles: ["coach"], status: "active" },
+      { user_id: "coach-parent-e2e", email: "both@example.com", display_name: "Coach And Parent", role: "parent", roles: ["parent", "coach"], status: "active" },
+      { user_id: "parent-e2e", email: "parent@example.com", display_name: "Parent Only", role: "parent", roles: ["parent"], status: "active" },
+    ];
+    const queries: string[] = [];
+    await page.route("**/api/v2/admin/users?*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const url = new URL(route.request().url());
+      queries.push(url.search);
+      // Mirror the BFF (#918): exclude_role=parent drops parent-only accounts.
+      const excludeParentOnly = url.searchParams.get("exclude_role") === "parent";
+      return fulfillJson(route, {
+        users: excludeParentOnly
+          ? STAFF.filter((user) => user.roles.some((r) => r !== "parent"))
+          : STAFF,
+      });
+    });
+    await page.goto("/admin/users");
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    await expect(page.getByTestId("admin-users-filter-all")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("admin-users-filter-all")).toContainText("All staff");
+    await expect(page.getByTestId("admin-users-row-coach-e2e")).toBeVisible();
+    await expect(page.getByTestId("admin-users-row-coach-parent-e2e")).toBeVisible();
+    await expect(page.getByTestId("admin-users-row-parent-e2e")).toHaveCount(0);
+    await expect(page.getByTestId("admin-users-parents-link")).toHaveAttribute(
+      "href",
+      "/admin/families",
+    );
+    await expect(page.getByTestId("admin-users-parents-banner")).toHaveCount(0);
+    expect(queries.some((q) => q.includes("exclude_role=parent"))).toBe(true);
+    // The nav row is relabelled but keeps its id, so the testid survives.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-users")).toContainText("Staff");
+    await expect(nav.getByTestId("admin-nav-users")).not.toContainText("Users");
+    expect(
+      errors,
+      `App console errors on /admin/users: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 

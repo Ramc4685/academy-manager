@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 
 /**
- * Parents live in the Users directory, filtered by role.
+ * Parents live under Families (sidebar regroup PR 3). The Staff directory at
+ * `/admin/users` lists coaches and admins only.
  *
  * `/admin/parents` is forwarded by `RETIRED_ROUTE_REDIRECTS` in
  * `next.config.ts`, which is matched before route resolution — rendering the
@@ -11,5 +12,5 @@ import { redirect } from "next/navigation";
  * route-manifest equality test still passes.
  */
 export default function AdminParentsPage() {
-  redirect("/admin/users?role=parent");
+  redirect("/admin/families");
 }

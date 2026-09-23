@@ -80,6 +80,10 @@ export default function AdminUserDetailPage() {
   // Any coaching role on the user, not only the primary one: a parent who
   // also coaches, or an assistant coach, still needs pay rates and sessions.
   const isCoach = hasCoachRole(user);
+  // Sidebar regroup PR 3: the sidebar says Staff, so a parent-only account
+  // opened from Families, search or an old link says what it is up front.
+  const heldRoles = user.roles.length > 0 ? user.roles : [user.role];
+  const parentOnly = heldRoles.every((r) => r === "parent");
 
   const invalidate = () => {
     void queryClient.invalidateQueries({
@@ -91,6 +95,22 @@ export default function AdminUserDetailPage() {
   return (
     <section className="space-y-6" data-testid="admin-user-detail">
       <BackLink />
+      {parentOnly && (
+        <p
+          className="rounded-md border border-rally-line bg-white px-3 py-2 text-sm text-rally-base"
+          role="status"
+          data-testid="admin-user-parent-only-banner"
+        >
+          This is a parent account, not staff. Children, invoices and autopay are on the{" "}
+          <Link
+            href={`/admin/families/${encodeURIComponent(user.user_id)}`}
+            className="font-medium underline underline-offset-2"
+          >
+            family record
+          </Link>
+          .
+        </p>
+      )}
       <Header user={user} />
       <div className="grid gap-6 lg:grid-cols-3">
         <Card p={20} className="lg:col-span-2">

@@ -194,6 +194,19 @@ describe("isOwnerOnlyRoute", () => {
 });
 
 describe("metaForPath", () => {
+  // Sidebar regroup PR 3: the list holds coaches and admins only, so it is
+  // named for what is in it. The nav id stays `users` (pinned above).
+  it("titles the Staff list and keeps its nav id", () => {
+    const meta = metaForPath("/admin/users");
+    expect(meta.title).toBe("Staff");
+    expect(meta.subtitle).toBe("Coaches and admins: logins, roles, pay");
+    expect(meta.breadcrumbs).toEqual(["Admin", "People", "Staff"]);
+    const item = ADMIN_NAV.flatMap((group) => group.items).find(
+      (entry) => entry.href === "/admin/users",
+    );
+    expect(item).toMatchObject({ id: "users", label: "Staff" });
+  });
+
   it("titles the Families list", () => {
     expect(metaForPath("/admin/families").title).toBe("Families");
     // Reports is Month close now (spec §5); the sub-reports say so too.

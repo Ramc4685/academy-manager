@@ -51,7 +51,7 @@ const eq = (route: string) => (p: string) => p === route;
  * Rally admin nav in six groups (sidebar regroup spec §2): the day's start
  * point, the curriculum, the people, outbound comms, the money, and the
  * academy's own configuration. Every item carries an explicit `id` so the
- * testid survives a label change; "Users" keeps its id when it becomes Staff.
+ * testid survives a label change; "Staff" (formerly "Users") keeps the id `users`.
  */
 export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
@@ -77,7 +77,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       // lanyard. Three People destinations, three glyphs.
       { id: "students", href: "/admin/students", label: "Students", icon: "user", match: startsWith("/admin/students") },
       { id: "families", href: "/admin/families", label: "Families", icon: "family", match: startsWith("/admin/families") },
-      { id: "users", href: "/admin/users", label: "Users", icon: "badge", match: startsWith("/admin/users") },
+      { id: "users", href: "/admin/users", label: "Staff", icon: "badge", match: startsWith("/admin/users") },
     ],
   },
   {
@@ -191,7 +191,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
   "/admin/students": { title: "Students", subtitle: "Every child: classes, attendance, status", breadcrumbs: ["Admin", "People", "Students"] },
   "/admin/pathway": { title: "Skill Pathways", subtitle: "Curriculum levels and skills", breadcrumbs: ["Admin", "Pathway"] },
-  "/admin/users": { title: "Users", subtitle: "Coaches, parents, and admins", breadcrumbs: ["Admin", "People", "Users"] },
+  "/admin/users": { title: "Staff", subtitle: "Coaches and admins: logins, roles, pay", breadcrumbs: ["Admin", "People", "Staff"] },
   "/admin/inbox": { title: "Inbox", subtitle: "Registrations, waitlist, level-ups, and parent requests", breadcrumbs: ["Admin", "Inbox"] },
   // The registration detail page is the one route left under /admin/registrations
   // now that the list redirects to the Inbox (#776); without its own key it would
