@@ -314,3 +314,75 @@ export function fetchFamilyIndex(params: FamilyIndexParams = {}): Promise<Family
 export function fetchFamilyIndexSummary(): Promise<FamilyIndexSummary> {
   return apiFetch<FamilyIndexSummary>("/admin/families/summary", { method: "GET" });
 }
+
+// ---------------------------------------------------------------------------
+// People CRM family record page (Lane A4). Shapes mirror
+// backend/v2/interfaces/admin/family_index_views.py (AdminFamilyRecordView)
+// and backend/v2/interfaces/admin/family_record_routes.py.
+// ---------------------------------------------------------------------------
+
+/** `GET /admin/families/{familyId}/record`: the family's index row. */
+export interface FamilyRecordView {
+  generated_at: string;
+  family: FamilyIndexRow;
+  money_visible: boolean;
+  warnings: string[];
+}
+
+export function fetchFamilyRecord(familyId: string): Promise<FamilyRecordView> {
+  return apiFetch<FamilyRecordView>(
+    `/admin/families/${encodeURIComponent(familyId)}/record`,
+    { method: "GET" },
+  );
+}
+
+/** A coach note the coach shared with the family (#665), read-only. */
+export interface StudentCoachNote {
+  note_id: string;
+  session_id: string | null;
+  session_title: string | null;
+  coach_name: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface StudentCoachNoteList {
+  student_id: string;
+  notes: StudentCoachNote[];
+}
+
+export function fetchStudentCoachNotes(studentId: string): Promise<StudentCoachNoteList> {
+  return apiFetch<StudentCoachNoteList>(
+    `/admin/students/${encodeURIComponent(studentId)}/coach-notes`,
+    { method: "GET" },
+  );
+}
+
+export type CorrectableAttendanceStatus = "present" | "absent" | "late";
+
+export interface CorrectedAttendance {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  student_id: string;
+  status: CorrectableAttendanceStatus;
+  previous_status: CorrectableAttendanceStatus | "voided" | null;
+  corrected_by: string | null;
+  corrected_at: string | null;
+}
+
+/**
+ * Admin correction of one recorded mark (#517): any time, no coach window.
+ * The backend keeps the previous status, the admin and the reason on the row
+ * and emits `Coaching.AttendanceCorrected`.
+ */
+export function correctStudentAttendance(
+  occurrenceId: string,
+  studentId: string,
+  payload: { status: CorrectableAttendanceStatus; reason: string | null },
+): Promise<CorrectedAttendance> {
+  return apiFetch<CorrectedAttendance>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}

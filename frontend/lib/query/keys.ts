@@ -73,6 +73,10 @@ export const queryKeys = {
     familyIndexSummary: () => ["admin", "families", "index-summary"] as const,
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
+    familyRecord: (familyId: string) =>
+      ["admin", "families", familyId, "record"] as const,
+    studentCoachNotes: (studentId: string) =>
+      ["admin", "student", studentId, "coach-notes"] as const,
     registrations: () => ["admin", "registrations"] as const,
     registrationDetail: (applicationId: string) =>
       ["admin", "registrations", applicationId] as const,
