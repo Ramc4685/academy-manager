@@ -24,6 +24,10 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     Eligibility,
     autopay_eligibility,
 )
+from backend.v2.contexts.billing.application.family_money import (
+    open_balance,
+    registration_state,
+)
 
 TIMELINE_CAP = 200
 
@@ -858,14 +862,11 @@ def build_family_billing_view(
             if next_charge is None or candidate < next_charge:
                 next_charge = candidate
 
-    open_rows = [inv for inv in facts.invoices if inv.status in CHARGEABLE_INVOICE_STATUSES]
-
-    if facts.customer.has_card:
-        registration = "registered"
-    elif facts.customer.last_invited_at is not None:
-        registration = "invited"
-    else:
-        registration = "not_invited"
+    # The one balance rule, shared with the People CRM family index (#A3).
+    balance_cents, open_invoice_count = open_balance(facts.invoices)
+    registration = registration_state(
+        has_card=facts.customer.has_card, last_invited_at=facts.customer.last_invited_at
+    )
 
     return {
         "generated_at": _iso(generated_at),
@@ -878,8 +879,8 @@ def build_family_billing_view(
             "phone": facts.parent.phone,
         },
         "header": {
-            "balance_cents": sum(inv.balance_due_cents for inv in open_rows),
-            "open_invoice_count": len(open_rows),
+            "balance_cents": balance_cents,
+            "open_invoice_count": open_invoice_count,
             "available_credit_cents": facts.available_credit_cents,
             "last_payment": _last_payment(facts),
             "autopay": {
