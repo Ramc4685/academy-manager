@@ -7,9 +7,10 @@ import { CheckIcon } from "./icons";
 import styles from "./public-page.module.css";
 
 /**
- * The `#trial` section. Lane B4 renders the anonymous trial request form in
- * the `form` slot; until it does, the slot points the visitor at Register so
- * the primary action is never a dead end.
+ * The `#trial` section. PublicTenantPage puts the anonymous trial request
+ * form (Lane B4, TrialRequestForm) in the `form` slot while trials are open;
+ * with no form supplied the slot points the visitor at Register so the
+ * primary action is never a dead end. Trials closed: the notice, no form.
  */
 export function TrialSection({
   academyName,

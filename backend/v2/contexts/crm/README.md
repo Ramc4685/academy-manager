@@ -45,6 +45,7 @@ Collection `crm_contacts`, one document per inquiry.
 | `child_name` | str or null, <= 120 | CRM only | The public form must not collect it (brief §5). |
 | `child_age` | str or null, <= 20 | both | Free text as typed ("9", "5 to 8"). Not a number on purpose. |
 | `requested_session_id` | str or null, <= 64 | both | The class asked about, when one was picked. Not checked against `sessions` here; the consumer validates it if it cares. |
+| `message` | str or null, <= 1000 | both | Optional free-text note left with the inquiry (the public form's "anything the coach should know"). Plain text, line breaks kept; never rendered as HTML. Not part of the dedupe key. |
 | `pipeline_status` | `PipelineStatus` | both | **The lifecycle stage** of this lead. |
 | `pipeline_override` | `{column, set_by, set_at}` or null | CRM only | A board move with no system write behind it (spec §3.4). Not set by CreateContact. |
 | `referrer_parent_id` | str or null | CRM only | Who referred them. Only allowed when `source == "referral"`. |
@@ -217,6 +218,18 @@ The endpoint takes no academy, tenant or slug parameter.
   enrollment context) for public leads. That queue is for signed-in parents.
 - Rate limiting, the honeypot, size caps on the raw request body and the
   acknowledgement and academy emails belong to the endpoint, not here.
+
+## The public trial-request endpoint (Lane B4)
+
+`POST /api/v2/public/trial-requests` (`interfaces/public/trial_request_routes.py`,
+wired by `composition/public_trial_requests.py`) is the `website` writer. It
+takes the academy from the host only, refuses with the unknown-host 404 while
+the page is unpublished, answers `409 Public.TrialsClosed` when trials are
+switched off, resolves the optional class from its opaque `public_id` against
+the academy's **published** classes only, and returns one acknowledgement body
+for new, repeated and honeypot submissions. `created` is used only after the
+response, to email the academy's owners once per new row.
+
 
 ## Tests
 

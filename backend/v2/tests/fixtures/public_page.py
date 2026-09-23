@@ -15,6 +15,33 @@ from typing import Any
 from fastapi import FastAPI, Request
 
 from backend.v2.composition.public_page_read import compose_public_page_read
+from backend.v2.composition.public_trial_requests import (
+    PublicTrialRequests,
+    TrialRequestOwnerEmail,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
+    MongoAudienceResolver,
+)
+from backend.v2.contexts.communications.infrastructure.stub_send_port import StubEmailSendPort
+from backend.v2.contexts.crm.application.use_cases.create_contact import CreateContact
+from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import (
+    SubmitWebsiteInquiry,
+)
+from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
+    MongoCrmContactRepository,
+)
+from backend.v2.contexts.enrollment.application.use_cases.public_class_choice import (
+    ResolvePublicClassChoice,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
+    MongoSessionRepository,
+)
+from backend.v2.contexts.identity.application.public_academy_profile import (
+    GetPublicAcademyProfile,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
+    MongoAcademyRepository,
+)
 from backend.v2.interfaces.public.router import router as public_router
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.http import register_exception_handlers
@@ -249,4 +276,22 @@ def build_app(
     )
     app.include_router(public_router, prefix="/api/v2")
     app.state.public_page = compose_public_page_read(db)
+    # Lane B4: the trial form, with the recording stub in place of Resend.
+    app.state.sent_email = StubEmailSendPort()
+    app.state.public_trial_requests = compose_trial_requests_for_test(db, app.state.sent_email)
     return app
+
+
+def compose_trial_requests_for_test(db: Any, sender: Any) -> PublicTrialRequests:
+    """``compose_public_trial_requests`` with an injected send port (no settings)."""
+    academies = MongoAcademyRepository(db)
+    return PublicTrialRequests(
+        get_academy_profile=GetPublicAcademyProfile(academies),
+        resolve_class_choice=ResolvePublicClassChoice(MongoSessionRepository(db)),
+        submit_inquiry=SubmitWebsiteInquiry(CreateContact(MongoCrmContactRepository(db))),
+        notifier=TrialRequestOwnerEmail(
+            academies=academies,
+            audiences=MongoAudienceResolver(db=db),
+            sender=sender,
+        ),
+    )

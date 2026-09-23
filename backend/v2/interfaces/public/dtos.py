@@ -111,8 +111,52 @@ class PublicAcademyNotPublishedDto(BaseModel):
     academy: PublicBrandDto
 
 
+class PublicTrialRequestAckDto(BaseModel):
+    """The ONE answer to an accepted trial request (Lane B4).
+
+    Identical for a new inquiry, a repeat of one already on file and a
+    honeypot hit, so the form cannot be used to learn who has already asked
+    (brief section 5). Carries nothing about the stored row.
+    """
+
+    state: Literal["received"] = "received"
+
+
+class PublicTrialFormRequest(BaseModel):
+    """What the anonymous trial form may send (Lane B4). Request-only.
+
+    Deliberately absent: any academy, tenant or slug (the host decides), the
+    child's name (brief section 5: not collected), ``created_by`` and any
+    referrer. Unknown keys are ignored, never stored. Loose types on purpose:
+    the route validates and answers with per-field messages, never with the
+    submitted values echoed back.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    #: Free text as typed ("9", "5 to 8"); a number is accepted too.
+    player_age: str | int | None = None
+    #: A class ``public_id`` from the page, or blank for "not sure".
+    class_id: str | None = None
+    message: str | None = None
+    #: Must be true: consent to be contacted about THIS request.
+    contact_about_request: bool = False
+    #: News and offers; off unless ticked.
+    marketing_opt_in: bool = False
+    #: Honeypot. Hidden from people and assistive technology; a bot fills it.
+    website: str | None = None
+
+
 #: Every model the public persona can serialise, for the no-leak test.
 PUBLIC_RESPONSE_MODELS: tuple[type[BaseModel], ...] = (
     PublicAcademyPageDto,
     PublicAcademyNotPublishedDto,
+    PublicTrialRequestAckDto,
 )
+
+#: Every request body the public persona accepts, for the no-leak test's
+#: request allow-list (these fields are what a stranger may submit).
+PUBLIC_REQUEST_MODELS: tuple[type[BaseModel], ...] = (PublicTrialFormRequest,)

@@ -28,6 +28,9 @@ _PUBLIC_WRITE_PATHS = {
     # infeasible, but unlimited anonymous POSTs would let one client hammer
     # Mongo and the Firebase Admin API (issue #546).
     ("POST", "/api/v2/magic-link/consume"),
+    # Anonymous public trial request (public tenant page, Lane B4). Tighter
+    # per-IP window in _PATH_LIMIT_OVERRIDES, plus a per-host ceiling below.
+    ("POST", "/api/v2/public/trial-requests"),
 }
 
 # Paths with their own (limit, window_seconds), overriding the instance
@@ -40,6 +43,20 @@ _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
     # marketing page a real visitor reloads and shares, so a generous
     # per-client ceiling that still caps scraping and volumetric abuse.
     ("GET", "/api/v2/public/academy"): (120, 60),
+    # A real family submits the trial form once, maybe a few times while
+    # fixing a typo: 10 per client IP per 10 minutes.
+    ("POST", "/api/v2/public/trial-requests"): (10, 600),
+}
+
+# Second, per-HOST ceiling for anonymous writes that land on one academy
+# (Lane B4): caps a flood spread across many client IPs against a single
+# academy's inbox. Checked only after the per-IP limit passes, so one client
+# cannot spend the host's whole budget. Keyed on the host the tenant
+# resolver reads (``x-forwarded-host`` else ``host``), normalised. In
+# production ``single_academy`` mode every host maps to one academy, so a
+# client rotating Host headers still meets its own per-IP limit first.
+_PER_HOST_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
+    ("POST", "/api/v2/public/trial-requests"): (100, 600),
 }
 
 _PROXY_AUTH_HEADER = "x-cm-proxy-auth"
@@ -72,6 +89,17 @@ def _is_stripe_session_path(method: str, path: str) -> bool:
         and path.endswith(_INVOICE_PAY_SUFFIX)
         and len(path) > len(_INVOICE_PAY_PREFIX) + len(_INVOICE_PAY_SUFFIX)
     )
+
+
+def _request_host(request: Request) -> str:
+    """The host the tenant resolver reads, lower-cased, port and trailing dot dropped."""
+    raw = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    host = raw.split(",")[0].strip().lower()
+    if host.startswith("["):  # IPv6 literal
+        host = host.split("]")[0] + "]"
+    else:
+        host = host.split(":")[0]
+    return host.rstrip(".") or "unknown"
 
 
 class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
@@ -118,22 +146,20 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         limit, window_seconds = limit_window
 
-        key = (self._client_key(request), request.url.path)
         now = self._clock()
         self._evict_expired(now)
-        window_started_at, count, _ = self._buckets.get(key, (now, 0, window_seconds))
-        elapsed = now - window_started_at
-        if elapsed >= window_seconds:
-            window_started_at = now
-            count = 0
-
-        count += 1
-        self._buckets[key] = (window_started_at, count, window_seconds)
+        path = request.url.path
+        retry_after = self._hit((self._client_key(request), path), limit, window_seconds, now)
+        if retry_after is None:
+            host_limit = _PER_HOST_LIMITS.get((request.method.upper(), path))
+            if host_limit is not None:
+                retry_after = self._hit(
+                    ("host:" + _request_host(request), path), host_limit[0], host_limit[1], now
+                )
         self._evict_over_capacity()
-        if count <= limit:
+        if retry_after is None:
             return await call_next(request)
 
-        retry_after = max(1, ceil(window_seconds - elapsed))
         return JSONResponse(
             status_code=429,
             content={
@@ -145,6 +171,20 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
             },
             headers={"Retry-After": str(retry_after)},
         )
+
+    def _hit(self, key: tuple[str, str], limit: int, window_seconds: int, now: float) -> int | None:
+        """Count one request against ``key``; the Retry-After seconds when over."""
+        window_started_at, count, _ = self._buckets.get(key, (now, 0, window_seconds))
+        elapsed = now - window_started_at
+        if elapsed >= window_seconds:
+            window_started_at = now
+            count = 0
+            elapsed = 0.0
+        count += 1
+        self._buckets[key] = (window_started_at, count, window_seconds)
+        if count <= limit:
+            return None
+        return max(1, ceil(window_seconds - elapsed))
 
     def _limit_for(self, request: Request) -> tuple[int, int] | None:
         method_path = (request.method.upper(), request.url.path)

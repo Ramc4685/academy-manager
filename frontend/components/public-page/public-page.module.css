@@ -30,6 +30,8 @@
   --queue-bg: #fefce8;
   --queue-fg: #854d0e;
   --queue-dot: #eab308;
+  --err: #b91c1c;
+  --field-line: #64748b;
   --brand-fill: #0f172a;
   --brand-on: #ffffff;
 
@@ -56,6 +58,8 @@
     --few-fg: #fcd34d;
     --queue-bg: #292306;
     --queue-fg: #fde047;
+    --err: #fca5a5;
+    --field-line: #7c8ba3;
   }
 }
 
@@ -907,4 +911,170 @@
       opacity: 0.55;
     }
   }
+}
+
+/* ---------- trial request form (Lane B4) ---------- */
+.trialForm {
+  display: grid;
+  gap: 14px;
+}
+
+.fieldPair {
+  display: grid;
+  gap: 14px;
+}
+
+@media (min-width: 520px) {
+  .fieldPair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.field label,
+.fieldLegend {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.optional {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid var(--field-line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 16px;
+}
+
+.field textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.field [aria-invalid="true"] {
+  border-color: var(--err);
+  border-width: 2px;
+}
+
+.fieldHint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.fieldError {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--err);
+}
+
+.check {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 4px 10px;
+  align-items: start;
+  font-size: 15px;
+}
+
+.check input {
+  width: 22px;
+  height: 22px;
+  margin: 1px 0 0;
+  accent-color: var(--brand-fill);
+}
+
+.check .fieldError {
+  grid-column: 2;
+}
+
+.errorSummary {
+  border: 2px solid var(--err);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 6px;
+}
+
+.errorSummary h3 {
+  font-size: 1rem;
+}
+
+.errorSummary ul {
+  display: grid;
+  gap: 4px;
+}
+
+.page .errorSummary a {
+  color: var(--err);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.fine {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.page .fine a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* Honeypot: off-screen (not display:none, which some bots skip) and hidden
+   from assistive technology by aria-hidden on the wrapper. */
+.honeypot {
+  position: absolute;
+  left: -10000px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.trialDone {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.trialDone h3 {
+  font: 600 1.3rem / 1.2 var(--font-outfit), system-ui, sans-serif;
+}
+
+.trialDone svg {
+  width: 32px;
+  height: 32px;
+  color: var(--ok-dot);
+}
+
+.page .trialSubmit[aria-disabled="true"] {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

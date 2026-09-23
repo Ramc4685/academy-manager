@@ -16,12 +16,14 @@ import {
   faqEntries,
 } from "@/lib/public-page/page-model";
 import { serializeJsonLd } from "@/lib/public-page/structured-data";
+import { trialClassOptions } from "@/lib/public-page/trial-request";
 import type { PublicAcademyPage } from "@/lib/public-page/types";
 
 import { ClassRow } from "./ClassRow";
 import { PageFrame, SiteFooter, SiteHeader, type NavItem } from "./chrome";
 import { ArrowIcon, CheckIcon, CourtDrawing, PinIcon, PlusIcon } from "./icons";
 import styles from "./public-page.module.css";
+import { TrialRequestForm } from "./TrialRequestForm";
 import { TrialSection } from "./TrialSection";
 
 function lowerFirst(value: string): string {
@@ -178,7 +180,16 @@ export function PublicTenantPage({
           trialsOpen={view.trialsOpen}
           hasClasses={view.hasClasses}
           allFull={view.allFull}
-          form={trialForm}
+          form={
+            trialForm ?? (
+              <TrialRequestForm
+                academyName={academy.name}
+                classOptions={trialClassOptions(classes)}
+                privacyNoticeUrl={page.page.privacy_notice_url}
+                variant={!view.hasClasses ? "notify" : view.allFull ? "waitlist" : "trial"}
+              />
+            )
+          }
         />
 
         <section className={styles.section} aria-labelledby="joining-heading">

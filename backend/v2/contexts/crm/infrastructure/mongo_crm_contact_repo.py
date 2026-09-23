@@ -57,6 +57,7 @@ class MongoCrmContactRepository(TenantScopedRepository):
             child_name=doc.get("child_name"),
             child_age=doc.get("child_age"),
             requested_session_id=doc.get("requested_session_id"),
+            message=doc.get("message"),
             pipeline_status=doc.get("pipeline_status", "lead"),
             pipeline_override=override,
             referrer_parent_id=doc.get("referrer_parent_id"),
