@@ -1,6 +1,6 @@
 # Public tenant page B1: Program entity, per-class publish switch, public page settings, migration 0194
 
-PR: #TBD
+PR: #934
 
 ## What changed
 
