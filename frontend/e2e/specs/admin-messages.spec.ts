@@ -316,6 +316,40 @@ test.describe("admin direct messages (#864)", () => {
     expect(readCalls).toEqual(["m-new"]);
   });
 
+  // #917: the page is three lanes long on a phone and the sidebar cannot
+  // deep-link into the middle of it, so each lane card carries a fragment id
+  // and a labelled jump nav points at them.
+  test("lane jump links target the direct, broadcast and campaign cards", async ({
+    page,
+  }) => {
+    await page.setViewportSize(PHONE);
+    await stubMessagesPage(page);
+
+    await page.goto("/admin/messages");
+    await expect(page.getByTestId("admin-messages")).toBeVisible();
+
+    const nav = page.getByRole("navigation", { name: "Message lanes" });
+    await expect(nav).toBeVisible();
+    for (const [id, label] of [
+      ["direct", "Direct messages"],
+      ["broadcast", "Broadcast"],
+      ["campaign", "Email campaign"],
+    ] as const) {
+      const link = nav.getByTestId(`admin-messages-lane-link-${id}`);
+      await expect(link).toHaveText(label);
+      await expect(link).toHaveAttribute("href", `#${id}`);
+      // The anchor resolves: exactly one element on the page carries the id,
+      // and it is the lane card that holds the matching heading.
+      const target = page.locator(`#${id}`);
+      await expect(target).toHaveCount(1);
+      await expect(target.getByText(label, { exact: true }).first()).toBeAttached();
+    }
+
+    // Following the last link lands on the campaign card.
+    await nav.getByTestId("admin-messages-lane-link-campaign").click();
+    await expect(page).toHaveURL(/#campaign$/);
+  });
+
   test("on desktop an open thread sits beside the list", async ({ page }) => {
     await page.setViewportSize(DESKTOP);
     await stubMessagesPage(page);

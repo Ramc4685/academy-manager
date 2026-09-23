@@ -37,6 +37,13 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { LaneHeader } from "@/components/ds/lane";
 
+/** The three lanes on this page, in page order; ids double as fragment anchors. */
+const MESSAGE_LANES = [
+  { id: "direct", label: "Direct messages" },
+  { id: "broadcast", label: "Broadcast" },
+  { id: "campaign", label: "Email campaign" },
+] as const;
+
 export default function AdminMessagesPage() {
   return (
     <Suspense fallback={<section data-testid="admin-messages" className="space-y-5" />}>
@@ -126,6 +133,24 @@ function AdminMessagesContent() {
 
   return (
     <section data-testid="admin-messages" className="space-y-5">
+      {/* Lane jump links: the page is three lanes long on a phone, and the
+          sidebar entry cannot deep-link into the middle of it. */}
+      <nav
+        aria-label="Message lanes"
+        className="flex flex-wrap gap-x-4 gap-y-1 text-sm"
+        data-testid="admin-messages-lane-links"
+      >
+        {MESSAGE_LANES.map((lane) => (
+          <a
+            key={lane.id}
+            href={`#${lane.id}`}
+            className="inline-flex min-h-touch items-center font-medium text-rally-cobalt-700 hover:underline"
+            data-testid={`admin-messages-lane-link-${lane.id}`}
+          >
+            {lane.label}
+          </a>
+        ))}
+      </nav>
       {isError && (
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
           <div role="alert" className="flex items-center justify-between gap-3">
@@ -150,7 +175,7 @@ function AdminMessagesContent() {
           dmRecipientId ? "grid grid-cols-1 gap-5" : "grid grid-cols-1 lg:grid-cols-2 gap-5"
         }
       >
-        <Card p={20}>
+        <Card p={20} id="direct">
           <LaneHeader index="01" title="Direct messages" />
 
           {isLoading ? (
@@ -246,7 +271,7 @@ function AdminMessagesContent() {
           )}
         </Card>
 
-        <Card p={20}>
+        <Card p={20} id="broadcast">
           <LaneHeader index="02" title="Broadcast" />
           <BroadcastComposer onSent={invalidate} />
           <div className="mt-6">
@@ -272,7 +297,7 @@ function AdminMessagesContent() {
         </Card>
       </div>
 
-      <Card p={20}>
+      <Card p={20} id="campaign">
         <LaneHeader index="03" title="Email campaign" />
         <EmailCampaignComposer />
       </Card>

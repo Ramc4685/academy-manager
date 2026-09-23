@@ -1998,7 +1998,7 @@ def compose_admin(
         async def list_parents(self, *, academy_id: str) -> list[ParentRosterEntry]:
             seen: dict[str, ParentRosterEntry] = {}
             for student in await self._all_students():
-                if student.parent_id not in seen:
+                if student.parent_id and student.parent_id not in seen:
                     seen[student.parent_id] = ParentRosterEntry(
                         parent_id=student.parent_id,
                         parent_name=student.parent_name or student.parent_id,

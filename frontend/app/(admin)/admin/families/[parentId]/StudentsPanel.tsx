@@ -11,6 +11,7 @@ import type { FamilyStudent } from "@/lib/api/admin-families";
 import { formatCents } from "@/lib/money";
 import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
+import type { StudentTab } from "@/lib/admin/student-tabs";
 
 import { shortDate } from "./family-view";
 
@@ -21,8 +22,9 @@ const STATUS_CHIP: Record<string, { variant: ChipVariant; label: string }> = {
   withdrawn: { variant: "expired", label: "Withdrawn" },
 };
 
-function studentHref(studentId: string): Route {
-  return `/admin/students/${encodeURIComponent(studentId)}` as Route;
+function studentHref(studentId: string, tab?: StudentTab): Route {
+  const base = `/admin/students/${encodeURIComponent(studentId)}`;
+  return (tab ? `${base}?tab=${tab}` : base) as Route;
 }
 
 export function StudentsPanel({
@@ -73,7 +75,7 @@ export function StudentsPanel({
         )}
         {isOwner && e.actions.includes("recurring_discount") && (
           <Link
-            href={studentHref(s.student_id)}
+            href={studentHref(s.student_id, "sessions")}
             className={`${linkClass} text-rally-cobalt-700 hover:underline`}
             data-testid={`enrollment-discount-${e.enrollment_id}`}
           >
