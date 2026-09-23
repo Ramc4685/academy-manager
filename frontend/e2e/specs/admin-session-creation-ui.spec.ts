@@ -150,6 +150,27 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     });
   });
 
+  // #917: the old sidebar entry pointed at /admin/waitlist, which has never
+  // been a page. The queue lives on the Inbox, so the sessions page carries a
+  // link straight to that tab.
+  test("sessions page links to the waitlist queue on the inbox", async ({ page }) => {
+    await stubAdminShell(page);
+    await page.route("**/api/v2/admin/sessions*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { sessions: [] });
+    });
+    await page.route("**/api/v2/admin/inbox/counts*", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
+
+    await page.goto("/admin/sessions");
+    const link = page.getByTestId("admin-sessions-waitlist-link");
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", "/admin/inbox?tab=waitlist");
+    // Create session stays on the same row, not displaced by the new link.
+    await expect(page.getByTestId("admin-sessions-create")).toBeVisible();
+  });
+
   test("billing rules save the late fee and the invoice schedule from one panel", async ({
     page,
   }) => {

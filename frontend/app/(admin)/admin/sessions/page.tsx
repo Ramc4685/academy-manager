@@ -12,6 +12,7 @@
 
 import dynamic from "next/dynamic";
 import type { Route } from "next";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -211,15 +212,26 @@ export default function AdminSessionsPage() {
             Upcoming academy sessions
           </span>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          icon={Icon.plus(14, "currentColor")}
-          onClick={() => setCreateOpen(true)}
-          data-testid="admin-sessions-create"
-        >
-          Create session
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* The waitlist is a queue on the Inbox, not its own page; the old
+              sidebar entry pointed at /admin/waitlist, which does not exist. */}
+          <Link
+            href={"/admin/inbox?tab=waitlist" as Route}
+            className="inline-flex min-h-touch items-center text-sm font-medium text-rally-cobalt-700 hover:underline"
+            data-testid="admin-sessions-waitlist-link"
+          >
+            Waitlist
+          </Link>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Icon.plus(14, "currentColor")}
+            onClick={() => setCreateOpen(true)}
+            data-testid="admin-sessions-create"
+          >
+            Create session
+          </Button>
+        </div>
       </div>
 
       {isError && (
