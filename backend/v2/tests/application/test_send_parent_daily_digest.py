@@ -344,4 +344,14 @@ def test_digest_reply_to_prefers_the_academy_explicit_reply_to() -> None:
         reply_to("platform@example.com", {**doc, "email_reply_to": "desk@example.com"})
         == "desk@example.com"
     )
+    # A blank, whitespace-only or invalid explicit reply-to falls through to
+    # the pre-L9a contact-address chain unchanged.
+    for blank in ("", "   ", None, "not-an-email"):
+        assert (
+            reply_to("platform@example.com", {**doc, "email_reply_to": blank})
+            == "contact@example.com"
+        )
+    assert reply_to("platform@example.com", {"owner_email": "owner@example.com"}) == (
+        "owner@example.com"
+    )
     assert reply_to("platform@example.com", None) == "platform@example.com"

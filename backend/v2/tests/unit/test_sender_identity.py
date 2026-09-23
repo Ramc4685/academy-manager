@@ -17,6 +17,7 @@ from backend.v2.contexts.communications.infrastructure.resend_send_port import (
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import StubEmailSendPort
 from backend.v2.shared.comms.sender_identity import (
+    REPLY_TO_MAX_LENGTH,
     InvalidSenderValue,
     SenderIdentity,
     format_from_header,
@@ -63,6 +64,15 @@ def test_sender_name_trims_and_blank_clears() -> None:
 def test_reply_to_rejects_invalid(bad: str) -> None:
     with pytest.raises(InvalidSenderValue):
         validate_reply_to(bad)
+
+
+def test_reply_to_rejects_over_length() -> None:
+    local = "a" * 64
+    domain = ".".join(["b" * 60] * 4) + ".com"
+    too_long = f"{local}@{domain}"
+    assert len(too_long) > REPLY_TO_MAX_LENGTH
+    with pytest.raises(InvalidSenderValue):
+        validate_reply_to(too_long)
 
 
 def test_reply_to_trims_and_blank_clears() -> None:

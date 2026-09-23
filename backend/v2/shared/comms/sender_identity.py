@@ -33,6 +33,8 @@ from backend.v2.shared.tenancy.context import current_academy_id
 log = logging.getLogger(__name__)
 
 SENDER_NAME_MAX_LENGTH = 80
+# RFC 5321 practical limit for a forward-path address.
+REPLY_TO_MAX_LENGTH = 254
 
 # CR/LF (and every other control character) would let a value start a new
 # header; angle brackets would let it smuggle a second address into From.
@@ -74,6 +76,8 @@ def validate_reply_to(value: str | None) -> str | None:
     cleaned = value.strip()
     if not cleaned:
         return None
+    if len(cleaned) > REPLY_TO_MAX_LENGTH:
+        raise InvalidSenderValue(f"Reply-to must be {REPLY_TO_MAX_LENGTH} characters or fewer.")
     try:
         return str(_EMAIL_ADAPTER.validate_python(cleaned))
     except ValidationError as exc:
