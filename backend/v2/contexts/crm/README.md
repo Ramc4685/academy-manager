@@ -15,7 +15,8 @@ code disagree, the tests in `backend/v2/tests/unit/test_crm_create_contact.py`
 decide.
 
 This context ships the record, the repository, the use case and migration
-`0192_crm_contacts`. **It ships no route and no composition wiring.** Each
+`0192_crm_contacts`. The contact store ships no route and no composition
+wiring (the read-only family index below has its own). Each
 consumer adds its own.
 
 ## Layout
@@ -226,3 +227,56 @@ The endpoint takes no academy, tenant or slug parameter.
   cross-academy reads see nothing; writes stamp the tenant.
 - `backend/v2/tests/contract/test_partial_index_planner_usability.py`: the
   dedupe lookup is served by its index on a real `mongod`.
+
+## The family index (People CRM Phase 2, backend)
+
+Read-only. Backs `GET /api/v2/admin/families` and
+`GET /api/v2/admin/families/summary` (both `require_persona("admin")`;
+`tests/structural/test_crm_admin_persona_gate.py` pins every `/families`
+route to it). Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
+§6 and §7 Phase 2.
+
+| File | What it is |
+|---|---|
+| `domain/family_stage.py` | `roll_up_family_stage` and the precedence `pending_cancel > active > at_risk > on_hold > paused > trial > never_enrolled > left`; the Active / Leaving / Left scope tiles |
+| `domain/family_index.py` | `FamilyRecord`, `FamilyChild`, `FamilyMoney`, `FamilyIndex`, and `search_family` (child and parent name word-prefix on `full_name_key`, email, legacy roster fields, phone by the last 7 to 10 digits) |
+| `application/family_index.py` | `query_family_index` (scope, stage, class, card, overdue filters; sort before pagination) and `summarize_family_index` |
+| `application/money_visibility.py` | `can_view_family_money(claims)`: the one money seam (#553) |
+| `application/ports.py` | `ParentAliasResolver`, `ChildLifecycleReader`, `FamilyMoneyReader` |
+| `infrastructure/family_index_read_model.py` | `MongoFamilyIndexReadModel`: the whole academy's index in a fixed number of reads, cached 60 s per academy |
+
+Wiring is `backend/v2/composition/families_crm.py`: identity's
+`MongoUserRepository.resolve_parent_aliases`, enrollment's
+`MongoStudentRepository.lifecycle_snapshots` and billing's
+`MongoFamilyMoneyReadModel`. The CRM imports none of those contexts.
+
+Rules the index keeps:
+
+- **A family is keyed by the parent's canonical id** (`user_id`, else
+  `auth_uid`, else the users `_id`). A student whose `parent_id` (or legacy
+  `parent_user_id`) holds any alias (`user_id`, `firebase_uid`, `auth_uid`,
+  users `_id`) lands in that family. Aliases are resolved with one `$in` per
+  field, never an `$or` across fields (#878, #894). A parent reference no users
+  document answers to is kept as its own family with `has_account = false`;
+  the Billing tab 404s for those, as it always has.
+- **Staff are excluded.** A user is in the index only when a student here
+  references them or their membership here has the `parent` role (not
+  `removed` or `suspended`). Children with no parent reference are not in the
+  index (the Students page lists them).
+- **The child state is the Students page's state.** `lifecycle_snapshots` is
+  the same derivation `/admin/students` runs. The CRM only ranks it.
+- **Money is the Billing tab's money.** `balance_cents` and
+  `open_invoice_count` come from `billing/application/family_money.open_balance`,
+  which `build_family_billing_view` also calls. Money is computed once and
+  gated at serialization: when `can_view_family_money` is false every
+  `money` block is `null`, `sort=balance` falls back to name and the Overdue
+  filter matches nothing.
+- **A failed secondary source is a warning, never a zero.** Money and class
+  titles failing give `money_unavailable` / `classes_unavailable` in
+  `warnings`; students, memberships, parents and lifecycles failing is a 503.
+
+Not built yet (later phases): the R6 extension (application, waitlist and
+trial states for children without enrollments), leads from `crm_contacts`
+and applications in the index, `family_contacts` search keys, persisted
+Groups (`family_groups`, Phase 4; today the summary returns static presets),
+and the Not attending / Missing info / Needs attention chips.

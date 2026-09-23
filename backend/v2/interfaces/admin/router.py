@@ -20,6 +20,7 @@ from .departures_routes import router as departures_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .families_routes import router as families_router
+from .family_index_routes import router as family_index_router
 from .hold_routes import router as hold_router
 from .inbox_routes import router as inbox_router
 from .month_close_routes import router as month_close_router
@@ -53,6 +54,7 @@ router.include_router(teaching_plan_router)
 router.include_router(session_type_router)
 router.include_router(waitlist_router)
 router.include_router(collections_router)
+router.include_router(family_index_router)
 router.include_router(families_router)
 router.include_router(billing_health_router)
 router.include_router(billing_router)
