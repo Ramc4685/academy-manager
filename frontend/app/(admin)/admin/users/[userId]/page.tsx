@@ -32,6 +32,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -146,6 +147,8 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
   const [repairFrom, setRepairFrom] = useState("");
   const [repairUntil, setRepairUntil] = useState("");
   const [repairReason, setRepairReason] = useState("");
+  // UI-2: set by any typed value, cleared by a successful save or repair.
+  const [payEdited, setPayEdited] = useState(false);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -159,6 +162,7 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
       setError(null);
       setPercent("");
       setAmount("");
+      setPayEdited(false);
       void queryClient.invalidateQueries({
         queryKey: ["admin", "coaches", coachId, "pay-rates"],
       });
@@ -182,6 +186,7 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
       setError(null);
       setRepairOpen(false);
       setRepairReason("");
+      setPayEdited(false);
       void queryClient.invalidateQueries({
         queryKey: ["admin", "coaches", coachId, "pay-rates"],
       });
@@ -200,6 +205,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
     ? !(Number(percent) > 0 && Number(percent) <= 100)
     : !(Number(amount) > 0);
   const repairInvalid = valueInvalid || !repairFrom || !repairUntil || !repairReason.trim();
+  useReportUnsavedChanges(
+    "admin-coach-pay-rate",
+    payEdited && Boolean(percent || amount || repairReason.trim()),
+  );
 
   return (
     <Card p={20} data-testid="admin-coach-pay-rate">
@@ -272,7 +281,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 max={100}
                 step="0.5"
                 value={percent}
-                onChange={(event) => setPercent(event.target.value)}
+                onChange={(event) => {
+                  setPercent(event.target.value);
+                  setPayEdited(true);
+                }}
                 placeholder="60"
                 className="w-24 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 data-testid="coach-pay-rate-percent"
@@ -294,7 +306,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 min={0}
                 step="0.01"
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) => {
+                  setAmount(event.target.value);
+                  setPayEdited(true);
+                }}
                 placeholder="50.00"
                 className="w-28 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 data-testid="coach-pay-rate-amount"
@@ -341,7 +356,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 Reason
                 <input
                   value={repairReason}
-                  onChange={(event) => setRepairReason(event.target.value)}
+                  onChange={(event) => {
+                    setRepairReason(event.target.value);
+                    setPayEdited(true);
+                  }}
                   className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 />
               </label>
@@ -520,6 +538,9 @@ function UserEditForm({
     null,
   );
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  // UI-2: true from the first edit until a save succeeds or Reset is
+  // pressed, so a successful save is clean before the refetch lands.
+  const [edited, setEdited] = useState(false);
 
   useEffect(() => {
     setEmail(user.email);
@@ -541,6 +562,7 @@ function UserEditForm({
     onSuccess: (updated) => {
       setSubmitError(null);
       setSubmitOk(true);
+      setEdited(false);
       setInviteOutcome(updated.login_invite ?? null);
       onSaved();
     },
@@ -564,6 +586,7 @@ function UserEditForm({
     displayName !== user.display_name ||
     phone !== (user.phone ?? "") ||
     status !== user.status;
+  useReportUnsavedChanges("admin-user-profile", dirty && edited);
 
   // Anything other than "active" locks the person out of the app (#838).
   const losesAccess = status !== user.status && status !== "active";
@@ -572,6 +595,8 @@ function UserEditForm({
     <form
       className="mt-3 space-y-4"
       data-testid="admin-user-edit-form"
+      // React's onChange bubbles per keystroke from every field below.
+      onChange={() => setEdited(true)}
       onSubmit={(event) => {
         event.preventDefault();
         setSubmitOk(false);
@@ -708,6 +733,7 @@ function UserEditForm({
               setSubmitError(null);
               setSubmitOk(false);
               setInviteOutcome(null);
+              setEdited(false);
             }}
           >
             Reset
@@ -769,6 +795,7 @@ function RolesPanel({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
   const [confirmOwner, setConfirmOwner] = useState(false);
+  const [rolesEdited, setRolesEdited] = useState(false);
 
   useEffect(() => {
     setSelected(user.roles.length > 0 ? user.roles : [user.role]);
@@ -792,6 +819,7 @@ function RolesPanel({
     onSuccess: () => {
       setSubmitError(null);
       setSubmitOk(true);
+      setRolesEdited(false);
       onSaved();
     },
     onError: (err: unknown) => {
@@ -802,10 +830,17 @@ function RolesPanel({
 
   const toggle = (role: AdminUserRole) => {
     setSubmitOk(false);
+    setRolesEdited(true);
     setSelected((prev) =>
       prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
     );
   };
+
+  // UI-2: only the roles this editor can toggle count as a draft.
+  const rolesDirty = academyRoles.some(
+    (role) => selected.includes(role) !== initialRoles.includes(role),
+  );
+  useReportUnsavedChanges("admin-user-roles", rolesEdited && rolesDirty);
 
   const hadOwner = initialRoles.includes("owner");
   const willHaveOwner = selected.includes("owner");
@@ -998,6 +1033,8 @@ function CoachSessionsPanel({
   const [assignReason, setAssignReason] = useState("Admin coach assignment");
   const [assignError, setAssignError] = useState<string | null>(null);
   const [assignOk, setAssignOk] = useState(false);
+  // UI-2: a picked-but-unassigned session is a draft worth a confirm.
+  useReportUnsavedChanges("admin-coach-assign-session", assignSessionId !== "");
 
   const coachSessionsQuery = useQuery({
     queryKey: queryKeys.admin.coachSessions(user.user_id),
