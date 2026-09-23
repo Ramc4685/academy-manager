@@ -458,6 +458,7 @@ async def test_billing_setup_charge_claim_and_result_are_replayable(admin_db) ->
             expected_amount_cents=5000,
             request_id="request-charge-0001",
             actor_id="admin-1",
+            actor_roles=("admin", "owner"),
         )
         second = await admin.charge_billing_setup_balance(
             parent_id="parent-1",
@@ -465,6 +466,7 @@ async def test_billing_setup_charge_claim_and_result_are_replayable(admin_db) ->
             expected_amount_cents=5000,
             request_id="request-charge-0001",
             actor_id="admin-1",
+            actor_roles=("admin", "owner"),
         )
 
     assert first == second
@@ -557,6 +559,7 @@ async def test_billing_setup_processing_audit_records_attempted_not_received_amo
             expected_amount_cents=5000,
             request_id="request-processing-0001",
             actor_id="admin-1",
+            actor_roles=("admin", "owner"),
         )
         audit = await admin_db["billing_audit_log"].find_one(
             {"academy_id": ACAD, "action": "admin_charge_initiated"}

@@ -31,8 +31,11 @@ from backend.v2.contexts.billing.application.family_money import (
 
 TIMELINE_CAP = 200
 
+#: Billing-tab actions hidden from non-owners: every money-moving action
+#: (staff tiers, roadmap 2026-09-22 section 6 item 2). ``charge_card`` joined
+#: in #928; ``record_payment`` stays open to billing staff.
 OWNER_ONLY_ACTIONS: frozenset[str] = frozenset(
-    {"void", "refund", "discount_once", "recurring_discount"}
+    {"void", "refund", "discount_once", "recurring_discount", "charge_card"}
 )
 
 # Charge-outcome attempt statuses that mean "the charge did not take money".

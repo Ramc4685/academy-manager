@@ -16,6 +16,7 @@ from typing import Literal, cast
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.application.charge_admin_invoice import ChargeRequiresOwner
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
     BillingSetupPage,
     BillingSetupRow,
@@ -26,7 +27,7 @@ from backend.v2.contexts.identity.application.use_cases.provision_parent_login i
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import require_owner, require_persona
 
 router = APIRouter(tags=["admin.billing.setup"])
 log = logging.getLogger(__name__)
@@ -241,9 +242,13 @@ class BillingSetupChargeRequest(BaseModel):
 async def charge_billing_setup_parent(
     parent_id: str,
     payload: BillingSetupChargeRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> BillingSetupChargeResponse:
+    """Charge the confirmed invoice amount on the parent's saved card.
+
+    Owner-only (#928), like every money-moving action; non-owners get 404.
+    """
     charge = _required_callable(use_cases.charge_billing_setup_balance, "Billing Setup charge")
     try:
         result = await charge(  # type: ignore[operator]
@@ -252,7 +257,10 @@ async def charge_billing_setup_parent(
             expected_amount_cents=payload.expected_amount_cents,
             request_id=payload.request_id,
             actor_id=claims.user_id,
+            actor_roles=claims.roles,
         )
+    except ChargeRequiresOwner as exc:
+        raise HTTPException(status_code=404, detail="Not found") from exc
     except ValueError as exc:
         code = _public_failure(str(exc).split(":", 1)[0], "charge_request_invalid")
         raise HTTPException(status_code=400, detail=code) from exc

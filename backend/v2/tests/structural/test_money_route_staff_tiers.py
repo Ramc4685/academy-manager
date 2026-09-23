@@ -11,10 +11,9 @@ authoritative and newer than People CRM engineering spec section 4:
   (record payment, mark paid);
 * front desk: an "owes money" flag only.
 
-Known gap, pinned as strict xfails so it flips to a failure the moment it is
-closed: the two card-charge routes and the ``charge_card`` Billing-tab action
-are reachable by non-owner admins (production fix deferred to its own PR,
-since it removes a live capability and needs a frontend change).
+Card charges (the two charge routes and the ``charge_card`` Billing-tab
+action) were reachable by non-owner admins until #928 put them behind
+``require_owner``; they are pinned here with the other money-moving routes.
 
 Only the owner tier exists in code today; billing and front desk are #553. So
 billing-tier routes are gated by the admin persona and must NOT be owner-gated
@@ -48,6 +47,9 @@ MONEY_MOVING_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/adjustments"),
     ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
     ("POST", f"{_ADMIN}/enrollments/{{enrollment_id}}/fee"),
+    # Card charges (#928).
+    ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/charge-autopay"),
+    ("POST", f"{_ADMIN}/billing/setup/{{parent_id}}/charge"),
 )
 
 #: Billing-tier routes: billing staff record payments the family already
@@ -57,38 +59,11 @@ BILLING_TIER_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
 )
 
-_CHARGE_GAP = (
-    "Card charges move money and are owner-only per the 2026-09-22 staff-tier "
-    "decision, but this route is require_persona('admin') and not in "
-    "OWNER_ONLY_ROUTE_PATHS (A5 finding; production fix deferred)."
-)
-
-#: Admin-reachable card charges: the known gap.
-CARD_CHARGE_ROUTES: tuple[tuple[str, str], ...] = (
-    ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/charge-autopay"),
-    ("POST", f"{_ADMIN}/billing/setup/{{parent_id}}/charge"),
-)
-
 
 @pytest.mark.parametrize("key", MONEY_MOVING_ROUTES, ids=lambda k: f"{k[0]} {k[1]}")
 def test_money_moving_route_is_owner_only(key: tuple[str, str]) -> None:
     routes = _admin_routes()
     assert key in routes, f"money route not registered: {key}"
-    assert key in OWNER_ONLY_ROUTE_PATHS
-    assert _is_owner_guarded(routes[key])
-
-
-@pytest.mark.parametrize(
-    "key",
-    [
-        pytest.param(k, marks=pytest.mark.xfail(strict=True, reason=_CHARGE_GAP))
-        for k in CARD_CHARGE_ROUTES
-    ],
-    ids=lambda k: f"{k[0]} {k[1]}",
-)
-def test_card_charge_route_is_owner_only(key: tuple[str, str]) -> None:
-    routes = _admin_routes()
-    assert key in routes, f"charge route not registered: {key}"
     assert key in OWNER_ONLY_ROUTE_PATHS
     assert _is_owner_guarded(routes[key])
 
@@ -110,6 +85,5 @@ def test_billing_tab_offers_record_payment_to_billing_staff() -> None:
     assert "record_payment" not in OWNER_ONLY_ACTIONS
 
 
-@pytest.mark.xfail(strict=True, reason=_CHARGE_GAP)
 def test_billing_tab_hides_the_card_charge_from_non_owners() -> None:
     assert "charge_card" in OWNER_ONLY_ACTIONS

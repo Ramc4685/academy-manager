@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+from backend.v2.contexts.billing.application.charge_admin_invoice import ChargeRequiresOwner
 from backend.v2.contexts.billing.application.first_month_quote_presentation import (
     first_month_quote_formula,
 )
@@ -883,10 +884,14 @@ async def send_billing_invoice(
 async def charge_invoice_via_autopay(
     invoice_id: str,
     body: ChargeAutopayRequest | None = None,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ChargeAutopayResponse:
     """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
+
+    Owner-only (#928): a card charge moves money (staff tiers, roadmap
+    2026-09-22 section 6 item 2). Non-owners get 404 like every owner route; the
+    use case also refuses a non-owner (``ChargeRequiresOwner`` -> 404).
 
     - Returns success=True when the PI succeeds immediately and the ledger is updated.
     - Returns success=False with decline_code on card declines (invoice status unchanged).
@@ -908,9 +913,12 @@ async def charge_invoice_via_autopay(
         result = await charge_as_admin(  # type: ignore[operator]
             invoice_id=invoice_id,
             actor_id=claims.user_id,
+            actor_roles=claims.roles,
             reason=(body.reason if body and body.reason else "Charged by admin"),
             request_id=(body.request_id if body and body.request_id else str(uuid4())),
         )
+    except ChargeRequiresOwner as exc:
+        raise HTTPException(status_code=404, detail="Not found") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

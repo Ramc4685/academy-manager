@@ -211,13 +211,14 @@ def test_family_actions() -> None:
     ]
 
 
-def test_strip_owner_actions_removes_void_refund_discount_everywhere() -> None:
+def test_strip_owner_actions_removes_void_refund_discount_charge_everywhere() -> None:
     view = build_family_billing_view(
         _facts(), timezone="America/Chicago", generated_at=NOW, today=TODAY
     )
     assert "void" in view["invoices"][0]["actions"]
     stripped = strip_owner_actions(view)
-    assert stripped["invoices"][0]["actions"] == ["send", "record_payment", "charge_card"]
+    # Card charges are owner-only too (#928).
+    assert stripped["invoices"][0]["actions"] == ["send", "record_payment"]
     assert stripped["students"][0]["enrollments"][0]["actions"] == []
     assert view["students"][0]["enrollments"][0]["actions"] == ["recurring_discount"]
 

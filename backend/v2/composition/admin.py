@@ -6,6 +6,7 @@ import collections
 import csv
 import io
 import logging
+from collections.abc import Collection
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -1291,7 +1292,12 @@ def compose_admin(
     _admin_charge_attempts = _AdminChargeAttempts()
 
     async def charge_invoice_as_admin_action(
-        *, invoice_id: str, actor_id: str, reason: str, request_id: str
+        *,
+        invoice_id: str,
+        actor_id: str,
+        actor_roles: Collection[str],
+        reason: str,
+        request_id: str,
     ) -> dict[str, Any]:
         """Admin pressed "Charge card now" on a list or the Family page.
 
@@ -1316,6 +1322,7 @@ def compose_admin(
             parent_id=invoice.parent_id,
             invoice_id=invoice_id,
             actor_id=actor_id,
+            actor_roles=actor_roles,
             request_id=request_id,
             reason=reason,
             source="admin_manual",
@@ -1330,6 +1337,7 @@ def compose_admin(
         expected_amount_cents: int,
         request_id: str,
         actor_id: str,
+        actor_roles: Collection[str],
     ) -> dict[str, Any]:
         """Charge the exact invoice and amount confirmed by the admin.
 
@@ -1349,6 +1357,7 @@ def compose_admin(
             parent_id=parent_id,
             invoice_id=invoice_id,
             actor_id=actor_id,
+            actor_roles=actor_roles,
             request_id=request_id,
             reason="Billing Setup charge now",
             source="admin_billing_setup",
