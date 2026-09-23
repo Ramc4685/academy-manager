@@ -80,7 +80,7 @@ jobs:
         with:
           name: index-drift-live
           path: live.json
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: error
 
   check:

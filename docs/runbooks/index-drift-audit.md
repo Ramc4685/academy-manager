@@ -11,7 +11,9 @@ database.
 
 1. **dump**: connects with `PROD_MONGO_READONLY_URI`, runs
    `index_drift_audit.py --dump > live.json`, and uploads `live.json` as the
-   `index-drift-live` artifact (kept 7 days).
+   `index-drift-live` artifact (kept 1 day: long enough for the check job and
+   a same-day look, short because the repo is public and any signed-in GitHub
+   user can download run artifacts).
 2. **check**: downloads `live.json`, installs `backend/requirements-dev.txt`
    (it needs `mongomock`), and runs `index_drift_audit.py --check live.json`.
    The job fails when the script exits non-zero. The JSON report appears in the
