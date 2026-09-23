@@ -1,6 +1,6 @@
 # The admin "View page" link accepts the academy address as a full URL
 
-PR: #TBD
+PR: #940
 
 ## What changed
 
