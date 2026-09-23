@@ -36,6 +36,10 @@ _PUBLIC_WRITE_PATHS = {
 # and Stripe retries with backoff on 429 so no event is lost.
 _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
     ("POST", "/api/v2/parent/webhooks/stripe"): (600, 60),
+    # Anonymous public academy page read (public tenant page, Lane B2). A
+    # marketing page a real visitor reloads and shares, so a generous
+    # per-client ceiling that still caps scraping and volumetric abuse.
+    ("GET", "/api/v2/public/academy"): (120, 60),
 }
 
 _PROXY_AUTH_HEADER = "x-cm-proxy-auth"

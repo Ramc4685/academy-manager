@@ -39,6 +39,15 @@ from backend.v2.shared.tenancy.context import _current_origins as _tenant_origin
 
 log = logging.getLogger(__name__)
 
+#: The anonymous public page persona (``interfaces/public``).
+_PUBLIC_PAGE_PREFIX = "/api/v2/public/"
+
+
+def _public_not_found() -> JSONResponse:
+    """Same body and status as the public route's own unknown-host answer."""
+    return JSONResponse(status_code=404, content={"detail": "Not found"}, headers={"Vary": "Host"})
+
+
 BFF_AUTH_HEADER = "x-courtmastr-auth"
 BFF_IDENTITY_HEADER = "x-courtmastr-identity"
 
@@ -149,11 +158,19 @@ class TenancyMiddleware(BaseHTTPMiddleware):
                 log.info("tenant_resolve_failed: %s", exc)
                 resolved_academy_id = None
 
+        # The anonymous public page answers every "no servable tenant here"
+        # the same way as an unknown host: a bare 404 naming no academy, so a
+        # stranger cannot tell a suspended, foreign or missing tenant apart
+        # (public tenant page brief, "Academy paused").
+        is_public_page = request.url.path.startswith(_PUBLIC_PAGE_PREFIX)
+
         if (
             resolved_academy_id
             and self._tenancy_mode == "single_academy"
             and resolved_academy_id != self._primary_academy_id
         ):
+            if is_public_page:
+                return _public_not_found()
             return JSONResponse(
                 status_code=403,
                 content={
@@ -176,6 +193,8 @@ class TenancyMiddleware(BaseHTTPMiddleware):
                 log.info("tenant_status_check_failed: %s", exc)
                 servable, reason = False, "tenant_status_unavailable"
             if not servable:
+                if is_public_page:
+                    return _public_not_found()
                 return JSONResponse(
                     status_code=423,
                     content={
