@@ -177,13 +177,19 @@ def test_non_admin_personas_are_refused(db: Any, roles: tuple[str, ...]) -> None
     [
         ({"primary_domain": "riverside.example"}, "https://riverside.example/"),
         ({"custom_domain": "www.riverside.example"}, "https://www.riverside.example/"),
+        ({"primary_domain": "https://riverside.example/"}, "https://riverside.example/"),
+        ({"primary_domain": "HTTPS://Riverside.Example"}, "https://riverside.example/"),
+        ({"primary_domain": "http://riverside.example/"}, "https://riverside.example/"),
+        ({"primary_domain": "https://riverside.example/privacy"}, None),
+        ({"primary_domain": "https://riverside.example:8443/"}, None),
+        ({"primary_domain": "ftp://riverside.example/"}, None),
         ({"primary_domain": "javascript:alert(1)"}, None),
         ({"primary_domain": "riverside.example/path"}, None),
         ({"primary_domain": "user@riverside.example"}, None),
         ({"primary_domain": "localhost"}, None),
     ],
 )
-def test_view_page_address_is_a_bare_host_or_nothing(
+def test_view_page_address_is_a_host_or_site_root_url_or_nothing(
     db: Any, stored: dict[str, Any], expected: str | None
 ) -> None:
     asyncio.run(db["academies"].update_one({"academy_id": ACADEMY}, {"$set": stored}))

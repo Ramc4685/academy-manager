@@ -54,6 +54,22 @@ _HOST_RE = re.compile(
     r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
 
+_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def _bare_host(raw: str) -> str | None:
+    """The host name in ``raw``, or None.
+
+    Accepts a bare host (``riverside.example``) or the same host written as
+    a site root URL (``https://riverside.example/``); anything with a path,
+    port, credentials or another scheme is refused.
+    """
+    value = _SCHEME_RE.sub("", raw.strip(), count=1)
+    if value.endswith("/"):
+        value = value[:-1]
+    host = value.lower().rstrip(".")
+    return host if _HOST_RE.match(host) else None
+
 
 class GetPublicPageAddress:
     """The academy's own web address, for the admin panel's "View page" link.
@@ -73,8 +89,8 @@ class GetPublicPageAddress:
         for key in ("primary_domain", "custom_domain"):
             raw = doc.get(key)
             if isinstance(raw, str):
-                host = raw.strip().lower().rstrip(".")
-                if _HOST_RE.match(host):
+                host = _bare_host(raw)
+                if host is not None:
                     return f"https://{host}/"
         return None
 
