@@ -88,6 +88,42 @@ class MongoCrmContactRepository(TenantScopedRepository):
         doc = await self._find_one({"contact_id": contact_id})
         return self._to_domain(doc) if doc else None
 
+    async def set_pipeline_override(
+        self,
+        contact_id: str,
+        override: PipelineOverride,
+        *,
+        expected_column: str | None,
+        updated_at: datetime,
+    ) -> CrmContact | None:
+        """Write a Pipeline board move (People CRM L3a) as a compare-and-swap.
+
+        Matches only while the row still carries the override the caller read
+        (``expected_column``; ``None`` = no override yet) and is not
+        ``enrolled``, so two staff moving the same card at once cannot both
+        land, and a card the conversion flow just enrolled is never
+        overridden. ``None`` back means "not found or changed"; the caller
+        re-reads to tell which. Served by ``crm_contacts_academy_contact_unique``.
+        """
+        filter_: dict[str, Any] = {
+            "contact_id": contact_id,
+            "pipeline_status": {"$ne": "enrolled"},
+        }
+        if expected_column is None:
+            filter_["pipeline_override"] = None
+        else:
+            filter_["pipeline_override.column"] = expected_column
+        doc = await self._find_one_and_update(
+            filter_,
+            {
+                "$set": {
+                    "pipeline_override": override.model_dump(mode="python"),
+                    "updated_at": updated_at,
+                }
+            },
+        )
+        return self._to_domain(doc) if doc else None
+
     async def find_by_dedupe_key(self, dedupe_key: str) -> CrmContact | None:
         # Equality on the partial index key: served by
         # crm_contacts_academy_dedupe_unique (partial filter {"$gt": ""}).

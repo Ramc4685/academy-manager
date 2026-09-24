@@ -31,6 +31,7 @@ from .pause_routes import router as pause_router
 from .payout_period_routes import router as payout_period_router
 from .payroll_routes import router as payroll_router
 from .people_reports_routes import router as people_reports_router
+from .pipeline_routes import router as pipeline_router
 from .progress_routes import router as progress_router
 from .public_page_routes import router as public_page_router
 from .registration_routes import router as registration_router
@@ -41,6 +42,7 @@ from .session_type_routes import router as session_type_router
 from .sessions_routes import router as sessions_router
 from .setup_checklist_routes import router as setup_checklist_router
 from .teaching_plan_routes import router as teaching_plan_router
+from .trial_outcome_routes import router as trial_outcome_router
 from .waitlist_routes import router as waitlist_router
 from .waiver_routes import router as waiver_router
 
@@ -81,6 +83,8 @@ router.include_router(pathway_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
 router.include_router(self_service_request_router)
+router.include_router(trial_outcome_router)
+router.include_router(pipeline_router)
 router.include_router(departure_policy_router)
 router.include_router(hold_router)
 router.include_router(departures_router)

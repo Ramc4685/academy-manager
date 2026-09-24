@@ -278,6 +278,26 @@ async function setup(
         warnings: [],
       });
     }
+    // People CRM Phase 5: the Timeline tab reads the unified feed, which
+    // carries billing's own timeline as one source.
+    if (req.method() === "GET" && new URL(req.url()).pathname.endsWith("/timeline")) {
+      const billingView = view as { timeline?: Array<Record<string, unknown>> };
+      return fulfillJson(route, {
+        family_id: "parent-1",
+        entries: (billingView.timeline ?? []).map((e, i) => ({
+          entry_id: `billing:${i}`,
+          source: "billing",
+          detail: null,
+          student_id: null,
+          actor_name: null,
+          collapsed_codes: [],
+          ...e,
+        })),
+        next_cursor: null,
+        money_visible: true,
+        warnings: [],
+      });
+    }
     if (req.method() === "POST") {
       posts.push({ url: req.url(), body: req.postDataJSON() });
       return fulfillJson(route, { paused_count: 1, active_count_before: 1, warnings: [] });
@@ -358,7 +378,7 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("invoice-row-inv-sep")).toContainText("Sep 2026 · Arjun");
     await page.getByTestId("invoice-expand-inv-aug").click();
     await expect(page.getByTestId("invoice-allocations-inv-aug")).toContainText("pi_aug");
-    // The timeline moved to its own tab and reads the same response.
+    // The timeline has its own tab; billing's rows arrive through the unified feed.
     await page.getByTestId("family-tab-timeline").click();
     await expect(page).toHaveURL(/\?tab=timeline$/);
     await expect(page.getByTestId("timeline-entry-autopay_notice_emailed")).toHaveAttribute(

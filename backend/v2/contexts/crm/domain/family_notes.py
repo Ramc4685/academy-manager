@@ -76,6 +76,24 @@ class FamilyFollowUp(BaseModel):
     updated_at: datetime
     done_at: datetime | None = None
     done_by: str | None = None
+    #: Set only on a follow-up a scheduled job created (roadmap L3c), e.g.
+    #: ``trial_passed:<trial request id>``. Unique per academy (migration
+    #: 0201), so the job can run any number of times and still create one.
+    #: ``None`` on every follow-up a person adds.
+    source_key: str | None = None
+
+
+#: The ``source_key`` prefix and title of the automatic "trial passed, no
+#: registration" follow-up (roadmap L3c).
+TRIAL_PASSED_SOURCE_PREFIX: Final = "trial_passed:"
+TRIAL_PASSED_FOLLOW_UP_TITLE: Final = "Trial passed, no registration"
+#: ``assignee_user_id`` of a job-created follow-up whose academy has no active
+#: owner. People can only assign staff; the job alone may leave it empty.
+UNASSIGNED: Final = ""
+
+
+def trial_passed_source_key(trial_id: str) -> str:
+    return f"{TRIAL_PASSED_SOURCE_PREFIX}{trial_id}"
 
 
 def normalize_note_body(raw: str | None) -> str:

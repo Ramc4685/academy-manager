@@ -62,12 +62,13 @@ const STUDENT_B: FamilyStudent = {
 };
 
 describe("family tabs", () => {
-  it("lists Overview, Notes & follow-ups, Details, Billing, Timeline in order", () => {
+  it("lists Overview, Notes & follow-ups, Details, Billing, Messages, Timeline in order", () => {
     expect(FAMILY_TABS.map((t) => t.id)).toEqual([
       "overview",
       "notes",
       "details",
       "billing",
+      "messages",
       "timeline",
     ]);
   });
@@ -76,6 +77,7 @@ describe("family tabs", () => {
     expect(resolveFamilyTab("billing")).toBe("billing");
     expect(resolveFamilyTab("timeline")).toBe("timeline");
     expect(resolveFamilyTab("notes")).toBe("notes");
+    expect(resolveFamilyTab("messages")).toBe("messages");
     expect(resolveFamilyTab(null)).toBe("overview");
     expect(resolveFamilyTab("payments")).toBe("overview");
   });
@@ -94,6 +96,7 @@ describe("family tabs", () => {
     expect(adjacentFamilyTab("timeline", "ArrowRight")).toBe("overview");
     expect(adjacentFamilyTab("billing", "Home")).toBe("overview");
     expect(adjacentFamilyTab("billing", "End")).toBe("timeline");
+    expect(adjacentFamilyTab("billing", "ArrowRight")).toBe("messages");
     expect(adjacentFamilyTab("billing", "Enter")).toBeNull();
   });
 });

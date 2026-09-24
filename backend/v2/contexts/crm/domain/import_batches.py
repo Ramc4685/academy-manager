@@ -109,6 +109,10 @@ class ImportBatch:
     committed_by: str | None = None
     #: Set on commit: students inserted by the commit that finished the batch.
     students_created: int | None = None
+    #: The academy the batch was stored under (set by the store on read).
+    #: The commit refuses a batch whose academy is not the caller's, as a
+    #: guard independent of the store's own tenant scoping.
+    academy_id: str | None = None
 
     def expired(self, now: datetime) -> bool:
         return now - self.created_at > PREVIEW_VALID_FOR

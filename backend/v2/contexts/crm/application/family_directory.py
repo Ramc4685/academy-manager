@@ -18,6 +18,7 @@ from typing import Protocol
 
 from backend.v2.contexts.crm.application.family_index import FamilyIndex, find_family_record
 from backend.v2.contexts.crm.application.ports import FamilyRef
+from backend.v2.contexts.crm.domain.family_index import FamilyRecord
 
 
 class _IndexBuilder(Protocol):
@@ -30,6 +31,11 @@ class IndexFamilyDirectory:
         self._fresh = fresh
 
     async def find(self, academy_id: str, family_id: str) -> FamilyRef | None:
+        return await self.find_record(academy_id, family_id)
+
+    async def find_record(self, academy_id: str, family_id: str) -> FamilyRecord | None:
+        """The whole index row (children included), or None: the family timeline
+        needs the children, the notes only the id."""
         record = find_family_record(await self._cached.build(academy_id), family_id)
         if record is None:
             record = find_family_record(await self._fresh.build(academy_id), family_id)

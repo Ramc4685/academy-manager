@@ -72,10 +72,21 @@ def get_admin_family_import(request: Request) -> Any:
 
 
 def _academy_id(claims: AuthClaims) -> str:
+    """The request's tenant, taken only from the ambient tenant context.
+
+    The import batch store scopes every read and write by that context, so
+    the academy the planner uses must be the same one. No fallback to the
+    claims: an unset context, or one that disagrees with the caller's
+    claims, is refused loudly instead of planning and storing against two
+    different academies.
+    """
     try:
-        return current_academy_id()
+        academy_id = current_academy_id()
     except TenantContextUnset:
-        return claims.academy_id
+        raise HTTPException(status_code=503, detail="tenant context is not set") from None
+    if claims.academy_id and claims.academy_id != academy_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    return academy_id
 
 
 class PreviewRequest(BaseModel):

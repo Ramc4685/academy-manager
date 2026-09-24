@@ -198,6 +198,75 @@ class FamilyFollowUpRepository(Protocol):
         ...
 
 
+class SourcedFollowUpWriter(Protocol):
+    """A job's follow-up write, at most once per ``source_key`` (roadmap L3c)."""
+
+    async def add_once(self, follow_up: FamilyFollowUp) -> bool:
+        """Insert unless a follow-up with this ``source_key`` exists in the
+        academy (open, done or edited). True when this call inserted it."""
+        ...
+
+
+# --------------------------------------------------------------------------
+# Trial passed, no registration (roadmap L3c). The CRM may not import
+# enrollment, onboarding or identity: composition hands in their reads.
+# --------------------------------------------------------------------------
+
+
+class PassedTrial(Protocol):
+    @property
+    def trial_id(self) -> str: ...
+
+    @property
+    def parent_user_id(self) -> str: ...
+
+    @property
+    def student_id(self) -> str | None: ...
+
+    @property
+    def child_name(self) -> str | None: ...
+
+    @property
+    def session_id(self) -> str: ...
+
+    @property
+    def requested_at(self) -> datetime: ...
+
+    @property
+    def class_started_at(self) -> datetime: ...
+
+
+class PassedTrialSource(Protocol):
+    async def came_not_converted(
+        self, academy_id: str, *, started_after: datetime, started_before: datetime
+    ) -> Sequence[PassedTrial]:
+        """This academy's trials marked Came (``completed``, outcome ``came``)
+        that no registration has converted yet, whose assigned class started
+        inside the window (a cancelled date never counts)."""
+        ...
+
+
+class RegistrationCheck(Protocol):
+    async def registered_since(
+        self,
+        academy_id: str,
+        *,
+        parent_user_id: str,
+        student_id: str | None,
+        session_id: str,
+        since: datetime,
+    ) -> bool:
+        """Did this family register after the trial was requested: an
+        application past draft, or (for an existing child) a seat on the class?"""
+        ...
+
+
+class AcademyOwnerLookup(Protocol):
+    async def owner_user_id(self, academy_id: str) -> str | None:
+        """The academy's active owner (the earliest, when there are several)."""
+        ...
+
+
 class FamilyRef(Protocol):
     @property
     def family_id(self) -> str: ...

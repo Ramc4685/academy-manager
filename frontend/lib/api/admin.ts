@@ -3392,6 +3392,10 @@ export interface TrialRequestAdminRow {
   assigned_occurrence_start_at?: string | null;
   /** Null for a prospective child, who has `prospective_child_name` instead. */
   student_full_name?: string | null;
+  /** People CRM L3a: Came / Didn't come, set once the trial is `completed`. */
+  outcome?: "came" | "no_show" | null;
+  outcome_by?: string | null;
+  outcome_at?: string | null;
 }
 
 export interface TrialRequestsAdminResponse {
@@ -3500,6 +3504,17 @@ export function denyTrial(
   return apiFetch<TrialRequestAdminRow>(
     `/admin/self-service/trials/${encodeURIComponent(requestId)}/deny`,
     { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** People CRM L3a: record Came / Didn't come on an approved trial. */
+export function recordTrialOutcome(
+  requestId: string,
+  outcome: "came" | "no_show",
+): Promise<TrialRequestAdminRow> {
+  return apiFetch<TrialRequestAdminRow>(
+    `/admin/self-service/trials/${encodeURIComponent(requestId)}/outcome`,
+    { method: "POST", body: JSON.stringify({ outcome }) },
   );
 }
 

@@ -390,6 +390,24 @@ async def test_another_academy_is_never_matched_nor_able_to_commit(real_db: Any)
     )
 
 
+async def test_the_commit_refuses_a_batch_of_another_academy_even_if_the_store_finds_it(
+    real_db: Any,
+) -> None:
+    # Belt and braces over the store's tenant scoping: the context says A (so
+    # the store reads A's batch) but the caller commits for B.
+    await _seed(real_db)
+    batch = await _preview(real_db, A, FILE)
+    assert batch.academy_id == A
+    services = compose_admin_family_import(real_db)
+    with tenant_scope(A), pytest.raises(ImportBatchNotFound):
+        await services.commit.execute(B, import_batch_id=batch.import_batch_id, actor_id="b-admin")
+    stored = await real_db["import_batches"].find_one({"import_batch_id": batch.import_batch_id})
+    assert stored["status"] == "previewed"
+    assert (
+        await real_db["students"].count_documents({"import_batch_id": batch.import_batch_id}) == 0
+    )
+
+
 async def test_the_batch_lookup_is_served_by_its_index(real_db: Any) -> None:
     await _seed(real_db)
     batch = await _preview(real_db, A, FILE)

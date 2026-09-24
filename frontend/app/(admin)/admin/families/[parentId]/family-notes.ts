@@ -30,6 +30,8 @@ export function staffName(
   userId: string,
   meId: string | null | undefined,
 ): string {
+  // An automatic follow-up (L3c) is left unassigned when the academy has no owner.
+  if (!userId) return "Unassigned";
   if (meId && userId === meId) return "You";
   return options.find((o) => o.userId === userId)?.label ?? "A staff member";
 }
