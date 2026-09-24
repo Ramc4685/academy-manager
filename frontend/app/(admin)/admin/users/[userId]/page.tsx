@@ -26,6 +26,7 @@ import {
 } from "@/lib/api/admin";
 import { hasCoachRole } from "@/lib/admin/coach-roles";
 import { roleLabel } from "@/lib/admin/role-label";
+import { ROLE_HINTS, planRoleChanges } from "@/lib/admin/staff-roles";
 import { assignableRoles } from "@/lib/auth/assignable-roles";
 import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
@@ -803,17 +804,12 @@ function RolesPanel({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const current = new Set(initialRoles);
-      const next = new Set(selected);
-      for (const role of academyRoles) {
-        if (next.has(role) && !current.has(role)) {
-          await addAdminUserRole(user.user_id, role, reason);
-        }
+      const plan = planRoleChanges(initialRoles, selected, academyRoles);
+      for (const role of plan.add) {
+        await addAdminUserRole(user.user_id, role, reason);
       }
-      for (const role of academyRoles) {
-        if (current.has(role) && !next.has(role)) {
-          await removeAdminUserRole(user.user_id, role, reason);
-        }
+      for (const role of plan.remove) {
+        await removeAdminUserRole(user.user_id, role, reason);
       }
     },
     onSuccess: () => {
@@ -873,16 +869,23 @@ function RolesPanel({
         coach who is also a parent. Users with more than one role get a view
         switcher in the app header.
       </p>
-      <div className="flex flex-wrap gap-3">
+      <div className="grid gap-2 sm:grid-cols-2">
         {academyRoles.map((role) => (
-          <label key={role} className="inline-flex items-center gap-2 text-sm">
+          <label key={role} className="flex items-start gap-2 text-sm">
             <input
               type="checkbox"
+              className="mt-1"
               checked={selected.includes(role)}
               onChange={() => toggle(role)}
               data-testid={`role-checkbox-${role}`}
+              aria-describedby={`role-hint-${role}`}
             />
-            <span>{roleLabel(role)}</span>
+            <span>
+              <span className="block font-medium text-rally-base">{roleLabel(role)}</span>
+              <span id={`role-hint-${role}`} className="block text-xs text-rally-muted">
+                {ROLE_HINTS[role]}
+              </span>
+            </span>
           </label>
         ))}
       </div>
@@ -937,7 +940,7 @@ function RolesPanel({
                 They immediately lose refunds, discounts, voiding invoices and payout approval, and
                 can no longer change anyone&apos;s roles. Their other roles stay.
               </p>
-              <p>Make sure at least one other owner remains, or nobody can govern money.</p>
+              <p>The academy always keeps at least one owner: the last one cannot be removed.</p>
             </>
           ) : (
             <>

@@ -981,7 +981,84 @@ test.describe("Rally admin shell", () => {
       const roleSelect = page.getByTestId("new-user-role");
       await expect(roleSelect).toBeVisible();
       const options = await roleSelect.locator("option").allTextContents();
-      expect(options.sort()).toEqual(["Admin", "Assistant coach", "Coach", "Owner", "Parent"]);
+      expect(options.sort()).toEqual([
+        "Admin",
+        "Assistant coach",
+        "Billing",
+        "Coach",
+        "Front desk",
+        "Owner",
+        "Parent",
+      ]);
+    });
+
+    test("owner assigns the billing staff tier on the Staff page and it is sent with the reason", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page);
+      const coach = {
+        user_id: "coach-e2e",
+        email: "coach@example.com",
+        display_name: "Coach E2E",
+        role: "coach",
+        status: "active",
+        phone: null,
+        roles: ["coach"],
+        linked_student_count: 0,
+        session_count: 0,
+      };
+      const grants: Array<{ role: string; reason: string }> = [];
+      await page.route("**/api/v2/admin/users/coach-e2e/roles", async (route) => {
+        const body = route.request().postDataJSON() as { role: string; reason: string };
+        grants.push(body);
+        await fulfillJson(route, { ...coach, roles: ["coach", body.role] });
+      });
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) => fulfillJson(route, coach));
+
+      await page.goto("/admin/users/coach-e2e");
+      const form = page.getByTestId("admin-user-role-form");
+      await expect(form).toBeVisible();
+      await expect(form.getByTestId("role-checkbox-front_desk")).toBeVisible();
+      await expect(form).toContainText("never an amount");
+
+      await form.getByTestId("role-checkbox-billing").check();
+      await form.getByLabel("Reason").fill("Handles family payments");
+      await form.getByRole("button", { name: "Save roles" }).click();
+
+      await expect.poll(() => grants).toEqual([
+        { role: "billing", reason: "Handles family payments" },
+      ]);
+      expect(
+        errors,
+        `App console errors on Staff role assignment: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("admin without the owner scope sees no staff tier checkboxes on the Staff page", async ({
+      page,
+    }) => {
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "coach-e2e",
+          email: "coach@example.com",
+          display_name: "Coach E2E",
+          role: "coach",
+          status: "active",
+          phone: null,
+          roles: ["coach", "billing"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+
+      await page.goto("/admin/users/coach-e2e");
+      const form = page.getByTestId("admin-user-role-form");
+      await expect(form).toBeVisible();
+      await expect(form.getByTestId("role-checkbox-billing")).toHaveCount(0);
+      await expect(form.getByTestId("role-checkbox-front_desk")).toHaveCount(0);
+      await expect(form.getByTestId("admin-user-locked-roles")).toContainText("Billing");
     });
 
     test("admin without the owner scope sees no Billing rules or Gateway settings", async ({
