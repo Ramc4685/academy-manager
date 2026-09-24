@@ -206,6 +206,55 @@ def test_restore_cli_refuses_a_remote_target_before_touching_it(
     assert SECRET not in err
 
 
+@pytest.mark.parametrize(
+    "bad",
+    ["", "../etc", "a/b", "a\\b", "a.b", "a b", "a$b", "a*", 'a"b', "x" * 64, "a\x00b"],
+)
+def test_unsafe_database_names_are_rejected(bad: str) -> None:
+    with pytest.raises(ValueError):
+        br.validate_db_name(bad)
+    with pytest.raises(ValueError):
+        br.archive_name(bad, NOW)
+
+
+@pytest.mark.parametrize("good", ["academy", "academy_manager", "drill-restore", "a" * 63])
+def test_safe_database_names_are_accepted(good: str) -> None:
+    assert br.validate_db_name(good) == good
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["backup", "--db", "../escape", "--out-dir", "OUT"],
+        ["restore", "--archive", "A", "--nsFrom", "academy", "--nsTo", "a/b"],
+        ["restore", "--archive", "A", "--nsFrom", "a.*", "--nsTo", "academy_r"],
+        ["verify", "--manifest", "M", "--db", "a b"],
+    ],
+)
+def test_cli_rejects_unsafe_database_names_before_any_io(
+    argv: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _no_connect(uri: str) -> Any:  # pragma: no cover - must not be reached
+        raise AssertionError("bad db name must be rejected before connecting")
+
+    monkeypatch.setattr(br, "mongo_client", _no_connect)
+    argv = [str(tmp_path / "out") if a == "OUT" else a for a in argv]
+    with pytest.raises(SystemExit) as exc:
+        br.main(argv, environ={"MONGO_URL": "mongodb://localhost"})
+    assert exc.value.code == br.EXIT_REFUSED
+    assert not (tmp_path / "out").exists()
+
+
+def test_verify_rejects_an_unsafe_db_name_read_from_the_manifest(tmp_path: Path) -> None:
+    manifest = tmp_path / "m.json"
+    manifest.write_text(json.dumps({"db": "../x", "collections": {}}), encoding="utf-8")
+    code = br.main(
+        ["verify", "--manifest", str(manifest)],
+        environ={"SCRATCH_MONGO_URL": "mongodb://localhost"},
+    )
+    assert code == br.EXIT_REFUSED
+
+
 # --------------------------------------------------------------------------- manifest diff
 
 

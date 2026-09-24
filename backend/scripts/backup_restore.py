@@ -222,7 +222,31 @@ def check_restore_target(
 # ---------------------------------------------------------------------------
 
 
+#: Conservative Mongo database-name charset. Mongo itself forbids
+#: ``/\\. "$*<>:|?`` and whitespace; we also reject everything else outside
+#: this set so a name can never escape ``--out-dir`` or smuggle a namespace
+#: pattern into ``--nsFrom``/``--nsTo``.
+_DB_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
+
+
+def validate_db_name(value: str) -> str:
+    """Return ``value`` if it is a safe Mongo database name, else raise ValueError."""
+    if not _DB_NAME_RE.fullmatch(value):
+        raise ValueError(
+            f"invalid database name {value!r}: use 1-63 characters from A-Z a-z 0-9 _ -"
+        )
+    return value
+
+
+def _db_name_arg(value: str) -> str:
+    try:
+        return validate_db_name(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def archive_name(db: str, now: dt.datetime) -> str:
+    validate_db_name(db)
     return f"{db}-{now.astimezone(dt.UTC).strftime(STAMP_FORMAT)}{ARCHIVE_SUFFIX}"
 
 
@@ -501,7 +525,7 @@ def cmd_verify(args: argparse.Namespace, environ: Mapping[str, str], out: Out) -
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     uri = read_uri(args.target_uri_env, environ)
     out.add_secret(uri)
-    target_db = args.db or manifest["db"]
+    target_db = validate_db_name(args.db or manifest["db"])
     client = mongo_client(uri)
     try:
         actual = snapshot_database(client[target_db])
@@ -534,7 +558,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     backup = sub.add_parser("backup", help="mongodump one database plus a manifest")
     backup.add_argument("--uri-env", default="MONGO_URL", help="env var holding the source URI")
-    backup.add_argument("--db", required=True)
+    backup.add_argument("--db", required=True, type=_db_name_arg)
     backup.add_argument("--out-dir", required=True)
     backup.set_defaults(func=cmd_backup)
 
@@ -550,17 +574,30 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--archive", required=True)
     restore.add_argument("--target-uri-env", default="SCRATCH_MONGO_URL")
     restore.add_argument(
-        "--nsFrom", "--ns-from", dest="ns_from", required=True, help="source db name"
+        "--nsFrom",
+        "--ns-from",
+        dest="ns_from",
+        required=True,
+        type=_db_name_arg,
+        help="source db name",
     )
-    restore.add_argument("--nsTo", "--ns-to", dest="ns_to", required=True, help="target db name")
+    restore.add_argument(
+        "--nsTo", "--ns-to", dest="ns_to", required=True, type=_db_name_arg, help="target db name"
+    )
     restore.add_argument("--allow-remote-target", action="store_true")
-    restore.add_argument("--i-know-this-is-prod", action="store_true", help="owner-only")
+    restore.add_argument(
+        "--i-know-this-is-prod",
+        action="store_true",
+        help="self-attestation for the owner-only prod restore; not an access check",
+    )
     restore.set_defaults(func=cmd_restore)
 
     verify = sub.add_parser("verify", help="compare a database with a backup manifest")
     verify.add_argument("--manifest", required=True)
     verify.add_argument("--target-uri-env", default="SCRATCH_MONGO_URL")
-    verify.add_argument("--db", help="database to check (default: the manifest's db)")
+    verify.add_argument(
+        "--db", type=_db_name_arg, help="database to check (default: the manifest's db)"
+    )
     verify.set_defaults(func=cmd_verify)
     return parser
 

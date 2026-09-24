@@ -71,6 +71,18 @@ archive whose SHA-256 no longer matches its manifest.
 | `--nsTo` equals `--nsFrom` | refused | `--i-know-this-is-prod` (owner-only) |
 | Target database already holds collections | refused | none: drop it or pick a new name |
 
+`--i-know-this-is-prod` is a self-attestation flag, not an access control:
+the script only checks that the flag was passed, never who passed it. What
+actually keeps a restore away from production is credential possession (only
+the owner holds `PROD_MONGO_URL` / the production URI) plus the
+declared-incident process below. "Owner-only" in this table names who is
+expected to use the flag, not something the script enforces.
+
+Database names given to `--db`, `--nsFrom` and `--nsTo` (and the `db` read
+from a manifest) must be 1-63 characters from `A-Z a-z 0-9 _ -`; anything else
+(path separators, dots, spaces, `$`, `*`) is rejected with exit 2 before any
+file is written or any server is contacted.
+
 Keep the production URI in a `PROD_MONGO_URL` variable in any shell that also
 holds scratch credentials, so the host denylist is populated automatically.
 
