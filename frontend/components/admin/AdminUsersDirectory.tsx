@@ -40,6 +40,10 @@ import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { CoachEngagementStatsStrip } from "@/components/admin/CoachEngagementStatsStrip";
 import { BulkInviteDialog } from "@/components/admin/bulk-invite-dialog";
+import {
+  PossibleDuplicateNotice,
+  usePossibleDuplicateCheck,
+} from "@/components/admin/possible-duplicate-notice";
 
 /** How long a keystroke waits before it narrows the table. */
 const SEARCH_DEBOUNCE_MS = 150;
@@ -289,6 +293,10 @@ function CreateUserDialog({
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("Manual user onboarding");
   const [error, setError] = useState<string | null>(null);
+  // People CRM Phase 4c: warn (never block) when this looks like someone the
+  // academy already has. Checked when the email or phone field is left.
+  const duplicates = usePossibleDuplicateCheck();
+  const checkDuplicates = () => duplicates.check({ email, phone, name: displayName });
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -305,6 +313,7 @@ function CreateUserDialog({
       setPhone("");
       setReason("Manual user onboarding");
       setError(null);
+      duplicates.reset();
       onCreated(user);
     },
     onError: (err: unknown) => {
@@ -371,6 +380,7 @@ function CreateUserDialog({
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
+                onBlur={checkDuplicates}
                 className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
                 required
                 maxLength={254}
@@ -379,8 +389,11 @@ function CreateUserDialog({
             <Field label="Phone" htmlFor="create-user-phone">
               <input
                 id="create-user-phone"
+                data-testid="new-user-phone"
+                type="tel"
                 value={phone}
                 onChange={(event) => setPhone(event.target.value)}
+                onBlur={checkDuplicates}
                 className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
                 maxLength={40}
               />
@@ -395,6 +408,7 @@ function CreateUserDialog({
                 maxLength={500}
               />
             </Field>
+            <PossibleDuplicateNotice matches={duplicates.matches} testId="new-user-duplicate" />
             {error && (
               <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
                 {error}

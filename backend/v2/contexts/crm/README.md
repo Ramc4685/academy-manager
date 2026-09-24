@@ -371,3 +371,51 @@ isolation, duplicate ids, index use), and
 Not built here: pinned notes, `student_id` tags, the `students.notes` copy,
 `contact_id` (lead) notes, automatic follow-ups (`source`, `source_ref`), and
 the timeline merge.
+
+## Duplicate warning (People CRM Phase 4c, migration 0197)
+
+"Possible match: <name> - open" on the forms that add a person: Add user /
+Add parent (the Users directory dialog, which is how a family is added
+today) and Add contact (the family record's Details tab). There is no staff
+Add inquiry form yet (Pipeline quick add is a later phase); when it lands it
+reuses `usePossibleDuplicateCheck` and `PossibleDuplicateNotice`
+(`frontend/components/admin/possible-duplicate-notice.tsx`). A warning,
+never a gate: nothing is merged and nothing is refused.
+
+| File | What it is |
+|---|---|
+| `domain/duplicates.py` | normalisation (email lower-cased and trimmed, phone digits with both North American spellings, exact `full_name_key` name), the family-row matcher, masking |
+| `application/use_cases/find_possible_duplicates.py` | `FindPossibleDuplicates`: family index, family contacts, members of this academy, inquiries; merged in code, at most 5 |
+| `backend/v2/composition/people_duplicates.py` | wiring; identity's "user with this normalised email, only with an active membership HERE" adapter |
+| `interfaces/admin/people_duplicate_routes.py` | `POST /admin/people/duplicate-check` |
+| `backend/v2/migrations/0197_crm_duplicate_lookup_indexes.py` | the lookup indexes |
+
+Rules:
+
+- **Tenant-scoped.** The family index is built from the academy's own rows;
+  `crm_contacts` and `family_contacts` lookups go through the
+  `TenantScopedRepository`; a user is returned only with an active membership
+  in the caller's academy. Nothing of another academy comes back
+  (`tests/contract/test_crm_duplicate_check_real_mongo.py`,
+  `tests/contract/test_two_tenant_isolation.py`).
+- **Equality lookups on indexes, never `$or`.** One query per field and per
+  phone spelling (`5550102030` and `15550102030`), merged in code. Users by
+  `normalized_email` (`users_normalized_email_unique`), memberships by
+  `(academy_id, user_id)`, contacts and inquiries by the 0197 indexes.
+  Legacy users without a `normalized_email` are not looked up (parents among
+  them are still matched through the family index).
+- **Masked.** `jo***@example.test`, `•••-2030`. The link opens the record
+  (`/admin/families/{id}` for a family, family contact or linked inquiry,
+  `/admin/users/{id}` for a staff user; `null` for an unlinked inquiry).
+- `require_persona("admin")`; rate-limited per client (60 a minute).
+
+### Indexes (migration 0197)
+
+| Collection | Name | Keys | Options |
+|---|---|---|---|
+| `crm_contacts` | `crm_contacts_academy_email_lookup` | `(academy_id, email)` | partial `{email: {$gt: ""}}` |
+| `crm_contacts` | `crm_contacts_academy_phone_lookup` | `(academy_id, phone_digits)` | partial `{phone_digits: {$gt: ""}}` |
+| `family_contacts` | `family_contacts_academy_email_lookup` | `(academy_id, email)` | partial `{email: {$gt: ""}}` |
+| `family_contacts` | `family_contacts_academy_phone_lookup` | `(academy_id, phone_digits)` | partial `{phone_digits: {$gt: ""}}` |
+
+Non-unique on purpose (a household shares an email or phone).

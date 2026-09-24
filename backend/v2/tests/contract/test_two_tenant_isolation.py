@@ -118,6 +118,8 @@ def _ids(academy: str) -> dict[str, str]:
         "rec_id": f"{academy}-levelup-rec-1",
         "note_id": f"{academy}-note-1",
         "follow_up_id": f"{academy}-follow-up-1",
+        # Family contacts (People CRM Phase 4b, #950) landed after this test.
+        "contact_id": f"{academy}-family-contact-1",
         "request_id": f"{academy}-request-1",
         "event_id": f"{academy}-event-1",
         "checkout_session_id": f"cs_test_{academy}_1",
@@ -152,6 +154,7 @@ UNSEEDED_PARAMS = frozenset(
         "rec_id",
         "note_id",
         "follow_up_id",
+        "contact_id",
         "request_id",
         "event_id",
         "checkout_session_id",
@@ -864,6 +867,33 @@ def test_own_tenant_reads_its_seed(env: Env) -> None:
             response = env.client.get(path, headers=headers)
             assert response.status_code == 200, (academy, path, response.text[:300])
             assert academy in response.text
+
+
+def test_duplicate_check_never_matches_the_other_tenants_people(env: Env) -> None:
+    """``POST /admin/people/duplicate-check`` (People CRM Phase 4c) is a
+    parameterless write-shaped read, so the enumeration above does not reach
+    it. A's admin probing B's parent and coach finds nothing; B's own admin
+    probing the same email finds B's family (the positive control)."""
+    path = "/api/v2/admin/people/duplicate-check"
+
+    def check(academy: str, body: dict[str, str]) -> Any:
+        headers = {"authorization": f"Bearer {_email(academy, 'admin')}", "host": _host(academy)}
+        return env.client.post(path, json=body, headers=headers)
+
+    for body in (
+        {"email": _email(B, "parent")},
+        {"email": _email(B, "coach").upper()},
+        {"email": _email(B, "parent"), "name": "zbravo"},
+    ):
+        response = check(A, body)
+        assert response.status_code == 200, response.text[:300]
+        assert response.json() == {"matches": []}, (body, response.text[:300])
+        assert not _foreign_markers(_response_text(response), set(body.values()))
+
+    control = check(B, {"email": _email(B, "parent")})
+    assert control.status_code == 200, control.text[:300]
+    kinds = [match["kind"] for match in control.json()["matches"]]
+    assert "family" in kinds, control.text[:300]
 
 
 @pytest.mark.parametrize("persona", PERSONAS)

@@ -19,7 +19,11 @@ from backend.v2.tests.structural.test_owner_gate_policy import (
     _iter_routes,
 )
 
-_CRM_PREFIXES = ("/api/v2/admin/families", "/api/v2/admin/follow-ups")
+_CRM_PREFIXES = (
+    "/api/v2/admin/families",
+    "/api/v2/admin/follow-ups",
+    "/api/v2/admin/people",
+)
 
 
 def _personas(route: Any) -> set[str]:
@@ -64,6 +68,8 @@ def test_the_family_index_routes_are_registered() -> None:
     assert ("DELETE", "/api/v2/admin/families/{parent_id}/contacts/{contact_id}") in routes
     assert ("GET", "/api/v2/admin/families/{parent_id}/details") in routes
     assert ("PATCH", "/api/v2/admin/families/{parent_id}/details") in routes
+    # Phase 4c: the duplicate warning.
+    assert ("POST", "/api/v2/admin/people/duplicate-check") in routes
 
 
 def test_every_crm_route_requires_the_admin_persona() -> None:

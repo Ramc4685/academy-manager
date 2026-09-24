@@ -210,7 +210,29 @@ async function setup(page: Page) {
     return fulfillJson(route, details);
   });
 
-  return { errors, sent, contacts };
+  // People CRM Phase 4c: the Add contact form asks for possible duplicates
+  // when the email or phone field is left.
+  const checks: Array<Record<string, unknown>> = [];
+  await page.route("**/api/v2/admin/people/duplicate-check", (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    checks.push(body);
+    const matches =
+      body.email === "existing.adult@example.test"
+        ? [
+            {
+              kind: "family",
+              display_name: "Existing Testfamily",
+              email_masked: "ex***@example.test",
+              phone_masked: null,
+              link: "/admin/families/parent-9",
+              matched_on: ["email"],
+            },
+          ]
+        : [];
+    return fulfillJson(route, { matches });
+  });
+
+  return { errors, sent, contacts, checks };
 }
 
 test.describe("Family contacts and details (People CRM Phase 4b)", () => {
@@ -267,6 +289,37 @@ test.describe("Family contacts and details (People CRM Phase 4b)", () => {
     expect(contacts[0].gets_notices).toBe(true);
     expect(contacts[0].gets_invoices).toBe(false);
     expect(sent.every((s) => !JSON.stringify(s.body).includes("academy_id"))).toBe(true);
+    expect(errors, errors.join("\n")).toEqual([]);
+  });
+
+  test("a possible duplicate is warned about and the contact still saves", async ({ page }) => {
+    const { errors, sent, checks } = await setup(page);
+    await page.goto("/admin/families/parent-1?tab=details");
+    await page.getByTestId("family-contact-add-open").click();
+    const form = page.getByTestId("family-contact-form");
+    await expect(form.getByTestId("family-contact-duplicate-region")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
+
+    await form.getByTestId("family-contact-name-input").fill("Another Testadult");
+    await form.getByTestId("family-contact-email").fill("Existing.Adult@example.test");
+    await form.getByTestId("family-contact-phone").focus();
+    const notice = form.getByTestId("family-contact-duplicate");
+    await expect(notice).toContainText("Possible match: Existing Testfamily");
+    await expect(form.getByTestId("family-contact-duplicate-open")).toHaveAttribute(
+      "href",
+      "/admin/families/parent-9",
+    );
+    expect(checks[0]).toEqual({
+      email: "existing.adult@example.test",
+      phone: null,
+      name: "Another Testadult",
+    });
+
+    await form.getByTestId("family-contact-save").click();
+    await expect(page.getByTestId("family-contact-c-1")).toContainText("Another Testadult");
+    expect(sent[0]).toMatchObject({ method: "POST", body: { name: "Another Testadult" } });
     expect(errors, errors.join("\n")).toEqual([]);
   });
 

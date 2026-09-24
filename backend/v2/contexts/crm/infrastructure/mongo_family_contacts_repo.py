@@ -85,6 +85,25 @@ class MongoFamilyContactRepository(TenantScopedRepository):
         cursor = self._find_many({"parent_id": parent_id}, sort=[("created_at", 1)], limit=limit)
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def find_by_email(self, email: str, *, limit: int = 5) -> list[FamilyContact]:
+        """Contacts on ANY family of the academy with exactly this email.
+
+        Equality on a non-empty string: served by the partial
+        ``family_contacts_academy_email_lookup`` index (migration 0197).
+        """
+        if not email:
+            return []
+        cursor = self._find_many({"email": email}, limit=limit)
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def find_by_phone_digits(self, digits: str, *, limit: int = 5) -> list[FamilyContact]:
+        """Contacts whose stored ``phone_digits`` equal ``digits`` exactly
+        (one spelling per call); served by ``family_contacts_academy_phone_lookup``."""
+        if not digits:
+            return []
+        cursor = self._find_many({"phone_digits": digits}, limit=limit)
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def count_for_family(self, parent_id: str) -> int:
         return await self._count({"parent_id": parent_id})
 

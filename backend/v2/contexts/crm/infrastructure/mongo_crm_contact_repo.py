@@ -94,6 +94,28 @@ class MongoCrmContactRepository(TenantScopedRepository):
         doc = await self._find_one({"dedupe_key": dedupe_key})
         return self._to_domain(doc) if doc else None
 
+    async def find_by_email(self, email: str, *, limit: int = 5) -> list[CrmContact]:
+        """Inquiries with exactly this (already normalised) email, newest first.
+
+        Equality on a non-empty string: served by the partial
+        ``crm_contacts_academy_email_lookup`` index (migration 0197).
+        """
+        if not email:
+            return []
+        cursor = self._find_many({"email": email}, limit=limit)
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def find_by_phone_digits(self, digits: str, *, limit: int = 5) -> list[CrmContact]:
+        """Inquiries whose stored ``phone_digits`` equal ``digits`` exactly.
+
+        One spelling per call (the caller asks once per spelling, never an
+        ``$or``); served by ``crm_contacts_academy_phone_lookup`` (0197).
+        """
+        if not digits:
+            return []
+        cursor = self._find_many({"phone_digits": digits}, limit=limit)
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_by_pipeline_status(
         self, status: PipelineStatus | None = None, *, limit: int = 200
     ) -> list[CrmContact]:
