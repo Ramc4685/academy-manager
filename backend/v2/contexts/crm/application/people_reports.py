@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 from backend.v2.contexts.crm.application.family_index import FamilyIndex
 from backend.v2.contexts.crm.application.ports import FamilyMoneyFacts, FamilyMoneyReader
 from backend.v2.contexts.crm.domain.models import CONTACT_SOURCES, PIPELINE_STATUSES
+from backend.v2.shared.tenancy import tenant_scope
 
 # --------------------------------------------------------------------------
 # Money owed by age band
@@ -301,8 +302,8 @@ class InquiryConversionReport:
 
     ``from`` and ``to`` are academy-local calendar days, both inclusive; the
     window is ``[from 00:00, to + 1 day 00:00)`` in the academy's timezone.
-    Contacts are read through the tenant-scoped repository, so only the
-    request's academy is ever counted.
+    Contacts are read through the tenant-scoped repository with the tenant
+    context pinned to ``academy_id``, so only that academy is ever counted.
     """
 
     def __init__(
@@ -331,7 +332,12 @@ class InquiryConversionReport:
         created_before = datetime.combine(
             end + timedelta(days=1), time.min, tzinfo=zone
         ).astimezone(UTC)
-        rows = await self._contacts.count_by_source_and_status(
-            created_from=created_from, created_before=created_before
-        )
+        # The contacts port is tenant-scoped (it reads the ContextVar), so pin
+        # the ContextVar to the academy this run was asked for: the count then
+        # honours the same academy_id as the money report even when the route
+        # resolved it from the claims rather than the request context.
+        with tenant_scope(academy_id):
+            rows = await self._contacts.count_by_source_and_status(
+                created_from=created_from, created_before=created_before
+            )
         return summarize_inquiry_conversion(rows, date_from=start, date_to=end, timezone=zone_name)

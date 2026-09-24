@@ -23,6 +23,7 @@ from backend.v2.contexts.crm.application.people_reports import (
     summarize_inquiry_conversion,
 )
 from backend.v2.contexts.crm.domain.family_index import FamilyIndex
+from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
 
 NOW = datetime(2026, 9, 23, 15, 0, tzinfo=UTC)
 
@@ -173,3 +174,32 @@ async def test_window_validation() -> None:
     start = date.fromordinal(end.toordinal() - MAX_WINDOW_DAYS + 1)
     result = await report.run("acad", date_from=start, date_to=end)
     assert result.date_from == start
+
+
+class _ScopedContacts:
+    """Mirrors MongoCrmContactRepository: the academy comes from the ContextVar."""
+
+    def __init__(self) -> None:
+        self.academies: list[str] = []
+
+    async def count_by_source_and_status(
+        self, *, created_from: datetime, created_before: datetime
+    ) -> list[tuple[str, str, int]]:
+        self.academies.append(current_academy_id())
+        return []
+
+
+async def test_contacts_are_counted_for_the_academy_the_run_was_asked_for() -> None:
+    contacts = _ScopedContacts()
+    report = InquiryConversionReport(
+        contacts=contacts, academy_timezone=await _tz("UTC"), clock=lambda: NOW
+    )
+    # No tenant context (the route's claims fallback): still scoped, no raise.
+    await report.run("acad-a")
+    # A stale context never wins over the academy passed in.
+    with tenant_scope("acad-other"):
+        await report.run("acad-b")
+        assert current_academy_id() == "acad-other"
+    assert contacts.academies == ["acad-a", "acad-b"]
+    with pytest.raises(TenantContextUnset):
+        current_academy_id()
