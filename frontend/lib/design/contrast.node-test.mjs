@@ -149,3 +149,21 @@ test("skill board is readable without colour", () => {
     assert.ok(glyphBlock.includes(status), `${status} has a glyph`);
   }
 });
+
+test("UI-4 — parent pay hero caption clears AA on the night card", () => {
+  // The hero is bg-rally-night in both themes (rally tokens are fixed hexes).
+  // "Secure checkout via Stripe" wore rally.subtle there: 4.0:1, under AA.
+  assert.ok(contrastRatio(NIGHT, MUTED) < AA_TEXT, "rally.subtle on night fails AA");
+  assert.ok(contrastRatio(NIGHT, SUBTLE_INK) >= AA_TEXT, "subtle-ink on night clears AA");
+
+  const source = read("app/(parent)/parent/payments/page.tsx");
+  const start = source.indexOf("{/* Balance hero */}");
+  assert.ok(start >= 0, "balance hero block is still marked");
+  assert.ok(source.slice(start).includes("bg-rally-night"), "hero is still the night card");
+  const caption = source
+    .slice(start)
+    .match(/<p className="([^"]*)" data-testid="pay-balance-reassurance">/);
+  assert.ok(caption, "hero caption keeps its test id and a static className");
+  assert.ok(/\btext-rally-subtle-ink\b/.test(caption[1]), "caption uses the night-surface token");
+  assert.ok(!/\btext-rally-(subtle|muted)(?!-)/.test(caption[1]), "…not rally.subtle/muted");
+});

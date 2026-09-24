@@ -25,7 +25,12 @@ import {
   stubParentProfile,
 } from "../fixtures/saas-stubs";
 
-type Surface = "public" | "parent-home" | "admin-dashboard" | "coach-today";
+type Surface =
+  | "public"
+  | "parent-home"
+  | "parent-payments"
+  | "admin-dashboard"
+  | "coach-today";
 
 interface AllowlistEntry {
   surface: Surface;
@@ -207,6 +212,57 @@ test.describe("axe: parent home", () => {
     await expect(page.getByTestId("parent-dashboard")).toBeVisible();
     await expect(page.getByTestId("parent-balance-banner")).toBeVisible();
     await expectNoBlockingViolations(page, "parent-home");
+  });
+});
+
+test.describe("axe: parent payments", () => {
+  // UI-4: the balance hero is a night card on a light page, so its caption
+  // needs the night-surface token. Scanned with a balance due so the hero,
+  // its "Secure checkout" caption and the autopay opt-in are all rendered.
+  test("has no serious or critical WCAG A/AA violations", async ({ page }) => {
+    await stubMe(page, ["parent"], "user-parent-e2e");
+    await stubParentProfile(page);
+    await stubParentMessages(page);
+    await stubParentAcademy(page);
+    await stubGet(page, "**/api/v2/parent/payments", { payments: [] });
+    await stubGet(page, "**/api/v2/parent/invoices", {
+      invoices: [
+        {
+          invoice_id: "inv-open-1",
+          period: "2026-09",
+          status: "open",
+          total_cents: 12000,
+          balance_due_cents: 12000,
+          currency: "usd",
+          due_date: "2026-09-12",
+          pdf_url: null,
+          created_at: "2026-09-01T00:00:00Z",
+          void_reason: null,
+        },
+      ],
+    });
+    await stubGet(page, "**/api/v2/parent/credits", { balance_cents: 0, credits: [] });
+    await stubGet(page, "**/api/v2/parent/pause-requests", { requests: [] });
+    await stubGet(page, "**/api/v2/parent/enrollments", {
+      enrollments: [
+        {
+          enrollment_id: "enr-1",
+          student_id: "st-1",
+          student_name: "Ava Sample",
+          session_id: "sess-1",
+          session_title: "Junior Beginners",
+          status: "active",
+          payment_mode: "monthly",
+          subscription_status: null,
+          autopay_enrollment_status: null,
+        },
+      ],
+    });
+
+    await page.goto("/parent/payments");
+    await expect(page.getByTestId("parent-payments")).toBeVisible();
+    await expect(page.getByTestId("pay-balance-reassurance")).toBeVisible();
+    await expectNoBlockingViolations(page, "parent-payments");
   });
 });
 
