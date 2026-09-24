@@ -1,6 +1,6 @@
 # Per-academy platform application fee (roadmap L9b)
 
-PR: #TBD
+PR: #958
 
 ## What changed
 
@@ -13,6 +13,7 @@ PR: #TBD
 
 - No migration. The field is optional in the 0136 validator, and a missing field reads as 0.
 - No env or config changes. After deploy every academy is still at 0%, and nothing changes until a platform admin sets a fee.
+- Owner steps: none to deploy. To charge a fee later, a platform admin sets it per academy on the tenant page. Also carries the one-line `contact_id` isolation-test fix for #950.
 
 ## Risk / rollback
 
