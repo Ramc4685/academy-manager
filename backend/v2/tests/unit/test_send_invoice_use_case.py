@@ -1284,3 +1284,43 @@ async def test_autopay_notice_failure_marks_delivery_failed_and_sends_no_pay_lin
     assert email.calls == []
     assert result.invoice.delivery_status == "delivery_failed"
     assert result.autopay_notified is False
+
+
+# ---------------------------------------------------------------------------
+# Roadmap L9b: per-academy platform application fee on the invoice pay link.
+# ---------------------------------------------------------------------------
+
+
+def _fee_uc(stripe: FakeInvoiceStripe, fee_bps: int) -> SendInvoice:
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+    return SendInvoice(
+        ledger=repo,
+        stripe=stripe,
+        email=None,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        settings=_FakeBillingSettings(
+            BillingSettings(academy_id="acad-1", application_fee_bps=fee_bps)
+        ),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+
+async def test_pay_link_default_fee_keeps_the_call_byte_identical() -> None:
+    stripe = FakeInvoiceStripe()
+
+    await _fee_uc(stripe, 0).execute("inv-1")
+
+    call = stripe.calls[0]
+    assert call["connected_account_id"] == "acct_ready_1"
+    assert "application_fee_cents" not in call
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
+
+
+async def test_pay_link_sends_the_academy_fee_and_scopes_the_idempotency_key() -> None:
+    stripe = FakeInvoiceStripe()
+
+    await _fee_uc(stripe, 125).execute("inv-1")
+
+    call = stripe.calls[0]
+    assert call["application_fee_cents"] == 125  # 1.25% of $100.00
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:fee125"

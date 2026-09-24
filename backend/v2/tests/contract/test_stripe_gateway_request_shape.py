@@ -173,8 +173,10 @@ async def test_create_account_onboarding_link_uses_account_link(
     assert call["return_url"] == "https://app.test/connect/return"
 
 
+@pytest.mark.parametrize("fee_cents", [0, 125])
 async def test_off_session_payment_intent_has_connect_params_and_no_pmt_types(
     fake_stripe: _Recorder,
+    fee_cents: int,
 ) -> None:
     gw = _gateway()
 
@@ -186,12 +188,14 @@ async def test_off_session_payment_intent_has_connect_params_and_no_pmt_types(
         idempotency_key="idem-1",
         metadata={"academy_id": "acad-1"},
         connected_account_id="acct_v2_123",
+        application_fee_cents=fee_cents,
     )
 
     call = fake_stripe.calls["PaymentIntent.create"]
     assert call["on_behalf_of"] == "acct_v2_123"
     assert call["transfer_data"] == {"destination": "acct_v2_123"}
-    assert call.get("application_fee_amount", 0) == 0
+    # Sent explicitly: the academy's platform fee (default 0, roadmap L9b).
+    assert call["application_fee_amount"] == fee_cents
     # Dynamic payment methods: never pin payment_method_types.
     assert "payment_method_types" not in call
     # Customers are created on the PLATFORM, not the connected account.
@@ -219,8 +223,10 @@ async def test_off_session_payment_intent_without_connected_account_omits_connec
     assert "payment_method_types" not in call
 
 
+@pytest.mark.parametrize("fee_cents", [0, 125])
 async def test_session_checkout_has_destination_charge_params_and_no_pmt_types(
     fake_stripe: _Recorder,
+    fee_cents: int,
 ) -> None:
     gw = _gateway()
 
@@ -232,13 +238,14 @@ async def test_session_checkout_has_destination_charge_params_and_no_pmt_types(
         cancel_url="https://app.test/cancel",
         metadata={"academy_id": "acad-1", "payment_id": "pay-1"},
         connected_account_id="acct_v2_123",
+        application_fee_cents=fee_cents,
     )
 
     call = fake_stripe.calls["checkout.Session.create"]
     pi_data = call["payment_intent_data"]
     assert pi_data["on_behalf_of"] == "acct_v2_123"
     assert pi_data["transfer_data"] == {"destination": "acct_v2_123"}
-    assert pi_data.get("application_fee_amount", 0) == 0
+    assert pi_data["application_fee_amount"] == fee_cents
     assert "payment_method_types" not in call
     assert "stripe_account" not in call
 
@@ -263,8 +270,10 @@ async def test_session_checkout_without_connected_account_omits_connect_params(
     assert "payment_method_types" not in call
 
 
+@pytest.mark.parametrize("fee_cents", [0, 125])
 async def test_invoice_checkout_has_destination_charge_params_and_no_pmt_types(
     fake_stripe: _Recorder,
+    fee_cents: int,
 ) -> None:
     gw = _gateway()
 
@@ -277,13 +286,14 @@ async def test_invoice_checkout_has_destination_charge_params_and_no_pmt_types(
         metadata={"academy_id": "acad-1", "parent_id": "parent-1"},
         idempotency_key="invoice-checkout:inv-1:4100",
         connected_account_id="acct_v2_123",
+        application_fee_cents=fee_cents,
     )
 
     call = fake_stripe.calls["checkout.Session.create"]
     pi_data = call["payment_intent_data"]
     assert pi_data["on_behalf_of"] == "acct_v2_123"
     assert pi_data["transfer_data"] == {"destination": "acct_v2_123"}
-    assert pi_data.get("application_fee_amount", 0) == 0
+    assert pi_data["application_fee_amount"] == fee_cents
     assert pi_data["metadata"] == {"academy_id": "acad-1", "parent_id": "parent-1"}
     assert call["idempotency_key"] == "invoice-checkout:inv-1:4100"
     # Dynamic payment methods: never pin payment_method_types.
@@ -314,8 +324,10 @@ async def test_invoice_checkout_without_connected_account_omits_connect_params(
     assert "payment_method_types" not in call
 
 
+@pytest.mark.parametrize("fee_cents", [0, 125])
 async def test_invoice_checkout_with_autopay_optin_saves_payment_method(
     fake_stripe: _Recorder,
+    fee_cents: int,
 ) -> None:
     gw = _gateway()
 
@@ -330,6 +342,7 @@ async def test_invoice_checkout_with_autopay_optin_saves_payment_method(
         connected_account_id="acct_v2_123",
         save_payment_method_for_autopay=True,
         autopay_enrollment_ids=["enr-1", "enr-2", "enr-1"],
+        application_fee_cents=fee_cents,
     )
 
     call = fake_stripe.calls["checkout.Session.create"]
@@ -344,7 +357,7 @@ async def test_invoice_checkout_with_autopay_optin_saves_payment_method(
     # Opt-in composes with destination-charge routing — unchanged.
     assert pi_data["on_behalf_of"] == "acct_v2_123"
     assert pi_data["transfer_data"] == {"destination": "acct_v2_123"}
-    assert pi_data.get("application_fee_amount", 0) == 0
+    assert pi_data["application_fee_amount"] == fee_cents
     # Dynamic payment methods: never pin payment_method_types.
     assert "payment_method_types" not in call
 
@@ -499,3 +512,89 @@ async def test_session_checkout_expires_shortly_after_creation(
     # At least Stripe's 30-minute minimum, and nowhere near the 24h default.
     assert expires_at >= before + 30 * 60
     assert expires_at <= after + 45 * 60
+
+
+# ---------------------------------------------------------------------------
+# Application fee validation (roadmap L9b): the gateway refuses a fee Stripe
+# would reject or that would take money it should not, before any request.
+# ---------------------------------------------------------------------------
+
+
+async def _call_each_charge_method(gw: RealStripeGateway, *, fee: int, account: str | None) -> None:
+    await gw.create_off_session_payment_intent(
+        amount_cents=1000,
+        currency="usd",
+        customer_id="cus_1",
+        payment_method_id="pm_1",
+        idempotency_key="idem-1",
+        metadata={"academy_id": "acad-1"},
+        connected_account_id=account,
+        application_fee_cents=fee,
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs"),
+    [
+        (
+            "create_off_session_payment_intent",
+            {
+                "amount_cents": 1000,
+                "currency": "usd",
+                "customer_id": "cus_1",
+                "payment_method_id": "pm_1",
+                "idempotency_key": "idem-1",
+                "metadata": {"academy_id": "acad-1"},
+            },
+        ),
+        (
+            "create_checkout_session",
+            {
+                "parent_id": "parent-1",
+                "session_id": "sess-1",
+                "amount_cents": 1000,
+                "success_url": "https://app.test/ok",
+                "cancel_url": "https://app.test/cancel",
+                "metadata": {"academy_id": "acad-1"},
+            },
+        ),
+        (
+            "create_invoice_checkout_session",
+            {
+                "invoice_id": "inv-1",
+                "amount_cents": 1000,
+                "currency": "usd",
+                "success_url": "https://app.test/ok",
+                "cancel_url": "https://app.test/cancel",
+                "metadata": {"academy_id": "acad-1", "parent_id": "parent-1"},
+            },
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("fee", "account"),
+    [
+        (1001, "acct_v2_123"),  # more than the charge
+        (-1, "acct_v2_123"),  # negative
+        (50, None),  # a fee on a platform-direct charge
+    ],
+)
+async def test_invalid_application_fee_is_refused_before_calling_stripe(
+    fake_stripe: _Recorder,
+    method: str,
+    kwargs: dict[str, Any],
+    fee: int,
+    account: str | None,
+) -> None:
+    gw = _gateway()
+
+    with pytest.raises(ValueError, match="application fee"):
+        await getattr(gw, method)(**kwargs, connected_account_id=account, application_fee_cents=fee)
+
+    assert fake_stripe.calls == {}
+
+
+async def test_application_fee_equal_to_the_charge_is_allowed(fake_stripe: _Recorder) -> None:
+    await _call_each_charge_method(_gateway(), fee=1000, account="acct_v2_123")
+
+    assert fake_stripe.calls["PaymentIntent.create"]["application_fee_amount"] == 1000

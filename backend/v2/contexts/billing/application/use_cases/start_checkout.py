@@ -18,6 +18,10 @@ from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
     StripeGateway,
 )
+from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    application_fee_kwargs,
+    resolve_application_fee_cents,
+)
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
 from backend.v2.contexts.billing.domain.models import Payment
 from backend.v2.shared.ids import new_ulid
@@ -67,6 +71,11 @@ class StartCheckout:
         # #532) stamps the CURRENT academy, never a boot-time one.
         academy_id = self._academy_id() if callable(self._academy_id) else self._academy_id
         connected_account_id = await self._ready_connected_account_id()
+        fee_cents = await resolve_application_fee_cents(
+            self._settings,
+            amount_cents=cmd.amount_cents,
+            connected_account_id=connected_account_id,
+        )
         payment_id = str(new_ulid())
         try:
             checkout_id, url = await self._stripe.create_checkout_session(
@@ -83,6 +92,7 @@ class StartCheckout:
                     "calculation_snapshot_id": cmd.calculation_snapshot_id or "",
                 },
                 connected_account_id=connected_account_id,
+                **application_fee_kwargs(fee_cents),
             )
         except Exception as exc:  # pragma: no cover - infra-only path
             raise CheckoutCreationFailed(str(exc)) from exc

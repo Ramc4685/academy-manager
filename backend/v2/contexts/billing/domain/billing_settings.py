@@ -10,6 +10,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+#: Upper bound on the platform's per-academy application fee, in basis points
+#: (1 bps = 0.01%). 1,000 bps = 10% of the charge: a guard rail against a
+#: fat-fingered value, not a pricing decision. Raising it is a code change.
+MAX_APPLICATION_FEE_BPS = 1_000
+
 
 class BillingSettings(BaseModel):
     """Academy-scoped billing configuration (cash/ACH discount + invoice numbering)."""
@@ -51,6 +56,16 @@ class BillingSettings(BaseModel):
     # sorted and de-duplicated so the job can never send two emails for the
     # same calendar day.
     reminder_days: tuple[int, ...] = Field(default=(15, 20))
+
+    # Platform application fee (roadmap L9b), in basis points of each
+    # destination charge routed to this academy's connected account; Stripe's
+    # ``application_fee_amount`` is derived from it per charge by
+    # ``domain.fees.application_fee_cents``. Default 0 keeps every existing
+    # academy's charges exactly as before. PLATFORM-ADMIN ONLY: the tenant
+    # settings write path (``BillingSettingsRepository.upsert``) never
+    # persists this field; only ``set_application_fee_bps`` does, from the
+    # platform BFF.
+    application_fee_bps: int = Field(default=0, ge=0, le=MAX_APPLICATION_FEE_BPS)
 
     @field_validator("reminder_days", mode="before")
     @classmethod

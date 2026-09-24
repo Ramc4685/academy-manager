@@ -1366,3 +1366,87 @@ async def test_platform_fallback_settings_lookup_failure_fails_closed_to_decline
     assert result.success is False
     assert result.decline_code == "connected_account_not_ready"
     assert stripe.create_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Roadmap L9b: per-academy platform application fee on the autopay charge.
+# ---------------------------------------------------------------------------
+
+
+class _FakeStripeRecordsFee(FakeStripeSucceeds):
+    async def create_off_session_payment_intent(  # type: ignore[override]
+        self, *, application_fee_cents: int = 0, **kwargs
+    ) -> tuple[str, str, str | None]:
+        result = await super().create_off_session_payment_intent(**kwargs)
+        self.create_calls[-1]["application_fee_cents"] = application_fee_cents
+        return result
+
+
+def _ready_accounts() -> FakeConnectedAccounts:
+    return FakeConnectedAccounts(
+        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_ready").with_status(
+            status="active", charges_enabled=True
+        )
+    )
+
+
+async def test_autopay_default_fee_is_zero_and_request_is_unchanged() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = _FakeStripeRecordsFee()
+
+    result = await _uc(
+        repo,
+        stripe,
+        settings=FakeBillingSettingsRepo(BillingSettings(academy_id="acad-1")),
+        connected_accounts=_ready_accounts(),
+    ).execute("inv-1")
+
+    assert result.success is True
+    call = stripe.create_calls[0]
+    assert call["application_fee_cents"] == 0
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
+async def test_autopay_sends_the_academy_fee_and_scopes_the_idempotency_key() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = _FakeStripeRecordsFee()
+
+    result = await _uc(
+        repo,
+        stripe,
+        settings=FakeBillingSettingsRepo(
+            BillingSettings(academy_id="acad-1", application_fee_bps=250)
+        ),
+        connected_accounts=_ready_accounts(),
+    ).execute("inv-1")
+
+    assert result.success is True
+    call = stripe.create_calls[0]
+    assert call["connected_account_id"] == "acct_ready"
+    assert call["application_fee_cents"] == 250  # 2.5% of $100.00
+    # A fee change inside Stripe's idempotency window must not replay the old key.
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:fee250"
+
+
+async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = _FakeStripeRecordsFee()
+
+    result = await _uc(
+        repo,
+        stripe,
+        settings=FakeBillingSettingsRepo(
+            BillingSettings(
+                academy_id="acad-1",
+                application_fee_bps=250,
+                allow_platform_charge_fallback=True,
+            )
+        ),
+        connected_accounts=FakeConnectedAccounts(None),
+    ).execute("inv-1")
+
+    assert result.success is True
+    call = stripe.create_calls[0]
+    assert call["connected_account_id"] is None
+    assert call["application_fee_cents"] == 0
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"

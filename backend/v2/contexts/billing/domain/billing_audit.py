@@ -53,6 +53,11 @@ BillingAuditAction = Literal[
     # configured fee (#552). Nobody clicked anything, so the trail is the only
     # place the parent's extra charge can be explained from.
     "late_fee_applied",
+    # Platform config, not money movement: a PLATFORM admin changed this
+    # academy's application fee (roadmap L9b), which changes how much of every
+    # future destination charge the platform keeps. Same actor/before/after
+    # trail as the other charge-routing settings.
+    "application_fee_changed",
 ]
 
 
