@@ -71,6 +71,9 @@ export const queryKeys = {
     familyIndex: (params: Record<string, unknown>) =>
       ["admin", "families", "index", params] as const,
     familyIndexSummary: () => ["admin", "families", "index-summary"] as const,
+    // People CRM Pipeline board (L3b). Under `families()` so a families-wide
+    // invalidation refreshes it too.
+    pipelineBoard: () => ["admin", "families", "pipeline"] as const,
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
     familyRecord: (familyId: string) =>

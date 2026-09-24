@@ -79,6 +79,7 @@ import {
 } from "@/components/ds/list-toolbar";
 import { Th } from "@/components/ds/dialog-chrome";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { PipelineBoard } from "@/components/admin/people/pipeline-board";
 
 const PAGE_SIZE = 50;
 /** Bounded walk of the Billing Setup pages for the bulk invite's recipients. */
@@ -105,8 +106,53 @@ export default function FamiliesPage() {
   // `useSearchParams` needs a Suspense boundary for the static build.
   return (
     <Suspense fallback={<div className="flex flex-col gap-6" />}>
-      <FamiliesView />
+      <PeopleViews />
     </Suspense>
+  );
+}
+
+/**
+ * People CRM views on one route (spec §1: "Families, Pipeline ... are views
+ * over the same family index"). `?view=pipeline` is the Pipeline board (L3b,
+ * deep link `?view=pipeline&stage=trial_booked`); anything else is Families.
+ */
+function PeopleViews() {
+  const searchParams = useSearchParams();
+  const pipeline = searchParams.get("view") === "pipeline";
+  return (
+    <div className="flex flex-col gap-4">
+      <nav aria-label="People views" data-testid="admin-people-views">
+        <ul className="flex gap-2">
+          {(
+            [
+              { href: "/admin/families", label: "Families", current: !pipeline, id: "families" },
+              {
+                href: "/admin/families?view=pipeline",
+                label: "Pipeline",
+                current: pipeline,
+                id: "pipeline",
+              },
+            ] as const
+          ).map((item) => (
+            <li key={item.id}>
+              <Link
+                href={item.href as Route}
+                aria-current={item.current ? "page" : undefined}
+                data-testid={`admin-people-view-${item.id}`}
+                className={`inline-flex h-9 items-center rounded-full border px-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rally-cobalt-600 ${
+                  item.current
+                    ? "border-rally-ink bg-rally-ink text-white"
+                    : "border-rally-line bg-white text-rally-base hover:bg-rally-paper"
+                }`}
+              >
+                {item.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      {pipeline ? <PipelineBoard initialStage={searchParams.get("stage")} /> : <FamiliesView />}
+    </div>
   );
 }
 

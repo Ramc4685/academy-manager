@@ -427,7 +427,7 @@ Spec §3.4: "Moves that correspond to a real write (approve trial, Came /
 Didn't come) call the existing use cases; moves without one write
 `crm_contacts.pipeline_override` with author and time so the board never lies
 about the system state." L3a ships both halves as backend plus minimal
-buttons; the board view itself is L3b.
+buttons; the board view itself is L3b (next section).
 
 | File | What it is |
 |---|---|
@@ -469,3 +469,53 @@ Tests: `tests/unit/test_mark_trial_outcome.py`, `tests/unit/test_crm_pipeline_mo
 `tests/contract/test_trial_outcome_pipeline_real_mongo.py` (real `mongod`: the
 status and override compare-and-swaps, tenant isolation, concurrent moves),
 `frontend/e2e/specs/trial-outcome.spec.ts`.
+
+## The Pipeline board (People CRM L3b)
+
+`/admin/families?view=pipeline` (a view on the existing Families route, no new
+page; deep link `?view=pipeline&stage=trial_booked` picks the phone stage).
+Spec §3.4.
+
+| File | What it is |
+|---|---|
+| `application/pipeline_board.py` | `build_pipeline_board` (pure merge), `GetPipelineBoard`, `move_targets`, `quick_add_command` |
+| `backend/v2/composition/crm_pipeline.py` | lazy wiring: `app.state.crm_pipeline_board` (reuses `app.state.admin_family_index.index`, so the board shares the index cache) and `app.state.crm_quick_add` (the existing `CreateContact`) |
+| `interfaces/admin/pipeline_routes.py` | `GET /admin/crm/pipeline`, `POST /admin/crm/contacts` (quick add) |
+| `frontend/components/admin/people/pipeline-board.tsx` | the board, the phone stage switcher, Move to... and quick add |
+
+Where a card sits:
+
+- **`crm_contacts`** (newest first, at most 500): `current_column` (system
+  `enrolled` > staff override > the stage's column). `move_targets` lists the
+  columns `refuse_move` allows now; an enrolled contact has none. An enrolled
+  card leaves the board 7 days after its last change.
+- **The family index roll-up**: stage `trial` is a Trial booked card, a family
+  with an account and no enrolled child (`never_enrolled`) is an Inquiry card.
+  Family cards are read-only (their stage is a system write made on the family
+  record or the Inbox) and open `/admin/families/{id}`. A family a contact
+  links to (`linked_family_id` / `converted_parent_id`, any alias) is not shown
+  twice. Active, leaving and left families are not on the board.
+- A failed family index read is the `families_unavailable` warning; the
+  contact cards still show.
+
+No card carries money, so every admin-persona tier sees the same board. Quick
+add takes a staff source only (`whatsapp_or_phone`, `referral`, `other`; the
+route refuses `website` and extra fields), stamps `created_by`, stage `lead`,
+`consent.contact_about_request = true`, never marketing. Staff rows are not
+deduped (see "Idempotency"): the form disables its button while saving and
+shows the Phase 4c duplicate warning.
+
+UI rules: moves are a "Move to..." button opening radio options with an
+explicit Move button (nothing commits on change, WCAG 3.2.2); Escape closes
+it and returns focus to the button; after a card leaves its column focus
+goes to the card that took its place, else the column heading (WCAG 2.4.3).
+
+Tests: `tests/unit/test_crm_pipeline_board.py`,
+`tests/interface/test_crm_pipeline_board_routes.py`,
+`tests/contract/test_crm_pipeline_board_real_mongo.py` (real `mongod`: tenant
+scope, newest first, a move shows on the next read, staff rows never deduped),
+`frontend/e2e/specs/admin-pipeline-board.spec.ts`.
+
+Not built here: the Registered and Trial done columns for families (they
+need the application and trial joins of the R6 extension), card assignee,
+last contact and Cold chip, and the auto follow-up (L3c).
