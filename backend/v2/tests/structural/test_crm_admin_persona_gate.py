@@ -19,7 +19,7 @@ from backend.v2.tests.structural.test_owner_gate_policy import (
     _iter_routes,
 )
 
-_CRM_PREFIXES = ("/api/v2/admin/families",)
+_CRM_PREFIXES = ("/api/v2/admin/families", "/api/v2/admin/follow-ups")
 
 
 def _personas(route: Any) -> set[str]:
@@ -48,6 +48,15 @@ def test_the_family_index_routes_are_registered() -> None:
     routes = _crm_routes()
     assert ("GET", "/api/v2/admin/families") in routes
     assert ("GET", "/api/v2/admin/families/summary") in routes
+    # Phase 4a: family notes and follow-ups.
+    assert ("GET", "/api/v2/admin/families/{parent_id}/notes") in routes
+    assert ("POST", "/api/v2/admin/families/{parent_id}/notes") in routes
+    assert ("PATCH", "/api/v2/admin/families/{parent_id}/notes/{note_id}") in routes
+    assert ("DELETE", "/api/v2/admin/families/{parent_id}/notes/{note_id}") in routes
+    assert ("GET", "/api/v2/admin/families/{parent_id}/follow-ups") in routes
+    assert ("POST", "/api/v2/admin/families/{parent_id}/follow-ups") in routes
+    assert ("PATCH", "/api/v2/admin/families/{parent_id}/follow-ups/{follow_up_id}") in routes
+    assert ("GET", "/api/v2/admin/follow-ups") in routes
 
 
 def test_every_crm_route_requires_the_admin_persona() -> None:

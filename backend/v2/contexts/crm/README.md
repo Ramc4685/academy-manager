@@ -293,3 +293,80 @@ trial states for children without enrollments), leads from `crm_contacts`
 and applications in the index, `family_contacts` search keys, persisted
 Groups (`family_groups`, Phase 4; today the summary returns static presets),
 and the Not attending / Missing info / Needs attention chips.
+
+## Family notes and follow-ups (People CRM Phase 4a, migration 0195)
+
+Team notes and dated follow-ups on a family record. Spec:
+`docs/design/people-crm/engineering-spec.md` §3.5 and §5. Coach notes are NOT
+these records: they stay read-only (#665 data, child drawer) and the CRM
+never writes them.
+
+| File | What it is |
+|---|---|
+| `domain/family_notes.py` | `FamilyNote`, `FamilyFollowUp`, body/title normalisers and caps (4,000 / 200), `can_edit_note` (author or owner), `follow_up_bucket` |
+| `application/family_directory.py` | `IndexFamilyDirectory`: "is this a family of this academy", over the family index (cached, re-checked once against a fresh build on a miss); resolves an alias to the canonical family id |
+| `application/use_cases/family_notes.py` | `ListFamilyNotes`, `AddFamilyNote`, `EditFamilyNote`, `DeleteFamilyNote` |
+| `application/use_cases/family_follow_ups.py` | `ListFamilyFollowUps`, `AddFamilyFollowUp`, `UpdateFamilyFollowUp`, `ListFollowUps` (the queue) |
+| `infrastructure/mongo_family_notes_repo.py` | `MongoFamilyNoteRepository`, `MongoFamilyFollowUpRepository` (both `TenantScopedRepository`) |
+| `backend/v2/migrations/0195_crm_family_notes_follow_ups.py` | the indexes |
+
+Routes (`interfaces/admin/family_crm_routes.py`, all `require_persona("admin")`,
+services on `app.state.admin_family_index` from `composition/families_crm.py`):
+
+| Route | Notes |
+|---|---|
+| `GET/POST /admin/families/{parent_id}/notes` | newest first; live notes only |
+| `PATCH/DELETE /admin/families/{parent_id}/notes/{note_id}` | author or owner (403 otherwise); DELETE is soft (`deleted_at`, `deleted_by`) |
+| `GET/POST /admin/families/{parent_id}/follow-ups` | assignee must be an active admin or owner of this academy (422) |
+| `PATCH /admin/families/{parent_id}/follow-ups/{follow_up_id}` | title, due date, assignee, `status` open/done (`done_at`, `done_by` stamped; reopening clears them) |
+| `GET /admin/follow-ups?assignee=me\|all&bucket=overdue\|today\|upcoming\|done` | open rows by `due_on` against the academy's local today (no bucket = all open); done newest first |
+
+### Records
+
+`family_notes`: `{academy_id, parent_id, note_id, body, author_user_id,
+created_at, updated_at, deleted_at?, deleted_by?}`. `body` is plain text,
+line breaks kept, at most 4,000 characters, never rendered as HTML.
+
+`family_follow_ups`: `{academy_id, parent_id, follow_up_id, title, due_on,
+assignee_user_id, status (open|done), created_by, created_at, updated_at,
+done_at?, done_by?}`. `due_on` is stored as an ISO `YYYY-MM-DD` string so it
+sorts and range-compares as the date.
+
+`parent_id` is always the **canonical** family id (the family index key), so
+notes written from an alias URL land on the same family.
+
+### Rules
+
+- **The family check is the index, not tenant membership** (#664). Every use
+  case first asks `FamilyDirectory` whether the id is a family of the caller's
+  academy; another academy's family, or no family, is a 404.
+- **Every repository read filters `academy_id` (tenant context) and
+  `parent_id`**, so a note or follow-up id is only ever found on its own
+  family. No body carries an academy.
+- **Ids are unique per academy** through the unique indexes; a duplicate
+  insert is `Crm.DuplicateRecordId` (409). The test fakes
+  (`tests/fixtures/crm_family_fakes.py`) raise the same way.
+- Coaches and parents get the wrong-persona 404 (`docs/security-matrix.md`).
+
+### Indexes (migration 0195)
+
+| Collection | Name | Keys | Options |
+|---|---|---|---|
+| `family_notes` | `family_notes_academy_note_unique` | `(academy_id, note_id)` | unique |
+| `family_notes` | `family_notes_academy_parent_created` | `(academy_id, parent_id, created_at desc)` | |
+| `family_follow_ups` | `family_follow_ups_academy_follow_up_unique` | `(academy_id, follow_up_id)` | unique |
+| `family_follow_ups` | `family_follow_ups_academy_parent_created` | `(academy_id, parent_id, created_at desc)` | |
+| `family_follow_ups` | `family_follow_ups_academy_assignee_status_due` | `(academy_id, assignee_user_id, status, due_on)` | |
+| `family_follow_ups` | `family_follow_ups_academy_status_due` | `(academy_id, status, due_on)` | |
+
+None is partial; no validator yet (same reasoning as 0192). Tests:
+`tests/unit/test_crm_family_notes_domain.py`,
+`tests/unit/test_crm_family_notes_use_cases.py`,
+`tests/unit/test_0195_crm_family_notes_follow_ups.py`,
+`tests/contract/test_crm_family_notes_real_mongo.py` (real `mongod`: tenant
+isolation, duplicate ids, index use), and
+`tests/interface/test_admin_family_crm_routes.py`.
+
+Not built here: pinned notes, `student_id` tags, the `students.notes` copy,
+`contact_id` (lead) notes, automatic follow-ups (`source`, `source_ref`), and
+the timeline merge.

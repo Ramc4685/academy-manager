@@ -75,6 +75,17 @@ export const queryKeys = {
       ["admin", "families", parentId, "billing"] as const,
     familyRecord: (familyId: string) =>
       ["admin", "families", familyId, "record"] as const,
+    // People CRM Phase 4a: team notes and follow-ups on a family.
+    familyNotes: (parentId: string) =>
+      ["admin", "families", parentId, "notes"] as const,
+    familyFollowUps: (parentId: string) =>
+      ["admin", "families", parentId, "follow-ups"] as const,
+    // The signed-in staff member (`/me`), for "you" labels and defaults.
+    currentUser: () => ["admin", "current-user"] as const,
+    // Every cross-family follow-up queue (the dashboard's "My follow-ups").
+    followUpQueueAll: () => ["admin", "families", "follow-up-queue"] as const,
+    followUpQueue: (assignee: "me" | "all", bucket: string | null) =>
+      ["admin", "families", "follow-up-queue", assignee, bucket ?? "open"] as const,
     studentCoachNotes: (studentId: string) =>
       ["admin", "student", studentId, "coach-notes"] as const,
     registrations: () => ["admin", "registrations"] as const,
