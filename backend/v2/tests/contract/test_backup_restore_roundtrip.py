@@ -75,8 +75,12 @@ async def test_backup_restore_verify_round_trip(
     real_db: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     await _seed(real_db)
+    _round_trip(real_db.name, tmp_path, capsys)
+
+
+def _round_trip(source: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The blocking part (subprocesses, files, sync client) kept out of the event loop."""
     url = _real_mongo_url()
-    source = real_db.name
     target = _restore_db_name(source)
     env = {"MONGO_URL": url, "SCRATCH_MONGO_URL": url}
     client: MongoClient[Any] = MongoClient(url, serverSelectionTimeoutMS=2000)
