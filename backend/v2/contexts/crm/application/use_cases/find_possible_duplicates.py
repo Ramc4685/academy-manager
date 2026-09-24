@@ -10,7 +10,7 @@ Sources, all inside the caller's academy:
 1. the family index (parents with an account or a roster-only parent):
    in memory, built from this academy's own rows (email, phone, exact name);
 2. family contacts (second parents, guardians): one equality lookup per
-   field and per phone spelling (migration 0197 indexes);
+   field and per phone spelling (migration 0198 indexes);
 3. users with an active membership here (staff, and parents already found in
    1 are skipped): identity's lookup by normalised email;
 4. inquiries (``crm_contacts``): one equality lookup per field and spelling.

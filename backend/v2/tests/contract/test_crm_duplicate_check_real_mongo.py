@@ -1,4 +1,4 @@
-"""The People CRM duplicate warning on a real ``mongod`` (Phase 4c, migration 0197).
+"""The People CRM duplicate warning on a real ``mongod`` (Phase 4c, migration 0198).
 
 ``real_db`` replays every migration, so the lookups run against the
 production indexes. Wired exactly as ``composition/people_duplicates.py``

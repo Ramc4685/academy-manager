@@ -89,7 +89,7 @@ class MongoFamilyContactRepository(TenantScopedRepository):
         """Contacts on ANY family of the academy with exactly this email.
 
         Equality on a non-empty string: served by the partial
-        ``family_contacts_academy_email_lookup`` index (migration 0197).
+        ``family_contacts_academy_email_lookup`` index (migration 0198).
         """
         if not email:
             return []

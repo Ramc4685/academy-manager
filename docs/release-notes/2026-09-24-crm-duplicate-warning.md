@@ -1,4 +1,4 @@
-# People CRM Phase 4c: duplicate warning on Add user / Add parent / Add contact, migration 0197
+# People CRM Phase 4c: duplicate warning on Add user / Add parent / Add contact, migration 0198
 
 PR: #TBD
 
@@ -10,8 +10,8 @@ PR: #TBD
 
 ## Deploy notes
 
-- Migration **0197_crm_duplicate_lookup_indexes** is applied by the production migrate job (dry run, then the Fly release command) per `docs/runbooks/migrations-rollout.md`; expect it in the dry-run pending list after 0196 (and 0192-0195 if those have not shipped yet). It only creates four non-unique partial indexes: `crm_contacts (academy_id, email)` and `(academy_id, phone_digits)`, `family_contacts (academy_id, email)` and `(academy_id, phone_digits)`, each filtered on `{field: {$gt: ""}}`. Every index leads with `academy_id`; no `$type` filter; no document is modified. Both collections are small. Never hand-apply it.
-- Until 0197 runs, the check still works but its inquiry and family-contact lookups scan the academy's rows of those collections.
+- Migration **0198_crm_duplicate_lookup_indexes** is applied by the production migrate job (dry run, then the Fly release command) per `docs/runbooks/migrations-rollout.md`; expect it in the dry-run pending list after 0196 and any 0197 (and 0192-0195 if those have not shipped yet). It only creates four non-unique partial indexes: `crm_contacts (academy_id, email)` and `(academy_id, phone_digits)`, `family_contacts (academy_id, email)` and `(academy_id, phone_digits)`, each filtered on `{field: {$gt: ""}}`. Every index leads with `academy_id`; no `$type` filter; no document is modified. Both collections are small. Never hand-apply it.
+- Until 0198 runs, the check still works but its inquiry and family-contact lookups scan the academy's rows of those collections.
 - No feature flag, no environment variable, no backfill.
 
 ## Risk / rollback

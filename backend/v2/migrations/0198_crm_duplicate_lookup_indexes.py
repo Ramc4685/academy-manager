@@ -35,7 +35,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0197_crm_duplicate_lookup_indexes"
+version = "0198_crm_duplicate_lookup_indexes"
 
 #: (collection, name, keys, options). Exposed so the unit test pins the shapes.
 INDEXES: list[tuple[str, str, list[tuple[str, int]], dict[str, Any]]] = [

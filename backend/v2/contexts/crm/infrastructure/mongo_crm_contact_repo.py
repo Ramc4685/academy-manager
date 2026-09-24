@@ -98,7 +98,7 @@ class MongoCrmContactRepository(TenantScopedRepository):
         """Inquiries with exactly this (already normalised) email, newest first.
 
         Equality on a non-empty string: served by the partial
-        ``crm_contacts_academy_email_lookup`` index (migration 0197).
+        ``crm_contacts_academy_email_lookup`` index (migration 0198).
         """
         if not email:
             return []
@@ -109,7 +109,7 @@ class MongoCrmContactRepository(TenantScopedRepository):
         """Inquiries whose stored ``phone_digits`` equal ``digits`` exactly.
 
         One spelling per call (the caller asks once per spelling, never an
-        ``$or``); served by ``crm_contacts_academy_phone_lookup`` (0197).
+        ``$or``); served by ``crm_contacts_academy_phone_lookup`` (0198).
         """
         if not digits:
             return []

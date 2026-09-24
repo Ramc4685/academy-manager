@@ -372,7 +372,7 @@ Not built here: pinned notes, `student_id` tags, the `students.notes` copy,
 `contact_id` (lead) notes, automatic follow-ups (`source`, `source_ref`), and
 the timeline merge.
 
-## Duplicate warning (People CRM Phase 4c, migration 0197)
+## Duplicate warning (People CRM Phase 4c, migration 0198)
 
 "Possible match: <name> - open" on the forms that add a person: Add user /
 Add parent (the Users directory dialog, which is how a family is added
@@ -388,7 +388,7 @@ never a gate: nothing is merged and nothing is refused.
 | `application/use_cases/find_possible_duplicates.py` | `FindPossibleDuplicates`: family index, family contacts, members of this academy, inquiries; merged in code, at most 5 |
 | `backend/v2/composition/people_duplicates.py` | wiring; identity's "user with this normalised email, only with an active membership HERE" adapter |
 | `interfaces/admin/people_duplicate_routes.py` | `POST /admin/people/duplicate-check` |
-| `backend/v2/migrations/0197_crm_duplicate_lookup_indexes.py` | the lookup indexes |
+| `backend/v2/migrations/0198_crm_duplicate_lookup_indexes.py` | the lookup indexes |
 
 Rules:
 
@@ -401,7 +401,7 @@ Rules:
 - **Equality lookups on indexes, never `$or`.** One query per field and per
   phone spelling (`5550102030` and `15550102030`), merged in code. Users by
   `normalized_email` (`users_normalized_email_unique`), memberships by
-  `(academy_id, user_id)`, contacts and inquiries by the 0197 indexes.
+  `(academy_id, user_id)`, contacts and inquiries by the 0198 indexes.
   Legacy users without a `normalized_email` are not looked up (parents among
   them are still matched through the family index).
 - **Masked.** `jo***@example.test`, `•••-2030`. The link opens the record
@@ -409,7 +409,7 @@ Rules:
   `/admin/users/{id}` for a staff user; `null` for an unlinked inquiry).
 - `require_persona("admin")`; rate-limited per client (60 a minute).
 
-### Indexes (migration 0197)
+### Indexes (migration 0198)
 
 | Collection | Name | Keys | Options |
 |---|---|---|---|

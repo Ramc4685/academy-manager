@@ -1,4 +1,4 @@
-"""Migration 0197 builds the duplicate-warning lookup indexes: every one led by
+"""Migration 0198 builds the duplicate-warning lookup indexes: every one led by
 ``academy_id``, partial on ``{field: {$gt: ""}}`` (never ``$type``, #878),
 non-unique (a shared household email is warned about, never refused);
 re-running is a no-op."""
@@ -9,13 +9,13 @@ import importlib
 
 import mongomock_motor
 
-_M0197 = importlib.import_module("backend.v2.migrations.0197_crm_duplicate_lookup_indexes")
+_M0198 = importlib.import_module("backend.v2.migrations.0198_crm_duplicate_lookup_indexes")
 
 
 async def test_builds_the_indexes_and_rerun_is_a_no_op() -> None:
     db = mongomock_motor.AsyncMongoMockClient()["test"]
-    await _M0197.up(db)
-    await _M0197.up(db)
+    await _M0198.up(db)
+    await _M0198.up(db)
 
     contacts = await db["crm_contacts"].index_information()
     assert contacts["crm_contacts_academy_email_lookup"]["key"] == [
@@ -38,9 +38,9 @@ async def test_builds_the_indexes_and_rerun_is_a_no_op() -> None:
 
 
 def test_every_index_leads_with_academy_id_and_filters_with_gt_empty() -> None:
-    assert _M0197.version == "0197_crm_duplicate_lookup_indexes"
-    assert len(_M0197.INDEXES) == 4
-    for _collection, _name, keys, options in _M0197.INDEXES:
+    assert _M0198.version == "0198_crm_duplicate_lookup_indexes"
+    assert len(_M0198.INDEXES) == 4
+    for _collection, _name, keys, options in _M0198.INDEXES:
         assert keys[0] == ("academy_id", 1)
         field = keys[1][0]
         partial = options["partialFilterExpression"]
