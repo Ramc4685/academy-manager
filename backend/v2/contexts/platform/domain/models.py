@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field, field_validator
 
 TenantStatus = Literal["provisioning", "active", "suspended", "cancelled"]
 
+#: How the platform charges the academy (roadmap L9c). The only model the
+#: owner has decided on (2026-09-22) is a flat monthly fee. The per-payment
+#: application fee (L9b) is a separate setting, not a fee model.
+FeeModel = Literal["flat_monthly"]
+DEFAULT_FEE_MODEL: FeeModel = "flat_monthly"
+
 
 class TenantLimits(BaseModel, frozen=True):
     """Plan limits owned by the Platform context."""
@@ -53,6 +59,13 @@ class Tenant(BaseModel, frozen=True):
     suspended_at: datetime | None = None
     cancelled_at: datetime | None = None
     reactivated_at: datetime | None = None
+    fee_model: FeeModel = DEFAULT_FEE_MODEL
+    #: Platform agreement acceptance (roadmap L9c). All three are set together
+    #: by ``record_agreement_acceptance``; all three stay null until an academy
+    #: signatory has really accepted. A tenant cannot be activated without it.
+    platform_agreement_version: str | None = None
+    platform_agreement_accepted_at: datetime | None = None
+    platform_agreement_accepted_by: str | None = None
 
     @field_validator(
         "display_name", "slug", "primary_domain", "plan_code", "created_by", "updated_by"
@@ -63,6 +76,13 @@ class Tenant(BaseModel, frozen=True):
         if not stripped:
             raise ValueError("field is required")
         return stripped
+
+    def has_accepted_platform_agreement(self) -> bool:
+        return bool(
+            self.platform_agreement_version
+            and self.platform_agreement_accepted_at is not None
+            and self.platform_agreement_accepted_by
+        )
 
     def is_servable(self) -> bool:
         return self.status == "active"

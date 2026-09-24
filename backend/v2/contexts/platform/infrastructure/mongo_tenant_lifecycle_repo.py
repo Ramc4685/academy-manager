@@ -9,7 +9,11 @@ from typing import Any
 from pydantic import ValidationError
 from pymongo import ReturnDocument
 
-from backend.v2.contexts.platform.domain.models import Tenant, TenantLimits
+from backend.v2.contexts.platform.domain.models import (
+    DEFAULT_FEE_MODEL,
+    Tenant,
+    TenantLimits,
+)
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +109,12 @@ class MongoTenantLifecycleRepository:
             suspended_at=doc.get("suspended_at"),
             cancelled_at=doc.get("cancelled_at"),
             reactivated_at=doc.get("reactivated_at"),
+            # Docs written before L9c (migration 0200 backfills) carry no fee
+            # model: they read as the platform default, never as accepted.
+            fee_model=doc.get("fee_model") or DEFAULT_FEE_MODEL,
+            platform_agreement_version=doc.get("platform_agreement_version"),
+            platform_agreement_accepted_at=doc.get("platform_agreement_accepted_at"),
+            platform_agreement_accepted_by=doc.get("platform_agreement_accepted_by"),
         )
 
     @staticmethod

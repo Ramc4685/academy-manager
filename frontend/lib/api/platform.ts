@@ -16,6 +16,9 @@ export interface TenantLimits {
   max_locations: number | null;
 }
 
+/** How the platform charges the academy (roadmap L9c). Only flat monthly today. */
+export type TenantFeeModel = "flat_monthly";
+
 export interface PlatformTenant {
   academy_id: string;
   display_name: string;
@@ -28,6 +31,15 @@ export interface PlatformTenant {
   limits: TenantLimits;
   status_reason: string | null;
   updated_by: string;
+  fee_model: TenantFeeModel;
+  platform_agreement_version: string | null;
+  platform_agreement_accepted_at: string | null;
+  platform_agreement_accepted_by: string | null;
+}
+
+export interface RecordAgreementAcceptancePayload {
+  agreement_version: string;
+  accepted_by: string;
 }
 
 export interface TenantHealth {
@@ -81,6 +93,17 @@ export function activatePlatformTenant(academyId: string): Promise<PlatformTenan
   return apiFetch<PlatformTenant>(
     `/platform/tenants/${encodeURIComponent(academyId)}/activate`,
     { method: "POST" },
+  );
+}
+
+/** Record that the academy accepted a platform agreement version (L9c). */
+export function recordPlatformAgreementAcceptance(
+  academyId: string,
+  payload: RecordAgreementAcceptancePayload,
+): Promise<PlatformTenant> {
+  return apiFetch<PlatformTenant>(
+    `/platform/tenants/${encodeURIComponent(academyId)}/agreement`,
+    { method: "POST", body: JSON.stringify(payload) },
   );
 }
 

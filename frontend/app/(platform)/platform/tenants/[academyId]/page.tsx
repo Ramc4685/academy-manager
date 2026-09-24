@@ -25,17 +25,21 @@ import {
   updatePlatformTenantPlan,
   type PlatformTenant,
 } from "@/lib/api/platform";
+import { hasAcceptedAgreement } from "@/lib/platform-agreement";
 import { usePlatformAuth } from "@/lib/auth/use-persona-auth";
 import { queryKeys } from "@/lib/query/keys";
 
 import { TenantStatusChip } from "../status-chip";
 
+import { AgreementCard } from "./agreement-card";
 import { ApplicationFeeCard } from "./application-fee-card";
 
 /** Which lifecycle transitions the API accepts from each status. */
-function allowedActions(status: PlatformTenant["status"]) {
+function allowedActions(tenant: PlatformTenant) {
+  const { status } = tenant;
   return {
-    activate: status === "provisioning",
+    // Activation also needs a recorded platform agreement acceptance (L9c).
+    activate: status === "provisioning" && hasAcceptedAgreement(tenant),
     suspend: status === "active",
     cancel: status === "active" || status === "suspended",
     reactivate: status === "suspended" || status === "cancelled",
@@ -93,7 +97,7 @@ export default function PlatformTenantDetailPage() {
   });
 
   const tenant = statusQuery.data;
-  const actions = tenant ? allowedActions(tenant.status) : null;
+  const actions = tenant ? allowedActions(tenant) : null;
   const mutating = activateMutation.isPending || reactivateMutation.isPending;
 
   return (
@@ -165,6 +169,8 @@ export default function PlatformTenantDetailPage() {
               </div>
             )}
           </Card>
+
+          <AgreementCard tenant={tenant} canEdit={auth.isAdmin} onDone={refresh} />
 
           <ApplicationFeeCard academyId={academyId} canEdit={auth.isAdmin} />
 
