@@ -82,6 +82,15 @@ describe("familyMoneyDisplay per role", () => {
     });
   });
 
+  it("an explicit unknown flag is never re-derived from an amount sent alongside it", () => {
+    expect(familyMoneyDisplay({ money: MONEY, owes_money: null }, "flag")).toEqual({
+      kind: "unknown",
+    });
+    expect(familyMoneyDisplay({ money: MONEY, owes_money: false }, "flag")).toEqual({
+      kind: "clear",
+    });
+  });
+
   it("hidden when the caller may see no money", () => {
     expect(familyMoneyDisplay({ money: MONEY, owes_money: true }, "none")).toEqual({
       kind: "hidden",

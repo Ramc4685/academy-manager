@@ -74,9 +74,16 @@ export function familyMoneyDisplay(
       openCount: money.open_invoice_count,
     };
   }
-  // flag: the server's yes/no. An owner previewing front desk against a
-  // server that predates `owes_money` falls back to the balance it already has.
-  const owes = row.owes_money ?? (row.money ? row.money.balance_cents > 0 : null);
+  // flag: the server's yes/no is authoritative. The balance fallback exists
+  // only for an owner previewing front desk against a server that predates
+  // `owes_money` (field absent, i.e. undefined). A real front-desk response
+  // always carries `money: null`, so it never reaches the fallback with an
+  // amount, and an explicit `owes_money: null` means "unknown" and stays
+  // unknown rather than being re-derived from an amount sent alongside it.
+  // Remove the fallback once every deployed backend sends `money_view`.
+  let owes: boolean | null;
+  if (row.owes_money !== undefined) owes = row.owes_money;
+  else owes = row.money ? row.money.balance_cents > 0 : null;
   if (owes === null) return { kind: "unknown" };
   return owes ? { kind: "owes" } : { kind: "clear" };
 }
