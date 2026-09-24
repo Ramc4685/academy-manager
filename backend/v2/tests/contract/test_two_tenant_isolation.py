@@ -118,8 +118,6 @@ def _ids(academy: str) -> dict[str, str]:
         "rec_id": f"{academy}-levelup-rec-1",
         "note_id": f"{academy}-note-1",
         "follow_up_id": f"{academy}-follow-up-1",
-        # Family contacts (People CRM Phase 4b, #950) landed after this test.
-        "contact_id": f"{academy}-family-contact-1",
         "request_id": f"{academy}-request-1",
         "event_id": f"{academy}-event-1",
         "checkout_session_id": f"cs_test_{academy}_1",
@@ -156,7 +154,6 @@ UNSEEDED_PARAMS = frozenset(
         "rec_id",
         "note_id",
         "follow_up_id",
-        "contact_id",
         "request_id",
         "event_id",
         "checkout_session_id",
