@@ -172,3 +172,26 @@ def test_purge_dry_run_on_a_cancelled_tenant_returns_counts() -> None:
     assert body["executed"] is False
     assert body["confirm_token"].startswith("purge_")
     assert [a.action for a in audits] == ["tenant.purge_dry_run"]
+
+
+def test_content_disposition_cannot_carry_quotes_or_line_breaks() -> None:
+    from backend.v2.interfaces.platform.tenant_data_routes import _content_disposition
+
+    header = _content_disposition('tenant-export-a"b\r\nX-Evil: 1-20260101.zip')
+    assert "\r" not in header and "\n" not in header
+    fallback = header.split("filename=", 1)[1].split(";", 1)[0]
+    assert fallback == '"tenant-export-a_b__X-Evil__1-20260101.zip"'
+    assert "filename*=UTF-8''tenant-export-a%22b%0D%0AX-Evil%3A%201-20260101.zip" in header
+
+
+def test_route_without_a_composed_service_is_503() -> None:
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(platform_router, prefix="/api/v2")
+
+    async def _override() -> AuthClaims:
+        return _claims("platform_admin")
+
+    app.dependency_overrides[get_auth_claims] = _override
+    response = TestClient(app).post("/api/v2/platform/tenants/acad_gone/purge-dry-run")
+    assert response.status_code == 503

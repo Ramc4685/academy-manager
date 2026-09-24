@@ -7,22 +7,15 @@ hand, see docs/runbooks/tenant-export-and-purge.md.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
 from backend.v2.contexts.platform.application.use_cases.tenant_data_offboarding import (
     TenantDataOffboardingService,
-)
-from backend.v2.contexts.platform.audit.application.use_cases import (
-    RecordPlatformAuditEventCommand,
-)
-from backend.v2.contexts.platform.infrastructure.mongo_tenant_data_store import (
-    MongoTenantDataStore,
-)
-from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
-    MongoTenantLifecycleRepository,
 )
 from backend.v2.interfaces.platform.bootstrap_routes import require_platform_admin
 from backend.v2.shared.auth.claims import AuthClaims
@@ -60,26 +53,22 @@ class PurgeDryRunResponse(BaseModel):
 
 
 def get_tenant_data_offboarding(request: Request) -> TenantDataOffboardingService:
-    """Built per request from app state, so ``main.py`` needs no new wiring.
-
-    Tests may place a ready service on ``app.state.tenant_data_offboarding``.
-    """
-    ready = getattr(request.app.state, "tenant_data_offboarding", None)
-    if ready is not None:
-        return ready  # type: ignore[no-any-return]
-    db = getattr(request.app.state, "db", None)
-    platform_audit = getattr(request.app.state, "platform_audit", None)
-    if db is None or platform_audit is None:
+    """The service is wired in the composition root (``main.py``)."""
+    service = getattr(request.app.state, "tenant_data_offboarding", None)
+    if service is None:
         raise HTTPException(status_code=503, detail="Tenant data export is not configured")
+    return service  # type: ignore[no-any-return]
 
-    async def _record(command: RecordPlatformAuditEventCommand) -> object:
-        return await platform_audit.record_event(command)
 
-    return TenantDataOffboardingService(
-        tenants=MongoTenantLifecycleRepository(db),
-        data=MongoTenantDataStore(db),
-        audit_recorder=_record,
-    )
+def _content_disposition(filename: str) -> str:
+    """Attachment header that cannot carry quotes, backslashes or CR/LF.
+
+    The filename embeds the academy_id path parameter, so the plain
+    ``filename=`` fallback is reduced to a safe ASCII allowlist and the exact
+    name travels RFC 5987-encoded in ``filename*=``.
+    """
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename) or "tenant-export.zip"
+    return f"attachment; filename=\"{safe}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 def _request_meta(request: Request) -> tuple[str | None, str | None]:
@@ -108,7 +97,7 @@ async def export_tenant_data(
         content=archive.content,
         media_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="{archive.filename}"',
+            "Content-Disposition": _content_disposition(archive.filename),
             "X-Export-Sha256": archive.sha256,
             "Cache-Control": "no-store",
         },
