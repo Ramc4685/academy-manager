@@ -217,6 +217,43 @@ async def test_no_op_when_the_family_registered_after_the_trial(real_db: Any) ->
     assert await _rows(real_db, A) == []
 
 
+async def test_older_application_resubmitted_after_the_trial_is_a_registration(
+    real_db: Any,
+) -> None:
+    await _seed_academy(real_db, A)
+    await real_db["onboarding_applications"].insert_one(
+        {
+            "application_id": "app-reopened",
+            "academy_id": A,
+            "parent_user_id": "p-1",
+            "status": "PENDING_APPROVAL",
+            "created_at": NOW - timedelta(days=300),
+            "updated_at": NOW - timedelta(days=2),
+        }
+    )
+    with tenant_scope(A):
+        run = await _job(real_db).execute(academy_id=A)
+    assert (run.created, run.registered) == (0, 1)
+
+
+async def test_application_with_only_created_at_after_the_trial_is_a_registration(
+    real_db: Any,
+) -> None:
+    await _seed_academy(real_db, A)
+    await real_db["onboarding_applications"].insert_one(
+        {
+            "application_id": "app-no-updated",
+            "academy_id": A,
+            "parent_user_id": "p-1",
+            "status": "APPROVED",
+            "created_at": NOW - timedelta(days=2),
+        }
+    )
+    with tenant_scope(A):
+        run = await _job(real_db).execute(academy_id=A)
+    assert (run.created, run.registered) == (0, 1)
+
+
 async def test_draft_or_other_academy_application_is_not_a_registration(real_db: Any) -> None:
     await _seed_academy(real_db, A)
     await real_db["onboarding_applications"].insert_many(

@@ -107,18 +107,24 @@ class MongoRegistrationCheck:
         session_id: str,
         since: datetime,
     ) -> bool:
-        cursor = self._db["onboarding_applications"].find(
+        # Bounded read: the date window is part of the filter and at most one
+        # document comes back, so cost does not grow with application history.
+        # updated_at >= created_at on every write path, so "either stamp is
+        # inside the window" matches the old "latest stamp >= since" check.
+        application = await self._db["onboarding_applications"].find_one(
             {
                 "academy_id": academy_id,
                 "parent_user_id": parent_user_id,
                 "status": {"$nin": list(NOT_REGISTERED_APPLICATION_STATUSES)},
+                "$or": [
+                    {"updated_at": {"$gte": since}},
+                    {"created_at": {"$gte": since}},
+                ],
             },
-            {"created_at": 1, "updated_at": 1},
+            {"_id": 1},
         )
-        async for doc in cursor:
-            touched = doc.get("updated_at") or doc.get("created_at")
-            if isinstance(touched, datetime) and ensure_utc(touched) >= since:
-                return True
+        if application is not None:
+            return True
         if student_id:
             seat = await self._db["enrollments"].find_one(
                 {
