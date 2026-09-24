@@ -63,13 +63,20 @@ const STUDENT_B: FamilyStudent = {
 };
 
 describe("family tabs", () => {
-  it("lists Overview, Details, Billing, Timeline in order", () => {
-    expect(FAMILY_TABS.map((t) => t.id)).toEqual(["overview", "details", "billing", "timeline"]);
+  it("lists Overview, Notes & follow-ups, Details, Billing, Timeline in order", () => {
+    expect(FAMILY_TABS.map((t) => t.id)).toEqual([
+      "overview",
+      "notes",
+      "details",
+      "billing",
+      "timeline",
+    ]);
   });
 
   it("resolves ?tab= and falls back to Overview", () => {
     expect(resolveFamilyTab("billing")).toBe("billing");
     expect(resolveFamilyTab("timeline")).toBe("timeline");
+    expect(resolveFamilyTab("notes")).toBe("notes");
     expect(resolveFamilyTab(null)).toBe("overview");
     expect(resolveFamilyTab("payments")).toBe("overview");
   });
@@ -82,7 +89,8 @@ describe("family tabs", () => {
   });
 
   it("moves with arrow keys, wrapping at the ends", () => {
-    expect(adjacentFamilyTab("overview", "ArrowRight")).toBe("details");
+    expect(adjacentFamilyTab("overview", "ArrowRight")).toBe("notes");
+    expect(adjacentFamilyTab("notes", "ArrowRight")).toBe("details");
     expect(adjacentFamilyTab("overview", "ArrowLeft")).toBe("timeline");
     expect(adjacentFamilyTab("timeline", "ArrowRight")).toBe("overview");
     expect(adjacentFamilyTab("billing", "Home")).toBe("overview");

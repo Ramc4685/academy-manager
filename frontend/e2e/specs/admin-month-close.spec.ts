@@ -537,3 +537,159 @@ test.describe("admin month close", () => {
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });
+
+/**
+ * People reports (roadmap L5a): the two cards in the "People" group. Both are
+ * plain tables with text for every number, and each has an empty state. The
+ * money card disappears for a role the money seam refuses (403).
+ */
+const MONEY_OWED_URL = "**/api/v2/admin/reports/people/money-owed-by-age*";
+const INQUIRY_URL = "**/api/v2/admin/reports/people/inquiry-conversion*";
+
+const MONEY_OWED = {
+  as_of: "2026-09-23",
+  generated_at: "2026-09-23T15:00:00Z",
+  not_yet_due: {
+    key: "not_yet_due",
+    label: "Not yet due",
+    min_days: null,
+    max_days: 0,
+    family_count: 2,
+    total_cents: 6_000,
+  },
+  bands: [
+    { key: "days_1_30", label: "1 to 30 days late", min_days: 1, max_days: 30, family_count: 1, total_cents: 3_500 },
+    { key: "days_31_60", label: "31 to 60 days late", min_days: 31, max_days: 60, family_count: 1, total_cents: 7_000 },
+    { key: "days_over_60", label: "Over 60 days late", min_days: 61, max_days: null, family_count: 1, total_cents: 4_000 },
+  ],
+  overdue_cents: 14_500,
+  overdue_family_count: 2,
+  balance_cents: 20_500,
+  owing_family_count: 2,
+};
+
+function inquiryRow(source: string, lead: number, trial: number, enrolled: number) {
+  const inquiries = lead + trial + enrolled;
+  return {
+    source,
+    inquiries,
+    lead,
+    trial,
+    enrolled,
+    conversion_rate: inquiries ? enrolled / inquiries : null,
+  };
+}
+
+const INQUIRIES = {
+  date_from: "2026-06-26",
+  date_to: "2026-09-23",
+  timezone: "America/Chicago",
+  sources: [
+    inquiryRow("website", 1, 1, 1),
+    inquiryRow("whatsapp_or_phone", 0, 1, 0),
+    inquiryRow("referral", 1, 0, 1),
+    inquiryRow("other", 0, 0, 0),
+  ],
+  total: inquiryRow("all", 2, 2, 2),
+};
+
+test.describe("admin reports: people", () => {
+  test("money owed by age and inquiries by source render as tables", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
+    await page.route(MONEY_OWED_URL, (route) => fulfillJson(route, MONEY_OWED));
+    const inquiryRanges: string[] = [];
+    await page.route(INQUIRY_URL, (route) => {
+      inquiryRanges.push(new URL(route.request().url()).search);
+      return fulfillJson(route, INQUIRIES);
+    });
+
+    await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "people");
+
+    const money = page.getByTestId("people-report-money-owed-table");
+    await expect(money).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByTestId("people-report-money-owed-row-days_1_30")).toContainText(
+      "1 to 30 days late",
+    );
+    await expect(page.getByTestId("people-report-money-owed-row-days_1_30")).toContainText(
+      "$35.00",
+    );
+    await expect(page.getByTestId("people-report-money-owed-row-days_31_60")).toContainText(
+      "$70.00",
+    );
+    await expect(page.getByTestId("people-report-money-owed-row-days_over_60")).toContainText(
+      "1 family",
+    );
+    await expect(page.getByTestId("people-report-money-owed-total")).toContainText("$205.00");
+    await expect(page.getByTestId("people-report-money-owed-total")).toContainText("2 families");
+    await expect(money.getByRole("columnheader", { name: "Amount" })).toBeVisible();
+
+    const inquiries = page.getByTestId("people-report-inquiries-table");
+    await expect(inquiries).toBeVisible();
+    await expect(page.getByTestId("people-report-inquiries-row-website")).toContainText(
+      "Website form",
+    );
+    await expect(page.getByTestId("people-report-inquiries-row-website")).toContainText("33%");
+    await expect(page.getByTestId("people-report-inquiries-row-referral")).toContainText("50%");
+    await expect(page.getByTestId("people-report-inquiries-total")).toContainText("6");
+    expect(inquiryRanges[0]).toBe("");
+
+    // A picked range is sent as from/to.
+    await page.getByTestId("people-report-inquiries-from").fill("2026-09-01");
+    await expect.poll(() => inquiryRanges.some((q) => q.includes("from=2026-09-01"))).toBe(true);
+
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("the money card hides on 403 and both cards have empty states", async ({ page }) => {
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
+    await page.route(MONEY_OWED_URL, (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Family money is not visible to your role" }),
+      }),
+    );
+    await page.route(INQUIRY_URL, (route) =>
+      fulfillJson(route, {
+        ...INQUIRIES,
+        sources: INQUIRIES.sources.map((row) => inquiryRow(row.source, 0, 0, 0)),
+        total: inquiryRow("all", 0, 0, 0),
+      }),
+    );
+
+    await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "people");
+    await expect(page.getByTestId("people-report-inquiries-empty")).toBeVisible({
+      timeout: 45_000,
+    });
+    await expect(page.getByTestId("people-report-money-owed")).toHaveCount(0);
+  });
+
+  test("a family index with nobody owing shows the money empty state", async ({ page }) => {
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
+    await page.route(MONEY_OWED_URL, (route) =>
+      fulfillJson(route, {
+        ...MONEY_OWED,
+        not_yet_due: { ...MONEY_OWED.not_yet_due, family_count: 0, total_cents: 0 },
+        bands: MONEY_OWED.bands.map((band) => ({ ...band, family_count: 0, total_cents: 0 })),
+        overdue_cents: 0,
+        overdue_family_count: 0,
+        balance_cents: 0,
+        owing_family_count: 0,
+      }),
+    );
+    await page.route(INQUIRY_URL, (route) => fulfillJson(route, INQUIRIES));
+
+    await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "people");
+    await expect(page.getByTestId("people-report-money-owed-empty")).toBeVisible({
+      timeout: 45_000,
+    });
+    await expect(page.getByTestId("people-report-money-owed-table")).toHaveCount(0);
+  });
+});

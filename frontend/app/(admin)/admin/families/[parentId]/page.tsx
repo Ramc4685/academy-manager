@@ -23,6 +23,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { BillingTab } from "./BillingTab";
 import { ChildDrawer } from "./ChildDrawer";
 import { DetailsTab } from "./DetailsTab";
+import { NotesTab } from "./NotesTab";
 import { OverviewTab } from "./OverviewTab";
 import { TimelinePanel } from "./TimelinePanel";
 import {
@@ -37,8 +38,8 @@ import {
 } from "./family-record";
 
 /**
- * The People CRM family record (spec §4, Lane A4): Overview, Details,
- * Billing and Timeline tabs on the existing /admin/families/[parentId] route,
+ * The People CRM family record (spec §4, Lane A4): Overview, Notes &
+ * follow-ups (Phase 4a), Details, Billing and Timeline tabs on the existing /admin/families/[parentId] route,
  * with the tab in `?tab=` so a link to a family's Billing is a link to it.
  */
 export default function FamilyRecordPage() {
@@ -173,6 +174,8 @@ export default function FamilyRecordPage() {
         )}
         {activeTab === "billing" ? (
           <BillingTab parentId={parentId} />
+        ) : activeTab === "notes" ? (
+          <NotesTab parentId={parentId} />
         ) : activeTab === "timeline" ? (
           <Loaded query={billing} what="the timeline">
             {billing.data && (

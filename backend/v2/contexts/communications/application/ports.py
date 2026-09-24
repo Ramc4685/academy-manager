@@ -96,6 +96,10 @@ class EmailSendPort(Protocol):
     un-classified call site is the record of an existing commercial
     relationship (invoice, dunning notice, login invite) and must never be
     dropped by an unsubscribe preference.
+
+    ``sender_name`` is the academy's display name for the From header (see
+    ``shared/comms/sender_identity.py``). It is a name only: the From
+    *address* is owned by the adapter and never varies per academy.
     """
 
     async def send(
@@ -108,6 +112,7 @@ class EmailSendPort(Protocol):
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome: ...
 
 

@@ -118,6 +118,7 @@ class StubEmailSendPort(EmailSendPort):
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         record = {
             "user_id": recipient.user_id,
@@ -125,6 +126,8 @@ class StubEmailSendPort(EmailSendPort):
             "subject": subject,
             "body": body,
             "category": category,
+            "reply_to": reply_to,
+            "sender_name": sender_name,
         }
         self.sent.append(record)
         if recipient.email in self.fail_for_emails:
@@ -705,6 +708,7 @@ class CrashingSendPort(EmailSendPort):
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         if recipient.email == self.crash_on_email:
             raise RuntimeError("process died mid-loop")
@@ -810,3 +814,40 @@ async def test_the_campaign_unsubscribe_link_points_at_the_academys_own_host() -
     body = sender.sent[0]["body"]
     assert "https://blno.courtmastr.com/unsubscribe?t=" in body, body[-400:]
     assert "https://app.courtmastr.com/unsubscribe" not in body
+
+
+@pytest.mark.asyncio
+async def test_campaign_carries_the_academy_sender_name_and_reply_to() -> None:
+    """L9a: the brand lookup's sender identity reaches every campaign send,
+    looked up for the command's own academy."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from backend.v2.shared.comms.email_theme import EmailBrand
+
+    resolver = FakeAudienceResolver(by_academy=[_recipient("p1"), _recipient("p2")])
+    use_case, _, sender, _, _ = _build_use_case(resolver=resolver)
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(
+            return_value=EmailBrand(
+                academy_name="Synthetic Academy",
+                sender_name="Synthetic Front Desk",
+                reply_to="desk@example.com",
+            )
+        )
+    )
+    await use_case.execute(_parent_command())
+
+    use_case.brands.brand_for.assert_awaited_once_with("aca-1")
+    assert [(r["sender_name"], r["reply_to"]) for r in sender.sent] == [
+        ("Synthetic Front Desk", "desk@example.com"),
+        ("Synthetic Front Desk", "desk@example.com"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_campaign_without_brand_lookup_keeps_the_platform_sender() -> None:
+    resolver = FakeAudienceResolver(by_academy=[_recipient("p1")])
+    use_case, _, sender, _, _ = _build_use_case(resolver=resolver)
+    await use_case.execute(_parent_command())
+    assert (sender.sent[0]["sender_name"], sender.sent[0]["reply_to"]) == (None, None)
