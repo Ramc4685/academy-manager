@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Protocol
 
 from backend.v2.contexts.crm.domain.family_contacts import FamilyContact, FamilyDetails
+from backend.v2.contexts.crm.domain.family_index import FamilyIndex
 from backend.v2.contexts.crm.domain.family_notes import (
     FamilyFollowUp,
     FamilyNote,
@@ -268,3 +269,51 @@ class FamilyDetailsRepository(Protocol):
         """Set ``changes`` on the family's one details document, creating it on
         first write (the unique ``(academy_id, parent_id)`` index keeps it one)."""
         ...
+
+
+# --------------------------------------------------------------------------
+# Possible-duplicate warning (People CRM spec §4 "Real forms", Phase 4c).
+# Every lookup is an equality on one normalised field inside the tenant; the
+# use case asks once per field and per phone spelling and merges in code
+# (never an ``$or`` across partial-indexed fields, #878/#894).
+# --------------------------------------------------------------------------
+
+
+class CrmContactLookup(Protocol):
+    async def find_by_email(self, email: str, *, limit: int = 5) -> list[CrmContact]: ...
+
+    async def find_by_phone_digits(self, digits: str, *, limit: int = 5) -> list[CrmContact]: ...
+
+
+class FamilyContactLookup(Protocol):
+    async def find_by_email(self, email: str, *, limit: int = 5) -> list[FamilyContact]: ...
+
+    async def find_by_phone_digits(self, digits: str, *, limit: int = 5) -> list[FamilyContact]: ...
+
+
+class FamilyIndexSource(Protocol):
+    """The academy's family index (cached), built from its own rows only."""
+
+    async def build(self, academy_id: str) -> FamilyIndex: ...
+
+
+class AcademyMember(Protocol):
+    @property
+    def user_id(self) -> str: ...
+
+    @property
+    def display_name(self) -> str | None: ...
+
+    @property
+    def email(self) -> str | None: ...
+
+    @property
+    def phone(self) -> str | None: ...
+
+
+class AcademyMemberLookup(Protocol):
+    """Identity: the user with this normalised email, ONLY when they hold an
+    active membership in ``academy_id``; None otherwise (a user of another
+    academy is never returned)."""
+
+    async def find_member_by_email(self, academy_id: str, email: str) -> AcademyMember | None: ...

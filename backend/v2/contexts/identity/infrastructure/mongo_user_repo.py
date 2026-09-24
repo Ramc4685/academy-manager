@@ -440,6 +440,24 @@ class MongoUserRepository:
                 resolved[str(doc["_id"])] = parent_alias_set(doc)
         return resolved
 
+    async def find_alias_set_by_normalized_email(self, email: str) -> ParentAliasSet | None:
+        """The users document whose ``normalized_email`` equals ``email``, as an alias set.
+
+        One equality lookup served by ``users_normalized_email_unique``
+        (0080). ``users`` is global: the caller MUST check a membership in its
+        own academy before treating the answer as "someone of this academy"
+        (the People CRM duplicate warning does, through
+        ``MongoMembershipRepository.get_membership``). Legacy rows without a
+        ``normalized_email`` are not found here; parents among them are still
+        matched by the family index.
+        """
+        if not email:
+            return None
+        doc = await self.collection.find_one(
+            {"normalized_email": email}, self._PARENT_ALIAS_PROJECTION
+        )
+        return parent_alias_set(doc) if doc else None
+
     async def list_existing_user_ids(self, user_ids: list[str], *, academy_id: str) -> set[str]:
         """Which of ``user_ids`` (== parent_id, per this codebase's convention
         that a parent IS a User) already have a login account in this academy.

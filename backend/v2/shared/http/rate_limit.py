@@ -46,6 +46,10 @@ _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
     # A real family submits the trial form once, maybe a few times while
     # fixing a typo: 10 per client IP per 10 minutes.
     ("POST", "/api/v2/public/trial-requests"): (10, 600),
+    # Admin-only People CRM duplicate warning (Phase 4c): the Add family,
+    # Add user and Add contact forms call it on email/phone blur. Generous
+    # for a person typing, but caps a script walking emails through it.
+    ("POST", "/api/v2/admin/people/duplicate-check"): (60, 60),
 }
 
 # Second, per-HOST ceiling for anonymous writes that land on one academy

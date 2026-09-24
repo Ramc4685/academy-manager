@@ -4,6 +4,10 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import {
+  PossibleDuplicateNotice,
+  usePossibleDuplicateCheck,
+} from "@/components/admin/possible-duplicate-notice";
 import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Button, Card, Chip, Overline, Skeleton, useToast } from "@/components/ds";
 import { ErrorNotice } from "@/components/ds/error-notice";
@@ -407,6 +411,13 @@ function ContactForm({
   const [formError, setFormError] = useState<string | null>(null);
   const dirty = isContactDraftDirty(draft, initial);
   useReportUnsavedChanges(`family-contact-${formKey}`, dirty);
+  // People CRM Phase 4c: a new contact who looks like someone the academy
+  // already has gets a warning (never a block). Editing a contact does not
+  // check: it would only find itself.
+  const duplicates = usePossibleDuplicateCheck();
+  const checkDuplicates = () => {
+    if (!original) duplicates.check({ email: draft.email, phone: draft.phone, name: draft.name });
+  };
 
   const save = useMutation({
     mutationFn: () =>
@@ -495,6 +506,7 @@ function ContactForm({
               error: errors.email,
             })}
             onChange={(e) => set("email", e.target.value)}
+            onBlur={checkDuplicates}
             data-testid="family-contact-email"
           />
         </FormField>
@@ -510,6 +522,7 @@ function ContactForm({
               error: errors.phone,
             })}
             onChange={(e) => set("phone", e.target.value)}
+            onBlur={checkDuplicates}
             data-testid="family-contact-phone"
           />
         </FormField>
@@ -528,6 +541,7 @@ function ContactForm({
           />
         ))}
       </div>
+      <PossibleDuplicateNotice matches={duplicates.matches} testId="family-contact-duplicate" />
       {formError && (
         <p role="alert" className="text-xs font-medium text-status-red-800">
           {formError}

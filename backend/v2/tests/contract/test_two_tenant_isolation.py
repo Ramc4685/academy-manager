@@ -869,6 +869,33 @@ def test_own_tenant_reads_its_seed(env: Env) -> None:
             assert academy in response.text
 
 
+def test_duplicate_check_never_matches_the_other_tenants_people(env: Env) -> None:
+    """``POST /admin/people/duplicate-check`` (People CRM Phase 4c) is a
+    parameterless write-shaped read, so the enumeration above does not reach
+    it. A's admin probing B's parent and coach finds nothing; B's own admin
+    probing the same email finds B's family (the positive control)."""
+    path = "/api/v2/admin/people/duplicate-check"
+
+    def check(academy: str, body: dict[str, str]) -> Any:
+        headers = {"authorization": f"Bearer {_email(academy, 'admin')}", "host": _host(academy)}
+        return env.client.post(path, json=body, headers=headers)
+
+    for body in (
+        {"email": _email(B, "parent")},
+        {"email": _email(B, "coach").upper()},
+        {"email": _email(B, "parent"), "name": "zbravo"},
+    ):
+        response = check(A, body)
+        assert response.status_code == 200, response.text[:300]
+        assert response.json() == {"matches": []}, (body, response.text[:300])
+        assert not _foreign_markers(_response_text(response), set(body.values()))
+
+    control = check(B, {"email": _email(B, "parent")})
+    assert control.status_code == 200, control.text[:300]
+    kinds = [match["kind"] for match in control.json()["matches"]]
+    assert "family" in kinds, control.text[:300]
+
+
 @pytest.mark.parametrize("persona", PERSONAS)
 def test_actor_cannot_use_its_token_on_the_other_tenants_host(env: Env, persona: str) -> None:
     """A's token on B's host: no membership in B, so no claims, so 401/403."""
