@@ -133,24 +133,33 @@ Notes for the owner:
 
 ## Stage 5 - Bring families in (academy owner)
 
-There is no tenant-safe historical importer. `backend/scripts/import_blno.py`
-is single-tenant, drops collections and refuses to run against a database
-with more than one academy: never use it for academy two.
+Never use `backend/scripts/import_blno.py` for academy two: it is
+single-tenant, drops collections and refuses to run against a database with
+more than one academy. Use the tenant-scoped CSV import below instead.
 
 1. Classes: create them on **Sessions** (step "First classes").
-2. Families: invite parents from **Users > Bulk invite parents** by pasting or
-   uploading a CSV of names and emails. Each row gets a real login-invite
-   email, so preview the batch before sending and send it only when the
-   academy is ready for parents to sign in.
-3. Parents then register their children and sign the waiver themselves; the
-   owner approves registrations from the dashboard.
-4. Balances carried over from a previous system are entered by the owner as
+2. Families and students: on **Families**, choose **Import from CSV**.
+   - Download the header-only template. Columns: `parent_name`,
+     `student_name`, `parent_email` and/or `parent_phone`,
+     `student_date_of_birth`. UTF-8, up to 1 MB and 1,000 rows.
+   - **Check file** runs a dry run: every row is shown as New family, Adds to
+     family, Already here or Problem, with line numbers. Nothing is written.
+     Rows are grouped into families by email, then phone, and matched
+     against existing families with the duplicate finder.
+   - Fix every Problem row in the spreadsheet and check the file again;
+     Import stays disabled while any row has an error.
+   - **Import** writes the students as roster families. Nobody is emailed,
+     no login is created and nothing is charged. Re-uploading the same file
+     is a no-op (a child the family already has is skipped). A checked file
+     expires after 24 hours; check it again if Import says so.
+3. Logins: when the academy is ready for parents to sign in, send invites
+   from Billing Setup (roster families) or **Users > Bulk invite parents**.
+   Each invite is a real email, so preview the batch before sending.
+4. Parents sign the waiver themselves on first sign-in; the owner approves
+   registrations from the dashboard.
+5. Balances carried over from a previous system are entered by the owner as
    invoices or credits in the app, one family at a time, never written into
-   the database directly.
-
-A bulk historical import (families, children, enrolments, balances) needs a
-new tenant-scoped importer with `academy_id` on every document and selector.
-Plan it as its own piece of work before promising it to an academy.
+   the database directly. The CSV import carries no enrolments or balances.
 
 ## Stage 6 - Trial run (academy owner, platform operator watching)
 
