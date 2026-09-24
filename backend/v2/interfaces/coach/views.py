@@ -66,6 +66,10 @@ class CoachRosterEntry(BaseModel):
     # "enrollment" for regular roster rows; "makeup" / "trial" for one-time
     # entries (Tasks 5/7) added just for this occurrence.
     entry_source: Literal["enrollment", "makeup", "trial"] = "enrollment"
+    # People CRM L3a: on a trial row, the trial request id the coach records
+    # Came / Didn't come against, and the outcome already recorded.
+    trial_request_id: str | None = None
+    trial_outcome: Literal["came", "no_show"] | None = None
     # Issue #675: set while a parent's end-of-period cancel is pending — the
     # student still attends; the UI may show "ends <date>".
     pending_cancellation_at: datetime | None = None

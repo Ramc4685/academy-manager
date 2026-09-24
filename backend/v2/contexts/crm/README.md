@@ -59,8 +59,9 @@ Collection `crm_contacts`, one document per inquiry.
 | `created_at`, `updated_at` | UTC datetime (ms) | CreateContact | |
 
 The conversion fields (`converted_parent_id`, `linked_family_id`,
-`linked_user_id`) and `pipeline_override` exist in the model and are read back
-by the repository, but no use case in this PR writes them.
+`linked_user_id`) exist in the model and are read back by the repository, but
+no use case writes them yet. `pipeline_override` is written only by
+`MoveCardOnPipeline` (see "Pipeline moves" below).
 
 ### `ContactSource`
 
@@ -419,3 +420,52 @@ Rules:
 | `family_contacts` | `family_contacts_academy_phone_lookup` | `(academy_id, phone_digits)` | partial `{phone_digits: {$gt: ""}}` |
 
 Non-unique on purpose (a household shares an email or phone).
+
+## Pipeline moves and trial outcomes (People CRM L3a)
+
+Spec §3.4: "Moves that correspond to a real write (approve trial, Came /
+Didn't come) call the existing use cases; moves without one write
+`crm_contacts.pipeline_override` with author and time so the board never lies
+about the system state." L3a ships both halves as backend plus minimal
+buttons; the board view itself is L3b.
+
+| File | What it is |
+|---|---|
+| `domain/pipeline.py` | the five board columns `inquiry, trial_booked, trial_done, registered, enrolled`, `current_column` (system `enrolled` > override > column implied by `pipeline_status`) and the stage-skip guard `refuse_move` |
+| `application/use_cases/pipeline_moves.py` | `MoveCardOnPipeline`: tenant-scoped read, guard, compare-and-swap write of `{column, set_by, set_at}` plus `updated_at` |
+| `infrastructure/mongo_crm_contact_repo.py` | `set_pipeline_override(contact_id, override, expected_column=, updated_at=)` |
+| `backend/v2/composition/crm_pipeline.py` | wiring (lazy, `app.state.crm_pipeline_moves`) |
+| `interfaces/admin/pipeline_routes.py` | `POST /admin/crm/contacts/{contact_id}/pipeline-move` `{to_column}` |
+
+Guard rules: forward one column at a time (`stage_skip`), backward any number
+(a correction), never to `enrolled` (only the conversion flow enrolls; the
+route refuses it as a 422, the use case as `needs_system_write`), and an
+enrolled contact never moves (`contact_enrolled`). A move to the column the
+card already shows is a no-op that keeps the first author. The write matches
+only while the stored override is the one read and the row is not
+`enrolled`, so of two concurrent moves one lands and the other gets
+`Crm.PipelineMoveNotAllowed` (409) with `reason = "changed"`. Another
+academy's id is `Crm.ContactNotFound` (404). No new index: the write is an
+equality on `(academy_id, contact_id)` (`crm_contacts_academy_contact_unique`).
+
+**Came / Didn't come** is the enrollment context's `MarkTrialOutcome`
+(`contexts/enrollment/application/use_cases/trial_outcomes.py`, wired by
+`composition/trial_outcomes.py`): an `approved` trial with an assigned, not
+cancelled date, from one hour before it starts, becomes `completed` with
+`outcome` (`came` | `no_show`), `outcome_by` and `outcome_at` on the
+`trial_requests` row; a completed trial may be corrected; `converted`,
+`pending` and `denied` refuse (409 `Enrollment.TrialOutcomeNotAllowed`,
+`details.reason`). Routes: `POST /admin/self-service/trials/{request_id}/outcome`
+(admin Inbox trial rows, `require_persona("admin")` like approve/deny) and
+`POST /coach/trials/{request_id}/outcome` (coach Today trial rows; a coach only
+for sessions they coach or assist, anything else is the unknown-id 404; a coach
+supervisor for any trial of the academy). `GET /coach/today` trial rows carry
+`trial_request_id` and `trial_outcome`. Prospective-child trials are not on the
+coach roster (no student to roster, a v1 limitation), so they are marked from
+the admin Inbox.
+
+Tests: `tests/unit/test_mark_trial_outcome.py`, `tests/unit/test_crm_pipeline_moves.py`,
+`tests/interface/test_trial_outcome_and_pipeline_routes.py`,
+`tests/contract/test_trial_outcome_pipeline_real_mongo.py` (real `mongod`: the
+status and override compare-and-swaps, tenant isolation, concurrent moves),
+`frontend/e2e/specs/trial-outcome.spec.ts`.

@@ -52,6 +52,11 @@ class OccurrenceRosterItem(BaseModel):
     # was simply dropped here, so the coach saw a held student with no hint
     # that the seat is on hold or when they come back.
     hold_return_on: date | None = None
+    # People CRM L3a: a trial row carries its trial request id so the coach
+    # can record Came / Didn't come, and the outcome already recorded (None
+    # while unmarked). Both None on every other row.
+    trial_request_id: str | None = None
+    trial_outcome: str | None = None
 
 
 class AbsenceNoticeQuery(Protocol):
@@ -60,6 +65,10 @@ class AbsenceNoticeQuery(Protocol):
 
 class OccurrenceRosterQuery(Protocol):
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
+
+
+class TrialOutcomeQuery(Protocol):
+    async def outcomes_for(self, request_ids: list[str]) -> dict[str, str | None]: ...
 
 
 class GetOccurrenceRoster:
@@ -71,7 +80,10 @@ class GetOccurrenceRoster:
         occurrence_roster: OccurrenceRosterQuery,
         students: StudentQuery,
         occurrences: SessionOccurrenceRepository,
+        trial_outcomes: TrialOutcomeQuery | None = None,
     ) -> None:
+        # Optional so hand-built fixtures that predate L3a keep working.
+        self._trial_outcomes = trial_outcomes
         self._get_roster = get_roster
         self._absence_notices = absence_notices
         self._occurrence_roster = occurrence_roster
@@ -115,6 +127,12 @@ class GetOccurrenceRoster:
         if one_time_entries:
             students = await self._students.by_ids([e.student_id for e in one_time_entries])
             students_by_id = {s.student_id: s for s in students}
+            trial_ids = [e.origin_request_id for e in one_time_entries if e.source == "trial"]
+            outcomes: dict[str, str | None] = (
+                await self._trial_outcomes.outcomes_for(trial_ids)
+                if trial_ids and self._trial_outcomes is not None
+                else {}
+            )
             for entry in one_time_entries:
                 student = students_by_id.get(entry.student_id)
                 if student is None:
@@ -129,6 +147,14 @@ class GetOccurrenceRoster:
                         status=None,
                         entry_source=entry.source,
                         expected_absence=student.student_id in absent_student_ids,
+                        trial_request_id=(
+                            entry.origin_request_id if entry.source == "trial" else None
+                        ),
+                        trial_outcome=(
+                            outcomes.get(entry.origin_request_id)
+                            if entry.source == "trial"
+                            else None
+                        ),
                     )
                 )
         return out

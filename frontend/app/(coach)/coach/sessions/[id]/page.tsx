@@ -21,6 +21,7 @@ import {
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { TrialOutcomeControl } from "@/components/coach/trial-outcome-control";
 import { Chip } from "@/components/ds/chip";
 import { formatCents } from "@/lib/money";
 import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
@@ -1210,6 +1211,16 @@ function RosterRow({
           </div>
         </div>
       </div>
+
+      {/* People CRM L3a: close the trial (Came / Didn't come), separate from
+          the attendance mark above. Only trial rows carry a request id. */}
+      {student.entry_source === "trial" && student.trial_request_id && (
+        <TrialOutcomeControl
+          requestId={student.trial_request_id}
+          studentName={student.full_name}
+          outcome={student.trial_outcome}
+        />
+      )}
 
       {local?.error && (
         <p

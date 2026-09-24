@@ -92,3 +92,19 @@ class InvalidFamilyDetails(DomainError):
 
     code = "Crm.InvalidFamilyDetails"
     status_code = 422
+
+
+class ContactNotFound(DomainError):
+    """No ``crm_contacts`` row with this id in the caller's academy."""
+
+    code = "Crm.ContactNotFound"
+    status_code = 404
+
+
+class PipelineMoveNotAllowed(DomainError):
+    """A Pipeline board move the stage-skip guard refuses. ``details.reason``
+    is ``stage_skip``, ``needs_system_write``, ``contact_enrolled``,
+    ``unknown_column`` or ``changed`` (the card moved while saving)."""
+
+    code = "Crm.PipelineMoveNotAllowed"
+    status_code = 409

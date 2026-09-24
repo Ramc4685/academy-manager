@@ -28,6 +28,8 @@ export type EnrollmentStatus =
   | "reclaim_pending"
   | "cancelled";
 export type AttendanceStatus = "present" | "absent" | "late";
+/** People CRM L3a: what happened at an approved trial. */
+export type TrialOutcome = "came" | "no_show";
 
 export interface CoachRosterEntry {
   student_id: string;
@@ -43,6 +45,10 @@ export interface CoachRosterEntry {
   expected_absence?: boolean;
   /** "enrollment" for regular roster rows; "makeup"/"trial" for one-time entries. */
   entry_source?: "enrollment" | "makeup" | "trial";
+  /** People CRM L3a: on a trial row, the trial request to record Came / Didn't come against. */
+  trial_request_id?: string | null;
+  /** People CRM L3a: the outcome already recorded for that trial, or null. */
+  trial_outcome?: TrialOutcome | null;
   /**
    * Issue #774: the family's overdue balance for this student, in integer
    * cents, or null when nothing is overdue. The ONLY money fact a coach
@@ -341,6 +347,23 @@ export async function correctAttendance(
   return apiFetch<CorrectAttendanceResponse>(
     `/coach/occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,
     { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export interface CoachTrialOutcomeResponse {
+  request_id: string;
+  status: string;
+  outcome: TrialOutcome | null;
+}
+
+/** People CRM L3a: Came / Didn't come on a trial row of the coach's day. */
+export async function recordCoachTrialOutcome(
+  requestId: string,
+  outcome: TrialOutcome,
+): Promise<CoachTrialOutcomeResponse> {
+  return apiFetch<CoachTrialOutcomeResponse>(
+    `/coach/trials/${encodeURIComponent(requestId)}/outcome`,
+    { method: "POST", body: JSON.stringify({ outcome }) },
   );
 }
 

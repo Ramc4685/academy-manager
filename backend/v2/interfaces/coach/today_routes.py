@@ -165,6 +165,8 @@ async def get_today(
                     ),
                     expected_absence=getattr(r, "expected_absence", False),
                     entry_source=getattr(r, "entry_source", "enrollment"),
+                    trial_request_id=getattr(r, "trial_request_id", None),
+                    trial_outcome=getattr(r, "trial_outcome", None),
                     pending_cancellation_at=getattr(r, "pending_cancellation_at", None),
                     hold_return_on=getattr(r, "hold_return_on", None),
                     payment_due_cents=overdue_cents.get(r.student_id) or None,

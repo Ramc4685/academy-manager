@@ -17,6 +17,8 @@
           "attendance_status": null,
           "expected_absence": false,
           "entry_source": "enrollment",
+          "trial_request_id": null,
+          "trial_outcome": null,
           "pending_cancellation_at": null,
           "hold_return_on": null,
           "payment_due_cents": null
@@ -28,6 +30,8 @@
           "attendance_status": null,
           "expected_absence": false,
           "entry_source": "enrollment",
+          "trial_request_id": null,
+          "trial_outcome": null,
           "pending_cancellation_at": null,
           "hold_return_on": null,
           "payment_due_cents": null

@@ -26,6 +26,7 @@ import {
   listAdminTrials,
   listSessionOccurrences,
   recordAdminAbsence,
+  recordTrialOutcome,
   type AbsenceNoticeAdminRow,
   type AdminSessionOccurrenceView,
   type MakeupRequestAdminRow,
@@ -45,10 +46,10 @@ import { TableSkeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 
-type StatusFilter = "all" | "pending" | "approved" | "denied" | "expired" | "converted";
+type StatusFilter = "all" | "pending" | "approved" | "denied" | "expired" | "completed" | "converted";
 
 const MAKEUP_STATUS_FILTERS: StatusFilter[] = ["all", "pending", "approved", "denied", "expired"];
-const TRIAL_STATUS_FILTERS: StatusFilter[] = ["all", "pending", "approved", "denied", "converted"];
+const TRIAL_STATUS_FILTERS: StatusFilter[] = ["all", "pending", "approved", "completed", "denied", "converted"];
 
 /**
  * One dated class, as an admin reads it (issue #841): "U10 Tuesday" over
@@ -88,6 +89,8 @@ function statusChipVariant(status: string): ChipVariant {
       return "expired";
     case "converted":
       return "converted";
+    case "completed":
+      return "enrolled";
     default:
       return "pending";
   }
@@ -455,6 +458,7 @@ export function TrialsTab() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
   const [denyTarget, setDenyTarget] = useState<TrialRequestAdminRow | null>(null);
   const [approveTarget, setApproveTarget] = useState<TrialRequestAdminRow | null>(null);
+  const [noShowTarget, setNoShowTarget] = useState<TrialRequestAdminRow | null>(null);
 
   const apiStatus = statusFilter === "all" ? undefined : statusFilter;
   const { data, isLoading, isError } = useQuery({
@@ -478,6 +482,16 @@ export function TrialsTab() {
     },
   });
 
+  // People CRM L3a: Came / Didn't come on an approved (or completed) trial.
+  const outcomeMutation = useMutation({
+    mutationFn: ({ requestId, outcome }: { requestId: string; outcome: "came" | "no_show" }) =>
+      recordTrialOutcome(requestId, outcome),
+    onSuccess: () => {
+      setNoShowTarget(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceTrialsAll() });
+    },
+  });
+
   const trials = data?.trials ?? [];
 
   return (
@@ -491,7 +505,32 @@ export function TrialsTab() {
       ) : trials.length === 0 ? (
         <EmptyState title="No trial requests." data-testid="admin-trials-empty" compact />
       ) : (
-        <TrialsList trials={trials} onDeny={setDenyTarget} onApprove={setApproveTarget} />
+        <TrialsList
+          trials={trials}
+          onDeny={setDenyTarget}
+          onApprove={setApproveTarget}
+          onCame={(row) => outcomeMutation.mutate({ requestId: row.request_id, outcome: "came" })}
+          onNoShow={setNoShowTarget}
+          outcomePendingId={outcomeMutation.isPending ? outcomeMutation.variables?.requestId ?? null : null}
+          outcomeError={
+            outcomeMutation.isError && !noShowTarget
+              ? { requestId: outcomeMutation.variables?.requestId ?? "", message: outcomeErrorText(outcomeMutation.error) }
+              : null
+          }
+        />
+      )}
+
+      {noShowTarget && (
+        <NoShowDialog
+          name={trialChildName(noShowTarget)}
+          pending={outcomeMutation.isPending}
+          error={outcomeMutation.isError ? outcomeErrorText(outcomeMutation.error) : null}
+          onCancel={() => {
+            setNoShowTarget(null);
+            outcomeMutation.reset();
+          }}
+          onConfirm={() => outcomeMutation.mutate({ requestId: noShowTarget.request_id, outcome: "no_show" })}
+        />
       )}
 
       {approveTarget && (
@@ -519,15 +558,44 @@ export function TrialsTab() {
   );
 }
 
+function trialChildName(t: TrialRequestAdminRow): string {
+  return t.prospective_child_name || t.student_full_name || "Existing child";
+}
+
+/** People CRM L3a: a trial takes Came / Didn't come once approved (and may be corrected). */
+function canRecordOutcome(t: TrialRequestAdminRow): boolean {
+  return (t.status === "approved" || t.status === "completed") && Boolean(t.assigned_occurrence_id);
+}
+
+function outcomeLabel(outcome: TrialRequestAdminRow["outcome"]): string | null {
+  if (outcome === "came") return "CAME";
+  if (outcome === "no_show") return "DIDN'T COME";
+  return null;
+}
+
+function outcomeErrorText(err: unknown): string {
+  const status = (err as { status?: number } | null)?.status;
+  if (status === 409) return "This trial can't take an outcome yet (not started, cancelled, or already converted).";
+  return "Could not save the trial outcome. Try again.";
+}
+
 /** #857, same shape as the makeups queue. */
 function TrialsList({
   trials,
   onDeny,
   onApprove,
+  onCame,
+  onNoShow,
+  outcomePendingId,
+  outcomeError,
 }: {
   trials: TrialRequestAdminRow[];
   onDeny: (row: TrialRequestAdminRow) => void;
   onApprove: (row: TrialRequestAdminRow) => void;
+  onCame: (row: TrialRequestAdminRow) => void;
+  onNoShow: (row: TrialRequestAdminRow) => void;
+  outcomePendingId: string | null;
+  outcomeError: { requestId: string; message: string } | null;
 }) {
   const isPhone = useIsPhone();
   if (isPhone) {
@@ -549,7 +617,16 @@ function TrialsList({
                       { key: "deny", label: "Deny", onSelect: () => onDeny(t) },
                       { key: "approve", label: "Approve", onSelect: () => onApprove(t) },
                     ]
-                  : []
+                  : canRecordOutcome(t)
+                    ? [
+                        ...(t.outcome !== "came"
+                          ? [{ key: "came", label: "Came", onSelect: () => onCame(t) }]
+                          : []),
+                        ...(t.outcome !== "no_show"
+                          ? [{ key: "no_show", label: "Didn't come", onSelect: () => onNoShow(t) }]
+                          : []),
+                      ]
+                    : []
               }
               secondary={
                 <>
@@ -567,6 +644,10 @@ function TrialsList({
                         : "Not scheduled"}
                   </div>
                   {t.status === "denied" && t.denial_reason && <div>{t.denial_reason}</div>}
+                  {outcomeLabel(t.outcome) && <div>{outcomeLabel(t.outcome)}</div>}
+                  {outcomeError?.requestId === t.request_id && (
+                    <div role="alert" className="text-red-700">{outcomeError.message}</div>
+                  )}
                 </>
               }
             />
@@ -617,6 +698,14 @@ function TrialsList({
                       {t.status === "denied" && t.denial_reason && (
                         <p className="mt-1 text-xs text-rally-subtle">{t.denial_reason}</p>
                       )}
+                      {outcomeLabel(t.outcome) && (
+                        <p className="mt-1 text-xs font-semibold text-rally-base" data-testid={`admin-trials-outcome-${t.request_id}`}>
+                          {outcomeLabel(t.outcome)}
+                        </p>
+                      )}
+                      {outcomeError?.requestId === t.request_id && (
+                        <p role="alert" className="mt-1 text-xs text-red-700">{outcomeError.message}</p>
+                      )}
                     </td>
                     <td className={`${actionCellClass} bg-white`}>
                       {t.status === "pending" ? (
@@ -626,6 +715,29 @@ function TrialsList({
                           </Button>
                           <Button variant="primary" size="sm" onClick={() => onApprove(t)}>
                             Approve
+                          </Button>
+                        </div>
+                      ) : canRecordOutcome(t) ? (
+                        <div className="flex justify-end gap-2" role="group" aria-label={`Trial outcome for ${trialChildName(t)}`}>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            data-testid={`admin-trials-came-${t.request_id}`}
+                            aria-pressed={t.outcome === "came"}
+                            disabled={outcomePendingId === t.request_id || t.outcome === "came"}
+                            onClick={() => onCame(t)}
+                          >
+                            Came
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            data-testid={`admin-trials-no-show-${t.request_id}`}
+                            aria-pressed={t.outcome === "no_show"}
+                            disabled={outcomePendingId === t.request_id || t.outcome === "no_show"}
+                            onClick={() => onNoShow(t)}
+                          >
+                            Didn&apos;t come
                           </Button>
                         </div>
                       ) : null}
@@ -1230,6 +1342,49 @@ function DenyDialog({
           onClick={() => onConfirm(reason.trim())}
         >
           {pending ? "Denying…" : "Deny"}
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+/** People CRM L3a: "Didn't come" is confirmed before it is saved. */
+function NoShowDialog({
+  name,
+  pending,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  pending: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <DialogShell title="Mark trial as didn't come" onCancel={onCancel}>
+      <p className="text-sm text-rally-base" data-testid="no-show-confirm-text">
+        Record that {name} didn&apos;t come to the trial? The trial closes as completed. No email
+        is sent.
+      </p>
+      {error && (
+        <p role="alert" className="text-xs text-red-700">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2 pt-2">
+        <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          data-testid="no-show-confirm"
+          disabled={pending}
+          onClick={onConfirm}
+        >
+          {pending ? "Saving…" : "Didn't come"}
         </Button>
       </div>
     </DialogShell>

@@ -122,6 +122,16 @@ class TrialRequestNotPending(DomainError):
     status_code = 409
 
 
+class TrialOutcomeNotAllowed(DomainError):
+    """Raised when Came / Didn't come is recorded on a trial that cannot take
+    an outcome: not approved (still pending, denied, or already converted),
+    no assigned date, a cancelled date, or a date that has not started yet.
+    ``details["reason"]`` says which."""
+
+    code = "Enrollment.TrialOutcomeNotAllowed"
+    status_code = 409
+
+
 class EnrollmentNotCancellable(DomainError):
     """Raised when a parent tries to self-cancel an enrollment that isn't
     ``active`` (already cancelled/paused/withdrawn), or when a double-submit
@@ -241,6 +251,10 @@ class MakeupRequest(BaseModel):
 
 TrialRequestStatus = Literal["pending", "approved", "denied", "completed", "converted"]
 
+#: What happened at an approved trial (People CRM spec §3.4 "Came / Didn't
+#: come"). Recording either moves the request to ``completed``.
+TrialOutcome = Literal["came", "no_show"]
+
 
 class TrialRequest(BaseModel):
     """A parent-submitted request to try a session before enrolling (R3).
@@ -279,3 +293,8 @@ class TrialRequest(BaseModel):
     decided_by: str | None = None
     decided_at: datetime | None = None
     created_at: datetime
+    #: Came / Didn't come, written by ``MarkTrialOutcome`` with who and when.
+    #: Set exactly when ``status == "completed"`` (or later ``converted``).
+    outcome: TrialOutcome | None = None
+    outcome_by: str | None = None
+    outcome_at: datetime | None = None
