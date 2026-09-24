@@ -22,6 +22,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { BillingTab } from "./BillingTab";
 import { ChildDrawer } from "./ChildDrawer";
 import { DetailsTab } from "./DetailsTab";
+import { MessagesTab } from "./MessagesTab";
 import { NotesTab } from "./NotesTab";
 import { OverviewTab } from "./OverviewTab";
 import { TimelinePanel } from "./TimelinePanel";
@@ -38,7 +39,7 @@ import {
 
 /**
  * The People CRM family record (spec §4, Lane A4): Overview, Notes &
- * follow-ups (Phase 4a), Details, Billing and Timeline (the unified feed, Phase 5) tabs on the existing /admin/families/[parentId] route,
+ * follow-ups (Phase 4a), Details, Billing, Messages (Phase 6) and Timeline (the unified feed, Phase 5) tabs on the existing /admin/families/[parentId] route,
  * with the tab in `?tab=` so a link to a family's Billing is a link to it.
  */
 export default function FamilyRecordPage() {
@@ -175,6 +176,12 @@ export default function FamilyRecordPage() {
           <BillingTab parentId={parentId} />
         ) : activeTab === "notes" ? (
           <NotesTab parentId={parentId} />
+        ) : activeTab === "messages" ? (
+          <MessagesTab
+            parentId={parentId}
+            phone={family?.phone ?? billing.data?.parent.phone ?? null}
+            email={family?.email ?? billing.data?.parent.email ?? null}
+          />
         ) : activeTab === "timeline" ? (
           <TimelinePanel parentId={parentId} />
         ) : record.isLoading && billing.isLoading ? (

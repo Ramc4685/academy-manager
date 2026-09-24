@@ -126,3 +126,62 @@ export function fetchFollowUpQueue(
   if (bucket) params.set("bucket", bucket);
   return apiFetch<FollowUpQueue>(`/admin/follow-ups?${params.toString()}`, { method: "GET" });
 }
+
+// ---------------------------------------------------------------------------
+// People CRM Phase 6 (L4c): the family Messages tab. The app sends no SMS or
+// WhatsApp; staff hand off to their own app and log the contact here.
+// ---------------------------------------------------------------------------
+
+export type MessageChannel = "email" | "whatsapp" | "sms" | "call" | "in_person";
+export type MessageSource = "campaign" | "digest" | "absence_notice" | "invoice_copy" | "staff_log";
+export type MessageStatus = "queued" | "sent" | "opened" | "failed" | "logged" | "not_logged";
+
+export interface FamilyMessage {
+  entry_id: string;
+  at: string;
+  channel: MessageChannel;
+  source: MessageSource;
+  status: MessageStatus;
+  summary: string;
+  detail: string | null;
+  recipient: string | null;
+  author_user_id: string | null;
+  failed_reason: string | null;
+  log_id: string | null;
+  /** A `not_logged` handoff the caller may still confirm as sent. */
+  can_complete: boolean;
+}
+
+export interface FamilyMessageList {
+  family_id: string;
+  entries: FamilyMessage[];
+  warnings: string[];
+}
+
+export interface NewContactLog {
+  channel: MessageChannel;
+  status: "logged" | "not_logged";
+  note?: string | null;
+}
+
+export function fetchFamilyMessages(parentId: string): Promise<FamilyMessageList> {
+  return apiFetch<FamilyMessageList>(`${family(parentId)}/messages`, { method: "GET" });
+}
+
+export function logFamilyContact(parentId: string, payload: NewContactLog): Promise<FamilyMessage> {
+  return apiFetch<FamilyMessage>(`${family(parentId)}/messages/log`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function completeFamilyContactLog(
+  parentId: string,
+  logId: string,
+  note: string | null = null,
+): Promise<FamilyMessage> {
+  return apiFetch<FamilyMessage>(`${family(parentId)}/messages/log/${encodeURIComponent(logId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: "logged", note }),
+  });
+}
