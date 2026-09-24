@@ -422,7 +422,12 @@ Non-unique on purpose (a household shares an email or phone).
 
 ## CSV family and student import (roadmap L8a, migration 0199)
 
-Backend only; the upload page is L8b. Replaces the live-academy import
+The upload UI (L8b) is a panel on the Families page
+(`frontend/app/(admin)/admin/families/FamilyImportPanel.tsx`, client in
+`frontend/lib/api/admin-family-import.ts`): template download (header row
+only), check (preview) with one result per row, a confirm dialog, then the
+commit's result; a commit refused as `has_errors` or `expired` re-checks the
+same file. Replaces the live-academy import
 scripts for new academies (`backend/scripts/import_blno.py` stays the
 historical single-tenant script, still guarded).
 
