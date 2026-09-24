@@ -198,6 +198,8 @@ export const queryKeys = {
       ["platform", "tenant", academyId, "status"] as const,
     tenantHealth: (academyId: string) =>
       ["platform", "tenant", academyId, "health"] as const,
+    tenantApplicationFee: (academyId: string) =>
+      ["platform", "tenant", academyId, "application-fee"] as const,
   },
   student: {
     all: ["student"] as const,

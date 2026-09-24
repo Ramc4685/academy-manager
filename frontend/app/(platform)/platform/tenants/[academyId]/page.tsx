@@ -30,6 +30,8 @@ import { queryKeys } from "@/lib/query/keys";
 
 import { TenantStatusChip } from "../status-chip";
 
+import { ApplicationFeeCard } from "./application-fee-card";
+
 /** Which lifecycle transitions the API accepts from each status. */
 function allowedActions(status: PlatformTenant["status"]) {
   return {
@@ -163,6 +165,8 @@ export default function PlatformTenantDetailPage() {
               </div>
             )}
           </Card>
+
+          <ApplicationFeeCard academyId={academyId} canEdit={auth.isAdmin} />
 
           <Card p={20}>
             <Overline>Lifecycle</Overline>

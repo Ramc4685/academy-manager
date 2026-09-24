@@ -398,11 +398,15 @@ class StripeGateway(Protocol):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url).
 
         When ``connected_account_id`` is set, the checkout's PaymentIntent is a
-        destination charge to the academy's connected account.
+        destination charge to the academy's connected account, carrying
+        ``application_fee_amount=application_fee_cents`` (the academy's platform
+        fee, default 0). A non-zero fee without a connected account, or one
+        larger than ``amount_cents``, raises ``ValueError``.
         """
 
     async def expire_checkout_session(self, checkout_session_id: str) -> None:
@@ -597,12 +601,16 @@ class StripeGateway(Protocol):
         idempotency_key: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str, str | None]:
         """Confirm an off-session autopay charge; returns (pi_id, status, decline_code).
 
         When ``connected_account_id`` is set, this is a destination charge to the
         connected academy account (``on_behalf_of`` + ``transfer_data.destination``,
-        ``application_fee_amount=0`` for now). Customers live on the platform.
+        ``application_fee_amount=application_fee_cents`` — the academy's
+        platform fee, default 0, set per academy by a platform admin). A non-zero
+        fee without a connected account, or one larger than ``amount_cents``,
+        raises ``ValueError``. Customers live on the platform.
         """
         ...
 
@@ -716,7 +724,14 @@ class BillingSettingsRepository(Protocol):
     """Port for academy-scoped billing configuration (Slice S0/D)."""
 
     async def get(self) -> BillingSettings: ...
-    async def upsert(self, settings: BillingSettings) -> None: ...
+
+    async def upsert(self, settings: BillingSettings) -> None:
+        """Persist academy-editable settings. Never writes ``application_fee_bps``."""
+        ...
+
+    async def set_application_fee_bps(self, fee_bps: int) -> None:
+        """Platform-admin only: set this academy's application fee (basis points)."""
+        ...
 
 
 class ConnectedAccountRepository(Protocol):
