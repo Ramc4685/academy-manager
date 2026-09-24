@@ -23,6 +23,7 @@ _CRM_PREFIXES = (
     "/api/v2/admin/families",
     "/api/v2/admin/follow-ups",
     "/api/v2/admin/people",
+    "/api/v2/admin/imports",
 )
 
 
@@ -70,6 +71,9 @@ def test_the_family_index_routes_are_registered() -> None:
     assert ("PATCH", "/api/v2/admin/families/{parent_id}/details") in routes
     # Phase 4c: the duplicate warning.
     assert ("POST", "/api/v2/admin/people/duplicate-check") in routes
+    # Roadmap L8a: CSV family import.
+    assert ("POST", "/api/v2/admin/imports/families/preview") in routes
+    assert ("POST", "/api/v2/admin/imports/families/commit") in routes
 
 
 def test_every_crm_route_requires_the_admin_persona() -> None:

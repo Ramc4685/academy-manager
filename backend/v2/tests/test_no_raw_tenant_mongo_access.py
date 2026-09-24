@@ -109,6 +109,8 @@ TENANT_OWNED_COLLECTIONS = {
     "family_details",
     # Invoice email copies to opted-in family contacts (migration 0197, L1b2)
     "invoice_contact_email_sends",
+    # CSV family and student import batches (migration 0199, roadmap L8a)
+    "import_batches",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

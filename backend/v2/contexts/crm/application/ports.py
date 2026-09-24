@@ -13,6 +13,7 @@ from backend.v2.contexts.crm.domain.family_notes import (
     FamilyNote,
     FollowUpStatus,
 )
+from backend.v2.contexts.crm.domain.import_batches import ImportBatch, ImportSummary, PlannedRow
 from backend.v2.contexts.crm.domain.models import CrmContact, PipelineStatus
 
 
@@ -317,3 +318,73 @@ class AcademyMemberLookup(Protocol):
     academy is never returned)."""
 
     async def find_member_by_email(self, academy_id: str, email: str) -> AcademyMember | None: ...
+
+
+class ImportBatchRepository(Protocol):
+    """``import_batches`` (migration 0199), scoped to the tenant context:
+    another academy's batch id is never found."""
+
+    async def add(self, batch: ImportBatch) -> None: ...
+
+    async def get(self, import_batch_id: str) -> ImportBatch | None: ...
+
+    async def claim_for_commit(
+        self, import_batch_id: str, *, actor_id: str, now: datetime, stale_before: datetime
+    ) -> ImportBatch | None:
+        """Move a ``previewed`` batch (or a ``committing`` one claimed before
+        ``stale_before``) to ``committing``; None when neither applies."""
+        ...
+
+    async def release_claim(
+        self,
+        import_batch_id: str,
+        *,
+        rows: Sequence[PlannedRow],
+        summary: ImportSummary,
+        now: datetime,
+    ) -> None:
+        """Back to ``previewed`` with a refreshed plan (the commit found errors)."""
+        ...
+
+    async def mark_committed(
+        self,
+        import_batch_id: str,
+        *,
+        rows: Sequence[PlannedRow],
+        summary: ImportSummary,
+        students_created: int,
+        now: datetime,
+    ) -> ImportBatch | None: ...
+
+
+class ImportedStudentWriter(Protocol):
+    """Enrollment's students store: insert the student if its id is absent,
+    never touching an existing row. True when a row was inserted."""
+
+    async def ensure_imported(
+        self,
+        *,
+        student_id: str,
+        parent_id: str,
+        full_name: str,
+        date_of_birth: str | None,
+        parent_name: str | None,
+        parent_email: str | None,
+        parent_phone: str | None,
+        import_batch_id: str,
+        imported_by: str,
+    ) -> bool: ...
+
+
+class ImportAuditLog(Protocol):
+    """One ``audit_logs`` row per preview and per commit (counts, no personal data)."""
+
+    async def record(
+        self,
+        *,
+        actor_id: str,
+        action: str,
+        import_batch_id: str,
+        summary: ImportSummary,
+        extra: Mapping[str, object] | None = None,
+    ) -> None: ...

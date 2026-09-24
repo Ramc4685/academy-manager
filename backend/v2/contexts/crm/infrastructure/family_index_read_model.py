@@ -54,6 +54,7 @@ from backend.v2.contexts.crm.domain.family_index import (
     FamilyIndex,
     FamilyMoney,
     FamilyRecord,
+    phone_digits,
 )
 from backend.v2.contexts.crm.domain.family_stage import roll_up_family_stage
 
@@ -186,6 +187,7 @@ class MongoFamilyIndexReadModel:
 
         children_by_family: dict[str, list[FamilyChild]] = {}
         legacy_by_family: dict[str, set[str]] = {}
+        phones_by_family: dict[str, set[str]] = {}
         fallback_name: dict[str, str] = {}
         for doc in student_docs:
             ref = _parent_ref(doc)
@@ -212,6 +214,9 @@ class MongoFamilyIndexReadModel:
                 value = _opt_str(doc.get(key))
                 if value:
                     legacy_by_family.setdefault(family, set()).add(value.lower())
+            roster_phone = phone_digits(_opt_str(doc.get("parent_phone")))
+            if roster_phone:
+                phones_by_family.setdefault(family, set()).add(roster_phone)
 
         families: list[FamilyRecord] = []
         for family in sorted(set(family_of.values())):
@@ -235,6 +240,7 @@ class MongoFamilyIndexReadModel:
                     registration=facts.registration if facts is not None else None,
                     money=_money(facts) if facts is not None else None,
                     legacy_contact_keys=legacy,
+                    legacy_phones=tuple(sorted(phones_by_family.get(family, ()))),
                 )
             )
         families.sort(key=lambda record: record.sort_key)
@@ -291,6 +297,7 @@ class MongoFamilyIndexReadModel:
                 "parent_name": 1,
                 "guardian_name": 1,
                 "parent_email": 1,
+                "parent_phone": 1,
             },
         )
         return [doc async for doc in cursor if doc.get("student_id")]
