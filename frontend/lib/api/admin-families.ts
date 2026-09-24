@@ -178,6 +178,64 @@ export interface AdminFamilyBillingView {
   warnings: string[];
 }
 
+/**
+ * People CRM Phase 5: every kind the unified family timeline carries. The
+ * Billing tab's own timeline only ever uses the first four (`TimelineKind`).
+ */
+export type FamilyTimelineKind =
+  | TimelineKind
+  | "attendance"
+  | "requests"
+  | "coach"
+  | "crm";
+
+/** One row of `GET /admin/families/{id}/timeline`. */
+export interface UnifiedTimelineEntry {
+  entry_id: string;
+  at: string;
+  kind: FamilyTimelineKind;
+  code: string;
+  summary: string;
+  source: string;
+  /** Longer text under the summary: a team note or a coach note body. */
+  detail: string | null;
+  student_id: string | null;
+  student_name: string | null;
+  enrollment_id: string | null;
+  invoice_id: string | null;
+  invoice_ids: string[];
+  actor_id: string | null;
+  actor_name: string | null;
+  reason: string | null;
+  /** Null for a caller who may not see money (front desk, #553). */
+  amount_cents: number | null;
+  refunded_cents: number | null;
+  muted: boolean;
+  /** Codes of same-enrollment rows folded into this one (10-minute window). */
+  collapsed_codes: string[];
+}
+
+export interface FamilyTimelinePage {
+  family_id: string;
+  entries: UnifiedTimelineEntry[];
+  /** Pass back as `before` for the next (older) page; null on the last one. */
+  next_cursor: string | null;
+  money_visible: boolean;
+  warnings: string[];
+}
+
+export function fetchFamilyTimeline(
+  parentId: string,
+  before: string | null = null,
+  limit = 50,
+): Promise<FamilyTimelinePage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before) params.set("before", before);
+  return apiFetch<FamilyTimelinePage>(
+    `/admin/families/${encodeURIComponent(parentId)}/timeline?${params.toString()}`,
+  );
+}
+
 export function fetchAdminFamilyBilling(parentId: string): Promise<AdminFamilyBillingView> {
   return apiFetch<AdminFamilyBillingView>(
     `/admin/families/${encodeURIComponent(parentId)}/billing`,

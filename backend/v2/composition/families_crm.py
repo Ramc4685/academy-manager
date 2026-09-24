@@ -34,6 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from backend.v2.composition.family_messages import AdminFamilyMessages, compose_family_messages
+from backend.v2.composition.family_timeline import compose_family_timeline
 from backend.v2.contexts.billing.infrastructure.family_money_read_model import (
     MongoFamilyMoneyReadModel,
 )
@@ -42,6 +44,7 @@ from backend.v2.contexts.crm.application.people_reports import (
     InquiryConversionReport,
     MoneyOwedByAgeReport,
 )
+from backend.v2.contexts.crm.application.timeline import GetFamilyTimeline
 from backend.v2.contexts.crm.application.use_cases.family_follow_ups import (
     AddFamilyFollowUp,
     ListFamilyFollowUps,
@@ -110,6 +113,10 @@ class AdminFamilyIndex:
     reports: AdminPeopleReports
     notes: AdminFamilyNotes | None = None
     follow_ups: AdminFamilyFollowUps | None = None
+    #: The unified family timeline (Phase 5, ``composition/family_timeline.py``).
+    timeline: GetFamilyTimeline | None = None
+    #: The family Messages tab (Phase 6, ``composition/family_messages.py``).
+    messages: AdminFamilyMessages | None = None
 
 
 class _MembershipStaffDirectory:
@@ -142,6 +149,14 @@ def _index_model(
     )
 
 
+def family_directory(db: Any) -> IndexFamilyDirectory:
+    """The family lookup the notes and follow-ups use, for a caller outside
+    this bundle (the L3c trial follow-up job)."""
+    return IndexFamilyDirectory(
+        cached=_index_model(db, FAMILY_INDEX_CACHE_TTL_SECONDS), fresh=_index_model(db, 0.0)
+    )
+
+
 def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
     money = MongoFamilyMoneyReadModel(db)
     index = _index_model(db, FAMILY_INDEX_CACHE_TTL_SECONDS, money)
@@ -170,4 +185,6 @@ def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
             update=UpdateFamilyFollowUp(follow_ups, families, staff, timezone),
             queue=ListFollowUps(follow_ups, families, staff, timezone),
         ),
+        timeline=compose_family_timeline(db, families=families, notes=notes, follow_ups=follow_ups),
+        messages=compose_family_messages(db, families=families),
     )

@@ -63,6 +63,8 @@ describe("staff options", () => {
     expect(staffName(options, "u-1", "u-1")).toBe("You");
     expect(staffName(options, "u-1", "u-2")).toBe("Amy Owner");
     expect(staffName(options, "u-9", "u-2")).toBe("A staff member");
+    // An automatic follow-up with no owner to assign (roadmap L3c).
+    expect(staffName(options, "", "u-2")).toBe("Unassigned");
   });
 });
 

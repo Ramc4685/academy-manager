@@ -9,7 +9,7 @@ import type {
   FamilyStudent,
   InvoiceAction,
   RegistrationState,
-  TimelineKind,
+  FamilyTimelineKind,
 } from "@/lib/api/admin-families";
 import { formatCents } from "@/lib/money";
 import {
@@ -172,10 +172,34 @@ export function undeliverableChip(
   };
 }
 
-export type TimelineTone = "muted" | TimelineKind;
+export type TimelineTone = "muted" | FamilyTimelineKind;
 
-export function timelineTone(entry: { kind: TimelineKind; muted: boolean }): TimelineTone {
+export function timelineTone(entry: {
+  kind: FamilyTimelineKind;
+  muted: boolean;
+}): TimelineTone {
   return entry.muted ? "muted" : entry.kind;
+}
+
+const TIMELINE_KIND_LABELS: Record<FamilyTimelineKind, string> = {
+  money: "Money",
+  lifecycle: "Enrollment",
+  attendance: "Attendance",
+  requests: "Request",
+  comms: "Message",
+  coach: "Coach",
+  admin: "Admin",
+  crm: "Team",
+};
+
+/** The small label in front of a unified timeline row. */
+export function timelineKindLabel(kind: string): string {
+  return TIMELINE_KIND_LABELS[kind as FamilyTimelineKind] ?? "Activity";
+}
+
+/** Timeline rows are emphasised when they are money or a staff action. */
+export function timelineEmphasis(tone: TimelineTone): boolean {
+  return tone === "money" || tone === "admin";
 }
 
 function pad(n: number): string {

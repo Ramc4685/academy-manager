@@ -15,6 +15,8 @@ import {
   refundLabel,
   registrationChips,
   shortDate,
+  timelineEmphasis,
+  timelineKindLabel,
   timelineTone,
   tuitionLineDescription,
   undeliverableChip,
@@ -123,6 +125,16 @@ describe("labels and chips", () => {
   it("mutes comms rows", () => {
     expect(timelineTone({ kind: "comms", muted: true })).toBe("muted");
     expect(timelineTone({ kind: "money", muted: false })).toBe("money");
+    expect(timelineTone({ kind: "coach", muted: false })).toBe("coach");
+  });
+  it("labels every unified timeline kind and emphasises money and admin rows", () => {
+    expect(timelineKindLabel("coach")).toBe("Coach");
+    expect(timelineKindLabel("crm")).toBe("Team");
+    expect(timelineKindLabel("requests")).toBe("Request");
+    expect(timelineKindLabel("something-new")).toBe("Activity");
+    expect(timelineEmphasis("money")).toBe(true);
+    expect(timelineEmphasis("admin")).toBe(true);
+    expect(timelineEmphasis("attendance")).toBe(false);
   });
 });
 

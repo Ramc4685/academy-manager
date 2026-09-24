@@ -123,6 +123,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_writer import (
     MongoStudentWriter,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
+)
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
@@ -519,6 +522,7 @@ def compose_coach(
             occurrence_roster=occurrence_roster_repo,
             students=students_repo,
             occurrences=occurrences_repo,
+            trial_outcomes=MongoTrialRequestRepository(db),
         ),
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,

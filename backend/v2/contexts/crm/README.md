@@ -59,8 +59,9 @@ Collection `crm_contacts`, one document per inquiry.
 | `created_at`, `updated_at` | UTC datetime (ms) | CreateContact | |
 
 The conversion fields (`converted_parent_id`, `linked_family_id`,
-`linked_user_id`) and `pipeline_override` exist in the model and are read back
-by the repository, but no use case in this PR writes them.
+`linked_user_id`) exist in the model and are read back by the repository, but
+no use case writes them yet. `pipeline_override` is written only by
+`MoveCardOnPipeline` (see "Pipeline moves" below).
 
 ### `ContactSource`
 
@@ -375,8 +376,8 @@ isolation, duplicate ids, index use), and
 `tests/interface/test_admin_family_crm_routes.py`.
 
 Not built here: pinned notes, `student_id` tags, the `students.notes` copy,
-`contact_id` (lead) notes, automatic follow-ups (`source`, `source_ref`), and
-the timeline merge.
+`contact_id` (lead) notes. Automatic follow-ups landed in L3c (`source_key`,
+below); the timeline merge is Phase 5 (below).
 
 ## Duplicate warning (People CRM Phase 4c, migration 0198)
 
@@ -425,6 +426,274 @@ Rules:
 | `family_contacts` | `family_contacts_academy_phone_lookup` | `(academy_id, phone_digits)` | partial `{phone_digits: {$gt: ""}}` |
 
 Non-unique on purpose (a household shares an email or phone).
+
+## Pipeline moves and trial outcomes (People CRM L3a)
+
+Spec §3.4: "Moves that correspond to a real write (approve trial, Came /
+Didn't come) call the existing use cases; moves without one write
+`crm_contacts.pipeline_override` with author and time so the board never lies
+about the system state." L3a ships both halves as backend plus minimal
+buttons; the board view itself is L3b (next section).
+
+| File | What it is |
+|---|---|
+| `domain/pipeline.py` | the five board columns `inquiry, trial_booked, trial_done, registered, enrolled`, `current_column` (system `enrolled` > override > column implied by `pipeline_status`) and the stage-skip guard `refuse_move` |
+| `application/use_cases/pipeline_moves.py` | `MoveCardOnPipeline`: tenant-scoped read, guard, compare-and-swap write of `{column, set_by, set_at}` plus `updated_at` |
+| `infrastructure/mongo_crm_contact_repo.py` | `set_pipeline_override(contact_id, override, expected_column=, updated_at=)` |
+| `backend/v2/composition/crm_pipeline.py` | wiring (lazy, `app.state.crm_pipeline_moves`) |
+| `interfaces/admin/pipeline_routes.py` | `POST /admin/crm/contacts/{contact_id}/pipeline-move` `{to_column}` |
+
+Guard rules: forward one column at a time (`stage_skip`), backward any number
+(a correction), never to `enrolled` (only the conversion flow enrolls; the
+route refuses it as a 422, the use case as `needs_system_write`), and an
+enrolled contact never moves (`contact_enrolled`). A move to the column the
+card already shows is a no-op that keeps the first author. The write matches
+only while the stored override is the one read and the row is not
+`enrolled`, so of two concurrent moves one lands and the other gets
+`Crm.PipelineMoveNotAllowed` (409) with `reason = "changed"`. Another
+academy's id is `Crm.ContactNotFound` (404). No new index: the write is an
+equality on `(academy_id, contact_id)` (`crm_contacts_academy_contact_unique`).
+
+**Came / Didn't come** is the enrollment context's `MarkTrialOutcome`
+(`contexts/enrollment/application/use_cases/trial_outcomes.py`, wired by
+`composition/trial_outcomes.py`): an `approved` trial with an assigned, not
+cancelled date, from one hour before it starts, becomes `completed` with
+`outcome` (`came` | `no_show`), `outcome_by` and `outcome_at` on the
+`trial_requests` row; a completed trial may be corrected; `converted`,
+`pending` and `denied` refuse (409 `Enrollment.TrialOutcomeNotAllowed`,
+`details.reason`). Routes: `POST /admin/self-service/trials/{request_id}/outcome`
+(admin Inbox trial rows, `require_persona("admin")` like approve/deny) and
+`POST /coach/trials/{request_id}/outcome` (coach Today trial rows; a coach only
+for sessions they coach or assist, anything else is the unknown-id 404; a coach
+supervisor for any trial of the academy). `GET /coach/today` trial rows carry
+`trial_request_id` and `trial_outcome`. Prospective-child trials are not on the
+coach roster (no student to roster, a v1 limitation), so they are marked from
+the admin Inbox.
+
+Tests: `tests/unit/test_mark_trial_outcome.py`, `tests/unit/test_crm_pipeline_moves.py`,
+`tests/interface/test_trial_outcome_and_pipeline_routes.py`,
+`tests/contract/test_trial_outcome_pipeline_real_mongo.py` (real `mongod`: the
+status and override compare-and-swaps, tenant isolation, concurrent moves),
+`frontend/e2e/specs/trial-outcome.spec.ts`.
+
+## The Pipeline board (People CRM L3b)
+
+`/admin/families?view=pipeline` (a view on the existing Families route, no new
+page; deep link `?view=pipeline&stage=trial_booked` picks the phone stage).
+Spec §3.4.
+
+| File | What it is |
+|---|---|
+| `application/pipeline_board.py` | `build_pipeline_board` (pure merge), `GetPipelineBoard`, `move_targets`, `quick_add_command` |
+| `backend/v2/composition/crm_pipeline.py` | lazy wiring: `app.state.crm_pipeline_board` (reuses `app.state.admin_family_index.index`, so the board shares the index cache) and `app.state.crm_quick_add` (the existing `CreateContact`) |
+| `interfaces/admin/pipeline_routes.py` | `GET /admin/crm/pipeline`, `POST /admin/crm/contacts` (quick add) |
+| `frontend/components/admin/people/pipeline-board.tsx` | the board, the phone stage switcher, Move to... and quick add |
+
+Where a card sits:
+
+- **`crm_contacts`** (newest first, at most 500): `current_column` (system
+  `enrolled` > staff override > the stage's column). `move_targets` lists the
+  columns `refuse_move` allows now; an enrolled contact has none. An enrolled
+  card leaves the board 7 days after its last change.
+- **The family index roll-up**: stage `trial` is a Trial booked card, a family
+  with an account and no enrolled child (`never_enrolled`) is an Inquiry card.
+  Family cards are read-only (their stage is a system write made on the family
+  record or the Inbox) and open `/admin/families/{id}`. A family a contact
+  links to (`linked_family_id` / `converted_parent_id`, any alias) is not shown
+  twice. Active, leaving and left families are not on the board.
+- A failed family index read is the `families_unavailable` warning; the
+  contact cards still show.
+
+No card carries money, so every admin-persona tier sees the same board. Quick
+add takes a staff source only (`whatsapp_or_phone`, `referral`, `other`; the
+route refuses `website` and extra fields), stamps `created_by`, stage `lead`,
+`consent.contact_about_request = true`, never marketing. Staff rows are not
+deduped (see "Idempotency"): the form disables its button while saving and
+shows the Phase 4c duplicate warning.
+
+UI rules: moves are a "Move to..." button opening radio options with an
+explicit Move button (nothing commits on change, WCAG 3.2.2); Escape closes
+it and returns focus to the button; after a card leaves its column focus
+goes to the card that took its place, else the column heading (WCAG 2.4.3).
+
+Tests: `tests/unit/test_crm_pipeline_board.py`,
+`tests/interface/test_crm_pipeline_board_routes.py`,
+`tests/contract/test_crm_pipeline_board_real_mongo.py` (real `mongod`: tenant
+scope, newest first, a move shows on the next read, staff rows never deduped),
+`frontend/e2e/specs/admin-pipeline-board.spec.ts`.
+
+Not built here: the Registered and Trial done columns for families (they
+need the application and trial joins of the R6 extension), card assignee,
+last contact and Cold chip. The auto follow-up is L3c, below.
+
+## Trial passed, no registration (People CRM L3c, migration 0201)
+
+A daily scheduled job, `create_trial_follow_ups` (04:50 scheduler time,
+leased, heartbeat in `ops_job_runs`, stale after 26h), runs
+`CreateTrialPassedFollowUps` once per academy inside its `tenant_scope`.
+For every trial marked **Came** (`status: completed`, `outcome: came`, no
+`linked_application_id`) whose assigned, not-cancelled class started between
+60 and 7 days ago, it adds one family follow-up:
+
+| Field | Value |
+| --- | --- |
+| `title` | `Trial passed, no registration` (`: <child>` for a prospective child) |
+| `parent_id` | the canonical family (family index); an unknown parent is skipped |
+| `assignee_user_id` | the academy's earliest active owner, else `""` (shown as "Unassigned") |
+| `due_on` | the academy's local today |
+| `created_by` | `system:trial_follow_up` |
+| `source_key` | `trial_passed:<trial request id>` |
+
+Rules:
+
+- **Idempotent per trial.** The write is `add_once`: one upsert on
+  `(academy_id, source_key)` with `$setOnInsert`, backed by a unique index.
+  A rerun, a second machine, or a follow-up staff already marked done never
+  produces a second row; a racing duplicate-key error reads as "already
+  there".
+- **No-op when registered.** The family registered after requesting the
+  trial when an `onboarding_applications` row of the parent, past `DRAFT` /
+  `CHECKOUT_EXPIRED` / `ABANDONED`, was created or updated since; or, for an
+  existing child, a non-terminal enrollment on the trial's class exists.
+- **Per academy.** Every read is tenant-scoped (repositories) or filters
+  `academy_id` explicitly (the composition's direct reads).
+- A follow-up a person adds stores `source_key: null` and is outside the
+  index. No email, no money.
+
+The CRM does not import enrollment, onboarding or identity: the reads are
+ports (`PassedTrialSource`, `RegistrationCheck`, `AcademyOwnerLookup`,
+`SourcedFollowUpWriter`) implemented in `composition/trial_follow_ups.py`.
+
+### Index (migration 0201)
+
+| Collection | Name | Keys | Options |
+| --- | --- | --- | --- |
+| `family_follow_ups` | `family_follow_ups_academy_source_key_unique` | `academy_id, source_key` | unique, partial `{source_key: {$gt: ""}}` |
+
+Tests: `tests/unit/test_crm_trial_follow_ups.py`,
+`tests/unit/test_0201_crm_follow_up_source_key.py`,
+`tests/contract/test_crm_trial_follow_ups_real_mongo.py` (real `mongod`:
+one row per trial, rerun and 5 concurrent runs, done not recreated,
+cross-tenant, registered no-op, draft and other-academy applications
+ignored, window and outcome filters, manual follow-ups coexist).
+
+## Unified family timeline (People CRM Phase 5, migration 0202)
+
+`GET /admin/families/{parent_id}/timeline?before=<cursor>&limit=<1..200>`
+(`interfaces/admin/family_timeline_routes.py`, `require_persona("admin")`,
+use case on `app.state.admin_family_index.timeline`, wired by
+`composition/family_timeline.py`). Spec: engineering spec §5 "Timeline".
+The family record's Timeline tab reads it; the Billing tab keeps billing's
+own timeline.
+
+| File | What it is |
+|---|---|
+| `domain/timeline.py` | `TimelineEntry`, merge (newest first, `entry_id` tiebreak), dedupe, cap, cursor paging, `redact_money`, `AUDIT_ACTION_ALLOWLIST` |
+| `application/timeline.py` | `GetFamilyTimeline`; the billing and coach-note source adapters |
+| `infrastructure/family_timeline_sources.py` | attendance, requests, admin audit (allowlist + moved family), CRM records |
+| `backend/v2/migrations/0202_family_timeline_indexes.py` | the lookup indexes |
+
+Sources (each read newest first, at most 200 rows per query, all under
+`gather`; a failing source adds `"<name>_unavailable"` to `warnings`):
+
+| Kind | Source |
+|---|---|
+| money, lifecycle, comms, billing admin actions | billing's `build_timeline` through the family billing read model (called as one source, not extended). Its lifecycle events cover every enrollment of the family's children. |
+| attendance | `attendance` absent marks and corrections of the children, dated by the occurrence `start_at` |
+| requests | `absence_notices`, `pause_requests`, `makeup_requests` by child; `trial_requests` by parent alias (one equality per alias) |
+| coach | shared coach notes (#665), read-only, with the coach's name |
+| admin | `audit_logs` on the parent aliases, children and their enrollments, action in `AUDIT_ACTION_ALLOWLIST` only (never `user_logged_in`); `student.parent_changed` rows become "Moved from family X" on the new family and "Moved to family Y" on the old one, found by `old_parent_id` / `new_parent_id` one alias at a time |
+| crm | family notes (body as `detail`), follow-ups (added, done), family contacts |
+
+Rules:
+
+- **The family check is the index** (#664): another academy's family, or no
+  family, is `Crm.FamilyNotFound` (404). The children and the canonical id
+  come from the index row; the parent's aliases from identity.
+- **Dedupe**: non-money entries with the same `enrollment_id` within 10
+  minutes of the cluster's first entry collapse into one (lifecycle kept
+  first); the others' codes are in `collapsed_codes`. Money never collapses.
+- **Times** go through `as_utc` (#706). The merged feed is cut to 200.
+- **Paging**: `next_cursor` is an opaque token of the last entry's time and
+  id; sources are asked only for rows at or before it.
+- **Money** is gated at serialization by `can_view_family_money` (#553): a
+  caller who may not see amounts gets money rows without `amount_cents` /
+  `refunded_cents` and without dollar figures in the summary, and
+  `money_visible: false`.
+
+### Indexes (migration 0202)
+
+| Collection | Name | Keys | Options |
+|---|---|---|---|
+| `audit_logs` | `audit_logs_academy_entity_created` | `(academy_id, entity_id, created_at desc)` | |
+| `audit_logs` | `audit_logs_academy_old_parent_created` | `(academy_id, old_parent_id, created_at desc)` | partial `{old_parent_id: {$gt: ""}}` |
+| `audit_logs` | `audit_logs_academy_new_parent_created` | `(academy_id, new_parent_id, created_at desc)` | partial `{new_parent_id: {$gt: ""}}` |
+| `absence_notices` | `absence_notices_academy_student_submitted` | `(academy_id, student_id, submitted_at desc)` | |
+| `pause_requests` | `pause_requests_academy_student_created` | `(academy_id, student_id, created_at desc)` | |
+| `makeup_requests` | `makeup_requests_academy_student_created` | `(academy_id, student_id, created_at desc)` | |
+
+Tests: `tests/unit/test_crm_timeline_domain.py`,
+`tests/unit/test_crm_family_timeline_use_case.py`,
+`tests/unit/test_0202_family_timeline_indexes.py`,
+`tests/interface/test_admin_family_timeline_routes.py`,
+`tests/contract/test_crm_family_timeline_real_mongo.py` (real `mongod`:
+allowlist, moved entries on both families, tenant isolation, index use).
+
+Not built here (see the Messages tab below for sends and logged contacts):
+registration (applications, waivers) and inquiry (`crm_contacts`) entries,
+and staff display names for `actor_id`.
+
+## Family Messages tab (People CRM Phase 6, roadmap L4c, migration 0203)
+
+`GET /admin/families/{parent_id}/messages`,
+`POST /admin/families/{parent_id}/messages/log`,
+`PATCH /admin/families/{parent_id}/messages/log/{log_id}`
+(`interfaces/admin/family_messages_routes.py`, `require_persona("admin")`,
+use cases on `app.state.admin_family_index.messages`, wired by
+`composition/family_messages.py`). The family record's Messages tab reads it.
+
+| File | What it is |
+|---|---|
+| `domain/family_messages.py` | `FamilyContactLog`, `MessageEntry`, merge (newest first, `entry_id` tiebreak, cap 200), note normalisation, who may complete a log |
+| `application/family_messages.py` | `GetFamilyMessages`, `LogFamilyContact`, `CompleteFamilyContactLog` |
+| `infrastructure/family_message_sources.py` | campaign deliveries, parent digest, absence-notice confirmations, invoice copies, the staff log |
+| `infrastructure/mongo_family_contact_log_repo.py` | `family_contact_log` (tenant-scoped) |
+| `backend/v2/migrations/0203_family_contact_log.py` | its indexes |
+
+Thread sources (all under `gather`; a failing source adds
+`"<name>_unavailable"` to `warnings`, never a 500):
+
+| Source | Rows |
+|---|---|
+| `campaigns` | `message_deliveries` to any parent alias, subject from `message_campaigns` |
+| `digest` | `parent_digest_sends` of any parent alias; `skipped_empty` left out |
+| `absence_notices` | `absence_notice_sends` with audience `parent` for the children's notices (the staff alert is not a message to the family) |
+| `invoice_copies` | `invoice_contact_email_sends` (0197) matched on the family contact's email AND `contact_id` |
+| `contact_log` | `family_contact_log`: WhatsApp / SMS / email sent from the staff member's own app, a call, a talk in person |
+
+Rules:
+
+- **No app-sent SMS or WhatsApp.** The tab opens `wa.me` / `sms:` / `mailto:`
+  and asks "Did you send it?": yes stores `status: logged`, "Not yet" stores
+  `not_logged` so the handoff can be confirmed later (by its author or an
+  owner, `Crm.ContactLogEditForbidden` otherwise). "Send from the app
+  (coming)" is shown disabled. A call or in-person talk is always `logged`.
+- **The family check is the index** (#664): another academy's family, or no
+  family, is `Crm.FamilyNotFound` (404); a log id of another family is
+  `Crm.ContactLogNotFound` (404).
+- **No money** is read or returned, so every staff tier sees the same thread.
+
+### Indexes (migration 0203)
+
+| Collection | Name | Keys | Options |
+|---|---|---|---|
+| `family_contact_log` | `family_contact_log_academy_log_id_unique` | `(academy_id, log_id)` | unique |
+| `family_contact_log` | `family_contact_log_academy_parent_created` | `(academy_id, parent_id, created_at desc)` | |
+
+Tests: `tests/unit/test_crm_family_messages.py`,
+`tests/unit/test_0203_family_contact_log.py`,
+`tests/interface/test_admin_family_messages_routes.py`,
+`tests/contract/test_crm_family_messages_real_mongo.py` (real `mongod`).
 
 ## CSV family and student import (roadmap L8a, migration 0199)
 

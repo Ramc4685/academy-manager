@@ -71,11 +71,20 @@ export const queryKeys = {
     familyIndex: (params: Record<string, unknown>) =>
       ["admin", "families", "index", params] as const,
     familyIndexSummary: () => ["admin", "families", "index-summary"] as const,
+    // People CRM Pipeline board (L3b). Under `families()` so a families-wide
+    // invalidation refreshes it too.
+    pipelineBoard: () => ["admin", "families", "pipeline"] as const,
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
     familyRecord: (familyId: string) =>
       ["admin", "families", familyId, "record"] as const,
+    // People CRM Phase 5: the unified family timeline (paged).
+    familyTimeline: (parentId: string) =>
+      ["admin", "families", parentId, "timeline"] as const,
     // People CRM Phase 4a: team notes and follow-ups on a family.
+    // People CRM Phase 6: the family Messages tab.
+    familyMessages: (parentId: string) =>
+      ["admin", "families", parentId, "messages"] as const,
     familyNotes: (parentId: string) =>
       ["admin", "families", parentId, "notes"] as const,
     familyFollowUps: (parentId: string) =>

@@ -94,6 +94,45 @@ class InvalidFamilyDetails(DomainError):
     status_code = 422
 
 
+class ContactNotFound(DomainError):
+    """No ``crm_contacts`` row with this id in the caller's academy."""
+
+    code = "Crm.ContactNotFound"
+    status_code = 404
+
+
+class PipelineMoveNotAllowed(DomainError):
+    """A Pipeline board move the stage-skip guard refuses. ``details.reason``
+    is ``stage_skip``, ``needs_system_write``, ``contact_enrolled``,
+    ``unknown_column`` or ``changed`` (the card moved while saving)."""
+
+    code = "Crm.PipelineMoveNotAllowed"
+    status_code = 409
+
+
+class InvalidContactLog(DomainError):
+    """A logged contact failed validation (unknown channel or status, a note
+    over the size cap). ``details.field`` names the offending field."""
+
+    code = "Crm.InvalidContactLog"
+    status_code = 422
+
+
+class ContactLogNotFound(DomainError):
+    """No logged contact with this id on this family of the caller's academy."""
+
+    code = "Crm.ContactLogNotFound"
+    status_code = 404
+
+
+class ContactLogEditForbidden(DomainError):
+    """Only the staff member who logged the contact, or an academy owner, may
+    complete it."""
+
+    code = "Crm.ContactLogEditForbidden"
+    status_code = 403
+
+
 class InvalidImportFile(DomainError):
     """The uploaded CSV cannot be imported as a whole (not UTF-8, too large,
     too many rows, unknown or missing columns). Row problems are not this

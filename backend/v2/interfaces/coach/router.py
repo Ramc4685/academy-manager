@@ -22,6 +22,7 @@ from .sessions_routes import router as sessions_router
 from .skill_routes import router as skill_router
 from .teaching_plan_routes import router as teaching_plan_router
 from .today_routes import router as today_router
+from .trial_outcome_routes import router as trial_outcome_router
 
 router = APIRouter(prefix="/coach")
 router.include_router(today_router)
@@ -36,3 +37,4 @@ router.include_router(feedback_router)
 router.include_router(skill_router)
 router.include_router(messages_router)
 router.include_router(announcement_router)
+router.include_router(trial_outcome_router)

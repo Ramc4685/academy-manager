@@ -117,6 +117,10 @@ class TrialRequestAdminRow(BaseModel):
     requested_session_title: str | None = None
     assigned_occurrence_start_at: datetime | None = None
     student_full_name: str | None = None
+    # People CRM L3a: Came / Didn't come ("came" | "no_show"), who and when.
+    outcome: str | None = None
+    outcome_by: str | None = None
+    outcome_at: datetime | None = None
 
 
 class TrialRequestsAdminResponse(BaseModel):

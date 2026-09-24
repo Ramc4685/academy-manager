@@ -258,3 +258,46 @@ def test_coach_today_shows_cancelled_occurrence_with_reason(seed):
     assert cancelled["cancellation_reason"] == "Court flooded"
     assert by_occurrence["occ-today-1"]["status"] == "scheduled"
     assert by_occurrence["occ-today-1"]["cancellation_reason"] is None
+
+
+def test_coach_today_trial_row_carries_request_id_and_outcome(seed):
+    """People CRM L3a: a trial row names its trial request (the id the coach
+    records Came / Didn't come against) and the outcome already recorded;
+    other rows carry neither."""
+    seed["students"] = [
+        *seed["students"],
+        Student(
+            student_id="st-trial",
+            academy_id="test-academy",
+            parent_id="p3",
+            full_name="Trial Kid",
+        ),
+    ]
+    seed["occurrence_roster_entries"] = [
+        OccurrenceRosterEntry(
+            entry_id="ore-t",
+            academy_id="test-academy",
+            occurrence_id="occ-today-1",
+            student_id="st-trial",
+            source="trial",
+            origin_request_id="tr-9",
+            created_at=datetime(2026, 5, 15, 8, 0, tzinfo=UTC),
+        )
+    ]
+
+    class _Outcomes:
+        async def outcomes_for(self, request_ids):
+            return {rid: "came" for rid in request_ids if rid == "tr-9"}
+
+    use_cases = _build_use_cases(seed)
+    use_cases.get_occurrence_roster._trial_outcomes = _Outcomes()  # type: ignore[union-attr]
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+    assert r.status_code == 200, r.text
+    by_id = {e["student_id"]: e for e in r.json()["sessions"][0]["roster"]}
+    assert by_id["st-trial"]["entry_source"] == "trial"
+    assert by_id["st-trial"]["trial_request_id"] == "tr-9"
+    assert by_id["st-trial"]["trial_outcome"] == "came"
+    assert by_id["st1"]["trial_request_id"] is None
+    assert by_id["st1"]["trial_outcome"] is None

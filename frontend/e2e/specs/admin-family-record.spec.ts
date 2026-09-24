@@ -107,6 +107,68 @@ const BILLING = {
   warnings: [],
 };
 
+/** People CRM Phase 5: the unified timeline, two pages. */
+function timelineEntry(over: Record<string, unknown>) {
+  return {
+    source: "test",
+    detail: null,
+    student_id: null,
+    student_name: null,
+    enrollment_id: null,
+    invoice_id: null,
+    invoice_ids: [],
+    actor_id: null,
+    actor_name: null,
+    reason: null,
+    amount_cents: null,
+    refunded_cents: null,
+    muted: false,
+    collapsed_codes: [],
+    ...over,
+  };
+}
+
+const TIMELINE_PAGE_1 = {
+  family_id: "parent-1",
+  entries: [
+    timelineEntry({
+      entry_id: "coach_note:n-1",
+      at: "2026-09-06T18:00:00Z",
+      kind: "coach",
+      code: "coach:note",
+      summary: "Coach note from Coach Testcoach · Kid Alpha · Sat Beginners",
+      detail: "Great footwork today",
+      actor_name: "Coach Testcoach",
+    }),
+    timelineEntry({
+      entry_id: "billing:enrollment_started",
+      at: "2026-09-04T20:00:00Z",
+      kind: "admin",
+      code: "enrollment_started",
+      summary: "Kid Alpha joined Sat Beginners",
+    }),
+  ],
+  next_cursor: "cursor-2",
+  money_visible: true,
+  warnings: [],
+};
+
+const TIMELINE_PAGE_2 = {
+  family_id: "parent-1",
+  entries: [
+    timelineEntry({
+      entry_id: "audit:au-1",
+      at: "2026-08-20T15:00:00Z",
+      kind: "admin",
+      code: "audit:moved_in",
+      summary: "Kid Alpha moved from family Testparent Two",
+    }),
+  ],
+  next_cursor: null,
+  money_visible: true,
+  warnings: ["attendance_unavailable"],
+};
+
 function studentDetail(status: "present" | "absent", previous: string | null) {
   return {
     student_id: "stu-a",
@@ -158,6 +220,90 @@ async function setup(page: Page) {
   await page.route("**/api/v2/admin/families/parent-1/billing", (route) =>
     fulfillJson(route, BILLING),
   );
+  await page.route("**/api/v2/admin/families/parent-1/timeline**", (route) =>
+    fulfillJson(
+      route,
+      new URL(route.request().url()).searchParams.get("before") === "cursor-2"
+        ? TIMELINE_PAGE_2
+        : TIMELINE_PAGE_1,
+    ),
+  );
+  // Messages tab (Phase 6): one app email, one unconfirmed WhatsApp handoff.
+  const messageLogs: unknown[] = [];
+  let messageEntries: Array<Record<string, unknown>> = [
+    {
+      entry_id: "log:log-1",
+      at: "2026-09-21T15:00:00Z",
+      channel: "whatsapp",
+      source: "staff_log",
+      status: "not_logged",
+      summary: "WhatsApp opened, not confirmed as sent",
+      detail: null,
+      recipient: null,
+      author_user_id: ADMIN_USER_A.user_id,
+      failed_reason: null,
+      log_id: "log-1",
+      can_complete: true,
+    },
+    {
+      entry_id: "campaign:d-1",
+      at: "2026-09-20T15:00:00Z",
+      channel: "email",
+      source: "campaign",
+      status: "failed",
+      summary: "Email: Term dates",
+      detail: null,
+      recipient: "parent.one@example.test",
+      author_user_id: null,
+      failed_reason: "mailbox full",
+      log_id: null,
+      can_complete: false,
+    },
+  ];
+  await page.route("**/api/v2/admin/users*", (route) =>
+    fulfillJson(route, {
+      users: [
+        {
+          user_id: ADMIN_USER_A.user_id,
+          email: "admin@example.com",
+          display_name: "Test Admin",
+          role: "admin",
+          roles: ["admin"],
+          status: "active",
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/v2/admin/families/parent-1/messages", (route) =>
+    fulfillJson(route, { family_id: "parent-1", entries: messageEntries, warnings: [] }),
+  );
+  await page.route("**/api/v2/admin/families/parent-1/messages/log**", (route) => {
+    const req = route.request();
+    const body = req.postDataJSON() as Record<string, unknown>;
+    messageLogs.push({ method: req.method(), url: req.url(), body });
+    if (req.method() === "PATCH") {
+      messageEntries = messageEntries.map((e) =>
+        e.log_id === "log-1" ? { ...e, status: "logged", can_complete: false } : e,
+      );
+      return fulfillJson(route, messageEntries[0]);
+    }
+    const row = {
+      entry_id: "log:log-2",
+      at: "2026-09-23T15:00:00Z",
+      channel: body.channel,
+      source: "staff_log",
+      status: body.status,
+      summary: "Phone call",
+      detail: body.note ?? null,
+      recipient: null,
+      author_user_id: ADMIN_USER_A.user_id,
+      failed_reason: null,
+      log_id: "log-2",
+      can_complete: false,
+    };
+    messageEntries = [row, ...messageEntries];
+    return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(row) });
+  });
   // Details tab (Phase 4b): no other contacts and empty family details.
   await page.route("**/api/v2/admin/families/*/contacts", (route) =>
     fulfillJson(route, { family_id: "parent-1", contacts: [] }),
@@ -208,7 +354,7 @@ async function setup(page: Page) {
       corrected_at: "2026-09-23T15:00:00Z",
     });
   });
-  return { errors, patches };
+  return { errors, patches, messageLogs };
 }
 
 test.describe("Family record (People CRM §4)", () => {
@@ -263,14 +409,89 @@ test.describe("Family record (People CRM §4)", () => {
 
     // Arrow keys move along the tablist.
     await page.getByTestId("family-tab-billing").press("ArrowRight");
+    await expect(page).toHaveURL(/\?tab=messages$/);
+    await expect(page.getByTestId("family-tab-messages")).toBeFocused();
+    await page.getByTestId("family-tab-messages").press("ArrowRight");
     await expect(page).toHaveURL(/\?tab=timeline$/);
     await expect(page.getByTestId("family-tab-timeline")).toBeFocused();
     await expect(page.getByTestId("timeline-entry-enrollment_started")).toContainText(
       "Kid Alpha joined",
     );
+    // Phase 5: the unified feed carries coach notes (read-only, with the
+    // coach's name) and pages back with "Show older".
+    await expect(page.getByTestId("timeline-entry-coach:note")).toContainText(
+      "Coach note from Coach Testcoach",
+    );
+    await expect(page.getByTestId("timeline-entry-coach:note")).toContainText(
+      "Great footwork today",
+    );
+    await page.getByTestId("family-timeline-older").click();
+    await expect(page.getByTestId("timeline-entry-audit:moved_in")).toContainText(
+      "moved from family Testparent Two",
+    );
+    await expect(page.getByTestId("family-timeline-older")).toHaveCount(0);
+    await expect(page.getByTestId("family-warnings")).toContainText("attendance_unavailable");
 
     await page.getByTestId("family-tab-overview").click();
     await expect(page).toHaveURL(/\/admin\/families\/parent-1\??$/);
+    expect(errors, errors.join("\n")).toEqual([]);
+  });
+
+  test("Messages lists sends with status, hands off to WhatsApp and logs contacts", async ({
+    page,
+  }) => {
+    const { errors, messageLogs } = await setup(page);
+    await page.goto("/admin/families/parent-1?tab=messages");
+    await expect(page.getByTestId("family-messages")).toBeVisible();
+    const failed = page.getByTestId("family-message-campaign");
+    await expect(failed).toHaveAttribute("data-status", "failed");
+    await expect(failed).toContainText("Email: Term dates");
+    await expect(failed).toContainText("Not delivered: mailbox full");
+
+    // Handoffs open the staff member's own app; the app never sends SMS or WhatsApp.
+    await expect(page.getByTestId("family-handoff-whatsapp")).toHaveAttribute(
+      "href",
+      "https://wa.me/5550100001",
+    );
+    await expect(page.getByTestId("family-handoff-sms")).toHaveAttribute("href", "sms:5550100001");
+    await expect(page.getByTestId("family-handoff-email")).toHaveAttribute(
+      "href",
+      "mailto:parent.one@example.test",
+    );
+    await expect(page.getByTestId("family-send-from-app")).toBeDisabled();
+
+    // An earlier unconfirmed handoff is completed from the thread.
+    const pending = page.getByTestId("family-message-staff_log");
+    await expect(pending).toHaveAttribute("data-status", "not_logged");
+    await pending.getByTestId("family-message-complete").click();
+    await expect(pending).toHaveAttribute("data-status", "logged");
+    // The confirm button is gone; focus lands on its row, not <body>.
+    await expect(pending).toBeFocused();
+    await expect(page.getByTestId("family-messages-status")).toHaveText("Marked as sent.");
+
+    // A call is logged with a short note.
+    await page.getByTestId("family-log-call").click();
+    await page.getByTestId("family-contact-log-note").fill("Talked about Saturday class");
+    await page.getByTestId("family-contact-log-save").click();
+    await expect(page.getByTestId("family-contact-log-form")).toHaveCount(0);
+    await expect(page.getByText("Talked about Saturday class")).toBeVisible();
+    // The form closed under the focused Save button; focus returns to its opener.
+    await expect(page.getByTestId("family-log-call")).toBeFocused();
+    await expect(page.getByTestId("family-contact-log-status")).toHaveText("Call logged.");
+
+    // Cancelling also returns focus to the button that opened the form.
+    await page.getByTestId("family-log-in_person").click();
+    await page.getByTestId("family-contact-log-cancel").click();
+    await expect(page.getByTestId("family-contact-log-form")).toHaveCount(0);
+    await expect(page.getByTestId("family-log-in_person")).toBeFocused();
+
+    expect(messageLogs).toEqual([
+      expect.objectContaining({ method: "PATCH", body: { status: "logged", note: null } }),
+      expect.objectContaining({
+        method: "POST",
+        body: { channel: "call", status: "logged", note: "Talked about Saturday class" },
+      }),
+    ]);
     expect(errors, errors.join("\n")).toEqual([]);
   });
 

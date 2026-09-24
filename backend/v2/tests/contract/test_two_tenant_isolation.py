@@ -118,11 +118,19 @@ def _ids(academy: str) -> dict[str, str]:
         "rec_id": f"{academy}-levelup-rec-1",
         "note_id": f"{academy}-note-1",
         "follow_up_id": f"{academy}-follow-up-1",
+        # Seeded as an approved trial request with an assigned date (L3a:
+        # POST /admin/self-service/trials/{request_id}/outcome and
+        # POST /coach/trials/{request_id}/outcome hit a real B row). Makeup
+        # requests share the name and stay unseeded.
         "request_id": f"{academy}-request-1",
         "event_id": f"{academy}-event-1",
         "checkout_session_id": f"cs_test_{academy}_1",
-        # CRM family contacts (#950) are unseeded, like the pathway ids above.
+        # Seeded as a CRM lead (L3a: POST /admin/crm/contacts/{contact_id}/
+        # pipeline-move hits a real B row). Family contacts (#950) share the
+        # name and stay unseeded.
         "contact_id": f"{academy}-crm-contact-1",
+        # Family Messages logged contacts (L4c) are unseeded too.
+        "log_id": f"{academy}-contact-log-1",
     }
 
 
@@ -158,6 +166,7 @@ UNSEEDED_PARAMS = frozenset(
         "event_id",
         "checkout_session_id",
         "contact_id",
+        "log_id",
     }
 )
 
@@ -505,6 +514,61 @@ def _seed_docs(academy: str) -> dict[str, list[dict[str, Any]]]:
                 "name": _name(academy, "Junior Program"),
                 "title": _name(academy, "Junior Program"),
                 "status": "active",
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+        ],
+        # Same shape as MongoTrialRequestRepository._to_doc.
+        "trial_requests": [
+            {
+                "request_id": ids["request_id"],
+                "academy_id": academy,
+                "parent_user_id": ids["parent_id"],
+                "student_ref": "prospective",
+                "student_id": None,
+                "prospective_child_name": _name(academy, "Trial Child"),
+                "prospective_child_dob": None,
+                "requested_session_id": ids["session_id"],
+                "preferred_start": "2026-10-01",
+                "preferred_end": "2026-10-31",
+                "status": "approved",
+                "assigned_occurrence_id": ids["occurrence_id"],
+                "linked_application_id": None,
+                "denial_reason": None,
+                "decided_by": ids["admin_user_id"],
+                "decided_at": NOW,
+                "created_at": NOW,
+                "outcome": None,
+                "outcome_by": None,
+                "outcome_at": None,
+            }
+        ],
+        # Same shape as MongoCrmContactRepository._to_doc (no dedupe_key).
+        "crm_contacts": [
+            {
+                "contact_id": ids["contact_id"],
+                "academy_id": academy,
+                "name": _name(academy, "Lead Parent"),
+                "email": f"lead.{academy}@example.com",
+                "phone_digits": None,
+                "source": "whatsapp_or_phone",
+                "child_name": None,
+                "child_age": None,
+                "requested_session_id": ids["session_id"],
+                "message": None,
+                "pipeline_status": "lead",
+                "pipeline_override": None,
+                "referrer_parent_id": None,
+                "converted_parent_id": None,
+                "linked_family_id": None,
+                "linked_user_id": None,
+                "consent": {
+                    "contact_about_request": True,
+                    "marketing": False,
+                    "captured_at": NOW,
+                    "privacy_notice_url": None,
+                },
+                "created_by": ids["admin_user_id"],
                 "created_at": NOW,
                 "updated_at": NOW,
             }

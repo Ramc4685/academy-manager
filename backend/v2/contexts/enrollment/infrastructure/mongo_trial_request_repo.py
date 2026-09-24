@@ -33,6 +33,9 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             decided_by=_optional_str(doc.get("decided_by")),
             decided_at=_optional_utc(doc.get("decided_at")),
             created_at=_utc(doc["created_at"]),
+            outcome=doc.get("outcome"),
+            outcome_by=_optional_str(doc.get("outcome_by")),
+            outcome_at=_optional_utc(doc.get("outcome_at")),
         )
 
     @staticmethod
@@ -55,6 +58,9 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             "decided_by": request.decided_by,
             "decided_at": request.decided_at,
             "created_at": request.created_at,
+            "outcome": request.outcome,
+            "outcome_by": request.outcome_by,
+            "outcome_at": request.outcome_at,
         }
 
     async def add(self, request: TrialRequest) -> None:
@@ -150,6 +156,32 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             {"$set": updates},
         )
         return self._to_domain(doc) if doc else None
+
+    async def record_outcome(
+        self, request_id: str, updates: dict[str, object]
+    ) -> TrialRequest | None:
+        """Atomically record Came / Didn't come iff the request can still take
+        an outcome (``approved``, or ``completed`` for a correction).
+
+        Same compare-and-swap shape as ``transition_from_pending``: the status
+        filter rides in the ``find_one_and_update``, so a trial that was
+        converted (or reopened by a cancelled date) between the caller's read
+        and this write is left alone and ``None`` comes back.
+        """
+        doc = await self._find_one_and_update(
+            {"request_id": request_id, "status": {"$in": ["approved", "completed"]}},
+            {"$set": updates},
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def outcomes_for(self, request_ids: list[str]) -> dict[str, str | None]:
+        """``{request_id: outcome}`` for these requests in this academy (one
+        read). Ids of other academies, or unknown ids, are simply absent."""
+        ids = [rid for rid in dict.fromkeys(request_ids) if rid]
+        if not ids:
+            return {}
+        cursor = self._find_many({"request_id": {"$in": ids}})
+        return {str(doc["request_id"]): doc.get("outcome") async for doc in cursor}
 
 
 def _optional_str(value: object | None) -> str | None:
