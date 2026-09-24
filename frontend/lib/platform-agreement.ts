@@ -46,3 +46,19 @@ export function formatAcceptedAt(iso: string | null): string {
     timeZone: "UTC",
   });
 }
+
+/**
+ * Warning shown before a new acceptance replaces the one on record, or null
+ * when nothing is recorded yet. The tenant record keeps only the latest
+ * acceptance; the replaced one survives in the platform audit log
+ * (tenant.agreement_accepted, "before" snapshot).
+ */
+export function replacedAcceptanceWarning(tenant: AgreementFields): string | null {
+  if (!hasAcceptedAgreement(tenant)) return null;
+  return (
+    `This replaces the acceptance on record: version ${tenant.platform_agreement_version} ` +
+    `by ${tenant.platform_agreement_accepted_by} on ` +
+    `${formatAcceptedAt(tenant.platform_agreement_accepted_at)}. ` +
+    "The replaced record is kept only in the platform audit log."
+  );
+}

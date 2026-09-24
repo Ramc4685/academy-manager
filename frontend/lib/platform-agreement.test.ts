@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { formatAcceptedAt, formatFeeModel, hasAcceptedAgreement } from "./platform-agreement";
+import {
+  formatAcceptedAt,
+  formatFeeModel,
+  hasAcceptedAgreement,
+  replacedAcceptanceWarning,
+} from "./platform-agreement";
 
 describe("platform agreement display", () => {
   it("labels the flat monthly fee model and passes unknown codes through", () => {
@@ -36,5 +41,24 @@ describe("platform agreement display", () => {
     expect(formatAcceptedAt("2026-10-01T23:30:00Z")).toBe("Oct 1, 2026");
     expect(formatAcceptedAt(null)).toBe("—");
     expect(formatAcceptedAt("not a date")).toBe("—");
+  });
+
+  it("warns before replacing a recorded acceptance and stays quiet otherwise", () => {
+    expect(
+      replacedAcceptanceWarning({
+        platform_agreement_version: null,
+        platform_agreement_accepted_at: null,
+        platform_agreement_accepted_by: null,
+      }),
+    ).toBeNull();
+    const warning = replacedAcceptanceWarning({
+      platform_agreement_version: "v1",
+      platform_agreement_accepted_at: "2026-10-01T12:00:00Z",
+      platform_agreement_accepted_by: "owner@example.test",
+    });
+    expect(warning).toContain("version v1");
+    expect(warning).toContain("owner@example.test");
+    expect(warning).toContain("Oct 1, 2026");
+    expect(warning).toContain("audit log");
   });
 });

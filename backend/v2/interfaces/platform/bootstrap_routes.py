@@ -90,7 +90,15 @@ class LifecycleReasonRequest(BaseModel):
 
 class RecordAgreementAcceptanceRequest(BaseModel):
     agreement_version: str = Field(min_length=1, max_length=64)
-    accepted_by: str = Field(min_length=1, max_length=200)
+    # Free text by design (a name or an email): the signatory is whoever the
+    # academy says signed, not necessarily an account holder. Only a platform
+    # admin can write it; each write replaces the tenant's current acceptance
+    # and the previous one is kept in the tenant.agreement_accepted audit row.
+    accepted_by: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Academy signatory, free text (name or email).",
+    )
 
 
 class UpdateTenantPlanRequest(BaseModel):

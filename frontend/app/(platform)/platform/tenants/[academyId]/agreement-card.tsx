@@ -9,6 +9,7 @@ import {
   formatAcceptedAt,
   formatFeeModel,
   hasAcceptedAgreement,
+  replacedAcceptanceWarning,
 } from "@/lib/platform-agreement";
 
 /**
@@ -93,7 +94,15 @@ function RecordAcceptanceDialog({
   const { toast } = useToast();
   const [version, setVersion] = useState(tenant.platform_agreement_version ?? "");
   const [acceptedBy, setAcceptedBy] = useState("");
-  const valid = version.trim().length > 0 && acceptedBy.trim().length > 0;
+  // Replacing a recorded acceptance overwrites the legal record on the tenant
+  // (the old one survives only in the audit log), so it needs an explicit
+  // confirmation on top of the form.
+  const replacing = replacedAcceptanceWarning(tenant);
+  const [confirmedReplace, setConfirmedReplace] = useState(false);
+  const valid =
+    version.trim().length > 0 &&
+    acceptedBy.trim().length > 0 &&
+    (replacing === null || confirmedReplace);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -131,6 +140,23 @@ function RecordAcceptanceDialog({
       <p className="text-sm text-rally-subtle">
         Only record an acceptance the academy has actually given. The time is stamped now.
       </p>
+      {replacing && (
+        <div
+          className="mt-3 rounded-lg bg-status-amber-50 px-3 py-2 text-sm text-status-amber-800"
+          data-testid="agreement-replace-warning"
+        >
+          <p>{replacing}</p>
+          <label className="mt-2 flex items-start gap-2 font-medium">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={confirmedReplace}
+              onChange={(e) => setConfirmedReplace(e.target.checked)}
+            />
+            <span>Replace the recorded acceptance</span>
+          </label>
+        </div>
+      )}
       <div className="mt-3 space-y-3">
         <FormField label="Agreement version" htmlFor="agreement-version" required>
           <input
@@ -144,7 +170,7 @@ function RecordAcceptanceDialog({
         <FormField
           label="Accepted by"
           htmlFor="agreement-accepted-by"
-          hint="The academy signatory, for example the owner's email"
+          hint="The academy signatory: a name or email, free text. Check it before saving."
           required
         >
           <input

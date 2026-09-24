@@ -74,8 +74,12 @@ class UpdateTenantPlanCommand(BaseModel):
 class RecordAgreementAcceptanceCommand(BaseModel):
     """A platform admin records that the academy accepted the platform agreement.
 
-    ``accepted_by`` names the academy-side signatory (for example the owner's
-    email); ``actor_user_id`` is the platform admin who recorded it and lands
+    ``accepted_by`` names the academy-side signatory as free text (a name or
+    an email). It is deliberately not validated as an email: the signatory may
+    not hold an account, and only a platform admin can write it. Each call
+    replaces the acceptance on the tenant record; the previous one survives in
+    the audit row's ``before`` snapshot, and the platform UI asks for explicit
+    confirmation before replacing a recorded acceptance. ``actor_user_id`` is the platform admin who recorded it and lands
     in ``updated_by`` and the audit trail. The agreement text itself is an
     owner/legal input (docs/platform/platform-agreement.md), versioned by
     ``agreement_version``.
