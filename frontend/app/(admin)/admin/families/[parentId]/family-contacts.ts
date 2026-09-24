@@ -47,8 +47,8 @@ export function relationshipLabel(value: ContactRelationship): string {
 
 /**
  * The two opt-in switches on a contact. Both start off and only staff turn
- * them on. Invoice emails are not wired to contacts yet, so that switch says
- * so rather than implying a copy is sent.
+ * them on. "Gets invoices" sends the contact a copy of each invoice email;
+ * the payment link stays with the primary parent, and the switch says so.
  */
 export const CONTACT_SWITCHES = [
   {
@@ -60,7 +60,7 @@ export const CONTACT_SWITCHES = [
     id: "gets_invoices",
     label: "Gets invoices (opted in)",
     description:
-      "Saved now. Invoice emails start going to this contact once invoice email wiring ships; payment links stay with the primary parent.",
+      "Invoice emails to this family also go to this email, once per invoice. The payment link stays with the primary parent.",
   },
 ] as const;
 
