@@ -118,6 +118,7 @@ def _ids(academy: str) -> dict[str, str]:
         "rec_id": f"{academy}-levelup-rec-1",
         "note_id": f"{academy}-note-1",
         "follow_up_id": f"{academy}-follow-up-1",
+        "contact_id": f"{academy}-contact-1",
         "request_id": f"{academy}-request-1",
         "event_id": f"{academy}-event-1",
         "checkout_session_id": f"cs_test_{academy}_1",
