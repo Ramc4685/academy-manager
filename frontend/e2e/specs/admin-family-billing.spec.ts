@@ -493,15 +493,19 @@ test.describe("Family billing", () => {
       ...FAMILY,
       invoices: FAMILY.invoices.map((i) => ({
         ...i,
-        actions: i.actions.filter((a) => !["void", "refund", "discount_once"].includes(a)),
+        // Mirrors the backend's strip for a non-owner (#928 added charge_card).
+        actions: i.actions.filter(
+          (a) => !["void", "refund", "discount_once", "charge_card"].includes(a),
+        ),
       })),
     };
     await setup(page, { owner: false, view });
     await expect(page.getByTestId("invoice-action-void-inv-sep")).toHaveCount(0);
     await expect(page.getByTestId("invoice-action-refund-inv-aug")).toHaveCount(0);
-    await expect(page.getByTestId("family-fix")).not.toContainText("Refund");
-    await expect(page.getByTestId("family-fix")).not.toContainText("Void invoice");
-    await expect(page.getByTestId("family-fix")).toContainText("Charge card now");
+    // #928: every Fix-something action moves money, card charges included, so
+    // a plain admin gets no Fix panel at all.
+    await expect(page.getByTestId("fix-charge_card-inv-sep")).toHaveCount(0);
+    await expect(page.getByTestId("family-fix")).toHaveCount(0);
     // #890: the owner-only actions live only in the Fix panel now, so what a
     // plain admin still gets on the row is the two row-specific actions.
     await expect(page.getByTestId("invoice-action-record_payment-inv-sep")).toBeVisible();

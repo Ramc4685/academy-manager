@@ -6,6 +6,7 @@ import collections
 import csv
 import io
 import logging
+from collections.abc import Collection
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -108,6 +109,11 @@ from backend.v2.contexts.billing.application.ports import (
     ParentBillingCustomerSnapshot,
     ParentContact,
     StripeGateway,
+)
+from backend.v2.contexts.billing.application.refund_idempotency import (
+    refund_keys,
+    remember,
+    replay_or_reject,
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
@@ -1291,7 +1297,12 @@ def compose_admin(
     _admin_charge_attempts = _AdminChargeAttempts()
 
     async def charge_invoice_as_admin_action(
-        *, invoice_id: str, actor_id: str, reason: str, request_id: str
+        *,
+        invoice_id: str,
+        actor_id: str,
+        actor_roles: Collection[str],
+        reason: str,
+        request_id: str,
     ) -> dict[str, Any]:
         """Admin pressed "Charge card now" on a list or the Family page.
 
@@ -1316,6 +1327,7 @@ def compose_admin(
             parent_id=invoice.parent_id,
             invoice_id=invoice_id,
             actor_id=actor_id,
+            actor_roles=actor_roles,
             request_id=request_id,
             reason=reason,
             source="admin_manual",
@@ -1330,6 +1342,7 @@ def compose_admin(
         expected_amount_cents: int,
         request_id: str,
         actor_id: str,
+        actor_roles: Collection[str],
     ) -> dict[str, Any]:
         """Charge the exact invoice and amount confirmed by the admin.
 
@@ -1349,6 +1362,7 @@ def compose_admin(
             parent_id=parent_id,
             invoice_id=invoice_id,
             actor_id=actor_id,
+            actor_roles=actor_roles,
             request_id=request_id,
             reason="Billing Setup charge now",
             source="admin_billing_setup",
@@ -1593,22 +1607,27 @@ def compose_admin(
         amount_cents: int | None,
         reason: str,
         actor_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # Idempotency boundary for the WHOLE operation. `issue_refund.execute` is
-        # itself idempotent, but the invoice-level claim `apply_invoice_refund` below
-        # is an unconditional increment — without this boundary, a retry would replay
-        # the cached Stripe refund yet re-claim the invoice projection, double-counting
-        # `refunded_cents`. Keyed on the logical request (invoice + amount + reason).
-        # The request tenant, not the boot academy (C4): the allocation lookup,
-        # the idempotency key (#544, the store is global) and the audit row.
+        # Idempotency boundary for the WHOLE operation (the invoice claim below is
+        # an unconditional increment), keyed per refund REQUEST (#930): policy in
+        # billing/application/refund_idempotency.py. The request tenant, not the
+        # boot academy (C4): the allocation lookup, the keys (#544) and the audit row.
         academy_id = request_academy_id()
-        refund_idem_key = f"invoice_refund:{academy_id}:{invoice_id}:{amount_cents}:{reason}"
-        cached = await idempotency_store.get(refund_idem_key)
-        if cached is not None:
-            return cached["payload"]
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
+        refund_idem = refund_keys(
+            kind="invoice_refund",
+            academy_id=academy_id,
+            target_id=invoice_id,
+            amount_cents=amount_cents,
+            reason=reason,
+            idempotency_key=idempotency_key,
+        )
+        cached = await replay_or_reject(idempotency_store, refund_idem)
+        if cached is not None:
+            return cached
         before_refunded = invoice.refunded_cents
         allocation_cursor = db["payment_allocations"].find(
             {
@@ -1657,6 +1676,7 @@ def compose_admin(
                     payment_id=selected_payment_id,
                     amount_cents=selected_amount_cents,
                     reason=reason,
+                    idempotency_key=f"invoice:{invoice_id}:{refund_idem.request_digest}",
                 )
             )
         except Exception:
@@ -1668,11 +1688,9 @@ def compose_admin(
             raise
         payload = result.model_dump(mode="python")
         payload["invoice_id"] = invoice_id
-        # Record the idempotency result immediately after the durable money movement
-        # (claim + Stripe refund) and BEFORE the audit append. If the audit append
-        # fails, a retry then short-circuits at the top and returns this cached
-        # payload rather than re-claiming `apply_invoice_refund` a second time.
-        await idempotency_store.put(refund_idem_key, {"payload": payload})
+        # Cache right after the money moved and BEFORE the audit append, so an
+        # audit failure cannot drive a retry into re-claiming the invoice.
+        payload = await remember(idempotency_store, refund_idem, payload)
         # P0-4: append-only audit of who issued the refund.
         await billing_audit_log.append(
             BillingAuditEntry(

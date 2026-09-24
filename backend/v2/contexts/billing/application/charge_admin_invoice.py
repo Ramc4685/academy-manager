@@ -15,6 +15,12 @@ Two callers, one flow:
 * Callers with no confirmed amount (the billing-health and reports lists) pass
   ``None`` and skip that guard; they still get attribution and the audit entry.
 
+Owner-only (#928): a card charge moves money, and the 2026-09-22 staff-tier
+decision (roadmap section 6, item 2) makes every money-moving action owner-only.
+The routes use ``require_owner``; this module refuses a non-owner on its own too,
+so no caller that skips the route can charge a card. ``actor_roles`` is required,
+so a caller that forgets it fails closed.
+
 Application layer: every dependency arrives as a protocol, so there is no Mongo
 or FastAPI import here.
 """
@@ -22,6 +28,7 @@ or FastAPI import here.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -32,6 +39,23 @@ from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 # A charge already submitted under this request is honoured rather than repeated
 # if it landed within this window; past it the plan is assumed abandoned.
 IN_FLIGHT_WINDOW = timedelta(seconds=60)
+
+
+#: The staff role allowed to charge a card on the family's behalf.
+CHARGE_ROLE = "owner"
+
+
+class ChargeRequiresOwner(PermissionError):
+    """A non-owner asked to charge a card. Interfaces map this to 404, like ``require_owner``."""
+
+    def __init__(self) -> None:
+        super().__init__("owner_required: only the academy owner can charge a card")
+
+
+def ensure_owner_may_charge(actor_roles: Collection[str]) -> None:
+    """Refuse a card charge unless the actor holds ``owner`` in this academy."""
+    if CHARGE_ROLE not in actor_roles:
+        raise ChargeRequiresOwner()
 
 
 class IdempotencyStore(Protocol):
@@ -87,6 +111,7 @@ async def charge_invoice_as_admin(
     parent_id: str,
     invoice_id: str,
     actor_id: str,
+    actor_roles: Collection[str],
     request_id: str,
     reason: str,
     source: str,
@@ -99,8 +124,10 @@ async def charge_invoice_as_admin(
 
     Raises ``ValueError`` with a machine-readable prefix the interfaces map to
     409s: ``no_saved_payment_method``, ``charge_target_changed``,
-    ``charge_in_progress``.
+    ``charge_in_progress``. Raises :class:`ChargeRequiresOwner` before touching
+    anything (even a cached result) unless ``actor_roles`` holds ``owner``.
     """
+    ensure_owner_may_charge(actor_roles)
     now = clock or (lambda: datetime.now(UTC))
     scope = expected_amount_cents if expected_amount_cents is not None else "any"
     idem_key = f"admin_charge:{academy_id}:{actor_id}:{parent_id}:{invoice_id}:{scope}:{request_id}"

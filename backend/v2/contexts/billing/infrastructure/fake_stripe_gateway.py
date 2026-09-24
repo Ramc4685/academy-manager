@@ -23,6 +23,10 @@ class FakeStripeGateway(StripeGateway):
         self.autopay_setup_checkouts: list[dict[str, Any]] = []
         self.portal_sessions: list[dict[str, Any]] = []
         self.refunds: list[dict[str, Any]] = []
+        # Every refund create call, including idempotent replays Stripe answers
+        # with the original refund (those add nothing to ``refunds``).
+        self.refund_requests: list[dict[str, Any]] = []
+        self._refunds_by_key: dict[str, dict[str, Any]] = {}
         self.cancelled_subscriptions: list[dict[str, Any]] = []
         self.paused_subscriptions: list[dict[str, Any]] = []
         self.resumed_subscriptions: list[dict[str, Any]] = []
@@ -297,15 +301,31 @@ class FakeStripeGateway(StripeGateway):
         charges = self.charges_by_customer.get(stripe_customer_id, [])
         return charges[: max(1, min(int(limit), 100))]
 
-    async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
+    async def issue_refund(
+        self,
+        payment_intent_id: str,
+        amount_cents: int | None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> str:
+        # Mirrors Stripe's idempotency semantics: a repeat with the same key and
+        # parameters returns the ORIGINAL refund (no second refund object); the
+        # same key with different parameters is an error.
+        params = {"payment_intent_id": payment_intent_id, "amount_cents": amount_cents}
+        self.refund_requests.append({**params, "idempotency_key": idempotency_key})
+        if idempotency_key is not None and idempotency_key in self._refunds_by_key:
+            original = self._refunds_by_key[idempotency_key]
+            if {k: original[k] for k in params} != params:
+                raise RuntimeError(
+                    "Keys for idempotent requests can only be used with the same "
+                    "parameters they were first used with."
+                )
+            return str(original["refund_id"])
         refund_id = f"re_test_{new_ulid()}"
-        self.refunds.append(
-            {
-                "refund_id": refund_id,
-                "payment_intent_id": payment_intent_id,
-                "amount_cents": amount_cents,
-            }
-        )
+        refund = {**params, "refund_id": refund_id, "idempotency_key": idempotency_key}
+        self.refunds.append(refund)
+        if idempotency_key is not None:
+            self._refunds_by_key[idempotency_key] = refund
         return refund_id
 
     async def cancel_subscription(

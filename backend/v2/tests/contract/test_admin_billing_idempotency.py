@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.composition.admin import compose_admin
+from backend.v2.contexts.billing.domain.errors import RefundPossibleDuplicate
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
@@ -109,18 +110,32 @@ async def test_issue_invoice_refund_retry_does_not_double_count(admin_db) -> Non
 
     with tenant_scope(ACAD):
         first = await admin.issue_invoice_refund(
-            invoice_id="inv-r", amount_cents=5_000, reason="duplicate", actor_id="admin-1"
+            invoice_id="inv-r",
+            amount_cents=5_000,
+            reason="duplicate",
+            actor_id="admin-1",
+            idempotency_key="k-retry",
         )
         second = await admin.issue_invoice_refund(
-            invoice_id="inv-r", amount_cents=5_000, reason="duplicate", actor_id="admin-1"
+            invoice_id="inv-r",
+            amount_cents=5_000,
+            reason="duplicate",
+            actor_id="admin-1",
+            idempotency_key="k-retry",
         )
+        # A keyless identical repeat is not replayed either: it is a 409 the
+        # owner must confirm with a new key (#930), and moves no money.
+        with pytest.raises(RefundPossibleDuplicate):
+            await admin.issue_invoice_refund(
+                invoice_id="inv-r", amount_cents=5_000, reason="duplicate", actor_id="admin-1"
+            )
         invoice = await admin_db["invoices"].find_one({"academy_id": ACAD, "invoice_id": "inv-r"})
         payment = await admin_db["payments"].find_one({"academy_id": ACAD, "payment_id": "pay-r"})
         audit_count = await admin_db["billing_audit_log"].count_documents(
             {"academy_id": ACAD, "invoice_id": "inv-r"}
         )
 
-    assert first == second  # the retry replays the original result
+    assert first == second  # the same-key retry replays the original result
     # Money moved exactly once.
     assert invoice is not None and invoice["refunded_cents"] == 5_000
     assert payment is not None and payment["refunded_cents"] == 5_000
@@ -180,7 +195,7 @@ async def test_record_manual_payment_keyed_retry_does_not_double_record(admin_db
             {"academy_id": ACAD, "invoice_id": "inv-m"}
         )
 
-    assert first == second  # the retry replays the original result
+    assert first == second  # the same-key retry replays the original result
     # Money recorded exactly once.
     assert payment_count == 1
     assert invoice is not None and invoice["balance_due_cents"] == 4_500
@@ -458,6 +473,7 @@ async def test_billing_setup_charge_claim_and_result_are_replayable(admin_db) ->
             expected_amount_cents=5000,
             request_id="request-charge-0001",
             actor_id="admin-1",
+            actor_roles=("admin", "owner"),
         )
         second = await admin.charge_billing_setup_balance(
             parent_id="parent-1",
@@ -465,6 +481,7 @@ async def test_billing_setup_charge_claim_and_result_are_replayable(admin_db) ->
             expected_amount_cents=5000,
             request_id="request-charge-0001",
             actor_id="admin-1",
+            actor_roles=("admin", "owner"),
         )
 
     assert first == second
@@ -557,6 +574,7 @@ async def test_billing_setup_processing_audit_records_attempted_not_received_amo
             expected_amount_cents=5000,
             request_id="request-processing-0001",
             actor_id="admin-1",
+            actor_roles=("admin", "owner"),
         )
         audit = await admin_db["billing_audit_log"].find_one(
             {"academy_id": ACAD, "action": "admin_charge_initiated"}

@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+from backend.v2.contexts.billing.application.charge_admin_invoice import ChargeRequiresOwner
 from backend.v2.contexts.billing.application.first_month_quote_presentation import (
     first_month_quote_formula,
 )
@@ -454,12 +455,18 @@ async def refund(
     body: IssueRefundRequest,
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
 ) -> dict[str, object]:
+    """Send an ``Idempotency-Key`` (one per refund attempt, reused on retry) so
+    a retry replays while a second real refund is still issued (#930). Without
+    it an identical repeat inside the TTL is a 409 to confirm; a key reused for
+    a different refund is a 422."""
     result = await use_cases.issue_refund.execute(
         IssueRefundCommand(
             payment_id=body.payment_id,
             amount_cents=body.amount_cents,
             reason=body.reason,
+            idempotency_key=idempotency_key or None,
         )
     )
     return result.model_dump()
@@ -883,10 +890,14 @@ async def send_billing_invoice(
 async def charge_invoice_via_autopay(
     invoice_id: str,
     body: ChargeAutopayRequest | None = None,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ChargeAutopayResponse:
     """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
+
+    Owner-only (#928): a card charge moves money (staff tiers, roadmap
+    2026-09-22 section 6 item 2). Non-owners get 404 like every owner route; the
+    use case also refuses a non-owner (``ChargeRequiresOwner`` -> 404).
 
     - Returns success=True when the PI succeeds immediately and the ledger is updated.
     - Returns success=False with decline_code on card declines (invoice status unchanged).
@@ -908,9 +919,12 @@ async def charge_invoice_via_autopay(
         result = await charge_as_admin(  # type: ignore[operator]
             invoice_id=invoice_id,
             actor_id=claims.user_id,
+            actor_roles=claims.roles,
             reason=(body.reason if body and body.reason else "Charged by admin"),
             request_id=(body.request_id if body and body.request_id else str(uuid4())),
         )
+    except ChargeRequiresOwner as exc:
+        raise HTTPException(status_code=404, detail="Not found") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1156,7 +1170,9 @@ async def refund_invoice(
     body: InvoiceRefundRequest,
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
 ) -> InvoiceRefundResponse:
+    """Same ``Idempotency-Key`` contract as ``POST /payments/refund`` (#930)."""
     issue_refund = _required_callable(use_cases.issue_invoice_refund, "Invoice refund")
     try:
         result = await issue_refund(  # type: ignore[operator]
@@ -1164,6 +1180,7 @@ async def refund_invoice(
             amount_cents=body.amount_cents,
             reason=body.reason,
             actor_id=claims.user_id,
+            idempotency_key=idempotency_key or None,
         )
     except ValueError as exc:
         msg = str(exc)

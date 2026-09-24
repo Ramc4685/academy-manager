@@ -1230,7 +1230,14 @@ def compose_registration_decline_refunds(
     class _RefundExecutor:
         async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
             await issue_refund.execute(
-                IssueRefundCommand(payment_id=payment_id, amount_cents=None, reason=reason)
+                IssueRefundCommand(
+                    payment_id=payment_id,
+                    amount_cents=None,
+                    reason=reason,
+                    # One decline refund per payment: a retried decline replays
+                    # it instead of tripping the keyless-duplicate 409 (#930).
+                    idempotency_key="registration_declined",
+                )
             )
 
     return RegistrationDeclineRefunds(payments=payments, refunds=_RefundExecutor())

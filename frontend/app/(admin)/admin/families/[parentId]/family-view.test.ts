@@ -6,16 +6,25 @@ import {
   defaultDueDate,
   enrollmentOptions,
   enrollmentPriceCents,
+  familyRefundLine,
   invoiceActionLabel,
   invoiceDueDays,
+  invoiceRefundLabel,
   periodLabel,
+  refundableCents,
+  refundLabel,
   registrationChips,
   shortDate,
   timelineTone,
   tuitionLineDescription,
   undeliverableChip,
 } from "./family-view";
-import type { FamilyEnrollment, FamilyStudent } from "@/lib/api/admin-families";
+import type {
+  FamilyEnrollment,
+  FamilyHeader,
+  FamilyInvoice,
+  FamilyStudent,
+} from "@/lib/api/admin-families";
 import {
   CARD_LABELS,
   LOGIN_LABELS,
@@ -234,5 +243,76 @@ describe("undeliverableChip", () => {
     expect(chip?.label).toBe("Marked as spam on Sep 4");
     expect(chip?.variant).toBe("pending");
     expect(chip?.detail).toContain("Invoices still send");
+  });
+});
+
+describe("refunds (#929)", () => {
+  function invoice(overrides: Partial<FamilyInvoice> = {}): FamilyInvoice {
+    return {
+      invoice_id: "inv-1",
+      invoice_number: null,
+      period: "2026-09",
+      student_id: null,
+      student_name: null,
+      enrollment_id: null,
+      status: "paid",
+      total_cents: 6000,
+      paid_cents: 6000,
+      balance_due_cents: 0,
+      due_date: null,
+      created_at: null,
+      paid_at: null,
+      voided_at: null,
+      void_reason: null,
+      settlement_unlinked: false,
+      delivery: { status: "sent", last_sent_at: null, kind: "invoice" },
+      allocations: [
+        {
+          payment_id: "pay-1",
+          amount_cents: 4000,
+          method: "card",
+          paid_at: null,
+          stripe_payment_intent_id: "pi_1",
+        },
+        {
+          payment_id: "pay-2",
+          amount_cents: 2000,
+          method: "cash",
+          paid_at: null,
+          stripe_payment_intent_id: null,
+        },
+      ],
+      credits: [],
+      chargeable: false,
+      actions: [],
+      ...overrides,
+    };
+  }
+
+  it("says nothing when nothing came back", () => {
+    expect(refundLabel(6000, 0)).toBeNull();
+    expect(refundLabel(6000, undefined)).toBeNull();
+    expect(invoiceRefundLabel(invoice())).toBeNull();
+  });
+
+  it("shows refunded and net, preferring the backend's net", () => {
+    expect(invoiceRefundLabel(invoice({ refunded_cents: 2500, net_paid_cents: 3500 }))).toBe(
+      "$25.00 refunded · $35.00 net",
+    );
+    // Older payload without a net: paid minus refunded, never negative.
+    expect(refundLabel(1000, 2500)).toBe("$25.00 refunded · $0.00 net");
+  });
+
+  it("family totals line only when the family had a refund", () => {
+    const header = { paid_cents: 7000, refunded_cents: 5000, net_paid_cents: 2000 } as FamilyHeader;
+    expect(familyRefundLine(header)).toBe("Paid $70.00 · $50.00 refunded · $20.00 net");
+    expect(familyRefundLine({ ...header, refunded_cents: 0 })).toBeNull();
+    expect(familyRefundLine({} as FamilyHeader)).toBeNull();
+  });
+
+  it("refund ceiling is card money minus what was already refunded", () => {
+    expect(refundableCents(invoice())).toBe(4000);
+    expect(refundableCents(invoice({ refunded_cents: 1500 }))).toBe(2500);
+    expect(refundableCents(invoice({ refunded_cents: 9000 }))).toBe(0);
   });
 });

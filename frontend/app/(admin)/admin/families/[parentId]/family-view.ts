@@ -4,11 +4,14 @@ import type {
   FamilyAutopay,
   FamilyEmailDelivery,
   FamilyEnrollment,
+  FamilyHeader,
+  FamilyInvoice,
   FamilyStudent,
   InvoiceAction,
   RegistrationState,
   TimelineKind,
 } from "@/lib/api/admin-families";
+import { formatCents } from "@/lib/money";
 import {
   cardChip,
   cardStateFromRegistration,
@@ -77,6 +80,44 @@ const INVOICE_ACTION_LABELS: Record<InvoiceAction, string> = {
 
 export function invoiceActionLabel(action: InvoiceAction): string {
   return INVOICE_ACTION_LABELS[action];
+}
+
+/**
+ * #929: "$25.00 refunded · $35.00 net" when anything came back, else null.
+ * `net` is the backend's figure when it sent one; otherwise paid minus refunded.
+ */
+export function refundLabel(
+  paidCents: number,
+  refundedCents: number | null | undefined,
+  netCents?: number | null,
+): string | null {
+  const refunded = refundedCents ?? 0;
+  if (refunded <= 0) return null;
+  const net = netCents ?? Math.max(paidCents - refunded, 0);
+  return `${formatCents(refunded)} refunded · ${formatCents(net)} net`;
+}
+
+export function invoiceRefundLabel(inv: FamilyInvoice): string | null {
+  return refundLabel(inv.paid_cents, inv.refunded_cents, inv.net_paid_cents);
+}
+
+/** #929 family totals line: "Paid $70.00 · $50.00 refunded · $20.00 net", or null. */
+export function familyRefundLine(header: FamilyHeader): string | null {
+  const paid = header.paid_cents ?? 0;
+  const label = refundLabel(paid, header.refunded_cents, header.net_paid_cents);
+  return label ? `Paid ${formatCents(paid)} · ${label}` : null;
+}
+
+/**
+ * Card money on this invoice not yet given back: the Refund dialog's ceiling.
+ * Before #929 this ignored earlier refunds, so a second refund offered the
+ * full card amount again.
+ */
+export function refundableCents(inv: FamilyInvoice): number {
+  const card = inv.allocations
+    .filter((a) => a.stripe_payment_intent_id)
+    .reduce((s, a) => s + a.amount_cents, 0);
+  return Math.max(card - (inv.refunded_cents ?? 0), 0);
 }
 
 export interface RegistrationChips {

@@ -8,7 +8,13 @@ import { formatCents, formatInstantDay } from "@/lib/money";
 
 import { describeCardDeclineCode } from "@/lib/people-status";
 
-import { autopayToggle, registrationChips, undeliverableChip } from "./family-view";
+import {
+  autopayToggle,
+  familyRefundLine,
+  refundLabel,
+  registrationChips,
+  undeliverableChip,
+} from "./family-view";
 
 export function FamilyHeader({
   view,
@@ -30,6 +36,14 @@ export function FamilyHeader({
   const reg = registrationChips(header.registration.state);
   const undeliverable = undeliverableChip(header.email_delivery);
   const studentCount = view.students.length;
+  const lastPaymentRefund = header.last_payment
+    ? refundLabel(
+        header.last_payment.amount_cents,
+        header.last_payment.refunded_cents,
+        header.last_payment.net_cents,
+      )
+    : null;
+  const familyRefunds = familyRefundLine(header);
   return (
     <Card p={20}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -192,7 +206,9 @@ export function FamilyHeader({
           big={header.last_payment ? formatCents(header.last_payment.amount_cents) : "—"}
           sub={
             header.last_payment
-              ? `${formatInstantDay(header.last_payment.paid_at)} · ${header.last_payment.method ?? "payment"}`
+              ? `${formatInstantDay(header.last_payment.paid_at)} · ${header.last_payment.method ?? "payment"}${
+                  lastPaymentRefund ? ` · ${lastPaymentRefund}` : ""
+                }`
               : "No payments yet"
           }
         />
@@ -203,6 +219,12 @@ export function FamilyHeader({
           sub={`${header.enrollment_counts.active} active · ${header.enrollment_counts.paused} paused`}
         />
       </div>
+      {/* #929: refunds used to be invisible here; the family totals say what came back. */}
+      {familyRefunds && (
+        <p className="mt-3 text-xs text-rally-muted" data-testid="family-refunds">
+          {familyRefunds}
+        </p>
+      )}
     </Card>
   );
 }

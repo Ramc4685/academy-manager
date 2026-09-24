@@ -78,6 +78,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # unsent draft is owner-gated per action by
         # `ensure_owner_for_invoice_void` — issue #726.)
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/refund"),
+        # Card charges (#928): an off-session charge on the family's saved card
+        # moves money, owner-only per the 2026-09-22 staff tiers (roadmap
+        # section 6 item 2). The use case refuses a non-owner as well.
+        ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/charge-autopay"),
+        # billing_setup_routes.py — the Family "Fix something" charge confirm
+        ("POST", f"{_ADMIN}/billing/setup/{{parent_id}}/charge"),
         # billing_health_routes.py — Stripe plumbing is governance, the same
         # tier as Reports and Payouts (spec 2026-09-07 §2). Admins who could
         # open Billing Health before this change now get a 404.

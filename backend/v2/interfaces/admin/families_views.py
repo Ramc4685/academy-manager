@@ -32,6 +32,8 @@ class FamilyParent(_View):
 
 class FamilyLastPayment(_View):
     amount_cents: int
+    refunded_cents: int = 0
+    net_cents: int | None = None
     method: str | None = None
     paid_at: str | None = None
     invoice_ids: list[str] = []
@@ -69,6 +71,9 @@ class FamilyHeader(_View):
     balance_cents: int
     open_invoice_count: int
     available_credit_cents: int
+    paid_cents: int = 0
+    refunded_cents: int = 0
+    net_paid_cents: int = 0
     last_payment: FamilyLastPayment | None = None
     autopay: FamilyAutopay
     registration: FamilyRegistration
@@ -125,6 +130,8 @@ class FamilyInvoice(_View):
     status: str
     total_cents: int
     paid_cents: int
+    refunded_cents: int = 0
+    net_paid_cents: int = 0
     balance_due_cents: int
     due_date: str | None = None
     created_at: str | None = None
@@ -151,6 +158,7 @@ class FamilyTimelineEntry(_View):
     actor_id: str | None = None
     reason: str | None = None
     amount_cents: int | None = None
+    refunded_cents: int | None = None
     muted: bool = False
 
 

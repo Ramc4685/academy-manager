@@ -30,6 +30,25 @@ class RefundFailed(DomainError):
     status_code = 502
 
 
+class RefundPossibleDuplicate(DomainError):
+    """A keyless refund identical to one issued inside the idempotency TTL (#930).
+
+    Two refunds with the same amount and reason can both be legitimate, so the
+    repeat is neither replayed nor executed: the owner confirms it by resending
+    with an ``Idempotency-Key``.
+    """
+
+    code = "Billing.RefundPossibleDuplicate"
+    status_code = 409
+
+
+class RefundIdempotencyKeyReused(DomainError):
+    """An ``Idempotency-Key`` already used for a DIFFERENT refund (#930)."""
+
+    code = "Billing.RefundIdempotencyKeyReused"
+    status_code = 422
+
+
 class CheckoutCreationFailed(DomainError):
     code = "Billing.CheckoutCreationFailed"
     status_code = 502

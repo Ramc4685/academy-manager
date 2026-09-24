@@ -13,7 +13,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { invoiceStatusChip } from "@/lib/billing-status";
 import { formatCents, formatInstantDay } from "@/lib/money";
 
-import { invoiceActionLabel, periodLabel, shortDate } from "./family-view";
+import { invoiceActionLabel, invoiceRefundLabel, periodLabel, shortDate } from "./family-view";
 
 /**
  * #890: the row used to render EVERY entry of `inv.actions`, so void, refund,
@@ -204,6 +204,11 @@ export function InvoicesPanel({
                           ? ` · ${formatCents(inv.paid_cents)} paid`
                           : ""}
                       </div>
+                      {invoiceRefundLabel(inv) && (
+                        <div data-testid={`invoice-refund-${inv.invoice_id}`}>
+                          {invoiceRefundLabel(inv)}
+                        </div>
+                      )}
                       <div>{deliveryLabel(inv)}</div>
                       <div className="flex flex-wrap gap-2 pt-1">{invoiceActions(inv, true)}</div>
                       {expanded && expandedDetail(inv)}
@@ -271,6 +276,15 @@ export function InvoicesPanel({
                       <span className="text-xs text-rally-muted">
                         {" "}
                         · {formatCents(inv.balance_due_cents)} due
+                      </span>
+                    )}
+                    {invoiceRefundLabel(inv) && (
+                      <span
+                        className="text-xs text-rally-muted"
+                        data-testid={`invoice-refund-${inv.invoice_id}`}
+                      >
+                        {" "}
+                        · {invoiceRefundLabel(inv)}
                       </span>
                     )}
                   </span>
