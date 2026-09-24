@@ -20,6 +20,7 @@ from .departures_routes import router as departures_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .families_routes import router as families_router
+from .family_crm_routes import router as family_crm_router
 from .family_index_routes import router as family_index_router
 from .family_record_routes import router as family_record_router
 from .hold_routes import router as hold_router
@@ -62,6 +63,7 @@ router.include_router(collections_router)
 router.include_router(family_index_router)
 router.include_router(families_router)
 router.include_router(family_record_router)
+router.include_router(family_crm_router)
 router.include_router(billing_health_router)
 router.include_router(billing_router)
 router.include_router(billing_setup_router)

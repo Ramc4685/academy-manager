@@ -34,6 +34,7 @@ from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     SelectedRecipientsAudience,
 )
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 
 logger = logging.getLogger(__name__)
@@ -277,6 +278,7 @@ class RegistrationDecisionEmailAdapter:
         body: str,
         application_id: str,
     ) -> None:
+        identity = await sender_identity_for_current_academy(self._academies)
         outcome = await self._sender.send(
             recipient=recipient,
             subject=subject,
@@ -285,6 +287,8 @@ class RegistrationDecisionEmailAdapter:
             # in the decline case, of a refund). It still passes the #556
             # bounce/complaint gate but carries no unsubscribe footer.
             category=EmailCategory.TRANSACTIONAL,
+            reply_to=identity.reply_to,
+            sender_name=identity.sender_name,
         )
         if not outcome.ok and not outcome.suppressed:
             logger.warning(

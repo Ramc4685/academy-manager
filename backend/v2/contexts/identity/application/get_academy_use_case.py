@@ -23,6 +23,9 @@ class GetAcademyOutput:
     logo_url: str | None = None
     brand_color: str | None = None
     currency: str = "USD"
+    #: Outbound email display name / reply-to (L9a). ``None`` = not set.
+    email_sender_name: str | None = None
+    email_reply_to: str | None = None
 
 
 class GetAcademyUseCase:
@@ -46,4 +49,6 @@ class GetAcademyUseCase:
             logo_url=doc.get("logo_url"),
             brand_color=doc.get("brand_color"),
             currency=str(doc.get("currency") or "USD"),
+            email_sender_name=doc.get("email_sender_name") or None,
+            email_reply_to=doc.get("email_reply_to") or None,
         )

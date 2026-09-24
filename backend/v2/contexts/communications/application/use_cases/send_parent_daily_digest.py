@@ -158,6 +158,7 @@ class SendParentDailyDigest:
                 body=body,
                 reply_to=view.reply_to,
                 category=EmailCategory.DIGEST,
+                sender_name=brand.sender_name if brand else None,
             )
             if outcome.ok:
                 await self.digests.mark_sent(

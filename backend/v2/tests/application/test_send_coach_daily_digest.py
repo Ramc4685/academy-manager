@@ -151,6 +151,7 @@ class StubSendPort:
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         self.sent.append(
             {
@@ -160,6 +161,7 @@ class StubSendPort:
                 "cc": cc or [],
                 "bcc": bcc or [],
                 "category": category,
+                "sender_name": sender_name,
             }
         )
         return SendOutcome(
@@ -553,3 +555,24 @@ async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
 
     await repo.mark_sent(ACADEMY_ID, own.digest_id, "prov-x")
     assert repo.by_id[own.digest_id].status == DigestSendStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_coach_digest_carries_the_academy_sender_identity() -> None:
+    """L9a: display name + reply-to come from the academy brand lookup."""
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(
+            return_value=EmailBrand(
+                academy_name="Brand Co", sender_name="Brand Co Desk", reply_to="desk@example.com"
+            )
+        )
+    )
+    await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert sender.sent[0]["sender_name"] == "Brand Co Desk"
+    use_case.brands.brand_for.assert_awaited_with(ACADEMY_ID)

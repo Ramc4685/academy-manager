@@ -101,6 +101,9 @@ TENANT_OWNED_COLLECTIONS = {
     "crm_contacts",
     # Public tenant page programs (migration 0194, Lane B1)
     "programs",
+    # People CRM family notes and follow-ups (migration 0195, Phase 4a)
+    "family_notes",
+    "family_follow_ups",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

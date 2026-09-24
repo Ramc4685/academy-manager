@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from backend.v2.contexts.billing.domain.errors import ConnectOnboardingFailed
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
@@ -48,6 +50,8 @@ def test_get_academy_contract(admin_client):
         "logo_url": "https://cdn.example.com/logo.png",
         "brand_color": "#2563eb",
         "currency": "USD",
+        "email_sender_name": None,
+        "email_reply_to": None,
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
 
@@ -70,6 +74,63 @@ def test_patch_academy_contract(admin_client):
     admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
         "acad", {"display_name": "Court 7", "brand_color": "#facc15"}
     )
+
+
+def test_patch_academy_sender_identity_is_validated_and_normalised(admin_client):
+    """L9a: sender name + reply-to are stored trimmed; blank clears."""
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone="UTC",
+        email_sender_name="Court 7 Front Desk",
+        email_reply_to="desk@example.com",
+    )
+
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={"email_sender_name": "  Court 7 Front Desk ", "email_reply_to": "desk@example.com"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["email_sender_name"] == "Court 7 Front Desk"
+    assert r.json()["email_reply_to"] == "desk@example.com"
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"email_sender_name": "Court 7 Front Desk", "email_reply_to": "desk@example.com"}
+    )
+
+    admin_client.use_cases.update_academy_use_case.execute.reset_mock()
+    r = admin_client.patch(
+        "/api/v2/admin/academy", json={"email_sender_name": "   ", "email_reply_to": ""}
+    )
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"email_sender_name": None, "email_reply_to": None}
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"email_sender_name": "Court 7\r\nBcc: attacker@example.com"},
+        {"email_sender_name": "Court 7\nX-Injected: 1"},
+        {"email_sender_name": "Court 7 <attacker@example.com>"},
+        {"email_sender_name": "x" * 81},
+        {"email_reply_to": "not-an-email"},
+        {"email_reply_to": "desk@example.com\r\nBcc: attacker@example.com"},
+    ],
+)
+def test_patch_academy_rejects_unsafe_sender_identity(admin_client, body):
+    r = admin_client.patch("/api/v2/admin/academy", json=body)
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_patch_academy_sender_identity_requires_admin(coach_on_admin_client):
+    r = coach_on_admin_client.patch("/api/v2/admin/academy", json={"email_sender_name": "Court 7"})
+
+    # Admin routes answer non-admin personas with 404 (not 403) by design.
+    assert r.status_code == 404, r.text
 
 
 def test_get_and_patch_fees_contract(admin_client):

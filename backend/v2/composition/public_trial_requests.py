@@ -58,6 +58,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand, shell
+from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.tenancy.context import tenant_scope
 
 logger = logging.getLogger(__name__)
@@ -180,15 +181,19 @@ class TrialRequestOwnerEmail:
         subject, body = render_trial_request_alert(
             brand=brand, contact=contact, class_title=class_title
         )
+        sender_name = resolve_sender(doc).sender_name
         for recipient in await self._recipients(doc):
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
                 body=body,
+                # Staff reply to the family, so reply-to stays the family's
+                # address; only the display name follows the academy (L9a).
                 reply_to=contact.email,
                 # TRANSACTIONAL: the record of a request someone made to this
                 # academy; it must reach a human and carries no unsubscribe.
                 category=EmailCategory.TRANSACTIONAL,
+                sender_name=sender_name,
             )
             if not outcome.ok and not outcome.suppressed:
                 logger.warning(

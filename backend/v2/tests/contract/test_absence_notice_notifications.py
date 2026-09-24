@@ -154,6 +154,7 @@ class FakeSender:
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         if recipient.user_id in self.raise_for:
             raise RuntimeError("resend rejected the message")
@@ -168,6 +169,7 @@ class FakeSender:
                 "subject": subject,
                 "body": body,
                 "category": category,
+                "sender_name": sender_name,
             }
         )
         return SendOutcome(ok=True, provider_message_id="msg-1", failed_reason=None)

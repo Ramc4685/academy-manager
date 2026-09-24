@@ -52,6 +52,11 @@ class EmailBrand:
     logo_url: str | None = None
     contact_email: str | None = None
     contact_phone: str | None = None
+    #: From-header display name and reply-to for this academy (L9a), resolved
+    #: by ``shared.comms.sender_identity.resolve_sender``. ``None`` keeps the
+    #: send path's previous behaviour.
+    sender_name: str | None = None
+    reply_to: str | None = None
 
     def accent(self) -> str:
         """The academy's colour if it is a valid hex, else cobalt. Free text
