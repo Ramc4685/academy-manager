@@ -6,7 +6,9 @@ consumes:
 * ``GET /admin/families`` → :class:`AdminFamilyIndexPage`: one row per
   family record, children with lifecycle chips and classes, the rolled-up
   stage, card/registration state and a ``money`` block that is ``null`` for
-  callers who may not see amounts (``money_visible`` says which);
+  callers who may not see amounts (``money_visible`` says which). Front desk
+  (``money_view == "flag"``) gets ``owes_money`` only: a yes/no with no
+  amount, never a ``money`` block (L2b, #553);
 * ``GET /admin/families/summary`` → :class:`AdminFamilyIndexSummary`: the
   scope tiles over the unfiltered index, counts per stage, and the static
   view presets.
@@ -27,6 +29,7 @@ from backend.v2.contexts.crm.application.family_index import (
     FamilyMoney,
     FamilyRecord,
 )
+from backend.v2.contexts.crm.application.money_visibility import MoneyView
 
 FamilyStageName = Literal[
     "pending_cancel",
@@ -83,6 +86,10 @@ class AdminFamilyIndexRow(_View):
     registration: Literal["registered", "invited", "not_invited"] | None = None
     #: Null when money is hidden from this caller or could not be read.
     money: AdminFamilyMoney | None = None
+    #: The "owes money" flag (balance above zero), for callers who see
+    #: amounts or the flag. Null when money is hidden or could not be read:
+    #: unknown, never "does not owe".
+    owes_money: bool | None = None
     #: True when the search matched the parent (name, email, phone).
     matched_parent: bool = False
 
@@ -94,6 +101,8 @@ class AdminFamilyIndexPage(_View):
     page: int
     page_size: int
     money_visible: bool
+    #: ``amounts`` (owner, admin, billing), ``flag`` (front desk) or ``none``.
+    money_view: MoneyView = "none"
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -110,6 +119,7 @@ class AdminFamilyRecordView(_View):
     family_id: str
     family: AdminFamilyIndexRow
     money_visible: bool
+    money_view: MoneyView = "none"
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -176,7 +186,13 @@ def _money(money: FamilyMoney | None, visible: bool) -> AdminFamilyMoney | None:
     )
 
 
-def _row(row: FamilyIndexRow, *, money_visible: bool) -> AdminFamilyIndexRow:
+def _owes(money: FamilyMoney | None, view: MoneyView) -> bool | None:
+    if money is None or view == "none":
+        return None
+    return money.balance_cents > 0
+
+
+def _row(row: FamilyIndexRow, *, view: MoneyView) -> AdminFamilyIndexRow:
     record = row.record
     matched = frozenset(row.hit.matched_student_ids) if row.hit else frozenset()
     return AdminFamilyIndexRow(
@@ -189,19 +205,26 @@ def _row(row: FamilyIndexRow, *, money_visible: bool) -> AdminFamilyIndexRow:
         children=[_child(child, matched) for child in record.children],
         card_on_file=record.card_on_file,
         registration=record.registration,
-        money=_money(record.money, money_visible),
+        money=_money(record.money, view == "amounts"),
+        owes_money=_owes(record.money, view),
         matched_parent=bool(row.hit and row.hit.matched_parent),
     )
 
 
-def page_view(page: FamilyIndexPage, *, generated_at: datetime) -> AdminFamilyIndexPage:
+def page_view(
+    page: FamilyIndexPage, *, generated_at: datetime, money_view: MoneyView
+) -> AdminFamilyIndexPage:
+    # Amounts need both: the caller's view and a query that ran with money
+    # visible (so no sort or filter ever ordered rows by a hidden amount).
+    view: MoneyView = "none" if money_view == "amounts" and not page.money_visible else money_view
     return AdminFamilyIndexPage(
         generated_at=generated_at,
-        families=[_row(row, money_visible=page.money_visible) for row in page.rows],
+        families=[_row(row, view=view) for row in page.rows],
         total=page.total,
         page=page.page,
         page_size=page.page_size,
-        money_visible=page.money_visible,
+        money_visible=view == "amounts",
+        money_view=view,
         warnings=list(page.warnings),
     )
 
@@ -232,13 +255,14 @@ def record_view(
     record: FamilyRecord,
     *,
     generated_at: datetime,
-    money_visible: bool,
+    money_view: MoneyView,
     warnings: tuple[str, ...] = (),
 ) -> AdminFamilyRecordView:
     return AdminFamilyRecordView(
         generated_at=generated_at,
         family_id=record.family_id,
-        family=_row(FamilyIndexRow(record=record), money_visible=money_visible),
-        money_visible=money_visible,
+        family=_row(FamilyIndexRow(record=record), view=money_view),
+        money_visible=money_view == "amounts",
+        money_view=money_view,
         warnings=list(warnings),
     )

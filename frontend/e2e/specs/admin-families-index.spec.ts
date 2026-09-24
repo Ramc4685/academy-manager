@@ -106,7 +106,10 @@ function serve(url: URL): FamilyIndexRowFixture[] {
   return rows;
 }
 
-async function setup(page: Page, opts: { moneyVisible?: boolean } = {}) {
+async function setup(
+  page: Page,
+  opts: { moneyVisible?: boolean; moneyView?: "amounts" | "flag" | "none" } = {},
+) {
   const errors = collectConsoleErrors(page);
   installTenantGuard(page);
   await stubShell(page);
@@ -114,6 +117,7 @@ async function setup(page: Page, opts: { moneyVisible?: boolean } = {}) {
   await stubFamilyIndex(page, {
     families: serve,
     moneyVisible: opts.moneyVisible ?? true,
+    moneyView: opts.moneyView,
     tiles: { active: 1, leaving: 1, left: 0 },
     presetCounts: { overdue: 1, no_card: 0 },
     onList: (req) => lists.push(new URL(req.url())),
@@ -215,5 +219,29 @@ test.describe("admin Families view (People CRM §3.2)", () => {
     await header.click();
     await expect(page).toHaveURL(/order=asc/);
     await expect(page.locator("th", { has: header })).toHaveAttribute("aria-sort", "ascending");
+  });
+});
+
+test.describe("Families money per staff tier (L2b, #553)", () => {
+  test("a front-desk payload shows Owes money and never an amount", async ({ page }) => {
+    const { errors } = await setup(page, { moneyView: "flag" });
+    await expect(page.getByTestId("admin-families-money-parent-1")).toContainText("Owes money");
+    await expect(page.getByTestId("admin-families-row-parent-1")).not.toContainText("$");
+    await expect(page.getByTestId("admin-families-sort-balance")).toHaveCount(0);
+    await expect(page.getByTestId("admin-families-preset-overdue")).toHaveCount(0);
+    expect(errors, errors.join("\n")).toEqual([]);
+  });
+
+  test("the owner previews front desk with Viewing as", async ({ page }) => {
+    const { errors } = await setup(page);
+    await expect(page.getByTestId("admin-families-money-parent-1")).toContainText("$70");
+    await page.getByTestId("viewing-as-select").selectOption("front_desk");
+    await expect(page.getByTestId("viewing-as-note")).toBeVisible();
+    await expect(page.getByTestId("admin-families-money-parent-1")).toContainText("Owes money");
+    await expect(page.getByTestId("admin-families-row-parent-1")).not.toContainText("$");
+    await expect(page.getByTestId("admin-families-preset-overdue")).toHaveCount(0);
+    await page.getByTestId("viewing-as-select").selectOption("billing");
+    await expect(page.getByTestId("admin-families-money-parent-1")).toContainText("$70");
+    expect(errors, errors.join("\n")).toEqual([]);
   });
 });

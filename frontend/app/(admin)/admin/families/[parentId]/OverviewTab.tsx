@@ -1,7 +1,13 @@
 "use client";
 
 import { Button, Card, Chip, Overline } from "@/components/ds";
-import type { AdminFamilyBillingView, FamilyRecordView } from "@/lib/api/admin-families";
+import type {
+  AdminFamilyBillingView,
+  FamilyMoneyView,
+  FamilyRecordView,
+} from "@/lib/api/admin-families";
+import { familyMoneyDisplay } from "@/lib/family-money-view";
+import { OwesMoneyChip } from "@/components/admin/family-money";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
 import { formatCents } from "@/lib/money";
 
@@ -10,21 +16,25 @@ import { childTriggerId, type OverviewChild } from "./family-record";
 /**
  * Overview (People CRM spec §4): who the family is at a glance. The stage and
  * children come from the family index row (the Families view's own row), the
- * money line only when `money_visible` says this caller may see amounts.
+ * money line only when `money_visible` says this caller may see amounts, and
+ * the "Owes money" flag (no amount) for front desk (L2b, `moneyView: "flag"`).
  * Every child opens the child drawer.
  */
 export function OverviewTab({
   record,
+  moneyView,
   billing,
   kids,
   onOpenChild,
 }: {
   record: FamilyRecordView | null;
+  moneyView: FamilyMoneyView;
   billing: AdminFamilyBillingView | null;
   kids: OverviewChild[];
   onOpenChild: (studentId: string) => void;
 }) {
-  const money = record?.money_visible ? record.family.money : null;
+  const money = moneyView === "amounts" && record ? record.family.money : null;
+  const flag = moneyView === "flag" && record ? familyMoneyDisplay(record.family, "flag") : null;
   const autopay = billing?.header.autopay ?? null;
   return (
     <div className="space-y-4" data-testid="family-overview">
@@ -44,6 +54,18 @@ export function OverviewTab({
                 ? `${money.overdue_invoice_count} overdue`
                 : `${money.open_invoice_count} open`}
             </p>
+          </Card>
+        )}
+        {flag && flag.kind !== "unknown" && (
+          <Card p={16} data-testid="family-overview-owes">
+            <Overline>Balance</Overline>
+            <div className="mt-2">
+              {flag.kind === "owes" ? (
+                <OwesMoneyChip />
+              ) : (
+                <p className="text-sm font-semibold text-rally-ink">Paid up</p>
+              )}
+            </div>
           </Card>
         )}
         {autopay && (

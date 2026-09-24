@@ -33,6 +33,8 @@ export interface FamilyIndexRowFixture {
     oldest_overdue_due_on: string | null;
     last_failed_payment_at: string | null;
   } | null;
+  /** L2b: the front-desk "owes money" flag. */
+  owes_money?: boolean | null;
   matched_parent: boolean;
 }
 
@@ -67,6 +69,8 @@ export interface FamilyIndexStubOptions {
   /** Rows for a given request; defaults to every row, unfiltered. */
   families?: FamilyIndexRowFixture[] | ((url: URL) => FamilyIndexRowFixture[]);
   moneyVisible?: boolean;
+  /** L2b: `flag` is the front-desk payload (no money block, `owes_money` only). */
+  moneyView?: "amounts" | "flag" | "none";
   tiles?: { active: number; leaving: number; left: number };
   /** The Overdue / No card chip counts; `overdue` is dropped when money is hidden. */
   presetCounts?: { overdue?: number; no_card?: number };
@@ -75,7 +79,8 @@ export interface FamilyIndexStubOptions {
 }
 
 export async function stubFamilyIndex(page: Page, opts: FamilyIndexStubOptions = {}) {
-  const moneyVisible = opts.moneyVisible ?? true;
+  const moneyView = opts.moneyView ?? ((opts.moneyVisible ?? true) ? "amounts" : "none");
+  const moneyVisible = moneyView === "amounts";
   const rowsFor = (url: URL) =>
     typeof opts.families === "function" ? opts.families(url) : (opts.families ?? []);
   await page.route(/\/api\/v2\/admin\/families\/summary(?:\?.*)?$/, (route) => {
@@ -97,7 +102,12 @@ export async function stubFamilyIndex(page: Page, opts: FamilyIndexStubOptions =
     if (req.method() !== "GET") return route.fallback();
     opts.onList?.(req);
     const url = new URL(req.url());
-    const rows = rowsFor(url).map((row) => (moneyVisible ? row : { ...row, money: null }));
+    const rows = rowsFor(url).map((row) => {
+      const owes = row.money ? row.money.balance_cents > 0 : null;
+      if (moneyView === "amounts") return { ...row, owes_money: owes };
+      if (moneyView === "flag") return { ...row, money: null, owes_money: owes };
+      return { ...row, money: null, owes_money: null };
+    });
     return fulfillJson(route, {
       generated_at: "2026-09-23T15:00:00Z",
       families: rows,
@@ -105,6 +115,7 @@ export async function stubFamilyIndex(page: Page, opts: FamilyIndexStubOptions =
       page: Number(url.searchParams.get("page") ?? "1"),
       page_size: Number(url.searchParams.get("page_size") ?? "50"),
       money_visible: moneyVisible,
+      money_view: moneyView,
       warnings: opts.warnings ?? [],
     });
   });
