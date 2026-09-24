@@ -245,10 +245,12 @@ response, to email the academy's owners once per new row.
 
 ## The family index (People CRM Phase 2, backend)
 
-Read-only. Backs `GET /api/v2/admin/families` and
-`GET /api/v2/admin/families/summary` (both `require_persona("admin")`;
-`tests/structural/test_crm_admin_persona_gate.py` pins every `/families`
-route to it). Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
+Read-only. Backs `GET /api/v2/admin/families`,
+`GET /api/v2/admin/families/summary` and
+`GET /api/v2/admin/families/{family_id}/record`, all
+`require_staff_tier("front_desk")`: owner, admin, billing or front desk (L2b,
+#553). `tests/structural/test_crm_admin_persona_gate.py` pins these three to
+that tier and every other CRM route to `require_persona("admin")`. Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
 §6 and §7 Phase 2.
 
 | File | What it is |
@@ -256,7 +258,7 @@ route to it). Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
 | `domain/family_stage.py` | `roll_up_family_stage` and the precedence `pending_cancel > active > at_risk > on_hold > paused > trial > never_enrolled > left`; the Active / Leaving / Left scope tiles |
 | `domain/family_index.py` | `FamilyRecord`, `FamilyChild`, `FamilyMoney`, `FamilyIndex`, and `search_family` (child and parent name word-prefix on `full_name_key`, email, legacy roster fields, phone by the last 7 to 10 digits) |
 | `application/family_index.py` | `query_family_index` (scope, stage, class, card, overdue filters; sort before pagination) and `summarize_family_index` |
-| `application/money_visibility.py` | `can_view_family_money(claims)`: the one money seam (#553); owner, admin and billing see amounts, front desk does not (`is_front_desk_only`), decided in `shared/auth/staff_tiers.py` |
+| `application/money_visibility.py` | `can_view_family_money(claims)` and `family_money_view(claims)` (`amounts` / `flag` / `none`): the one money seam (#553); owner, admin and billing see amounts, front desk gets the "owes money" flag (`is_front_desk_only`), decided in `shared/auth/staff_tiers.py` |
 | `application/ports.py` | `ParentAliasResolver`, `ChildLifecycleReader`, `FamilyMoneyReader` |
 | `infrastructure/family_index_read_model.py` | `MongoFamilyIndexReadModel`: the whole academy's index in a fixed number of reads, cached 60 s per academy |
 
@@ -283,9 +285,13 @@ Rules the index keeps:
 - **Money is the Billing tab's money.** `balance_cents` and
   `open_invoice_count` come from `billing/application/family_money.open_balance`,
   which `build_family_billing_view` also calls. Money is computed once and
-  gated at serialization: when `can_view_family_money` is false every
-  `money` block is `null`, `sort=balance` falls back to name and the Overdue
-  filter matches nothing.
+  gated at serialization by `family_money_view(claims)`: `amounts` (owner,
+  admin, billing) sends the `money` block and `owes_money`; `flag` (front
+  desk) sends `money: null` and only `owes_money` (balance above zero);
+  `none` sends neither. Whenever amounts are hidden, `sort=balance` falls
+  back to name and the Overdue filter matches nothing. `owes_money: null`
+  means money could not be read, never "does not owe". Responses carry
+  `money_view` beside the older `money_visible`.
 - **A failed secondary source is a warning, never a zero.** Money and class
   titles failing give `money_unavailable` / `classes_unavailable` in
   `warnings`; students, memberships, parents and lifecycles failing is a 503.
@@ -688,3 +694,109 @@ Tests: `tests/unit/test_crm_family_messages.py`,
 `tests/unit/test_0203_family_contact_log.py`,
 `tests/interface/test_admin_family_messages_routes.py`,
 `tests/contract/test_crm_family_messages_real_mongo.py` (real `mongod`).
+
+## CSV family and student import (roadmap L8a, migration 0199)
+
+The upload UI (L8b) is a panel on the Families page
+(`frontend/app/(admin)/admin/families/FamilyImportPanel.tsx`, client in
+`frontend/lib/api/admin-family-import.ts`): template download (header row
+only), check (preview) with one result per row, a confirm dialog, then the
+commit's result; a commit refused as `has_errors` or `expired` re-checks the
+same file. Replaces the live-academy import
+scripts for new academies (`backend/scripts/import_blno.py` stays the
+historical single-tenant script, still guarded).
+
+| File | What it is |
+|---|---|
+| `domain/family_import.py` | the strict column schema, size caps, formula-injection sanitising, per-row validation, in-file family grouping |
+| `domain/import_batches.py` | `ImportBatch`, `PlannedRow`, `ImportSummary`; the 24 h preview validity and the 5 min stale-claim window |
+| `application/use_cases/family_import.py` | `PreviewFamilyImport`, `CommitFamilyImport`, `FamilyImportPlanner` |
+| `infrastructure/mongo_import_batch_repo.py` | `MongoImportBatchRepository` (`import_batches`), `MongoImportAuditLog` (`audit_logs`) |
+| `backend/v2/composition/family_import.py` | wiring (fresh family index, the duplicate finder's lookups, enrollment's `MongoStudentWriter.ensure_imported`) |
+| `interfaces/admin/family_import_routes.py` | the two routes |
+| `backend/v2/migrations/0199_import_batches.py` | the indexes |
+
+Routes (`require_persona("admin")`, so owners and admins; coach, parent,
+billing and front desk get the wrong-persona 404; rate-limited 10 a minute):
+
+| Route | Body | Answer |
+|---|---|---|
+| `POST /admin/imports/families/preview` | `{filename?, csv}` (the file's text) | the stored batch: `import_batch_id`, `can_commit`, `summary`, one row result per data row |
+| `POST /admin/imports/families/commit` | `{import_batch_id}` | the committed batch, `already_committed`, `students_inserted` |
+
+### The file
+
+UTF-8 CSV, at most 1 MB and 1,000 data rows, one row per child. Columns
+(case-insensitive, each at most once; anything else refuses the file with
+422 `Crm.InvalidImportFile`): `parent_name` and `student_name` (required),
+`parent_email` and/or `parent_phone` (one of them per row), and
+`student_date_of_birth` (`YYYY-MM-DD`, optional). Blank rows are skipped.
+Row problems are per-row errors with the file's line number, not a refusal.
+
+Formula injection: a name's leading `=`, `+`, `-`, `@` are removed (with a
+warning); an email starting with one is an error; phones are stored as
+digits only.
+
+### What each row becomes
+
+Rows are grouped into families by parent email, else by phone (a phone-only
+row joins the emailed family with that phone). Each family is looked up with
+`FindPossibleDuplicates` (the L1c finder) on a family index built fresh for
+the call:
+
+- email or phone matches exactly one existing family: the child joins it;
+  a child that family already has (same `full_name_key`) is `skip`;
+- matches two or more families, a family contact, or a staff account:
+  an error (the import never guesses);
+- no match: a **new roster family**. Its students carry `parent_id` (minted
+  at preview, `parent_<ulid>`) and the `parent_name`, `parent_email` and
+  `parent_phone` roster fields. No users document, no Firebase login, no
+  email. Billing Setup's invite provisions the login later, as for any
+  roster parent.
+
+A matching inquiry, or a family with the same name only, is a warning.
+
+The family index now reads the students' `parent_phone` too
+(`FamilyRecord.legacy_phones`), and the duplicate matcher compares an email
+against the students' `parent_email` (`legacy_contact_keys`), so roster
+families (imported or legacy) are found by email and phone in the Add
+family duplicate warning as well as here. That is what makes re-uploading
+the same file a no-op: every row previews as `skip`.
+
+### Idempotency
+
+- Family and student ids are minted at preview and stored on the batch.
+  Every student is written with `$setOnInsert` keyed by
+  `(academy_id, student_id)`, and carries `import_batch_id` and
+  `imported_by`.
+- The commit claims the batch (`previewed` to `committing`, a conditional
+  update), re-plans the stored rows against current data, refuses with
+  409 `Crm.ImportNotCommittable` (`reason: has_errors`) when any row is an
+  error (the batch goes back to `previewed` with the refreshed plan),
+  writes, then marks it `committed`.
+- A committed batch answers again with `already_committed: true` and
+  writes nothing. A second concurrent commit gets 409 `in_progress`; a
+  claim older than 5 minutes is a crashed commit and is resumed (the
+  inserts are no-ops for rows already written). A preview older than 24 h
+  is 409 `expired`.
+- One `audit_logs` row per preview and per commit (`entity_type:
+  "import_batch"`, counts only, no names or contacts).
+
+### Record and indexes (migration 0199)
+
+`import_batches`: `{academy_id, import_batch_id, kind: "families", status
+(previewed|committing|committed), file_sha256, filename, created_by,
+created_at, updated_at, rows[], summary{}, claimed_at?, committed_at?,
+committed_by?, students_created?}`. Registered in `TENANT_OWNED_COLLECTIONS`.
+
+| Name | Keys | Options |
+|---|---|---|
+| `import_batches_academy_batch_unique` | `(academy_id, import_batch_id)` | unique |
+| `import_batches_academy_created` | `(academy_id, created_at desc)` | |
+
+Tests: `tests/unit/test_crm_family_import_domain.py`,
+`tests/unit/test_0199_import_batches.py`,
+`tests/contract/test_crm_family_import_real_mongo.py` (real `mongod`:
+re-upload no-op, repeated and concurrent commits, crash resume, re-plan,
+errors blocking commit, cross-tenant), and
+`tests/interface/test_admin_family_import_routes.py`.

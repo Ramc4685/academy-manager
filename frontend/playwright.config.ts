@@ -142,9 +142,11 @@ export default defineConfig({
       // public-page-settings joins for Lane B5: the per-class list is a
       // wide table that scrolls sideways on a phone and fits on a desktop.
       // pipeline-board joins for People CRM L3b: five columns on a desktop,
-      // a stage switcher on a phone.
+      // a stage switcher on a phone. family-import joins for L8b: the import
+      // preview is a five-column table, scrolled sideways on a phone and
+      // whole on a desktop.
       testMatch:
-        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record|public-page-settings|pipeline-board)\.spec\.ts/,
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record|public-page-settings|pipeline-board|family-import)\.spec\.ts/,
     },
     // D11 axe gate: chromium only, its own CI job in nightly-e2e.yml (nightly,
     // and on PRs that touch frontend/components/** or the a11y specs). The

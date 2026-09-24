@@ -156,9 +156,13 @@ def test_list_shape_and_tenant(admin: TestClient, services: FakeServices) -> Non
             "oldest_overdue_due_on": "2026-09-01",
             "last_failed_payment_at": None,
         },
+        "owes_money": True,
         "matched_parent": False,
     }
+    assert body["money_view"] == "amounts"
     assert body["families"][1]["money"] is None
+    # Money unreadable reads as unknown, never "does not owe".
+    assert body["families"][1]["owes_money"] is None
 
 
 def test_filters_search_and_pagination(admin: TestClient) -> None:
@@ -203,11 +207,13 @@ def test_money_seam_hides_every_amount(
     services: FakeServices, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When the #553 seam says no, nothing money-shaped leaves the server."""
-    monkeypatch.setattr(family_index_routes, "can_view_family_money", lambda claims: False)
+    monkeypatch.setattr(family_index_routes, "family_money_view", lambda claims: "none")
     with _client(("admin",), services) as client:
         body = client.get("/api/v2/admin/families", params={"sort": "balance"}).json()
         assert body["money_visible"] is False
+        assert body["money_view"] == "none"
         assert all(f["money"] is None for f in body["families"])
+        assert all(f["owes_money"] is None for f in body["families"])
         assert [f["family_id"] for f in body["families"]] == ["u-alpha", "u-bravo"]
         overdue = client.get("/api/v2/admin/families", params={"overdue": "true"}).json()
         assert overdue["families"] == []
@@ -216,8 +222,8 @@ def test_money_seam_hides_every_amount(
         assert summary["preset_counts"] == {"no_card": 1}
 
 
-@pytest.mark.parametrize("roles", [("coach",), ("parent",), ("owner",)])
-def test_non_admin_personas_are_404(services: FakeServices, roles: tuple[str, ...]) -> None:
+@pytest.mark.parametrize("roles", [("coach",), ("assistant_coach",), ("parent",), ("student",)])
+def test_non_staff_personas_are_404(services: FakeServices, roles: tuple[str, ...]) -> None:
     with _client(roles, services) as client:
         assert client.get("/api/v2/admin/families").status_code == 404
         assert client.get("/api/v2/admin/families/summary").status_code == 404
@@ -254,15 +260,17 @@ def test_family_record_unknown_family_is_404(admin: TestClient) -> None:
 def test_family_record_money_goes_through_the_seam(
     services: FakeServices, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(family_index_routes, "can_view_family_money", lambda claims: False)
+    monkeypatch.setattr(family_index_routes, "family_money_view", lambda claims: "none")
     with _client(("admin",), services) as client:
         body = client.get("/api/v2/admin/families/u-alpha/record").json()
     assert body["money_visible"] is False
+    assert body["money_view"] == "none"
     assert body["family"]["money"] is None
+    assert body["family"]["owes_money"] is None
 
 
 @pytest.mark.parametrize("roles", [("coach",), ("parent",)])
-def test_family_record_is_admin_only(services: FakeServices, roles: tuple[str, ...]) -> None:
+def test_family_record_is_staff_only(services: FakeServices, roles: tuple[str, ...]) -> None:
     with _client(roles, services) as client:
         assert client.get("/api/v2/admin/families/u-alpha/record").status_code == 404
     assert services.index.calls == []

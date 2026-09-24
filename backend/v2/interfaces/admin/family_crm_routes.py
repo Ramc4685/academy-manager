@@ -42,6 +42,7 @@ from backend.v2.shared.http import require_persona
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 from .family_contacts_routes import router as family_contacts_router
+from .family_import_routes import router as family_import_router
 from .family_messages_routes import router as family_messages_router
 from .family_timeline_routes import router as family_timeline_router
 from .people_duplicate_routes import router as people_duplicate_router
@@ -56,6 +57,8 @@ router.include_router(people_duplicate_router)
 router.include_router(family_timeline_router)
 # Phase 6: the family Messages tab (send logs + logged contacts).
 router.include_router(family_messages_router)
+# Roadmap L8a: CSV family and student import (preview and commit).
+router.include_router(family_import_router)
 
 # Raw-body caps sit a little above the domain caps so the domain's clearer
 # message wins for "just over"; anything far over is refused by pydantic.

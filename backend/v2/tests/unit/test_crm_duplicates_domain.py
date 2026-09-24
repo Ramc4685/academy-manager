@@ -80,3 +80,22 @@ def test_masking_shows_enough_to_recognise_and_no_more() -> None:
     assert mask_phone("(555) 010-2030") == "•••-2030"
     assert mask_phone("12") is None
     assert mask_phone(None) is None
+
+
+def test_a_roster_family_matches_on_its_students_parent_email_and_phone() -> None:
+    """A family with no users document (a roster family, e.g. from the CSV
+    import, L8a) is known only by the students' ``parent_*`` fields."""
+    roster = _record(
+        email=None,
+        phone=None,
+        has_account=False,
+        legacy_contact_keys=("nova testparent", "nova.parent@example.test"),
+        legacy_phones=("15550104411",),
+    )
+    assert family_record_matches(roster, build_probe(email="Nova.Parent@example.test")) == (
+        "email",
+    )
+    assert family_record_matches(roster, build_probe(phone="555-010-4411")) == ("phone",)
+    # A legacy NAME key is never an email match.
+    assert family_record_matches(roster, build_probe(email="nova testparent")) == ()
+    assert family_record_matches(roster, build_probe(phone="555-010-9999")) == ()

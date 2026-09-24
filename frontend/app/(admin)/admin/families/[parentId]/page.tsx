@@ -16,6 +16,9 @@ import { ArrowLeft } from "lucide-react";
 import { Card, Chip, Skeleton } from "@/components/ds";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { fetchAdminFamilyBilling, fetchFamilyRecord } from "@/lib/api/admin-families";
+import { effectiveMoneyView, familyMoneyDisplay, serverMoneyView } from "@/lib/family-money-view";
+import { FamilyOwesFlag } from "@/components/admin/family-money";
+import { ViewingAsToggle, useViewingAs } from "@/components/admin/viewing-as";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -86,6 +89,12 @@ export default function FamilyRecordPage() {
   };
 
   const family = record.data?.family ?? null;
+  // L2b: the server decides what money this caller sees; the owner's
+  // "Viewing as" preview can only narrow it.
+  const [viewingAs] = useViewingAs();
+  const moneyView = record.data
+    ? effectiveMoneyView(serverMoneyView(record.data), viewingAs)
+    : "none";
   const kids = overviewChildren(family, billing.data?.students ?? []);
   const openChild = kids.find((k) => k.studentId === openChildId) ?? null;
   const title = family?.parent_name ?? billing.data?.parent.name ?? family?.email ?? "Family";
@@ -119,7 +128,11 @@ export default function FamilyRecordPage() {
               <Chip variant={lifecycleVariant(family.stage)} label={lifecycleLabel(family.stage)} />
             </span>
           )}
+          {family && moneyView === "flag" && (
+            <FamilyOwesFlag display={familyMoneyDisplay(family, moneyView)} />
+          )}
         </div>
+        <ViewingAsToggle />
       </div>
 
       <div
@@ -172,7 +185,13 @@ export default function FamilyRecordPage() {
             retrying={record.isFetching}
           />
         )}
-        {activeTab === "billing" ? (
+        {activeTab === "billing" && viewingAs === "front_desk" ? (
+          <Card p={20}>
+            <p className="text-sm text-rally-muted" data-testid="family-billing-front-desk-preview">
+              Front desk cannot open Billing. They see only whether this family owes money.
+            </p>
+          </Card>
+        ) : activeTab === "billing" ? (
           <BillingTab parentId={parentId} />
         ) : activeTab === "notes" ? (
           <NotesTab parentId={parentId} />
@@ -198,6 +217,7 @@ export default function FamilyRecordPage() {
         ) : (
           <OverviewTab
             record={record.data ?? null}
+            moneyView={moneyView}
             billing={billing.data ?? null}
             kids={kids}
             onOpenChild={setOpenChildId}

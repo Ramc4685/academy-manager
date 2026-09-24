@@ -20,7 +20,9 @@ Billing-tier routes are guarded by ``require_staff_tier("billing")`` (owner,
 admin or billing; ``interfaces/admin/staff_tier.py``), never by the admin
 persona alone (that would 404 billing staff) and never by ``require_owner``
 (that would take a decided capability away from billing staff and admins).
-Front desk opens no money route. This walks the real admin router (the
+Front desk opens no money route: its only routes are the three People CRM
+family index reads (L2b), where money is redacted to an "owes money" flag
+by the server. This walks the real admin router (the
 ``test_owner_gate_policy`` walker) so a money route that drifts onto the
 wrong tier fails here, in both directions.
 """
@@ -120,9 +122,27 @@ def test_no_staff_tier_reaches_a_money_moving_route(key: tuple[str, str]) -> Non
     assert all(key not in keys for keys in STAFF_TIER_ROUTE_PATHS.values())
 
 
-def test_front_desk_records_no_payment_and_opens_no_route() -> None:
+def test_front_desk_records_no_payment_and_opens_only_family_index_reads() -> None:
     assert "front_desk" not in PAYMENT_RECORDER_ROLES
-    assert "front_desk" not in STAFF_TIER_ROUTE_PATHS
+    front_desk = STAFF_TIER_ROUTE_PATHS["front_desk"]
+    assert front_desk
+    assert all(method == "GET" for method, _ in front_desk)
+    assert all(path.startswith(f"{_ADMIN}/families") for _, path in front_desk)
+    assert not front_desk & set(MONEY_VIEWER_ONLY_READS)
+
+
+#: Reads that carry amounts and stay closed to front desk.
+MONEY_VIEWER_ONLY_READS: tuple[tuple[str, str], ...] = (
+    ("GET", f"{_ADMIN}/families/{{parent_id}}/billing"),
+    ("GET", f"{_ADMIN}/reports/people/money-owed-by-age"),
+)
+
+
+@pytest.mark.parametrize("key", MONEY_VIEWER_ONLY_READS, ids=lambda k: f"{k[0]} {k[1]}")
+def test_amount_reads_admit_no_staff_tier(key: tuple[str, str]) -> None:
+    routes = _admin_routes()
+    assert key in routes, f"money read not registered: {key}"
+    assert not _staff_tiers(routes[key])
 
 
 def test_billing_tab_hides_money_moving_actions_from_non_owners() -> None:

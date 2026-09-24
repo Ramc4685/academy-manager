@@ -157,7 +157,10 @@ def test_money_moving_routes_404_for_every_non_owner(
         ("GET", "/api/v2/admin/payments"),
         ("GET", "/api/v2/admin/finance/expenses"),
         ("POST", "/api/v2/admin/billing/invoices/inv-1/void"),
-        ("GET", "/api/v2/admin/families"),
+        # The family index reads are open to both tiers (L2b); the family's
+        # Billing tab and notes are not.
+        ("GET", "/api/v2/admin/families/u-1/billing"),
+        ("GET", "/api/v2/admin/families/u-1/notes"),
         ("GET", "/api/v2/admin/users"),
     ],
 )

@@ -25,6 +25,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.errors import (
+    CannotRemoveLastOwner,
     CannotRemoveLastRole,
     CoachHasFutureSessions,
     ParentHasLiveChildren,
@@ -1196,6 +1197,30 @@ class MongoUserRepository:
             )
         }
 
+    async def _assert_not_last_owner(self, doc: dict[str, Any], *, academy_id: str) -> None:
+        """Refuse a change that would leave the academy with no live owner (#553).
+
+        Owner is the only role that can grant or revoke owner, admin, billing
+        and front desk, and the only one that moves money. Revoking, replacing
+        or disabling the last one would lock the academy out of both for good.
+        The count reads ``academy_memberships`` (what ``LoadAuthClaims`` turns
+        into claims), excluding every alias of this account, and treats an
+        invited or suspended membership as no owner at all.
+        """
+
+        aliases = list(self._membership_aliases(doc))
+        other_owner = await self._db["academy_memberships"].find_one(
+            {
+                "academy_id": academy_id,
+                "roles": "owner",
+                "user_id": {"$nin": aliases},
+                "status": {"$nin": [*sorted(_SUSPENDED_MEMBERSHIP_STATUSES), "invited"]},
+            },
+            {"_id": 1},
+        )
+        if other_owner is None:
+            raise CannotRemoveLastOwner("The academy must keep at least one owner")
+
     async def _assert_offboardable(self, doc: dict[str, Any], *, academy_id: str) -> None:
         """Every dated-work guard a *disable* has to clear, in one place.
 
@@ -1205,6 +1230,8 @@ class MongoUserRepository:
         orphans came back through it.
         """
         roles = list(doc.get("roles") or ([doc["role"]] if doc.get("role") else []))
+        if "owner" in roles:
+            await self._assert_not_last_owner(doc, academy_id=academy_id)
         for role in sorted(COACHING_ROLES & set(roles)):
             await self._assert_no_future_coaching_work(doc, role=role, academy_id=academy_id)
         if "parent" in roles:
@@ -1386,6 +1413,8 @@ class MongoUserRepository:
         # A *replacement* always drops the old role, so "lost a role" cannot tell
         # a demotion from a promotion — only the privilege ceiling can.
         narrowing = _lowers_privilege(previous_roles, role)
+        if "owner" in previous_roles and role != "owner":
+            await self._assert_not_last_owner(before, academy_id=academy_id)
 
         if narrowing:
             await self._replace_membership_roles(before, role=role, academy_id=academy_id, now=now)
@@ -1750,6 +1779,8 @@ class MongoUserRepository:
             new_roles = [r for r in current if r != role]
             if not new_roles:
                 raise CannotRemoveLastRole(user_id)
+            if role == "owner" and role in current:
+                await self._assert_not_last_owner(before, academy_id=academy_id)
             # #785: this method rewrote `roles` and nothing else. Sessions and
             # occurrences kept naming the ex-coach, so the roster rendered
             # `coach_name: None` and no one was accountable for the class.

@@ -28,7 +28,7 @@ a billing member of one academy is nobody in another.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from backend.v2.shared.auth.claims import AuthClaims
@@ -42,6 +42,18 @@ PAYMENT_RECORDER_ROLES: Final[frozenset[str]] = frozenset({"owner", "admin", "bi
 
 #: The staff tiers of #553 that are not ``admin``/``owner``.
 STAFF_TIER_ROLES: Final[frozenset[str]] = frozenset({"billing", "front_desk"})
+
+#: Roles that may read the People CRM family index (the Families list, its
+#: scope tiles and one family's record row). Front desk reads it with money
+#: redacted to the "owes money" flag; billing, admin and owner see amounts.
+FAMILY_INDEX_READER_ROLES: Final[frozenset[str]] = frozenset(
+    {"owner", "admin", "billing", "front_desk"}
+)
+
+#: How a caller sees family money: ``amounts`` (owner, admin, billing),
+#: ``flag`` (front desk: "owes money" yes or no, never an amount) or
+#: ``none``.
+MoneyView = Literal["amounts", "flag", "none"]
 
 
 def can_view_money(claims: AuthClaims) -> bool:
@@ -64,3 +76,19 @@ def is_front_desk_only(claims: AuthClaims) -> bool:
     """
 
     return "front_desk" in claims.roles and not can_view_money(claims)
+
+
+def can_read_family_index(claims: AuthClaims) -> bool:
+    """True when the caller may read the family index (L2b, #553)."""
+
+    return any(role in FAMILY_INDEX_READER_ROLES for role in claims.roles)
+
+
+def money_view(claims: AuthClaims) -> MoneyView:
+    """The one answer to "what may this caller see of a family's money"."""
+
+    if can_view_money(claims):
+        return "amounts"
+    if is_front_desk_only(claims):
+        return "flag"
+    return "none"

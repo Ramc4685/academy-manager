@@ -75,3 +75,33 @@ def test_platform_roles_grant_no_money_tier() -> None:
     assert not can_view_family_money(claims)
     assert not can_record_payment(claims)
     assert not is_front_desk_only(claims)
+
+
+# --- L2b: family index reads and the money view -----------------------------
+
+_MONEY_VIEWS: list[tuple[tuple[str, ...], str, bool]] = [
+    (("owner",), "amounts", True),
+    (("admin",), "amounts", True),
+    (("billing",), "amounts", True),
+    (("front_desk",), "flag", True),
+    (("front_desk", "billing"), "amounts", True),
+    (("front_desk", "coach"), "flag", True),
+    (("coach",), "none", False),
+    (("assistant_coach",), "none", False),
+    (("parent",), "none", False),
+    ((), "none", False),
+]
+
+
+@pytest.mark.parametrize(("roles", "view", "reads_index"), _MONEY_VIEWS)
+def test_money_view_and_family_index_reads(
+    roles: tuple[str, ...], view: str, reads_index: bool
+) -> None:
+    from backend.v2.contexts.crm.application.money_visibility import family_money_view
+    from backend.v2.shared.auth.staff_tiers import can_read_family_index
+
+    claims = _claims(*roles)
+    assert family_money_view(claims) == view
+    assert can_read_family_index(claims) is reads_index
+    # The view and the older boolean seam never disagree.
+    assert (view == "amounts") is can_view_family_money(claims)

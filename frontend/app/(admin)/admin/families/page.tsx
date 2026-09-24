@@ -12,9 +12,12 @@
  * Filtering, sorting and paging are the backend's; this page only keeps the
  * filter state in the URL and renders what comes back. Money is never
  * computed here: a `null` money block (or `money_visible: false`) hides the
- * amount, it never becomes a zero. Actions (invites, charging, autopay) live
+ * amount, it never becomes a zero. Front desk (`money_view: "flag"`, L2b)
+ * gets an "Owes money" flag from the server and never an amount; the owner
+ * can preview that with "Viewing as". Actions (invites, charging, autopay) live
  * on the per-family page (`/admin/families/[parentId]`), except the one bulk
- * invite #897 put on this list.
+ * invite #897 put on this list and the CSV import (roadmap L8b,
+ * `FamilyImportPanel`).
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -36,8 +39,12 @@ import {
   type FamilyIndexChild,
   type FamilyIndexRow,
   type FamilyIndexSort,
+  type FamilyMoneyView,
   type FamilyScope,
 } from "@/lib/api/admin-families";
+import { effectiveMoneyView, familyMoneyDisplay, serverMoneyView } from "@/lib/family-money-view";
+import { FamilyMoneyCell } from "@/components/admin/family-money";
+import { ViewingAsToggle, useViewingAs } from "@/components/admin/viewing-as";
 import { queryKeys } from "@/lib/query/keys";
 import { cardChip, loginChip, loginStateFromRegistration } from "@/lib/people-status";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
@@ -80,6 +87,8 @@ import {
 import { Th } from "@/components/ds/dialog-chrome";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { PipelineBoard } from "@/components/admin/people/pipeline-board";
+
+import { FamilyImportPanel } from "./FamilyImportPanel";
 
 const PAGE_SIZE = 50;
 /** Bounded walk of the Billing Setup pages for the bulk invite's recipients. */
@@ -217,7 +226,12 @@ function FamiliesView() {
     () => indexQuery.data?.pages.flatMap((page) => page.families ?? []) ?? [],
     [indexQuery.data],
   );
-  const moneyVisible = firstPage?.money_visible ?? false;
+  const [viewingAs] = useViewingAs();
+  const moneyView: FamilyMoneyView = firstPage
+    ? effectiveMoneyView(serverMoneyView(firstPage), viewingAs)
+    : "none";
+  // Sorting and the Overdue chip work on amounts, so only amount viewers get them.
+  const moneyVisible = moneyView === "amounts";
   const searching = state.q.trim().length > 0;
   const rows = useMemo(() => familyResultRows(families, searching), [families, searching]);
   const warnings = useMemo(
@@ -231,7 +245,9 @@ function FamiliesView() {
   const summary = summaryQuery.data;
   // A money preset only ever arrives from a server that cleared this caller
   // for money; without the summary the chips fall back to the no-money set.
-  const presets = summary?.presets ?? FALLBACK_PRESETS;
+  const presets = (summary?.presets ?? FALLBACK_PRESETS).filter(
+    (preset) => moneyVisible || !preset.money,
+  );
   const classes = useMemo(
     () => classOptions(sessionsQuery.data?.sessions ?? [], families, state.classId),
     [sessionsQuery.data, families, state.classId],
@@ -244,10 +260,13 @@ function FamiliesView() {
 
   return (
     <div className="flex flex-col gap-6" data-testid="admin-families">
-      <p className="text-sm text-rally-muted">
-        Families · every family, their children and where they stand; open one for the full
-        picture
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-rally-muted">
+          Families · every family, their children and where they stand; open one for the full
+          picture
+        </p>
+        <ViewingAsToggle />
+      </div>
 
       {summaryQuery.isError ? (
         <ErrorNotice
@@ -280,6 +299,8 @@ function FamiliesView() {
       </div>
 
       <BulkInviteNotInvited onInvited={refreshAll} />
+
+      <FamilyImportPanel onImported={refreshAll} />
 
       <Card p={0}>
         <ListToolbar>
@@ -386,7 +407,7 @@ function FamiliesView() {
             ) : (
               <FamiliesList
                 rows={rows}
-                moneyVisible={moneyVisible}
+                moneyView={moneyView}
                 state={state}
                 onSort={onSort}
               />
@@ -525,12 +546,12 @@ function BulkInviteNotInvited({ onInvited }: { onInvited: () => void }) {
  */
 function FamiliesList({
   rows,
-  moneyVisible,
+  moneyView,
   state,
   onSort,
 }: {
   rows: FamilyResultRow[];
-  moneyVisible: boolean;
+  moneyView: FamilyMoneyView;
   state: FamilyIndexState;
   onSort: (column: FamilyIndexSort) => void;
 }) {
@@ -542,12 +563,13 @@ function FamiliesList({
           row.kind === "child" ? (
             <ChildPhoneRow key={row.key} family={row.family} child={row.child} />
           ) : (
-            <FamilyPhoneRow key={row.key} family={row.family} moneyVisible={moneyVisible} />
+            <FamilyPhoneRow key={row.key} family={row.family} moneyView={moneyView} />
           ),
         )}
       </PhoneList>
     );
   }
+  const moneyVisible = moneyView === "amounts";
   const sortHeader = (column: FamilyIndexSort, label: string, align?: "right") => {
     const sort = ariaSort(state, column, moneyVisible);
     const Icon = sort === "ascending" ? ArrowUp : sort === "descending" ? ArrowDown : ArrowUpDown;
@@ -577,7 +599,8 @@ function FamiliesList({
             {sortHeader("children", "Children")}
             {sortHeader("stage", "Stage")}
             <Th>Card and login</Th>
-            {moneyVisible ? sortHeader("balance", "Balance", "right") : null}
+            {moneyView === "amounts" ? sortHeader("balance", "Balance", "right") : null}
+            {moneyView === "flag" ? <Th align="right">Owes money</Th> : null}
             <Th>Actions</Th>
           </tr>
         </thead>
@@ -588,10 +611,10 @@ function FamiliesList({
                 key={row.key}
                 family={row.family}
                 child={row.child}
-                moneyVisible={moneyVisible}
+                moneyView={moneyView}
               />
             ) : (
-              <FamilyTableRow key={row.key} family={row.family} moneyVisible={moneyVisible} />
+              <FamilyTableRow key={row.key} family={row.family} moneyView={moneyView} />
             ),
           )}
         </tbody>
@@ -651,27 +674,13 @@ function CardLogin({ family }: { family: FamilyIndexRow }) {
   );
 }
 
-/** Rendered only when the server sent money: `null` reads as unknown, never $0.00. */
-function Balance({ family }: { family: FamilyIndexRow }) {
-  const money = family.money;
-  if (!money) {
-    return <span className="text-rally-subtle" title="Balance unknown">—</span>;
-  }
+/** The money cell: amounts, the front-desk flag, or unknown (never $0.00). */
+function Balance({ family, moneyView }: { family: FamilyIndexRow; moneyView: FamilyMoneyView }) {
   return (
-    <span className="flex flex-col items-end">
-      <span
-        className={`font-mono tabular-nums ${
-          money.balance_cents > 0 ? "font-semibold text-status-red-800" : "text-rally-muted"
-        }`}
-      >
-        {formatCents(money.balance_cents)}
-      </span>
-      {money.overdue_invoice_count > 0 ? (
-        <span className="text-[11px] text-status-red-800">
-          {formatCents(money.overdue_cents)} overdue
-        </span>
-      ) : null}
-    </span>
+    <FamilyMoneyCell
+      display={familyMoneyDisplay(family, moneyView)}
+      testId={`admin-families-money-${family.family_id}`}
+    />
   );
 }
 
@@ -695,10 +704,10 @@ function FamilyName({ family }: { family: FamilyIndexRow }) {
 
 function FamilyTableRow({
   family,
-  moneyVisible,
+  moneyView,
 }: {
   family: FamilyIndexRow;
-  moneyVisible: boolean;
+  moneyView: FamilyMoneyView;
 }) {
   const href = familyHref(family);
   return (
@@ -728,9 +737,9 @@ function FamilyTableRow({
       <td className="px-4 py-3">
         <CardLogin family={family} />
       </td>
-      {moneyVisible ? (
+      {moneyView !== "none" ? (
         <td className="px-4 py-3 text-right">
-          <Balance family={family} />
+          <Balance family={family} moneyView={moneyView} />
         </td>
       ) : null}
       <td className="px-4 py-3">
@@ -750,11 +759,11 @@ function FamilyTableRow({
 function ChildTableRow({
   family,
   child,
-  moneyVisible,
+  moneyView,
 }: {
   family: FamilyIndexRow;
   child: FamilyIndexChild;
-  moneyVisible: boolean;
+  moneyView: FamilyMoneyView;
 }) {
   const classes = child.classes.map((c) => c.title).filter(Boolean);
   return (
@@ -785,9 +794,9 @@ function ChildTableRow({
       <td className="px-4 py-3">
         <CardLogin family={family} />
       </td>
-      {moneyVisible ? (
+      {moneyView !== "none" ? (
         <td className="px-4 py-3 text-right">
-          <Balance family={family} />
+          <Balance family={family} moneyView={moneyView} />
         </td>
       ) : null}
       <td className="px-4 py-3">
@@ -810,10 +819,10 @@ function ChildTableRow({
  */
 function FamilyPhoneRow({
   family,
-  moneyVisible,
+  moneyView,
 }: {
   family: FamilyIndexRow;
-  moneyVisible: boolean;
+  moneyView: FamilyMoneyView;
 }) {
   const href = familyHref(family);
   const name = familyDisplayName(family);
@@ -824,7 +833,13 @@ function FamilyPhoneRow({
       title={name}
       href={href ?? undefined}
       titleTestId={href ? `family-link-${family.family_id}` : undefined}
-      primary={moneyVisible ? <Balance family={family} /> : <StageChip state={family.stage} />}
+      primary={
+        moneyView !== "none" ? (
+          <Balance family={family} moneyView={moneyView} />
+        ) : (
+          <StageChip state={family.stage} />
+        )
+      }
       actionsLabel={`Actions for ${name}`}
       actionsTestId={`admin-families-actions-${family.family_id}`}
       actions={href ? [{ key: "open", label: "Open family", href }] : []}
@@ -832,7 +847,7 @@ function FamilyPhoneRow({
       secondary={
         <>
           <div className="flex flex-wrap items-center gap-2">
-            {moneyVisible ? <StageChip state={family.stage} /> : null}
+            {moneyView !== "none" ? <StageChip state={family.stage} /> : null}
             {!family.has_account ? <NoAccountChip /> : null}
             <CardLogin family={family} />
           </div>

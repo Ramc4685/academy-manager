@@ -131,3 +131,36 @@ class ContactLogEditForbidden(DomainError):
 
     code = "Crm.ContactLogEditForbidden"
     status_code = 403
+
+
+class InvalidImportFile(DomainError):
+    """The uploaded CSV cannot be imported as a whole (not UTF-8, too large,
+    too many rows, unknown or missing columns). Row problems are not this
+    error: they are reported per row in the preview."""
+
+    code = "Crm.InvalidImportFile"
+    status_code = 422
+
+
+class ImportBatchNotFound(DomainError):
+    """No import batch with this id in the caller's academy."""
+
+    code = "Crm.ImportBatchNotFound"
+    status_code = 404
+
+
+class ImportNotCommittable(DomainError):
+    """The batch cannot be committed now. ``details.reason`` is ``has_errors``
+    (fix the file and preview again), ``expired`` (the preview is over a day
+    old) or ``in_progress`` (another commit holds it)."""
+
+    code = "Crm.ImportNotCommittable"
+    status_code = 409
+
+
+class ImportUnavailable(DomainError):
+    """The academy's family list could not be read, so duplicates cannot be
+    checked; the import refuses rather than risk creating duplicates."""
+
+    code = "Crm.ImportUnavailable"
+    status_code = 503
