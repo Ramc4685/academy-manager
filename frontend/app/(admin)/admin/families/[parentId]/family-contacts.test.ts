@@ -39,12 +39,14 @@ describe("contact drafts", () => {
     expect(draft.gets_invoices).toBe(false);
   });
 
-  it("labels the switches and says invoices are not wired yet", () => {
+  it("labels the switches and says the payment link stays with the primary parent", () => {
     expect(CONTACT_SWITCHES.map((s) => s.label)).toEqual([
       "Gets notices",
       "Gets invoices (opted in)",
     ]);
-    expect(CONTACT_SWITCHES[1].description).toMatch(/once invoice email wiring ships/);
+    expect(CONTACT_SWITCHES[1].description).toMatch(/Invoice emails to this family also go to this email/);
+    expect(CONTACT_SWITCHES[1].description).toMatch(/payment link stays with the primary parent/);
+    expect(CONTACT_SWITCHES[1].description).not.toMatch(/once invoice email wiring ships/);
   });
 
   it("reports field errors like the backend", () => {

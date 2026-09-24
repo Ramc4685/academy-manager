@@ -11,8 +11,9 @@ the request's tenant; no body carries one (extra fields are refused).
 its canonical id.
 
 A contact's ``gets_notices`` adds their email to the family's notice audience
-(``MongoAudienceResolver``); ``gets_invoices`` is stored and shown but does
-not change who receives invoice emails yet. Both default to off.
+(``MongoAudienceResolver``); ``gets_invoices`` sends them a copy of each
+invoice email (``composition/invoice_contact_copies.py``), never the pay
+link. Both default to off.
 
 This router is included by ``family_crm_routes.router``. Services are
 composed on first use and kept on ``app.state.admin_family_contacts``
