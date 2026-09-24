@@ -2079,10 +2079,17 @@ export function getAdminLastPaymentByFamily(): Promise<AdminFamilyLastPaymentsRe
   });
 }
 
-export function refundPayment(payload: RefundRequest): Promise<RefundResponse> {
+// #930: refunds are deduped per REQUEST, not per amount + reason. Callers mint
+// one key per refund attempt (mintPaymentIdempotencyKey) and reuse it on retry;
+// a new key is a new refund. The per-call fallback only covers direct callers.
+export function refundPayment(
+  payload: RefundRequest,
+  options?: { idempotencyKey?: string },
+): Promise<RefundResponse> {
   return apiFetch<RefundResponse>("/admin/payments/refund", {
     method: "POST",
     body: JSON.stringify(payload),
+    headers: { "Idempotency-Key": options?.idempotencyKey ?? mintPaymentIdempotencyKey() },
   });
 }
 
@@ -2706,12 +2713,14 @@ export function recordAdminInvoicePayment(
 export function refundAdminInvoice(
   invoiceId: string,
   payload: InvoiceRefundRequest,
+  options?: { idempotencyKey?: string },
 ): Promise<InvoiceRefundResponse> {
   return apiFetch<InvoiceRefundResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/refund`,
     {
       method: "POST",
       body: JSON.stringify(payload),
+      headers: { "Idempotency-Key": options?.idempotencyKey ?? mintPaymentIdempotencyKey() },
     },
   );
 }

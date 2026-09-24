@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useIsOwner } from "@/components/admin/owner-context";
@@ -15,6 +15,7 @@ import {
   fetchInvoiceAudit,
   getInvoiceSchedule,
   inviteBillingSetupParent,
+  mintPaymentIdempotencyKey,
   refundAdminInvoice,
   sendAdminInvoice,
   voidAdminInvoice,
@@ -39,6 +40,7 @@ import {
   invoiceDueDays,
   mintRequestId,
   periodLabel,
+  refundableCents,
   tuitionLineDescription,
   type EnrollmentOption,
 } from "./family-view";
@@ -93,6 +95,11 @@ export function BillingTab({ parentId }: { parentId: string }) {
   const queryClient = useQueryClient();
   const isOwner = useIsOwner();
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  // #930: one Idempotency-Key per refund attempt. A retry of the SAME refund
+  // (same invoice, amount, reason) after a failure reuses it and replays; a
+  // success or a different refund gets a fresh key, so a second real refund of
+  // the same amount is issued instead of being deduped away.
+  const refundAttemptRef = useRef<{ signature: string; key: string } | null>(null);
   // `false` = closed; `null` = open with no preselected invoice; string = preselected.
   const [recordFor, setRecordFor] = useState<string | null | false>(false);
   const [recordKey, setRecordKey] = useState(0);
@@ -141,7 +148,18 @@ export function BillingTab({ parentId }: { parentId: string }) {
         break;
       case "refund":
         if (!invoiceId) return;
-        await refundAdminInvoice(invoiceId, { amount_cents: r.amount_cents, reason: r.reason });
+        {
+          const signature = JSON.stringify([invoiceId, r.amount_cents ?? null, r.reason]);
+          if (refundAttemptRef.current?.signature !== signature) {
+            refundAttemptRef.current = { signature, key: mintPaymentIdempotencyKey() };
+          }
+          await refundAdminInvoice(
+            invoiceId,
+            { amount_cents: r.amount_cents, reason: r.reason },
+            { idempotencyKey: refundAttemptRef.current.key },
+          );
+          refundAttemptRef.current = null;
+        }
         break;
       case "discount_once":
         if (!invoiceId) return;
@@ -229,9 +247,7 @@ export function BillingTab({ parentId }: { parentId: string }) {
     : `${view.parent.name ?? "This family"} · ${view.header.autopay.active_count} enrollments on autopay`;
   const maxAmount =
     target && dialog?.kind === "refund"
-      ? target.allocations
-          .filter((a) => a.stripe_payment_intent_id)
-          .reduce((s, a) => s + a.amount_cents, 0)
+      ? refundableCents(target)
       : target && dialog?.kind === "discount_once"
         ? target.balance_due_cents
         : null;

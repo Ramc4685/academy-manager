@@ -31,8 +31,11 @@ from backend.v2.contexts.billing.application.family_money import (
 
 TIMELINE_CAP = 200
 
+#: Billing-tab actions hidden from non-owners: every money-moving action
+#: (staff tiers, roadmap 2026-09-22 section 6 item 2). ``charge_card`` joined
+#: in #928; ``record_payment`` stays open to billing staff.
 OWNER_ONLY_ACTIONS: frozenset[str] = frozenset(
-    {"void", "refund", "discount_once", "recurring_discount"}
+    {"void", "refund", "discount_once", "recurring_discount", "charge_card"}
 )
 
 # Charge-outcome attempt statuses that mean "the charge did not take money".
@@ -114,6 +117,9 @@ class AllocationFacts:
     method: str | None
     paid_at: datetime | None
     stripe_payment_intent_id: str | None
+    #: The WHOLE payment's cumulative refund (#929), not this allocation's share:
+    #: one payment can settle many invoices and Stripe refunds the payment.
+    payment_refunded_cents: int = 0
 
 
 @dataclass(frozen=True)
@@ -147,6 +153,10 @@ class InvoiceFacts:
     #: "invoice_email" | "autopay_notice". None for sends that pre-date the
     #: field, which fall back to ``autopay_status`` — the drifting guess.
     delivery_kind: str | None = None
+    #: Cumulative refunds against this invoice (#929). Written by the admin
+    #: refund route and by the Stripe ``charge.refunded`` webhook, so a refund
+    #: made in the Stripe dashboard (no audit row) is counted here too.
+    refunded_cents: int = 0
 
 
 @dataclass(frozen=True)
@@ -315,6 +325,23 @@ def _stripe_paid_cents(inv: InvoiceFacts) -> int:
     return sum(a.amount_cents for a in inv.allocations if a.stripe_payment_intent_id)
 
 
+def _refundable_cents(inv: InvoiceFacts) -> int:
+    """Card money on this invoice not yet given back (#929)."""
+    return max(_stripe_paid_cents(inv) - inv.refunded_cents, 0)
+
+
+def _paid_cents(inv: InvoiceFacts) -> int:
+    # Invoices settled before payment_allocations existed carry no rows; report
+    # total - balance (spec §3.2, flagged ``settlement_unlinked`` on the row).
+    if inv.status == "paid" and not inv.allocations:
+        return inv.total_cents - inv.balance_due_cents
+    return sum(a.amount_cents for a in inv.allocations)
+
+
+def _net_paid_cents(inv: InvoiceFacts) -> int:
+    return max(_paid_cents(inv) - inv.refunded_cents, 0)
+
+
 # --------------------------------------------------------------------------- rules
 
 
@@ -347,7 +374,7 @@ def invoice_actions(inv: InvoiceFacts, *, eligibility: Eligibility) -> list[str]
                 actions.append("charge_card")
         if not inv.allocations:
             actions.append("void")
-    if inv.status in {"paid", "partially_paid"} and _stripe_paid_cents(inv) > 0:
+    if inv.status in {"paid", "partially_paid"} and _refundable_cents(inv) > 0:
         actions.append("refund")
     if inv.status == "open" and inv.balance_due_cents > 0:
         actions.append("discount_once")
@@ -428,6 +455,7 @@ def _entry(
     reason: str | None = None,
     amount_cents: int | None = None,
     invoice_ids: list[str] | None = None,
+    refunded_cents: int | None = None,
 ) -> dict[str, Any]:
     return {
         "at": _as_utc(at),
@@ -441,6 +469,8 @@ def _entry(
         "actor_id": actor_id,
         "reason": reason,
         "amount_cents": amount_cents,
+        # #929: on a payment entry, how much of that payment went back.
+        "refunded_cents": refunded_cents,
         "muted": kind == "comms",
     }
 
@@ -561,19 +591,23 @@ def _payment_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
                 slot["invoice_ids"].append(inv.invoice_id)
             if slot["paid_at"] is None:
                 slot["paid_at"] = alloc.paid_at
+    refunds = _payment_refunds(facts)
     entries: list[dict[str, Any]] = []
     for payment_id, slot in payments.items():
         if slot["paid_at"] is None:
             continue
         method = _method_label(slot["method"], facts.customer.card_last4)
+        refunded = refunds.get(payment_id, 0)
+        tail = f" · {_money(refunded)} refunded" if refunded > 0 else ""
         entries.append(
             _entry(
                 at=slot["paid_at"],
                 kind="money",
                 code="payment_received",
-                summary=f"{_money(slot['amount_cents'])} received · {method}",
+                summary=f"{_money(slot['amount_cents'])} received · {method}{tail}",
                 invoice_ids=sorted(slot["invoice_ids"]),
                 amount_cents=slot["amount_cents"],
+                refunded_cents=refunded,
                 reason=payment_id,
             )
         )
@@ -635,20 +669,67 @@ def _dunning_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
     return entries
 
 
+def _refund_amount(a: AuditFacts) -> int | None:
+    """What THIS refund gave back (#929).
+
+    The audit row stores the invoice's cumulative ``refunded_cents`` before and
+    after, so the event's own amount is the difference on the same row, never
+    ``after`` alone (a second partial refund would show the running total).
+    """
+    if a.action != "refund_issued":
+        return None
+    after = (a.after or {}).get("refunded_cents")
+    if after is None:
+        return None
+    try:
+        delta = int(after) - int((a.before or {}).get("refunded_cents") or 0)
+    except (TypeError, ValueError):
+        return None
+    return delta if delta > 0 else None
+
+
+def _payment_refunds(facts: FamilyFacts) -> dict[str, int]:
+    """Each payment's cumulative refund: the best lower bound we hold (#929).
+
+    Three records each undercount in a known way, so the largest wins and none
+    are added: the payment stores (a Stripe-dashboard refund lands there, but
+    the admin route's payment write can miss the store this view reads when a
+    legacy ``payments`` row shadows the ledger row), and the sum of this
+    payment's ``refund_issued`` audit deltas (exact for refunds issued here,
+    blind to the Stripe dashboard).
+    """
+    out: dict[str, int] = {}
+    for inv in facts.invoices:
+        for alloc in inv.allocations:
+            out[alloc.payment_id] = max(out.get(alloc.payment_id, 0), alloc.payment_refunded_cents)
+    audited: dict[str, int] = {}
+    for a in facts.audit:
+        amount = _refund_amount(a)
+        if amount is not None and a.payment_id:
+            audited[a.payment_id] = audited.get(a.payment_id, 0) + amount
+    for pid, total in audited.items():
+        if pid in out:
+            out[pid] = max(out[pid], total)
+    return out
+
+
 def _audit_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for a in facts.audit:
         base = _AUDIT_SUMMARIES.get(a.action, a.action.replace("_", " ").capitalize())
+        amount = _refund_amount(a)
+        how_much = f" · {_money(amount)}" if amount is not None else ""
         why = f" · {a.reason}" if a.reason else ""
         entries.append(
             _entry(
                 at=a.at,
                 kind="admin",
                 code=f"audit:{a.action}",
-                summary=f"{base}{why}",
+                summary=f"{base}{how_much}{why}",
                 invoice_id=a.invoice_id,
                 actor_id=a.actor_id,
                 reason=a.reason,
+                amount_cents=amount,
             )
         )
     return entries
@@ -751,11 +832,7 @@ def _enrollment_payload(e: EnrollmentFacts) -> dict[str, Any]:
 
 
 def _invoice_payload(inv: InvoiceFacts, *, eligibility: Eligibility) -> dict[str, Any]:
-    allocated = sum(a.amount_cents for a in inv.allocations)
-    # Invoices settled before payment_allocations existed carry no rows; report
-    # total - balance and flag the row (spec §3.2).
     unlinked = inv.status == "paid" and not inv.allocations
-    paid_cents = inv.total_cents - inv.balance_due_cents if unlinked else allocated
     notice = _sent_as_notice(inv)
     return {
         "invoice_id": inv.invoice_id,
@@ -766,7 +843,10 @@ def _invoice_payload(inv: InvoiceFacts, *, eligibility: Eligibility) -> dict[str
         "enrollment_id": inv.enrollment_id,
         "status": inv.status,
         "total_cents": inv.total_cents,
-        "paid_cents": paid_cents,
+        "paid_cents": _paid_cents(inv),
+        # #929: a refund never reopens the balance; it lowers what was kept.
+        "refunded_cents": inv.refunded_cents,
+        "net_paid_cents": _net_paid_cents(inv),
         "balance_due_cents": inv.balance_due_cents,
         "due_date": _iso(inv.due_date),
         "created_at": _iso(inv.created_at),
@@ -811,8 +891,12 @@ def _last_payment(facts: FamilyFacts) -> dict[str, Any] | None:
     paid_at, pid = newest
     settled = [inv for inv in facts.invoices if any(a.payment_id == pid for a in inv.allocations)]
     allocs = [a for inv in settled for a in inv.allocations if a.payment_id == pid]
+    amount = sum(a.amount_cents for a in allocs)
+    refunded = _payment_refunds(facts).get(pid, 0)
     return {
-        "amount_cents": sum(a.amount_cents for a in allocs),
+        "amount_cents": amount,
+        "refunded_cents": refunded,
+        "net_cents": max(amount - refunded, 0),
         "method": allocs[0].method if allocs else None,
         "paid_at": _iso(paid_at),
         "invoice_ids": [inv.invoice_id for inv in settled],
@@ -883,6 +967,11 @@ def build_family_billing_view(
         "header": {
             "balance_cents": balance_cents,
             "open_invoice_count": open_invoice_count,
+            # #929 family totals over the invoices on this page (every open one
+            # plus settled history up to the read model's cap).
+            "paid_cents": sum(_paid_cents(inv) for inv in facts.invoices),
+            "refunded_cents": sum(inv.refunded_cents for inv in facts.invoices),
+            "net_paid_cents": sum(_net_paid_cents(inv) for inv in facts.invoices),
             "available_credit_cents": facts.available_credit_cents,
             "last_payment": _last_payment(facts),
             "autopay": {

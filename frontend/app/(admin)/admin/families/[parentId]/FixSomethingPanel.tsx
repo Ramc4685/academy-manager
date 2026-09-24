@@ -5,12 +5,22 @@ import type { FamilyInvoice, InvoiceAction } from "@/lib/api/admin-families";
 
 type FixKind = Extract<InvoiceAction, "void" | "refund" | "discount_once" | "charge_card">;
 
-const ITEMS: { kind: FixKind; label: string; ownerOnly: boolean }[] = [
+type FixItem = { kind: FixKind; label: string; ownerOnly: boolean };
+
+// Every fix here moves money, so all are owner-only (staff tiers, roadmap
+// 2026-09-22 section 6 item 2). Card charges joined in #928; the backend also
+// 404s a non-owner on both charge routes and strips `charge_card` from their
+// invoice actions, so this is presentation, not the gate.
+const ITEMS: FixItem[] = [
   { kind: "void", label: "Void invoice", ownerOnly: true },
   { kind: "refund", label: "Refund", ownerOnly: true },
   { kind: "discount_once", label: "One-time discount", ownerOnly: true },
-  { kind: "charge_card", label: "Charge card now", ownerOnly: false },
+  { kind: "charge_card", label: "Charge card now", ownerOnly: true },
 ];
+
+export function fixItemsFor(isOwner: boolean): FixItem[] {
+  return ITEMS.filter((it) => isOwner || !it.ownerOnly);
+}
 
 export function FixSomethingPanel({
   invoices,
@@ -21,6 +31,9 @@ export function FixSomethingPanel({
   isOwner: boolean;
   onPick: (kind: FixKind, invoiceId: string) => void;
 }) {
+  const items = fixItemsFor(isOwner);
+  // A plain admin has nothing to fix here (#928), so the panel is not shown.
+  if (items.length === 0) return null;
   return (
     <Card p={20} data-testid="family-fix">
       <Overline>Fix something</Overline>
@@ -28,7 +41,7 @@ export function FixSomethingPanel({
         Every action asks for a reason and lands in the timeline.
       </p>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {ITEMS.filter((it) => isOwner || !it.ownerOnly).map((it) => {
+        {items.map((it) => {
           const targets = invoices.filter((inv) => inv.actions.includes(it.kind));
           return (
             <div key={it.kind} className="rounded-lg border border-rally-line p-2">

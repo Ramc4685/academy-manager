@@ -514,11 +514,19 @@ class RealStripeGateway(StripeGateway):
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe Charge list failed: {exc}") from exc
 
-    async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
+    async def issue_refund(
+        self,
+        payment_intent_id: str,
+        amount_cents: int | None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> str:
         def _create() -> Any:
             kwargs: dict[str, Any] = {"payment_intent": payment_intent_id}
             if amount_cents is not None:
                 kwargs["amount"] = amount_cents
+            if idempotency_key:
+                kwargs["idempotency_key"] = idempotency_key
             return self._stripe.Refund.create(**kwargs)
 
         result = await asyncio.to_thread(_create)

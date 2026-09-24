@@ -716,12 +716,24 @@ export function InvoiceDialog({
     },
     onError: (err: Error) => setInvoiceActionError(err.message ?? "Adjustment failed."),
   });
+  // #930: one key per refund attempt, held across retries; a changed amount or
+  // reason (or a success, which clears them) is a new refund with a new key.
+  const invoiceRefundKeyRef = useRef(mintPaymentIdempotencyKey());
+  useEffect(() => {
+    invoiceRefundKeyRef.current = mintPaymentIdempotencyKey();
+  }, [invoiceId, refundAmountInput, refundReason]);
   const invoiceRefundMutation = useMutation({
     mutationFn: () =>
-      refundAdminInvoice(invoiceId, {
-        amount_cents: refundAmountInput ? Math.round(Number(refundAmountInput) * 100) : undefined,
-        reason: refundReason,
-      }),
+      refundAdminInvoice(
+        invoiceId,
+        {
+          amount_cents: refundAmountInput
+            ? Math.round(Number(refundAmountInput) * 100)
+            : undefined,
+          reason: refundReason,
+        },
+        { idempotencyKey: invoiceRefundKeyRef.current },
+      ),
     onSuccess: () => {
       setRefundAmountInput("");
       setRefundReason("");
@@ -1173,9 +1185,17 @@ export function RefundDialog({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ refunded_cents: number } | null>(null);
+  // #930: one key per refund attempt, held across retries; a changed amount or
+  // reason, another payment, or a success is a new refund with a new key.
+  const refundKeyRef = useRef(mintPaymentIdempotencyKey());
+  useEffect(() => {
+    refundKeyRef.current = mintPaymentIdempotencyKey();
+  }, [payment, amountInput, reason]);
   const mutation = useMutation({
-    mutationFn: (payload: RefundRequest) => refundPayment(payload),
+    mutationFn: (payload: RefundRequest) =>
+      refundPayment(payload, { idempotencyKey: refundKeyRef.current }),
     onSuccess: (res) => {
+      refundKeyRef.current = mintPaymentIdempotencyKey();
       setResult({ refunded_cents: res.refunded_cents });
       setError(null);
     },

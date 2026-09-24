@@ -1,7 +1,10 @@
 """Issue a refund — admin path.
 
-Idempotent on payment_id + amount via the @idempotent decorator (so the
-admin double-clicking the refund button doesn't double-refund).
+Idempotent per refund REQUEST, not per refund shape (#930): the caller's
+``idempotency_key`` identifies one attempt, scoped to the academy that owns the
+payment. A retry of the same key replays; a new key is a new refund (or a loud
+``RefundExceedsAmount``); a keyless identical repeat is a 409 to confirm. See
+``billing/application/refund_idempotency.py`` for the full policy.
 """
 
 from __future__ import annotations
@@ -14,6 +17,11 @@ from backend.v2.contexts.billing.application.ports import (
     PaymentRepository,
     StripeGateway,
 )
+from backend.v2.contexts.billing.application.refund_idempotency import (
+    refund_keys,
+    remember,
+    replay_or_reject,
+)
 from backend.v2.contexts.billing.domain.errors import (
     PaymentNotFound,
     RefundExceedsAmount,
@@ -24,7 +32,7 @@ from backend.v2.contexts.billing.domain.events import (
     PaymentRefundedPayload,
 )
 from backend.v2.shared.events import Outbox
-from backend.v2.shared.idempotency import IdempotencyStore, idempotent
+from backend.v2.shared.idempotency import IdempotencyStore
 
 
 class IssueRefundCommand(BaseModel):
@@ -33,6 +41,11 @@ class IssueRefundCommand(BaseModel):
     payment_id: str
     amount_cents: int | None = Field(default=None, ge=0)
     reason: str = "admin_initiated"
+    #: One refund attempt. Admin routes forward the client's ``Idempotency-Key``;
+    #: internal callers pass a deterministic key for the one refund they own
+    #: (e.g. the capacity auto-refund of a payment). None = keyless: an
+    #: identical repeat inside the TTL is rejected, never replayed.
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class IssueRefundResult(BaseModel):
@@ -60,14 +73,23 @@ class IssueRefund:
         self._idempotency_store = idempotency_store
         self._now = clock
 
-    @idempotent(
-        key_from=lambda self, cmd: f"refund:{cmd.payment_id}:{cmd.amount_cents}:{cmd.reason}",
-        result_type=IssueRefundResult,
-    )
     async def execute(self, cmd: IssueRefundCommand) -> IssueRefundResult:
+        # Tenant-scoped read FIRST: another academy's payment id is a plain
+        # "not found" and never reaches (or learns about) a cached result.
         payment = await self._payments.get(cmd.payment_id)
         if payment is None:
             raise PaymentNotFound("no such payment", payment_id=cmd.payment_id)
+        keys = refund_keys(
+            kind="payment_refund",
+            academy_id=payment.academy_id,
+            target_id=payment.payment_id,
+            amount_cents=cmd.amount_cents,
+            reason=cmd.reason,
+            idempotency_key=cmd.idempotency_key,
+        )
+        cached = await replay_or_reject(self._idempotency_store, keys)
+        if cached is not None:
+            return IssueRefundResult.model_validate(cached)
         if not payment.stripe_payment_intent_id:
             raise RefundFailed("payment has no Stripe payment intent")
 
@@ -85,7 +107,9 @@ class IssueRefund:
             )
         try:
             refund_id = await self._stripe.issue_refund(
-                payment.stripe_payment_intent_id, amount_cents=amount
+                payment.stripe_payment_intent_id,
+                amount_cents=amount,
+                idempotency_key=keys.stripe_key,
             )
         except Exception as exc:
             raise RefundFailed(str(exc)) from exc
@@ -112,12 +136,14 @@ class IssueRefund:
                 ),
             )
         )
-        return IssueRefundResult(
+        result = IssueRefundResult(
             payment_id=updated.payment_id,
             stripe_refund_id=refund_id,
             refunded_cents=amount,
             total_refunded_cents=new_total,
         )
+        stored = await remember(self._idempotency_store, keys, result.model_dump(mode="json"))
+        return IssueRefundResult.model_validate(stored)
 
 
 def _normalize_reason(reason: str) -> str:

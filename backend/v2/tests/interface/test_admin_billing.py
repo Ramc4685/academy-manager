@@ -658,6 +658,62 @@ def test_issue_refund_exceeds_amount_returns_400(admin_client):
     assert r.json()["error"]["code"] == "Billing.RefundExceedsAmount"
 
 
+def test_issue_refund_same_idempotency_key_replays_one_refund(admin_client):
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    body = {"payment_id": "pay-1", "amount_cents": 5000, "reason": "admin_initiated"}
+    first = admin_client.post(
+        "/api/v2/admin/payments/refund", json=body, headers={"Idempotency-Key": "k-1"}
+    )
+    second = admin_client.post(
+        "/api/v2/admin/payments/refund", json=body, headers={"Idempotency-Key": "k-1"}
+    )
+    assert first.status_code == second.status_code == 200, (first.text, second.text)
+    assert second.json() == first.json()
+    assert len(admin_client.seed["stripe"].refunds) == 1
+
+
+def test_issue_refund_new_idempotency_key_is_a_second_refund(admin_client):
+    """#930: same amount and reason, new key -> a real second refund."""
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    body = {"payment_id": "pay-1", "amount_cents": 5000, "reason": "admin_initiated"}
+    for key in ("k-1", "k-2"):
+        r = admin_client.post(
+            "/api/v2/admin/payments/refund", json=body, headers={"Idempotency-Key": key}
+        )
+        assert r.status_code == 200, r.text
+    assert r.json()["total_refunded_cents"] == 10000
+    assert len(admin_client.seed["stripe"].refunds) == 2
+
+
+def test_issue_refund_keyless_identical_repeat_is_409(admin_client):
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    body = {"payment_id": "pay-1", "amount_cents": 5000, "reason": "admin_initiated"}
+    assert admin_client.post("/api/v2/admin/payments/refund", json=body).status_code == 200
+    r = admin_client.post("/api/v2/admin/payments/refund", json=body)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "Billing.RefundPossibleDuplicate"
+    assert len(admin_client.seed["stripe"].refunds) == 1
+
+
+def test_issue_refund_key_reused_for_other_amount_is_422(admin_client):
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    headers = {"Idempotency-Key": "k-1"}
+    ok = admin_client.post(
+        "/api/v2/admin/payments/refund",
+        json={"payment_id": "pay-1", "amount_cents": 5000},
+        headers=headers,
+    )
+    assert ok.status_code == 200, ok.text
+    r = admin_client.post(
+        "/api/v2/admin/payments/refund",
+        json={"payment_id": "pay-1", "amount_cents": 4000},
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "Billing.RefundIdempotencyKeyReused"
+    assert len(admin_client.seed["stripe"].refunds) == 1
+
+
 def test_issue_refund_wrong_persona_404(parent_on_admin_client):
     r = parent_on_admin_client.post(
         "/api/v2/admin/payments/refund",
@@ -1315,6 +1371,8 @@ def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
         assert kwargs["amount_cents"] == 3_000
         assert kwargs["reason"] == "duplicate"
         assert kwargs["actor_id"]
+        # #930: the client's per-attempt key reaches the refund policy.
+        assert kwargs["idempotency_key"] == "k-inv-1"
         return {
             "invoice_id": "inv-1",
             "payment_id": "lp-1",
@@ -1328,6 +1386,7 @@ def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
     response = admin_client.post(
         "/api/v2/admin/billing/invoices/inv-1/refund",
         json={"amount_cents": 3_000, "reason": "duplicate"},
+        headers={"Idempotency-Key": "k-inv-1"},
     )
 
     assert response.status_code == 200, response.text
