@@ -70,6 +70,18 @@ export function paymentDisplayLabel(payment: AdminPaymentView): string {
   return payment.stripe_linked ? "Stripe payment" : "Manual payment";
 }
 
+/**
+ * UI-5: the title a row carries in the invoices list. The list already shows
+ * the period in its own column (desktop) or on its own line (phone), so the
+ * row title does not repeat it: a month of tuition used to print "Tuition for
+ * September 2026" on every row and wrap to three lines. Dialogs and action
+ * menus keep `paymentDisplayLabel`, where the month is the only context.
+ */
+export function paymentRowTitle(payment: AdminPaymentView): string {
+  if (payment.period) return "Monthly tuition";
+  return paymentDisplayLabel(payment);
+}
+
 export function paidCents(payment: AdminPaymentView): number | null {
   if (payment.paid_amount_cents > 0) return Math.max(payment.paid_amount_cents - payment.refunded_cents, 0);
   if (!["succeeded", "paid", "partially_refunded", "refunded"].includes(payment.status)) return null;
@@ -130,15 +142,49 @@ export function stripeIdSummary(payment: AdminPaymentView): string | null {
   return ids.join(" · ");
 }
 
+/**
+ * UI-5: the row annotation used to print the backend code with underscores
+ * swapped for spaces ("stripe synced", "orphan charge", "missing allocation")
+ * and "Stripe linked, app ledger pending" — developer strings an admin cannot
+ * act on. Each code now reads as a sentence that says what happened and, when
+ * something needs a person, where to go. `stripe_synced` is the healthy state
+ * and gets no annotation at all: it was the same amber note on every paid
+ * Stripe row. Unknown codes (a card decline code, a new backend value) still
+ * read as a sentence rather than a raw key.
+ */
+const RECONCILIATION_LABELS: Readonly<Record<string, string | null>> = {
+  stripe_synced: null,
+  stripe_linked_pending: "Waiting for Stripe to confirm this payment",
+  payment_failed: "The last payment attempt failed",
+  missing_allocation: "Payment received but not matched to this invoice. Check Billing Health.",
+  orphan_charge: "Stripe took a payment that is not matched to an invoice. Check Billing Health.",
+  card_declined: "The last payment attempt failed: card declined",
+  insufficient_funds: "The last payment attempt failed: not enough funds",
+  expired_card: "The last payment attempt failed: card expired",
+  incorrect_cvc: "The last payment attempt failed: wrong security code",
+  processing_error: "The last payment attempt failed: the card processor had an error",
+  authentication_required: "The last payment attempt failed: the bank asked the family to confirm",
+  unknown: "The last payment attempt failed",
+};
+
+export function reconciliationStatusLabel(code: string): string | null {
+  if (Object.prototype.hasOwnProperty.call(RECONCILIATION_LABELS, code)) {
+    return RECONCILIATION_LABELS[code] ?? null;
+  }
+  const words = code.replaceAll("_", " ").trim();
+  if (!words) return null;
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function reconciliationLabel(payment: AdminPaymentView): string | null {
   if (payment.reconciliation_status) {
-    return payment.reconciliation_status.replaceAll("_", " ");
+    return reconciliationStatusLabel(payment.reconciliation_status);
   }
   if (
     (payment.status === "pending" || payment.status === "partially_paid") &&
     payment.stripe_linked
   ) {
-    return "Stripe linked, app ledger pending";
+    return RECONCILIATION_LABELS.stripe_linked_pending ?? null;
   }
   return null;
 }

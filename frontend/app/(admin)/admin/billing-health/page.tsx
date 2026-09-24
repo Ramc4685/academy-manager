@@ -143,7 +143,8 @@ export default function BillingHealthPage() {
   if (readinessQuery.isError) {
     return (
       <div className="space-y-4 p-4 sm:p-6" data-testid="billing-health-page">
-        <h1 className="font-display text-2xl font-semibold tracking-[-0.01em]">Billing Health</h1>
+        {/* UI-5: the admin topbar already prints "Billing Health" as the
+            page's h1; a second one here read as the title printed twice. */}
         <Card p={20}>
           <div data-testid="billing-health-fatal" className="space-y-3">
             <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
@@ -177,8 +178,9 @@ export default function BillingHealthPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold tracking-[-0.01em]">Billing Health</h1>
-          <p className="mt-1 text-sm text-rally-muted">
+          {/* UI-5: no page h1 — the admin topbar owns the "Billing Health"
+              title, and repeating it made the page say its name twice. */}
+          <p className="text-sm text-rally-muted">
             Last reconciliation run: {relativeFromNow(latestRun?.finished_at ?? null)}
           </p>
         </div>

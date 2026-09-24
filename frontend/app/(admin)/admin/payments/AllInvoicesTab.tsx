@@ -42,6 +42,7 @@ import {
   methodChip,
   paidCents,
   paymentDisplayLabel,
+  paymentRowTitle,
   PAGE_SIZE,
   reconciliationLabel,
   sessionFilterKey,
@@ -463,7 +464,7 @@ export function AllInvoicesTab() {
                         {method && <Chip variant={method.variant} label={method.label} />}
                       </div>
                       <div className="break-words">
-                        {label} · {p.parent_name || "Parent on file"}
+                        {paymentRowTitle(p)} · {p.parent_name || "Parent on file"}
                       </div>
                       <div>
                         {formatPeriodLabel(p.period) || "No period"} · paid{" "}
@@ -540,7 +541,7 @@ export function AllInvoicesTab() {
                     >
                       <td className="px-4 py-3">
                         <div className="font-medium text-rally-ink">
-                          {paymentDisplayLabel(p)}
+                          {paymentRowTitle(p)}
                         </div>
                         <div className="mt-0.5 text-xs text-rally-subtle">
                           Created {new Date(p.created_at).toLocaleDateString()}
