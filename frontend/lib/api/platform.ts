@@ -6,7 +6,7 @@
  * missing route by design — surface it as "unavailable", not "forbidden".
  */
 
-import { apiFetch } from "./client";
+import { apiFetch, apiFetchBlob } from "./client";
 
 export type TenantStatus = "provisioning" | "active" | "suspended" | "cancelled";
 
@@ -194,5 +194,39 @@ export function setPlatformApplicationFee(
   return apiFetch<ApplicationFee>(
     `/platform/academies/${encodeURIComponent(academyId)}/application-fee`,
     { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+/** Tenant data export (roadmap L9d): a zip of every tenant-scoped collection. */
+export function exportPlatformTenantData(academyId: string, reason: string): Promise<Blob> {
+  return apiFetchBlob(`/platform/tenants/${encodeURIComponent(academyId)}/data-export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface PurgeCollectionCount {
+  collection: string;
+  count: number;
+}
+
+/** What a purge of a cancelled tenant would delete. Nothing is deleted. */
+export interface PurgeDryRun {
+  academy_id: string;
+  tenant_status: string;
+  cancelled_at: string | null;
+  generated_at: string;
+  would_delete: PurgeCollectionCount[];
+  would_retain: PurgeCollectionCount[];
+  total_to_delete: number;
+  confirm_token: string;
+  executed: boolean;
+}
+
+export function previewPlatformTenantPurge(academyId: string): Promise<PurgeDryRun> {
+  return apiFetch<PurgeDryRun>(
+    `/platform/tenants/${encodeURIComponent(academyId)}/purge-dry-run`,
+    { method: "POST" },
   );
 }

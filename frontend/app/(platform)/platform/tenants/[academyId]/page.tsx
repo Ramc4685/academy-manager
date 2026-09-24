@@ -32,6 +32,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { TenantStatusChip } from "../status-chip";
 
 import { AgreementCard } from "./agreement-card";
+import { DataOffboardingCard } from "./data-offboarding-card";
 import { ApplicationFeeCard } from "./application-fee-card";
 
 /** Which lifecycle transitions the API accepts from each status. */
@@ -173,6 +174,8 @@ export default function PlatformTenantDetailPage() {
           <AgreementCard tenant={tenant} canEdit={auth.isAdmin} onDone={refresh} />
 
           <ApplicationFeeCard academyId={academyId} canEdit={auth.isAdmin} />
+
+          {auth.isAdmin && <DataOffboardingCard tenant={tenant} />}
 
           <Card p={20}>
             <Overline>Lifecycle</Overline>
