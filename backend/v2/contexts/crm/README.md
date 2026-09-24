@@ -244,10 +244,12 @@ response, to email the academy's owners once per new row.
 
 ## The family index (People CRM Phase 2, backend)
 
-Read-only. Backs `GET /api/v2/admin/families` and
-`GET /api/v2/admin/families/summary` (both `require_persona("admin")`;
-`tests/structural/test_crm_admin_persona_gate.py` pins every `/families`
-route to it). Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
+Read-only. Backs `GET /api/v2/admin/families`,
+`GET /api/v2/admin/families/summary` and
+`GET /api/v2/admin/families/{family_id}/record`, all
+`require_staff_tier("front_desk")`: owner, admin, billing or front desk (L2b,
+#553). `tests/structural/test_crm_admin_persona_gate.py` pins these three to
+that tier and every other CRM route to `require_persona("admin")`. Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
 §6 and §7 Phase 2.
 
 | File | What it is |
@@ -255,7 +257,7 @@ route to it). Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
 | `domain/family_stage.py` | `roll_up_family_stage` and the precedence `pending_cancel > active > at_risk > on_hold > paused > trial > never_enrolled > left`; the Active / Leaving / Left scope tiles |
 | `domain/family_index.py` | `FamilyRecord`, `FamilyChild`, `FamilyMoney`, `FamilyIndex`, and `search_family` (child and parent name word-prefix on `full_name_key`, email, legacy roster fields, phone by the last 7 to 10 digits) |
 | `application/family_index.py` | `query_family_index` (scope, stage, class, card, overdue filters; sort before pagination) and `summarize_family_index` |
-| `application/money_visibility.py` | `can_view_family_money(claims)`: the one money seam (#553); owner, admin and billing see amounts, front desk does not (`is_front_desk_only`), decided in `shared/auth/staff_tiers.py` |
+| `application/money_visibility.py` | `can_view_family_money(claims)` and `family_money_view(claims)` (`amounts` / `flag` / `none`): the one money seam (#553); owner, admin and billing see amounts, front desk gets the "owes money" flag (`is_front_desk_only`), decided in `shared/auth/staff_tiers.py` |
 | `application/ports.py` | `ParentAliasResolver`, `ChildLifecycleReader`, `FamilyMoneyReader` |
 | `infrastructure/family_index_read_model.py` | `MongoFamilyIndexReadModel`: the whole academy's index in a fixed number of reads, cached 60 s per academy |
 
@@ -282,9 +284,13 @@ Rules the index keeps:
 - **Money is the Billing tab's money.** `balance_cents` and
   `open_invoice_count` come from `billing/application/family_money.open_balance`,
   which `build_family_billing_view` also calls. Money is computed once and
-  gated at serialization: when `can_view_family_money` is false every
-  `money` block is `null`, `sort=balance` falls back to name and the Overdue
-  filter matches nothing.
+  gated at serialization by `family_money_view(claims)`: `amounts` (owner,
+  admin, billing) sends the `money` block and `owes_money`; `flag` (front
+  desk) sends `money: null` and only `owes_money` (balance above zero);
+  `none` sends neither. Whenever amounts are hidden, `sort=balance` falls
+  back to name and the Overdue filter matches nothing. `owes_money: null`
+  means money could not be read, never "does not owe". Responses carry
+  `money_view` beside the older `money_visible`.
 - **A failed secondary source is a warning, never a zero.** Money and class
   titles failing give `money_unavailable` / `classes_unavailable` in
   `warnings`; students, memberships, parents and lifecycles failing is a 503.

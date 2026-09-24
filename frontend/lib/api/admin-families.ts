@@ -262,8 +262,21 @@ export interface FamilyIndexRow {
   registration: RegistrationState | null;
   /** Null when money is hidden from this caller or could not be read. */
   money: FamilyIndexMoney | null;
+  /**
+   * The "owes money" flag (balance above zero) for callers who see amounts
+   * or the flag (front desk). Null when hidden or unreadable: unknown, never
+   * "does not owe". Optional: responses before L2b omit it.
+   */
+  owes_money?: boolean | null;
   matched_parent: boolean;
 }
+
+/**
+ * How the server let this caller see family money (L2b, #553): `amounts`
+ * (owner, admin, billing), `flag` (front desk: owes money yes/no, no amount)
+ * or `none`. The server redacts; the client only renders what came back.
+ */
+export type FamilyMoneyView = "amounts" | "flag" | "none";
 
 export interface FamilyIndexPage {
   generated_at: string;
@@ -272,6 +285,8 @@ export interface FamilyIndexPage {
   page: number;
   page_size: number;
   money_visible: boolean;
+  /** Optional: responses before L2b omit it (read `money_visible`). */
+  money_view?: FamilyMoneyView;
   warnings: string[];
 }
 
@@ -344,6 +359,8 @@ export interface FamilyRecordView {
   family_id: string;
   family: FamilyIndexRow;
   money_visible: boolean;
+  /** Optional: responses before L2b omit it (read `money_visible`). */
+  money_view?: FamilyMoneyView;
   warnings: string[];
 }
 

@@ -8,11 +8,19 @@ The admin surface has three kinds of gate, and this module holds the third:
 * :func:`require_staff_tier`: a route a staff tier (billing, front desk) may
   also reach, listed in :data:`STAFF_TIER_ROUTE_PATHS`.
 
-Only the billing tier opens routes today: recording a payment the family
-already made (``record-payment`` on a ledger invoice, ``mark-paid`` on a
-legacy payment). Owner and admin keep them, so existing tokens behave
-exactly as before. Front desk opens no route here: it has no money write,
-and its read-only "owes money" flag belongs to the CRM redaction slice.
+Two tiers open routes:
+
+* ``billing``: recording a payment the family already made
+  (``record-payment`` on a ledger invoice, ``mark-paid`` on a legacy
+  payment). Owner, admin or billing.
+* ``front_desk``: reading the People CRM family index (the Families list,
+  its scope tiles and one family's record row). Owner, admin, billing or
+  front desk; the routes redact money per caller with
+  ``money_visibility.family_money_view`` (front desk gets the "owes money"
+  flag, never an amount). Front desk has no money write anywhere.
+
+Owner and admin keep every route here, so existing tokens behave exactly as
+before.
 
 Misses are 404, like every persona and owner guard, so a route's existence
 is never leaked. ``tests/structural/test_money_route_staff_tiers.py`` walks
@@ -28,14 +36,14 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from fastapi import Depends, HTTPException
 
-from backend.v2.shared.auth.staff_tiers import can_record_payment
+from backend.v2.shared.auth.staff_tiers import can_read_family_index, can_record_payment
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from backend.v2.shared.auth.claims import AuthClaims
 
 _ADMIN = "/api/v2/admin"
 
-StaffTier = Literal["billing"]
+StaffTier = Literal["billing", "front_desk"]
 
 #: Every admin route a staff tier opens, by tier.
 STAFF_TIER_ROUTE_PATHS: Final[dict[StaffTier, frozenset[tuple[str, str]]]] = {
@@ -47,10 +55,19 @@ STAFF_TIER_ROUTE_PATHS: Final[dict[StaffTier, frozenset[tuple[str, str]]]] = {
             ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
         }
     ),
+    "front_desk": frozenset(
+        {
+            # family_index_routes.py: read-only, money redacted per caller (L2b)
+            ("GET", f"{_ADMIN}/families"),
+            ("GET", f"{_ADMIN}/families/summary"),
+            ("GET", f"{_ADMIN}/families/{{family_id}}/record"),
+        }
+    ),
 }
 
 _TIER_CHECKS: Final[dict[StaffTier, Callable[[AuthClaims], bool]]] = {
     "billing": can_record_payment,
+    "front_desk": can_read_family_index,
 }
 
 
@@ -58,7 +75,9 @@ def require_staff_tier(tier: StaffTier) -> Callable[..., Awaitable[AuthClaims]]:
     """Admit owner, admin and the named staff tier; 404 for anyone else.
 
     ``billing``: owner, admin or billing (``staff_tiers.can_record_payment``).
-    Coaches, parents, front desk and callers with no academy role get 404.
+    ``front_desk``: owner, admin, billing or front desk
+    (``staff_tiers.can_read_family_index``). Coaches, parents and callers
+    with no academy role get 404; so does front desk on a ``billing`` route.
     """
 
     from backend.v2.shared.auth.claims import get_auth_claims
