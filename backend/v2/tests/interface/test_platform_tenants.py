@@ -90,6 +90,15 @@ def _create(client: TestClient) -> dict[str, object]:
     return response.json()
 
 
+_AGREEMENT = {"agreement_version": "2026-10-draft", "accepted_by": "owner@example.test"}
+
+
+def _accept(client: TestClient) -> dict[str, object]:
+    response = client.post("/api/v2/platform/tenants/tenant_test/agreement", json=_AGREEMENT)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def test_platform_admin_can_create_and_drive_tenant_lifecycle(platform_client: TestClient) -> None:
     created = _create(platform_client)
 
@@ -97,6 +106,7 @@ def test_platform_admin_can_create_and_drive_tenant_lifecycle(platform_client: T
     assert created["status"] == "provisioning"
     assert created["servable"] is False
 
+    _accept(platform_client)
     active = platform_client.post("/api/v2/platform/tenants/tenant_test/activate")
     suspended = platform_client.post(
         "/api/v2/platform/tenants/tenant_test/suspend",
@@ -124,6 +134,7 @@ def test_platform_admin_can_update_plan_limits_after_reactivation(
     platform_client: TestClient,
 ) -> None:
     _create(platform_client)
+    _accept(platform_client)
     assert platform_client.post("/api/v2/platform/tenants/tenant_test/activate").status_code == 200
     assert (
         platform_client.post(
@@ -167,6 +178,7 @@ def test_tenant_health_exposes_status_check_for_request_gating(
         "limits": {"max_students": 100, "max_coaches": 8, "max_locations": None},
     }
 
+    _accept(platform_client)
     platform_client.post("/api/v2/platform/tenants/tenant_test/activate")
     active = platform_client.get("/api/v2/platform/tenants/tenant_test/health")
     assert active.status_code == 200
@@ -241,6 +253,7 @@ def test_platform_support_is_blocked_from_every_lifecycle_mutation(
         ("post", "/api/v2/platform/tenants", _payload()),
         ("post", "/api/v2/platform/academies/bootstrap", None),
         ("post", "/api/v2/platform/tenants/tenant_test/activate", None),
+        ("post", "/api/v2/platform/tenants/tenant_test/agreement", _AGREEMENT),
         ("post", "/api/v2/platform/tenants/tenant_test/suspend", {"reason": "nope"}),
         ("post", "/api/v2/platform/tenants/tenant_test/cancel", {"reason": "nope"}),
         ("post", "/api/v2/platform/tenants/tenant_test/reactivate", None),
@@ -260,6 +273,7 @@ def test_platform_support_is_blocked_from_every_lifecycle_mutation(
     assert results == {path: 404 for _, path, _ in mutations}
     # And nothing was actually mutated.
     assert repo.tenants["tenant_test"].status == "provisioning"
+    assert repo.tenants["tenant_test"].platform_agreement_accepted_at is None
 
 
 def test_academy_roles_cannot_access_platform_lifecycle(repo: FakeTenantRepository) -> None:
@@ -269,3 +283,69 @@ def test_academy_roles_cannot_access_platform_lifecycle(repo: FakeTenantReposito
 
     assert create_response.status_code == 404
     assert status_response.status_code == 404
+
+
+def test_new_tenant_reports_flat_monthly_and_no_acceptance(platform_client: TestClient) -> None:
+    created = _create(platform_client)
+
+    assert created["fee_model"] == "flat_monthly"
+    assert created["platform_agreement_version"] is None
+    assert created["platform_agreement_accepted_at"] is None
+    assert created["platform_agreement_accepted_by"] is None
+
+
+def test_activate_without_acceptance_is_refused_with_409(platform_client: TestClient) -> None:
+    _create(platform_client)
+
+    refused = platform_client.post("/api/v2/platform/tenants/tenant_test/activate")
+
+    assert refused.status_code == 409, refused.text
+    assert "Platform.TenantAgreementNotAccepted" in refused.text
+    status = platform_client.get("/api/v2/platform/tenants/tenant_test/status").json()
+    assert status["status"] == "provisioning"
+
+
+def test_recorded_acceptance_is_shown_and_unlocks_activation(
+    platform_client: TestClient,
+) -> None:
+    _create(platform_client)
+
+    accepted = _accept(platform_client)
+
+    assert accepted["platform_agreement_version"] == "2026-10-draft"
+    assert accepted["platform_agreement_accepted_by"] == "owner@example.test"
+    assert accepted["platform_agreement_accepted_at"] is not None
+    assert accepted["updated_by"] == "platform-admin"
+    active = platform_client.post("/api/v2/platform/tenants/tenant_test/activate")
+    assert active.status_code == 200, active.text
+    assert active.json()["status"] == "active"
+
+
+def test_acceptance_rejects_blank_fields(platform_client: TestClient) -> None:
+    _create(platform_client)
+
+    for body in (
+        {"agreement_version": "", "accepted_by": "owner@example.test"},
+        {"agreement_version": "v1", "accepted_by": ""},
+        {"agreement_version": "v1"},
+    ):
+        response = platform_client.post("/api/v2/platform/tenants/tenant_test/agreement", json=body)
+        assert response.status_code == 422, (body, response.text)
+
+
+def test_acceptance_for_unknown_tenant_is_404(platform_client: TestClient) -> None:
+    response = platform_client.post(
+        "/api/v2/platform/tenants/tenant_missing/agreement", json=_AGREEMENT
+    )
+    assert response.status_code == 404
+
+
+def test_academy_roles_cannot_record_acceptance(repo: FakeTenantRepository) -> None:
+    with TestClient(_app(_platform_admin_claims(), repo)) as admin_client:
+        _create(admin_client)
+
+    with TestClient(_app(_academy_admin_claims(), repo)) as client:
+        response = client.post("/api/v2/platform/tenants/tenant_test/agreement", json=_AGREEMENT)
+
+    assert response.status_code == 404
+    assert repo.tenants["tenant_test"].platform_agreement_accepted_at is None

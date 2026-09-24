@@ -42,6 +42,7 @@ from backend.v2.shared.http import require_persona
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
 from .family_contacts_routes import router as family_contacts_router
+from .family_import_routes import router as family_import_router
 from .people_duplicate_routes import router as people_duplicate_router
 
 router = APIRouter(tags=["admin.families"])
@@ -50,6 +51,8 @@ router = APIRouter(tags=["admin.families"])
 router.include_router(family_contacts_router)
 # Phase 4c: the duplicate warning on Add family / Add user / Add contact.
 router.include_router(people_duplicate_router)
+# Roadmap L8a: CSV family and student import (preview and commit).
+router.include_router(family_import_router)
 
 # Raw-body caps sit a little above the domain caps so the domain's clearer
 # message wins for "just over"; anything far over is refused by pydantic.

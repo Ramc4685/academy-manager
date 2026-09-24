@@ -16,7 +16,8 @@
  * gets an "Owes money" flag from the server and never an amount; the owner
  * can preview that with "Viewing as". Actions (invites, charging, autopay) live
  * on the per-family page (`/admin/families/[parentId]`), except the one bulk
- * invite #897 put on this list.
+ * invite #897 put on this list and the CSV import (roadmap L8b,
+ * `FamilyImportPanel`).
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -85,6 +86,8 @@ import {
 } from "@/components/ds/list-toolbar";
 import { Th } from "@/components/ds/dialog-chrome";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+
+import { FamilyImportPanel } from "./FamilyImportPanel";
 
 const PAGE_SIZE = 50;
 /** Bounded walk of the Billing Setup pages for the bulk invite's recipients. */
@@ -250,6 +253,8 @@ function FamiliesView() {
       </div>
 
       <BulkInviteNotInvited onInvited={refreshAll} />
+
+      <FamilyImportPanel onImported={refreshAll} />
 
       <Card p={0}>
         <ListToolbar>
