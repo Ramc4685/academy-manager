@@ -354,3 +354,49 @@ test.describe("Family record (People CRM §4)", () => {
     expect(patches).toHaveLength(0);
   });
 });
+
+test.describe("Family money per staff tier (L2b, #553)", () => {
+  test("a front-desk payload shows Owes money and never an amount", async ({ page }) => {
+    const { errors } = await setup(page);
+    // What the server sends a front-desk caller: no money block, the flag only.
+    await page.route("**/api/v2/admin/families/parent-1/record", (route) =>
+      fulfillJson(route, {
+        ...RECORD,
+        family: { ...RECORD.family, money: null, owes_money: true },
+        money_visible: false,
+        money_view: "flag",
+      }),
+    );
+    await page.goto("/admin/families/parent-1");
+    await expect(page.getByTestId("family-record-owes-money")).toContainText("Owes money");
+    await expect(page.getByTestId("family-overview-owes")).toContainText("Owes money");
+    await expect(page.getByTestId("family-overview-balance")).toHaveCount(0);
+    await expect(page.getByTestId("family-overview")).not.toContainText("$");
+    expect(errors, errors.join("\n")).toEqual([]);
+  });
+
+  test("the owner previews front desk with Viewing as", async ({ page }) => {
+    const { errors } = await setup(page);
+    await stubMe(page, { ...ADMIN_USER_A, roles: ["admin", "owner"] });
+    await page.goto("/admin/families/parent-1");
+    await expect(page.getByTestId("family-overview-balance")).toContainText("$70");
+    await expect(page.getByTestId("family-record-owes-money")).toHaveCount(0);
+
+    await page.getByTestId("viewing-as-select").selectOption("front_desk");
+    await expect(page.getByTestId("viewing-as-note")).toBeVisible();
+    await expect(page.getByTestId("family-record-owes-money")).toBeVisible();
+    await expect(page.getByTestId("family-overview-balance")).toHaveCount(0);
+    await expect(page.getByTestId("family-overview")).not.toContainText("$");
+
+    await page.getByTestId("viewing-as-select").selectOption("self");
+    await expect(page.getByTestId("family-overview-balance")).toContainText("$70");
+    expect(errors, errors.join("\n")).toEqual([]);
+  });
+
+  test("an admin without the owner scope gets no Viewing as control", async ({ page }) => {
+    await setup(page);
+    await page.goto("/admin/families/parent-1");
+    await expect(page.getByTestId("family-overview-balance")).toBeVisible();
+    await expect(page.getByTestId("viewing-as")).toHaveCount(0);
+  });
+});
