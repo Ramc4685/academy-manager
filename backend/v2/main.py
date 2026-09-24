@@ -357,6 +357,14 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 30,
         "max_runtime": 30,
     },
+    # Roadmap L3c: one "Trial passed, no registration" follow-up per trial
+    # marked Came whose class was 7+ days ago. Daily; idempotent per trial
+    # (unique source_key, migration 0201), so an extra run creates nothing.
+    "create_trial_follow_ups": {
+        "schedule": {"type": "crontab", "value": "50 4 * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
 }
 assert SCHEDULED_JOB_MONITORS.keys() == JOB_STALE_AFTER.keys()
 
@@ -670,6 +678,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.win_back import compose_win_back
 
     app.state.win_back = compose_win_back(db, settings)
+    # Roadmap L3c: the trial follow-up job's use case (composition/trial_follow_ups.py).
+    from backend.v2.composition.trial_follow_ups import compose_trial_follow_ups
+
+    app.state.trial_follow_ups = compose_trial_follow_ups(db)
     # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
     # which cannot see `_holds.hold_notifier` (built here, after
     # compose_admin runs) and is at its own wiring line-budget cap. Attach
@@ -979,6 +991,30 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["sent"] += sent
         if totals["sent"]:
             log.info("win_back_notices_sent", extra=totals)
+
+    async def _create_trial_follow_ups() -> None:
+        await _run_leased_job(
+            "create_trial_follow_ups", timedelta(minutes=5), _create_trial_follow_ups_body
+        )
+
+    async def _create_trial_follow_ups_body() -> None:
+        # Roadmap L3c. One academy failing never stops the others.
+        totals = {"academy_count": 0, "created": 0, "failed": 0}
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            runtime_academy_id,
+        ):
+            try:
+                with tenant_scope(academy_id):
+                    run = await app.state.trial_follow_ups.execute(academy_id=academy_id)
+            except Exception:
+                totals["failed"] += 1
+                log.exception("trial_follow_ups_failed", extra={"academy_id": academy_id})
+                continue
+            totals["academy_count"] += 1
+            totals["created"] += run.created
+        if totals["created"] or totals["failed"]:
+            log.info("trial_follow_ups_created", extra=totals)
 
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
@@ -1577,6 +1613,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         hour=4,
         minute=30,
         id="send_win_back_notices",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _create_trial_follow_ups,
+        "cron",
+        hour=4,
+        minute=50,
+        id="create_trial_follow_ups",
         replace_existing=True,
         max_instances=1,
     )

@@ -120,7 +120,31 @@ class MongoFamilyFollowUpRepository(TenantScopedRepository):
             updated_at=_utc(doc.get("updated_at") or doc["created_at"]),
             done_at=_opt_utc(doc.get("done_at")),
             done_by=doc.get("done_by"),
+            source_key=doc.get("source_key") or None,
         )
+
+    async def add_once(self, follow_up: FamilyFollowUp) -> bool:
+        """Insert a job-created follow-up unless one with its ``source_key``
+        already exists in this academy. True when this call inserted it.
+
+        One upsert on ``(academy_id, source_key)``, backed by the unique
+        partial index of migration 0201: two machines (or two ticks) racing
+        on the same key insert one row, and the loser's duplicate-key error
+        reads as "already there". A row a person later edited or marked done
+        is matched too, so it is never recreated.
+        """
+        if not follow_up.source_key:
+            raise ValueError("add_once needs a source_key")
+        doc = self._to_doc(follow_up)
+        doc.pop("academy_id", None)
+        doc.pop("source_key", None)
+        try:
+            result = await self._update_one(
+                {"source_key": follow_up.source_key}, {"$setOnInsert": doc}, upsert=True
+            )
+        except DuplicateKeyError:
+            return False
+        return result.upserted_id is not None
 
     async def add(self, follow_up: FamilyFollowUp) -> FamilyFollowUp:
         doc = self._to_doc(follow_up)

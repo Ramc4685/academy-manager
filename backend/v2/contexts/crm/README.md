@@ -370,8 +370,8 @@ isolation, duplicate ids, index use), and
 `tests/interface/test_admin_family_crm_routes.py`.
 
 Not built here: pinned notes, `student_id` tags, the `students.notes` copy,
-`contact_id` (lead) notes, automatic follow-ups (`source`, `source_ref`), and
-the timeline merge.
+`contact_id` (lead) notes, and the timeline merge. Automatic follow-ups
+landed in L3c (`source_key`, below).
 
 ## Duplicate warning (People CRM Phase 4c, migration 0198)
 
@@ -518,4 +518,55 @@ scope, newest first, a move shows on the next read, staff rows never deduped),
 
 Not built here: the Registered and Trial done columns for families (they
 need the application and trial joins of the R6 extension), card assignee,
-last contact and Cold chip, and the auto follow-up (L3c).
+last contact and Cold chip. The auto follow-up is L3c, below.
+
+## Trial passed, no registration (People CRM L3c, migration 0201)
+
+A daily scheduled job, `create_trial_follow_ups` (04:50 scheduler time,
+leased, heartbeat in `ops_job_runs`, stale after 26h), runs
+`CreateTrialPassedFollowUps` once per academy inside its `tenant_scope`.
+For every trial marked **Came** (`status: completed`, `outcome: came`, no
+`linked_application_id`) whose assigned, not-cancelled class started between
+60 and 7 days ago, it adds one family follow-up:
+
+| Field | Value |
+| --- | --- |
+| `title` | `Trial passed, no registration` (`: <child>` for a prospective child) |
+| `parent_id` | the canonical family (family index); an unknown parent is skipped |
+| `assignee_user_id` | the academy's earliest active owner, else `""` (shown as "Unassigned") |
+| `due_on` | the academy's local today |
+| `created_by` | `system:trial_follow_up` |
+| `source_key` | `trial_passed:<trial request id>` |
+
+Rules:
+
+- **Idempotent per trial.** The write is `add_once`: one upsert on
+  `(academy_id, source_key)` with `$setOnInsert`, backed by a unique index.
+  A rerun, a second machine, or a follow-up staff already marked done never
+  produces a second row; a racing duplicate-key error reads as "already
+  there".
+- **No-op when registered.** The family registered after requesting the
+  trial when an `onboarding_applications` row of the parent, past `DRAFT` /
+  `CHECKOUT_EXPIRED` / `ABANDONED`, was created or updated since; or, for an
+  existing child, a non-terminal enrollment on the trial's class exists.
+- **Per academy.** Every read is tenant-scoped (repositories) or filters
+  `academy_id` explicitly (the composition's direct reads).
+- A follow-up a person adds stores `source_key: null` and is outside the
+  index. No email, no money.
+
+The CRM does not import enrollment, onboarding or identity: the reads are
+ports (`PassedTrialSource`, `RegistrationCheck`, `AcademyOwnerLookup`,
+`SourcedFollowUpWriter`) implemented in `composition/trial_follow_ups.py`.
+
+### Index (migration 0201)
+
+| Collection | Name | Keys | Options |
+| --- | --- | --- | --- |
+| `family_follow_ups` | `family_follow_ups_academy_source_key_unique` | `academy_id, source_key` | unique, partial `{source_key: {$gt: ""}}` |
+
+Tests: `tests/unit/test_crm_trial_follow_ups.py`,
+`tests/unit/test_0201_crm_follow_up_source_key.py`,
+`tests/contract/test_crm_trial_follow_ups_real_mongo.py` (real `mongod`:
+one row per trial, rerun and 5 concurrent runs, done not recreated,
+cross-tenant, registered no-op, draft and other-academy applications
+ignored, window and outcome filters, manual follow-ups coexist).

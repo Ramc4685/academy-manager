@@ -142,6 +142,14 @@ def _index_model(
     )
 
 
+def family_directory(db: Any) -> IndexFamilyDirectory:
+    """The family lookup the notes and follow-ups use, for a caller outside
+    this bundle (the L3c trial follow-up job)."""
+    return IndexFamilyDirectory(
+        cached=_index_model(db, FAMILY_INDEX_CACHE_TTL_SECONDS), fresh=_index_model(db, 0.0)
+    )
+
+
 def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
     money = MongoFamilyMoneyReadModel(db)
     index = _index_model(db, FAMILY_INDEX_CACHE_TTL_SECONDS, money)
