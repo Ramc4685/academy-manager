@@ -65,7 +65,7 @@ const WARNING_COPY: Record<string, string> = {
 };
 
 const INPUT =
-  "h-10 w-full rounded-md border border-neutral-200 bg-white px-2 font-body text-sm text-rally-base";
+  "h-10 w-full rounded-md border border-neutral-200 bg-white px-2 font-body text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15";
 
 function headingId(column: PipelineColumn): string {
   return `pipeline-column-${column}`;
