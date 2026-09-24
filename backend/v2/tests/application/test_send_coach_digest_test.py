@@ -124,8 +124,17 @@ class StubSendPort:
         bcc=None,
         reply_to=None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name=None,
     ):
-        self.sent.append({"email": recipient.email, "subject": subject, "body": body})
+        self.sent.append(
+            {
+                "email": recipient.email,
+                "subject": subject,
+                "body": body,
+                "reply_to": reply_to,
+                "sender_name": sender_name,
+            }
+        )
         return SendOutcome(
             ok=True, provider_message_id=f"stub-{len(self.sent)}", failed_reason=None
         )

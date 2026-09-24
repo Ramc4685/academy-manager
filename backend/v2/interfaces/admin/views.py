@@ -18,6 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle impor
 )
 from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
+from backend.v2.shared.comms.sender_identity import validate_reply_to, validate_sender_name
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
 # --- Directory ---
@@ -1789,6 +1790,8 @@ class AdminAcademyView(BaseModel):
     logo_url: str | None = None
     brand_color: str | None = None
     currency: str = "USD"
+    email_sender_name: str | None = None
+    email_reply_to: str | None = None
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -1801,6 +1804,21 @@ class UpdateAdminAcademyRequest(BaseModel):
     logo_url: str | None = None
     brand_color: str | None = None
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    #: Display name on outbound email (``"<name>" <SENDER_EMAIL>``). The From
+    #: address itself is platform-owned and cannot be set here (L9a).
+    email_sender_name: str | None = None
+    email_reply_to: str | None = None
+
+    @field_validator("email_sender_name")
+    @classmethod
+    def _check_sender_name(cls, value: str | None) -> str | None:
+        # Blank clears the override; the validator raises ValueError (422).
+        return validate_sender_name(value)
+
+    @field_validator("email_reply_to")
+    @classmethod
+    def _check_reply_to(cls, value: str | None) -> str | None:
+        return validate_reply_to(value)
 
 
 class AdminFeesView(BaseModel):

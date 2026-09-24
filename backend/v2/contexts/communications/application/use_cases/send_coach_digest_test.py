@@ -160,9 +160,10 @@ class SendCoachDigestTest:
                 detail="Recipient has no email address.",
             )
 
+        brand = await self._brand(command.academy_id)
         subject, body = render_coach_digest(
             plan,
-            brand=await self._brand(command.academy_id),
+            brand=brand,
             whatsapp_groups=await self._groups(recipient.user_id),
             unsubscribe_url=self.unsubscribe_links.build(
                 academy_id=command.academy_id,
@@ -182,6 +183,8 @@ class SendCoachDigestTest:
             # bounce and an opt-out rather than being the one path that mails a
             # recipient who asked us to stop.
             category=EmailCategory.DIGEST,
+            reply_to=brand.reply_to if brand else None,
+            sender_name=brand.sender_name if brand else None,
         )
         if outcome.ok:
             await self.digests.mark_sent(

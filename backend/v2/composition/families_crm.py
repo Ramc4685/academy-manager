@@ -12,6 +12,12 @@ implementation of the CRM ports:
 * billing's ``MongoFamilyMoneyReadModel`` (every family's money, the Billing
   tab's balance rule).
 
+It also wires the People reports on ``/admin/reports`` (roadmap L5a): money
+owed by age band reads the SAME index instance (so it shares the index's
+cache and alias map) and the same billing money read model; inquiry
+conversion reads ``crm_contacts`` through the tenant-scoped repository.
+Attached as ``AdminFamilyIndex.reports`` so ``main.py`` needs no new line.
+
 Nothing tenant-specific is captured: every read takes the request's
 ``academy_id``.
 
@@ -32,6 +38,10 @@ from backend.v2.contexts.billing.infrastructure.family_money_read_model import (
     MongoFamilyMoneyReadModel,
 )
 from backend.v2.contexts.crm.application.family_directory import IndexFamilyDirectory
+from backend.v2.contexts.crm.application.people_reports import (
+    InquiryConversionReport,
+    MoneyOwedByAgeReport,
+)
 from backend.v2.contexts.crm.application.use_cases.family_follow_ups import (
     AddFamilyFollowUp,
     ListFamilyFollowUps,
@@ -46,6 +56,9 @@ from backend.v2.contexts.crm.application.use_cases.family_notes import (
 )
 from backend.v2.contexts.crm.infrastructure.family_index_read_model import (
     MongoFamilyIndexReadModel,
+)
+from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
+    MongoCrmContactRepository,
 )
 from backend.v2.contexts.crm.infrastructure.mongo_family_notes_repo import (
     MongoFamilyFollowUpRepository,
@@ -86,8 +99,15 @@ class AdminFamilyFollowUps:
 
 
 @dataclass(frozen=True)
+class AdminPeopleReports:
+    money_owed_by_age: MoneyOwedByAgeReport
+    inquiry_conversion: InquiryConversionReport
+
+
+@dataclass(frozen=True)
 class AdminFamilyIndex:
     index: MongoFamilyIndexReadModel
+    reports: AdminPeopleReports
     notes: AdminFamilyNotes | None = None
     follow_ups: AdminFamilyFollowUps | None = None
 
@@ -109,19 +129,22 @@ class _MembershipStaffDirectory:
         return any(role in FOLLOW_UP_ASSIGNEE_ROLES for role in membership.roles)
 
 
-def _index_model(db: Any, cache_ttl_seconds: float) -> MongoFamilyIndexReadModel:
+def _index_model(
+    db: Any, cache_ttl_seconds: float, money: MongoFamilyMoneyReadModel | None = None
+) -> MongoFamilyIndexReadModel:
     return MongoFamilyIndexReadModel(
         db,
         parents=MongoUserRepository(db),
         children=MongoStudentRepository(db),
-        money=MongoFamilyMoneyReadModel(db),
+        money=money if money is not None else MongoFamilyMoneyReadModel(db),
         academy_timezone=academy_timezone_lookup(db),
         cache_ttl_seconds=cache_ttl_seconds,
     )
 
 
 def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
-    index = _index_model(db, FAMILY_INDEX_CACHE_TTL_SECONDS)
+    money = MongoFamilyMoneyReadModel(db)
+    index = _index_model(db, FAMILY_INDEX_CACHE_TTL_SECONDS, money)
     families = IndexFamilyDirectory(cached=index, fresh=_index_model(db, 0.0))
     notes = MongoFamilyNoteRepository(db)
     follow_ups = MongoFamilyFollowUpRepository(db)
@@ -129,6 +152,12 @@ def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
     timezone = academy_timezone_lookup(db)
     return AdminFamilyIndex(
         index=index,
+        reports=AdminPeopleReports(
+            money_owed_by_age=MoneyOwedByAgeReport(index=index, money=money),
+            inquiry_conversion=InquiryConversionReport(
+                contacts=MongoCrmContactRepository(db), academy_timezone=timezone
+            ),
+        ),
         notes=AdminFamilyNotes(
             list=ListFamilyNotes(notes, families),
             add=AddFamilyNote(notes, families),

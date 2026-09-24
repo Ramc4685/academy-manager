@@ -42,6 +42,7 @@ from backend.v2.contexts.communications.application.ports import (
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.shared.comms.email_theme import html_to_text
+from backend.v2.shared.comms.sender_identity import format_from_header
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ class ResendEmailSendPort(EmailSendPort):
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         # ``category`` is a routing/gating concern consumed by
         # ``GatedEmailSendPort`` before we are reached; Resend has no field for
@@ -121,7 +123,8 @@ class ResendEmailSendPort(EmailSendPort):
             return SendOutcome(ok=False, provider_message_id=None, failed_reason="no email address")
         try:
             params: resend.Emails.SendParams = {
-                "from": self._from_address,
+                # Per-academy display name, platform-owned address (L9a).
+                "from": format_from_header(sender_name, self._from_address),
                 "to": [recipient.email],
                 "subject": subject,
                 "html": body,
