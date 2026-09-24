@@ -42,6 +42,11 @@ function checklist(statuses: Partial<Record<string, Status>> = {}) {
 async function setup(page: Page, body: unknown) {
   const errors = collectConsoleErrors(page);
   installTenantGuard(page);
+  // Catch-all first (the most recently registered route wins): the branding
+  // link lands on the settings page, whose panel reads are not under test.
+  await page.route("**/api/v2/admin/**", (route) =>
+    route.request().method() === "GET" ? fulfillJson(route, {}) : route.fallback(),
+  );
   await stubMe(page, ADMIN_USER_A);
   await stubMemberships(page, [
     { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
