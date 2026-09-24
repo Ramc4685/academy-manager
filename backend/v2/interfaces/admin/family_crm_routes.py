@@ -41,7 +41,12 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id
 
+from .family_contacts_routes import router as family_contacts_router
+
 router = APIRouter(tags=["admin.families"])
+# Phase 4b family contacts and details ride on this router so admin/router.py
+# needs no new line (family_contacts_routes.py).
+router.include_router(family_contacts_router)
 
 # Raw-body caps sit a little above the domain caps so the domain's clearer
 # message wins for "just over"; anything far over is refused by pydantic.

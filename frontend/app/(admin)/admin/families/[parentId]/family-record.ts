@@ -100,33 +100,6 @@ export function primaryContactRows(
   ];
 }
 
-export interface SecondParentSwitch {
-  id: "gets_notices" | "gets_invoices";
-  label: string;
-  /** Always off and disabled: there is no backing field until family contacts. */
-  checked: false;
-  disabled: true;
-}
-
-/**
- * Second-parent switches (spec §5 family contacts). They are shown so the
- * admin knows where the setting will live, but they are read-only: the
- * `family_contacts` store arrives with Phase 4, and a switch that saved
- * nowhere would be a lie.
- */
-export const SECOND_PARENT_SWITCHES: readonly SecondParentSwitch[] = [
-  { id: "gets_notices", label: "Gets notices", checked: false, disabled: true },
-  {
-    id: "gets_invoices",
-    label: "Gets invoices (opted in)",
-    checked: false,
-    disabled: true,
-  },
-];
-
-export const SECOND_PARENT_NOTE =
-  "A second parent or guardian can be added when family contacts arrive. Until then these switches are read-only and nothing is sent to a second adult.";
-
 // ---------------------------------------------------------------------------
 // Children: Overview list and the child drawer.
 // ---------------------------------------------------------------------------

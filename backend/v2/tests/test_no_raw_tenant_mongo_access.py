@@ -104,6 +104,9 @@ TENANT_OWNED_COLLECTIONS = {
     # People CRM family notes and follow-ups (migration 0195, Phase 4a)
     "family_notes",
     "family_follow_ups",
+    # People CRM family contacts and details (migration 0196, Phase 4b)
+    "family_contacts",
+    "family_details",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from typing import Protocol
 
+from backend.v2.contexts.crm.domain.family_contacts import FamilyContact, FamilyDetails
 from backend.v2.contexts.crm.domain.family_notes import (
     FamilyFollowUp,
     FamilyNote,
@@ -219,3 +220,51 @@ class StaffDirectory(Protocol):
     """Identity: is this user an active staff member (admin or owner) here?"""
 
     async def is_staff(self, academy_id: str, user_id: str) -> bool: ...
+
+
+# --------------------------------------------------------------------------
+# Family contacts and family details (People CRM spec §4 "Details", Phase 4b).
+# Same rules as notes: the academy comes from the tenant context and every
+# read filters ``parent_id``.
+# --------------------------------------------------------------------------
+
+
+class FamilyContactRepository(Protocol):
+    async def add(self, contact: FamilyContact) -> FamilyContact:
+        """Insert. Raises ``DuplicateCrmRecordId`` when ``contact_id`` exists in
+        this academy, ``DuplicateFamilyContactEmail`` when this family already
+        has a contact with the same (lowercased) email."""
+        ...
+
+    async def get(self, parent_id: str, contact_id: str) -> FamilyContact | None: ...
+
+    async def list_for_family(self, parent_id: str, *, limit: int = 50) -> list[FamilyContact]:
+        """This family's contacts, oldest first."""
+        ...
+
+    async def count_for_family(self, parent_id: str) -> int: ...
+
+    async def update(
+        self, parent_id: str, contact_id: str, *, changes: Mapping[str, object]
+    ) -> FamilyContact | None:
+        """Set ``changes`` (validated values; a ``None`` email or phone clears
+        the field). None when absent. Raises ``DuplicateFamilyContactEmail``."""
+        ...
+
+    async def delete(self, parent_id: str, contact_id: str) -> bool: ...
+
+
+class FamilyDetailsRepository(Protocol):
+    async def get(self, parent_id: str) -> FamilyDetails | None: ...
+
+    async def upsert(
+        self,
+        parent_id: str,
+        *,
+        changes: Mapping[str, object],
+        updated_by: str,
+        updated_at: datetime,
+    ) -> FamilyDetails:
+        """Set ``changes`` on the family's one details document, creating it on
+        first write (the unique ``(academy_id, parent_id)`` index keeps it one)."""
+        ...
