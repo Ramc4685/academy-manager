@@ -435,7 +435,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                 {student.parent_id ? (
                   <Link
                     href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
-                    className="block rounded text-rally-base hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                    className="block rounded text-rally-cobalt-700 underline decoration-rally-cobalt-600/40 underline-offset-2 hover:decoration-rally-cobalt-600 dark:text-rally-cobalt-100 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
                     data-testid={`admin-students-family-link-${student.student_id}`}
                   >
                     {student.parent_name || student.parent_email || "Parent on file"}

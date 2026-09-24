@@ -273,21 +273,21 @@ function SessionRow({
           <p
             className={
               cancelled
-                ? "text-sm font-semibold truncate text-rally-muted line-through"
+                ? "text-sm font-semibold truncate text-status-slate-600 line-through"
                 : "text-sm font-semibold truncate text-rally-ink"
             }
           >
             {entry.session_title}
           </p>
-          <p className="text-xs mt-0.5 text-rally-muted">{whenStr}</p>
+          <p className="text-xs mt-0.5 text-status-slate-600">{whenStr}</p>
           {cancelled && (
-            <p className="text-[11px] mt-0.5 font-semibold text-status-red-600">
+            <p className="text-[11px] mt-0.5 font-semibold text-status-red-800">
               Cancelled — this class will not run
             </p>
           )}
           {(entry.location || entry.coach_name) && (
             <div className="flex flex-wrap gap-1.5 mt-1">
-              {entry.location && <span className="text-[11px] text-rally-muted">{entry.location}</span>}
+              {entry.location && <span className="text-[11px] text-status-slate-600">{entry.location}</span>}
               {entry.coach_name && (
                 <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-rally-cobalt-600/10 text-rally-cobalt-600">
                   {entry.coach_name}
@@ -299,7 +299,7 @@ function SessionRow({
       </div>
 
       {absenceMutation.isError && (
-        <p role="alert" className="text-xs text-status-red-600">
+        <p role="alert" className="text-xs text-status-red-800">
           {absenceMutation.error instanceof Error ? absenceMutation.error.message : "Could not report absence."}
         </p>
       )}

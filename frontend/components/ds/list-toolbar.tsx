@@ -18,6 +18,8 @@
 import { RefreshCw, Search } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { OverflowCue, useOverflowEdges } from "./overflow-cue";
+
 /** The bar itself: filters on the left, search (and any actions) on the right. */
 export function ListToolbar({
   children,
@@ -53,14 +55,23 @@ export function FilterBar({
   /** "tablist" only where the chips really switch what the list shows. */
   variant?: "tablist" | "group";
 }) {
+  // UI-7: on a phone the row scrolls; say so at whichever edge hides chips.
+  const { ref, edges } = useOverflowEdges<HTMLDivElement>();
   return (
-    <div
-      role={variant === "tablist" ? "tablist" : "group"}
-      aria-label={label}
-      data-testid={testId}
-      className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0"
-    >
-      {children}
+    <div className="relative min-w-0">
+      <div
+        ref={ref}
+        role={variant === "tablist" ? "tablist" : "group"}
+        aria-label={label}
+        data-testid={testId}
+        className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0"
+      >
+        {children}
+      </div>
+      {edges.left && <OverflowCue side="left" testId={testId ? `${testId}-more-left` : undefined} />}
+      {edges.right && (
+        <OverflowCue side="right" testId={testId ? `${testId}-more-right` : undefined} />
+      )}
     </div>
   );
 }

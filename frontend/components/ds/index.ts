@@ -31,5 +31,6 @@ export { PhoneList, PhoneListRow } from "./phone-row";
 export type { PhoneListRowProps } from "./phone-row";
 export { RallyModal, DialogActions, DialogError, Field, Th } from "./dialog-chrome";
 export { ListToolbar, FilterBar, FilterChip, ToolbarSearch } from "./list-toolbar";
+export { OverflowCue, overflowEdges, useOverflowEdges } from "./overflow-cue";
 export { ToastProvider, useToast } from "./toast";
 export type { ToastKind, ToastOptions } from "./toast";

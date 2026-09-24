@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UrlObject } from "url";
 
+import { OverflowCue } from "@/components/ds/overflow-cue";
+
 export type SettingsPanelKey =
   | "academy"
   | "billing-rules"
@@ -116,18 +118,9 @@ export function SettingsTabs({ active, hrefFor, tabs = SETTINGS_TABS }: Settings
           })}
         </div>
       </div>
-      {overflow.left && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 left-0 w-6 rounded-l-lg bg-gradient-to-r from-white to-transparent"
-        />
-      )}
-      {overflow.right && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 right-0 w-6 rounded-r-lg bg-gradient-to-l from-white to-transparent"
-        />
-      )}
+      {/* UI-7: fade plus chevron, the same cue as the People filter rows. */}
+      {overflow.left && <OverflowCue side="left" testId="settings-tabs-more-left" />}
+      {overflow.right && <OverflowCue side="right" testId="settings-tabs-more-right" />}
     </div>
   );
 }

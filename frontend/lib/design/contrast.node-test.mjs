@@ -167,3 +167,52 @@ test("UI-4 — parent pay hero caption clears AA on the night card", () => {
   assert.ok(/\btext-rally-subtle-ink\b/.test(caption[1]), "caption uses the night-surface token");
   assert.ok(!/\btext-rally-(subtle|muted)(?!-)/.test(caption[1]), "…not rally.subtle/muted");
 });
+
+test("UI-7 — run-4 measured contrast failures clear AA", () => {
+  const NEUTRAL_100 = "#f5f5f5"; // the coach mode-toggle track
+  const NEUTRAL_500 = "#737373";
+  const NEUTRAL_600 = "#525252";
+  const COBALT_50 = "#eff6ff"; // parent children schedule rows
+  const SLATE_600 = "#475569"; // status.slate.600
+
+  // "By student" toggle, unselected: neutral-500 on the neutral-100 track.
+  assert.ok(contrastRatio(NEUTRAL_100, NEUTRAL_500) < AA_TEXT, "neutral-500 on track fails");
+  assert.ok(contrastRatio(NEUTRAL_100, NEUTRAL_600) >= AA_TEXT, "neutral-600 on track passes");
+  // Passport REQUIRED tag: red on red-50.
+  assert.ok(contrastRatio(RED_50, RED_800) >= AA_TEXT, "status red-800 on red-50 passes");
+  // Parent children sub-labels on the cobalt-50 schedule row.
+  assert.ok(contrastRatio(COBALT_50, MUTED) < AA_TEXT, "rally.muted on cobalt-50 fails");
+  assert.ok(contrastRatio(COBALT_50, SLATE_600) >= AA_TEXT, "slate-600 on cobalt-50 passes");
+  assert.ok(contrastRatio(COBALT_50, RED_600) < AA_TEXT, "red-600 on cobalt-50 fails");
+  assert.ok(contrastRatio(COBALT_50, RED_800) >= AA_TEXT, "red-800 on cobalt-50 passes");
+
+  const skills = read("app/(coach)/coach/sessions/[id]/skills/page.tsx");
+  assert.ok(
+    skills.includes('active ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-600"'),
+    "coach skills mode toggle uses neutral-600 when unselected",
+  );
+  const board = read("components/pathway/skill-board.tsx");
+  assert.ok(!/:\s*"text-neutral-500"/.test(board), "skill board mode toggle is not neutral-500");
+
+  const passport = read("app/(coach)/coach/students/[studentId]/passport/page.tsx");
+  const tag = passport.slice(passport.indexOf("{entry.is_required && ("), passport.indexOf("Required\n"));
+  assert.ok(tag.length > 0, "passport REQUIRED tag is still rendered");
+  assert.ok(!tag.includes("text-red-600"), "passport REQUIRED tag left raw red-600");
+  assert.ok(tag.includes("text-status-red-800"), "passport REQUIRED tag uses status red-800");
+
+  const children = read("app/(parent)/parent/children/page.tsx");
+  const row = children.slice(children.indexOf('bg-rally-cobalt-50">'));
+  const rowEnd = row.indexOf("</li>");
+  const rowBlock = row.slice(0, rowEnd);
+  assert.ok(!/text-rally-muted/.test(rowBlock.slice(0, rowBlock.indexOf("absence"))), "no rally.muted text on the cobalt-50 row header");
+  assert.ok(!rowBlock.includes("text-status-red-600"), "cancelled label is not red-600 on cobalt-50");
+});
+
+test("UI-7 — no class names the non-token `rally-base` on the surfaces run 4 flagged", () => {
+  for (const file of [
+    "app/(coach)/coach/today/page.tsx",
+    "components/teaching/lesson-card.tsx",
+  ]) {
+    assert.ok(!read(file).includes("rally-base"), `${file} no longer uses rally-base`);
+  }
+});

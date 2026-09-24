@@ -602,7 +602,7 @@ function ChildrenChips({ kids }: { kids: FamilyIndexChild[] }) {
         <li key={child.student_id} className="flex flex-wrap items-center gap-2">
           <Link
             href={studentHref(child.student_id)}
-            className="text-sm text-rally-base hover:underline"
+            className="text-sm text-rally-cobalt-700 underline decoration-rally-cobalt-600/40 underline-offset-2 hover:decoration-rally-cobalt-600 dark:text-rally-cobalt-100"
           >
             {child.name}
           </Link>
@@ -729,7 +729,7 @@ function ChildTableRow({
         <Link
           href={studentHref(child.student_id)}
           data-testid={`admin-families-child-link-${child.student_id}`}
-          className="font-medium text-rally-base hover:underline"
+          className="font-medium text-rally-cobalt-700 underline decoration-rally-cobalt-600/40 underline-offset-2 hover:decoration-rally-cobalt-600 dark:text-rally-cobalt-100"
         >
           {child.name}
         </Link>

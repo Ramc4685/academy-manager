@@ -311,8 +311,8 @@ function LevelGroupSection({
               onClick={() => setMode(m)}
               className={`min-h-[44px] rounded-md text-xs font-semibold ${
                 mode === m
-                  ? "bg-white text-rally-base shadow-sm dark:bg-neutral-700"
-                  : "text-neutral-500"
+                  ? "bg-white text-rally-ink shadow-sm dark:bg-neutral-700 dark:text-white"
+                  : "text-neutral-600 dark:text-neutral-300"
               }`}
             >
               {m === "by-student" ? "By student" : "By skill"}

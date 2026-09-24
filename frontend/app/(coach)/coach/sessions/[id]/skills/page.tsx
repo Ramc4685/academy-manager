@@ -132,7 +132,7 @@ function ModeButton({
     <button
       onClick={onClick}
       className={`min-h-touch rounded-md text-sm font-semibold ${
-        active ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500"
+        active ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-600"
       }`}
     >
       {children}
