@@ -21,6 +21,14 @@ from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 
 OWNER_ACADEMY_ROLE: Role = "admin"
+#: Body of the placeholder waiver every bootstrapped academy starts with. The
+#: admin setup checklist (roadmap L7) treats a waiver still carrying exactly
+#: this text as "not done yet", so keep it the single source.
+DEFAULT_WAIVER_BODY = (
+    "Default academy participation waiver. Replace this template before "
+    "accepting student registrations."
+)
+
 DEFAULT_RECORDS = (
     "academy",
     "owner_user",
@@ -268,10 +276,7 @@ def _default_waiver(
     now: datetime,
     id_factory: Callable[[str], str],
 ) -> dict[str, Any]:
-    text = (
-        "Default academy participation waiver. Replace this template before "
-        "accepting student registrations."
-    )
+    text = DEFAULT_WAIVER_BODY
     return {
         "waiver_template_id": id_factory("wt_"),
         "academy_id": academy_id,

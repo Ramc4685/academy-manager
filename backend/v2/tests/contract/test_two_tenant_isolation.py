@@ -871,6 +871,20 @@ def test_own_tenant_reads_its_seed(env: Env) -> None:
             assert academy in response.text
 
 
+def test_setup_checklist_reads_every_source_on_the_real_composition(env: Env) -> None:
+    """``GET /admin/setup-checklist`` (roadmap L7) degrades a failing source to
+    ``unknown``; on the real app every source must actually answer, so a
+    wiring or signature mistake cannot hide behind the fallback."""
+    for academy in (A, B):
+        headers = {"authorization": f"Bearer {_email(academy, 'admin')}", "host": _host(academy)}
+        response = env.client.get("/api/v2/admin/setup-checklist", headers=headers)
+        assert response.status_code == 200, (academy, response.text[:300])
+        body = response.json()
+        unknown = [item["key"] for item in body["items"] if item["status"] == "unknown"]
+        assert unknown == [], (academy, unknown)
+        assert body["total"] == 9
+
+
 def test_duplicate_check_never_matches_the_other_tenants_people(env: Env) -> None:
     """``POST /admin/people/duplicate-check`` (People CRM Phase 4c) is a
     parameterless write-shaped read, so the enumeration above does not reach

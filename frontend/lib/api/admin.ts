@@ -3222,6 +3222,43 @@ export function listAdminAttention(): Promise<AdminAttentionList> {
 }
 
 // ---------------------------------------------------------------------------
+// Setup checklist (roadmap L7): derived from existing settings, read-only
+// ---------------------------------------------------------------------------
+
+export type SetupChecklistStatus = "done" | "todo" | "unknown";
+export type SetupChecklistKey =
+  | "academy_profile"
+  | "branding"
+  | "billing_rules"
+  | "stripe_connect"
+  | "session_types"
+  | "classes"
+  | "staff"
+  | "waiver"
+  | "public_page";
+
+export interface SetupChecklistItem {
+  key: SetupChecklistKey;
+  label: string;
+  detail: string;
+  status: SetupChecklistStatus;
+  href: string;
+  /** The step lives on an owner-only settings panel (billing rules, Stripe). */
+  owner_only: boolean;
+}
+
+export interface SetupChecklist {
+  items: SetupChecklistItem[];
+  done_count: number;
+  total: number;
+  complete: boolean;
+}
+
+export function getAdminSetupChecklist(): Promise<SetupChecklist> {
+  return apiFetch<SetupChecklist>("/admin/setup-checklist", { method: "GET" });
+}
+
+// ---------------------------------------------------------------------------
 // Pause requests / audit / dues / reports
 // ---------------------------------------------------------------------------
 
