@@ -18,10 +18,11 @@ import { shortDate } from "./family-view";
 // Tabs: `?tab=` on the existing /admin/families/[parentId] route.
 // ---------------------------------------------------------------------------
 
-export type FamilyTab = "overview" | "details" | "billing" | "timeline";
+export type FamilyTab = "overview" | "notes" | "details" | "billing" | "timeline";
 
 export const FAMILY_TABS: ReadonlyArray<{ id: FamilyTab; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "notes", label: "Notes & follow-ups" },
   { id: "details", label: "Details" },
   { id: "billing", label: "Billing" },
   { id: "timeline", label: "Timeline" },
