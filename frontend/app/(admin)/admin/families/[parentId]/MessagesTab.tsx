@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button, Card, Chip, Overline, Skeleton } from "@/components/ds";
@@ -93,14 +93,31 @@ function ContactCard({
   const [direct, setDirect] = useState<DirectChannel | null>(null);
   const [note, setNote] = useState("");
   const [noteError, setNoteError] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  // The control that opened the log form; focus returns there when the form
+  // closes (saved, cancelled or "Not yet") so keyboard users are not dropped
+  // on <body>. Falls back to the card heading when that control is gone.
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const headingRef = useRef<HTMLDivElement | null>(null);
+  const restoreFocus = useRef(false);
+
+  const closeForm = () => {
+    restoreFocus.current = true;
+    setPending(null);
+    setDirect(null);
+    setNote("");
+    setNoteError(null);
+  };
 
   const log = useMutation({
     mutationFn: (payload: NewContactLog) => logFamilyContact(parentId, payload),
-    onSuccess: () => {
-      setPending(null);
-      setDirect(null);
-      setNote("");
-      setNoteError(null);
+    onSuccess: (_data, payload) => {
+      closeForm();
+      setAnnouncement(
+        payload.status === "logged"
+          ? `${channelLabel(payload.channel)} logged.`
+          : `${channelLabel(payload.channel)} saved as not sent yet.`,
+      );
       void qc.invalidateQueries({ queryKey: key });
       void qc.invalidateQueries({ queryKey: queryKeys.admin.familyTimeline(parentId) });
     },
@@ -115,9 +132,26 @@ function ContactCard({
 
   const channel = pending ?? direct;
 
+  useEffect(() => {
+    if (channel || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    const target = returnFocus.current;
+    (target && target.isConnected ? target : headingRef.current)?.focus();
+  }, [channel]);
+
   return (
     <Card p={20} data-testid="family-messages-contact">
-      <Overline>Contact this family</Overline>
+      <div
+        ref={headingRef}
+        tabIndex={-1}
+        className="focus:outline-none"
+        data-testid="family-messages-contact-heading"
+      >
+        <Overline>Contact this family</Overline>
+      </div>
+      <p role="status" className="sr-only" data-testid="family-contact-log-status">
+        {announcement}
+      </p>
       <p className="mt-1 text-xs text-rally-muted">
         Opens your own WhatsApp, messages or mail app. Log it here so the team sees it.
       </p>
@@ -146,7 +180,9 @@ function ContactCard({
               rel={ch === "whatsapp" ? "noopener noreferrer" : undefined}
               data-testid={`family-handoff-${ch}`}
               className="inline-flex min-h-9 items-center rounded-lg border border-rally-line bg-white px-3 text-sm font-medium text-rally-ink hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
-              onClick={() => {
+              onClick={(ev) => {
+                returnFocus.current = ev.currentTarget;
+                setAnnouncement("");
                 setDirect(null);
                 setPending(ch);
               }}
@@ -172,7 +208,9 @@ function ContactCard({
             size="sm"
             variant="secondary"
             data-testid={`family-log-${ch}`}
-            onClick={() => {
+            onClick={(ev) => {
+              returnFocus.current = ev.currentTarget;
+              setAnnouncement("");
               setPending(null);
               setDirect(ch);
             }}
@@ -244,11 +282,7 @@ function ContactCard({
                   variant="secondary"
                   disabled={log.isPending}
                   data-testid="family-contact-log-cancel"
-                  onClick={() => {
-                    setDirect(null);
-                    setNote("");
-                    setNoteError(null);
-                  }}
+                  onClick={closeForm}
                 >
                   Cancel
                 </Button>
@@ -289,10 +323,16 @@ function ThreadCard({ parentId }: { parentId: string }) {
   });
   const staff = staffOptions(staffQuery.data?.users ?? []);
   const meId = meQuery.data?.user_id ?? null;
+  // The row whose "Yes, I sent it" button just succeeded: once the refetch
+  // removes that button, focus moves to the row itself instead of <body>.
+  const [focusLogId, setFocusLogId] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState("");
 
   const complete = useMutation({
     mutationFn: (logId: string) => completeFamilyContactLog(parentId, logId),
-    onSuccess: () => {
+    onSuccess: (_data, logId) => {
+      setFocusLogId(logId);
+      setAnnouncement("Marked as sent.");
       void qc.invalidateQueries({ queryKey: key });
       void qc.invalidateQueries({ queryKey: queryKeys.admin.familyTimeline(parentId) });
     },
@@ -322,6 +362,9 @@ function ThreadCard({ parentId }: { parentId: string }) {
   return (
     <Card p={20} data-testid="family-messages">
       <Overline>Messages</Overline>
+      <p role="status" className="sr-only" data-testid="family-messages-status">
+        {announcement}
+      </p>
       {warning && (
         <p className="mt-1 text-xs text-rally-muted" data-testid="family-messages-warnings">
           {warning}
@@ -337,14 +380,20 @@ function ThreadCard({ parentId }: { parentId: string }) {
           No messages yet. Emails the academy sends and contacts you log show up here.
         </p>
       ) : (
-        <ol className="mt-2 divide-y divide-rally-line">
+        <ol className="mt-2 divide-y divide-rally-line" aria-live="polite" aria-relevant="additions">
           {entries.map((e) => (
             <MessageRow
               key={e.entry_id}
               entry={e}
               author={e.author_user_id ? staffName(staff, e.author_user_id, meId) : null}
               completing={complete.isPending && complete.variables === e.log_id}
-              onComplete={() => e.log_id && complete.mutate(e.log_id)}
+              focusRequested={focusLogId !== null && focusLogId === e.log_id}
+              onFocused={() => setFocusLogId(null)}
+              onComplete={() => {
+                if (!e.log_id) return;
+                setAnnouncement("");
+                complete.mutate(e.log_id);
+              }}
             />
           ))}
         </ol>
@@ -357,16 +406,30 @@ function MessageRow({
   entry,
   author,
   completing,
+  focusRequested,
+  onFocused,
   onComplete,
 }: {
   entry: FamilyMessage;
   author: string | null;
   completing: boolean;
+  focusRequested: boolean;
+  onFocused: () => void;
   onComplete: () => void;
 }) {
+  const rowRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    // Wait for the refetch that removes the button before moving focus.
+    if (!focusRequested || entry.can_complete) return;
+    rowRef.current?.focus();
+    onFocused();
+  }, [focusRequested, entry.can_complete, onFocused]);
+
   return (
     <li
-      className="py-2 text-sm"
+      ref={rowRef}
+      tabIndex={-1}
+      className="py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt-600"
       data-testid={`family-message-${entry.source}`}
       data-status={entry.status}
       data-channel={entry.channel}

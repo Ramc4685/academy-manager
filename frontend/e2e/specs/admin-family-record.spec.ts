@@ -465,6 +465,9 @@ test.describe("Family record (People CRM §4)", () => {
     await expect(pending).toHaveAttribute("data-status", "not_logged");
     await pending.getByTestId("family-message-complete").click();
     await expect(pending).toHaveAttribute("data-status", "logged");
+    // The confirm button is gone; focus lands on its row, not <body>.
+    await expect(pending).toBeFocused();
+    await expect(page.getByTestId("family-messages-status")).toHaveText("Marked as sent.");
 
     // A call is logged with a short note.
     await page.getByTestId("family-log-call").click();
@@ -472,6 +475,15 @@ test.describe("Family record (People CRM §4)", () => {
     await page.getByTestId("family-contact-log-save").click();
     await expect(page.getByTestId("family-contact-log-form")).toHaveCount(0);
     await expect(page.getByText("Talked about Saturday class")).toBeVisible();
+    // The form closed under the focused Save button; focus returns to its opener.
+    await expect(page.getByTestId("family-log-call")).toBeFocused();
+    await expect(page.getByTestId("family-contact-log-status")).toHaveText("Call logged.");
+
+    // Cancelling also returns focus to the button that opened the form.
+    await page.getByTestId("family-log-in_person").click();
+    await page.getByTestId("family-contact-log-cancel").click();
+    await expect(page.getByTestId("family-contact-log-form")).toHaveCount(0);
+    await expect(page.getByTestId("family-log-in_person")).toBeFocused();
 
     expect(messageLogs).toEqual([
       expect.objectContaining({ method: "PATCH", body: { status: "logged", note: null } }),
