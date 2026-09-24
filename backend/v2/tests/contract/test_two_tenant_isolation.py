@@ -50,6 +50,7 @@ filed GitHub issue, so the fix flips it to XPASS and forces the entry out.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import uuid
@@ -530,18 +531,27 @@ class Env:
     #: cases in collection order, so normally every list scan runs first).
     attacked_with_writes: bool = False
 
-    def fingerprint(self, academy: str) -> dict[str, int]:
-        """A hash of every stored document of ``academy``, per collection."""
+    def fingerprint(self, academy: str) -> dict[str, str]:
+        """A SHA-256 of every stored document of ``academy``, per collection.
+
+        Each BSON document is length-prefixed, so concatenating them in ``_id``
+        order is unambiguous; collections with no document of ``academy`` are
+        left out.
+        """
         from bson import encode
 
-        prints: dict[str, int] = {}
+        prints: dict[str, str] = {}
         for collection in sorted(self.database.list_collection_names()):
             if collection.startswith("system."):
                 continue
             docs = self.database[collection].find({"academy_id": academy}, sort=[("_id", 1)])
-            digest = hash(tuple(encode(doc) for doc in docs))
-            if digest != hash(()):
-                prints[collection] = digest
+            digest = hashlib.sha256()
+            seen = False
+            for doc in docs:
+                digest.update(encode(doc))
+                seen = True
+            if seen:
+                prints[collection] = digest.hexdigest()
         return prints
 
     def call(
@@ -768,6 +778,17 @@ def _request_body(
 # ---------------------------------------------------------------------------
 
 
+def _response_text(response: Any) -> str:
+    """Headers and body of ``response``, as one string to scan for B markers.
+
+    Headers are included so a B id or name echoed only in ``Location``,
+    ``Set-Cookie``, ``Content-Disposition`` or a pagination header is caught
+    too.
+    """
+    headers = "\n".join(f"{name}: {value}" for name, value in response.headers.items())
+    return f"{headers}\n\n{response.text}"
+
+
 def _foreign_markers(text: str, echoed: set[str]) -> list[str]:
     """B markers in ``text`` other than ids the request itself carried."""
     scrubbed = text
@@ -848,7 +869,7 @@ def test_actor_cannot_use_its_token_on_the_other_tenants_host(env: Env, persona:
         headers={"authorization": f"Bearer {_email(A, persona)}", "host": _host(B)},
     )
     assert response.status_code in (401, 403), response.text[:300]
-    assert not _foreign_markers(response.text, set())
+    assert not _foreign_markers(_response_text(response), set())
 
 
 @pytest.mark.parametrize("case", _params(LIST_ROUTES))
@@ -861,7 +882,7 @@ def test_list_route_holds_no_other_tenant_data(
     response, injected = env.call(case, academy=A, ids=A_IDS, openapi=openapi)
     assert response.status_code < 500, f"{case.test_id}: {response.text[:400]}"
     tolerated = set(B_IDS.values()) if env.attacked_with_writes else set()
-    leaked = _foreign_markers(response.text, injected | tolerated)
+    leaked = _foreign_markers(_response_text(response), injected | tolerated)
     assert not leaked, f"{case.test_id} returned academy B data: {leaked[:3]}"
     env.outcomes["list_scanned"] += 1
 
@@ -911,7 +932,7 @@ def test_path_parameter_route_refuses_other_tenants_ids(
     after = env.fingerprint(B)
 
     assert response.status_code < 500, f"{case.test_id} crashed: {response.text[:400]}"
-    leaked = _foreign_markers(response.text, injected)
+    leaked = _foreign_markers(_response_text(response), injected)
     assert not leaked, f"{case.test_id} returned academy B data: {leaked[:3]}"
     changed = sorted(c for c in set(before) | set(after) if before.get(c) != after.get(c))
     assert not changed, f"{case.test_id} as academy A changed academy B's {changed}"
