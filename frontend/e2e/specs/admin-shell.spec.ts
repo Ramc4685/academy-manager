@@ -1612,6 +1612,200 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
+  test("student detail warns before a tab switch or a link discards an unsaved edit", async ({
+    page,
+  }) => {
+    // UI-2: only Settings reported dirty state, so a typed student edit was
+    // dropped by a tab switch (the tabs are buttons, not links) or any link.
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/students/student-guard-e2e", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        student_id: "student-guard-e2e",
+        full_name: "Guard Student E2E",
+        parent_id: "parent-guard-e2e",
+        parent_name: "Guard Parent E2E",
+        parent_email: "guard-parent@example.com",
+        parent_phone: null,
+        lifecycle: "active",
+        active_session_count: 0,
+        last_seen_at: null,
+        attendance_rate: null,
+        dues_status: "paid",
+        date_of_birth: "2015-04-10",
+        level: "beginner",
+        notes: "",
+        parent_details: null,
+        previous_experience: "",
+        medical_notes: "",
+        emergency_contact_name: "",
+        emergency_contact_phone: "",
+        t_shirt_size: "",
+        waiver_status: "signed",
+        waiver_signed_at: null,
+        waiver_version: null,
+        recent_attendance: [],
+        enrolled_sessions: [],
+        past_enrollments: [],
+        payment_history: [],
+        current_payment: null,
+      });
+    });
+    // The Training tab's skill pathway reads the program catalog; the shell
+    // catch-all's `{}` has no `programs` key.
+    await page.route("**/api/v2/admin/programs*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { programs: [] });
+    });
+    await page.route("**/api/v2/admin/enrollment/departure-policy", (route) =>
+      fulfillJson(route, {
+        max_hold_days: 30,
+        hold_reclaim_policy: "longest_held",
+        drop_default_outcome: "no_credit_mid_month",
+        delete_enrollment_requires_owner: true,
+      }),
+    );
+    const nativeDialogs: string[] = [];
+    page.on("dialog", async (dialog) => {
+      nativeDialogs.push(dialog.message());
+      await dialog.dismiss();
+    });
+
+    await page.goto("/admin/students/student-guard-e2e");
+    const fullName = page.getByLabel("Full name");
+    await expect(fullName).toHaveValue("Guard Student E2E");
+
+    // A clean form switches tabs with no prompt.
+    const guard = page.getByTestId("confirm-action-dialog");
+    const trainingTab = page.getByRole("tab", { name: "Training" });
+    await trainingTab.click();
+    await expect(page).toHaveURL(/tab=training/);
+    await expect(guard).toHaveCount(0);
+    await page.getByRole("tab", { name: "Overview" }).click();
+    await expect(fullName).toHaveValue("Guard Student E2E");
+
+    await fullName.fill("Guard Student Edited");
+
+    // Keyboard: the tab is reachable and Enter opens the guard, focus moves
+    // into the dialog, and Escape stays and hands focus back to the tab.
+    await trainingTab.focus();
+    await page.keyboard.press("Enter");
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+    await expect
+      .poll(() => guard.evaluate((el) => el.contains(document.activeElement)))
+      .toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(guard).toHaveCount(0);
+    await expect(trainingTab).toBeFocused();
+    await expect(page).not.toHaveURL(/tab=training/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
+    // Stay keeps the tab and the typed value.
+    await trainingTab.click();
+    await expect(guard).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).not.toHaveURL(/tab=training/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
+    // An in-app link is guarded too.
+    await page.getByRole("link", { name: "All students" }).click();
+    await expect(guard).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(page).toHaveURL(/\/admin\/students\/student-guard-e2e/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
+    // Leaving on purpose takes one confirm.
+    await trainingTab.click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/tab=training/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
+    await expect(page.getByTestId("admin-student-training-tab")).toBeVisible();
+
+    // Nothing is dirty any more: the next switch is immediate.
+    await page.getByRole("tab", { name: "Overview" }).click();
+    await expect(fullName).toHaveValue("Guard Student E2E");
+    await expect(guard).toHaveCount(0);
+    expect(nativeDialogs).toEqual([]);
+    expect(
+      errors,
+      `App console errors on the student dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("user detail warns before a link discards an unsaved profile edit", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    let saved: Record<string, unknown> | null = null;
+    const staff = {
+      user_id: "staff-guard-e2e",
+      email: "staff-guard@example.com",
+      display_name: "Guard Staff E2E",
+      role: "admin",
+      status: "active",
+      roles: ["admin"],
+      phone: null,
+    };
+    await page.route("**/api/v2/admin/users/staff-guard-e2e", (route) => {
+      const method = route.request().method();
+      if (method === "PATCH") {
+        saved = route.request().postDataJSON() as Record<string, unknown>;
+        return fulfillJson(route, { ...staff, ...saved });
+      }
+      if (method !== "GET") return route.fallback();
+      return fulfillJson(route, staff);
+    });
+
+    await page.goto("/admin/users/staff-guard-e2e");
+    const displayName = page.getByLabel("Display name");
+    await expect(displayName).toHaveValue("Guard Staff E2E");
+    await displayName.fill("Guard Staff Edited");
+
+    const guard = page.getByTestId("confirm-action-dialog");
+    const back = page.getByRole("link", { name: "All users" });
+    await back.click();
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/users\/staff-guard-e2e$/);
+    await expect(displayName).toHaveValue("Guard Staff Edited");
+
+    // A successful save is clean at once, even though the refetch still
+    // returns the old name: the link leaves with no prompt.
+    await page
+      .getByTestId("admin-user-edit-form")
+      .getByRole("button", { name: /^save changes$/i })
+      .click();
+    await expect.poll(() => saved).toMatchObject({ display_name: "Guard Staff Edited" });
+    await expect(
+      page.getByTestId("admin-user-edit-form").getByText("Saved", { exact: false }),
+    ).toBeVisible();
+    await Promise.all([page.waitForURL(/\/admin\/users$/), back.click()]);
+    await expect(guard).toHaveCount(0);
+
+    // Edit again and leave on purpose through the confirm.
+    await page.goto("/admin/users/staff-guard-e2e");
+    await expect(displayName).toHaveValue("Guard Staff E2E");
+    await displayName.fill("Guard Staff Again");
+    await back.click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/admin\/users$/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
+    expect(
+      errors,
+      `App console errors on the user dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
   test("settings tabs keep 44px targets and the active tab in view at 400px", async ({
     page,
   }) => {

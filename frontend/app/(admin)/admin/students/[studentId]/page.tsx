@@ -34,6 +34,7 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
+import { useUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Chip } from "@/components/ds/chip";
 import { ContactLinks } from "@/components/ds/contact-links";
 import { OverflowMenu } from "@/components/ds/menu";
@@ -63,6 +64,15 @@ export default function AdminStudentDetailPage() {
   // to their Billing and a reload does not drop back to Overview.
   const activeTab = resolveStudentTab(searchParams.get("tab"));
   const [stopAllClassesOpen, setStopAllClassesOpen] = useState(false);
+  const { requestLeave } = useUnsavedChanges();
+
+  // UI-2: only the active tab's panel is mounted, so switching tabs unmounts
+  // the form holding a draft. The tabs are buttons, not links, so the shell
+  // guard's link listener never sees them; ask it explicitly instead.
+  function selectTab(next: StudentTab) {
+    if (next === activeTab) return;
+    requestLeave(() => setActiveTab(next));
+  }
 
   function setActiveTab(next: StudentTab) {
     const nextParams = new URLSearchParams(searchParams.toString());
@@ -175,7 +185,7 @@ export default function AdminStudentDetailPage() {
         />
       )}
       <StudentSummaryStrip student={student} />
-      <StudentTabs activeTab={activeTab} onChange={setActiveTab} />
+      <StudentTabs activeTab={activeTab} onChange={selectTab} />
 
       {activeTab === "overview" && (
         <TabPanel id="overview">
