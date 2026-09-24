@@ -177,7 +177,7 @@ function SkillCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-rally-base">{entry.skill_name}</span>
             {entry.is_required && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-600">
+              <span className="rounded-full bg-status-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-status-red-800">
                 Required
               </span>
             )}

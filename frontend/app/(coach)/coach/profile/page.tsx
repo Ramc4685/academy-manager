@@ -111,7 +111,7 @@ export default function CoachProfilePage() {
                 Pay information lives here, separate from Coach Home.
               </p>
               <p className="mt-3 rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800">
-                Statement downloads are not available in this workspace yet.
+                Statement downloads are not available yet.
               </p>
             </section>
           )}

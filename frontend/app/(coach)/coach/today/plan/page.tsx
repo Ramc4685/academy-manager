@@ -47,7 +47,7 @@ export default function CoachTeachingPlanPage() {
         <div>
           <Link
             href="/coach/today"
-            className="text-xs text-rally-base hover:underline"
+            className="text-xs text-rally-cobalt-700 hover:underline dark:text-rally-cobalt-100"
           >
             ‹ Today
           </Link>

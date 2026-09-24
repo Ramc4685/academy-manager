@@ -114,6 +114,10 @@ If it fails:
 
 ## Onboarding checklist
 
+This covers the host only. The full order of operations for a new academy
+(tenant, host, owner access, setup checklist, families, go-live) is in
+`docs/runbooks/onboard-academy-two.md`.
+
 - [ ] Academy created with its `slug`; primary domain written to
       `academy_domains` with `status: "verified"`.
 - [ ] Gate 1 done in Google Cloud Console (origins + `/__/auth/handler`).

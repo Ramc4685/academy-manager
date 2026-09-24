@@ -31,6 +31,7 @@ import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucke
 import { statHint, statText } from "@/lib/ui/load-state";
 
 import { MyFollowUpsCard } from "@/components/admin/my-follow-ups-card";
+import { SetupChecklistCard } from "@/components/admin/setup-checklist-card";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
@@ -125,6 +126,10 @@ export default function AdminDashboardPage() {
 
   return (
     <section data-testid="admin-dashboard" className="space-y-6">
+      {/* Roadmap L7: a new academy's setup steps, derived from its settings.
+          Renders nothing once every step is done. */}
+      <SetupChecklistCard />
+
       {/* Issue #842: attention leads the dashboard, above the KPI strip — the
           items that need a decision matter more than the tiles that just
           report a number. */}

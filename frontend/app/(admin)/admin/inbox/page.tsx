@@ -70,6 +70,8 @@ export default function AdminInboxPage() {
         {INBOX_TABS.map((t) => {
           const count = counts?.[t.id] ?? 0;
           return (
+            // UI-7: `whitespace-nowrap` keeps "Level-ups" whole when the
+            // strip wraps to a second row on a phone.
             <button
               key={t.id}
               type="button"
@@ -77,7 +79,7 @@ export default function AdminInboxPage() {
               data-testid={`admin-inbox-tab-${t.id}`}
               aria-selected={tab === t.id}
               onClick={() => setPicked(t.id)}
-              className="min-h-touch flex-1 rounded-lg px-3 text-sm font-semibold transition-all duration-150"
+              className="min-h-touch flex-1 whitespace-nowrap rounded-lg px-3 text-sm font-semibold transition-all duration-150"
               style={
                 tab === t.id
                   ? {

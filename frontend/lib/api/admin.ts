@@ -2950,6 +2950,80 @@ export function getInquiryConversion(range: {
   );
 }
 
+/**
+ * People reports (roadmap L5b): students whose lifecycle is at_risk (no
+ * attendance in the last three class dates), by class and by the class's
+ * coach. No money.
+ */
+export interface AdminClassRiskRow {
+  session_id: string;
+  title: string;
+  coach_id: string | null;
+  coach_name: string | null;
+  students: number;
+  at_risk: number;
+  at_risk_rate: number | null;
+}
+
+export interface AdminCoachRiskRow {
+  coach_id: string | null;
+  coach_name: string | null;
+  classes: number;
+  students: number;
+  at_risk: number;
+  at_risk_rate: number | null;
+}
+
+export interface AdminAttendanceRiskResponse {
+  generated_at: string;
+  by_class: AdminClassRiskRow[];
+  by_coach: AdminCoachRiskRow[];
+  students: number;
+  at_risk: number;
+}
+
+export function getAttendanceRisk(): Promise<AdminAttendanceRiskResponse> {
+  return apiFetch<AdminAttendanceRiskResponse>("/admin/reports/people/attendance-risk", {
+    method: "GET",
+  });
+}
+
+/**
+ * People reports (roadmap L5b): families whose children have all left, with
+ * the departure in the window, by recorded reason (#775) or, when none was
+ * recorded, by how the last class ended. No money.
+ */
+export interface AdminReasonCount {
+  key: string;
+  label: string | null;
+  families: number;
+}
+
+export interface AdminFamiliesLostResponse {
+  date_from: string;
+  date_to: string;
+  timezone: string;
+  families_lost: number;
+  by_reason: AdminReasonCount[];
+  with_reason: number;
+  by_transition: AdminReasonCount[];
+  without_reason: number;
+}
+
+export function getFamiliesLost(range: {
+  from?: string;
+  to?: string;
+}): Promise<AdminFamiliesLostResponse> {
+  const params = new URLSearchParams();
+  if (range.from) params.set("from", range.from);
+  if (range.to) params.set("to", range.to);
+  const q = params.toString();
+  return apiFetch<AdminFamiliesLostResponse>(
+    `/admin/reports/people/families-lost${q ? `?${q}` : ""}`,
+    { method: "GET" },
+  );
+}
+
 export interface AdminAttendanceTrendsPeriod {
   period: string;
   scheduled_count: number;
@@ -3153,6 +3227,43 @@ export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
 
 export function listAdminAttention(): Promise<AdminAttentionList> {
   return apiFetch<AdminAttentionList>("/admin/dashboard/attention", { method: "GET" });
+}
+
+// ---------------------------------------------------------------------------
+// Setup checklist (roadmap L7): derived from existing settings, read-only
+// ---------------------------------------------------------------------------
+
+export type SetupChecklistStatus = "done" | "todo" | "unknown";
+export type SetupChecklistKey =
+  | "academy_profile"
+  | "branding"
+  | "billing_rules"
+  | "stripe_connect"
+  | "session_types"
+  | "classes"
+  | "staff"
+  | "waiver"
+  | "public_page";
+
+export interface SetupChecklistItem {
+  key: SetupChecklistKey;
+  label: string;
+  detail: string;
+  status: SetupChecklistStatus;
+  href: string;
+  /** The step lives on an owner-only settings panel (billing rules, Stripe). */
+  owner_only: boolean;
+}
+
+export interface SetupChecklist {
+  items: SetupChecklistItem[];
+  done_count: number;
+  total: number;
+  complete: boolean;
+}
+
+export function getAdminSetupChecklist(): Promise<SetupChecklist> {
+  return apiFetch<SetupChecklist>("/admin/setup-checklist", { method: "GET" });
 }
 
 // ---------------------------------------------------------------------------

@@ -933,6 +933,65 @@ def test_own_tenant_reads_its_seed(env: Env) -> None:
             assert academy in response.text
 
 
+def test_setup_checklist_reads_every_source_on_the_real_composition(env: Env) -> None:
+    """``GET /admin/setup-checklist`` (roadmap L7) degrades a failing source to
+    ``unknown``; on the real app every source must actually answer, so a
+    wiring or signature mistake cannot hide behind the fallback."""
+    for academy in (A, B):
+        headers = {"authorization": f"Bearer {_email(academy, 'admin')}", "host": _host(academy)}
+        response = env.client.get("/api/v2/admin/setup-checklist", headers=headers)
+        assert response.status_code == 200, (academy, response.text[:300])
+        body = response.json()
+        unknown = [item["key"] for item in body["items"] if item["status"] == "unknown"]
+        assert unknown == [], (academy, unknown)
+        assert body["total"] == 9
+
+
+def test_setup_checklist_answers_from_the_callers_tenant_only(env: Env) -> None:
+    """``request.app.state.admin`` is one process-wide ``AdminUseCases``, so the
+    checklist's tenant scope comes from the request, not from the object. The
+    session-type read takes no ``academy_id`` argument (the repository scopes
+    it from the request's tenant) while branding passes ``claims.academy_id``
+    explicitly: change each on B only and A's checklist must not move."""
+
+    def statuses(academy: str) -> dict[str, str]:
+        headers = {"authorization": f"Bearer {_email(academy, 'admin')}", "host": _host(academy)}
+        response = env.client.get("/api/v2/admin/setup-checklist", headers=headers)
+        assert response.status_code == 200, (academy, response.text[:300])
+        return {item["key"]: item["status"] for item in response.json()["items"]}
+
+    a_before = statuses(A)
+    b_before = statuses(B)
+    # The seed has no session type and no branding in either academy.
+    assert a_before["session_types"] == b_before["session_types"] == "todo"
+    assert a_before["branding"] == b_before["branding"] == "todo"
+
+    types = env.database["session_types"]
+    types.insert_one(
+        {
+            "_id": "setup-checklist-probe",
+            "session_type_id": "setup-checklist-probe",
+            "academy_id": B,
+            "name": _name(B, "Group class"),
+            "price_cents": 10_000,
+            "is_active": True,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    env.database["academies"].update_one({"_id": B}, {"$set": {"brand_color": "#0055aa"}})
+    try:
+        b_after = statuses(B)
+        assert b_after["session_types"] == "done", b_after
+        assert b_after["branding"] == "done", b_after
+        assert statuses(A) == a_before
+    finally:
+        # Restore B byte-for-byte so later fingerprint checks see the seed.
+        env.database["academies"].update_one({"_id": B}, {"$unset": {"brand_color": ""}})
+        types.delete_one({"_id": "setup-checklist-probe"})
+    assert statuses(B) == b_before
+
+
 def test_duplicate_check_never_matches_the_other_tenants_people(env: Env) -> None:
     """``POST /admin/people/duplicate-check`` (People CRM Phase 4c) is a
     parameterless write-shaped read, so the enumeration above does not reach

@@ -116,6 +116,9 @@ export const queryKeys = {
     moneyOwedByAge: () => ["admin", "reports", "people", "money-owed-by-age"] as const,
     inquiryConversion: (from: string, to: string) =>
       ["admin", "reports", "people", "inquiry-conversion", from || "default", to || "default"] as const,
+    attendanceRisk: () => ["admin", "reports", "people", "attendance-risk"] as const,
+    familiesLost: (from: string, to: string) =>
+      ["admin", "reports", "people", "families-lost", from || "default", to || "default"] as const,
     attendanceTrends: (periods: string[]) =>
       ["admin", "reports", "attendance-trends", ...periods] as const,
     coachUtilization: (periods: string[]) =>
@@ -124,6 +127,7 @@ export const queryKeys = {
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,
     attention: () => ["admin", "dashboard", "attention"] as const,
+    setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,

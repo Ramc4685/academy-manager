@@ -448,7 +448,7 @@ test.describe("admin month close", () => {
     await expect(page.getByTestId("month-close-verdict-issues")).toHaveCount(0);
   });
 
-  test("the card wall collapses on a phone and opens on a desktop", async ({ page }) => {
+  test("the card wall collapses on phone and desktop and remembers what was opened", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubMonthCloseShell(page);
     await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
@@ -481,16 +481,24 @@ test.describe("admin month close", () => {
     await openMonthCloseSection(page, "discounts");
     await expect(page.getByTestId("tuition-discounts-section")).toBeVisible();
 
-    // The same page on a desktop viewport opens every group by default.
+    // UI-7: desktop starts collapsed too (it was a ~5,700px scroll at 1280),
+    // and the group opened above is remembered across the reload.
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.reload();
     await expect(page.getByTestId("month-close-verdict")).toBeVisible({ timeout: 45_000 });
-    for (const id of groups) {
+    await expect(page.getByTestId("month-close-section-discounts-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    for (const id of groups.filter((g) => g !== "discounts")) {
       await expect(page.getByTestId(`month-close-section-${id}-toggle`)).toHaveAttribute(
         "aria-expanded",
-        "true",
+        "false",
       );
     }
+    const desktopHeight = await page.evaluate(() => document.body.scrollHeight);
+    expect(desktopHeight).toBeLessThan(4_475);
+    await openMonthCloseSection(page, "autopay-run");
     await expect(page.getByTestId("autopay-run-box")).toBeVisible();
 
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
@@ -691,5 +699,138 @@ test.describe("admin reports: people", () => {
       timeout: 45_000,
     });
     await expect(page.getByTestId("people-report-money-owed-table")).toHaveCount(0);
+  });
+});
+
+/**
+ * People reports (roadmap L5b): attendance risk by class and coach, and
+ * families lost and why. Both carry no money, so they render for any admin.
+ */
+const ATTENDANCE_RISK_URL = "**/api/v2/admin/reports/people/attendance-risk*";
+const FAMILIES_LOST_URL = "**/api/v2/admin/reports/people/families-lost*";
+
+const ATTENDANCE_RISK = {
+  generated_at: "2026-09-23T15:00:00Z",
+  by_class: [
+    {
+      session_id: "sess-sat",
+      title: "Saturday Squad",
+      coach_id: "coach-1",
+      coach_name: "Testcoach One",
+      students: 3,
+      at_risk: 2,
+      at_risk_rate: 2 / 3,
+    },
+    {
+      session_id: "sess-new",
+      title: "Brand New Class",
+      coach_id: null,
+      coach_name: null,
+      students: 1,
+      at_risk: 0,
+      at_risk_rate: 0,
+    },
+  ],
+  by_coach: [
+    { coach_id: "coach-1", coach_name: "Testcoach One", classes: 1, students: 3, at_risk: 2, at_risk_rate: 2 / 3 },
+    { coach_id: null, coach_name: null, classes: 1, students: 1, at_risk: 0, at_risk_rate: 0 },
+  ],
+  students: 4,
+  at_risk: 2,
+};
+
+const FAMILIES_LOST = {
+  date_from: "2026-06-26",
+  date_to: "2026-09-23",
+  timezone: "America/Chicago",
+  families_lost: 4,
+  by_reason: [
+    { key: "moved_away", label: null, families: 1 },
+    { key: "cost", label: null, families: 1 },
+    { key: "other", label: null, families: 0 },
+  ],
+  with_reason: 2,
+  by_transition: [
+    { key: "cancelled_by_family", label: "Cancelled by the family", families: 1 },
+    { key: "hold_expired", label: "Hold ran out", families: 1 },
+  ],
+  without_reason: 2,
+};
+
+test.describe("admin reports: attendance risk and families lost", () => {
+  test("both cards render as tables and the range is sent", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
+    await page.route(ATTENDANCE_RISK_URL, (route) => fulfillJson(route, ATTENDANCE_RISK));
+    const lostRanges: string[] = [];
+    await page.route(FAMILIES_LOST_URL, (route) => {
+      lostRanges.push(new URL(route.request().url()).search);
+      return fulfillJson(route, FAMILIES_LOST);
+    });
+
+    await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "people");
+
+    await expect(page.getByTestId("people-report-risk-class-table")).toBeVisible({
+      timeout: 45_000,
+    });
+    const saturday = page.getByTestId("people-report-risk-class-row-sess-sat");
+    await expect(saturday).toContainText("Saturday Squad");
+    await expect(saturday).toContainText("Testcoach One");
+    await expect(saturday).toContainText("67%");
+    await expect(page.getByTestId("people-report-risk-class-row-sess-new")).toContainText(
+      "No coach assigned",
+    );
+    await expect(page.getByTestId("people-report-risk-coach-row-coach-1")).toContainText(
+      "Testcoach One",
+    );
+    await expect(page.getByTestId("people-report-attendance-risk-total")).toContainText(
+      "2 students at risk of 4 students",
+    );
+
+    await expect(page.getByTestId("people-report-families-lost-table")).toBeVisible();
+    await expect(page.getByTestId("people-report-families-lost-reason-moved_away")).toContainText(
+      "Moved away",
+    );
+    await expect(page.getByTestId("people-report-families-lost-reason-other")).toHaveCount(0);
+    await expect(
+      page.getByTestId("people-report-families-lost-transition-cancelled_by_family"),
+    ).toContainText("Cancelled by the family");
+    await expect(page.getByTestId("people-report-families-lost-no-reason")).toContainText(
+      "No reason recorded",
+    );
+    await expect(page.getByTestId("people-report-families-lost-total")).toContainText("4");
+    expect(lostRanges[0]).toBe("");
+
+    await page.getByTestId("people-report-families-lost-from").fill("2026-09-01");
+    await expect.poll(() => lostRanges.some((q) => q.includes("from=2026-09-01"))).toBe(true);
+
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("both cards show empty states on an empty academy", async ({ page }) => {
+    await stubMonthCloseShell(page);
+    await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
+    await page.route(ATTENDANCE_RISK_URL, (route) =>
+      fulfillJson(route, { ...ATTENDANCE_RISK, by_class: [], by_coach: [], students: 0, at_risk: 0 }),
+    );
+    await page.route(FAMILIES_LOST_URL, (route) =>
+      fulfillJson(route, {
+        ...FAMILIES_LOST,
+        families_lost: 0,
+        by_reason: FAMILIES_LOST.by_reason.map((row) => ({ ...row, families: 0 })),
+        with_reason: 0,
+        by_transition: [],
+        without_reason: 0,
+      }),
+    );
+
+    await page.goto("/admin/reports");
+    await openMonthCloseSection(page, "people");
+    await expect(page.getByTestId("people-report-attendance-risk-empty")).toBeVisible({
+      timeout: 45_000,
+    });
+    await expect(page.getByTestId("people-report-families-lost-empty")).toBeVisible();
   });
 });

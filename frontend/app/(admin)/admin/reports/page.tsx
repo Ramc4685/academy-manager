@@ -47,6 +47,8 @@ import { FunnelPanel } from "@/components/admin/reports/funnel-panel";
 import { AttendanceTrendsPanel } from "@/components/admin/reports/attendance-trends-panel";
 import { CoachUtilizationPanel } from "@/components/admin/reports/coach-utilization-panel";
 import {
+  AttendanceRiskPanel,
+  FamiliesLostPanel,
   InquiryConversionPanel,
   MoneyOwedByAgePanel,
 } from "@/components/admin/reports/people-reports-panels";
@@ -899,11 +901,13 @@ export default function AdminMonthClosePage() {
         <CollapsibleSection
           id="people"
           title="People"
-          summary="Money owed by how late it is, and inquiries to enrolled by source."
+          summary="Money owed by how late it is, inquiries by source, attendance risk and families lost."
         >
           <div className="grid gap-4 lg:grid-cols-2">
             <MoneyOwedByAgePanel />
             <InquiryConversionPanel />
+            <AttendanceRiskPanel />
+            <FamiliesLostPanel />
           </div>
         </CollapsibleSection>
 

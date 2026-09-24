@@ -14,6 +14,7 @@ import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { useToast } from "@/components/ds/toast";
+import { waiverAcceptLabel } from "@/lib/parent/waiver-label";
 
 export default function ParentWaiversPage() {
   const queryClient = useQueryClient();
@@ -169,7 +170,7 @@ export default function ParentWaiversPage() {
             variant="primary"
             className="mt-4 disabled:opacity-60"
           >
-            {acceptMutation.isPending ? "Accepting..." : "Accept waiver"}
+            {acceptMutation.isPending ? "Accepting..." : waiverAcceptLabel(waiver.students)}
           </Button>
         </Card>
       ) : (

@@ -67,7 +67,24 @@ export default function CoachTodayPage() {
           <h1 className="text-2xl font-semibold">Today</h1>
           <p className="text-sm text-neutral-500">{date}</p>
         </div>
-        <DatePicker date={date} onChange={setDate} />
+        <div className="flex flex-wrap items-center gap-2">
+          {/*
+           * UI-7 (critique run 4, leftover 9): the plan page is scoped to the
+           * date, not the session, so one link per day replaces the identical
+           * "View teaching plan" button that sat under every session card
+           * (its border class named a colour that is not a token, so it rendered none).
+           */}
+          {sessions.some((s) => !isCancelled(s)) && (
+            <Link
+              href={`/coach/today/plan?date=${date}` as Parameters<typeof Link>[0]["href"]}
+              data-testid="view-teaching-plan"
+              className="inline-flex min-h-touch items-center rounded-lg border border-rally-cobalt-600 px-4 text-sm font-semibold text-rally-cobalt-700 hover:bg-rally-cobalt-50 dark:text-rally-cobalt-100 dark:hover:bg-rally-night-panel"
+            >
+              View teaching plan
+            </Link>
+          )}
+          <DatePicker date={date} onChange={setDate} />
+        </div>
       </header>
 
       {isLoading && <SessionSkeleton />}
@@ -182,19 +199,6 @@ export default function CoachTodayPage() {
                 </p>
               )}
             </Link>
-            {!cancelled && (
-              <Link
-                href={
-                  `/coach/today/plan?date=${date}` as Parameters<
-                    typeof Link
-                  >[0]["href"]
-                }
-                data-testid={`view-teaching-plan-${s.session_id}`}
-                className="block min-h-touch rounded-lg border border-rally-base/30 px-4 py-2 text-center text-sm font-semibold text-rally-base hover:bg-rally-base/5"
-              >
-                View teaching plan
-              </Link>
-            )}
           </li>
           );
         })}

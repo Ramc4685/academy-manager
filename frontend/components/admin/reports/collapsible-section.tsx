@@ -1,8 +1,6 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
-
-import { useIsDesktop } from "@/lib/use-is-desktop";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
 /**
  * A named, collapsible group of month-close cards (issue #862).
@@ -16,7 +14,33 @@ import { useIsDesktop } from "@/lib/use-is-desktop";
  * NOT a `Card`: the groups hold cards, and wrapping them in another card
  * doubles every border. The header is its own bordered bar and the body is
  * the existing cards, unchanged, at their normal width.
+ *
+ * UI-7 (critique run 4, leftover 3): desktop used to open every group by
+ * default, so the page was still one ~5,700px scroll at 1280. Every viewport
+ * now starts collapsed, and a group the reader opened stays open for the rest
+ * of the browser session (sessionStorage, per group id), so switching period
+ * or coming back from a drill-down does not fold it again.
  */
+const STORAGE_PREFIX = "month-close-section:";
+
+function readRemembered(id: string): boolean | null {
+  try {
+    const raw = window.sessionStorage.getItem(STORAGE_PREFIX + id);
+    return raw === "open" ? true : raw === "closed" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+function remember(id: string, open: boolean): void {
+  try {
+    window.sessionStorage.setItem(STORAGE_PREFIX + id, open ? "open" : "closed");
+  } catch {
+    // Private mode or blocked storage: the group still toggles, it just
+    // will not be remembered.
+  }
+}
+
 interface CollapsibleSectionProps {
   /** Stable slug; drives `month-close-section-<id>` test ids. */
   id: string;
@@ -28,23 +52,27 @@ interface CollapsibleSectionProps {
 
 export function CollapsibleSection({ id, title, summary, children }: CollapsibleSectionProps) {
   const bodyId = `${useId()}-body`;
-  const isDesktop = useIsDesktop();
   /**
-   * `null` until the reader touches it, so the default follows the viewport:
-   * collapsed on a phone, open on a desktop where the height was never the
-   * problem. `useIsDesktop` reports `false` during hydration, so a desktop
-   * section mounts collapsed for one paint and then opens — deliberate, and
-   * why the group must not latch the first value into `useState`.
+   * Collapsed on first paint at every width (server and client agree, so no
+   * hydration flash); a remembered choice is applied after mount.
    */
-  const [override, setOverride] = useState<boolean | null>(null);
-  const open = override ?? isDesktop;
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const remembered = readRemembered(id);
+    if (remembered !== null) setOpen(remembered);
+  }, [id]);
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    remember(id, next);
+  };
 
   return (
     <section data-testid={`month-close-section-${id}`}>
       <h2>
         <button
           type="button"
-          onClick={() => setOverride(!open)}
+          onClick={toggle}
           aria-expanded={open}
           aria-controls={bodyId}
           data-testid={`month-close-section-${id}-toggle`}
