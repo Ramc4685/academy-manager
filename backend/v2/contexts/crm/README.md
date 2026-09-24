@@ -633,7 +633,58 @@ Tests: `tests/unit/test_crm_timeline_domain.py`,
 `tests/contract/test_crm_family_timeline_real_mongo.py` (real `mongod`:
 allowlist, moved entries on both families, tenant isolation, index use).
 
-Not built here (L4c and later): the Messages tab aggregation, logged
-WhatsApp / SMS / calls (`family_contact_log`), campaign and digest sends,
+Not built here (see the Messages tab below for sends and logged contacts):
 registration (applications, waivers) and inquiry (`crm_contacts`) entries,
 and staff display names for `actor_id`.
+
+## Family Messages tab (People CRM Phase 6, roadmap L4c, migration 0203)
+
+`GET /admin/families/{parent_id}/messages`,
+`POST /admin/families/{parent_id}/messages/log`,
+`PATCH /admin/families/{parent_id}/messages/log/{log_id}`
+(`interfaces/admin/family_messages_routes.py`, `require_persona("admin")`,
+use cases on `app.state.admin_family_index.messages`, wired by
+`composition/family_messages.py`). The family record's Messages tab reads it.
+
+| File | What it is |
+|---|---|
+| `domain/family_messages.py` | `FamilyContactLog`, `MessageEntry`, merge (newest first, `entry_id` tiebreak, cap 200), note normalisation, who may complete a log |
+| `application/family_messages.py` | `GetFamilyMessages`, `LogFamilyContact`, `CompleteFamilyContactLog` |
+| `infrastructure/family_message_sources.py` | campaign deliveries, parent digest, absence-notice confirmations, invoice copies, the staff log |
+| `infrastructure/mongo_family_contact_log_repo.py` | `family_contact_log` (tenant-scoped) |
+| `backend/v2/migrations/0203_family_contact_log.py` | its indexes |
+
+Thread sources (all under `gather`; a failing source adds
+`"<name>_unavailable"` to `warnings`, never a 500):
+
+| Source | Rows |
+|---|---|
+| `campaigns` | `message_deliveries` to any parent alias, subject from `message_campaigns` |
+| `digest` | `parent_digest_sends` of any parent alias; `skipped_empty` left out |
+| `absence_notices` | `absence_notice_sends` with audience `parent` for the children's notices (the staff alert is not a message to the family) |
+| `invoice_copies` | `invoice_contact_email_sends` (0197) matched on the family contact's email AND `contact_id` |
+| `contact_log` | `family_contact_log`: WhatsApp / SMS / email sent from the staff member's own app, a call, a talk in person |
+
+Rules:
+
+- **No app-sent SMS or WhatsApp.** The tab opens `wa.me` / `sms:` / `mailto:`
+  and asks "Did you send it?": yes stores `status: logged`, "Not yet" stores
+  `not_logged` so the handoff can be confirmed later (by its author or an
+  owner, `Crm.ContactLogEditForbidden` otherwise). "Send from the app
+  (coming)" is shown disabled. A call or in-person talk is always `logged`.
+- **The family check is the index** (#664): another academy's family, or no
+  family, is `Crm.FamilyNotFound` (404); a log id of another family is
+  `Crm.ContactLogNotFound` (404).
+- **No money** is read or returned, so every staff tier sees the same thread.
+
+### Indexes (migration 0203)
+
+| Collection | Name | Keys | Options |
+|---|---|---|---|
+| `family_contact_log` | `family_contact_log_academy_log_id_unique` | `(academy_id, log_id)` | unique |
+| `family_contact_log` | `family_contact_log_academy_parent_created` | `(academy_id, parent_id, created_at desc)` | |
+
+Tests: `tests/unit/test_crm_family_messages.py`,
+`tests/unit/test_0203_family_contact_log.py`,
+`tests/interface/test_admin_family_messages_routes.py`,
+`tests/contract/test_crm_family_messages_real_mongo.py` (real `mongod`).

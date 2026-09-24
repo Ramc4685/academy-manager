@@ -108,3 +108,26 @@ class PipelineMoveNotAllowed(DomainError):
 
     code = "Crm.PipelineMoveNotAllowed"
     status_code = 409
+
+
+class InvalidContactLog(DomainError):
+    """A logged contact failed validation (unknown channel or status, a note
+    over the size cap). ``details.field`` names the offending field."""
+
+    code = "Crm.InvalidContactLog"
+    status_code = 422
+
+
+class ContactLogNotFound(DomainError):
+    """No logged contact with this id on this family of the caller's academy."""
+
+    code = "Crm.ContactLogNotFound"
+    status_code = 404
+
+
+class ContactLogEditForbidden(DomainError):
+    """Only the staff member who logged the contact, or an academy owner, may
+    complete it."""
+
+    code = "Crm.ContactLogEditForbidden"
+    status_code = 403

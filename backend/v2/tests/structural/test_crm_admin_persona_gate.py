@@ -72,6 +72,10 @@ def test_the_family_index_routes_are_registered() -> None:
     assert ("POST", "/api/v2/admin/people/duplicate-check") in routes
     # Phase 5: the unified family timeline.
     assert ("GET", "/api/v2/admin/families/{parent_id}/timeline") in routes
+    # Phase 6: the family Messages tab.
+    assert ("GET", "/api/v2/admin/families/{parent_id}/messages") in routes
+    assert ("POST", "/api/v2/admin/families/{parent_id}/messages/log") in routes
+    assert ("PATCH", "/api/v2/admin/families/{parent_id}/messages/log/{log_id}") in routes
 
 
 def test_every_crm_route_requires_the_admin_persona() -> None:

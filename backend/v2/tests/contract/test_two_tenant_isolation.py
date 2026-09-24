@@ -129,6 +129,8 @@ def _ids(academy: str) -> dict[str, str]:
         # pipeline-move hits a real B row). Family contacts (#950) share the
         # name and stay unseeded.
         "contact_id": f"{academy}-crm-contact-1",
+        # Family Messages logged contacts (L4c) are unseeded too.
+        "log_id": f"{academy}-contact-log-1",
     }
 
 
@@ -164,6 +166,7 @@ UNSEEDED_PARAMS = frozenset(
         "event_id",
         "checkout_session_id",
         "contact_id",
+        "log_id",
     }
 )
 

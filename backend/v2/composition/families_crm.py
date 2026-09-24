@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from backend.v2.composition.family_messages import AdminFamilyMessages, compose_family_messages
 from backend.v2.composition.family_timeline import compose_family_timeline
 from backend.v2.contexts.billing.infrastructure.family_money_read_model import (
     MongoFamilyMoneyReadModel,
@@ -114,6 +115,8 @@ class AdminFamilyIndex:
     follow_ups: AdminFamilyFollowUps | None = None
     #: The unified family timeline (Phase 5, ``composition/family_timeline.py``).
     timeline: GetFamilyTimeline | None = None
+    #: The family Messages tab (Phase 6, ``composition/family_messages.py``).
+    messages: AdminFamilyMessages | None = None
 
 
 class _MembershipStaffDirectory:
@@ -183,4 +186,5 @@ def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
             queue=ListFollowUps(follow_ups, families, staff, timezone),
         ),
         timeline=compose_family_timeline(db, families=families, notes=notes, follow_ups=follow_ups),
+        messages=compose_family_messages(db, families=families),
     )
