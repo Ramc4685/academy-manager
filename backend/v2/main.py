@@ -211,6 +211,7 @@ from backend.v2.shared.observability.ops_alerts import (
     capture_message,
     cron_checkin,
     handle_scheduler_job_event,
+    warn_if_ops_alert_email_missing,
 )
 from backend.v2.shared.observability.ops_digest import (
     INVOICE_GENERATION_JOB,
@@ -435,6 +436,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging()
     log.info("Starting v2 app in env=%s", settings.env)
+    warn_if_ops_alert_email_missing(settings)
 
     client = AsyncIOMotorClient(settings.mongo_url)
     db = client[settings.mongo_db]
