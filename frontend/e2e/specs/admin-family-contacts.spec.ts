@@ -248,7 +248,9 @@ test.describe("Family contacts and details (People CRM Phase 4b)", () => {
     const invoices = form.getByRole("switch", { name: "Gets invoices (opted in)" });
     await expect(notices).not.toBeChecked();
     await expect(invoices).not.toBeChecked();
-    await expect(invoices).toHaveAccessibleDescription(/once invoice email wiring ships/);
+    await expect(invoices).toHaveAccessibleDescription(
+      /Invoice emails to this family also go to this email/,
+    );
 
     // A switch that sends email needs an email: the error sits by the field.
     await form.getByTestId("family-contact-name-input").fill("Second Testparent");

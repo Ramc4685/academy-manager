@@ -50,6 +50,7 @@ from backend.v2.composition.email_adapters import (
     LoginInviteEmailAdapter,
 )
 from backend.v2.composition.event_handlers import install_dunning_notifier
+from backend.v2.composition.invoice_contact_copies import build_invoice_contact_copies
 from backend.v2.composition.invoice_naming import (
     build_invoice_naming_resolver,
     find_invoice_by_id_or_number,
@@ -1201,6 +1202,7 @@ def compose_admin(
                 billing_counters=billing_counters_repo,
                 billing_settings=billing_settings_repo,
             ),
+            contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:

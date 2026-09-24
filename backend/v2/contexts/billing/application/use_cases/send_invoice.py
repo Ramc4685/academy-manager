@@ -68,6 +68,11 @@ from backend.v2.contexts.billing.application.ports import (
     ConnectedAccountRepository,
     LedgerRepository,
 )
+from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    application_fee_kwargs,
+    idempotency_key_with_fee,
+    resolve_application_fee_cents,
+)
 from backend.v2.contexts.billing.application.use_cases.record_checkout_mint_failure import (
     CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
     CHECKOUT_FAILURE_ACCOUNTS_NOT_CONFIGURED,
@@ -117,8 +122,13 @@ class InvoiceStripeGateway(Protocol):
         connected_account_id: str | None = None,
         save_payment_method_for_autopay: bool = False,
         autopay_enrollment_ids: list[str] | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str]:
-        """Returns (checkout_session_id, checkout_url)."""
+        """Returns (checkout_session_id, checkout_url).
+
+        ``application_fee_cents`` is the academy's platform fee on a
+        connected-account destination charge (default 0).
+        """
         ...
 
 
@@ -498,6 +508,12 @@ class SendInvoice:
                     "save_payment_method_for_autopay": True,
                     "autopay_enrollment_ids": enrollment_ids,
                 }
+            fee_cents = await resolve_application_fee_cents(
+                self._settings,
+                amount_cents=amount_cents,
+                connected_account_id=connected_account_id,
+            )
+            idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
             try:
                 session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
                     invoice_id=gateway_invoice_id,
@@ -509,6 +525,7 @@ class SendInvoice:
                     idempotency_key=idempotency_key,
                     connected_account_id=connected_account_id,
                     **autopay_kwargs,
+                    **application_fee_kwargs(fee_cents),
                 )
                 log.info(
                     "send_invoice: checkout_session created invoice=%s session=%s bundled=%s",

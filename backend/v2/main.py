@@ -644,6 +644,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
     )
 
+    # Per-academy platform application fee (roadmap L9b) — platform BFF only.
+    from backend.v2.composition.platform_application_fee import (
+        compose_platform_application_fee,
+    )
+
+    app.state.platform_application_fee = compose_platform_application_fee(db)
+
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
     # Departures / holds (issue #697; composition/admin.py is at its line

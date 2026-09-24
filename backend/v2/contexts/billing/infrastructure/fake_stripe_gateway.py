@@ -13,6 +13,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeCheckoutSessionNotExpirable,
     StripeGateway,
 )
+from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 from backend.v2.shared.ids import new_ulid
 
 
@@ -65,7 +66,15 @@ class FakeStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str]:
+        # Same validation as the real gateway, so a test cannot pass with a fee
+        # Stripe (or RealStripeGateway) would refuse.
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id,
+        )
         checkout_id = f"cs_test_{new_ulid()}"
         record = {
             "checkout_id": checkout_id,
@@ -76,6 +85,7 @@ class FakeStripeGateway(StripeGateway):
             "cancel_url": cancel_url,
             "metadata": metadata,
             "connected_account_id": connected_account_id,
+            "application_fee_amount": application_fee_cents if connected_account_id else None,
         }
         self.checkouts.append(record)
         return checkout_id, f"https://fake.stripe.com/c/{checkout_id}"
@@ -441,7 +451,13 @@ class FakeStripeGateway(StripeGateway):
         idempotency_key: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str, str | None]:
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id,
+        )
         pi_id = f"pi_fake_{new_ulid()}"
         record: dict[str, Any] = {
             "id": pi_id,
@@ -458,7 +474,7 @@ class FakeStripeGateway(StripeGateway):
             "transfer_data": (
                 {"destination": connected_account_id} if connected_account_id else None
             ),
-            "application_fee_amount": 0 if connected_account_id else None,
+            "application_fee_amount": application_fee_cents if connected_account_id else None,
         }
         self.off_session_payment_intents.append(record)
         return pi_id, "succeeded", None

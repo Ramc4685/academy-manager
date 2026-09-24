@@ -63,8 +63,8 @@ const inputClass =
  * switches, the editable family details, and the children.
  *
  * A contact receives nothing unless staff turn a switch on. "Gets notices"
- * adds their email to this family's class notices; "Gets invoices" is saved
- * but invoice emails do not use it yet, and its description says so.
+ * adds their email to this family's class notices; "Gets invoices" sends
+ * them a copy of each invoice email (never the payment link).
  */
 export function DetailsTab({
   parentId,

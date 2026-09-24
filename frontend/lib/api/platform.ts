@@ -149,3 +149,27 @@ export function bootstrapPlatformAcademy(
     body: JSON.stringify(payload),
   });
 }
+
+/** Per-academy platform application fee (roadmap L9b), in basis points. */
+export interface ApplicationFee {
+  academy_id: string;
+  application_fee_bps: number;
+  max_application_fee_bps: number;
+}
+
+export function getPlatformApplicationFee(academyId: string): Promise<ApplicationFee> {
+  return apiFetch<ApplicationFee>(
+    `/platform/academies/${encodeURIComponent(academyId)}/application-fee`,
+    { method: "GET" },
+  );
+}
+
+export function setPlatformApplicationFee(
+  academyId: string,
+  payload: { application_fee_bps: number; reason?: string },
+): Promise<ApplicationFee> {
+  return apiFetch<ApplicationFee>(
+    `/platform/academies/${encodeURIComponent(academyId)}/application-fee`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}

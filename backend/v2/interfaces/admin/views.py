@@ -74,7 +74,7 @@ class AdminUserList(BaseModel):
 
 
 class ModifyUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner", "billing", "front_desk"]
     reason: str = Field(default="Admin role change", min_length=1, max_length=500)
 
 
@@ -246,12 +246,12 @@ class UpdateAdminUserRequest(BaseModel):
 
 
 class UpdateAdminUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner", "billing", "front_desk"]
     reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
 class CreateAdminUserRequest(BaseModel):
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner", "billing", "front_desk"]
     display_name: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=1, max_length=254)
     phone: str | None = Field(default=None, max_length=40)

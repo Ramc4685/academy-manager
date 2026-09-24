@@ -255,7 +255,7 @@ route to it). Spec: `docs/design/people-crm/engineering-spec.md` §1, §3.2,
 | `domain/family_stage.py` | `roll_up_family_stage` and the precedence `pending_cancel > active > at_risk > on_hold > paused > trial > never_enrolled > left`; the Active / Leaving / Left scope tiles |
 | `domain/family_index.py` | `FamilyRecord`, `FamilyChild`, `FamilyMoney`, `FamilyIndex`, and `search_family` (child and parent name word-prefix on `full_name_key`, email, legacy roster fields, phone by the last 7 to 10 digits) |
 | `application/family_index.py` | `query_family_index` (scope, stage, class, card, overdue filters; sort before pagination) and `summarize_family_index` |
-| `application/money_visibility.py` | `can_view_family_money(claims)`: the one money seam (#553) |
+| `application/money_visibility.py` | `can_view_family_money(claims)`: the one money seam (#553); owner, admin and billing see amounts, front desk does not (`is_front_desk_only`), decided in `shared/auth/staff_tiers.py` |
 | `application/ports.py` | `ParentAliasResolver`, `ChildLifecycleReader`, `FamilyMoneyReader` |
 | `infrastructure/family_index_read_model.py` | `MongoFamilyIndexReadModel`: the whole academy's index in a fixed number of reads, cached 60 s per academy |
 

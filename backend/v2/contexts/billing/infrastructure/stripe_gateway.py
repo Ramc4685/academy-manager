@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeResourceNotFound,
     StripeTransientFailure,
 )
+from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 
 log = logging.getLogger(__name__)
 
@@ -109,11 +110,19 @@ class RealStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str]:
         """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
         DESTINATION charge (``on_behalf_of`` + ``transfer_data.destination``),
         matching ``create_invoice_checkout_session`` and the autopay fund flow.
+        ``application_fee_cents`` (the academy's platform fee for this charge,
+        default 0) is sent as ``application_fee_amount``.
         """
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id,
+        )
 
         def _create() -> Any:
             request: dict[str, Any] = {
@@ -140,7 +149,7 @@ class RealStripeGateway(StripeGateway):
                     "metadata": metadata,
                     "on_behalf_of": connected_account_id,
                     "transfer_data": {"destination": connected_account_id},
-                    "application_fee_amount": 0,
+                    "application_fee_amount": application_fee_cents,
                 }
             return self._stripe.checkout.Session.create(**request)
 
@@ -236,13 +245,16 @@ class RealStripeGateway(StripeGateway):
         connected_account_id: str | None = None,
         save_payment_method_for_autopay: bool = False,
         autopay_enrollment_ids: list[str] | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str]:
         """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
         DESTINATION charge: the connected academy account is the merchant of
         record (``on_behalf_of``) and funds settle to it
         (``transfer_data.destination``) — same fund flow as
-        ``create_off_session_payment_intent``. The platform accepts liability,
-        so ``application_fee_amount`` stays 0.
+        ``create_off_session_payment_intent``. The platform accepts liability;
+        ``application_fee_amount`` is ``application_fee_cents``, the academy's
+        platform fee for this charge (default 0, set per academy by a platform
+        admin — roadmap L9b).
 
         When ``save_payment_method_for_autopay`` is set, the payment doubles as
         an autopay enrollment: the payment method is saved for off-session use
@@ -251,6 +263,11 @@ class RealStripeGateway(StripeGateway):
         completion handlers. Default False keeps the request byte-identical to
         the plain one-time payment.
         """
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id,
+        )
         session_metadata = metadata
         if save_payment_method_for_autopay:
             session_metadata = dict(metadata)
@@ -266,7 +283,7 @@ class RealStripeGateway(StripeGateway):
             if connected_account_id:
                 payment_intent_data["on_behalf_of"] = connected_account_id
                 payment_intent_data["transfer_data"] = {"destination": connected_account_id}
-                payment_intent_data["application_fee_amount"] = 0
+                payment_intent_data["application_fee_amount"] = application_fee_cents
             request: dict[str, Any] = {
                 "mode": "payment",
                 "line_items": [
@@ -766,15 +783,22 @@ class RealStripeGateway(StripeGateway):
         idempotency_key: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
     ) -> tuple[str, str, str | None]:
         """Return (pi_id, pi_status, decline_code_or_None).
 
         Slice I: when ``connected_account_id`` is set, this is a DESTINATION
         charge — the connected academy account is the merchant of record
         (``on_behalf_of``) and funds settle to it (``transfer_data.destination``).
-        The platform accepts liability, so ``application_fee_amount`` stays 0.
+        The platform accepts liability; ``application_fee_amount`` is
+        ``application_fee_cents``, the academy's platform fee (default 0).
         The Customer stays on the platform (no ``stripe_account`` header).
         """
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id,
+        )
 
         def _create() -> Any:
             request: dict[str, Any] = {
@@ -790,7 +814,7 @@ class RealStripeGateway(StripeGateway):
             if connected_account_id:
                 request["on_behalf_of"] = connected_account_id
                 request["transfer_data"] = {"destination": connected_account_id}
-                request["application_fee_amount"] = 0
+                request["application_fee_amount"] = application_fee_cents
             return self._stripe.PaymentIntent.create(**request)
 
         try:

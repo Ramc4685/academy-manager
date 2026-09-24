@@ -42,6 +42,11 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    application_fee_kwargs,
+    idempotency_key_with_fee,
+    resolve_application_fee_cents,
+)
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
     EnrollChildInSessionType,
@@ -2006,6 +2011,13 @@ def compose_parent(
                 "save_payment_method_for_autopay": True,
                 "autopay_enrollment_ids": active_ids,
             }
+        # Roadmap L9b: the academy's platform application fee (0 by default).
+        fee_cents = await resolve_application_fee_cents(
+            billing_settings_repo,
+            amount_cents=total_cents,
+            connected_account_id=connected_account_stripe_id,
+        )
+        idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
         # Same reasoning as the single-invoice path (issue #635): every return
         # needs a checkout_session_id so the settlement poll can run, and the
         # opted-in case also picks up autopay activation from it.
@@ -2027,6 +2039,7 @@ def compose_parent(
                 idempotency_key=idempotency_key,
                 connected_account_id=connected_account_stripe_id,
                 **autopay_kwargs,
+                **application_fee_kwargs(fee_cents),
             )
         except Exception as exc:
             # Loud, and recorded per invoice (issue #426) — this is the parent

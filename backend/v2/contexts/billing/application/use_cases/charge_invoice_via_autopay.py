@@ -26,6 +26,11 @@ from backend.v2.contexts.billing.application.ports import (
     ConnectedAccountRepository,
     LedgerRepository,
 )
+from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    application_fee_kwargs,
+    idempotency_key_with_fee,
+    resolve_application_fee_cents,
+)
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.checkout_hold import (
     CHECKOUT_HOLD_DECLINE_CODE,
@@ -334,6 +339,12 @@ class ChargeInvoiceViaAutopay:
         idempotency_key = (
             f"{base_idempotency_key}:{retry_scope}" if retry_scope else base_idempotency_key
         )
+        fee_cents = await resolve_application_fee_cents(
+            self._settings,
+            amount_cents=invoice.balance_due_cents,
+            connected_account_id=connected_account_id,
+        )
+        idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
         pi_metadata = {
             "invoice_id": invoice.invoice_id,
             "academy_id": invoice.academy_id,
@@ -352,6 +363,7 @@ class ChargeInvoiceViaAutopay:
                 idempotency_key=idempotency_key,
                 metadata=pi_metadata,
                 connected_account_id=connected_account_id,
+                **application_fee_kwargs(fee_cents),
             )
         except Exception as exc:
             # Stripe card decline or API error — do NOT change invoice status

@@ -142,3 +142,10 @@ class AcademyMismatchError(DomainError):
 
     code = "Billing.AcademyMismatch"
     status_code = 404
+
+
+class ApplicationFeeAcademyNotFound(DomainError):
+    """Platform admin tried to read/set the application fee of an unknown academy."""
+
+    code = "Billing.AcademyNotFound"
+    status_code = 404
