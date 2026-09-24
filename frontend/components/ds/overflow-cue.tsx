@@ -31,6 +31,49 @@ export function overflowEdges(el: {
   };
 }
 
+type ObserverCtors = {
+  ResizeObserver?: typeof ResizeObserver;
+  MutationObserver?: typeof MutationObserver;
+};
+
+/**
+ * Calls `onChange` whenever the strip's scrollable width may have changed:
+ * the strip itself resizes, ANY direct child resizes (a chip's live count
+ * badge filling in), or chips are added or removed anywhere in the strip.
+ * Observing only the strip and its first child missed a later chip growing,
+ * which changes scrollWidth without changing the strip's own box.
+ *
+ * Exported (with injectable observer constructors) for unit tests.
+ */
+export function watchStripContent(
+  el: Element,
+  onChange: () => void,
+  ctors: ObserverCtors = {
+    ResizeObserver: typeof ResizeObserver === "undefined" ? undefined : ResizeObserver,
+    MutationObserver: typeof MutationObserver === "undefined" ? undefined : MutationObserver,
+  },
+): () => void {
+  const resize = ctors.ResizeObserver ? new ctors.ResizeObserver(() => onChange()) : null;
+  const observeAll = () => {
+    if (!resize) return;
+    resize.disconnect();
+    resize.observe(el);
+    for (const child of Array.from(el.children)) resize.observe(child);
+  };
+  observeAll();
+  const mutation = ctors.MutationObserver
+    ? new ctors.MutationObserver(() => {
+        observeAll();
+        onChange();
+      })
+    : null;
+  mutation?.observe(el, { childList: true });
+  return () => {
+    resize?.disconnect();
+    mutation?.disconnect();
+  };
+}
+
 export function useOverflowEdges<T extends HTMLElement>(): {
   ref: RefObject<T | null>;
   edges: OverflowEdges;
@@ -52,14 +95,12 @@ export function useOverflowEdges<T extends HTMLElement>(): {
     if (!el) return;
     el.addEventListener("scroll", sync, { passive: true });
     window.addEventListener("resize", sync);
-    // Chips mount after data (live counts), so the width changes after paint.
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(sync);
-    observer?.observe(el);
-    if (el.firstElementChild) observer?.observe(el.firstElementChild);
+    // Chips mount after data (live counts), so widths change after paint.
+    const unwatch = watchStripContent(el, sync);
     return () => {
       el.removeEventListener("scroll", sync);
       window.removeEventListener("resize", sync);
-      observer?.disconnect();
+      unwatch();
     };
   }, [sync]);
 
