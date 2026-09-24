@@ -1503,6 +1503,10 @@ export interface AdminAcademyView {
   logo_url: string | null;
   brand_color: string | null;
   currency: string;
+  /** Display name on outbound email; the From address stays the platform's. */
+  email_sender_name?: string | null;
+  /** Where replies to academy email go. Null = unchanged per-email default. */
+  email_reply_to?: string | null;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{
@@ -1515,6 +1519,8 @@ export type UpdateAdminAcademyRequest = Partial<{
   logo_url: string | null;
   brand_color: string | null;
   currency: string | null;
+  email_sender_name: string | null;
+  email_reply_to: string | null;
 }>;
 
 export interface AdminFeesView {

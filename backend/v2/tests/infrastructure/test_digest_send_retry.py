@@ -232,6 +232,7 @@ class _ScriptedSender:
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         if self._remaining_failures > 0:
             self._remaining_failures -= 1

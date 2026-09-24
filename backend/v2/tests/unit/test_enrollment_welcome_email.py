@@ -337,3 +337,36 @@ def test_group_chat_sits_right_after_where_and_no_reminder_footer() -> None:
     )
     assert body.index("Where") < body.index("Group chat") < body.index("Parking")
     assert "please disregard" not in body
+
+
+class _AcademiesWithSender(_Academies):
+    async def find_by_id(self, academy_id: str) -> dict:
+        doc = await super().find_by_id(academy_id)
+        doc["email_sender_name"] = "Synthetic Front Desk"
+        doc["email_reply_to"] = "desk@example.com"
+        return doc
+
+
+@pytest.mark.asyncio
+async def test_welcome_carries_the_academy_sender_identity() -> None:
+    """L9a: display name + reply-to from the current academy's settings."""
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender, academies=_AcademiesWithSender())
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    assert sender.calls[0]["sender_name"] == "Synthetic Front Desk"
+    assert sender.calls[0]["reply_to"] == "desk@example.com"
+
+
+@pytest.mark.asyncio
+async def test_welcome_without_sender_settings_uses_the_academy_name() -> None:
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender)
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    assert sender.calls[0]["sender_name"] == "BLNO Badminton"
+    assert sender.calls[0]["reply_to"] is None

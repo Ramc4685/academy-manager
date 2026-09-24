@@ -32,6 +32,7 @@ from backend.v2.contexts.communications.domain.models import SelectedRecipientsA
 from backend.v2.contexts.enrollment.application.use_cases.win_back import (
     SendWinBackNotices,
 )
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,15 @@ class WinBackNotificationAdapter:
     exactly as they do to every other family-facing send — no new gate
     needed, per the fix plan)."""
 
-    def __init__(self, *, audiences: Any, students: Any, sender: EmailSendPort) -> None:
+    def __init__(
+        self,
+        *,
+        audiences: Any,
+        students: Any,
+        sender: EmailSendPort,
+        academies: Any | None = None,
+    ) -> None:
+        self._academies = academies
         self._audiences = audiences
         self._students = students
         self._sender = sender
@@ -111,11 +120,14 @@ class WinBackNotificationAdapter:
             ]
         )
         try:
+            identity = await sender_identity_for_current_academy(self._academies)
             await self._sender.send(
                 recipient=recipient,
                 subject=subject,
                 body=body,
                 category=EmailCategory.CAMPAIGN,
+                reply_to=identity.reply_to,
+                sender_name=identity.sender_name,
             )
         except Exception:
             logger.exception("win_back_send_failed", extra={"student_id": student_id})
@@ -144,12 +156,16 @@ def compose_win_back(db: Any, settings: Any) -> WinBackComposition:
     from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
         MongoStudentRepository,
     )
+    from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
+        MongoAcademyRepository,
+    )
 
     students = MongoStudentRepository(db)
     notifier = WinBackNotificationAdapter(
         audiences=MongoAudienceResolver(db=db),
         students=students,
         sender=_build_email_sender(settings, db),
+        academies=MongoAcademyRepository(db),
     )
     use_case = SendWinBackNotices(
         enrollment_events=MongoEnrollmentEventRepository(db),

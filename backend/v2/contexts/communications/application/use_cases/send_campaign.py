@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from backend.v2.contexts.communications.application.ports import (
+    AcademyBrandLookup,
     AcademySlugLookup,
     AudienceResolver,
     CampaignRepository,
@@ -57,6 +58,7 @@ from backend.v2.contexts.communications.domain.models import (
     SessionAudience,
     audience_descriptor,
 )
+from backend.v2.shared.comms.email_theme import EmailBrand
 from backend.v2.shared.ids import new_ulid
 
 
@@ -145,6 +147,9 @@ class SendCampaign:
     # link falls back to the generic frontend host, which the unsubscribe route
     # refuses in SaaS mode rather than accepting on a weakened tenant check.
     academy_slugs: AcademySlugLookup | None = None
+    # Sender display name / reply-to (L9a). Optional: without it the From
+    # header stays the platform address and there is no reply-to.
+    brands: AcademyBrandLookup | None = None
     now: Callable[[], datetime] = field(default=_utcnow)
     new_id: Callable[[], str] = field(default=new_ulid)
 
@@ -155,6 +160,14 @@ class SendCampaign:
             return None
         try:
             return await self.academy_slugs.slug_for(academy_id)
+        except Exception:
+            return None
+
+    async def _brand(self, academy_id: str) -> EmailBrand | None:
+        if self.brands is None:
+            return None
+        try:
+            return await self.brands.brand_for(academy_id)
         except Exception:
             return None
 
@@ -213,6 +226,7 @@ class SendCampaign:
         await self.deliveries.save_many(queued)
 
         academy_slug = await self._academy_slug(command.academy_id)
+        brand = await self._brand(command.academy_id)
         deliveries: list[Delivery] = []
         sent_count = 0
         failed_count = 0
@@ -230,6 +244,8 @@ class SendCampaign:
                 subject=command.subject,
                 body=body,
                 category=EmailCategory.CAMPAIGN,
+                reply_to=brand.reply_to if brand else None,
+                sender_name=brand.sender_name if brand else None,
             )
             if outcome.ok:
                 deliveries.append(
