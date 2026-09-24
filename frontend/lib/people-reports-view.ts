@@ -1,5 +1,6 @@
 /**
- * Pure view helpers for the People report cards on /admin/reports (roadmap L5a).
+ * Pure view helpers for the People report cards on /admin/reports (roadmap L5a
+ * and L5b).
  *
  * Data in, plain values out: no DOM, no React and no runtime imports, so the
  * rows can be tested under plain `node --test`. The page formats money with
@@ -10,6 +11,8 @@
  */
 
 import type {
+  AdminAttendanceRiskResponse,
+  AdminFamiliesLostResponse,
   AdminInquiryConversionResponse,
   AdminInquirySourceRow,
   AdminMoneyAgeBand,
@@ -136,5 +139,119 @@ export function normalizeInquiry(raw: unknown): InquiryView | null {
     timezone: typeof data.timezone === "string" ? data.timezone : "",
     rows: data.sources.map(sourceRow).filter((row): row is SourceRow => row !== null),
     total,
+  };
+}
+
+// ---------------------------------------------------------------- attendance risk (L5b)
+
+export interface RiskRow {
+  key: string;
+  label: string;
+  /** The coach column on the by-class table; empty on the by-coach table. */
+  coach: string;
+  classes: number;
+  students: number;
+  atRisk: number;
+  share: string;
+}
+
+export interface AttendanceRiskView {
+  byClass: RiskRow[];
+  byCoach: RiskRow[];
+  students: number;
+  atRisk: number;
+}
+
+const NO_COACH = "No coach assigned";
+
+function list(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((row): row is Record<string, unknown> => !!row && typeof row === "object")
+    : [];
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+/** `null` when the payload is not an attendance risk report. */
+export function normalizeAttendanceRisk(raw: unknown): AttendanceRiskView | null {
+  const data = raw as Partial<AdminAttendanceRiskResponse> | null | undefined;
+  if (!data || !Array.isArray(data.by_class) || !Array.isArray(data.by_coach)) return null;
+  const byClass = list(data.by_class).map((row, i): RiskRow => {
+    const id = text(row.session_id) ?? `class-${i}`;
+    return {
+      key: id,
+      label: text(row.title) ?? id,
+      coach: text(row.coach_name) ?? (text(row.coach_id) ? "Unnamed coach" : NO_COACH),
+      classes: 1,
+      students: count(row.students),
+      atRisk: count(row.at_risk),
+      share: conversionText(row.at_risk_rate as number | null | undefined),
+    };
+  });
+  const byCoach = list(data.by_coach).map((row, i): RiskRow => {
+    const id = text(row.coach_id);
+    return {
+      key: id ?? `no-coach-${i}`,
+      label: text(row.coach_name) ?? (id ? "Unnamed coach" : NO_COACH),
+      coach: "",
+      classes: count(row.classes),
+      students: count(row.students),
+      atRisk: count(row.at_risk),
+      share: conversionText(row.at_risk_rate as number | null | undefined),
+    };
+  });
+  return { byClass, byCoach, students: count(data.students), atRisk: count(data.at_risk) };
+}
+
+export function studentsText(n: number): string {
+  return `${n} ${n === 1 ? "student" : "students"}`;
+}
+
+// ---------------------------------------------------------------- families lost (L5b)
+
+export interface ReasonRow {
+  key: string;
+  /** Server label, when it sent one (transitions); reasons are labelled by the page. */
+  label: string | null;
+  families: number;
+}
+
+export interface FamiliesLostView {
+  dateFrom: string;
+  dateTo: string;
+  timezone: string;
+  familiesLost: number;
+  /** Only reasons with at least one family, most families first. */
+  reasons: ReasonRow[];
+  withReason: number;
+  transitions: ReasonRow[];
+  withoutReason: number;
+}
+
+function reasonRows(value: unknown): ReasonRow[] {
+  return list(value)
+    .map((row) => ({
+      key: text(row.key) ?? "",
+      label: text(row.label),
+      families: count(row.families),
+    }))
+    .filter((row) => row.key !== "" && row.families > 0)
+    .sort((a, b) => b.families - a.families);
+}
+
+export function normalizeFamiliesLost(raw: unknown): FamiliesLostView | null {
+  const data = raw as Partial<AdminFamiliesLostResponse> | null | undefined;
+  if (!data || !Array.isArray(data.by_reason) || !Array.isArray(data.by_transition)) return null;
+  return {
+    dateFrom: typeof data.date_from === "string" ? data.date_from : "",
+    dateTo: typeof data.date_to === "string" ? data.date_to : "",
+    timezone: typeof data.timezone === "string" ? data.timezone : "",
+    familiesLost: count(data.families_lost),
+    reasons: reasonRows(data.by_reason),
+    withReason: count(data.with_reason),
+    transitions: reasonRows(data.by_transition),
+    withoutReason: count(data.without_reason),
   };
 }

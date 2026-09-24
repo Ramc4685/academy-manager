@@ -5,8 +5,11 @@ import {
   conversionText,
   familiesText,
   isMoneyHidden,
+  normalizeAttendanceRisk,
+  normalizeFamiliesLost,
   normalizeInquiry,
   normalizeMoneyOwed,
+  studentsText,
 } from "./people-reports-view.ts";
 
 const MONEY = {
@@ -101,4 +104,122 @@ test("small text helpers", () => {
   assert.equal(familiesText(0), "0 families");
   assert.equal(conversionText(0.5), "50%");
   assert.equal(conversionText(Number.NaN), "—");
+});
+
+// ---------------------------------------------------------------- L5b
+
+test("attendance risk rows carry class, coach and share", () => {
+  const view = normalizeAttendanceRisk({
+    generated_at: "2026-09-23T15:00:00Z",
+    by_class: [
+      {
+        session_id: "c1",
+        title: "Saturday Squad",
+        coach_id: "coach-1",
+        coach_name: "Testcoach One",
+        students: 3,
+        at_risk: 2,
+        at_risk_rate: 2 / 3,
+      },
+      {
+        session_id: "c2",
+        title: "",
+        coach_id: null,
+        coach_name: null,
+        students: 1,
+        at_risk: 0,
+        at_risk_rate: 0,
+      },
+      {
+        session_id: "c3",
+        title: "Thursday",
+        coach_id: "coach-x",
+        coach_name: null,
+        students: 0,
+        at_risk: 0,
+        at_risk_rate: null,
+      },
+    ],
+    by_coach: [
+      { coach_id: "coach-1", coach_name: "Testcoach One", classes: 1, students: 3, at_risk: 2, at_risk_rate: 2 / 3 },
+      { coach_id: null, coach_name: null, classes: 1, students: 1, at_risk: 0, at_risk_rate: 0 },
+    ],
+    students: 4,
+    at_risk: 2,
+  });
+  assert.ok(view);
+  assert.deepEqual(
+    view.byClass.map((r) => [r.key, r.label, r.coach, r.students, r.atRisk, r.share]),
+    [
+      ["c1", "Saturday Squad", "Testcoach One", 3, 2, "67%"],
+      ["c2", "c2", "No coach assigned", 1, 0, "0%"],
+      ["c3", "Thursday", "Unnamed coach", 0, 0, "—"],
+    ],
+  );
+  assert.deepEqual(
+    view.byCoach.map((r) => [r.label, r.classes, r.students, r.atRisk]),
+    [
+      ["Testcoach One", 1, 3, 2],
+      ["No coach assigned", 1, 1, 0],
+    ],
+  );
+  assert.equal(view.byCoach[1].key, "no-coach-1");
+  assert.equal(view.students, 4);
+  assert.equal(view.atRisk, 2);
+});
+
+test("attendance risk tolerates a stub payload", () => {
+  assert.equal(normalizeAttendanceRisk({}), null);
+  assert.equal(normalizeAttendanceRisk(null), null);
+  const view = normalizeAttendanceRisk({ by_class: [null, 3], by_coach: [] });
+  assert.deepEqual(view, { byClass: [], byCoach: [], students: 0, atRisk: 0 });
+});
+
+test("studentsText pluralises", () => {
+  assert.equal(studentsText(1), "1 student");
+  assert.equal(studentsText(0), "0 students");
+});
+
+test("families lost keeps only non-zero reasons, most families first", () => {
+  const view = normalizeFamiliesLost({
+    date_from: "2026-06-26",
+    date_to: "2026-09-23",
+    timezone: "America/Chicago",
+    families_lost: 5,
+    by_reason: [
+      { key: "moved_away", label: null, families: 1 },
+      { key: "cost", label: null, families: 2 },
+      { key: "other", label: null, families: 0 },
+    ],
+    with_reason: 3,
+    by_transition: [
+      { key: "cancelled_by_family", label: "Cancelled by the family", families: 1 },
+      { key: "hold_expired", label: "Hold ran out", families: 1 },
+    ],
+    without_reason: 2,
+  });
+  assert.ok(view);
+  assert.deepEqual(
+    view.reasons.map((r) => [r.key, r.families]),
+    [
+      ["cost", 2],
+      ["moved_away", 1],
+    ],
+  );
+  assert.deepEqual(
+    view.transitions.map((r) => [r.key, r.label, r.families]),
+    [
+      ["cancelled_by_family", "Cancelled by the family", 1],
+      ["hold_expired", "Hold ran out", 1],
+    ],
+  );
+  assert.equal(view.familiesLost, 5);
+  assert.equal(view.withReason, 3);
+  assert.equal(view.withoutReason, 2);
+  assert.equal(view.timezone, "America/Chicago");
+});
+
+test("families lost tolerates a stub payload", () => {
+  assert.equal(normalizeFamiliesLost({}), null);
+  assert.equal(normalizeFamiliesLost(undefined), null);
 });

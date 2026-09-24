@@ -17,6 +17,10 @@ owed by age band reads the SAME index instance (so it shares the index's
 cache and alias map) and the same billing money read model; inquiry
 conversion reads ``crm_contacts`` through the tenant-scoped repository.
 Attached as ``AdminFamilyIndex.reports`` so ``main.py`` needs no new line.
+The L5b cards ride on the same bundle: attendance risk reads enrollment's
+``lifecycle_snapshots`` (the same derivation the index uses) and names each
+class's coach with the admin sessions list's membership-gated lookup;
+families lost reads the SAME index instance and ``enrollment_events``.
 
 Nothing tenant-specific is captured: every read takes the request's
 ``academy_id``.
@@ -31,14 +35,18 @@ takes the academy at call time.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from backend.v2.composition.admin_session_staff import attach_session_staff_names
 from backend.v2.contexts.billing.infrastructure.family_money_read_model import (
     MongoFamilyMoneyReadModel,
 )
 from backend.v2.contexts.crm.application.family_directory import IndexFamilyDirectory
 from backend.v2.contexts.crm.application.people_reports import (
+    AttendanceRiskReport,
+    FamiliesLostReport,
     InquiryConversionReport,
     MoneyOwedByAgeReport,
 )
@@ -64,6 +72,10 @@ from backend.v2.contexts.crm.infrastructure.mongo_family_notes_repo import (
     MongoFamilyFollowUpRepository,
     MongoFamilyNoteRepository,
 )
+from backend.v2.contexts.crm.infrastructure.people_reports_read_model import (
+    MongoAttendanceRiskSource,
+    MongoDepartureSource,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
 )
@@ -71,6 +83,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.shared.tenancy import tenant_scope
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 #: Spec §3.2: the index is rebuilt at most once a minute per academy, so the
@@ -102,6 +115,8 @@ class AdminFamilyFollowUps:
 class AdminPeopleReports:
     money_owed_by_age: MoneyOwedByAgeReport
     inquiry_conversion: InquiryConversionReport
+    attendance_risk: AttendanceRiskReport
+    families_lost: FamiliesLostReport
 
 
 @dataclass(frozen=True)
@@ -127,6 +142,21 @@ class _MembershipStaffDirectory:
         if membership is None or not membership.is_active():
             return False
         return any(role in FOLLOW_UP_ASSIGNEE_ROLES for role in membership.roles)
+
+
+def _coach_names(db: Any) -> Callable[[str, Sequence[str]], Awaitable[Mapping[str, str]]]:
+    """Coach display names the way the admin sessions list resolves them:
+    only ids with a membership in ``academy_id`` get a name."""
+
+    async def names(academy_id: str, coach_ids: Sequence[str]) -> Mapping[str, str]:
+        rows: list[dict[str, Any]] = [{"coach_id": cid} for cid in coach_ids]
+        with tenant_scope(academy_id):
+            await attach_session_staff_names(db, rows)
+        return {
+            str(row["coach_id"]): str(row["coach_name"]) for row in rows if row.get("coach_name")
+        }
+
+    return names
 
 
 def _index_model(
@@ -156,6 +186,14 @@ def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
             money_owed_by_age=MoneyOwedByAgeReport(index=index, money=money),
             inquiry_conversion=InquiryConversionReport(
                 contacts=MongoCrmContactRepository(db), academy_timezone=timezone
+            ),
+            attendance_risk=AttendanceRiskReport(
+                source=MongoAttendanceRiskSource(
+                    db, children=MongoStudentRepository(db), coach_names=_coach_names(db)
+                )
+            ),
+            families_lost=FamiliesLostReport(
+                index=index, departures=MongoDepartureSource(db), academy_timezone=timezone
             ),
         ),
         notes=AdminFamilyNotes(

@@ -1,4 +1,4 @@
-"""Interface tests for the People reports (roadmap L5a).
+"""Interface tests for the People reports (roadmap L5a and L5b).
 
 ``GET /admin/reports/people/money-owed-by-age`` and
 ``GET /admin/reports/people/inquiry-conversion``: response shapes (the contract
@@ -20,11 +20,19 @@ from fastapi.testclient import TestClient
 from backend.v2.contexts.crm.application.family_index import FamilyIndexUnavailable
 from backend.v2.contexts.crm.application.people_reports import (
     AgeBandTotal,
+    AttendanceRiskFacts,
+    DepartureFact,
+    FamiliesLost,
     InvalidReportRange,
     MoneyOwedByAge,
     PeopleReportUnavailable,
+    RiskClass,
+    RiskStudent,
+    summarize_attendance_risk,
+    summarize_families_lost,
     summarize_inquiry_conversion,
 )
+from backend.v2.contexts.crm.domain.family_index import FamilyChild, FamilyIndex, FamilyRecord
 from backend.v2.interfaces.admin import people_reports_routes
 from backend.v2.interfaces.admin.owner_gate import OWNER_ONLY_ROUTE_PATHS
 from backend.v2.interfaces.admin.people_reports_routes import get_admin_people_reports
@@ -35,6 +43,8 @@ from backend.v2.shared.http import register_exception_handlers
 NOW = datetime(2026, 9, 23, 15, 0, tzinfo=UTC)
 MONEY_URL = "/api/v2/admin/reports/people/money-owed-by-age"
 INQUIRY_URL = "/api/v2/admin/reports/people/inquiry-conversion"
+RISK_URL = "/api/v2/admin/reports/people/attendance-risk"
+LOST_URL = "/api/v2/admin/reports/people/families-lost"
 
 
 def _band(key: str, low: int | None, high: int | None, families: int, cents: int) -> AgeBandTotal:
@@ -91,10 +101,83 @@ class FakeInquiry:
         )
 
 
+class FakeRisk:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.error: Exception | None = None
+
+    async def run(self, academy_id: str) -> Any:
+        self.calls.append(academy_id)
+        if self.error:
+            raise self.error
+        return summarize_attendance_risk(
+            AttendanceRiskFacts(
+                students=(
+                    RiskStudent("s1", "at_risk", ("c1",)),
+                    RiskStudent("s2", "active", ("c1",)),
+                ),
+                classes={"c1": RiskClass("c1", "Tuesday Juniors", "coach-1")},
+                coach_names={"coach-1": "Testcoach One"},
+            ),
+            generated_at=NOW,
+        )
+
+
+class FakeLost:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, date | None, date | None]] = []
+        self.error: Exception | None = None
+
+    async def run(
+        self, academy_id: str, *, date_from: date | None = None, date_to: date | None = None
+    ) -> FamiliesLost:
+        self.calls.append((academy_id, date_from, date_to))
+        if self.error:
+            raise self.error
+        if date_from and date_to and date_from > date_to:
+            raise InvalidReportRange("from must be on or before to")
+        index = FamilyIndex(
+            academy_id=academy_id,
+            generated_at=NOW,
+            families=(
+                FamilyRecord(
+                    family_id="f1",
+                    parent_name=None,
+                    email=None,
+                    phone=None,
+                    has_account=False,
+                    children=(FamilyChild(student_id="s1", name="s1", lifecycle="left"),),
+                    stage="left",
+                ),
+                FamilyRecord(
+                    family_id="f2",
+                    parent_name=None,
+                    email=None,
+                    phone=None,
+                    has_account=False,
+                    children=(FamilyChild(student_id="s2", name="s2", lifecycle="left"),),
+                    stage="left",
+                ),
+            ),
+        )
+        return summarize_families_lost(
+            index,
+            [
+                DepartureFact("s1", "withdrawn", "cost", NOW),
+                DepartureFact("s2", "cancelled", None, NOW),
+            ],
+            date_from=date_from or date(2026, 6, 26),
+            date_to=date_to or date(2026, 9, 23),
+            timezone="America/Chicago",
+        )
+
+
 class FakeServices:
     def __init__(self) -> None:
         self.money_owed_by_age = FakeMoney()
         self.inquiry_conversion = FakeInquiry()
+        self.attendance_risk = FakeRisk()
+        self.families_lost = FakeLost()
 
 
 def _claims(*roles: str) -> AuthClaims:
@@ -163,8 +246,12 @@ def test_non_admin_personas_are_404(services: FakeServices, roles: tuple[str, ..
     with _client(roles, services) as client:
         assert client.get(MONEY_URL).status_code == 404
         assert client.get(INQUIRY_URL).status_code == 404
+        assert client.get(RISK_URL).status_code == 404
+        assert client.get(LOST_URL).status_code == 404
     assert services.money_owed_by_age.calls == []
     assert services.inquiry_conversion.calls == []
+    assert services.attendance_risk.calls == []
+    assert services.families_lost.calls == []
 
 
 @pytest.mark.parametrize(
@@ -226,5 +313,80 @@ def test_inquiry_conversion_bad_range_is_422(admin: TestClient) -> None:
 
 def test_people_reports_are_admin_not_owner_only() -> None:
     """Gated by the money seam (owner/admin), not the owner-only report tier."""
-    for path in (MONEY_URL, INQUIRY_URL):
+    for path in (MONEY_URL, INQUIRY_URL, RISK_URL, LOST_URL):
         assert ("GET", path) not in OWNER_ONLY_ROUTE_PATHS
+
+
+# ------------------------------------------------------------ L5b
+
+
+def test_attendance_risk_shape(admin: TestClient, services: FakeServices) -> None:
+    res = admin.get(RISK_URL)
+    assert res.status_code == 200
+    assert services.attendance_risk.calls == ["acad"]
+    body = res.json()
+    assert body["by_class"] == [
+        {
+            "session_id": "c1",
+            "title": "Tuesday Juniors",
+            "coach_id": "coach-1",
+            "coach_name": "Testcoach One",
+            "students": 2,
+            "at_risk": 1,
+            "at_risk_rate": 0.5,
+        }
+    ]
+    assert body["by_coach"] == [
+        {
+            "coach_id": "coach-1",
+            "coach_name": "Testcoach One",
+            "classes": 1,
+            "students": 2,
+            "at_risk": 1,
+            "at_risk_rate": 0.5,
+        }
+    ]
+    assert (body["students"], body["at_risk"]) == (2, 1)
+
+
+def test_attendance_risk_needs_no_money_visibility(
+    services: FakeServices, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(people_reports_routes, "can_view_family_money", lambda claims: False)
+    with _client(("admin",), services) as client:
+        assert client.get(RISK_URL).status_code == 200
+        assert client.get(LOST_URL).status_code == 200
+
+
+def test_attendance_risk_source_failure_is_503(admin: TestClient, services: FakeServices) -> None:
+    services.attendance_risk.error = PeopleReportUnavailable("down")
+    assert admin.get(RISK_URL).status_code == 503
+
+
+def test_families_lost_shape(admin: TestClient, services: FakeServices) -> None:
+    res = admin.get(LOST_URL)
+    assert res.status_code == 200
+    assert services.families_lost.calls == [("acad", None, None)]
+    body = res.json()
+    assert (body["date_from"], body["date_to"], body["timezone"]) == (
+        "2026-06-26",
+        "2026-09-23",
+        "America/Chicago",
+    )
+    assert body["families_lost"] == 2
+    assert len(body["by_reason"]) == 10
+    assert {r["key"]: r["families"] for r in body["by_reason"] if r["families"]} == {"cost": 1}
+    assert body["with_reason"] == 1
+    assert body["by_transition"] == [
+        {"key": "cancelled_by_family", "label": "Cancelled by the family", "families": 1}
+    ]
+    assert body["without_reason"] == 1
+
+
+def test_families_lost_range_and_errors(admin: TestClient, services: FakeServices) -> None:
+    assert admin.get(LOST_URL, params={"from": "2026-09-01", "to": "2026-09-10"}).status_code == 200
+    assert services.families_lost.calls[-1] == ("acad", date(2026, 9, 1), date(2026, 9, 10))
+    assert admin.get(LOST_URL, params={"from": "2026-09-10", "to": "2026-09-01"}).status_code == 422
+    for error in (PeopleReportUnavailable("down"), FamilyIndexUnavailable("users down")):
+        services.families_lost.error = error
+        assert admin.get(LOST_URL).status_code == 503

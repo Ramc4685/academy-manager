@@ -30,6 +30,7 @@ consumer adds its own.
 | `infrastructure/mongo_crm_contact_repo.py` | `MongoCrmContactRepository(TenantScopedRepository)` |
 | `backend/v2/migrations/0192_crm_contacts.py` | the indexes |
 | `application/people_reports.py` | People reports (L5a): money owed by age band (billing's money rule asked at today, today-30, today-60) and inquiry conversion by source; read-only, routes in `interfaces/admin/people_reports_routes.py` |
+| `infrastructure/people_reports_read_model.py` | People reports (L5b): attendance risk reads enrollment's `lifecycle_snapshots` (the `/admin/students` at_risk rule, never a copied attendance window) grouped by class and the class's `coach_id`; families lost reads the family index's Left families and `enrollment_events` departures (index 0090) by `reason_code`, else by transition; read-only, no money |
 
 ## The record
 
