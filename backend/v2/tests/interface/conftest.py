@@ -2634,6 +2634,16 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             remaining = [r for r in self.roles[user_id] if r != role]
             if not remaining:
                 raise CannotRemoveLastRole(user_id)
+            # Mirrors MongoUserRepository._assert_not_last_owner (#553): the
+            # academy must keep at least one other owner.
+            if role == "owner" and "owner" in self.roles[user_id]:
+                others = [uid for uid, held in self.roles.items() if uid != user_id]
+                if not any("owner" in self.roles[uid] for uid in others):
+                    from backend.v2.contexts.identity.application.errors import (
+                        CannotRemoveLastOwner,
+                    )
+
+                    raise CannotRemoveLastOwner("The academy must keep at least one owner")
             self.roles[user_id] = remaining
             return self._detail(user_id)
 

@@ -90,6 +90,17 @@ class CannotRemoveLastRole(DomainError):
     status_code = 409
 
 
+class CannotRemoveLastOwner(DomainError):
+    """Raised when a change would leave the academy with no active owner (#553).
+
+    Only an owner can grant or revoke owner, billing, front desk and admin, so
+    an academy without one could never manage roles or money again.
+    """
+
+    code = "Identity.CannotRemoveLastOwner"
+    status_code = 409
+
+
 class CoachHasFutureSessions(DomainError):
     """Raised when a coaching role is removed while future work is assigned.
 
