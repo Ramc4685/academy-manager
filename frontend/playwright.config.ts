@@ -28,6 +28,9 @@ const E2E_PROXY_SECRET = "e2e-proxy-secret";
 process.env.PUBLIC_ACADEMY_STUB_PORT = PUBLIC_ACADEMY_STUB_PORT;
 process.env.E2E_PROXY_SECRET = E2E_PROXY_SECRET;
 
+// Axe accessibility specs (D11) run only in the a11y-chromium project.
+const A11Y_SPECS = /a11y-[^/]*\.spec\.ts$/;
+
 export default defineConfig({
   testDir: "./e2e/specs",
   timeout: 30 * 1000,
@@ -107,10 +110,12 @@ export default defineConfig({
     {
       name: "chromium-mobile",
       use: { ...devices["Pixel 7"] },
+      testIgnore: A11Y_SPECS,
     },
     {
       name: "webkit-mobile",
       use: { ...devices["iPhone 14"] },
+      testIgnore: A11Y_SPECS,
     },
     // Desktop viewport so the admin lg: sidebar branch (the primary admin
     // navigation on real screens) is exercised end-to-end. Scoped via
@@ -138,6 +143,14 @@ export default defineConfig({
       // wide table that scrolls sideways on a phone and fits on a desktop.
       testMatch:
         /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record|public-page-settings)\.spec\.ts/,
+    },
+    // D11 axe gate: chromium only, its own CI job in nightly-e2e.yml (nightly,
+    // and on PRs that touch frontend/components/** or the a11y specs). The
+    // per-PR mobile projects above ignore these specs.
+    {
+      name: "a11y-chromium",
+      use: { ...devices["Pixel 7"] },
+      testMatch: A11Y_SPECS,
     },
   ],
 });
