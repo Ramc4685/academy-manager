@@ -1,6 +1,6 @@
 # People reports: money owed by age and inquiries by source
 
-PR: #TBD
+PR: #949
 
 ## What changed
 - `/admin/reports` gains a "People" group with two cards, both plain tables with empty states.
@@ -11,5 +11,6 @@ PR: #TBD
 - None. No migrations (the inquiry count uses the existing `crm_contacts_academy_created` index from 0192), no env vars, no owner steps. Read-only.
 
 ## Risk / rollback
+- The money card makes three reads of billing's family money model per request (today, -30, -60); fine at current size, a single-read port is a follow-up.
 - Low: two new read-only admin routes and two cards. A wrong number is a display problem only; nothing writes.
 - Rollback: revert this PR and redeploy backend and frontend.
