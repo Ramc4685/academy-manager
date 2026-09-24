@@ -370,8 +370,8 @@ isolation, duplicate ids, index use), and
 `tests/interface/test_admin_family_crm_routes.py`.
 
 Not built here: pinned notes, `student_id` tags, the `students.notes` copy,
-`contact_id` (lead) notes, and the timeline merge. Automatic follow-ups
-landed in L3c (`source_key`, below).
+`contact_id` (lead) notes. Automatic follow-ups landed in L3c (`source_key`,
+below); the timeline merge is Phase 5 (below).
 
 ## Duplicate warning (People CRM Phase 4c, migration 0198)
 
@@ -570,3 +570,70 @@ Tests: `tests/unit/test_crm_trial_follow_ups.py`,
 one row per trial, rerun and 5 concurrent runs, done not recreated,
 cross-tenant, registered no-op, draft and other-academy applications
 ignored, window and outcome filters, manual follow-ups coexist).
+
+## Unified family timeline (People CRM Phase 5, migration 0202)
+
+`GET /admin/families/{parent_id}/timeline?before=<cursor>&limit=<1..200>`
+(`interfaces/admin/family_timeline_routes.py`, `require_persona("admin")`,
+use case on `app.state.admin_family_index.timeline`, wired by
+`composition/family_timeline.py`). Spec: engineering spec §5 "Timeline".
+The family record's Timeline tab reads it; the Billing tab keeps billing's
+own timeline.
+
+| File | What it is |
+|---|---|
+| `domain/timeline.py` | `TimelineEntry`, merge (newest first, `entry_id` tiebreak), dedupe, cap, cursor paging, `redact_money`, `AUDIT_ACTION_ALLOWLIST` |
+| `application/timeline.py` | `GetFamilyTimeline`; the billing and coach-note source adapters |
+| `infrastructure/family_timeline_sources.py` | attendance, requests, admin audit (allowlist + moved family), CRM records |
+| `backend/v2/migrations/0202_family_timeline_indexes.py` | the lookup indexes |
+
+Sources (each read newest first, at most 200 rows per query, all under
+`gather`; a failing source adds `"<name>_unavailable"` to `warnings`):
+
+| Kind | Source |
+|---|---|
+| money, lifecycle, comms, billing admin actions | billing's `build_timeline` through the family billing read model (called as one source, not extended). Its lifecycle events cover every enrollment of the family's children. |
+| attendance | `attendance` absent marks and corrections of the children, dated by the occurrence `start_at` |
+| requests | `absence_notices`, `pause_requests`, `makeup_requests` by child; `trial_requests` by parent alias (one equality per alias) |
+| coach | shared coach notes (#665), read-only, with the coach's name |
+| admin | `audit_logs` on the parent aliases, children and their enrollments, action in `AUDIT_ACTION_ALLOWLIST` only (never `user_logged_in`); `student.parent_changed` rows become "Moved from family X" on the new family and "Moved to family Y" on the old one, found by `old_parent_id` / `new_parent_id` one alias at a time |
+| crm | family notes (body as `detail`), follow-ups (added, done), family contacts |
+
+Rules:
+
+- **The family check is the index** (#664): another academy's family, or no
+  family, is `Crm.FamilyNotFound` (404). The children and the canonical id
+  come from the index row; the parent's aliases from identity.
+- **Dedupe**: non-money entries with the same `enrollment_id` within 10
+  minutes of the cluster's first entry collapse into one (lifecycle kept
+  first); the others' codes are in `collapsed_codes`. Money never collapses.
+- **Times** go through `as_utc` (#706). The merged feed is cut to 200.
+- **Paging**: `next_cursor` is an opaque token of the last entry's time and
+  id; sources are asked only for rows at or before it.
+- **Money** is gated at serialization by `can_view_family_money` (#553): a
+  caller who may not see amounts gets money rows without `amount_cents` /
+  `refunded_cents` and without dollar figures in the summary, and
+  `money_visible: false`.
+
+### Indexes (migration 0202)
+
+| Collection | Name | Keys | Options |
+|---|---|---|---|
+| `audit_logs` | `audit_logs_academy_entity_created` | `(academy_id, entity_id, created_at desc)` | |
+| `audit_logs` | `audit_logs_academy_old_parent_created` | `(academy_id, old_parent_id, created_at desc)` | partial `{old_parent_id: {$gt: ""}}` |
+| `audit_logs` | `audit_logs_academy_new_parent_created` | `(academy_id, new_parent_id, created_at desc)` | partial `{new_parent_id: {$gt: ""}}` |
+| `absence_notices` | `absence_notices_academy_student_submitted` | `(academy_id, student_id, submitted_at desc)` | |
+| `pause_requests` | `pause_requests_academy_student_created` | `(academy_id, student_id, created_at desc)` | |
+| `makeup_requests` | `makeup_requests_academy_student_created` | `(academy_id, student_id, created_at desc)` | |
+
+Tests: `tests/unit/test_crm_timeline_domain.py`,
+`tests/unit/test_crm_family_timeline_use_case.py`,
+`tests/unit/test_0202_family_timeline_indexes.py`,
+`tests/interface/test_admin_family_timeline_routes.py`,
+`tests/contract/test_crm_family_timeline_real_mongo.py` (real `mongod`:
+allowlist, moved entries on both families, tenant isolation, index use).
+
+Not built here (L4c and later): the Messages tab aggregation, logged
+WhatsApp / SMS / calls (`family_contact_log`), campaign and digest sends,
+registration (applications, waivers) and inquiry (`crm_contacts`) entries,
+and staff display names for `actor_id`.

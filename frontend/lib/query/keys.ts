@@ -78,6 +78,9 @@ export const queryKeys = {
       ["admin", "families", parentId, "billing"] as const,
     familyRecord: (familyId: string) =>
       ["admin", "families", familyId, "record"] as const,
+    // People CRM Phase 5: the unified family timeline (paged).
+    familyTimeline: (parentId: string) =>
+      ["admin", "families", parentId, "timeline"] as const,
     // People CRM Phase 4a: team notes and follow-ups on a family.
     familyNotes: (parentId: string) =>
       ["admin", "families", parentId, "notes"] as const,

@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from backend.v2.composition.family_timeline import compose_family_timeline
 from backend.v2.contexts.billing.infrastructure.family_money_read_model import (
     MongoFamilyMoneyReadModel,
 )
@@ -42,6 +43,7 @@ from backend.v2.contexts.crm.application.people_reports import (
     InquiryConversionReport,
     MoneyOwedByAgeReport,
 )
+from backend.v2.contexts.crm.application.timeline import GetFamilyTimeline
 from backend.v2.contexts.crm.application.use_cases.family_follow_ups import (
     AddFamilyFollowUp,
     ListFamilyFollowUps,
@@ -110,6 +112,8 @@ class AdminFamilyIndex:
     reports: AdminPeopleReports
     notes: AdminFamilyNotes | None = None
     follow_ups: AdminFamilyFollowUps | None = None
+    #: The unified family timeline (Phase 5, ``composition/family_timeline.py``).
+    timeline: GetFamilyTimeline | None = None
 
 
 class _MembershipStaffDirectory:
@@ -178,4 +182,5 @@ def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
             update=UpdateFamilyFollowUp(follow_ups, families, staff, timezone),
             queue=ListFollowUps(follow_ups, families, staff, timezone),
         ),
+        timeline=compose_family_timeline(db, families=families, notes=notes, follow_ups=follow_ups),
     )

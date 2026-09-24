@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import type { Route } from "next";
 import Link from "next/link";
@@ -39,7 +38,7 @@ import {
 
 /**
  * The People CRM family record (spec §4, Lane A4): Overview, Notes &
- * follow-ups (Phase 4a), Details, Billing and Timeline tabs on the existing /admin/families/[parentId] route,
+ * follow-ups (Phase 4a), Details, Billing and Timeline (the unified feed, Phase 5) tabs on the existing /admin/families/[parentId] route,
  * with the tab in `?tab=` so a link to a family's Billing is a link to it.
  */
 export default function FamilyRecordPage() {
@@ -177,11 +176,7 @@ export default function FamilyRecordPage() {
         ) : activeTab === "notes" ? (
           <NotesTab parentId={parentId} />
         ) : activeTab === "timeline" ? (
-          <Loaded query={billing} what="the timeline">
-            {billing.data && (
-              <TimelinePanel timeline={billing.data.timeline} warnings={billing.data.warnings} />
-            )}
-          </Loaded>
+          <TimelinePanel parentId={parentId} />
         ) : record.isLoading && billing.isLoading ? (
           <Card p={20}>
             <Skeleton lines={4} />
@@ -206,32 +201,4 @@ export default function FamilyRecordPage() {
       {openChild && <ChildDrawer child={openChild} onClose={closeDrawer} />}
     </section>
   );
-}
-
-function Loaded({
-  query,
-  what,
-  children,
-}: {
-  query: { isLoading: boolean; isError: boolean; error: unknown; refetch: () => unknown };
-  what: string;
-  children: ReactNode;
-}) {
-  if (query.isLoading) {
-    return (
-      <Card p={20}>
-        <Skeleton lines={6} />
-      </Card>
-    );
-  }
-  if (query.isError) {
-    return (
-      <Card p={20}>
-        <p className="text-sm text-rally-ink" data-testid="family-record-error">
-          Could not load {what}. {(query.error as Error | null)?.message ?? ""}
-        </p>
-      </Card>
-    );
-  }
-  return <>{children}</>;
 }

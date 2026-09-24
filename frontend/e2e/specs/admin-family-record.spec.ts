@@ -107,6 +107,68 @@ const BILLING = {
   warnings: [],
 };
 
+/** People CRM Phase 5: the unified timeline, two pages. */
+function timelineEntry(over: Record<string, unknown>) {
+  return {
+    source: "test",
+    detail: null,
+    student_id: null,
+    student_name: null,
+    enrollment_id: null,
+    invoice_id: null,
+    invoice_ids: [],
+    actor_id: null,
+    actor_name: null,
+    reason: null,
+    amount_cents: null,
+    refunded_cents: null,
+    muted: false,
+    collapsed_codes: [],
+    ...over,
+  };
+}
+
+const TIMELINE_PAGE_1 = {
+  family_id: "parent-1",
+  entries: [
+    timelineEntry({
+      entry_id: "coach_note:n-1",
+      at: "2026-09-06T18:00:00Z",
+      kind: "coach",
+      code: "coach:note",
+      summary: "Coach note from Coach Testcoach · Kid Alpha · Sat Beginners",
+      detail: "Great footwork today",
+      actor_name: "Coach Testcoach",
+    }),
+    timelineEntry({
+      entry_id: "billing:enrollment_started",
+      at: "2026-09-04T20:00:00Z",
+      kind: "admin",
+      code: "enrollment_started",
+      summary: "Kid Alpha joined Sat Beginners",
+    }),
+  ],
+  next_cursor: "cursor-2",
+  money_visible: true,
+  warnings: [],
+};
+
+const TIMELINE_PAGE_2 = {
+  family_id: "parent-1",
+  entries: [
+    timelineEntry({
+      entry_id: "audit:au-1",
+      at: "2026-08-20T15:00:00Z",
+      kind: "admin",
+      code: "audit:moved_in",
+      summary: "Kid Alpha moved from family Testparent Two",
+    }),
+  ],
+  next_cursor: null,
+  money_visible: true,
+  warnings: ["attendance_unavailable"],
+};
+
 function studentDetail(status: "present" | "absent", previous: string | null) {
   return {
     student_id: "stu-a",
@@ -157,6 +219,14 @@ async function setup(page: Page) {
   );
   await page.route("**/api/v2/admin/families/parent-1/billing", (route) =>
     fulfillJson(route, BILLING),
+  );
+  await page.route("**/api/v2/admin/families/parent-1/timeline**", (route) =>
+    fulfillJson(
+      route,
+      new URL(route.request().url()).searchParams.get("before") === "cursor-2"
+        ? TIMELINE_PAGE_2
+        : TIMELINE_PAGE_1,
+    ),
   );
   // Details tab (Phase 4b): no other contacts and empty family details.
   await page.route("**/api/v2/admin/families/*/contacts", (route) =>
@@ -268,6 +338,20 @@ test.describe("Family record (People CRM §4)", () => {
     await expect(page.getByTestId("timeline-entry-enrollment_started")).toContainText(
       "Kid Alpha joined",
     );
+    // Phase 5: the unified feed carries coach notes (read-only, with the
+    // coach's name) and pages back with "Show older".
+    await expect(page.getByTestId("timeline-entry-coach:note")).toContainText(
+      "Coach note from Coach Testcoach",
+    );
+    await expect(page.getByTestId("timeline-entry-coach:note")).toContainText(
+      "Great footwork today",
+    );
+    await page.getByTestId("family-timeline-older").click();
+    await expect(page.getByTestId("timeline-entry-audit:moved_in")).toContainText(
+      "moved from family Testparent Two",
+    );
+    await expect(page.getByTestId("family-timeline-older")).toHaveCount(0);
+    await expect(page.getByTestId("family-warnings")).toContainText("attendance_unavailable");
 
     await page.getByTestId("family-tab-overview").click();
     await expect(page).toHaveURL(/\/admin\/families\/parent-1\??$/);
