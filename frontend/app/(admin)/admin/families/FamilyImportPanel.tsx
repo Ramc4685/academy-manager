@@ -11,7 +11,7 @@
  * the same file, never retried blind.
  */
 
-import { useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { Route } from "next";
 import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
@@ -27,6 +27,7 @@ import {
   previewFamilyImport,
   previewSummaryLine,
   rowStatusLabel,
+  safeFamilyLink,
   type ImportBatch,
   type ImportCommitResult,
   type ImportRow,
@@ -61,6 +62,19 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
   const [recheck, setRecheck] = useState(false);
   const [onlyProblems, setOnlyProblems] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const openRef = useRef<HTMLDivElement>(null);
+  // A control that removes itself (Close, Import another file, Choose another
+  // file) hands focus to its successor once the next render has mounted it,
+  // so keyboard and screen-reader users never fall back to <body>.
+  const pendingFocus = useRef<"file" | "open" | null>(null);
+
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    if (target === "file") inputRef.current?.focus();
+    else openRef.current?.querySelector("button")?.focus();
+  });
 
   const preview = useMutation({
     mutationFn: (chosen: ChosenFile) =>
@@ -101,6 +115,12 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
     if (inputRef.current) inputRef.current.value = "";
   };
 
+  /** Start over with a new file; focus lands on the file input. */
+  const startOver = () => {
+    reset();
+    pendingFocus.current = "file";
+  };
+
   const onChoose = async (event: ChangeEvent<HTMLInputElement>) => {
     const chosen = event.target.files?.[0];
     setBatch(null);
@@ -109,6 +129,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
     preview.reset();
     if (!chosen) {
       setFile(null);
+      setFileError(null);
       return;
     }
     const check = checkImportFile(chosen);
@@ -145,7 +166,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
 
   if (!open) {
     return (
-      <div>
+      <div ref={openRef}>
         <Button
           type="button"
           size="sm"
@@ -185,6 +206,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
           onClick={() => {
             reset();
             setOpen(false);
+            pendingFocus.current = "open";
           }}
         >
           Close
@@ -205,7 +227,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
               size="sm"
               variant="secondary"
               data-testid="admin-families-import-again"
-              onClick={reset}
+              onClick={startOver}
             >
               Import another file
             </Button>
@@ -307,7 +329,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
                 type="button"
                 variant="secondary"
                 data-testid="admin-families-import-choose-another"
-                onClick={reset}
+                onClick={startOver}
               >
                 Choose another file
               </Button>
@@ -436,11 +458,12 @@ function ImportPreview({
 }
 
 function RowNotes({ row }: { row: ImportRow }) {
+  const link = safeFamilyLink(row.family_link);
   const family =
     row.family_action === "existing" && row.family_name ? (
-      row.family_link ? (
+      link ? (
         <Link
-          href={row.family_link as Route}
+          href={link as Route}
           className="font-medium text-rally-cobalt-700 hover:underline"
         >
           {row.family_name}

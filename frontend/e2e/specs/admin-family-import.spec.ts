@@ -158,6 +158,38 @@ test.describe("admin family CSV import (roadmap L8b)", () => {
     expect(errors, errors.join("\n")).toEqual([]);
   });
 
+  test("controls that remove themselves hand focus on, never to the page body", async ({
+    page,
+  }) => {
+    const { errors } = await setup(page);
+    await page.route("**/api/v2/admin/imports/families/preview", (route) =>
+      fulfillJson(route, batch(CLEAN_ROWS)),
+    );
+    await page.route("**/api/v2/admin/imports/families/commit", (route) =>
+      fulfillJson(route, {
+        ...batch(CLEAN_ROWS, { status: "committed", committed_at: "2026-09-24T15:01:00Z", can_commit: false }),
+        already_committed: false,
+        students_inserted: 2,
+      }),
+    );
+
+    await chooseCsv(page);
+    await page.getByTestId("admin-families-import-preview").click();
+    await page.getByTestId("admin-families-import-choose-another").click();
+    await expect(page.getByTestId("admin-families-import-file")).toBeFocused();
+
+    await chooseCsv(page);
+    await page.getByTestId("admin-families-import-preview").click();
+    await page.getByTestId("admin-families-import-commit").click();
+    await page.getByRole("dialog").getByRole("button", { name: "Import", exact: true }).click();
+    await page.getByTestId("admin-families-import-again").click();
+    await expect(page.getByTestId("admin-families-import-file")).toBeFocused();
+
+    await page.getByTestId("admin-families-import-close").click();
+    await expect(page.getByTestId("admin-families-import-open")).toBeFocused();
+    expect(errors, errors.join("\n")).toEqual([]);
+  });
+
   test("a row with a problem blocks the import and says why", async ({ page }) => {
     await setup(page);
     const rows = [

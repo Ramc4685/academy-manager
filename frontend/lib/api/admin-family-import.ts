@@ -156,6 +156,17 @@ export function needsRecheck(error: unknown): boolean {
   return reason === "has_errors" || reason === "expired";
 }
 
+/**
+ * The family link only when it is the in-app path the backend emits
+ * (`/admin/families/<url-encoded id>`); anything else (absolute, protocol-
+ * relative, extra segments, a query) renders as plain text instead of a link.
+ */
+export function safeFamilyLink(link: string | null | undefined): string | null {
+  if (!link) return null;
+  const ok = /^\/admin\/families\/[A-Za-z0-9._~%-]+$/.test(link) && !/\/\.{1,2}$/.test(link);
+  return ok ? link : null;
+}
+
 export function rowStatusLabel(row: ImportRow): string {
   if (row.status === "error") return "Problem";
   if (row.status === "skip") return "Already here";

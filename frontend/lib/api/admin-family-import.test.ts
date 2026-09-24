@@ -13,6 +13,7 @@ import {
   previewFamilyImport,
   previewSummaryLine,
   rowStatusLabel,
+  safeFamilyLink,
   type ImportCommitResult,
   type ImportRow,
   type ImportSummary,
@@ -134,5 +135,25 @@ describe("copy", () => {
       "Imported 2 children and 1 new family. 1 row was already here and skipped.",
     );
     expect(commitResultLine({ ...done, already_committed: true })).toMatch(/already imported/);
+  });
+});
+
+describe("safeFamilyLink", () => {
+  it("keeps the in-app family path the backend emits", () => {
+    expect(safeFamilyLink("/admin/families/parent-2")).toBe("/admin/families/parent-2");
+    expect(safeFamilyLink("/admin/families/p%40x_1.2~a")).toBe("/admin/families/p%40x_1.2~a");
+  });
+
+  it("drops anything that is not that path", () => {
+    expect(safeFamilyLink(null)).toBeNull();
+    expect(safeFamilyLink(undefined)).toBeNull();
+    expect(safeFamilyLink("")).toBeNull();
+    expect(safeFamilyLink("https://evil.example/admin/families/x")).toBeNull();
+    expect(safeFamilyLink("//evil.example/admin/families/x")).toBeNull();
+    expect(safeFamilyLink("javascript:alert(1)")).toBeNull();
+    expect(safeFamilyLink("/admin/families/x/../../billing")).toBeNull();
+    expect(safeFamilyLink("/admin/families/x?next=/y")).toBeNull();
+    expect(safeFamilyLink("/admin/families/")).toBeNull();
+    expect(safeFamilyLink("/admin/families/..")).toBeNull();
   });
 });
