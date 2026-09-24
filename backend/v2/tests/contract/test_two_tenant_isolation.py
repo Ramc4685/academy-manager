@@ -117,6 +117,7 @@ def _ids(academy: str) -> dict[str, str]:
         "level_id": f"{academy}-level-1",
         "rec_id": f"{academy}-levelup-rec-1",
         "note_id": f"{academy}-note-1",
+        "follow_up_id": f"{academy}-follow-up-1",
         "request_id": f"{academy}-request-1",
         "event_id": f"{academy}-event-1",
         "checkout_session_id": f"cs_test_{academy}_1",
@@ -145,7 +146,16 @@ BODY_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
 }
 
 UNSEEDED_PARAMS = frozenset(
-    {"skill_id", "level_id", "rec_id", "note_id", "request_id", "event_id", "checkout_session_id"}
+    {
+        "skill_id",
+        "level_id",
+        "rec_id",
+        "note_id",
+        "follow_up_id",
+        "request_id",
+        "event_id",
+        "checkout_session_id",
+    }
 )
 
 # ---------------------------------------------------------------------------
