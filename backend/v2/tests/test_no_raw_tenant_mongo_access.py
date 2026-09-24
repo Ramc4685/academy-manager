@@ -107,6 +107,8 @@ TENANT_OWNED_COLLECTIONS = {
     # People CRM family contacts and details (migration 0196, Phase 4b)
     "family_contacts",
     "family_details",
+    # Invoice email copies to opted-in family contacts (migration 0197, L1b2)
+    "invoice_contact_email_sends",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

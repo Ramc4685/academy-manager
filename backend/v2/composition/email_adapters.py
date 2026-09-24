@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from backend.v2.composition.invoice_contact_copies import InvoiceContactCopies
 from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome as AddCardReminderEmailOutcome,
 )
@@ -268,6 +269,7 @@ class InvoiceEmailAdapter:
         academies: MongoAcademyRepository,
         sender: EmailSendPort,
         naming: Callable[[str], Awaitable[InvoiceNaming | None]] | None = None,
+        contact_copies: InvoiceContactCopies | None = None,
     ) -> None:
         self._memberships = memberships
         self._users = users
@@ -276,6 +278,9 @@ class InvoiceEmailAdapter:
         # Issue #659: resolves student / class / invoice number for one
         # invoice id. Unwired (or failing) degrades to month-only copy.
         self._naming = naming
+        # L1b2: copies for family contacts with "Gets invoices" on. Unwired
+        # means the parent is the only recipient, exactly as before.
+        self._contact_copies = contact_copies
 
     async def _naming_for(self, invoice_id: str) -> InvoiceNaming:
         if self._naming is None:
@@ -370,6 +375,34 @@ class InvoiceEmailAdapter:
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
+        if self._contact_copies is not None:
+            # Only after the parent's copy landed: a failed parent send is
+            # retried as a whole, and the contacts' claims keep that retry
+            # from mailing anyone twice. The copy never carries the pay link.
+            copy_inner = (
+                f"<p style='color: {_BRAND_MUTED};'>You are receiving a copy of this "
+                "invoice because the academy added you as a contact for this family.</p>"
+                f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
+                f"{html.escape(month)} tuition</h2>"
+                f"<p>{self._tuition_html(period, naming)} is ready.</p>"
+                f"<p>Balance due: <strong>{safe_amount}</strong> "
+                f"(invoice total {safe_total}).</p>"
+                + (
+                    f"<p style='color: {_BRAND_MUTED};'>The payment link was sent to the "
+                    "family's primary email.</p>"
+                    if checkout_url
+                    else f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to "
+                    "arrange payment.</p>"
+                )
+                + self._invoice_number_html(naming)
+            )
+            await self._contact_copies.send_copies(
+                family_ids=[parent_id, str(user.user_id if user else "")],
+                primary_email=email,
+                invoice_id=invoice_id,
+                subject=subject,
+                body=_branded_shell(academy_name=academy_name, inner_html=copy_inner),
+            )
         return outcome.provider_message_id
 
     async def send_dunning_notice(
