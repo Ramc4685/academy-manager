@@ -18,6 +18,10 @@ from pydantic import BaseModel
 ACTOR_TYPE_BY_ROLE: tuple[tuple[str, str], ...] = (
     ("owner", "owner"),
     ("admin", "admin"),
+    # Staff tiers (#553) are staff, so they share the admin actor type (the
+    # audit filter's vocabulary); `actor_role` still names the tier.
+    ("billing", "admin"),
+    ("front_desk", "admin"),
     ("coach", "coach"),
     ("assistant_coach", "coach"),
     ("parent", "parent"),

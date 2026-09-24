@@ -130,7 +130,7 @@ class ListAdminUsers:
 
     async def execute(
         self,
-        role: Literal["admin", "coach", "assistant_coach", "parent", "owner"] | None = None,
+        role: Role | None = None,
         academy_id: str | None = None,
         *,
         exclude_role: Role | None = None,

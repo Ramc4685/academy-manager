@@ -15,23 +15,31 @@ Card charges (the two charge routes and the ``charge_card`` Billing-tab
 action) were reachable by non-owner admins until #928 put them behind
 ``require_owner``; they are pinned here with the other money-moving routes.
 
-Only the owner tier exists in code today; billing and front desk are #553. So
-billing-tier routes are gated by the admin persona and must NOT be owner-gated
-(that would take a decided capability away from billing staff). When #553
-lands, these routes move from "admin persona" to "billing tier or owner".
-This walks the real admin router (the ``test_owner_gate_policy`` walker) so a
-money route that drifts onto the wrong tier fails here.
+#553 built the billing and front-desk tiers (``shared/auth/staff_tiers.py``).
+Billing-tier routes are guarded by ``require_staff_tier("billing")`` (owner,
+admin or billing; ``interfaces/admin/staff_tier.py``), never by the admin
+persona alone (that would 404 billing staff) and never by ``require_owner``
+(that would take a decided capability away from billing staff and admins).
+Front desk opens no money route. This walks the real admin router (the
+``test_owner_gate_policy`` walker) so a money route that drifts onto the
+wrong tier fails here, in both directions.
 """
 
 from __future__ import annotations
+
+import inspect
+from typing import Any
 
 import pytest
 
 from backend.v2.contexts.billing.application.family_billing import OWNER_ONLY_ACTIONS
 from backend.v2.interfaces.admin.owner_gate import OWNER_ONLY_ROUTE_PATHS
+from backend.v2.interfaces.admin.staff_tier import STAFF_TIER_ROUTE_PATHS
+from backend.v2.shared.auth.staff_tiers import PAYMENT_RECORDER_ROLES
 from backend.v2.tests.structural.test_crm_admin_persona_gate import _personas
 from backend.v2.tests.structural.test_owner_gate_policy import (
     _admin_routes,
+    _dependant_calls,
     _is_owner_guarded,
 )
 
@@ -53,7 +61,7 @@ MONEY_MOVING_ROUTES: tuple[tuple[str, str], ...] = (
 )
 
 #: Billing-tier routes: billing staff record payments the family already
-#: made (owner decision 2026-09-22). Admin-persona gated today, never owner-only.
+#: made (owner decision 2026-09-22). Owner, admin or billing; never owner-only.
 BILLING_TIER_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/record-payment"),
     ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
@@ -68,13 +76,53 @@ def test_money_moving_route_is_owner_only(key: tuple[str, str]) -> None:
     assert _is_owner_guarded(routes[key])
 
 
+def _staff_tiers(route: Any) -> set[str]:
+    """The tiers named by every ``require_staff_tier`` in a route's chain."""
+    found: set[str] = set()
+    for call in _dependant_calls(route.dependant):
+        if "require_staff_tier" not in getattr(call, "__qualname__", ""):
+            continue
+        tier = inspect.getclosurevars(call).nonlocals.get("tier")
+        if isinstance(tier, str):
+            found.add(tier)
+    return found
+
+
 @pytest.mark.parametrize("key", BILLING_TIER_ROUTES, ids=lambda k: f"{k[0]} {k[1]}")
-def test_billing_tier_route_is_admin_gated_not_owner_only(key: tuple[str, str]) -> None:
+def test_billing_tier_route_admits_the_billing_tier_not_owner_only(
+    key: tuple[str, str],
+) -> None:
     routes = _admin_routes()
     assert key in routes, f"billing route not registered: {key}"
-    assert "admin" in _personas(routes[key])
+    assert _staff_tiers(routes[key]) == {"billing"}
+    # The admin persona gate would 404 a billing-only member before the tier ran.
+    assert "admin" not in _personas(routes[key])
+    assert key in STAFF_TIER_ROUTE_PATHS["billing"]
     assert key not in OWNER_ONLY_ROUTE_PATHS
     assert not _is_owner_guarded(routes[key])
+
+
+def test_staff_tier_route_set_matches_the_router_in_both_directions() -> None:
+    routes = _admin_routes()
+    guarded = {(tier, key) for key, route in routes.items() for tier in _staff_tiers(route)}
+    declared = {(tier, key) for tier, keys in STAFF_TIER_ROUTE_PATHS.items() for key in keys}
+    assert guarded == declared
+
+
+def test_billing_tier_routes_are_exactly_the_payment_recording_routes() -> None:
+    assert STAFF_TIER_ROUTE_PATHS["billing"] == frozenset(BILLING_TIER_ROUTES)
+
+
+@pytest.mark.parametrize("key", MONEY_MOVING_ROUTES, ids=lambda k: f"{k[0]} {k[1]}")
+def test_no_staff_tier_reaches_a_money_moving_route(key: tuple[str, str]) -> None:
+    routes = _admin_routes()
+    assert not _staff_tiers(routes[key])
+    assert all(key not in keys for keys in STAFF_TIER_ROUTE_PATHS.values())
+
+
+def test_front_desk_records_no_payment_and_opens_no_route() -> None:
+    assert "front_desk" not in PAYMENT_RECORDER_ROLES
+    assert "front_desk" not in STAFF_TIER_ROUTE_PATHS
 
 
 def test_billing_tab_hides_money_moving_actions_from_non_owners() -> None:
