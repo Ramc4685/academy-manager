@@ -66,8 +66,12 @@ _ROLE_PRIVILEGE: dict[str, int] = {
     "parent": 0,
     "assistant_coach": 1,
     "coach": 2,
-    "admin": 3,
-    "owner": 4,
+    # Staff tiers (#553): front desk sees an "owes money" flag only, billing
+    # also sees amounts and records payments; both are narrower than admin.
+    "front_desk": 2,
+    "billing": 3,
+    "admin": 4,
+    "owner": 5,
 }
 
 

@@ -56,6 +56,8 @@ BFF_IDENTITY_HEADER = "x-courtmastr-identity"
 _PERSONA_PRIORITY: tuple[str, ...] = (
     "owner",
     "admin",
+    "billing",
+    "front_desk",
     "coach",
     "assistant_coach",
     "parent",

@@ -5,24 +5,37 @@ counts and amounts, the last failed charge) is gated by
 :func:`can_view_family_money`, called once per request at the interface
 layer. Nothing else may decide it.
 
-Today the CRM routes are ``require_persona("admin")`` and the answer is
-"owner or admin", so for every caller that reaches a CRM route it is True.
-That is deliberate: this is the seam the staff tiers of #553 (owner, billing,
-front desk; owner decision 2026-09-22, spec §8 decision 4) will narrow, and
-narrowing it must be a one-function change rather than a hunt through every
-serializer. #553 itself is not built here. A later front-desk "owes money"
-flag without amounts (spec §3.2) is a separate, non-money field.
+The staff tiers of #553 (owner decision 2026-09-22) are decided in
+``shared/auth/staff_tiers.py`` and this seam delegates to it:
+
+* owner, admin and billing see amounts;
+* front desk sees an "owes money" flag only (:func:`is_front_desk_only`),
+  never an amount;
+* coaches, parents and anyone else see nothing.
+
+The CRM routes are still ``require_persona("admin")``, so today every caller
+that reaches one is an admin and the answer is True. Opening CRM reads to the
+billing and front-desk tiers, and the front-desk flag itself, are the
+redaction slice (L2b); they only have to call these functions.
 """
 
 from __future__ import annotations
 
-from typing import Final
-
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.auth.staff_tiers import (
+    MONEY_VIEWER_ROLES,
+    can_record_payment,
+    can_view_money,
+    is_front_desk_only,
+)
 
-#: Academy roles that see family money amounts today.
-MONEY_VIEWER_ROLES: Final[frozenset[str]] = frozenset({"owner", "admin"})
+__all__ = [
+    "MONEY_VIEWER_ROLES",
+    "can_record_payment",
+    "can_view_family_money",
+    "is_front_desk_only",
+]
 
 
 def can_view_family_money(claims: AuthClaims) -> bool:
-    return any(role in MONEY_VIEWER_ROLES for role in claims.roles)
+    return can_view_money(claims)

@@ -43,6 +43,7 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_invoice_void
+from backend.v2.interfaces.admin.staff_tier import require_staff_tier
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
     AdminEnrollmentQuoteResponse,
@@ -488,7 +489,7 @@ async def generate_monthly_payments(
 async def mark_payment_paid(
     payment_id: str,
     body: MarkPaymentPaidRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_staff_tier("billing")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.mark_payment_paid.execute(
@@ -1118,7 +1119,7 @@ class InvoiceRefundResponse(BaseModel):
 async def record_manual_payment(
     invoice_id: str,
     body: RecordManualPaymentRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_staff_tier("billing")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> RecordManualPaymentResponse:
