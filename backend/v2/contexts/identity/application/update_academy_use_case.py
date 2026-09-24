@@ -37,4 +37,6 @@ class UpdateAcademyUseCase:
             logo_url=doc.get("logo_url"),
             brand_color=doc.get("brand_color"),
             currency=str(doc.get("currency") or "USD"),
+            email_sender_name=doc.get("email_sender_name") or None,
+            email_reply_to=doc.get("email_reply_to") or None,
         )

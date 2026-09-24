@@ -78,6 +78,7 @@ from backend.v2.contexts.communications.infrastructure.digest_claim import claim
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
 from backend.v2.contexts.enrollment.domain.models import Session, SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import ParentSelfServicePolicy
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
@@ -571,11 +572,14 @@ class AbsenceNoticeNotificationAdapter:
     ) -> str | None:
         """One recipient, never raising. Returns a failure reason or ``None``."""
         try:
+            identity = await sender_identity_for_current_academy(self._academies)
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
                 body=body,
                 category=category,
+                reply_to=identity.reply_to,
+                sender_name=identity.sender_name,
             )
         except Exception:
             logger.exception(

@@ -88,6 +88,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
@@ -1024,11 +1025,14 @@ class RosterAlertAdapter:
         audience their alert, and must not reach the enrollment write.
         """
         try:
+            identity = await sender_identity_for_current_academy(self._academies)
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
                 body=body,
                 category=category,
+                reply_to=identity.reply_to,
+                sender_name=identity.sender_name,
             )
         except Exception:
             logger.exception(

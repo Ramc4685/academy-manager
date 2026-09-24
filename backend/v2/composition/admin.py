@@ -1902,7 +1902,7 @@ def compose_admin(
     send_login_invite = SendLoginInvite(
         users=_MembershipAwareLoginInviteRecorder(),
         links=get_firebase_admin_adapter(),
-        sender=LoginInviteEmailAdapter(sender=_email_sender),
+        sender=LoginInviteEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
         portals=_AcademyPortalUrlAdapter(),
     )

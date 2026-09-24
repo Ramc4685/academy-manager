@@ -152,3 +152,21 @@ def test_render_uses_the_theme_shell_escapes_text_and_labels_a_lead() -> None:
     assert "Sent by Riverside Shuttle Club" in body  # the shared email_theme shell
     assert "#0f766e" in body  # the academy's brand rule
     assert "News and offers" in body and ">Yes<" in body
+
+
+async def test_owner_alert_uses_the_academy_display_name_but_family_reply_to() -> None:
+    """L9a: the From name follows the academy's sender name; reply-to stays
+    the family's address so the owner can answer them directly."""
+    adapter, sender, _, _ = _adapter(
+        [OWNER],
+        doc={
+            "academy_id": ACADEMY,
+            "display_name": "Riverside Shuttle Club",
+            "email_sender_name": "Riverside Front Desk",
+            "email_reply_to": "desk@example.com",
+        },
+    )
+    await adapter.notify(academy_id=ACADEMY, contact=_contact(), created=True, class_title=None)
+    [sent] = sender.sent
+    assert sent["sender_name"] == "Riverside Front Desk"
+    assert sent["reply_to"] == "jamie@example.test"

@@ -46,6 +46,10 @@ import { CollapsibleSection } from "@/components/admin/reports/collapsible-secti
 import { FunnelPanel } from "@/components/admin/reports/funnel-panel";
 import { AttendanceTrendsPanel } from "@/components/admin/reports/attendance-trends-panel";
 import { CoachUtilizationPanel } from "@/components/admin/reports/coach-utilization-panel";
+import {
+  InquiryConversionPanel,
+  MoneyOwedByAgePanel,
+} from "@/components/admin/reports/people-reports-panels";
 
 const FINANCIAL_REPORTS = [
   {
@@ -890,6 +894,17 @@ export default function AdminMonthClosePage() {
           <AttendanceTrendsPanel periods={trailingPeriods} />
           <CoachUtilizationPanel periods={trailingPeriods} />
         </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="people"
+          title="People"
+          summary="Money owed by how late it is, and inquiries to enrolled by source."
+        >
+          <div className="grid gap-4 lg:grid-cols-2">
+            <MoneyOwedByAgePanel />
+            <InquiryConversionPanel />
+          </div>
         </CollapsibleSection>
 
         <CollapsibleSection
