@@ -624,14 +624,25 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 {"academy_id": academy_id, "invoice_id": invoice_id}
             )
         ]
-        result = allocate_payment_to_invoice(
-            invoice=self._invoice_from_doc(invoice_doc),
-            payment=self._payment_from_doc(payment_doc),
-            lines=lines,
-            requested_amount_cents=amount_cents,
-            allocation_id=str(new_ulid()),
-            now=self._clock(),
-        )
+        try:
+            result = allocate_payment_to_invoice(
+                invoice=self._invoice_from_doc(invoice_doc),
+                payment=self._payment_from_doc(payment_doc),
+                lines=lines,
+                requested_amount_cents=amount_cents,
+                allocation_id=str(new_ulid()),
+                now=self._clock(),
+            )
+        except ValueError:
+            # A same-key caller may have claimed and committed between our
+            # find_one and the snapshot reads above, spending the balance we
+            # were about to compute against (#931). Replay its claim instead
+            # of failing; a genuine "nothing payable" still raises.
+            if await self._db["payment_allocations"].find_one(
+                {"academy_id": academy_id, "idempotency_key": idempotency_key}
+            ):
+                return None
+            raise
         allocation_doc = _mongo_doc(result.allocation)
         allocation_doc["idempotency_key"] = idempotency_key
         # The unique (academy_id, idempotency_key) index (0091) makes this

@@ -219,6 +219,64 @@ async def test_loser_arriving_mid_claim_does_not_roll_the_winner_back(real_db) -
     assert loser.invoice.status == "paid" and loser.payment.unapplied_amount_cents == 0
 
 
+class _StaleFirstLookupAllocations:
+    """``payment_allocations`` whose FIRST key lookup misses.
+
+    Models a same-key caller whose ``find_one`` ran just before the winner's
+    claim insert, while its snapshot reads land after the winner committed.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.missed = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def find_one(self, flt: Any, *args: Any, **kwargs: Any) -> Any:
+        if not self.missed and isinstance(flt, dict) and "idempotency_key" in flt:
+            self.missed = True
+            return None
+        return await self._inner.find_one(flt, *args, **kwargs)
+
+
+class _StaleLookupDb:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.allocations = _StaleFirstLookupAllocations(inner["payment_allocations"])
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __getitem__(self, name: str) -> Any:
+        if name == "payment_allocations":
+            return self.allocations
+        return self._inner[name]
+
+
+async def test_loser_that_misses_the_claim_replays_it_instead_of_failing(real_db) -> None:
+    """The loser's key lookup misses, but the winner commits before the loser
+    reads the invoice and payment. The loser then computes against a paid
+    invoice. Before the fix it raised "no payable invoice balance"; now it
+    finds the winner's claim and returns the same allocation.
+    """
+    with tenant_scope(ACAD):
+        invoice_id, payment_id = await _seed(real_db, "stale-lookup")
+        key = "alloc:931:stale-lookup"
+        winner = await MongoBillingLedgerRepository(real_db).allocate_payment(
+            payment_id=payment_id, invoice_id=invoice_id, amount_cents=TOTAL, idempotency_key=key
+        )
+        stale_db = _StaleLookupDb(real_db)
+        loser = await MongoBillingLedgerRepository(stale_db).allocate_payment(
+            payment_id=payment_id, invoice_id=invoice_id, amount_cents=TOTAL, idempotency_key=key
+        )
+        allocations, invoice, payment = await _state(real_db, invoice_id, payment_id)
+
+    assert stale_db.allocations.missed
+    assert loser.allocation.allocation_id == winner.allocation.allocation_id
+    _assert_one_allocation_posted_once(allocations, invoice, payment)
+
+
 async def test_partial_allocation_race_keeps_the_payment_remainder(real_db) -> None:
     """Same interleaving on a payment larger than the invoice: no double debit."""
     with tenant_scope(ACAD):
