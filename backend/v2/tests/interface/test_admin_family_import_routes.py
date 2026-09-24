@@ -129,6 +129,8 @@ class _Commit:
 class Caller:
     def __init__(self) -> None:
         self.be("u-admin", "admin")
+        #: What the auth middleware put in the tenant context (None = unset).
+        self.tenant: str | None = A
 
     def be(self, user_id: str, *roles: str) -> None:
         self.claims = AuthClaims(
@@ -159,7 +161,7 @@ def client(caller: Caller, services: SimpleNamespace) -> Iterator[TestClient]:
     app.include_router(admin_router, prefix="/api/v2")
 
     async def claims() -> AuthClaims:
-        _tenant.set(caller.claims.academy_id)
+        _tenant.set(caller.tenant)
         return caller.claims
 
     app.dependency_overrides[get_auth_claims] = claims
@@ -257,3 +259,23 @@ def test_malformed_and_oversized_bodies_are_refused_before_parsing(
 def test_the_routes_are_rate_limited() -> None:
     assert ("POST", PREVIEW) in _PATH_LIMIT_OVERRIDES
     assert ("POST", COMMIT) in _PATH_LIMIT_OVERRIDES
+
+
+def test_an_unset_tenant_context_is_refused_not_guessed_from_claims(
+    client: TestClient, caller: Caller, services: Any
+) -> None:
+    # The batch store scopes by the tenant context; planning against the
+    # claims' academy instead would split one request across two tenants.
+    caller.tenant = None
+    assert client.post(PREVIEW, json={"csv": "a"}).status_code == 503
+    assert client.post(COMMIT, json={"import_batch_id": "b"}).status_code == 503
+    assert services.preview.calls == [] and services.commit.calls == []
+
+
+def test_a_tenant_context_that_disagrees_with_the_claims_is_a_404(
+    client: TestClient, caller: Caller, services: Any
+) -> None:
+    caller.tenant = "acad-b"
+    assert client.post(PREVIEW, json={"csv": "a"}).status_code == 404
+    assert client.post(COMMIT, json={"import_batch_id": "b"}).status_code == 404
+    assert services.preview.calls == [] and services.commit.calls == []

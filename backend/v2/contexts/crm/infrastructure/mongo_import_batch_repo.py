@@ -138,6 +138,7 @@ class MongoImportBatchRepository(TenantScopedRepository):
             committed_at=_opt_utc(doc.get("committed_at")),
             committed_by=doc.get("committed_by"),
             students_created=doc.get("students_created"),
+            academy_id=doc.get("academy_id"),
         )
 
     async def add(self, batch: ImportBatch) -> None:

@@ -127,6 +127,19 @@ def _new_family_id() -> str:
     return f"parent_{new_ulid().lower()}"
 
 
+def _own(batch: ImportBatch | None, academy_id: str) -> ImportBatch | None:
+    """The batch only when it belongs to ``academy_id``.
+
+    Belt and braces over the store's tenant scoping: a batch stored under
+    another academy reads as absent, never as committable.
+    """
+    if batch is None:
+        return None
+    if batch.academy_id is not None and batch.academy_id != academy_id:
+        return None
+    return batch
+
+
 class _FixedIndex:
     """Hands the finder the one index this call built (never a cached one)."""
 
@@ -380,6 +393,7 @@ class PreviewFamilyImport:
             updated_at=now,
             rows=planned,
             summary=summarize(planned),
+            academy_id=academy_id,
         )
         await self._batches.add(batch)
         await self._audit.record(
@@ -419,7 +433,7 @@ class CommitFamilyImport:
     async def execute(
         self, academy_id: str, *, import_batch_id: str, actor_id: str
     ) -> CommitFamilyImportResult:
-        batch = await self._batches.get(import_batch_id)
+        batch = _own(await self._batches.get(import_batch_id), academy_id)
         if batch is None:
             raise ImportBatchNotFound("import batch not found", import_batch_id=import_batch_id)
         if batch.status == "committed":
@@ -444,6 +458,8 @@ class CommitFamilyImport:
             raise ImportNotCommittable(
                 "This import is already being committed.", reason="in_progress"
             )
+        if _own(claimed, academy_id) is None:
+            raise ImportBatchNotFound("import batch not found", import_batch_id=import_batch_id)
 
         planned = await self._planner.plan(academy_id, claimed.rows)
         summary = summarize(planned)
