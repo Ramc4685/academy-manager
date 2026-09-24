@@ -448,7 +448,7 @@ test.describe("admin month close", () => {
     await expect(page.getByTestId("month-close-verdict-issues")).toHaveCount(0);
   });
 
-  test("the card wall collapses on a phone and opens on a desktop", async ({ page }) => {
+  test("the card wall collapses on phone and desktop and remembers what was opened", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubMonthCloseShell(page);
     await page.route(MONTH_CLOSE_URL, (route) => fulfillJson(route, monthClose()));
@@ -481,16 +481,24 @@ test.describe("admin month close", () => {
     await openMonthCloseSection(page, "discounts");
     await expect(page.getByTestId("tuition-discounts-section")).toBeVisible();
 
-    // The same page on a desktop viewport opens every group by default.
+    // UI-7: desktop starts collapsed too (it was a ~5,700px scroll at 1280),
+    // and the group opened above is remembered across the reload.
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.reload();
     await expect(page.getByTestId("month-close-verdict")).toBeVisible({ timeout: 45_000 });
-    for (const id of groups) {
+    await expect(page.getByTestId("month-close-section-discounts-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    for (const id of groups.filter((g) => g !== "discounts")) {
       await expect(page.getByTestId(`month-close-section-${id}-toggle`)).toHaveAttribute(
         "aria-expanded",
-        "true",
+        "false",
       );
     }
+    const desktopHeight = await page.evaluate(() => document.body.scrollHeight);
+    expect(desktopHeight).toBeLessThan(4_475);
+    await openMonthCloseSection(page, "autopay-run");
     await expect(page.getByTestId("autopay-run-box")).toBeVisible();
 
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
