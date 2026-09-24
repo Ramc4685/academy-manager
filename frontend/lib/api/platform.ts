@@ -6,7 +6,7 @@
  * missing route by design — surface it as "unavailable", not "forbidden".
  */
 
-import { apiFetch } from "./client";
+import { apiFetch, apiFetchBlob } from "./client";
 
 export type TenantStatus = "provisioning" | "active" | "suspended" | "cancelled";
 
@@ -15,6 +15,9 @@ export interface TenantLimits {
   max_coaches: number | null;
   max_locations: number | null;
 }
+
+/** How the platform charges the academy (roadmap L9c). Only flat monthly today. */
+export type TenantFeeModel = "flat_monthly";
 
 export interface PlatformTenant {
   academy_id: string;
@@ -28,6 +31,15 @@ export interface PlatformTenant {
   limits: TenantLimits;
   status_reason: string | null;
   updated_by: string;
+  fee_model: TenantFeeModel;
+  platform_agreement_version: string | null;
+  platform_agreement_accepted_at: string | null;
+  platform_agreement_accepted_by: string | null;
+}
+
+export interface RecordAgreementAcceptancePayload {
+  agreement_version: string;
+  accepted_by: string;
 }
 
 export interface TenantHealth {
@@ -81,6 +93,17 @@ export function activatePlatformTenant(academyId: string): Promise<PlatformTenan
   return apiFetch<PlatformTenant>(
     `/platform/tenants/${encodeURIComponent(academyId)}/activate`,
     { method: "POST" },
+  );
+}
+
+/** Record that the academy accepted a platform agreement version (L9c). */
+export function recordPlatformAgreementAcceptance(
+  academyId: string,
+  payload: RecordAgreementAcceptancePayload,
+): Promise<PlatformTenant> {
+  return apiFetch<PlatformTenant>(
+    `/platform/tenants/${encodeURIComponent(academyId)}/agreement`,
+    { method: "POST", body: JSON.stringify(payload) },
   );
 }
 
@@ -171,5 +194,39 @@ export function setPlatformApplicationFee(
   return apiFetch<ApplicationFee>(
     `/platform/academies/${encodeURIComponent(academyId)}/application-fee`,
     { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+/** Tenant data export (roadmap L9d): a zip of every tenant-scoped collection. */
+export function exportPlatformTenantData(academyId: string, reason: string): Promise<Blob> {
+  return apiFetchBlob(`/platform/tenants/${encodeURIComponent(academyId)}/data-export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface PurgeCollectionCount {
+  collection: string;
+  count: number;
+}
+
+/** What a purge of a cancelled tenant would delete. Nothing is deleted. */
+export interface PurgeDryRun {
+  academy_id: string;
+  tenant_status: string;
+  cancelled_at: string | null;
+  generated_at: string;
+  would_delete: PurgeCollectionCount[];
+  would_retain: PurgeCollectionCount[];
+  total_to_delete: number;
+  confirm_token: string;
+  executed: boolean;
+}
+
+export function previewPlatformTenantPurge(academyId: string): Promise<PurgeDryRun> {
+  return apiFetch<PurgeDryRun>(
+    `/platform/tenants/${encodeURIComponent(academyId)}/purge-dry-run`,
+    { method: "POST" },
   );
 }

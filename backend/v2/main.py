@@ -651,6 +651,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.platform_application_fee = compose_platform_application_fee(db)
 
+    # Tenant data export + purge dry-run (roadmap L9d) — platform BFF only.
+    from backend.v2.composition.tenant_data_offboarding import (
+        compose_tenant_data_offboarding,
+    )
+
+    app.state.tenant_data_offboarding = compose_tenant_data_offboarding(
+        db, app.state.platform_audit
+    )
+
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
     # Departures / holds (issue #697; composition/admin.py is at its line

@@ -116,9 +116,16 @@ def phone_matches(stored: str | None, probe: DuplicateProbe) -> bool:
 def family_record_matches(record: FamilyRecord, probe: DuplicateProbe) -> tuple[MatchedOn, ...]:
     """Why a family index row matches the probe (empty when it does not)."""
     matched: list[MatchedOn] = []
-    if probe.email is not None and (record.email or "").strip().lower() == probe.email:
+    if probe.email is not None and (
+        (record.email or "").strip().lower() == probe.email
+        # A roster family (no users document) is known by the students'
+        # ``parent_email``, kept lower-cased among the legacy keys.
+        or probe.email in record.legacy_contact_keys
+    ):
         matched.append("email")
-    if phone_matches(record.phone, probe):
+    if phone_matches(record.phone, probe) or any(
+        phone_matches(stored, probe) for stored in record.legacy_phones
+    ):
         matched.append("phone")
     if probe.name_key is not None and record.parent_name:
         if full_name_key(record.parent_name) == probe.name_key:

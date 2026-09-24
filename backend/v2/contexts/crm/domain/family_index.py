@@ -77,6 +77,10 @@ class FamilyRecord:
     #: Legacy parent fields on the student rows (``parent_name``,
     #: ``guardian_name``, ``parent_email``): searched, never displayed.
     legacy_contact_keys: tuple[str, ...] = ()
+    #: Digits of the legacy ``parent_phone`` on the student rows (a roster
+    #: family, such as one a CSV import created, has no users document to
+    #: carry a phone). Matched by the duplicate check, never displayed.
+    legacy_phones: tuple[str, ...] = ()
 
     @property
     def sort_key(self) -> tuple[str, str]:

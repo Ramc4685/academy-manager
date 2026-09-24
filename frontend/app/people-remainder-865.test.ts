@@ -48,7 +48,9 @@ describe("Families can be filtered and sorted by what is owed (#865, People CRM 
   });
 
   it("renders the balance only when the server sent money", () => {
-    expect(page()).toContain("moneyVisible ? sortHeader(");
+    // L2b: only amount viewers get the sortable Balance column; front desk
+    // gets a plain "Owes money" column from the server's flag.
+    expect(page()).toContain('moneyView === "amounts" ? sortHeader("balance"');
     expect(page()).not.toMatch(/balance_cents\s*[-+*/]/);
   });
 });

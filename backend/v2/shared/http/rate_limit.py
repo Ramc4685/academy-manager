@@ -50,6 +50,11 @@ _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
     # Add user and Add contact forms call it on email/phone blur. Generous
     # for a person typing, but caps a script walking emails through it.
     ("POST", "/api/v2/admin/people/duplicate-check"): (60, 60),
+    # Admin-only CSV family import (roadmap L8a): each preview parses up to
+    # 1 MB and runs a duplicate check per family; nobody previews more than
+    # a few files a minute.
+    ("POST", "/api/v2/admin/imports/families/preview"): (10, 60),
+    ("POST", "/api/v2/admin/imports/families/commit"): (10, 60),
 }
 
 # Second, per-HOST ceiling for anonymous writes that land on one academy
