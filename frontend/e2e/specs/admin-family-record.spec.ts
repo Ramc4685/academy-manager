@@ -13,7 +13,7 @@ import { familyIndexRow } from "../fixtures/family-index";
 
 /**
  * People CRM family record page (engineering-spec §4, Lane A4): the tab shell
- * on /admin/families/[parentId], the read-only Details tab, the child drawer
+ * on /admin/families/[parentId], the Details tab, the child drawer
  * with shared coach notes, and the admin attendance correction's confirm step
  * and focus return. Every API is mocked; names are fake.
  */
@@ -158,6 +158,21 @@ async function setup(page: Page) {
   await page.route("**/api/v2/admin/families/parent-1/billing", (route) =>
     fulfillJson(route, BILLING),
   );
+  // Details tab (Phase 4b): no other contacts and empty family details.
+  await page.route("**/api/v2/admin/families/*/contacts", (route) =>
+    fulfillJson(route, { family_id: "parent-1", contacts: [] }),
+  );
+  await page.route("**/api/v2/admin/families/*/details", (route) =>
+    fulfillJson(route, {
+      family_id: "parent-1",
+      address: null,
+      preferred_channel: null,
+      heard_about_us: null,
+      tags: [],
+      updated_by: null,
+      updated_at: null,
+    }),
+  );
   let detail = studentDetail("present", null);
   await page.route("**/api/v2/admin/students/stu-a", (route) => fulfillJson(route, detail));
   await page.route("**/api/v2/admin/students/stu-a/coach-notes", (route) =>
@@ -259,19 +274,19 @@ test.describe("Family record (People CRM §4)", () => {
     expect(errors, errors.join("\n")).toEqual([]);
   });
 
-  test("Details is read-only and the second-parent switches are disabled", async ({ page }) => {
-    await setup(page);
+  test("Details shows the primary parent, no other contacts yet, and the details form", async ({
+    page,
+  }) => {
+    const { errors } = await setup(page);
     await page.goto("/admin/families/parent-1?tab=details");
     await expect(page.getByTestId("family-details")).toBeVisible();
     await expect(page.getByTestId("details-parent-email")).toHaveText("parent.one@example.test");
     await expect(page.getByTestId("details-parent-phone")).toHaveText("555-010-0001");
-    for (const id of ["gets_notices", "gets_invoices"]) {
-      const sw = page.getByTestId(`second-parent-${id}`);
-      await expect(sw).toBeDisabled();
-      await expect(sw).not.toBeChecked();
-    }
-    await expect(page.getByTestId("second-parent-note")).toContainText("family contacts");
+    await expect(page.getByTestId("family-contacts-empty")).toBeVisible();
+    await expect(page.getByTestId("family-contact-add-open")).toBeVisible();
+    await expect(page.getByTestId("family-details-save")).toBeDisabled();
     await expect(page.getByTestId("family-details-children")).toContainText("Kid Alpha");
+    expect(errors, errors.join("\n")).toEqual([]);
   });
 
   test("the child drawer shows shared coach notes and returns focus on close", async ({

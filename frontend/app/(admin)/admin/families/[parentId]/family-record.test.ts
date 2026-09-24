@@ -4,7 +4,6 @@ import type { FamilyIndexRow, FamilyStudent } from "@/lib/api/admin-families";
 
 import {
   FAMILY_TABS,
-  SECOND_PARENT_SWITCHES,
   adjacentFamilyTab,
   attendanceStatusLabel,
   canonicalFamilyHref,
@@ -116,14 +115,6 @@ describe("details", () => {
       "Not on file",
       "Not on file",
     ]);
-  });
-
-  it("second-parent switches are off and disabled", () => {
-    expect(SECOND_PARENT_SWITCHES.map((s) => s.label)).toEqual([
-      "Gets notices",
-      "Gets invoices (opted in)",
-    ]);
-    expect(SECOND_PARENT_SWITCHES.every((s) => s.disabled && !s.checked)).toBe(true);
   });
 });
 

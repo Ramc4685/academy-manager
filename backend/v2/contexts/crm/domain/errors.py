@@ -57,3 +57,38 @@ class DuplicateCrmRecordId(DomainError):
 
     code = "Crm.DuplicateRecordId"
     status_code = 409
+
+
+class InvalidFamilyContact(DomainError):
+    """A family contact failed validation (missing name, bad email or phone,
+    a switch turned on with no email to send to). ``details.field`` names the
+    offending field so the form can show the error next to it."""
+
+    code = "Crm.InvalidFamilyContact"
+    status_code = 422
+
+
+class FamilyContactNotFound(DomainError):
+    code = "Crm.FamilyContactNotFound"
+    status_code = 404
+
+
+class DuplicateFamilyContactEmail(DomainError):
+    """This family already has a contact with that email (the partial unique
+    ``(academy_id, parent_id, email)`` index decides)."""
+
+    code = "Crm.DuplicateFamilyContactEmail"
+    status_code = 409
+
+
+class TooManyFamilyContacts(DomainError):
+    code = "Crm.TooManyFamilyContacts"
+    status_code = 422
+
+
+class InvalidFamilyDetails(DomainError):
+    """A family details field failed validation (over a size cap, unknown
+    preferred channel, too many tags). ``details.field`` names the field."""
+
+    code = "Crm.InvalidFamilyDetails"
+    status_code = 422

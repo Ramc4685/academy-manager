@@ -57,6 +57,13 @@ def test_the_family_index_routes_are_registered() -> None:
     assert ("POST", "/api/v2/admin/families/{parent_id}/follow-ups") in routes
     assert ("PATCH", "/api/v2/admin/families/{parent_id}/follow-ups/{follow_up_id}") in routes
     assert ("GET", "/api/v2/admin/follow-ups") in routes
+    # Phase 4b: family contacts and family details.
+    assert ("GET", "/api/v2/admin/families/{parent_id}/contacts") in routes
+    assert ("POST", "/api/v2/admin/families/{parent_id}/contacts") in routes
+    assert ("PATCH", "/api/v2/admin/families/{parent_id}/contacts/{contact_id}") in routes
+    assert ("DELETE", "/api/v2/admin/families/{parent_id}/contacts/{contact_id}") in routes
+    assert ("GET", "/api/v2/admin/families/{parent_id}/details") in routes
+    assert ("PATCH", "/api/v2/admin/families/{parent_id}/details") in routes
 
 
 def test_every_crm_route_requires_the_admin_persona() -> None:

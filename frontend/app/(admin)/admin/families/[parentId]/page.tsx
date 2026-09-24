@@ -187,7 +187,12 @@ export default function FamilyRecordPage() {
             <Skeleton lines={4} />
           </Card>
         ) : activeTab === "details" ? (
-          <DetailsTab family={family} parent={billing.data?.parent ?? null} kids={kids} />
+          <DetailsTab
+            parentId={parentId}
+            family={family}
+            parent={billing.data?.parent ?? null}
+            kids={kids}
+          />
         ) : (
           <OverviewTab
             record={record.data ?? null}

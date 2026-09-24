@@ -35,6 +35,16 @@ from backend.v2.shared.tenancy.context import current_academy_id
 #: tests/infrastructure/test_mongo_audience_resolver.py.
 SESSION_AUDIENCE_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"active", "held"})
 
+#: People CRM Phase 4b (migration 0196): a family contact (second parent,
+#: guardian, ...) who has "Gets notices" switched on receives the family's
+#: notices. Contacts are never users, so each gets a synthetic, stable
+#: recipient id under this prefix (the unsubscribe link and the preference
+#: gate key on it like any other recipient id). The collection is written by
+#: the CRM context; communications may not import it (Rule 5), so it is read
+#: here by name, like ``students`` and ``enrollments`` above.
+FAMILY_CONTACTS_COLLECTION = "family_contacts"
+FAMILY_CONTACT_RECIPIENT_PREFIX = "family_contact:"
+
 
 @dataclass
 class MongoAudienceResolver(AudienceResolver):
@@ -125,7 +135,8 @@ class MongoAudienceResolver(AudienceResolver):
         # A student's parent id may be the parent's user_id or their Firebase
         # auth_uid alias; resolve both, deduped, current tenant (or legacy
         # global doc) only — the same lookup every other parent audience uses.
-        return await self._resolve_users_for_ids(sorted(parent_ids))
+        parents = await self._resolve_users_for_ids(sorted(parent_ids))
+        return await self._with_family_contacts(parents, parent_ids)
 
     async def resolve_coach_audience(self, audience: CoachAudience) -> list[ResolvedRecipient]:
         if audience.session_id:
@@ -157,7 +168,12 @@ class MongoAudienceResolver(AudienceResolver):
             {"academy_id": academy_id, "user_id": {"$in": list(audience.user_ids)}},
             {"user_id": 1, "email": 1, "display_name": 1, "name": 1},
         )
-        return [self._user_to_recipient(doc) async for doc in cursor]
+        users = [self._user_to_recipient(doc) async for doc in cursor]
+        if not audience.include_family_contacts:
+            return users
+        # Contacts are appended AFTER the users, so a caller that reads the
+        # selected parent as ``resolved[0]`` still gets the parent.
+        return await self._with_family_contacts(users, set())
 
     async def resolve_payment_risk_audience(
         self, audience: PaymentRiskAudience
@@ -203,6 +219,58 @@ class MongoAudienceResolver(AudienceResolver):
         # _resolve_users_for_ids keeps the cross-tenant fix: it only matches
         # the current academy's doc or a global doc, never another tenant's.
         return await self._resolve_users_for_ids(user_ids)
+
+    async def _with_family_contacts(
+        self, parents: list[ResolvedRecipient], raw_parent_ids: set[str]
+    ) -> list[ResolvedRecipient]:
+        """``parents`` plus every opted-in family contact of those families.
+
+        The per-parent expansion (People CRM spec §4 "Second parent"): a
+        contact is added only when ``gets_notices`` is true, only from the
+        current academy's ``family_contacts`` rows (the filter carries
+        ``academy_id``), and only once per lowercased email — never a second
+        copy of an address already in the list, the primary parent's
+        included. Contacts are keyed by the family's canonical parent id, the
+        user's ``user_id``; the raw ids (a student's ``parent_id`` may be an
+        ``auth_uid`` alias) are matched too. One ``$in`` on one field, served
+        by the ``(academy_id, parent_id, created_at)`` index.
+
+        Bounced or complained addresses are not filtered here: every send goes
+        through ``GatedEmailSendPort``, whose suppression gate checks the email
+        itself, so a suppressed contact is refused at send time exactly as a
+        suppressed parent is.
+        """
+        family_ids = {r.user_id for r in parents if r.user_id} | set(raw_parent_ids)
+        if not family_ids:
+            return parents
+        cursor = (
+            self.db[FAMILY_CONTACTS_COLLECTION]
+            .find(
+                {
+                    "academy_id": current_academy_id(),
+                    "parent_id": {"$in": sorted(family_ids)},
+                    "gets_notices": True,
+                },
+                {"contact_id": 1, "email": 1, "name": 1},
+            )
+            .sort([("parent_id", 1), ("created_at", 1)])
+        )
+        seen = {r.email.strip().lower() for r in parents if r.email and r.email.strip()}
+        recipients = list(parents)
+        async for doc in cursor:
+            email = str(doc.get("email") or "").strip().lower()
+            contact_id = doc.get("contact_id")
+            if not email or not contact_id or email in seen:
+                continue
+            seen.add(email)
+            recipients.append(
+                ResolvedRecipient(
+                    user_id=f"{FAMILY_CONTACT_RECIPIENT_PREFIX}{contact_id}",
+                    email=email,
+                    display_name=doc.get("name"),
+                )
+            )
+        return recipients
 
     @staticmethod
     def _user_to_recipient(doc: dict[str, Any]) -> ResolvedRecipient:
