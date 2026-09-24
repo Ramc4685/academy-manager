@@ -312,7 +312,11 @@ test.describe("billing trust and recovery surfaces", () => {
     // #892: the reconciliation trail stays on the row, but the raw Stripe ids
     // are no longer the first thing the row says — they sit behind a
     // disclosure. The note an admin has to act on stays visible.
+    // UI-5: the note is a sentence with a next step, not the backend code.
     await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
+      "Payment received but not matched to this invoice. Check Billing Health.",
+    );
+    await expect(page.getByTestId("payment-row-pmt_failed_1")).not.toContainText(
       "missing allocation",
     );
     const stripeIds = page.getByTestId("stripe-ids-pmt_failed_1");
