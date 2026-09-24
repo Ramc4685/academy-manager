@@ -2871,6 +2871,68 @@ export function getEnrollmentFunnel(period?: string): Promise<AdminEnrollmentFun
   });
 }
 
+/**
+ * People reports (roadmap L5a): money owed by age band. Owner/admin only
+ * (`can_view_family_money`); any other admin gets 403 and the card hides.
+ */
+export interface AdminMoneyAgeBand {
+  key: "not_yet_due" | "days_1_30" | "days_31_60" | "days_over_60" | string;
+  label: string;
+  min_days: number | null;
+  max_days: number | null;
+  family_count: number;
+  total_cents: number;
+}
+
+export interface AdminMoneyOwedByAgeResponse {
+  as_of: string;
+  generated_at: string;
+  not_yet_due: AdminMoneyAgeBand;
+  bands: AdminMoneyAgeBand[];
+  overdue_cents: number;
+  overdue_family_count: number;
+  balance_cents: number;
+  owing_family_count: number;
+}
+
+export function getMoneyOwedByAge(): Promise<AdminMoneyOwedByAgeResponse> {
+  return apiFetch<AdminMoneyOwedByAgeResponse>("/admin/reports/people/money-owed-by-age", {
+    method: "GET",
+  });
+}
+
+/** People reports (roadmap L5a): crm_contacts by source and pipeline status. */
+export interface AdminInquirySourceRow {
+  source: "website" | "whatsapp_or_phone" | "referral" | "other" | "all" | string;
+  inquiries: number;
+  lead: number;
+  trial: number;
+  enrolled: number;
+  conversion_rate: number | null;
+}
+
+export interface AdminInquiryConversionResponse {
+  date_from: string;
+  date_to: string;
+  timezone: string;
+  sources: AdminInquirySourceRow[];
+  total: AdminInquirySourceRow;
+}
+
+export function getInquiryConversion(range: {
+  from?: string;
+  to?: string;
+}): Promise<AdminInquiryConversionResponse> {
+  const params = new URLSearchParams();
+  if (range.from) params.set("from", range.from);
+  if (range.to) params.set("to", range.to);
+  const q = params.toString();
+  return apiFetch<AdminInquiryConversionResponse>(
+    `/admin/reports/people/inquiry-conversion${q ? `?${q}` : ""}`,
+    { method: "GET" },
+  );
+}
+
 export interface AdminAttendanceTrendsPeriod {
   period: string;
   scheduled_count: number;

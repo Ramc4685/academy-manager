@@ -250,6 +250,11 @@ class MongoFamilyIndexReadModel:
 
     # ------------------------------------------------------------------ helpers
 
+    async def academy_today(self, academy_id: str) -> date:
+        """The academy's calendar day now: the ``today`` every build's overdue
+        split uses (People reports read it so their bands match the index)."""
+        return await self._today(academy_id, self._clock())
+
     async def _secondary(
         self, warning: str, warnings: list[str], coro: Awaitable[Any], fallback: Any
     ) -> Any:
