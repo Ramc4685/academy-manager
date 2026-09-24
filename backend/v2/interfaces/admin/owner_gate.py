@@ -48,8 +48,10 @@ if TYPE_CHECKING:
 
 _ADMIN = "/api/v2/admin"
 
-#: Roles only an owner may grant or revoke.
-GOVERNANCE_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner"})
+#: Roles only an owner may grant or revoke. The staff tiers of #553
+#: (``billing``, ``front_desk``) are role management too: granting ``billing``
+#: hands out money visibility and payment recording, so only the owner may.
+GOVERNANCE_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner", "billing", "front_desk"})
 
 OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
@@ -149,10 +151,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
 
 
 def ensure_can_assign_role(claims: AuthClaims, role: str) -> None:
-    """Refuse to grant or revoke ``admin``/``owner`` unless the caller is an owner.
+    """Refuse to grant or revoke a governance role unless the caller is an owner.
 
-    Called from every role-changing admin route (`create_user`, `add_user_role`,
-    `remove_user_role`, `update_user_role`). Any other role (coach, parent) is
+    Governance roles are ``admin``, ``owner`` and the staff tiers ``billing``
+    and ``front_desk`` (#553). Called from every role-changing admin route
+    (`create_user`, `add_user_role`, `remove_user_role`, `update_user_role`).
+    Any other role (coach, parent) is
     ordinary operations work and stays open to admins. 403, not 404: the caller
     already passed the admin guard, so nothing is leaked and the message is
     what the UI needs to show.
@@ -161,7 +165,7 @@ def ensure_can_assign_role(claims: AuthClaims, role: str) -> None:
     if role in GOVERNANCE_ROLES and "owner" not in claims.roles:
         raise HTTPException(
             status_code=403,
-            detail="Only the academy owner can grant or revoke admin and owner roles",
+            detail="Only the academy owner can grant or revoke admin, owner and staff roles",
         )
 
 

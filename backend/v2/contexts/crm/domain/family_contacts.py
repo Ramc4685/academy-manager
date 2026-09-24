@@ -6,8 +6,9 @@
 
   - ``gets_notices``: the contact's email joins the family's notice audience
     (the audience resolver's per-parent expansion);
-  - ``gets_invoices``: stored now; invoice email recipients are wired in a
-    later phase, so today it changes nothing that is sent.
+  - ``gets_invoices``: the contact gets a copy of each invoice email, once
+    per invoice and without the pay link
+    (``composition/invoice_contact_copies.py``).
 
 * ``FamilyDetails``: one document per family with the editable, non-money
   details (home address, preferred channel, how they heard about us, tags).

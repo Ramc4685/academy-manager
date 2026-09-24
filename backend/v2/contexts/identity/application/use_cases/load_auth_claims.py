@@ -45,7 +45,16 @@ logger = logging.getLogger(__name__)
 
 # Most privileged role first: the persona stamped on a login event is the one
 # the session can actually act as.
-_PERSONA_PRIORITY = ("owner", "admin", "coach", "assistant_coach", "parent", "student")
+_PERSONA_PRIORITY = (
+    "owner",
+    "admin",
+    "billing",
+    "front_desk",
+    "coach",
+    "assistant_coach",
+    "parent",
+    "student",
+)
 
 
 class LoadAuthClaims:
