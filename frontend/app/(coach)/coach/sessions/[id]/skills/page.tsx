@@ -14,6 +14,7 @@ import {
 import { updateSkillStatus, type SkillStatus } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 import { RetryButton } from "@/components/coach/RetryButton";
 
 const STATUS_OPTIONS: SkillStatus[] = [
@@ -24,16 +25,6 @@ const STATUS_OPTIONS: SkillStatus[] = [
   "PASSED",
   "NEEDS_REVIEW",
 ];
-
-const STATUS_LABELS: Record<SkillStatus, string> = {
-  NOT_STARTED: "Not started",
-  INTRODUCED: "Introduced",
-  LEARNING: "Learning",
-  PRACTICING: "Practicing",
-  TEST_READY: "Test ready",
-  PASSED: "Passed",
-  NEEDS_REVIEW: "Needs review",
-};
 
 function todayISO(): string {
   const now = new Date();
@@ -240,7 +231,7 @@ function BySkillWorkspace({
         >
           {STATUS_OPTIONS.map((option) => (
             <option key={option} value={option}>
-              {STATUS_LABELS[option]}
+              {SKILL_STATUS_LABELS[option]}
             </option>
           ))}
         </select>
@@ -343,7 +334,7 @@ function StudentSkillRow({
         >
           {STATUS_OPTIONS.map((option) => (
             <option key={option} value={option}>
-              {STATUS_LABELS[option]}
+              {SKILL_STATUS_LABELS[option]}
             </option>
           ))}
         </select>
