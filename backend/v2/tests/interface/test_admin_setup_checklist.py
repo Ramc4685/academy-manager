@@ -202,6 +202,17 @@ def test_parent_only_accounts_do_not_count_as_staff():
     assert _derive(users=(True, [owner, front_desk]))["staff"] == "done"
 
 
+def test_roles_array_is_authoritative_and_inactive_staff_do_not_count():
+    owner = {"role": "owner", "roles": ["owner"], "status": "active"}
+    # ``role`` is derived as ``roles[0]``; a stray scalar never adds a role.
+    stale = {"role": "coach", "roles": ["parent"], "status": "active"}
+    legacy_coach = {"role": "coach", "roles": [], "status": "active"}
+    disabled_coach = {"role": "coach", "roles": ["coach"], "status": "disabled"}
+    assert _derive(users=(True, [owner, stale]))["staff"] == "todo"
+    assert _derive(users=(True, [owner, disabled_coach]))["staff"] == "todo"
+    assert _derive(users=(True, [owner, legacy_coach]))["staff"] == "done"
+
+
 def test_blank_strings_do_not_count_as_set():
     academy = {"timezone": "  ", "contact_email": "desk@example.com", "logo_url": ""}
     statuses = _derive(academy=(True, academy))

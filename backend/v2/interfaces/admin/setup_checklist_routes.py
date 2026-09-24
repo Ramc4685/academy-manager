@@ -46,6 +46,9 @@ ChecklistKey = Literal[
 #: who also coaches counts; a parent-only account does not.
 STAFF_ROLES = frozenset({"owner", "admin", "coach", "assistant_coach", "billing", "front_desk"})
 
+#: ``users.status`` spellings that mean the account cannot sign in.
+INACTIVE_STATUSES = frozenset({"disabled", "inactive", "suspended", "deleted"})
+
 #: The owner alone is one staff account; the item wants at least one more.
 MIN_STAFF_ACCOUNTS = 2
 
@@ -97,8 +100,21 @@ def _status(ok: bool, done: bool) -> ChecklistStatus:
 
 
 def _is_staff(user: Any) -> bool:
+    """A signed-in-capable account holding a staff role in this academy.
+
+    ``list_admin_users`` is the same tenant-scoped ``users`` read the Users
+    page shows; ``roles`` is already resolved there (the v2 array wins, the
+    legacy scalar is only a fallback, and ``role`` is ``roles[0]``), so it
+    is authoritative here and ``role`` is used only when ``roles`` is empty.
+    A disabled or suspended account is not a team member the owner can
+    lean on, so it does not count.
+    """
+    status = _field(user, "status")
+    if isinstance(status, str) and status.strip().lower() in INACTIVE_STATUSES:
+        return False
     roles = set(_field(user, "roles", ()) or ())
-    roles.add(_field(user, "role", ""))
+    if not roles:
+        roles = {_field(user, "role", "")}
     return bool(roles & STAFF_ROLES)
 
 
