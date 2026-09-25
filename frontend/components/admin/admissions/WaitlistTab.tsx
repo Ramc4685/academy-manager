@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  getAdminAcademy,
   listGlobalWaitlist,
   type AdminGlobalWaitlistSession,
   type AdminWaitlistEntry,
@@ -15,6 +16,7 @@ import { Chip } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
+import { SEATLESS_OFFER_NOTE, offerExpiryLabel } from "@/lib/admin/waitlist-offer";
 
 function formatDate(isoString: string): string {
   return new Date(isoString).toLocaleDateString([], { month: "short", day: "numeric" });
@@ -39,18 +41,20 @@ export function WaitlistTab() {
     queryKey: queryKeys.admin.globalWaitlist(),
     queryFn: listGlobalWaitlist,
   });
+  // X2: offer deadlines on the academy's clock, as the family's email has them.
+  const academyQuery = useQuery({ queryKey: queryKeys.admin.academy(), queryFn: getAdminAcademy });
+  const timezone = academyQuery.data?.timezone ?? null;
   const sessions = query.data?.sessions ?? [];
   const total = query.data?.total_waitlisted ?? 0;
+  const offered = query.data?.total_offered ?? 0;
 
   return (
     <div data-testid="admin-waitlist-tab" className="space-y-6">
       <div className="grid gap-4 md:grid-cols-3">
         <Metric label="Total waitlisted" value={String(total)} />
+        {/* X2: a held seat is invisible in "enrolled" and in the queue alike. */}
+        <Metric label="Seats offered" value={String(offered)} />
         <Metric label="Sessions with queue" value={String(sessions.length)} />
-        <Metric
-          label="Largest queue"
-          value={String(Math.max(0, ...sessions.map((session) => session.entries.length)))}
-        />
       </div>
 
       <LaneHeader index="01" title="By session" />
@@ -70,7 +74,7 @@ export function WaitlistTab() {
       ) : (
         <div className="space-y-4">
           {sessions.map((session) => (
-            <SessionWaitlist key={session.session_id} session={session} />
+            <SessionWaitlist key={session.session_id} session={session} timezone={timezone} />
           ))}
         </div>
       )}
@@ -89,7 +93,13 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
+function SessionWaitlist({
+  session,
+  timezone,
+}: {
+  session: AdminGlobalWaitlistSession;
+  timezone: string | null;
+}) {
   return (
     <Card p={0}>
       <div className="flex flex-col gap-4 border-b border-rally-line p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -103,6 +113,7 @@ function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
           </p>
           <p className="mt-1 font-mono text-[10px] uppercase tracking-overline text-rally-subtle">
             {session.enrolled_count} / {session.capacity} enrolled · {session.waitlist_count} waiting
+            {session.offered_count ? ` · ${session.offered_count} seat offered` : ""}
           </p>
         </div>
         <a
@@ -112,7 +123,7 @@ function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
           Manage session
         </a>
       </div>
-      <WaitlistEntries entries={session.entries} />
+      <WaitlistEntries entries={session.entries} timezone={timezone} />
     </Card>
   );
 }
@@ -123,27 +134,41 @@ function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
  * full-width blocks per waiting student, so one screen held two people. The
  * shared phone row says the same thing in two lines.
  */
-function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
+function WaitlistEntries({
+  entries,
+  timezone,
+}: {
+  entries: AdminWaitlistEntry[];
+  timezone: string | null;
+}) {
   const isPhone = useIsPhone();
   if (isPhone) {
     return (
       <PhoneList aria-label="Waitlist" data-testid="admin-waitlist-phone-list">
         {entries.map((entry, index) => {
           const position = entry.position || index + 1;
+          const offer = entry.status === "offered";
           return (
             <PhoneListRow
               key={entry.waitlist_id}
               data-testid={`admin-waitlist-row-${entry.waitlist_id}`}
               leading={
                 <span className="flex size-9 items-center justify-center rounded-md bg-rally-paper font-display text-sm font-bold text-rally-ink">
-                  #{position}
+                  {offer ? "—" : `#${position}`}
                 </span>
               }
               title={entry.full_name}
-              primary={<Chip variant="waitlist" label={entry.status.toUpperCase()} />}
+              primary={<EntryChip entry={entry} />}
               secondary={
                 <>
-                  <div>Joined {formatDate(entry.added_at)}</div>
+                  {offer ? (
+                    <div>
+                      {offerExpiryLabel(entry.offer_expires_at, timezone)}
+                      {entry.offer_holds_seat === false && <div>{SEATLESS_OFFER_NOTE}</div>}
+                    </div>
+                  ) : (
+                    <div>Joined {formatDate(entry.added_at)}</div>
+                  )}
                   <div>Parent: {parentLabel(entry)}</div>
                 </>
               }
@@ -160,6 +185,7 @@ function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
           key={entry.waitlist_id}
           entry={entry}
           position={entry.position || index + 1}
+          timezone={timezone}
         />
       ))}
     </div>
@@ -169,9 +195,11 @@ function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
 function WaitlistRow({
   entry,
   position,
+  timezone,
 }: {
   entry: AdminWaitlistEntry;
   position: number;
+  timezone: string | null;
 }) {
   return (
     <div
@@ -179,7 +207,7 @@ function WaitlistRow({
       className="grid gap-4 border-b border-rally-line p-5 last:border-0 md:grid-cols-[56px_1fr_180px_140px]"
     >
       <div className="flex h-11 w-11 items-center justify-center rounded-md bg-rally-paper font-display text-lg font-bold text-rally-ink">
-        #{position}
+        {entry.status === "offered" ? "—" : `#${position}`}
       </div>
       <div className="flex min-w-0 items-center gap-3">
         <Avatar name={entry.full_name} size={34} />
@@ -190,16 +218,36 @@ function WaitlistRow({
           </div>
         </div>
       </div>
-      <div>
-        <Overline>Joined queue</Overline>
-        <div className="mt-1 font-mono text-[12px] font-semibold uppercase tracking-[0.05em] text-rally-ink">
-          {formatDate(entry.added_at)}
+      {entry.status === "offered" ? (
+        <div data-testid={`admin-waitlist-offer-expiry-${entry.waitlist_id}`}>
+          <Overline>Offer</Overline>
+          <div className="mt-1 text-[12px] font-semibold text-rally-ink">
+            {offerExpiryLabel(entry.offer_expires_at, timezone) ?? "Held"}
+          </div>
+          {entry.offer_holds_seat === false && (
+            <div className="mt-1 text-[12px] text-status-amber-800">{SEATLESS_OFFER_NOTE}</div>
+          )}
         </div>
-      </div>
+      ) : (
+        <div>
+          <Overline>Joined queue</Overline>
+          <div className="mt-1 font-mono text-[12px] font-semibold uppercase tracking-[0.05em] text-rally-ink">
+            {formatDate(entry.added_at)}
+          </div>
+        </div>
+      )}
       <div className="flex items-center md:justify-end">
-        <Chip variant="waitlist" label={entry.status.toUpperCase()} />
+        <EntryChip entry={entry} />
       </div>
     </div>
+  );
+}
+
+function EntryChip({ entry }: { entry: AdminWaitlistEntry }) {
+  return entry.status === "offered" ? (
+    <Chip variant="offered" label="SEAT OFFERED" />
+  ) : (
+    <Chip variant="waitlist" label={entry.status.toUpperCase()} />
   );
 }
 

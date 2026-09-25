@@ -121,6 +121,13 @@ class FakeWaitlist:
         ]
         return sorted(waiting, key=lambda entry: entry.joined_at)[0] if waiting else None
 
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        current = next((e for e in self.entries if e.waitlist_id == waitlist_id), None)
+        if current is None or current.status != expected:
+            return False
+        await self.update_status(waitlist_id, to)
+        return True
+
     async def update_status(self, waitlist_id: str, status: str) -> None:
         self.entries = [
             entry.model_copy(update={"status": status})
@@ -132,13 +139,26 @@ class FakeWaitlist:
     async def get(self, waitlist_id: str) -> WaitlistEntry | None:
         return next((e for e in self.entries if e.waitlist_id == waitlist_id), None)
 
-    async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at, holds_seat=True) -> None:
         self.entries = [
-            entry.model_copy(update={"status": "offered", "offer_expires_at": offer_expires_at})
+            entry.model_copy(
+                update={
+                    "status": "offered",
+                    "offer_expires_at": offer_expires_at,
+                    "offer_holds_seat": holds_seat,
+                }
+            )
             if entry.waitlist_id == waitlist_id
             else entry
             for entry in self.entries
         ]
+
+    async def count_seatless_offers(self, session_id):
+        return sum(
+            1
+            for e in self.entries
+            if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+        )
 
     async def find_expired_offers(self, *, before) -> list[WaitlistEntry]:
         return [

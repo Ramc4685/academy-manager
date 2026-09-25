@@ -1086,6 +1086,9 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    DeclineWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
@@ -1492,12 +1495,38 @@ class FakeWaitlistRepo:
     async def get(self, waitlist_id):
         return self.entries.get(waitlist_id)
 
-    async def mark_offered(self, waitlist_id, *, offer_expires_at):
+    async def mark_offered(self, waitlist_id, *, offer_expires_at, holds_seat=True):
         e = self.entries.get(waitlist_id)
         if e is not None:
             self.entries[waitlist_id] = e.model_copy(
-                update={"status": "offered", "offer_expires_at": offer_expires_at}
+                update={
+                    "status": "offered",
+                    "offer_expires_at": offer_expires_at,
+                    "offer_holds_seat": holds_seat,
+                }
             )
+
+    async def give_seat_to_seatless_offer(self, session_id):
+        open_ = sorted(
+            (
+                e
+                for e in self.entries.values()
+                if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+            ),
+            key=lambda e: e.joined_at,
+        )
+        if not open_:
+            return None
+        upgraded = open_[0].model_copy(update={"offer_holds_seat": True})
+        self.entries[upgraded.waitlist_id] = upgraded
+        return upgraded
+
+    async def count_seatless_offers(self, session_id):
+        return sum(
+            1
+            for e in self.entries.values()
+            if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+        )
 
     async def find_expired_offers(self, *, before):
         return [
@@ -1507,6 +1536,17 @@ class FakeWaitlistRepo:
             and e.offer_expires_at is not None
             and e.offer_expires_at <= before
         ]
+
+    async def transition_status(self, waitlist_id, *, expected, to):
+        e = self.entries.get(waitlist_id)
+        if e is None or e.status != expected:
+            return False
+        self.entries[waitlist_id] = e.model_copy(update={"status": to})
+        return True
+
+    async def list_for_parent(self, parent_id):
+        rows = [e for e in self.entries.values() if e.parent_id == parent_id]
+        return sorted(rows, key=lambda e: e.joined_at)
 
     async def find_waiting_for_session_student(self, session_id, student_id):
         return next(
@@ -2763,6 +2803,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         promote_from_waitlist=promote,
         skip_from_waitlist=skip,
         remove_from_waitlist=remove,
+        withdraw_waitlist_offer=DeclineWaitlistOffer(
+            waitlist=waitlist, sessions=sessions, promote=promote
+        ),
         list_admin_pause_requests=list_admin_pause_requests,
         approve_pause_request=approve_pause_request,
         decline_pause_request=decline_pause_request,

@@ -34,6 +34,17 @@ async function stubParentIdentity(page: import("@playwright/test").Page): Promis
 }
 
 async function stubAcademyAndChildren(page: import("@playwright/test").Page): Promise<void> {
+  // X2: the Requests page also reads the family's waitlist offers. None
+  // here, so the section stays hidden and these specs see the page as before.
+  await page.route("**/api/v2/parent/waitlist", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ entries: [] }),
+    });
+  });
+
   await page.route("**/api/v2/parent/academy", async (route: Route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return route.fulfill({

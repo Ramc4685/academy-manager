@@ -619,6 +619,47 @@ export function listParentTrialRequests(): Promise<{ trials: TrialRequestView[] 
   return apiFetch("/parent/trial-requests", { method: "GET" });
 }
 
+// --- Waitlist offers (#828, X2) ---
+//
+// A freed seat is held for the family for a few days and they are emailed;
+// the email lands on /parent/requests, which lists these and confirms or
+// declines. `offer_expires_at` is set while `status === "offered"`.
+
+export type ParentWaitlistStatus = "waiting" | "offered" | "expired";
+
+export interface ParentWaitlistEntry {
+  waitlist_id: string;
+  session_id: string;
+  session_title: string;
+  schedule_label: string | null;
+  location: string | null;
+  student_id: string;
+  student_name: string;
+  status: ParentWaitlistStatus;
+  joined_at: string;
+  offer_expires_at: string | null;
+}
+
+export function listParentWaitlist(): Promise<{ entries: ParentWaitlistEntry[] }> {
+  return apiFetch("/parent/waitlist", { method: "GET" });
+}
+
+export function confirmWaitlistOffer(
+  waitlistId: string,
+): Promise<{ waitlist_id: string; enrollment_id: string }> {
+  return apiFetch(`/parent/waitlist/${encodeURIComponent(waitlistId)}/confirm`, {
+    method: "POST",
+  });
+}
+
+export function declineWaitlistOffer(
+  waitlistId: string,
+): Promise<{ waitlist_id: string; status: "removed" }> {
+  return apiFetch(`/parent/waitlist/${encodeURIComponent(waitlistId)}/decline`, {
+    method: "POST",
+  });
+}
+
 export function submitTrialRequest(payload: {
   student_ref: TrialRequestStudentRef;
   requested_session_id: string;

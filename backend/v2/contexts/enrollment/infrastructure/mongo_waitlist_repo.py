@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
+from pymongo import ReturnDocument
+
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.tenancy import TenantScopedRepository
 from backend.v2.shared.time.mongo import ensure_utc
@@ -30,6 +32,7 @@ class MongoWaitlistRepository(TenantScopedRepository):
                 if (raw_expires := doc.get("offer_expires_at")) is not None
                 else None
             ),
+            offer_holds_seat=bool(doc.get("offer_holds_seat", True)),
         )
 
     async def add(self, entry: WaitlistEntry) -> None:
@@ -69,10 +72,38 @@ class MongoWaitlistRepository(TenantScopedRepository):
         doc = await self._find_one({"waitlist_id": waitlist_id})
         return self._to_domain(doc) if doc else None
 
-    async def mark_offered(self, waitlist_id: str, *, offer_expires_at: datetime) -> None:
+    async def mark_offered(
+        self, waitlist_id: str, *, offer_expires_at: datetime, holds_seat: bool = True
+    ) -> None:
         await self._update_one(
             {"waitlist_id": waitlist_id},
-            {"$set": {"status": "offered", "offer_expires_at": offer_expires_at}},
+            {
+                "$set": {
+                    "status": "offered",
+                    "offer_expires_at": offer_expires_at,
+                    "offer_holds_seat": holds_seat,
+                }
+            },
+        )
+
+    async def give_seat_to_seatless_offer(self, session_id: str) -> WaitlistEntry | None:
+        doc = await self.collection.find_one_and_update(
+            self._scoped(
+                {"session_id": session_id, "status": "offered", "offer_holds_seat": False}
+            ),
+            {"$set": {"offer_holds_seat": True}},
+            sort=[("joined_at", 1)],
+            return_document=ReturnDocument.AFTER,
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def count_seatless_offers(self, session_id: str) -> int:
+        return int(
+            await self.collection.count_documents(
+                self._scoped(
+                    {"session_id": session_id, "status": "offered", "offer_holds_seat": False}
+                )
+            )
         )
 
     async def find_expired_offers(self, *, before: datetime) -> list[WaitlistEntry]:
@@ -80,4 +111,14 @@ class MongoWaitlistRepository(TenantScopedRepository):
             {"status": "offered", "offer_expires_at": {"$lte": before}},
             sort=[("offer_expires_at", 1)],
         )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        result = await self._update_one(
+            {"waitlist_id": waitlist_id, "status": expected}, {"$set": {"status": to}}
+        )
+        return bool(result.modified_count == 1)
+
+    async def list_for_parent(self, parent_id: str) -> list[WaitlistEntry]:
+        cursor = self._find_many({"parent_id": parent_id}, sort=[("joined_at", 1)])
         return [self._to_domain(doc) async for doc in cursor]

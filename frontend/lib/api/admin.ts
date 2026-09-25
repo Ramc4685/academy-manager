@@ -295,7 +295,11 @@ export interface EnrollmentEventsResponse {
   next_cursor: string | null;
 }
 
-export type WaitlistStatus = "waiting" | "skipped" | "promoted" | "removed";
+/**
+ * X2: `offered` = a seat is being held for this family until
+ * `offer_expires_at`; `expired` = they did not answer in time.
+ */
+export type WaitlistStatus = "waiting" | "offered" | "expired" | "skipped" | "promoted" | "removed";
 
 export interface AdminWaitlistEntry {
   waitlist_id: string;
@@ -306,8 +310,16 @@ export interface AdminWaitlistEntry {
   parent_name?: string | null;
   full_name: string;
   status: WaitlistStatus;
+  /** 0 for an `offered` row: it has left the queue and is holding a seat. */
   position: number;
   added_at: string;
+  /** Set while `status === "offered"`: when the held seat moves on. */
+  offer_expires_at?: string | null;
+  /**
+   * X2: false = the class was full of holds, so no seat is held for this
+   * offer; a held family's seat is reclaimed only if this family confirms.
+   */
+  offer_holds_seat?: boolean;
 }
 
 export interface AdminWaitlistList {
@@ -322,11 +334,14 @@ export interface AdminGlobalWaitlistSession {
   capacity: number;
   enrolled_count: number;
   waitlist_count: number;
+  /** X2: seats held for families that have not answered yet. */
+  offered_count?: number;
   entries: AdminWaitlistEntry[];
 }
 
 export interface AdminGlobalWaitlistList {
   total_waitlisted: number;
+  total_offered?: number;
   sessions: AdminGlobalWaitlistSession[];
 }
 

@@ -289,18 +289,38 @@ class WaitlistRepository(Protocol):
     async def get(self, waitlist_id: str) -> WaitlistEntry | None:
         """One entry by id, whatever its status — the confirm route's read."""
 
-    async def mark_offered(self, waitlist_id: str, *, offer_expires_at: datetime) -> None:
+    async def mark_offered(
+        self, waitlist_id: str, *, offer_expires_at: datetime, holds_seat: bool = True
+    ) -> None:
         """``waiting`` -> ``offered``, stamping the confirmation deadline.
 
-        The seat is already reserved when this is called: the entry's
-        ``offered`` status and the session's reserved-seat counter together
-        ARE the hold (``SeatAcquisition`` is an in-memory value, not a row),
-        so the sweep releases the counter when the window closes.
+        With ``holds_seat`` the seat is already reserved when this is called:
+        the entry's ``offered`` status and the session's reserved-seat counter
+        together ARE the hold (``SeatAcquisition`` is an in-memory value, not
+        a row), so the sweep releases the counter when the window closes.
+        Without it (X2) nothing is reserved and nothing may be released.
         """
+
+    async def count_seatless_offers(self, session_id: str) -> int:
+        """Open ``offered`` rows on the session that hold no seat yet (X2)."""
+
+    async def give_seat_to_seatless_offer(self, session_id: str) -> WaitlistEntry | None:
+        """Atomically flip the oldest open seatless offer to seat-holding and
+        return it; ``None`` when there is none (X2). The caller has already
+        reserved the seat."""
 
     async def find_expired_offers(self, *, before: datetime) -> list[WaitlistEntry]:
         """Every ``offered`` entry whose ``offer_expires_at`` is at or before
         ``before`` — the sweep's work list."""
+
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        """Compare-and-set ``expected`` -> ``to``; ``False`` when the row had
+        already moved on. Closing an offer (decline, expiry) releases a seat,
+        so exactly one closer may win — a blind ``update_status`` would let an
+        expiry overwrite a confirmation and hand the same seat out twice."""
+
+    async def list_for_parent(self, parent_id: str) -> list[WaitlistEntry]:
+        """Every entry one family owns, oldest first — the parent's own read."""
 
 
 class EnrollmentEventRepository(Protocol):
@@ -665,6 +685,11 @@ class HoldRepository(Protocol):
     is what let the fake enforce "never return the same document twice"
     without also having to fake every other enrollment-writer method.
     """
+
+    async def count_reclaimable(self, session_id: str) -> int:
+        """Held rows on the session that ``claim_longest_held`` could still
+        take. A read only — nothing is claimed (X2: a seatless waitlist offer
+        is made only while one of these exists)."""
 
     async def claim_longest_held(
         self, *, session_id: str, now: datetime, requested_by: str

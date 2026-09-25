@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
 import { EmptyState } from "@/components/ds/empty-state";
+import { WaitlistOffers } from "@/components/parent/waitlist-offers";
 import { queryKeys } from "@/lib/query/keys";
 import { requestStatusChipVariant } from "@/lib/parent-requests";
 import {
@@ -52,6 +54,11 @@ export default function ParentRequestsPage() {
         <p className="text-sm mt-0.5 text-rally-muted">Absences, makeups &amp; trial classes</p>
       </div>
 
+      {/* X2: the "a seat opened" email lands here (?offer=<waitlist_id>). */}
+      <Suspense fallback={null}>
+        <WaitlistOffersFromLink />
+      </Suspense>
+
       {/* #843: the inactive tab label was rally-muted (#64748b) on the
           rally-line track (#e2e8f0) — 3.86:1, under AA. slate-600 clears it. */}
       <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
@@ -78,6 +85,11 @@ export default function ParentRequestsPage() {
       {tab === "trials" && <TrialsPanel />}
     </section>
   );
+}
+
+function WaitlistOffersFromLink() {
+  const offerId = useSearchParams().get("offer");
+  return <WaitlistOffers highlightId={offerId} />;
 }
 
 // --- Absences ---

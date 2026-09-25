@@ -716,6 +716,12 @@ class AdminWaitlistEntry(BaseModel):
     position: int = 0
     added_at: datetime | None = None
     status: str
+    # X2: set while ``status == "offered"`` — the seat is held for this
+    # family until then, then the hourly sweep offers it onward.
+    offer_expires_at: datetime | None = None
+    # X2: False = the class was full of holds; a hold is reclaimed only if
+    # this family confirms (no seat is held for them meanwhile).
+    offer_holds_seat: bool = True
 
 
 class AdminWaitlistList(BaseModel):
@@ -731,11 +737,14 @@ class AdminGlobalWaitlistSessionView(BaseModel):
     capacity: int
     enrolled_count: int = 0
     waitlist_count: int = 0
+    # X2: seats held for a family that has not answered yet.
+    offered_count: int = 0
     entries: list[AdminWaitlistEntry]
 
 
 class AdminGlobalWaitlistList(BaseModel):
     total_waitlisted: int
+    total_offered: int = 0
     sessions: list[AdminGlobalWaitlistSessionView]
 
 

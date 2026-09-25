@@ -35,6 +35,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from backend.v2.composition.digests import (
@@ -406,17 +407,20 @@ def render_waitlist_offer_email(
             f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
             f"The seat in {safe_session} has been offered to another family</h2>",
             _para(
-                f"We held a place in {safe_session} for {safe_student} for three days "
-                f"and did not hear back, so it has gone to the next family on the "
-                f"waitlist."
+                f"We held a place in {safe_session} for {safe_student} and did not "
+                f"hear back before the deadline, so it has gone to the next family "
+                f"on the waitlist."
             ),
+            # X2: this used to promise "still on the waitlist — we will write
+            # again". An expired entry is closed and is never offered again,
+            # so the honest next step is to ask the academy.
             _para(
-                f"{safe_student} is still on the waitlist — we will write again "
-                f"the next time a seat opens."
+                f"{safe_student} is no longer on the waitlist for this class. If you "
+                f"would still like a place, please contact {html.escape(academy_name)}."
             ),
         ]
         if portal_url:
-            parts.append(_branded_button(label="View the waitlist", url=portal_url))
+            parts.append(_branded_button(label="View your requests", url=portal_url))
         return (
             f"The seat in {session.title} went to the next family",
             _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
@@ -428,7 +432,7 @@ def render_waitlist_offer_email(
         f"A seat opened in {safe_session} for {safe_student}</h2>",
         _para(
             f"{safe_student} is next on the waitlist. We are holding the seat until "
-            f"<strong>{html.escape(deadline)}</strong> — confirm by then and it is yours."
+            f"<strong>{html.escape(deadline)}</strong> — confirm by then to claim it."
         ),
         _para(
             f"<strong>When:</strong> "
@@ -438,7 +442,11 @@ def render_waitlist_offer_email(
     if session.location:
         parts.append(_para(f"<strong>Where:</strong> {html.escape(session.location)}"))
     parts.append(
-        _para("If we do not hear from you by then, the seat goes to the next family on the list.")
+        _para(
+            "If we do not hear from you by then, the seat goes to the next family on the list. "
+            "In the rare case the class fills up again before you confirm, you stay first on "
+            "the waitlist."
+        )
     )
     if portal_url:
         parts.append(_branded_button(label="Confirm the seat", url=portal_url))
@@ -994,7 +1002,11 @@ class RosterAlertAdapter:
             session=session,
             academy_name=academy_name,
             student_name=await self._student_name(student_id) or "Your child",
-            portal_url=f"{base.rstrip('/')}/parent/requests" if base else None,
+            # The Requests page shows the family's offers (X2); the id lets it
+            # scroll to and highlight this one.
+            portal_url=(
+                f"{base.rstrip('/')}/parent/requests?offer={quote(waitlist_id)}" if base else None
+            ),
             offer_expires_at=offer_expires_at,
             academy_timezone=academy_timezone,
         )

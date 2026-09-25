@@ -32,6 +32,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.errors import CapacityExceeded
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import DomainEvent
@@ -74,14 +77,47 @@ class FakeWaitlistRepository:
         e = self.entries[waitlist_id]
         self.entries[waitlist_id] = e.model_copy(update={"status": status})
 
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        e = self.entries.get(waitlist_id)
+        if e is None or e.status != expected:
+            return False
+        self.entries[waitlist_id] = e.model_copy(update={"status": to})
+        return True
+
     async def get(self, waitlist_id: str) -> WaitlistEntry | None:
         return self.entries.get(waitlist_id)
 
-    async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at, holds_seat=True) -> None:
         self.updated_status[waitlist_id] = "offered"
         e = self.entries[waitlist_id]
         self.entries[waitlist_id] = e.model_copy(
-            update={"status": "offered", "offer_expires_at": offer_expires_at}
+            update={
+                "status": "offered",
+                "offer_expires_at": offer_expires_at,
+                "offer_holds_seat": holds_seat,
+            }
+        )
+
+    async def give_seat_to_seatless_offer(self, session_id):
+        open_ = sorted(
+            (
+                e
+                for e in self.entries.values()
+                if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+            ),
+            key=lambda e: e.joined_at,
+        )
+        if not open_:
+            return None
+        upgraded = open_[0].model_copy(update={"offer_holds_seat": True})
+        self.entries[upgraded.waitlist_id] = upgraded
+        return upgraded
+
+    async def count_seatless_offers(self, session_id):
+        return sum(
+            1
+            for e in self.entries.values()
+            if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
         )
 
     async def find_expired_offers(self, *, before) -> list[WaitlistEntry]:
@@ -297,7 +333,7 @@ async def test_transfer_enrollment_reclaims_a_held_seat_in_the_target_through_th
 
 
 @pytest.mark.asyncio
-async def test_promote_from_waitlist_reclaims_a_held_seat_through_the_broker() -> None:
+async def test_a_waitlist_offer_reclaims_a_held_seat_only_when_confirmed() -> None:
     enrollments = FakeEnrollmentWriter(
         rows={
             "held-1": make_enrollment(
@@ -342,15 +378,33 @@ async def test_promote_from_waitlist_reclaims_a_held_seat_through_the_broker() -
     )
     offered_id = await promote.execute("sess-1")
 
-    # Issue #828: the reclaimed seat is HELD and offered, not seated. The
-    # broker half is unchanged — the held row is still dropped and the seat
-    # still handed over with no arithmetic — but the waiting family now has
-    # three days to claim it.
+    # X2 (owner decision 2026-09-25): the OFFER no longer reclaims. The held
+    # family keeps its seat and the waiting family gets a seatless offer —
+    # this test used to pin the drop happening here, before anyone said yes.
     assert offered_id == "wl-1"
-    assert waitlist.updated_status["wl-1"] == "offered"
+    assert waitlist.entries["wl-1"].status == "offered"
+    assert waitlist.entries["wl-1"].offer_holds_seat is False
     assert waitlist.entries["wl-1"].offer_expires_at == NOW + timedelta(days=3)
+    assert enrollments.rows["held-1"].status == "held"
+    assert notifier.reclaimed_calls == []
+    assert sessions.reserved_seats["sess-1"] == 1
+
+    # The reclaim happens when the family confirms — through the broker, with
+    # the same no-arithmetic handover.
+    confirm = ConfirmWaitlistOffer(
+        waitlist=waitlist,
+        enrollments=enrollments,
+        outbox=outbox,
+        academy_id=lambda: "acad",
+        sessions=sessions,
+        seat_broker=broker,
+        clock=lambda: NOW + timedelta(days=1),
+    )
+    enrollment_id = await confirm.execute("wl-1", parent_id="parent-1")
+
     assert enrollments.rows["held-1"].status == "dropped"
+    assert len(notifier.reclaimed_calls) == 1
+    assert enrollments.rows[enrollment_id].status == "active"
+    assert waitlist.entries["wl-1"].status == "promoted"
     assert sessions.reserved_seats["sess-1"] == 1
     assert sessions.release_calls == []
-    # Nothing is enrolled until the family confirms.
-    assert [r for r in enrollments.rows.values() if r.student_id == "stu-waiting"] == []

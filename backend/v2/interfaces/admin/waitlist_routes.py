@@ -25,13 +25,17 @@ async def list_global_waitlist(
     sessions = await use_cases.list_admin_sessions(None, window="upcoming")  # type: ignore[operator]
     grouped: list[AdminGlobalWaitlistSessionView] = []
     total = 0
+    total_offered = 0
     for session in sessions:
         raw = session if isinstance(session, dict) else session.model_dump(exclude={"academy_id"})
         entries = await use_cases.list_waitlist_for_session(raw["session_id"])  # type: ignore[operator]
         normalized = _normalize_waitlist_entries(entries)
         if not normalized:
             continue
-        total += len(normalized)
+        offered = sum(1 for e in normalized if e.status == "offered")
+        waiting = len(normalized) - offered
+        total += waiting
+        total_offered += offered
         grouped.append(
             AdminGlobalWaitlistSessionView(
                 session_id=raw["session_id"],
@@ -40,11 +44,14 @@ async def list_global_waitlist(
                 start_at=raw["start_at"],
                 capacity=int(raw.get("capacity") or 0),
                 enrolled_count=int(raw.get("enrolled_count") or 0),
-                waitlist_count=int(raw.get("waitlist_count") or len(normalized)),
+                waitlist_count=int(raw.get("waitlist_count") or waiting),
+                offered_count=offered,
                 entries=normalized,
             )
         )
-    return AdminGlobalWaitlistList(total_waitlisted=total, sessions=grouped)
+    return AdminGlobalWaitlistList(
+        total_waitlisted=total, total_offered=total_offered, sessions=grouped
+    )
 
 
 @router.get(
@@ -73,20 +80,27 @@ def _normalize_waitlist_entries(entries: object) -> list[AdminWaitlistEntry]:
             "joined_at": e.joined_at,
             "added_at": e.joined_at,
             "status": e.status,
+            "offer_expires_at": e.offer_expires_at,
+            "offer_holds_seat": e.offer_holds_seat,
         }
         for e in entries
     ]
-    rows = [row for row in rows if row.get("status") == "waiting"]
+    # X2: an ``offered`` row is holding a seat for a family that has not
+    # answered. Filtering it out (as this did until X2) made the seat vanish
+    # from every admin view. Offers lead; they have no queue position (0).
+    offered = [row for row in rows if row.get("status") == "offered"]
+    waiting = [row for row in rows if row.get("status") == "waiting"]
+    positioned = [(0, row) for row in offered] + list(enumerate(waiting, start=1))
     return [
         AdminWaitlistEntry(
             **{
                 **row,
-                "position": idx,
+                "position": position,
                 "full_name": str(row.get("full_name") or "(unknown)"),
                 "added_at": row.get("added_at") or row["joined_at"],
             }
         )
-        for idx, row in enumerate(rows, start=1)
+        for position, row in positioned
     ]
 
 
@@ -106,6 +120,8 @@ async def skip(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
+    if await _withdraw_offer(use_cases, waitlist_id, outcome="skipped"):
+        return
     await use_cases.skip_from_waitlist.execute(waitlist_id)
 
 
@@ -115,4 +131,17 @@ async def remove(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
+    if await _withdraw_offer(use_cases, waitlist_id, outcome="removed"):
+        return
     await use_cases.remove_from_waitlist.execute(waitlist_id)
+
+
+async def _withdraw_offer(use_cases: AdminUseCases, waitlist_id: str, *, outcome: str) -> bool:
+    """Close an OFFERED row through the use case that gives its seat back.
+
+    ``False`` for any other row, so Skip/Remove keep their plain status write.
+    """
+    withdraw = use_cases.withdraw_waitlist_offer
+    if withdraw is None:
+        return False
+    return await withdraw.execute(waitlist_id, outcome=outcome)

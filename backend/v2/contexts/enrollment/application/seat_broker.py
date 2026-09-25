@@ -158,6 +158,21 @@ class SeatBroker:
             reclaimed_student_id=victim.student_id,
         )
 
+    async def reclaimable_seats(self, session_id: str) -> int:
+        """How many seats ``acquire`` could still take from holds, without
+        taking any. ``0`` unless the academy's policy is ``longest_held``.
+
+        X2 (owner decision 2026-09-25): a waitlist OFFER must not end a held
+        family's enrollment — nobody has said yes yet. ``PromoteFromWaitlist``
+        asks this instead of calling ``acquire``, makes a seatless offer, and
+        the reclaim happens in ``ConfirmWaitlistOffer`` when the family says
+        yes.
+        """
+        policy = await self._departure_policy.get_or_default()
+        if getattr(policy, "hold_reclaim_policy", "never") != "longest_held":
+            return 0
+        return await self._holds.count_reclaimable(session_id)
+
     async def release(self, acquisition: SeatAcquisition) -> None:
         """Compensate a caller's own failed write AFTER a successful acquire.
 

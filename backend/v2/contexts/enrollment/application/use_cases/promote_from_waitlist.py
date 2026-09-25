@@ -230,6 +230,15 @@ class PromoteFromWaitlist:
                 extra={"session_id": session_id},
             )
             return None
+        # X2: an open seatless offer is first in line for a seat that frees
+        # up. Otherwise the free seat would go to the next family while that
+        # offer's confirm still reclaims a held family's seat.
+        if await self._waitlist.count_seatless_offers(session_id):
+            if await self._sessions.try_reserve_seat(session_id):
+                upgraded = await self._waitlist.give_seat_to_seatless_offer(session_id)
+                if upgraded is not None:
+                    return upgraded.waitlist_id
+                await self._release_quietly(session_id, None)
         entry = await self._waitlist.next_waiting(session_id)
         if entry is None:
             return None
@@ -300,24 +309,39 @@ class PromoteFromWaitlist:
             return acquisition, acquisition.granted
         return None, await self._sessions.try_reserve_seat(entry.session_id)
 
-    async def _offer_seat(self, entry: WaitlistEntry) -> str | None:
-        """Hold the freed seat and give this family until the deadline (#828).
+    async def _can_offer_seatless(self, session_id: str) -> bool:
+        """A seatless offer needs a hold it could reclaim on confirm — one per
+        open seatless offer, so two families are never promised one hold."""
+        if self._seat_broker is None:
+            return False
+        reclaimable = await self._seat_broker.reclaimable_seats(session_id)
+        return reclaimable > await self._waitlist.count_seatless_offers(session_id)
 
+    async def _offer_seat(self, entry: WaitlistEntry) -> str | None:
+        """Offer the seat and give this family until the deadline (#828).
+
+        A free seat is held for the window. A class full only of holds gets a
+        seatless offer instead (X2): the hold is reclaimed on confirm, not now.
         Returns the entry's id once the offer is on the row, or ``None`` when
         no seat could be had — same "nothing promoted" answer the immediate
         path used to give a full class.
         """
-        acquisition, reserved = await self._reserve(entry)
-        if not reserved:
+        # X2 (owner decision 2026-09-25): an offer takes only a FREE seat. It
+        # never goes through SeatBroker.acquire, because a reclaim there ends
+        # a held family's enrollment for a family that has not said yes yet.
+        # When the class is full only of holds the offer goes out seatless and
+        # ConfirmWaitlistOffer reclaims at the moment the family confirms.
+        holds_seat = await self._sessions.try_reserve_seat(entry.session_id)
+        if not holds_seat and not await self._can_offer_seatless(entry.session_id):
             return None
         expires_at = self._now() + self._offer_window
-        # Contract §3.8: compensation goes through SeatBroker.release, not a
-        # bare release_seat — a reclaim-granted acquisition already dropped and
-        # emailed a different family for this seat.
         try:
-            await self._waitlist.mark_offered(entry.waitlist_id, offer_expires_at=expires_at)
+            await self._waitlist.mark_offered(
+                entry.waitlist_id, offer_expires_at=expires_at, holds_seat=holds_seat
+            )
         except BaseException:
-            await self._release_quietly(entry.session_id, acquisition)
+            if holds_seat:
+                await self._release_quietly(entry.session_id, None)
             raise
         # Best-effort, and last: an offer the family never hears about is
         # recovered by the sweep (seat released, next family offered), while an

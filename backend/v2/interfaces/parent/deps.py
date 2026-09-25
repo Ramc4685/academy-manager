@@ -38,6 +38,7 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
 )
 from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
     ConfirmWaitlistOffer,
+    DeclineWaitlistOffer,
 )
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -114,6 +115,8 @@ class ParentUseCases:
     # the confirmation window keep constructing; real parent composition
     # always sets it.
     confirm_waitlist_offer: ConfirmWaitlistOffer | None = None
+    decline_waitlist_offer: DeclineWaitlistOffer | None = None
+    list_parent_waitlist: object | None = None  # callable(parent_id)
     # Home aggregate (kid-first Home, slice 4). Defaulted so fixtures that
     # predate it keep constructing; real parent composition always sets it.
     get_parent_home: object | None = None  # callable

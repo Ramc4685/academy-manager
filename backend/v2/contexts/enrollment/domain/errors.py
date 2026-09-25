@@ -232,6 +232,15 @@ class WaitlistOfferNotOpen(DomainError):
     status_code = 409
 
 
+class WaitlistOfferSeatUnavailable(DomainError):
+    """A seatless offer (X2) could not get its seat at confirm time: the held
+    family came back, or the policy changed. The family goes back to the head
+    of the waitlist rather than losing their place."""
+
+    code = "Enrollment.WaitlistOfferSeatUnavailable"
+    status_code = 409
+
+
 class ProgramNotFound(DomainError):
     """No program with that id in the caller's academy (Lane B1).
 

@@ -125,6 +125,9 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     DenyTrialRequest,
     ListTrialRequestsForAdmin,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    DeclineWaitlistOffer,
+)
 from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
 from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
     ApprovePayoutPeriod,
@@ -459,6 +462,9 @@ class AdminUseCases:
     # composition/departures.py, same attach-after-the-fact pattern.
     stop_all_classes: StopAllClasses | None = None
     leaving_report: GetLeavingReport | None = None
+    # X2: closes an OFFERED waitlist row and releases its held seat; attached
+    # in main.py (composition/waitlist_offers.py), same pattern as above.
+    withdraw_waitlist_offer: DeclineWaitlistOffer | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:
