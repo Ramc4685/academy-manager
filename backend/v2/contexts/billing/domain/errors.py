@@ -91,6 +91,17 @@ class ConnectOnboardingFailed(DomainError):
     status_code = 502
 
 
+class HouseAcademyUsesPlatformAccount(DomainError):
+    """The house academy charges on the platform Stripe account (BLNO owns it).
+
+    Connecting a second Stripe account would silently move its parents'
+    charges, saved cards and autopay off the platform account.
+    """
+
+    code = "Billing.HouseAcademyUsesPlatformAccount"
+    status_code = 409
+
+
 class PaymentOperationNotAllowed(DomainError):
     code = "Billing.PaymentOperationNotAllowed"
     status_code = 400

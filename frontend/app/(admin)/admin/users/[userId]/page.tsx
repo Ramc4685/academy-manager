@@ -27,7 +27,7 @@ import {
 import { hasCoachRole } from "@/lib/admin/coach-roles";
 import { roleLabel } from "@/lib/admin/role-label";
 import { ROLE_HINTS, planRoleChanges } from "@/lib/admin/staff-roles";
-import { assignableRoles } from "@/lib/auth/assignable-roles";
+import { assignableRoles, canManageUser } from "@/lib/auth/assignable-roles";
 import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
@@ -48,6 +48,7 @@ export default function AdminUserDetailPage() {
   const params = useParams<{ userId: string }>();
   const userId = params?.userId ?? "";
   const queryClient = useQueryClient();
+  const isOwner = useIsOwner();
 
   const userQuery = useQuery({
     queryKey: queryKeys.admin.userDetail(userId),
@@ -86,6 +87,8 @@ export default function AdminUserDetailPage() {
   // opened from Families, search or an old link says what it is up front.
   const heldRoles = user.roles.length > 0 ? user.roles : [user.role];
   const parentOnly = heldRoles.every((r) => r === "parent");
+  // X3: only the owner changes an owner's or admin's account.
+  const canManage = canManageUser(isOwner, heldRoles);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({
@@ -115,17 +118,33 @@ export default function AdminUserDetailPage() {
       )}
       <Header user={user} />
       <div className="grid gap-6 lg:grid-cols-3">
+        {!canManage && (
+          <p
+            className="text-sm text-rally-muted lg:col-span-3"
+            data-testid="admin-user-owner-managed"
+            role="note"
+          >
+            Only the academy owner can change an owner&apos;s or admin&apos;s
+            account: email, status, roles and login invites.{" "}
+            <OwnerOnlyHint />
+          </p>
+        )}
         <Card p={20} className="lg:col-span-2">
           <Overline>Profile</Overline>
-          <UserEditForm user={user} onSaved={invalidate} />
+          {/* A disabled fieldset disables every input and button inside. */}
+          <fieldset disabled={!canManage} className="m-0 min-w-0 border-0 p-0">
+            <UserEditForm user={user} onSaved={invalidate} />
+          </fieldset>
         </Card>
         <Card p={20}>
           <Overline>Access</Overline>
-          <RolesPanel user={user} onSaved={invalidate} />
+          <fieldset disabled={!canManage} className="m-0 min-w-0 border-0 p-0">
+            <RolesPanel user={user} onSaved={invalidate} />
+          </fieldset>
         </Card>
       </div>
       <FamilyPanel user={user} />
-      <LoginInvitePanel user={user} onSaved={invalidate} />
+      {canManage && <LoginInvitePanel user={user} onSaved={invalidate} />}
       {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
     </section>

@@ -8,7 +8,10 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.curriculum.application.ports import LevelRepository, SkillRepository
 from backend.v2.contexts.curriculum.domain.errors import LevelNotFound, SkillNotFound
-from backend.v2.contexts.curriculum.domain.models import ScoringType, Skill
+from backend.v2.contexts.curriculum.domain.models import (
+    ScoringType as ScoringType,  # re-exported for interfaces
+)
+from backend.v2.contexts.curriculum.domain.models import Skill
 from backend.v2.shared.ids import new_ulid
 
 

@@ -73,6 +73,7 @@ from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_
     ReconcileStripePaymentIntents,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.infrastructure.house_academy import configure_house_academy
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -650,6 +651,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             *settings.cors_allowed_origins(),
             *current_tenant_origins(),
         ),
+        house_academy_id=settings.house_academy_id,
     )
 
     # Per-academy platform application fee (roadmap L9b) — platform BFF only.
@@ -2186,6 +2188,7 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     configure_error_tracking(settings)
+    configure_house_academy(settings.house_academy_id)
     configure_tracing(app)
     register_exception_handlers(app)
 

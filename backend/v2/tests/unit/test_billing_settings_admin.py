@@ -1,4 +1,4 @@
-"""Platform-charge-fallback and invoice-schedule billing settings use cases."""
+"""Platform-charge (read-only) and invoice-schedule billing settings use cases."""
 
 from __future__ import annotations
 
@@ -12,8 +12,6 @@ from backend.v2.contexts.billing.application.use_cases.billing_settings_admin im
     GetPlatformChargeFallback,
     SetInvoiceScheduleCommand,
     SetInvoiceScheduleSettings,
-    SetPlatformChargeFallback,
-    SetPlatformChargeFallbackCommand,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
@@ -40,97 +38,6 @@ class _Audit:
 
     async def append(self, entry: BillingAuditEntry) -> None:
         self.entries.append(entry)
-
-
-@pytest.mark.asyncio
-async def test_enable_writes_settings_and_audit_trail() -> None:
-    repo = _SettingsRepo(BillingSettings.default("acad-1"))
-    audit = _Audit()
-    uc = SetPlatformChargeFallback(settings=repo, audit=audit, clock=lambda: NOW)
-
-    result = await uc.execute(
-        SetPlatformChargeFallbackCommand(
-            enabled=True, actor_id="admin-1", reason="connect under review"
-        )
-    )
-
-    assert result.allow_platform_charge_fallback is True
-    assert [s.allow_platform_charge_fallback for s in repo.upserts] == [True]
-    assert len(audit.entries) == 1
-    entry = audit.entries[0]
-    assert entry.action == "platform_fallback_toggled"
-    assert entry.actor_id == "admin-1"
-    assert entry.reason == "connect under review"
-    assert entry.before == {"allow_platform_charge_fallback": False}
-    assert entry.after == {"allow_platform_charge_fallback": True}
-    assert entry.at == NOW
-
-
-@pytest.mark.asyncio
-async def test_disable_after_enable_round_trips() -> None:
-    repo = _SettingsRepo(
-        BillingSettings.default("acad-1").model_copy(
-            update={"allow_platform_charge_fallback": True}
-        )
-    )
-    audit = _Audit()
-    uc = SetPlatformChargeFallback(settings=repo, audit=audit, clock=lambda: NOW)
-
-    result = await uc.execute(SetPlatformChargeFallbackCommand(enabled=False, actor_id="admin-1"))
-
-    assert result.allow_platform_charge_fallback is False
-    assert repo.upserts[-1].allow_platform_charge_fallback is False
-    assert audit.entries[0].before == {"allow_platform_charge_fallback": True}
-
-
-@pytest.mark.asyncio
-async def test_setting_current_value_is_a_noop_without_audit() -> None:
-    repo = _SettingsRepo(BillingSettings.default("acad-1"))
-    audit = _Audit()
-    uc = SetPlatformChargeFallback(settings=repo, audit=audit, clock=lambda: NOW)
-
-    result = await uc.execute(SetPlatformChargeFallbackCommand(enabled=False, actor_id="admin-1"))
-
-    assert result.allow_platform_charge_fallback is False
-    assert repo.upserts == []
-    assert audit.entries == []
-
-
-@pytest.mark.asyncio
-async def test_audit_failure_blocks_settings_write() -> None:
-    """The flag must never change unaudited: the audit append runs first, so
-    an audit-log failure leaves the settings untouched and a retry is not
-    swallowed by the no-op check."""
-
-    class _FailingAudit:
-        async def append(self, entry: BillingAuditEntry) -> None:
-            raise RuntimeError("audit log unavailable")
-
-    repo = _SettingsRepo(BillingSettings.default("acad-1"))
-    uc = SetPlatformChargeFallback(settings=repo, audit=_FailingAudit(), clock=lambda: NOW)
-
-    with pytest.raises(RuntimeError, match="audit log unavailable"):
-        await uc.execute(SetPlatformChargeFallbackCommand(enabled=True, actor_id="admin-1"))
-
-    assert repo.upserts == []
-    assert (await repo.get()).allow_platform_charge_fallback is False
-
-
-@pytest.mark.asyncio
-async def test_toggle_preserves_other_settings() -> None:
-    repo = _SettingsRepo(
-        BillingSettings.default("acad-1").model_copy(
-            update={"ach_discount_enabled": True, "ach_discount_percent": 2.0}
-        )
-    )
-    uc = SetPlatformChargeFallback(settings=repo, clock=lambda: NOW)
-
-    await uc.execute(SetPlatformChargeFallbackCommand(enabled=True, actor_id="admin-1"))
-
-    written = repo.upserts[-1]
-    assert written.ach_discount_enabled is True
-    assert written.ach_discount_percent == 2.0
-    assert written.allow_platform_charge_fallback is True
 
 
 @pytest.mark.asyncio
@@ -212,7 +119,7 @@ async def test_set_invoice_schedule_to_current_values_is_a_noop_without_audit() 
 
 @pytest.mark.asyncio
 async def test_set_invoice_schedule_audit_failure_blocks_settings_write() -> None:
-    """Same ordering guarantee as the platform-fallback toggle: the schedule
+    """Audit-first ordering: the schedule
     decides when parents get charged, so it must never move unaudited."""
 
     class _FailingAudit:

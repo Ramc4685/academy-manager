@@ -748,8 +748,8 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
           <Row label="Charges enabled" value={account.charges_enabled ? "Yes" : "No"} />
           <Row label="Payouts enabled" value={account.payouts_enabled ? "Yes" : "No"} />
           <Row
-            label="Platform charge fallback"
-            value={data.allow_platform_charge_fallback ? "On" : "Off"}
+            label="Charges settle on"
+            value={data.allow_platform_charge_fallback ? "Platform account (house academy)" : "Connected account"}
           />
           <Row
             label="Stuck webhook events"

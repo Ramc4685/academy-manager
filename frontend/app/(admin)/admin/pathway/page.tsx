@@ -10,7 +10,7 @@ import {
   seedBadmintonPathway,
   type Program,
 } from "@/lib/api/curriculum";
-import { getActiveAcademyId } from "@/lib/api/client";
+import { getActiveAcademyId, type ApiError } from "@/lib/api/client";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
@@ -54,6 +54,10 @@ export default function AdminPathwayPage() {
   });
 
   const list = programs ?? [];
+  // Coach, digest and student screens support one active program per
+  // academy, and the backend refuses a second one (#968).
+  const hasActiveProgram = list.some((p) => p.is_active);
+  const createRefused = (createMutation.error as ApiError | null)?.status === 409;
 
   return (
     <section data-testid="admin-pathway" className="space-y-6">
@@ -74,15 +78,24 @@ export default function AdminPathwayPage() {
               Progress Overview
             </Button>
           )}
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setShowForm((v) => !v)}
-          >
-            {showForm ? "Cancel" : "Create Program"}
-          </Button>
+          {!hasActiveProgram && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setShowForm((v) => !v)}
+            >
+              {showForm ? "Cancel" : "Create Program"}
+            </Button>
+          )}
         </div>
       </div>
+
+      {hasActiveProgram && (
+        <p data-testid="pathway-single-program-note" className="text-sm text-neutral-500">
+          Each academy has one active skill program for now. Add levels and skills to it
+          instead of creating another.
+        </p>
+      )}
 
       {showForm && (
         <Card p={20}>
@@ -125,7 +138,11 @@ export default function AdminPathwayPage() {
               />
             </div>
             {createMutation.isError && (
-              <p className="text-xs text-red-600">Failed to create program. Please try again.</p>
+              <p className="text-xs text-red-600">
+                {createRefused
+                  ? "This academy already has an active skill program."
+                  : "Failed to create program. Please try again."}
+              </p>
             )}
             <div className="flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={() => setShowForm(false)}>

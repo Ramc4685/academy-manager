@@ -17,5 +17,5 @@ PR: #TBD
 ## Risk / rollback
 
 - Low risk. The change only makes the ACH discount smaller, and only for invoices that carry a tuition discount. No family pays more than the tuition-discounted price.
-- A separate, unmerged branch (`fix/ledger-discount-double-count`) fixes `recompute_totals` double-subtracting the tuition discount on generator invoices. That fix is independent of this one: the ACH base here reads lines, not the recomputed header.
+- Builds on #973, which stopped `recompute_totals` taking the tuition discount off twice on generator invoices. #973 fixed the charged total. This PR fixes the ACH line amount itself, and it reads lines rather than the recomputed header, so it does not depend on #973's header shape. With both, the example month charges $78.00 ($100 − $20 − $2.00) on every attempt.
 - Rollback: revert this PR. Lines written by this code are valid ACH discount lines to the old code, which re-bases them on its next attempt.

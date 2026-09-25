@@ -335,3 +335,29 @@ def test_sentry_traces_sample_rate_explicit_env_wins_in_production(monkeypatch) 
 
     assert settings.env == "prod"
     assert settings.sentry_traces_sample_rate == 0.5
+
+
+def test_house_academy_id_reads_root_env_name(monkeypatch) -> None:
+    monkeypatch.delenv("V2_HOUSE_ACADEMY_ID", raising=False)
+    monkeypatch.setenv("HOUSE_ACADEMY_ID", " acad_blno_badminton ")
+
+    assert Settings(_env_file=None).house_academy_id == "acad_blno_badminton"
+
+
+def test_house_academy_id_v2_name_wins_and_blank_means_unset(monkeypatch) -> None:
+    monkeypatch.setenv("HOUSE_ACADEMY_ID", "acad_root")
+    monkeypatch.setenv("V2_HOUSE_ACADEMY_ID", "acad_v2")
+    assert Settings(_env_file=None).house_academy_id == "acad_v2"
+
+    monkeypatch.delenv("V2_HOUSE_ACADEMY_ID", raising=False)
+    monkeypatch.setenv("HOUSE_ACADEMY_ID", "  ")
+    assert Settings(_env_file=None).house_academy_id is None
+
+
+def test_fly_toml_pins_blno_as_the_house_academy() -> None:
+    """Production must name the house academy: unset silently reverts to the
+    legacy per-academy flag."""
+    from pathlib import Path
+
+    fly = (Path(__file__).resolve().parents[3] / "fly.toml").read_text()
+    assert 'HOUSE_ACADEMY_ID = "acad_blno_badminton"' in fly

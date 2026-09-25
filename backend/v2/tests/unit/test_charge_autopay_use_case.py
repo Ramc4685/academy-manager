@@ -1511,6 +1511,46 @@ def _ach_settings() -> FakeBillingSettingsRepo:
     )
 
 
+async def test_ach_discount_on_a_tuition_discounted_month_charges_the_discount_once() -> None:
+    """ACH line added → header recomputed. It used to take the tuition discount
+    off twice: $100 gross, $20 sibling discount, ACH line → charged $57.50."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+
+    result = await _uc(repo, stripe, settings=_ach_settings()).execute("inv-1")
+
+    ach_line = next(
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    )
+    expected = 8_000 + ach_line.amount_cents
+    assert result.success is True
+    assert stripe.create_calls[0]["amount_cents"] == expected
+    assert repo.allocation_calls[0][2] == expected
+
+
+async def test_ach_retry_on_a_tuition_discounted_month_charges_the_discount_once() -> None:
+    """A retry that finds its ACH line already written recomputes the header
+    on every attempt; that path double-counted too."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+    first = _AchDeclines()
+    declined = await _uc(repo, first, settings=_ach_settings()).execute("inv-1")
+    assert declined.success is False
+    assert any(line.line_type == "ach_discount" for line in repo.lines_by_invoice["inv-1"])
+
+    retry = FakeStripeSucceeds()
+    retry.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    result = await _uc(repo, retry, settings=_ach_settings()).execute("inv-1")
+
+    ach_line = next(
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    )
+    assert result.success is True
+    assert retry.create_calls[0]["amount_cents"] == 8_000 + ach_line.amount_cents
+
+
 def _ach_line_cents(repo: FakeLedgerRepo) -> int:
     return next(
         line.amount_cents

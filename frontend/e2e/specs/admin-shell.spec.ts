@@ -1061,6 +1061,33 @@ test.describe("Rally admin shell", () => {
       await expect(form.getByTestId("admin-user-locked-roles")).toContainText("Billing");
     });
 
+    test("admin without the owner scope sees an owner's Staff page read-only (X3)", async ({
+      page,
+    }) => {
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.route("**/api/v2/admin/users/owner-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "owner-e2e",
+          email: "owner@example.com",
+          display_name: "Owner E2E",
+          role: "owner",
+          status: "active",
+          phone: null,
+          roles: ["owner", "admin"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+
+      await page.goto("/admin/users/owner-e2e");
+      await expect(page.getByTestId("admin-user-owner-managed")).toBeVisible();
+      const form = page.getByTestId("admin-user-edit-form");
+      await expect(form.locator("#user-email")).toBeDisabled();
+      await expect(form.locator("#user-status")).toBeDisabled();
+      await expect(page.getByTestId("admin-user-role-form").getByRole("button", { name: "Save roles" })).toBeDisabled();
+      await expect(page.getByTestId("send-login-invite")).toHaveCount(0);
+    });
+
     test("admin without the owner scope sees no Billing rules or Gateway settings", async ({
       page,
     }) => {
@@ -1731,7 +1758,7 @@ test.describe("Rally admin shell", () => {
     });
     // The Training tab's skill pathway reads the program catalog; the shell
     // catch-all's `{}` has no `programs` key.
-    await page.route("**/api/v2/admin/programs*", (route) => {
+    await page.route("**/api/v2/admin/curriculum/programs*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { programs: [] });
     });

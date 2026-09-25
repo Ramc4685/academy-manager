@@ -281,7 +281,7 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
       ],
     });
   });
-  await page.route("**/api/v2/admin/programs*", (route) => {
+  await page.route("**/api/v2/admin/curriculum/programs*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { programs: [] });
   });
