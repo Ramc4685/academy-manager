@@ -56,6 +56,11 @@ class UpdateAdminUserCommand(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     status: str | None = Field(default=None, max_length=32)
     actor_id: str = Field(min_length=1)
+    # The caller's academy roles at the time of the edit, stamped on the
+    # `user.edited` audit row so "who changed an owner's email" can be
+    # answered without joining today's memberships (X3). Empty for the
+    # coach/parent self-service paths.
+    actor_roles: tuple[str, ...] = ()
     reason: str = Field(min_length=1, max_length=500)
 
 

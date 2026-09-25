@@ -1087,6 +1087,9 @@ class MongoUserRepository:
                 changed_keys=changed,
                 before=before,
                 after=doc,
+                metadata={"actor_roles": list(command.actor_roles)}
+                if command.actor_roles
+                else None,
             )
         return await self.get_admin_user(self._to_domain(doc).user_id, academy_id=academy_id)
 
@@ -1697,14 +1700,17 @@ class MongoUserRepository:
         changed_keys: list[str],
         before: dict[str, Any],
         after: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         from backend.v2.shared.ids import new_ulid
 
         def pick(doc: dict[str, Any]) -> dict[str, Any]:
             return {key: doc.get(key) for key in changed_keys}
 
+        extra: dict[str, Any] = {"metadata": metadata} if metadata else {}
         await self._db["audit_logs"].insert_one(
             {
+                **extra,
                 "audit_id": str(new_ulid()),
                 "academy_id": academy_id,
                 "actor_id": actor_id,

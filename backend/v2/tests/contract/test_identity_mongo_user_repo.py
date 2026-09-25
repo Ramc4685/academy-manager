@@ -1293,3 +1293,59 @@ async def test_role_removal_reports_when_no_membership_row_matched(db, caplog) -
         )
 
     assert "role removal matched no membership row to revoke" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_user_edit_audit_row_carries_the_actor_roles(db, monkeypatch) -> None:
+    """X3: "which non-owner changed an owner's email" must be answerable from
+    the audit row itself, not from memberships as they are today."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", _RecordingFirebase)
+    await _seed_editable_parent(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    await repo.update_admin_user(
+        "roster-parent-9",
+        UpdateAdminUserCommand(
+            display_name="Parent Renamed",
+            actor_id="admin-1",
+            actor_roles=("admin",),
+            reason="name fix",
+        ),
+        academy_id="academy-b",
+    )
+
+    row = await db["audit_logs"].find_one({"action": "user.edited"})
+    assert row["actor_id"] == "admin-1"
+    assert row["metadata"] == {"actor_roles": ["admin"]}
+
+
+@pytest.mark.asyncio
+async def test_governance_audit_records_both_sides_roles(db) -> None:
+    from backend.v2.contexts.identity.infrastructure.mongo_user_governance_audit import (
+        MongoUserGovernanceAudit,
+    )
+
+    await MongoUserGovernanceAudit(db).record(
+        academy_id="academy-b",
+        actor_id="admin-1",
+        actor_roles=("admin",),
+        action="user.change_denied",
+        target_id="owner-1",
+        target_roles=("owner", "admin"),
+        reason="takeover",
+        detail={"attempted": "edit:email"},
+    )
+
+    row = await db["audit_logs"].find_one({"action": "user.change_denied"})
+    assert row["academy_id"] == "academy-b"
+    assert row["entity_type"] == "user"
+    assert row["entity_id"] == "owner-1"
+    assert row["metadata"] == {
+        "actor_roles": ["admin"],
+        "target_roles": ["owner", "admin"],
+        "attempted": "edit:email",
+    }

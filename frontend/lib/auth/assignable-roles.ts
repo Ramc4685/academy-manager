@@ -13,3 +13,18 @@ export function assignableRoles(isOwner: boolean): AdminUserRole[] {
     ? ["parent", "coach", "assistant_coach", "front_desk", "billing", "admin", "owner"]
     : ["parent", "coach", "assistant_coach"];
 }
+
+/**
+ * X3 mirror of the BFF's `ensure_can_manage_user`: an owner may change anyone;
+ * an admin may only change users who hold neither `admin` nor `owner`. Covers
+ * the profile (email, status), roles and set-password invite controls. The
+ * BFF also lets anyone edit their own profile; this page does not know the
+ * viewer's id, so a plain admin sees their own page read-only (stricter, never
+ * looser). The BFF 403 is the boundary; this only hides what would fail.
+ */
+export function canManageUser(
+  isOwner: boolean,
+  targetRoles: readonly AdminUserRole[],
+): boolean {
+  return isOwner || !targetRoles.some((role) => role === "admin" || role === "owner");
+}

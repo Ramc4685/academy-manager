@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from backend.v2.contexts.identity.domain.models import (
     AcademyMembership,
@@ -193,4 +193,26 @@ class LoginAuditRecorder(Protocol):
         provider: str | None,
         persona: str | None,
         dedupe_key: str,
+    ) -> None: ...
+
+
+class UserGovernanceAudit(Protocol):
+    """Append a staff-governance event the user repo does not record (X3).
+
+    Used for refused changes to a user who outranks or equals the caller
+    (``user.change_denied``) and for set-password links sent
+    (``user.login_invite_sent``). Rows carry both sides' roles.
+    """
+
+    async def record(
+        self,
+        *,
+        academy_id: str,
+        actor_id: str,
+        actor_roles: Sequence[str],
+        action: str,
+        target_id: str,
+        target_roles: Sequence[str],
+        reason: str | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> None: ...
