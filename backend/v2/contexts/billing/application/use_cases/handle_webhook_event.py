@@ -148,9 +148,22 @@ UNATTRIBUTED_QUARANTINE_ACADEMY = "__unattributed__"
 # select exactly "nobody could tell whose event this was").
 QUARANTINE_UNATTRIBUTED = "unattributed_no_tenant_marker"
 
+# ``quarantine_reason`` for a Connect event whose ``metadata.academy_id`` names
+# a different academy than the one that owns the event's ``account``. The
+# account is Stripe's own statement of where the money moved; metadata is text
+# our code (or anyone able to edit the object on that account) wrote. The two
+# disagreeing means something is wrong, so neither is trusted to project.
+QUARANTINE_ACCOUNT_METADATA_CONFLICT = "connect_account_metadata_conflict"
+
 
 class AccountAcademyResolver(Protocol):
     """Resolves a Stripe Connect account id to its owning academy id.
+
+    ``academy_id_for_account`` must answer across EVERY academy (composition
+    backs it with the platform-scoped ``ConnectedAccountDirectory``): ingest
+    attributes direct-charge events for accounts the boot academy does not
+    own. ``get_by_stripe_account_id`` / ``update_status`` stay scoped to the
+    handler's own academy.
 
     Typed against this Protocol (rather than ``Any``) so a composition-root
     mismatch — e.g. passing the raw ``ConnectedAccountRepository`` instead of
@@ -242,7 +255,7 @@ class HandleWebhookEvent:
         event = self._verify(payload, signature)
         event_id, event_type = self._event_identity(event)
 
-        academy_id, quarantine_reason = await self._ingest_academy_id(event)
+        academy_id, quarantine_reason, reason_code = await self._ingest_academy_id(event)
         with tenant_scope(academy_id):
             stored = await self._dedup.store_received(
                 event,
@@ -257,11 +270,11 @@ class HandleWebhookEvent:
                 return {"received": True, "stored": False, "type": event_type}
             if quarantine_reason is None:
                 return {"received": True, "stored": True, "type": event_type}
-            await self._dedup.mark_quarantined(
-                event_id, quarantine_reason, reason_code=QUARANTINE_UNATTRIBUTED
-            )
+            await self._dedup.mark_quarantined(event_id, quarantine_reason, reason_code=reason_code)
         log.warning(
-            "stripe_webhook_event_unattributed",
+            "stripe_webhook_event_unattributed"
+            if reason_code == QUARANTINE_UNATTRIBUTED
+            else "stripe_webhook_event_account_metadata_conflict",
             extra={
                 "event_id": event_id,
                 "event_type": event_type,
@@ -271,7 +284,7 @@ class HandleWebhookEvent:
         self._alert_quarantined(
             event_id=event_id,
             event_type=event_type,
-            reason=QUARANTINE_UNATTRIBUTED,
+            reason=reason_code,
             error=quarantine_reason,
             # The row lives under the sentinel bucket, not the boot academy;
             # the alert must point ops at the same academy_id as the row.
@@ -285,26 +298,36 @@ class HandleWebhookEvent:
             "status": "quarantined",
         }
 
-    async def _ingest_academy_id(self, event: dict[str, Any]) -> tuple[str, str | None]:
+    async def _ingest_academy_id(self, event: dict[str, Any]) -> tuple[str, str | None, str]:
         """Tenant attribution at INGEST time (issues #532 and the unattributed
-        follow-up).
+        follow-up; Connect ownership for direct charges).
 
         The /webhooks/stripe endpoint is served by the boot-academy handler,
         but the drain claims stored events per academy — an event stamped with
         the wrong academy would be claimed by the wrong per-academy processor
         and quarantined by its cross-academy guard instead of reaching its own.
 
-        Returns ``(academy_id_to_store_under, quarantine_reason)``; the reason
-        is ``None`` whenever the event may be processed normally.
+        Returns ``(academy_id_to_store_under, quarantine_reason, reason_code)``;
+        the reason is ``None`` whenever the event may be processed normally.
 
         Resolution order:
-        1. ``metadata.academy_id`` — stamped by our own checkout/subscription
-           creation, delivered back inside the signature-verified payload.
-        2. Top-level ``account`` (Connect events) resolved via the
-           connected-account repo. An account that does not resolve is still
-           stored under this handler's academy: the processing-side guard
-           (``resolve_academy_for_event``) already quarantines and alerts on it,
-           so ingest does not duplicate that machinery.
+        1. Top-level ``account`` (Connect events: every direct charge on a
+           non-house academy's connected account) resolved to its OWNER across
+           all academies. The account is authoritative:
+           - owner found, ``metadata.academy_id`` absent or equal: the owner.
+           - owner found, ``metadata.academy_id`` names ANOTHER academy:
+             quarantined under the owner (``QUARANTINE_ACCOUNT_METADATA_CONFLICT``).
+             Metadata never overrides the account. The owner's processing
+             guard would reject it too (metadata != its academy), so a drain
+             racing the quarantine mark cannot project it either.
+           - no owner (unknown account, or the lookup failed): stored under
+             this handler's academy, where the processing-side guard
+             (``resolve_academy_for_event``) re-resolves and quarantines with
+             its own alert. Deferring keeps a lookup blip, or an account row
+             written a moment after Stripe emitted its first event, from
+             becoming a terminal ingest quarantine.
+        2. No ``account`` (a platform event — the house academy, and legacy
+           destination charges): ``metadata.academy_id`` exactly as before.
         3. Neither marker:
            - ``single_academy`` mode: this handler's academy. There is exactly
              one tenant (``primary_academy_id``) by construction, so a platform
@@ -319,29 +342,39 @@ class HandleWebhookEvent:
         and treated as "did not resolve".
         """
         metadata_academy = self._event_metadata(event).get("academy_id")
-        if metadata_academy:
-            return metadata_academy, None
         account_id = str(event.get("account") or "")
         if account_id:
+            owner: str | None = None
             if self._connected_accounts is not None:
                 try:
-                    resolved = await self._connected_accounts.academy_id_for_account(account_id)
+                    owner = await self._connected_accounts.academy_id_for_account(account_id)
                 except Exception as exc:
                     log.warning(
                         "stripe_webhook_ingest_account_resolution_failed account=%s err=%s",
                         account_id,
                         exc,
                     )
-                    resolved = None
-                if resolved:
-                    return resolved, None
-            return self._academy_id, None
+                    owner = None
+            if not owner:
+                return self._academy_id, None, QUARANTINE_UNATTRIBUTED
+            if metadata_academy and metadata_academy != owner:
+                return (
+                    owner,
+                    f"metadata.academy_id={metadata_academy} conflicts with the owner "
+                    f"{owner} of connected account {account_id}; the account wins and "
+                    "the event is not projected",
+                    QUARANTINE_ACCOUNT_METADATA_CONFLICT,
+                )
+            return owner, None, QUARANTINE_UNATTRIBUTED
+        if metadata_academy:
+            return metadata_academy, None, QUARANTINE_UNATTRIBUTED
         if self._tenancy_mode == "single_academy":
-            return self._academy_id, None
+            return self._academy_id, None, QUARANTINE_UNATTRIBUTED
         return (
             UNATTRIBUTED_QUARANTINE_ACADEMY,
             "no metadata.academy_id and no Connect account on the event; "
             f"refusing to attribute to boot academy {self._academy_id} in multi_academy mode",
+            QUARANTINE_UNATTRIBUTED,
         )
 
     async def process_next(
@@ -1124,7 +1157,9 @@ class HandleWebhookEvent:
         )
         return True
 
-    async def _async_failure_detail(self, payment_intent_id: str | None) -> tuple[str, str]:
+    async def _async_failure_detail(
+        self, payment_intent_id: str | None, *, stripe_account: str | None = None
+    ) -> tuple[str, str]:
         """Failure code/message for a Checkout session whose async payment failed.
 
         The session object carries no ``last_payment_error``, so read it off the
@@ -1136,7 +1171,9 @@ class HandleWebhookEvent:
         if not payment_intent_id:
             return fallback
         try:
-            pi = await self._stripe.retrieve_payment_intent(payment_intent_id)
+            pi = await self._stripe.retrieve_payment_intent(
+                payment_intent_id, **_on_account_kwargs(stripe_account)
+            )
         except Exception as exc:  # detail is best-effort; never fail the event over it
             log.warning(
                 "checkout_async_payment_failed: could not read pi=%s for failure detail: %s",
@@ -1264,7 +1301,9 @@ class HandleWebhookEvent:
         amount_total = int(obj.get("amount_total") or 0)
         currency = str(obj.get("currency") or "usd").lower()
         parent_id = str(metadata.get("parent_id") or "unknown")
-        failure_code, failure_message = await self._async_failure_detail(payment_intent_id)
+        failure_code, failure_message = await self._async_failure_detail(
+            payment_intent_id, stripe_account=_event_account(event)
+        )
 
         for invoice_id, share_cents in await self._checkout_attempt_shares(
             invoice_ids=invoice_ids,
@@ -1716,7 +1755,11 @@ class HandleWebhookEvent:
         if not checkout_session_id:
             return False
 
-        checkout = await self._stripe.retrieve_checkout_session(checkout_session_id)
+        # The session lives on the same account as the PaymentIntent the
+        # event names (the connected account for a direct charge).
+        checkout = await self._stripe.retrieve_checkout_session(
+            checkout_session_id, **_on_account_kwargs(_event_account(event))
+        )
         metadata = checkout.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}

@@ -29,6 +29,9 @@ from backend.v2.contexts.billing.domain.connected_account import ConnectedAccoun
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_directory import (
+    MongoConnectedAccountDirectory,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
@@ -55,7 +58,9 @@ def _webhook_handler(repo: MongoConnectedAccountRepository, academy_id: str) -> 
         subscriptions=object(),  # type: ignore[arg-type]
         outbox=object(),  # type: ignore[arg-type]
         academy_id=academy_id,
-        connected_accounts=_ConnectAccountResolver(repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            repo, academy_id, directory=MongoConnectedAccountDirectory(repo._db)
+        ),
     )
 
 

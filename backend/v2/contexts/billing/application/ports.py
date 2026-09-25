@@ -861,6 +861,18 @@ class ConnectedAccountRepository(Protocol):
     ) -> bool: ...
 
 
+class ConnectedAccountDirectory(Protocol):
+    """PLATFORM-scoped port: which academy owns a Stripe connected account.
+
+    Unlike ``ConnectedAccountRepository`` this deliberately crosses tenants:
+    the webhook endpoint must attribute a Connect event (top-level
+    ``account``) to its owner before any tenant scope exists. Read-only, and
+    it answers only the owner's academy id (None when no academy owns it).
+    """
+
+    async def owner_academy_id(self, stripe_account_id: str) -> str | None: ...
+
+
 class LedgerRepository(Protocol):
     """Port for ledger invoice + line persistence (Phase 2A+)."""
 

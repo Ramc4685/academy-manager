@@ -125,3 +125,41 @@ connected route does not find them, and autopay for those parents fails with
 `no_saved_payment_method` until they set up autopay again, on the academy's
 account. Before deploying, count them with a read-only query:
 `db.parent_billing_customers.countDocuments({academy_id: {$ne: "<HOUSE_ACADEMY_ID>"}, stripe_customer_id: {$type: "string"}, stripe_account_id: {$exists: false}})`.
+
+## Webhooks from connected accounts
+
+A direct charge's events (`checkout.session.*`, `payment_intent.*`,
+`setup_intent.succeeded`, `charge.*`) happen ON the academy's connected
+account. Stripe only delivers them to an endpoint registered for
+**Connect** events (events on connected accounts), signed with that endpoint's
+own secret (`STRIPE_CONNECT_WEBHOOK_SECRET`). The gateway already tries both
+secrets. Before the first non-house academy takes a payment, confirm in the
+Stripe Dashboard that a Connect endpoint exists for `/webhooks/stripe` and
+subscribes to the same payment event types as the platform endpoint.
+
+How an event is attributed (`HandleWebhookEvent._ingest_academy_id`):
+
+1. The event has a top-level `account`: its owner is looked up across every
+   academy by `MongoConnectedAccountDirectory` (read-only, platform-scoped,
+   uses the unique `academy_connected_accounts_stripe_account` index from
+   migration 0139, so no new migration). The event is stored under the owner.
+   - If `metadata.academy_id` names a different academy, the event is
+     quarantined under the owner with `quarantine_reason =
+     connect_account_metadata_conflict`. Metadata never overrides the account.
+   - If no academy owns the account, the event is stored under the boot
+     academy and the processing guard quarantines it ("unknown connected
+     account").
+2. No `account` (the house academy, and older destination charges):
+   `metadata.academy_id`, as before.
+
+While processing, the Stripe objects are read back on the event's account
+(`stripe_account=event.account`). Platform events keep the account-less calls.
+
+Find conflicting events:
+
+```js
+db.stripe_webhook_events.find(
+  { quarantine_reason: "connect_account_metadata_conflict" },
+  { event_id: 1, event_type: 1, academy_id: 1, stripe_account: 1, error_message: 1 }
+)
+```

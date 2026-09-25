@@ -36,6 +36,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
 )
 from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
+    ConnectedAccountDirectory,
     StripeCheckoutSessionNotExpirable,
     StripeGateway,
 )
@@ -97,6 +98,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_directory import (
+    MongoConnectedAccountDirectory,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
@@ -646,7 +650,11 @@ def compose_parent_webhook_handler(
         transaction_runner=transaction_runner,
         enrollment_identity=_EnrollmentBillingIdentity(),
         invoice_processing=invoice_processing,
-        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            connected_accounts_repo,
+            academy_id,
+            directory=MongoConnectedAccountDirectory(db),
+        ),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -809,7 +817,11 @@ def compose_parent(
         transaction_runner=transaction_runner,
         enrollment_identity=enrollment_identity,
         invoice_processing=invoice_processing,
-        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            connected_accounts_repo,
+            academy_id,
+            directory=MongoConnectedAccountDirectory(db),
+        ),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -2908,20 +2920,36 @@ class _StripeGatewayProto(Protocol):
 
 
 class _ConnectAccountResolver:
-    """Resolve a connected Stripe account id -> owning academy for the webhook
-    guard (Slice I). Bridges the repo method name (``get_by_stripe_account_id``)
-    to the resolver name the webhook handler expects (``academy_id_for_account``)
-    — the Slice-B name-mismatch lesson, covered by a port-drive test.
+    """Connected-account access for the webhook handler (Slice I).
+
+    ``academy_id_for_account`` answers which academy OWNS an account, across
+    every academy: direct charges deliver each academy's payment events as
+    Connect events to the one boot-academy endpoint, so ingest must attribute
+    an account it does not own, and the processing guard must be able to say
+    "this belongs to academy B" rather than "unknown". That lookup goes
+    through the platform-scoped ``ConnectedAccountDirectory``, never through
+    the tenant-scoped repo.
+
+    ``get_by_stripe_account_id`` / ``update_status`` stay tenant-scoped to the
+    handler's own academy: only the owner's processor may read or change the
+    account row. Bridges the repo method names to the resolver names the
+    handler expects — the Slice-B name-mismatch lesson, covered by a
+    port-drive test.
     """
 
-    def __init__(self, repo: MongoConnectedAccountRepository, academy_id: str) -> None:
+    def __init__(
+        self,
+        repo: MongoConnectedAccountRepository,
+        academy_id: str,
+        *,
+        directory: ConnectedAccountDirectory,
+    ) -> None:
         self._repo = repo
         self._academy_id = academy_id
+        self._directory = directory
 
     async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
-        with tenant_scope(self._academy_id):
-            account = await self._repo.get_by_stripe_account_id(stripe_account_id)
-        return account.academy_id if account else None
+        return await self._directory.owner_academy_id(stripe_account_id)
 
     async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None:
         with tenant_scope(self._academy_id):
