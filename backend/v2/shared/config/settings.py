@@ -139,6 +139,16 @@ class Settings(BaseSettings):
     stripe_connect_client_id: str | None = Field(default=None)
     stripe_connect_callback_uri: str | None = Field(default=None)
     stripe_connect_state_secret: str | None = Field(default=None)
+    house_academy_id: str | None = Field(
+        default=None,
+        description=(
+            "The one academy whose parent charges settle on the PLATFORM Stripe "
+            "account (BLNO, which is also the platform owner). Every other academy "
+            "must charge through its own connected account. Set in fly.toml so a "
+            "change is a reviewed commit plus an approved deploy. Unset keeps the "
+            "legacy per-academy billing_settings flag (local/staging only)."
+        ),
+    )
     firebase_project_id: str | None = Field(default=None)
     cors_origins: str = Field(default="")
     frontend_url: str | None = Field(default=None)
@@ -254,6 +264,10 @@ class Settings(BaseSettings):
                 "STRIPE_CONNECT_WEBHOOK_SECRET",
                 self.stripe_connect_webhook_secret,
             )
+        if "V2_HOUSE_ACADEMY_ID" not in os.environ:
+            self.house_academy_id = (
+                os.environ.get("HOUSE_ACADEMY_ID", self.house_academy_id or "") or ""
+            ).strip() or None
         if "V2_TENANCY_MODE" not in os.environ and os.environ.get("APP_TENANCY_MODE"):
             self.tenancy_mode = os.environ["APP_TENANCY_MODE"].strip().lower()  # type: ignore[assignment]
         if "V2_PRIMARY_ACADEMY_ID" not in os.environ:

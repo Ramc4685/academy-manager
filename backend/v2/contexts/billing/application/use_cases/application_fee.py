@@ -143,8 +143,8 @@ class SetApplicationFee:
     """Set one academy's application fee, with an append-only audit entry.
 
     Idempotent: writing the current value is a no-op with no audit entry.
-    The audit is written BEFORE the settings write, same rationale as
-    ``SetPlatformChargeFallback``: the fee must never change unaudited.
+    The audit is written BEFORE the settings write so the fee can never
+    change unaudited; a failed write leaves an intent record, not a gap.
     """
 
     def __init__(
