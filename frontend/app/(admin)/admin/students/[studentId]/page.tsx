@@ -664,9 +664,12 @@ function Header({
       {/* #897: on a phone "Stop all classes" sat directly beside the parent's
           tel:/mailto: links, one mis-tap from ending every enrollment. It is
           now an actions menu pinned to the card's top-right; the dialog and
-          everything it does are unchanged. */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          everything it does are unchanged.
+          On a phone the menu shares the name row and the parent's contacts
+          take the card's full width: beside the menu they wrapped WhatsApp
+          onto a third 44px row at 390px (iPhone 14), which pushed the tabs
+          below the fold. From `sm` up it is one row, as before. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-4 sm:flex sm:items-center">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar name={student.full_name} size={56} />
             <div className="min-w-0">
@@ -684,7 +687,7 @@ function Header({
               </div>
             </div>
           </div>
-          <div className="text-sm text-rally-muted">
+          <div className="col-span-2 text-sm text-rally-muted sm:ml-auto">
             {/* #839: the parent was plain text here, so the family — and every
                 invoice on it — was two clicks away via the Billing tab. */}
             {student.parent_id ? (
@@ -709,9 +712,8 @@ function Header({
               phone={student.parent_phone}
             />
           </div>
-        </div>
         <OverflowMenu
-          className="shrink-0"
+          className="col-start-2 row-start-1 shrink-0 sm:self-start"
           triggerLabel={`Actions for ${student.full_name}`}
           triggerTestId="admin-student-actions"
           items={[
