@@ -1731,7 +1731,7 @@ test.describe("Rally admin shell", () => {
     });
     // The Training tab's skill pathway reads the program catalog; the shell
     // catch-all's `{}` has no `programs` key.
-    await page.route("**/api/v2/admin/programs*", (route) => {
+    await page.route("**/api/v2/admin/curriculum/programs*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { programs: [] });
     });

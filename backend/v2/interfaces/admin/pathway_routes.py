@@ -25,6 +25,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_refs import (
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
     CreateSkillCommand,
+    ScoringType,
     UpdateSkillCommand,
 )
 from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards import (
@@ -36,6 +37,12 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin-pathway"])
+
+# Skill-program list/create live under ``/curriculum`` because the public
+# page's programs (``public_page_routes``) own ``GET/POST /admin/programs``.
+# Both routers mount on the same admin router, so a shared path silently
+# routes to whichever is included first (the #934 collision).
+CURRICULUM_PROGRAMS_PATH = "/curriculum/programs"
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +79,7 @@ class CreateSkillBody(BaseModel):
     name: str
     description: str = ""
     is_required: bool = True
-    scoring_type: str = "ATTEMPT_BASED"
+    scoring_type: ScoringType = "ATTEMPT_BASED"
     pass_threshold_pct: float = Field(default=70.0, ge=0.0, le=100.0)
     coach_override_allowed: bool = False
 
@@ -108,7 +115,7 @@ class AddExternalRefBody(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.post("/programs", status_code=201)
+@router.post(CURRICULUM_PROGRAMS_PATH, status_code=201)
 async def create_program(
     body: CreateProgramBody,
     claims: AuthClaims = Depends(require_persona("admin")),
@@ -127,7 +134,7 @@ async def create_program(
     return program.model_dump()
 
 
-@router.get("/programs")
+@router.get(CURRICULUM_PROGRAMS_PATH)
 async def list_programs(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),

@@ -215,9 +215,14 @@ export interface SkillCertificate {
 // Admin — curriculum
 // ---------------------------------------------------------------------------
 
+// Skill programs live under /admin/curriculum/programs. The bare
+// /admin/programs path belongs to the public page's programs (see
+// lib/api/admin.ts); the two used to collide and the public page won.
+export const CURRICULUM_PROGRAMS_PATH = "/admin/curriculum/programs";
+
 export function listPrograms(academyId: string): Promise<Program[]> {
   return apiFetch<{ programs: Program[] }>(
-    `/admin/programs?academy_id=${encodeURIComponent(academyId)}`,
+    `${CURRICULUM_PROGRAMS_PATH}?academy_id=${encodeURIComponent(academyId)}`,
     { method: "GET" },
   ).then((d) => d.programs);
 }
@@ -227,7 +232,7 @@ export function createProgram(body: {
   sport: string;
   description: string;
 }): Promise<Program> {
-  return apiFetch<Program>("/admin/programs", {
+  return apiFetch<Program>(CURRICULUM_PROGRAMS_PATH, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -255,16 +260,52 @@ export function createLevel(
   );
 }
 
-export function createSkill(
-  levelId: string,
-  body: {
+// Mirrors the backend ScoringType literal
+// (backend/v2/contexts/curriculum/domain/models.py).
+export const SKILL_SCORING_TYPES = [
+  { value: "ATTEMPT_BASED", label: "Attempts (pass %)" },
+  { value: "CHECKLIST_BASED", label: "Checklist" },
+  { value: "COACH_APPROVAL", label: "Coach approval" },
+  { value: "RALLY_COUNT", label: "Rally count" },
+  { value: "TIME_BASED", label: "Time based" },
+  { value: "POINTS_BASED", label: "Points based" },
+] as const;
+
+export type SkillScoringType = (typeof SKILL_SCORING_TYPES)[number]["value"];
+
+export interface CreateSkillBody {
+  program_id: string;
+  sequence: number;
+  name: string;
+  description: string;
+  is_required: boolean;
+  scoring_type: SkillScoringType;
+  pass_threshold_pct?: number;
+}
+
+// The new skill goes after the level's existing skills.
+export function buildCreateSkillBody(
+  level: Pick<Level, "program_id">,
+  existingSkills: ReadonlyArray<Pick<Skill, "sequence">>,
+  form: {
     name: string;
     description: string;
     is_required: boolean;
-    scoring_type: string;
-    pass_threshold_pct?: number;
+    scoring_type: SkillScoringType;
   },
-): Promise<Skill> {
+): CreateSkillBody {
+  const lastSequence = existingSkills.reduce((max, s) => Math.max(max, s.sequence), 0);
+  return {
+    program_id: level.program_id,
+    sequence: lastSequence + 1,
+    name: form.name.trim(),
+    description: form.description.trim(),
+    is_required: form.is_required,
+    scoring_type: form.scoring_type,
+  };
+}
+
+export function createSkill(levelId: string, body: CreateSkillBody): Promise<Skill> {
   return apiFetch<Skill>(
     `/admin/levels/${encodeURIComponent(levelId)}/skills`,
     { method: "POST", body: JSON.stringify(body) },
