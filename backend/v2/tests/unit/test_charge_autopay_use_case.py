@@ -1519,11 +1519,11 @@ def _ach_line_cents(repo: FakeLedgerRepo) -> int:
     )
 
 
-async def test_ach_discount_base_on_a_tuition_discounted_month_pins_current_behavior() -> None:
-    """PIN (2026-09-25): the first attempt bases the ACH discount on the header's
-    GROSS subtotal ($100 → -$2.50), a retry that finds the line already written
-    bases it on the non-ACH lines, which are NET of the sibling discount
-    ($80 → -$2.00). The same month gets two different cash discounts."""
+async def test_ach_discount_base_is_the_price_after_the_tuition_discount_on_every_attempt() -> None:
+    """The ACH cash discount is a percentage of the price after the tuition
+    discount (owner decision 2026-09-25): $100 month, $20 sibling discount, 2.5%
+    → -$2.00 on the first attempt AND on a retry. The first attempt used to base
+    it on the header's GROSS subtotal (-$2.50) and a retry rewrote it to -$2.00."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     _seed_generator_discounted_month(repo)
 
@@ -1533,5 +1533,36 @@ async def test_ach_discount_base_on_a_tuition_discounted_month_pins_current_beha
     await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
     retry_cents = _ach_line_cents(repo)
 
-    assert first_attempt_cents == -250
+    assert first_attempt_cents == -200
     assert retry_cents == -200
+
+
+async def test_ach_discount_base_subtracts_a_header_only_discount() -> None:
+    """A header-only ``discount_cents`` with no discount line is still a tuition
+    discount the family does not pay, so the ACH base excludes it too."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={"discount_cents": 2_000, "total_cents": 8_000, "balance_due_cents": 8_000}
+    )
+    repo.lines_by_invoice["inv-1"] = [
+        InvoiceLine(
+            line_id="line-tuition",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="tuition",
+            description="Tuition",
+            quantity=1,
+            unit_amount_cents=10_000,
+            amount_cents=10_000,
+            source_type="manual",
+            source_id=None,
+            created_at=NOW,
+        )
+    ]
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    first_attempt_cents = _ach_line_cents(repo)
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+
+    assert first_attempt_cents == -200
+    assert _ach_line_cents(repo) == -200
