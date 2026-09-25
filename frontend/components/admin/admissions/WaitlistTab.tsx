@@ -15,7 +15,7 @@ import { Chip } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
-import { offerExpiryLabel } from "@/lib/admin/waitlist-offer";
+import { SEATLESS_OFFER_NOTE, offerExpiryLabel } from "@/lib/admin/waitlist-offer";
 
 function formatDate(isoString: string): string {
   return new Date(isoString).toLocaleDateString([], { month: "short", day: "numeric" });
@@ -146,7 +146,10 @@ function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
               secondary={
                 <>
                   {offer ? (
-                    <div>{offerExpiryLabel(entry.offer_expires_at)}</div>
+                    <div>
+                      {offerExpiryLabel(entry.offer_expires_at)}
+                      {entry.offer_holds_seat === false && <div>{SEATLESS_OFFER_NOTE}</div>}
+                    </div>
                   ) : (
                     <div>Joined {formatDate(entry.added_at)}</div>
                   )}
@@ -202,6 +205,9 @@ function WaitlistRow({
           <div className="mt-1 text-[12px] font-semibold text-rally-ink">
             {offerExpiryLabel(entry.offer_expires_at) ?? "Held"}
           </div>
+          {entry.offer_holds_seat === false && (
+            <div className="mt-1 text-[12px] text-status-amber-800">{SEATLESS_OFFER_NOTE}</div>
+          )}
         </div>
       ) : (
         <div>

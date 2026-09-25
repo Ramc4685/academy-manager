@@ -38,6 +38,10 @@ from backend.v2.contexts.enrollment.application.ports import (
     WaitlistOfferNotifier,
     WaitlistRepository,
 )
+from backend.v2.contexts.enrollment.application.seat_broker import (
+    SeatAcquisition,
+    SeatBroker,
+)
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
     record_promotion,
@@ -46,8 +50,10 @@ from backend.v2.contexts.enrollment.domain.errors import (
     WaitlistOfferExpired,
     WaitlistOfferNotFound,
     WaitlistOfferNotOpen,
+    WaitlistOfferSeatUnavailable,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment
+from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
 
@@ -57,7 +63,12 @@ Clock = Callable[[], datetime]
 
 
 class ConfirmWaitlistOffer:
-    """``offered`` -> ``promoted``: the family takes the seat being held."""
+    """``offered`` -> ``promoted``: the family takes the seat being held.
+
+    A seatless offer (X2) takes its seat here, through the ``SeatBroker``:
+    this is the one moment a held family may lose their seat to a waitlist
+    family, because this family has actually said yes.
+    """
 
     def __init__(
         self,
@@ -68,6 +79,8 @@ class ConfirmWaitlistOffer:
         academy_id: Callable[[], str],
         enrollment_events: EnrollmentEventRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        sessions: SessionWriter | None = None,
+        seat_broker: SeatBroker | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._waitlist = waitlist
@@ -76,7 +89,39 @@ class ConfirmWaitlistOffer:
         self._academy_id = academy_id
         self._enrollment_events = enrollment_events
         self._roster_notifier = roster_notifier
+        self._sessions = sessions
+        # Attached by main.py after composition, like every other seat taker.
+        self._seat_broker = seat_broker
         self._now = clock
+
+    def set_seat_broker(self, seat_broker: SeatBroker) -> None:
+        self._seat_broker = seat_broker
+
+    async def _take_seat(self, entry: WaitlistEntry) -> tuple[bool, SeatAcquisition | None]:
+        """The seat a seatless offer never held. Reclaims a hold when the
+        class is still full only of holds (policy permitting)."""
+        if self._seat_broker is not None:
+            acquisition = await self._seat_broker.acquire(
+                entry.session_id, requested_by=f"waitlist_offer_confirm:{entry.waitlist_id}"
+            )
+            return acquisition.granted, acquisition
+        if self._sessions is not None:
+            return await self._sessions.try_reserve_seat(entry.session_id), None
+        return False, None
+
+    async def _give_seat_back(
+        self, entry: WaitlistEntry, acquisition: SeatAcquisition | None
+    ) -> None:
+        try:
+            if self._seat_broker is not None and acquisition is not None:
+                await self._seat_broker.release(acquisition)
+            elif self._sessions is not None:
+                await self._sessions.release_seat(entry.session_id)
+        except Exception:  # pragma: no cover - defensive
+            log.exception(
+                "enrollment.waitlist_confirm_seat_release_failed",
+                extra={"waitlist_id": entry.waitlist_id},
+            )
 
     async def execute(
         self,
@@ -115,22 +160,43 @@ class ConfirmWaitlistOffer:
             raise WaitlistOfferExpired(f"The offer on {waitlist_id} has expired")
 
         academy_id = self._academy_id()
-        if existing is not None and existing.status == "active":
-            enrollment = existing
-        elif existing is not None:
-            await self._enrollments.update_status(existing.enrollment_id, "active")
-            enrollment = existing.model_copy(update={"status": "active"})
-        else:
-            # No seat arithmetic: the offer has been holding this seat since
-            # PromoteFromWaitlist reserved it.
-            enrollment = Enrollment(
-                enrollment_id=str(new_ulid()),
-                academy_id=academy_id,
-                session_id=entry.session_id,
-                student_id=entry.student_id,
-                status="active",
-            )
-            await self._enrollments.create(enrollment)
+        took_seat = False
+        acquisition: SeatAcquisition | None = None
+        if not entry.offer_holds_seat and not (
+            existing is not None and existing.status == "active"
+        ):
+            took_seat, acquisition = await self._take_seat(entry)
+            if not took_seat:
+                # Nothing left to reclaim (the held family came back, or the
+                # policy changed). Their place in the queue is kept: back to
+                # waiting, still first by joined_at.
+                await self._waitlist.transition_status(
+                    waitlist_id, expected="offered", to="waiting"
+                )
+                raise WaitlistOfferSeatUnavailable(
+                    f"No seat is free for waitlist entry {waitlist_id} any more"
+                )
+        try:
+            if existing is not None and existing.status == "active":
+                enrollment = existing
+            elif existing is not None:
+                await self._enrollments.update_status(existing.enrollment_id, "active")
+                enrollment = existing.model_copy(update={"status": "active"})
+            else:
+                # No further seat arithmetic: the offer held this seat since
+                # PromoteFromWaitlist reserved it, or _take_seat just took it.
+                enrollment = Enrollment(
+                    enrollment_id=str(new_ulid()),
+                    academy_id=academy_id,
+                    session_id=entry.session_id,
+                    student_id=entry.student_id,
+                    status="active",
+                )
+                await self._enrollments.create(enrollment)
+        except BaseException:
+            if took_seat:
+                await self._give_seat_back(entry, acquisition)
+            raise
 
         await record_promotion(
             entry,
@@ -184,7 +250,9 @@ class SweepExpiredWaitlistOffers:
             ):
                 continue
             try:
-                await self._sessions.release_seat(entry.session_id)
+                # A seatless offer (X2) never took one; nothing to give back.
+                if entry.offer_holds_seat:
+                    await self._sessions.release_seat(entry.session_id)
             except Exception:
                 log.exception(
                     "enrollment.waitlist_offer_seat_release_failed",
@@ -280,7 +348,8 @@ class DeclineWaitlistOffer:
                 return False
             raise WaitlistOfferNotOpen(f"Waitlist entry {waitlist_id} is not an open offer")
 
-        await self._sessions.release_seat(entry.session_id)
+        if entry.offer_holds_seat:
+            await self._sessions.release_seat(entry.session_id)
         # Hand the seat to the next family. Best-effort: the decline itself
         # has landed, and a failed re-offer leaves a free seat the next
         # cancellation or the admin "Promote" button will fill.

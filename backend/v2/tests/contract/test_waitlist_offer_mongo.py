@@ -113,3 +113,69 @@ async def test_parent_list_is_scoped_ordered_and_hides_old_or_closed_rows(real_d
     assert offer["student_name"] == "Asha Rao"
     assert offer["offer_expires_at"] is not None
     assert rows[1]["student_name"] == "Your child"  # no student doc: honest fallback
+
+
+@pytest.mark.asyncio
+async def test_a_seatless_offer_round_trips_and_is_counted(real_db) -> None:
+    await _row(real_db, "acad-a", "wl-1")
+    await _row(real_db, "acad-a", "wl-2")
+    await _row(real_db, "acad-a", "legacy", status="offered", offer_expires_at=NOW)
+    repo = MongoWaitlistRepository(real_db)
+
+    with tenant_scope("acad-a"):
+        await repo.mark_offered("wl-1", offer_expires_at=NOW, holds_seat=False)
+        await repo.mark_offered("wl-2", offer_expires_at=NOW)
+        seatless = await repo.get("wl-1")
+        held = await repo.get("wl-2")
+        legacy = await repo.get("legacy")
+        count = await repo.count_seatless_offers("sess-1")
+    with tenant_scope("acad-b"):
+        other_tenant = await repo.count_seatless_offers("sess-1")
+
+    assert seatless is not None and seatless.offer_holds_seat is False
+    assert held is not None and held.offer_holds_seat is True
+    # Rows offered before X2 have no field: they DID hold a seat.
+    assert legacy is not None and legacy.offer_holds_seat is True
+    assert count == 1
+    assert other_tenant == 0
+
+
+@pytest.mark.asyncio
+async def test_count_reclaimable_matches_what_claim_longest_held_could_take(real_db) -> None:
+    from backend.v2.contexts.enrollment.infrastructure.mongo_hold_repo import MongoHoldRepository
+
+    base = {"academy_id": "acad-a", "session_id": "sess-1", "hold_seq": 1}
+    await real_db["enrollments"].insert_many(
+        [
+            {
+                **base,
+                "enrollment_id": "h1",
+                "student_id": "s1",
+                "status": "held",
+                "hold_started_at": NOW,
+                "hold_reclaim_claimed_at": None,
+            },
+            {
+                **base,
+                "enrollment_id": "h2",
+                "student_id": "s2",
+                "status": "held",
+                "hold_started_at": NOW,
+                "hold_reclaim_claimed_at": NOW,
+            },
+            {**base, "enrollment_id": "a1", "student_id": "s3", "status": "active"},
+            {
+                **base,
+                "academy_id": "acad-b",
+                "enrollment_id": "hb",
+                "student_id": "s4",
+                "status": "held",
+                "hold_started_at": NOW,
+                "hold_reclaim_claimed_at": None,
+            },
+        ]
+    )
+    holds = MongoHoldRepository(real_db)
+
+    with tenant_scope("acad-a"):
+        assert await holds.count_reclaimable("sess-1") == 1

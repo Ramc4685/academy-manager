@@ -33,3 +33,8 @@ class WaitlistEntry(BaseModel):
     #: Set only while ``status == "offered"`` (#828): the instant the held seat
     #: is released back to the next family if nobody confirms.
     offer_expires_at: datetime | None = None
+    #: X2 (owner decision 2026-09-25): ``False`` for an offer made while the
+    #: class was full only of holds. No seat is taken — and no held family is
+    #: dropped — until the family confirms; ``ConfirmWaitlistOffer`` then gets
+    #: the seat through the ``SeatBroker``. Rows written before X2 held a seat.
+    offer_holds_seat: bool = True

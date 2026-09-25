@@ -237,3 +237,15 @@ def test_skip_on_a_waiting_row_is_still_a_plain_status_write(admin_client):
     assert admin_client.post("/api/v2/admin/waitlist/w1/skip").status_code == 204
     assert seed["waitlist"].entries["w1"].status == "skipped"
     assert seed["sessions"].reserved == before
+
+
+def test_a_seatless_offer_is_flagged_for_staff(admin_client):
+    """X2: an offer made while the class was full of holds holds no seat; the
+    row says so, because confirming it will reclaim a held family's seat."""
+    _offer(admin_client.seed, "seatless", datetime(2026, 5, 19, 12, 0, tzinfo=UTC))
+    entries = admin_client.seed["waitlist"].entries
+    entries["seatless"] = entries["seatless"].model_copy(update={"offer_holds_seat": False})
+
+    [row] = admin_client.get("/api/v2/admin/sessions/sess-1/waitlist").json()["entries"]
+
+    assert row["offer_holds_seat"] is False

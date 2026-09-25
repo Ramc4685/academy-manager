@@ -315,6 +315,11 @@ export interface AdminWaitlistEntry {
   added_at: string;
   /** Set while `status === "offered"`: when the held seat moves on. */
   offer_expires_at?: string | null;
+  /**
+   * X2: false = the class was full of holds, so no seat is held for this
+   * offer; a held family's seat is reclaimed only if this family confirms.
+   */
+  offer_holds_seat?: boolean;
 }
 
 export interface AdminWaitlistList {

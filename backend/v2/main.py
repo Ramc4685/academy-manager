@@ -731,6 +731,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # is the same shape of seat demand as the routes above: a class full only
     # because of holds must reclaim, not force an auto-refund.
     app.state.parent.confirm_enrollment.set_seat_broker(_holds.seat_broker)
+    # X2 (owner decision 2026-09-25): a waitlist OFFER never reclaims a hold;
+    # a seatless offer takes its seat when the family confirms, through the
+    # broker, so the held family is only dropped for a family that said yes.
+    app.state.parent.confirm_waitlist_offer.set_seat_broker(_holds.seat_broker)
     # Issue #704 (second-review correction): the coach roster-add path
     # delegates to its own EditRosterAdd instance (composition/coach.py) —
     # a sixth try_reserve_seat call site the original structural wiring test

@@ -133,6 +133,29 @@ test.describe("parent — waitlist seat offer", () => {
     await expect(page.getByTestId("waitlist-offer-error")).toContainText("next family");
   });
 
+  test("a seat that filled up again keeps the family first in line", async ({ page }) => {
+    await stubParent(page, [offerRow()]);
+    await page.route(`**/api/v2/parent/waitlist/${OFFER_ID}/confirm`, (route) =>
+      json(
+        route,
+        {
+          error: {
+            code: "Enrollment.WaitlistOfferSeatUnavailable",
+            message: "No seat is free any more",
+          },
+        },
+        409,
+      ),
+    );
+
+    await page.goto(`/parent/requests?offer=${OFFER_ID}`);
+    await page.getByTestId("waitlist-offer-confirm").click();
+
+    await expect(page.getByTestId("waitlist-offer-error")).toContainText(
+      "still first on the waitlist",
+    );
+  });
+
   test("an expired row explains itself and offers no buttons", async ({ page }) => {
     await stubParent(page, [
       offerRow({ status: "expired", offer_expires_at: "2026-09-20T12:00:00Z" }),

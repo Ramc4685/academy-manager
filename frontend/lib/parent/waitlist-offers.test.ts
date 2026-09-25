@@ -77,6 +77,7 @@ describe("classifyOfferError", () => {
     ["Enrollment.WaitlistOfferExpired", "expired"],
     ["Enrollment.WaitlistOfferNotOpen", "taken"],
     ["Enrollment.WaitlistOfferNotFound", "not_found"],
+    ["Enrollment.WaitlistOfferSeatUnavailable", "seat_gone"],
     ["Something.Else", "unknown"],
   ])("%s -> %s", (code, failure) => {
     expect(classifyOfferError(Object.assign(new Error("x"), { status: 409, code }))).toBe(failure);
@@ -85,6 +86,10 @@ describe("classifyOfferError", () => {
   it("copes with a plain error or nothing", () => {
     expect(classifyOfferError(new Error("offline"))).toBe("unknown");
     expect(classifyOfferError(null)).toBe("unknown");
+  });
+
+  it("tells a family whose seat vanished that they kept their place", () => {
+    expect(offerFailureMessage("seat_gone")).toMatch(/still first on the waitlist/);
   });
 
   it("tells an expired family the seat moved on and whom to ask", () => {

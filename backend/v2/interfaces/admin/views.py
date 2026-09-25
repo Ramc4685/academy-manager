@@ -719,6 +719,9 @@ class AdminWaitlistEntry(BaseModel):
     # X2: set while ``status == "offered"`` — the seat is held for this
     # family until then, then the hourly sweep offers it onward.
     offer_expires_at: datetime | None = None
+    # X2: False = the class was full of holds; a hold is reclaimed only if
+    # this family confirms (no seat is held for them meanwhile).
+    offer_holds_seat: bool = True
 
 
 class AdminWaitlistList(BaseModel):

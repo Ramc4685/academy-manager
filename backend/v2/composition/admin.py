@@ -3010,6 +3010,7 @@ def compose_admin(
                     "added_at": entry.joined_at,
                     "status": entry.status,
                     "offer_expires_at": entry.offer_expires_at,
+                    "offer_holds_seat": entry.offer_holds_seat,
                     "position": idx,
                     "full_name": student.full_name if student else "(unknown)",
                 }

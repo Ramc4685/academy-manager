@@ -81,6 +81,7 @@ def _normalize_waitlist_entries(entries: object) -> list[AdminWaitlistEntry]:
             "added_at": e.joined_at,
             "status": e.status,
             "offer_expires_at": e.offer_expires_at,
+            "offer_holds_seat": e.offer_holds_seat,
         }
         for e in entries
     ]

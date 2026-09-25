@@ -52,13 +52,16 @@ export function offerIsOpen(entry: ParentWaitlistEntry, now: number): boolean {
   return entry.status === "offered" && msUntil(entry.offer_expires_at, now) > 0;
 }
 
-export type OfferFailure = "expired" | "taken" | "not_found" | "unknown";
+export type OfferFailure = "expired" | "taken" | "seat_gone" | "not_found" | "unknown";
 
 /** Map the backend's refusal onto the story the family is told. */
 export function classifyOfferError(error: unknown): OfferFailure {
   const code = (error as Partial<ApiError> | null)?.code;
   if (code === "Enrollment.WaitlistOfferExpired") return "expired";
   if (code === "Enrollment.WaitlistOfferNotOpen") return "taken";
+  // X2: the class filled up again before the family confirmed. They are
+  // back at the front of the waitlist, not dropped from it.
+  if (code === "Enrollment.WaitlistOfferSeatUnavailable") return "seat_gone";
   if (code === "Enrollment.WaitlistOfferNotFound") return "not_found";
   return "unknown";
 }
@@ -69,6 +72,8 @@ export function offerFailureMessage(failure: OfferFailure): string {
       return "This offer has expired, and the seat has gone to the next family on the waitlist. Please contact the academy if you would still like a place.";
     case "taken":
       return "This offer is no longer open. It may already have been confirmed or declined.";
+    case "seat_gone":
+      return "Sorry, the seat is no longer available. You are still first on the waitlist, and we will email you as soon as another seat opens.";
     case "not_found":
       return "We could not find this offer on your account. Check that you are signed in as the parent the email was sent to.";
     default:

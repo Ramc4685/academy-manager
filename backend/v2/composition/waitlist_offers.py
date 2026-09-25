@@ -53,6 +53,9 @@ def compose_confirm_waitlist_offer(db: Any, settings: Any) -> ConfirmWaitlistOff
         outbox=MongoOutbox(db),
         enrollment_events=MongoEnrollmentEventRepository(db),
         roster_notifier=compose_roster_notifier(db, settings),
+        # A seatless offer (X2) takes its seat at confirm; main.py attaches
+        # the SeatBroker so that can reclaim a hold.
+        sessions=MongoSessionWriter(db),
         # Request-time tenant, never the boot value (#532).
         academy_id=current_academy_id,
     )

@@ -49,9 +49,22 @@ class FakeWaitlist:
     async def update_status(self, waitlist_id: str, status: str) -> None:
         self.entries[waitlist_id] = self.entries[waitlist_id].model_copy(update={"status": status})
 
-    async def mark_offered(self, waitlist_id: str, *, offer_expires_at: datetime) -> None:
+    async def mark_offered(
+        self, waitlist_id: str, *, offer_expires_at: datetime, holds_seat=True
+    ) -> None:
         self.entries[waitlist_id] = self.entries[waitlist_id].model_copy(
-            update={"status": "offered", "offer_expires_at": offer_expires_at}
+            update={
+                "status": "offered",
+                "offer_expires_at": offer_expires_at,
+                "offer_holds_seat": holds_seat,
+            }
+        )
+
+    async def count_seatless_offers(self, session_id):
+        return sum(
+            1
+            for e in self.entries.values()
+            if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
         )
 
     async def find_expired_offers(self, *, before: datetime) -> list[WaitlistEntry]:

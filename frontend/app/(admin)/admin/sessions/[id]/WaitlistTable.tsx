@@ -5,7 +5,7 @@ import { type AdminWaitlistEntry, type WaitlistStatus } from "@/lib/api/admin";
 import { Button } from "@/components/ds/button";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Th } from "@/components/ds/dialog-chrome";
-import { offerExpiryLabel } from "@/lib/admin/waitlist-offer";
+import { SEATLESS_OFFER_NOTE, offerExpiryLabel } from "@/lib/admin/waitlist-offer";
 
 import { actionCellClass, actionHeaderClass } from "./format";
 
@@ -60,6 +60,9 @@ export function WaitlistTable({
                     >
                       {offerExpiryLabel(w.offer_expires_at)}
                     </div>
+                  )}
+                  {w.status === "offered" && w.offer_holds_seat === false && (
+                    <div className="mt-1 text-[12px] text-status-amber-800">{SEATLESS_OFFER_NOTE}</div>
                   )}
                 </td>
                 <td className={`${actionCellClass} bg-white`}>
