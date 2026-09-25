@@ -34,6 +34,7 @@ from backend.v2.composition.waitlist_offers import compose_confirm_waitlist_offe
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
     StripeCheckoutSessionNotExpirable,
     StripeGateway,
@@ -45,7 +46,6 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
     idempotency_key_with_fee,
-    resolve_application_fee_cents,
 )
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
@@ -1875,7 +1875,7 @@ def compose_parent(
         redirect_success_url = _success_url_with_checkout_session_placeholder(success_url)
         result = await SendInvoice(
             ledger=billing_ledger_repo,
-            stripe=invoice_stripe,  # type: ignore[arg-type]
+            stripe=invoice_stripe,
             email=None,
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
@@ -1929,57 +1929,42 @@ def compose_parent(
             # No Stripe wiring at all — nothing is broken, this academy just
             # does not collect online. Same 409, no failure recorded.
             raise InvoicePayLinkUnavailable("balance payment unavailable")
-        # Destination-charge routing (Slice I posture): funds must settle to the
-        # academy's connected account; refuse a platform charge if not ready
-        # unless the temporary allow_platform_charge_fallback escape hatch is on.
-        account = await connected_accounts_repo.get_for_academy()
-        connected_account_stripe_id: str | None = None
-        if account is not None and account.is_ready_for_charges():
-            connected_account_stripe_id = account.stripe_account_id
-        else:
-            fallback_enabled = False
-            try:
-                fallback_enabled = (
-                    await billing_settings_repo.get()
-                ).allow_platform_charge_fallback
-            except Exception as exc:
-                log.warning(
-                    "start_balance_payment: billing settings lookup failed; keeping "
-                    "fail-closed connected-account requirement parent=%s err=%s",
+        # One routing rule (billing/application/charge_route.py): the house
+        # academy charges on the platform; any other academy needs a
+        # charge-ready connected account or the pay link is refused.
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context=f"start_balance_payment parent={parent_id}",
+        )
+        if route.refused:
+            # Same split as SendInvoice (issue #426): an academy with no
+            # Connect account at all has simply never onboarded online
+            # payments — nothing is broken, so record nothing. An account
+            # that EXISTS but cannot charge is a real, operator-visible
+            # failure.
+            account_exists = route.kind == "account_not_ready"
+            if account_exists:
+                log.error(
+                    "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
+                    "— connected account not ready",
                     parent_id,
-                    exc,
+                    len(payable),
                 )
-            if not fallback_enabled:
-                # Same split as SendInvoice (issue #426): an academy with no
-                # Connect account at all has simply never onboarded online
-                # payments — nothing is broken, so record nothing. An account
-                # that EXISTS but cannot charge is a real, operator-visible
-                # failure.
-                if account is not None:
-                    log.error(
-                        "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
-                        "— connected account not ready",
-                        parent_id,
-                        len(payable),
-                    )
-                    await record_checkout_mint_failure(
-                        billing_ledger_repo,
-                        invoices=payable,
-                        failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
-                        failure_message=(
-                            "Academy Stripe connected account exists but is not ready for "
-                            "charges, and platform-charge fallback is off."
-                        ),
-                    )
-                raise InvoicePayLinkUnavailable(
-                    "balance payment unavailable",
-                    reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account is not None else None),
+                await record_checkout_mint_failure(
+                    billing_ledger_repo,
+                    invoices=payable,
+                    failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+                    failure_message=(
+                        "Academy Stripe connected account exists but is not ready for "
+                        "charges, and platform-charge fallback is off."
+                    ),
                 )
-            log.warning(
-                "start_balance_payment: connected account not ready — falling back to "
-                "PLATFORM charge (allow_platform_charge_fallback=on) parent=%s",
-                parent_id,
+            raise InvoicePayLinkUnavailable(
+                "balance payment unavailable",
+                reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account_exists else None),
             )
+        connected_account_stripe_id = route.connected_account_id
         currencies = {inv.currency for inv in payable}
         if len(currencies) != 1:
             raise ValueError("cannot pay invoices with mixed currencies in one checkout")
@@ -2013,11 +1998,7 @@ def compose_parent(
                 "autopay_enrollment_ids": active_ids,
             }
         # Roadmap L9b: the academy's platform application fee (0 by default).
-        fee_cents = await resolve_application_fee_cents(
-            billing_settings_repo,
-            amount_cents=total_cents,
-            connected_account_id=connected_account_stripe_id,
-        )
+        fee_cents = route.application_fee_cents(total_cents)
         idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
         # Same reasoning as the single-invoice path (issue #635): every return
         # needs a checkout_session_id so the settlement poll can run, and the

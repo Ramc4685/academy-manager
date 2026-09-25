@@ -388,6 +388,17 @@ class StripeTransientFailure(ValueError):
 
 
 class StripeGateway(Protocol):
+    """Stripe anti-corruption port.
+
+    Account dimension: every method touching Checkout Sessions, Customers,
+    PaymentIntents, SetupIntents, PaymentMethods or Refunds takes an optional
+    ``stripe_account``. ``None`` means the PLATFORM account (the house academy)
+    and must produce exactly the platform call; a connected account id sends
+    the Stripe-Account header, so the object is created on / read from that
+    account. Stripe objects are account-scoped: an id minted on one account is
+    ``resource_missing`` on every other account.
+    """
+
     async def create_checkout_session(
         self,
         *,
@@ -399,6 +410,7 @@ class StripeGateway(Protocol):
         metadata: dict[str, str],
         connected_account_id: str | None = None,
         application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url).
 
@@ -409,7 +421,9 @@ class StripeGateway(Protocol):
         larger than ``amount_cents``, raises ``ValueError``.
         """
 
-    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+    async def expire_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> None:
         """Expire an open Checkout Session so it can never be paid.
 
         Called when a newer session supersedes it: two live sessions for the
@@ -430,6 +444,7 @@ class StripeGateway(Protocol):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str]:
         """Returns (checkout_session_id, redirect_url, stripe_subscription_id)."""
 
@@ -443,11 +458,36 @@ class StripeGateway(Protocol):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url) for saved-card setup.
 
         When ``connected_account_id`` is set, the eventual off-session charges
         route to that connected academy account (``setup_intent_data.on_behalf_of``).
+        """
+
+    async def create_invoice_checkout_session(
+        self,
+        *,
+        invoice_id: str,
+        amount_cents: int,
+        currency: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+        idempotency_key: str | None = None,
+        connected_account_id: str | None = None,
+        save_payment_method_for_autopay: bool = False,
+        autopay_enrollment_ids: list[str] | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
+    ) -> tuple[str, str]:
+        """Returns (checkout_session_id, redirect_url) for a ledger-invoice payment.
+
+        ``connected_account_id`` makes it a destination charge (``on_behalf_of``
+        + ``transfer_data.destination``, ``application_fee_amount``).
+        ``save_payment_method_for_autopay`` saves the payment method for
+        off-session autopay against an always-created customer.
         """
 
     async def create_customer_portal_session(
@@ -456,12 +496,15 @@ class StripeGateway(Protocol):
         parent_id: str,
         return_url: str,
         stripe_customer_id: str | None,
+        stripe_account: str | None = None,
     ) -> str:
         """Returns portal redirect URL."""
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]: ...
 
-    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+    async def retrieve_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe Checkout Session state for reconciliation."""
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
@@ -480,13 +523,19 @@ class StripeGateway(Protocol):
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         """Fetch current Stripe subscription state for reconciliation."""
 
-    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+    async def retrieve_payment_intent(
+        self, stripe_payment_intent_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe PaymentIntent state for reconciliation."""
 
-    async def retrieve_setup_intent(self, stripe_setup_intent_id: str) -> dict[str, Any]:
+    async def retrieve_setup_intent(
+        self, stripe_setup_intent_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe SetupIntent state for saved-payment-method setup."""
 
-    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+    async def retrieve_payment_method(
+        self, stripe_payment_method_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe PaymentMethod state for saved-payment-method setup."""
 
     async def set_customer_default_payment_method(
@@ -495,6 +544,7 @@ class StripeGateway(Protocol):
         stripe_customer_id: str,
         stripe_payment_method_id: str,
         metadata: dict[str, str],
+        stripe_account: str | None = None,
     ) -> None:
         """Set the Customer default PM used by off-session autopay charges."""
 
@@ -509,7 +559,7 @@ class StripeGateway(Protocol):
         """
 
     async def list_charges_for_customer(
-        self, *, stripe_customer_id: str, limit: int = 100
+        self, *, stripe_customer_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
         """List a customer's recent succeeded charges (legacy invoice match candidates).
 
@@ -524,6 +574,7 @@ class StripeGateway(Protocol):
         amount_cents: int | None,
         *,
         idempotency_key: str | None = None,
+        stripe_account: str | None = None,
     ) -> str:
         """Returns Stripe refund id.
 
@@ -608,6 +659,7 @@ class StripeGateway(Protocol):
         metadata: dict[str, str],
         connected_account_id: str | None = None,
         application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         """Confirm an off-session autopay charge; returns (pi_id, status, decline_code).
 
@@ -618,6 +670,13 @@ class StripeGateway(Protocol):
         fee without a connected account, or one larger than ``amount_cents``,
         raises ``ValueError``. Customers live on the platform.
         """
+        ...
+
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str, stripe_account: str | None = None
+    ) -> tuple[str, str] | None:
+        """(stripe_customer_id, default payment_method_id) for a parent's saved
+        card on ``stripe_account`` (platform when None), or None."""
         ...
 
 

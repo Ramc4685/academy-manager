@@ -32,6 +32,7 @@ from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices imp
     ConfirmLegacyMatch,
     ConfirmLegacyMatchCommand,
 )
+from backend.v2.contexts.billing.domain.charge_route import decide_charge_route
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -144,7 +145,11 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             unavailable.append(CHECK_AUTOPAY_DISABLE)
 
         ready = bool(account and account.is_ready_for_charges())
-        payments_possible = ready or fallback_allowed
+        # Same routing rule the charge paths use (domain/charge_route.py): the
+        # house academy charges on the platform; anyone else needs a ready
+        # connected account.
+        route = decide_charge_route(is_house_academy=fallback_allowed, account=account)
+        payments_possible = route.payments_possible
 
         verdict = evaluate_billing_health(
             payments_possible=payments_possible,
@@ -176,7 +181,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             # platform fallback is on — in which case the money lands on the
             # platform account instead of theirs.
             "payments_possible": payments_possible,
-            "funds_route_to_academy": ready,
+            "funds_route_to_academy": route.is_connected,
             "webhook_events": stuck,
             "autopay_disable_failures": disable_failures,
             "health": verdict.as_dict(),

@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
     AutopayConsentRepository,
     BillingSettingsRepository,
@@ -627,32 +628,16 @@ class StartSubscriptionCheckout:
         )
 
     async def _ready_connected_account_id(self) -> str | None:
-        if self._connected_accounts is None:
-            return None
-        account = await self._connected_accounts.get_for_academy()
-        if account is None or not account.is_ready_for_charges():
-            if await self._platform_fallback_enabled():
-                log.warning(
-                    "start_subscription_checkout: connected account not ready — falling back "
-                    "to PLATFORM charge (allow_platform_charge_fallback=on)"
-                )
-                return None
+        route = await resolve_charge_route(
+            connected_accounts=self._connected_accounts,
+            settings=self._settings,
+            context="start_subscription_checkout",
+        )
+        if route.refused:
             raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
-        return account.stripe_account_id
-
-    async def _platform_fallback_enabled(self) -> bool:
-        if self._settings is None:
-            return False
-        try:
-            settings = await self._settings.get()
-        except Exception as exc:
-            log.warning(
-                "start_subscription_checkout: billing settings lookup failed; keeping "
-                "fail-closed connected-account requirement err=%s",
-                exc,
-            )
-            return False
-        return settings.allow_platform_charge_fallback
+        # Platform (house) and unconfigured routes -> None; a connected route
+        # still routes via setup_intent_data.on_behalf_of.
+        return route.connected_account_id
 
 
 class CreateCustomerPortalSessionCommand(BaseModel):

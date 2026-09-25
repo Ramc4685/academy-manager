@@ -21,6 +21,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
     invoice_is_chargeable,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -29,7 +30,6 @@ from backend.v2.contexts.billing.application.ports import (
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
     idempotency_key_with_fee,
-    resolve_application_fee_cents,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.checkout_hold import (
@@ -282,39 +282,26 @@ class ChargeInvoiceViaAutopay:
                 decline_code="stripe_not_configured",
             )
 
-        connected_account_id = await self._ready_connected_account_id()
-        if self._connected_accounts is not None and connected_account_id is None:
-            fallback_enabled = False
-            if self._settings is not None:
-                try:
-                    fallback_settings = await self._settings.get()
-                except Exception as exc:
-                    log.warning(
-                        "charge_autopay: billing settings lookup failed invoice=%s — "
-                        "failing closed (connected account not ready) err=%s",
-                        invoice_id,
-                        exc,
-                    )
-                else:
-                    fallback_enabled = fallback_settings.allow_platform_charge_fallback
-            if fallback_enabled:
-                log.warning(
-                    "charge_autopay: connected account not ready — falling back to PLATFORM "
-                    "charge (allow_platform_charge_fallback=on) invoice=%s",
-                    invoice_id,
-                )
-            else:
-                log.warning(
-                    "charge_autopay: refusing to charge invoice=%s — connected account not ready",
-                    invoice_id,
-                )
-                return ChargeResult(
-                    success=False,
-                    invoice_id=invoice_id,
-                    status=invoice.status,
-                    balance_due_cents=invoice.balance_due_cents,
-                    decline_code="connected_account_not_ready",
-                )
+        route = await resolve_charge_route(
+            connected_accounts=self._connected_accounts,
+            settings=self._settings,
+            context=f"charge_autopay invoice={invoice_id}",
+        )
+        if route.refused:
+            log.warning(
+                "charge_autopay: refusing to charge invoice=%s — connected account not ready",
+                invoice_id,
+            )
+            return ChargeResult(
+                success=False,
+                invoice_id=invoice_id,
+                status=invoice.status,
+                balance_due_cents=invoice.balance_due_cents,
+                decline_code="connected_account_not_ready",
+            )
+        # House academy (and an unwired connected-accounts store) -> platform;
+        # otherwise the ready connected account (destination charge).
+        connected_account_id = route.connected_account_id
 
         saved = await self._stripe.get_default_payment_method(
             academy_id=invoice.academy_id,
@@ -339,11 +326,7 @@ class ChargeInvoiceViaAutopay:
         idempotency_key = (
             f"{base_idempotency_key}:{retry_scope}" if retry_scope else base_idempotency_key
         )
-        fee_cents = await resolve_application_fee_cents(
-            self._settings,
-            amount_cents=invoice.balance_due_cents,
-            connected_account_id=connected_account_id,
-        )
+        fee_cents = route.application_fee_cents(invoice.balance_due_cents)
         idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
         pi_metadata = {
             "invoice_id": invoice.invoice_id,
@@ -521,14 +504,6 @@ class ChargeInvoiceViaAutopay:
             balance_due_cents=updated_invoice.balance_due_cents,
             attempted_amount_cents=invoice.balance_due_cents,
         )
-
-    async def _ready_connected_account_id(self) -> str | None:
-        if self._connected_accounts is None:
-            return None
-        account = await self._connected_accounts.get_for_academy()
-        if account is None or not account.is_ready_for_charges():
-            return None
-        return account.stripe_account_id
 
     async def _record_attempt(
         self,

@@ -1213,7 +1213,7 @@ def compose_admin(
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         result = await SendInvoice(
             ledger=billing_ledger_repo,
-            stripe=invoice_stripe,  # type: ignore[arg-type]
+            stripe=invoice_stripe,
             email=_invoice_email_port(),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
@@ -1266,7 +1266,7 @@ def compose_admin(
             raise RuntimeError("Stripe autopay not configured")
         result = await ChargeInvoiceViaAutopay(
             ledger=billing_ledger_repo,
-            stripe=stripe,  # type: ignore[arg-type]
+            stripe=stripe,
             enrollment_autopay=student_billing_enrollment_repo,
             settings=billing_settings_repo,
             connected_accounts=connected_accounts_repo,

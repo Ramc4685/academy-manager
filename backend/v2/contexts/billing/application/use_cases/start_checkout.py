@@ -12,6 +12,10 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.application.charge_route import (
+    ChargeRoute,
+    resolve_charge_route,
+)
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -20,7 +24,6 @@ from backend.v2.contexts.billing.application.ports import (
 )
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
-    resolve_application_fee_cents,
 )
 from backend.v2.contexts.billing.domain.errors import CheckoutCreationFailed
 from backend.v2.contexts.billing.domain.models import Payment
@@ -70,12 +73,9 @@ class StartCheckout:
         # Resolved at execute time so a request-time tenant provider (issue
         # #532) stamps the CURRENT academy, never a boot-time one.
         academy_id = self._academy_id() if callable(self._academy_id) else self._academy_id
-        connected_account_id = await self._ready_connected_account_id()
-        fee_cents = await resolve_application_fee_cents(
-            self._settings,
-            amount_cents=cmd.amount_cents,
-            connected_account_id=connected_account_id,
-        )
+        route = await self._charge_route()
+        connected_account_id = route.connected_account_id
+        fee_cents = route.application_fee_cents(cmd.amount_cents)
         payment_id = str(new_ulid())
         try:
             checkout_id, url = await self._stripe.create_checkout_session(
@@ -117,29 +117,15 @@ class StartCheckout:
             redirect_url=url,
         )
 
-    async def _ready_connected_account_id(self) -> str | None:
-        # Destination-charge routing (Slice I posture): when the connected-accounts
-        # repo is wired, funds must settle to the academy's connected account —
-        # refuse a platform charge if it is not charge-ready.
-        if self._connected_accounts is None:
-            return None
-        account = await self._connected_accounts.get_for_academy()
-        if account is None or not account.is_ready_for_charges():
-            if self._settings is not None:
-                try:
-                    settings = await self._settings.get()
-                except Exception as exc:
-                    log.warning(
-                        "start_checkout: billing settings lookup failed — "
-                        "failing closed (connected account not ready) err=%s",
-                        exc,
-                    )
-                else:
-                    if settings.allow_platform_charge_fallback:
-                        log.warning(
-                            "start_checkout: connected account not ready — falling back to "
-                            "PLATFORM charge (allow_platform_charge_fallback=on)"
-                        )
-                        return None
+    async def _charge_route(self) -> ChargeRoute:
+        route = await resolve_charge_route(
+            connected_accounts=self._connected_accounts,
+            settings=self._settings,
+            context="start_checkout",
+        )
+        if route.refused:
             raise CheckoutCreationFailed("Stripe connected account is not ready for checkout.")
-        return account.stripe_account_id
+        # A connected route still uses destination-charge params (on_behalf_of +
+        # transfer_data) via ``connected_account_id``; ``unconfigured`` (no
+        # connected-accounts store wired) keeps its historical platform charge.
+        return route

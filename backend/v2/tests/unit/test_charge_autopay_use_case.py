@@ -1320,7 +1320,34 @@ async def test_platform_fallback_enabled_charges_via_platform_when_account_not_r
     assert result.success is True
     assert result.decline_code is None
     assert stripe.create_calls[0]["connected_account_id"] is None
-    assert connected_accounts.calls == 1
+    # The house academy charges on the platform without consulting its
+    # connected account at all (billing/domain/charge_route.py).
+    assert connected_accounts.calls == 0
+
+
+async def test_house_academy_charges_on_platform_even_with_a_ready_connected_account() -> None:
+    """House academy is ALWAYS a platform charge — a ready account never re-routes it."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    ready = ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_ready").with_status(
+        status="active", charges_enabled=True
+    )
+    connected_accounts = FakeConnectedAccounts(ready)
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1", allow_platform_charge_fallback=True, application_fee_bps=250
+        )
+    )
+
+    result = await _uc(
+        repo, stripe, settings=settings, connected_accounts=connected_accounts
+    ).execute("inv-1")
+
+    assert result.success is True
+    assert stripe.create_calls[0]["connected_account_id"] is None
+    # No platform fee on a platform charge, and the idempotency key is unscoped.
+    assert "application_fee_cents" not in stripe.create_calls[0]
+    assert ":fee" not in stripe.create_calls[0]["idempotency_key"]
 
 
 async def test_platform_fallback_disabled_still_declines_when_account_not_ready() -> None:

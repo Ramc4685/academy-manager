@@ -63,6 +63,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.autopay_eligibility import ladder_eligibility
+from backend.v2.contexts.billing.application.charge_route import ChargeRoute, resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -71,7 +72,6 @@ from backend.v2.contexts.billing.application.ports import (
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
     idempotency_key_with_fee,
-    resolve_application_fee_cents,
 )
 from backend.v2.contexts.billing.application.use_cases.record_checkout_mint_failure import (
     CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
@@ -391,6 +391,7 @@ class SendInvoice:
         # repo is wired, funds must route to the academy's connected account —
         # refuse to mint a platform-charge pay link if it is not charge-ready.
         connected_account_id: str | None = None
+        route: ChargeRoute | None = None
         connected_account_blocked = False
         # (failure_code, failure_message) kept together so they can never drift.
         checkout_failure: tuple[str, str] | None = None
@@ -407,59 +408,44 @@ class SendInvoice:
                     "platform-charge pay link.",
                 )
             else:
-                account = await self._connected_accounts.get_for_academy()
-                if account is None or not account.is_ready_for_charges():
-                    fallback_enabled = False
-                    if self._settings is not None:
-                        try:
-                            fallback_settings = await self._settings.get()
-                        except Exception as exc:
-                            log.warning(
-                                "send_invoice: billing settings lookup failed invoice=%s — "
-                                "failing closed (connected account not ready) err=%s",
-                                invoice_id,
-                                exc,
-                            )
-                        else:
-                            fallback_enabled = fallback_settings.allow_platform_charge_fallback
-                    if fallback_enabled:
-                        log.warning(
-                            "send_invoice: connected account not ready — falling back to "
-                            "PLATFORM charge (allow_platform_charge_fallback=on) invoice=%s",
-                            invoice_id,
-                        )
-                        connected_account_id = None
-                    elif account is None:
-                        # No Connect account row at all: this academy has never
-                        # onboarded online payments and collects fees off
-                        # platform. That is a CONFIGURATION STATE, not a
-                        # failure — the platform Stripe client is always wired
-                        # in prod, so treating it as one would silently stop
-                        # every invoice email for such an academy. Send the
-                        # normal email; its "contact the academy to arrange
-                        # payment" copy is exactly right here.
-                        log.info(
-                            "send_invoice: no connected account for this academy — sending "
-                            "invoice=%s without a pay link",
-                            invoice_id,
-                        )
-                        connected_account_blocked = True
-                    else:
-                        # An account EXISTS but cannot take charges (onboarding
-                        # abandoned, capability revoked, requirements past due).
-                        # This academy expects online payments and is broken.
-                        log.error(
-                            "send_invoice: refusing pay link for invoice=%s — connected account not ready",
-                            invoice_id,
-                        )
-                        connected_account_blocked = True
-                        checkout_failure = (
-                            CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
-                            "Academy Stripe connected account exists but is not ready for "
-                            "charges, and platform-charge fallback is off.",
-                        )
+                route = await resolve_charge_route(
+                    connected_accounts=self._connected_accounts,
+                    settings=self._settings,
+                    context=f"send_invoice invoice={invoice_id}",
+                )
+                if route.kind == "no_account":
+                    # No Connect account row at all: this academy has never
+                    # onboarded online payments and collects fees off
+                    # platform. That is a CONFIGURATION STATE, not a
+                    # failure — the platform Stripe client is always wired
+                    # in prod, so treating it as one would silently stop
+                    # every invoice email for such an academy. Send the
+                    # normal email; its "contact the academy to arrange
+                    # payment" copy is exactly right here.
+                    log.info(
+                        "send_invoice: no connected account for this academy — sending "
+                        "invoice=%s without a pay link",
+                        invoice_id,
+                    )
+                    connected_account_blocked = True
+                elif route.refused:
+                    # An account EXISTS but cannot take charges (onboarding
+                    # abandoned, capability revoked, requirements past due).
+                    # This academy expects online payments and is broken.
+                    log.error(
+                        "send_invoice: refusing pay link for invoice=%s — connected account not ready",
+                        invoice_id,
+                    )
+                    connected_account_blocked = True
+                    checkout_failure = (
+                        CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+                        "Academy Stripe connected account exists but is not ready for "
+                        "charges, and platform-charge fallback is off.",
+                    )
                 else:
-                    connected_account_id = account.stripe_account_id
+                    # House academy -> platform (None); otherwise the ready
+                    # connected account (destination charge).
+                    connected_account_id = route.connected_account_id
         if can_create_checkout and self._stripe is not None and not connected_account_blocked:
             if is_bundled:
                 # Same "balance_payment" contract as the parent portal's
@@ -508,11 +494,7 @@ class SendInvoice:
                     "save_payment_method_for_autopay": True,
                     "autopay_enrollment_ids": enrollment_ids,
                 }
-            fee_cents = await resolve_application_fee_cents(
-                self._settings,
-                amount_cents=amount_cents,
-                connected_account_id=connected_account_id,
-            )
+            fee_cents = route.application_fee_cents(amount_cents) if route else 0
             idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
             try:
                 session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
