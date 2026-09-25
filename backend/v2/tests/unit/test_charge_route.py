@@ -168,7 +168,7 @@ async def test_start_checkout_house_academy_is_a_platform_charge(ready_account: 
     assert record["application_fee_amount"] is None
 
 
-async def test_start_checkout_tenant_with_ready_account_is_a_destination_charge() -> None:
+async def test_start_checkout_tenant_with_ready_account_is_a_direct_charge() -> None:
     from backend.v2.contexts.billing.application.use_cases.start_checkout import (
         StartCheckout,
         StartCheckoutCommand,
@@ -199,7 +199,52 @@ async def test_start_checkout_tenant_with_ready_account_is_a_destination_charge(
         )
     )
     record = stripe.checkouts[-1]
-    # Slice 2 keeps destination-charge params for a connected route.
-    assert record["connected_account_id"] == "acct_t"
-    assert record["stripe_account"] is None
+    # A direct charge ON the academy's account, carrying the academy's fee.
+    assert record["stripe_account"] == "acct_t"
+    assert record["connected_account_id"] is None
     assert record["application_fee_amount"] == 100
+    assert stripe.account_of(record["checkout_id"]) == "acct_t"
+
+
+# --- per-call helpers: account kwarg and idempotency key ---------------------
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        ChargeRoute.platform(),
+        ChargeRoute(kind="unconfigured"),
+        ChargeRoute(kind="no_account"),
+        ChargeRoute(kind="account_not_ready"),
+    ],
+)
+def test_non_connected_routes_leave_the_call_and_key_unchanged(route: ChargeRoute) -> None:
+    assert route.on_account_kwargs() == {}
+    assert route.idempotency_key("autopay:inv-1:2026-09:100") == "autopay:inv-1:2026-09:100"
+
+
+def test_connected_route_puts_the_call_and_key_on_the_account() -> None:
+    route = ChargeRoute.connected("acct_x", application_fee_bps=250)
+    assert route.on_account_kwargs() == {"stripe_account": "acct_x"}
+    assert route.idempotency_key("k:fee25") == "k:fee25:acct:acct_x"
+    # Two accounts never share a key.
+    other = ChargeRoute.connected("acct_y")
+    assert route.idempotency_key("k") != other.idempotency_key("k")
+
+
+@pytest.mark.parametrize(
+    ("amount", "bps", "fee"),
+    [
+        (10_000, 0, 0),  # default: no fee
+        (10_000, 250, 250),
+        (10_001, 250, 250),  # floor: the fraction stays with the academy
+        (1, 9_999, 0),
+        (15_000, 250, 375),
+        (0, 250, 0),
+    ],
+)
+def test_connected_route_fee_math(amount: int, bps: int, fee: int) -> None:
+    assert (
+        ChargeRoute.connected("acct_x", application_fee_bps=bps).application_fee_cents(amount)
+        == fee
+    )

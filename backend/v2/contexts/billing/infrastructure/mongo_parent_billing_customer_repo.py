@@ -6,6 +6,16 @@ is per-enrollment (see ``student_billing_enrollments`` and
 enrollment has its own autopay on/off/paused state, so pausing one child must
 not affect siblings. Only the saved payment method / Stripe customer stays
 per-parent here.
+
+Stripe account dimension (direct charges): a Stripe Customer and its saved
+payment methods live on ONE Stripe account. ``stripe_account_id`` records
+which: absent (the historical shape, and every house-academy row) means the
+PLATFORM account; otherwise the academy's connected account the customer was
+created on. The record stays one per ``(academy, parent)`` — an academy
+charges on exactly one account at a time — and a write that names a
+DIFFERENT account than the stored one replaces the customer and drops every
+saved payment method of the old account, so a platform customer or card can
+never be charged on a connected account, or the reverse.
 """
 
 from __future__ import annotations
@@ -14,6 +24,62 @@ from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.shared.tenancy import TenantScopedRepository
+
+#: Every field that names a saved payment method (or the setup that saved it).
+#: All of them belong to the Stripe account in ``stripe_account_id``; an
+#: account switch drops them together.
+_PAYMENT_METHOD_FIELDS: tuple[str, ...] = (
+    "default_payment_method_id",
+    "payment_method_type",
+    "stripe_mandate_id",
+    "payment_method_label",
+    "payment_method_last4",
+    "autopay_setup_intent_id",
+    "autopay_setup_checkout_session_id",
+    "autopay_setup_completed_at",
+    "autopay_payment_methods",
+    *(
+        f"{role}_{suffix}"
+        for role in ("primary", "fallback")
+        for suffix in (
+            "payment_method_id",
+            "payment_method_type",
+            "stripe_mandate_id",
+            "setup_intent_id",
+            "setup_status",
+            "payment_method_label",
+            "payment_method_last4",
+        )
+    ),
+)
+
+
+def stored_stripe_account(doc: dict[str, Any] | None) -> str | None:
+    """The Stripe account a customer record's ids live on (None = platform)."""
+    if not doc:
+        return None
+    account = doc.get("stripe_account_id")
+    return str(account) if account else None
+
+
+def _account_switch_unsets(
+    doc: dict[str, Any] | None, stripe_account_id: str | None, *, keep: set[str]
+) -> dict[str, str]:
+    """``$unset`` fields for a write onto ``stripe_account_id``.
+
+    Empty when the stored record is on the same account (or does not exist).
+    On a switch, every saved payment method of the old account is dropped
+    (except ``keep``, the fields this very write sets) and, when the write
+    moves to the platform, the ``stripe_account_id`` marker itself.
+    """
+    unset: dict[str, str] = {}
+    if doc is None:
+        return unset
+    if stored_stripe_account(doc) != stripe_account_id:
+        unset.update({field: "" for field in _PAYMENT_METHOD_FIELDS if field not in keep})
+    if stripe_account_id is None and "stripe_account_id" in doc:
+        unset["stripe_account_id"] = ""
+    return unset
 
 
 class MongoParentBillingCustomerRepository(TenantScopedRepository):
@@ -26,20 +92,55 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         customer_id = doc.get("stripe_customer_id")
         return str(customer_id) if customer_id else None
 
-    async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None:
+    async def get_saved_payment_method(
+        self, *, parent_id: str, stripe_account_id: str | None
+    ) -> tuple[str, str] | None:
+        """(stripe_customer_id, payment_method_id) of the parent's chargeable
+        saved card ON ``stripe_account_id`` (None = platform), or None.
+
+        A record stored on any other account answers None: its customer and
+        payment method do not exist on ``stripe_account_id``.
+        """
+        doc = await self._find_one({"parent_id": parent_id})
+        if not doc or stored_stripe_account(doc) != stripe_account_id:
+            return None
+        customer_id = doc.get("stripe_customer_id")
+        if not customer_id:
+            return None
+        payment_method_id = doc.get("default_payment_method_id")
+        if not payment_method_id and doc.get("primary_setup_status") == "active":
+            payment_method_id = doc.get("primary_payment_method_id")
+        if not payment_method_id:
+            return None
+        return str(customer_id), str(payment_method_id)
+
+    async def set_stripe_customer_id(
+        self,
+        *,
+        parent_id: str,
+        stripe_customer_id: str,
+        stripe_account_id: str | None = None,
+    ) -> None:
+        """Record the parent's Stripe customer on ``stripe_account_id``
+        (None = platform). A customer on a different account than the stored
+        one replaces it and drops the old account's saved payment methods."""
         now = datetime.now(UTC)
-        await self._update_one(
-            {"parent_id": parent_id},
-            {
-                "$set": {
-                    "parent_id": parent_id,
-                    "stripe_customer_id": stripe_customer_id,
-                    "updated_at": now,
-                },
-                "$setOnInsert": {"created_at": now},
-            },
-            upsert=True,
-        )
+        doc = await self._find_one({"parent_id": parent_id})
+        update: dict[str, object] = {
+            "parent_id": parent_id,
+            "stripe_customer_id": stripe_customer_id,
+            "updated_at": now,
+        }
+        if stripe_account_id is not None:
+            update["stripe_account_id"] = stripe_account_id
+        mutation: dict[str, object] = {
+            "$set": update,
+            "$setOnInsert": {"created_at": now},
+        }
+        unset = _account_switch_unsets(doc, stripe_account_id, keep=set())
+        if unset:
+            mutation["$unset"] = unset
+        await self._update_one({"parent_id": parent_id}, mutation, upsert=True)
 
     async def set_default_payment_method(
         self,
@@ -61,7 +162,10 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         payment_method_label: str | None = None,
         payment_method_last4: str | None = None,
         session: Any | None = None,
+        stripe_account_id: str | None = None,
     ) -> None:
+        """``stripe_account_id`` is the account the customer and payment
+        method live on (None = platform)."""
         now = datetime.now(UTC)
         role = payment_method_role if payment_method_role in {"primary", "fallback"} else "primary"
         method_projection: dict[str, object] = {
@@ -135,6 +239,11 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             unset["current_card_disclosure_version"] = ""
         if card_disclosure_version:
             unset["current_ach_mandate_version"] = ""
+        if stripe_account_id is not None:
+            update["stripe_account_id"] = stripe_account_id
+        existing = await self._find_one({"parent_id": parent_id}, session=session)
+        for field in _account_switch_unsets(existing, stripe_account_id, keep=set(update)):
+            unset.setdefault(field, "")
         mutation: dict[str, object] = {
             "$set": update,
             "$setOnInsert": {"created_at": now},
@@ -169,7 +278,11 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         stripe_mandate_id: str | None,
         payment_method_label: str | None = None,
         payment_method_last4: str | None = None,
+        stripe_account_id: str | None = None,
     ) -> None:
+        """Only promotes on the record stored for ``stripe_account_id``
+        (None = platform): a payment method never becomes the default of a
+        customer on another account."""
         update: dict[str, object] = {
             "default_payment_method_id": stripe_payment_method_id,
             "payment_method_type": payment_method_type,
@@ -189,8 +302,10 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         mutation: dict[str, object] = {"$set": update}
         if unset:
             mutation["$unset"] = unset
+        # ``None`` matches both a missing field (every historical platform
+        # row) and an explicit null.
         await self._update_one(
-            {"parent_id": parent_id},
+            {"parent_id": parent_id, "stripe_account_id": stripe_account_id},
             mutation,
             upsert=False,
         )

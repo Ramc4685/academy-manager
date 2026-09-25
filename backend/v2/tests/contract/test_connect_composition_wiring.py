@@ -212,7 +212,8 @@ async def test_autopay_setup_checkout_drives_real_connected_account_repo(db, aca
         )
     )
 
-    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+    assert stripe.autopay_setup_checkouts[0]["stripe_account"] == "acct_ready"
+    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] is None
 
 
 async def test_allowed_origins_callable_is_evaluated_per_call(db, acad) -> None:

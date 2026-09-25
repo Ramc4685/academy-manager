@@ -355,7 +355,7 @@ async def test_pay_balance_totals_invoices_under_every_alias(real_db: Any, app_o
     assert call["amount_cents"] == 15_000
     assert call["metadata"]["invoice_ids"] == "inv-bal-alias,inv-bal-user-id"
     assert call["metadata"]["parent_id"] == PARENT
-    assert call["connected_account_id"] == f"acct_{ACAD}"
+    assert call["stripe_account"] == f"acct_{ACAD}"
 
 
 @pytest.mark.asyncio

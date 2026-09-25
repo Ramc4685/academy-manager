@@ -1270,6 +1270,7 @@ def compose_admin(
             enrollment_autopay=student_billing_enrollment_repo,
             settings=billing_settings_repo,
             connected_accounts=connected_accounts_repo,
+            parent_customers=parent_customers_repo,
         ).execute(
             invoice_id,
             source=source,
@@ -1448,6 +1449,7 @@ def compose_admin(
         enrollment_autopay=student_billing_enrollment_repo,
         settings=billing_settings_repo,
         connected_accounts=connected_accounts_repo,
+        parent_customers=parent_customers_repo,
         email_port=_invoice_email_port,
         outbox=outbox,
     )

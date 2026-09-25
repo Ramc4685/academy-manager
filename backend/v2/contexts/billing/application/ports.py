@@ -205,8 +205,22 @@ class SubscriptionRepository(Protocol):
 
 
 class ParentStripeCustomerRepository(Protocol):
+    """The parent's Stripe customer and saved payment methods.
+
+    ``stripe_account_id`` names the Stripe account those ids live on: None
+    (the default, and every house-academy call) is the PLATFORM; otherwise the
+    academy's connected account. Implementations must never let a customer or
+    payment method stored for one account be read back or promoted for another.
+    """
+
     async def get_stripe_customer_id(self, *, parent_id: str) -> str | None: ...
-    async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None: ...
+    async def set_stripe_customer_id(
+        self,
+        *,
+        parent_id: str,
+        stripe_customer_id: str,
+        stripe_account_id: str | None = None,
+    ) -> None: ...
     async def set_default_payment_method(
         self,
         *,
@@ -227,6 +241,7 @@ class ParentStripeCustomerRepository(Protocol):
         payment_method_label: str | None = None,
         payment_method_last4: str | None = None,
         session: Any | None = None,
+        stripe_account_id: str | None = None,
     ) -> None: ...
     async def promote_payment_method_to_default(
         self,
@@ -237,7 +252,24 @@ class ParentStripeCustomerRepository(Protocol):
         stripe_mandate_id: str | None,
         payment_method_label: str | None = None,
         payment_method_last4: str | None = None,
+        stripe_account_id: str | None = None,
     ) -> None: ...
+
+
+class SavedPaymentMethodReader(Protocol):
+    """Reads the parent's stored chargeable card on one Stripe account.
+
+    Direct-charge autopay charges exactly the customer and payment method the
+    app stored for the academy's connected account — never a platform-wide
+    Customer search, which cannot see connected-account customers and could
+    surface a card from another account.
+    """
+
+    async def get_saved_payment_method(
+        self, *, parent_id: str, stripe_account_id: str | None
+    ) -> tuple[str, str] | None:
+        """(stripe_customer_id, payment_method_id) on ``stripe_account_id``, or None."""
+        ...
 
 
 class AutopayConsentRepository(Protocol):
@@ -414,10 +446,11 @@ class StripeGateway(Protocol):
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url).
 
-        When ``connected_account_id`` is set, the checkout's PaymentIntent is a
-        destination charge to the academy's connected account, carrying
-        ``application_fee_amount=application_fee_cents`` (the academy's platform
-        fee, default 0). A non-zero fee without a connected account, or one
+        ``stripe_account`` makes it a DIRECT charge created ON the academy's
+        connected account, carrying ``application_fee_amount=application_fee_cents``
+        (the academy's platform fee, default 0; omitted when 0). Every charge
+        path uses this. ``connected_account_id`` (a platform destination charge)
+        is legacy and has no caller. A non-zero fee without an account, or one
         larger than ``amount_cents``, raises ``ValueError``.
         """
 
@@ -462,8 +495,10 @@ class StripeGateway(Protocol):
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url) for saved-card setup.
 
-        When ``connected_account_id`` is set, the eventual off-session charges
-        route to that connected academy account (``setup_intent_data.on_behalf_of``).
+        ``stripe_account`` runs the setup ON the academy's connected account, so
+        the customer, SetupIntent and saved card all live there, where its
+        direct charges run. ``connected_account_id`` (``on_behalf_of``) is legacy
+        and has no caller.
         """
 
     async def create_invoice_checkout_session(
@@ -484,8 +519,10 @@ class StripeGateway(Protocol):
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url) for a ledger-invoice payment.
 
-        ``connected_account_id`` makes it a destination charge (``on_behalf_of``
-        + ``transfer_data.destination``, ``application_fee_amount``).
+        ``stripe_account`` makes it a DIRECT charge on the academy's connected
+        account (``application_fee_amount`` when non-zero); callers scope the
+        idempotency key to that account. ``connected_account_id`` (a destination
+        charge) is legacy and has no caller.
         ``save_payment_method_for_autopay`` saves the payment method for
         off-session autopay against an always-created customer.
         """
@@ -663,12 +700,14 @@ class StripeGateway(Protocol):
     ) -> tuple[str, str, str | None]:
         """Confirm an off-session autopay charge; returns (pi_id, status, decline_code).
 
-        When ``connected_account_id`` is set, this is a destination charge to the
-        connected academy account (``on_behalf_of`` + ``transfer_data.destination``,
-        ``application_fee_amount=application_fee_cents`` — the academy's
-        platform fee, default 0, set per academy by a platform admin). A non-zero
-        fee without a connected account, or one larger than ``amount_cents``,
-        raises ``ValueError``. Customers live on the platform.
+        ``stripe_account`` makes it a DIRECT charge on the academy's connected
+        account: ``customer_id`` and ``payment_method_id`` must live on that
+        account, and ``application_fee_amount=application_fee_cents`` (the
+        academy's platform fee, default 0, set by a platform admin) is sent when
+        non-zero. Without it the charge is on the platform (house academy).
+        ``connected_account_id`` (a destination charge) is legacy and has no
+        caller. A non-zero fee without an account, or one larger than
+        ``amount_cents``, raises ``ValueError``.
         """
         ...
 

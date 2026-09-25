@@ -305,7 +305,8 @@ async def test_start_autopay_setup_routes_checkout_through_ready_connected_accou
     await uc.execute(_checkout_command())
 
     assert connected_accounts.calls == 1
-    assert gateway.setup_created[0]["connected_account_id"] == "acct_ready"
+    assert gateway.setup_created[0]["stripe_account"] == "acct_ready"
+    assert "connected_account_id" not in gateway.setup_created[0]
 
 
 @pytest.mark.asyncio
@@ -358,7 +359,9 @@ async def test_start_autopay_setup_falls_back_to_platform_when_flag_on() -> None
     result = await uc.execute(_checkout_command())
 
     assert result.redirect_url == "https://checkout.stripe.com/c/setup"
-    assert gateway.setup_created[0]["connected_account_id"] is None
+    # House academy: the platform call, with no account kwarg at all.
+    assert "stripe_account" not in gateway.setup_created[0]
+    assert "connected_account_id" not in gateway.setup_created[0]
 
 
 @pytest.mark.asyncio
@@ -520,7 +523,7 @@ async def test_start_autopay_does_not_reuse_legacy_checkout_when_connect_is_enfo
 
     assert result.subscription_id != "sub-existing"
     assert result.checkout_session_id == "cs_setup_1"
-    assert gateway.setup_created[0]["connected_account_id"] == "acct_ready"
+    assert gateway.setup_created[0]["stripe_account"] == "acct_ready"
 
 
 class _NoPaymentRepo:

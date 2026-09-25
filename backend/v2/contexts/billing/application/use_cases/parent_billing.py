@@ -9,7 +9,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
+from backend.v2.contexts.billing.application.charge_route import (
+    ChargeRoute,
+    resolve_charge_route,
+)
 from backend.v2.contexts.billing.application.ports import (
     AutopayConsentRepository,
     BillingSettingsRepository,
@@ -125,11 +128,17 @@ class CompleteAutopaySetup:
         *,
         expected_parent_id: str | None = None,
         consent_context: AutopayConsentCaptureContext | None = None,
+        stripe_account: str | None = None,
     ) -> AutopaySetupCompletionResult:
+        """``stripe_account`` is the Stripe account the checkout ran on (None =
+        the platform): its SetupIntent, customer and payment method are read
+        there, and the saved card is recorded as living there."""
         setup_intent_id = _stripe_id(checkout.get("setup_intent"))
         if not setup_intent_id:
             raise ValueError("autopay setup checkout missing setup_intent")
-        setup_intent = await self._stripe.retrieve_setup_intent(setup_intent_id)
+        setup_intent = await self._stripe.retrieve_setup_intent(
+            setup_intent_id, **_on_account(stripe_account)
+        )
         return await self.execute_from_setup_intent(
             setup_intent,
             checkout_metadata=_string_metadata(checkout.get("metadata")),
@@ -137,6 +146,7 @@ class CompleteAutopaySetup:
             checkout_customer_id=_stripe_id(checkout.get("customer")),
             expected_parent_id=expected_parent_id,
             consent_context=consent_context,
+            stripe_account=stripe_account,
         )
 
     async def execute_from_setup_intent(
@@ -148,7 +158,9 @@ class CompleteAutopaySetup:
         checkout_customer_id: str | None = None,
         expected_parent_id: str | None = None,
         consent_context: AutopayConsentCaptureContext | None = None,
+        stripe_account: str | None = None,
     ) -> AutopaySetupCompletionResult:
+        on_account = _on_account(stripe_account)
         setup_metadata = _string_metadata(setup_intent.get("metadata"))
         checkout_metadata = checkout_metadata or {}
         for key in ("source", "academy_id", "parent_id", "enrollment_id", "payment_method_role"):
@@ -187,7 +199,9 @@ class CompleteAutopaySetup:
         stripe_payment_method_id = _stripe_id(setup_intent.get("payment_method"))
         if not stripe_payment_method_id:
             raise ValueError("autopay setup missing payment method")
-        payment_method = await self._stripe.retrieve_payment_method(stripe_payment_method_id)
+        payment_method = await self._stripe.retrieve_payment_method(
+            stripe_payment_method_id, **on_account
+        )
         payment_method_type = str(payment_method.get("type") or "unknown")
         payment_method_label, payment_method_last4 = _payment_method_display_details(payment_method)
         stripe_mandate_id = _stripe_id(setup_intent.get("mandate"))
@@ -226,6 +240,7 @@ class CompleteAutopaySetup:
             payment_method_label=payment_method_label,
             payment_method_last4=payment_method_last4,
             activate_enrollment=False,
+            stripe_account=stripe_account,
         )
         if should_activate:
             await self._stripe.set_customer_default_payment_method(
@@ -235,6 +250,7 @@ class CompleteAutopaySetup:
                     "academy_id": self._academy_id,
                     "parent_id": parent_id,
                 },
+                **on_account,
             )
             await self._parent_customers.promote_payment_method_to_default(
                 parent_id=parent_id,
@@ -243,6 +259,7 @@ class CompleteAutopaySetup:
                 stripe_mandate_id=stripe_mandate_id,
                 payment_method_label=payment_method_label,
                 payment_method_last4=payment_method_last4,
+                **_stored_account(stripe_account),
             )
             activated = await self._enrollment_autopay.mark_autopay_active_from_setup(
                 enrollment_id=enrollment_id,
@@ -270,6 +287,7 @@ class CompleteAutopaySetup:
         *,
         expected_parent_id: str | None = None,
         consent_context: AutopayConsentCaptureContext | None = None,
+        stripe_account: str | None = None,
     ) -> list[str]:
         """Activate autopay from an opted-in invoice/balance payment checkout
         (``mode=payment`` + metadata ``autopay_optin == "true"``).
@@ -305,7 +323,8 @@ class CompleteAutopaySetup:
         payment_intent_id = _stripe_id(checkout.get("payment_intent"))
         if not payment_intent_id:
             raise ValueError("autopay opt-in checkout missing payment_intent")
-        payment_intent = await self._stripe.retrieve_payment_intent(payment_intent_id)
+        on_account = _on_account(stripe_account)
+        payment_intent = await self._stripe.retrieve_payment_intent(payment_intent_id, **on_account)
         stripe_payment_method_id = _stripe_id(payment_intent.get("payment_method"))
         if not stripe_payment_method_id:
             raise ValueError("autopay opt-in missing payment method")
@@ -314,7 +333,9 @@ class CompleteAutopaySetup:
         )
         if not stripe_customer_id:
             raise ValueError("autopay opt-in missing Stripe customer")
-        payment_method = await self._stripe.retrieve_payment_method(stripe_payment_method_id)
+        payment_method = await self._stripe.retrieve_payment_method(
+            stripe_payment_method_id, **on_account
+        )
         payment_method_type = str(payment_method.get("type") or "unknown")
         payment_method_label, payment_method_last4 = _payment_method_display_details(payment_method)
         completed_at = self._now()
@@ -331,6 +352,7 @@ class CompleteAutopaySetup:
                 "academy_id": self._academy_id,
                 "parent_id": parent_id,
             },
+            **on_account,
         )
         activated: list[str] = []
         failed: list[str] = []
@@ -364,6 +386,7 @@ class CompleteAutopaySetup:
                     consent=consent,
                     payment_method_label=payment_method_label,
                     payment_method_last4=payment_method_last4,
+                    stripe_account=stripe_account,
                 )
             except Exception as exc:
                 log.warning(
@@ -383,6 +406,7 @@ class CompleteAutopaySetup:
             stripe_mandate_id=None,
             payment_method_label=payment_method_label,
             payment_method_last4=payment_method_last4,
+            **_stored_account(stripe_account),
         )
         if failed:
             # Surface AFTER attempting every enrollment so the webhook worker
@@ -414,6 +438,7 @@ class CompleteAutopaySetup:
         payment_method_label: str | None = None,
         payment_method_last4: str | None = None,
         activate_enrollment: bool = True,
+        stripe_account: str | None = None,
     ) -> None:
         async def work(session: Any | None) -> None:
             persisted_consent = consent
@@ -453,6 +478,7 @@ class CompleteAutopaySetup:
                 payment_method_label=payment_method_label,
                 payment_method_last4=payment_method_last4,
                 session=session,
+                **_stored_account(stripe_account),
             )
             if (
                 activate_enrollment
@@ -563,7 +589,7 @@ class StartSubscriptionCheckout:
         # Resolved at execute time so a request-time tenant provider (issue
         # #532) stamps the CURRENT academy, never a boot-time one.
         academy_id = self._academy_id() if callable(self._academy_id) else self._academy_id
-        connected_account_id = await self._ready_connected_account_id()
+        route = await self._ready_charge_route()
         existing = await self._subscriptions.latest_for_enrollment(cmd.enrollment_id)
         if (
             self._connected_accounts is None
@@ -616,7 +642,10 @@ class StartSubscriptionCheckout:
                     "ach_mandate_version": DEFAULT_ACH_MANDATE_VERSION,
                     "card_disclosure_version": DEFAULT_CARD_DISCLOSURE_VERSION,
                 },
-                connected_account_id=connected_account_id,
+                # House: platform (no account kwarg). Otherwise the customer,
+                # SetupIntent and saved card are created ON the academy's
+                # connected account, where its direct charges will run.
+                **route.on_account_kwargs(),
             )
         except Exception as exc:  # pragma: no cover - infra path
             raise CheckoutCreationFailed(str(exc)) from exc
@@ -627,7 +656,7 @@ class StartSubscriptionCheckout:
             redirect_url=url,
         )
 
-    async def _ready_connected_account_id(self) -> str | None:
+    async def _ready_charge_route(self) -> ChargeRoute:
         route = await resolve_charge_route(
             connected_accounts=self._connected_accounts,
             settings=self._settings,
@@ -635,9 +664,7 @@ class StartSubscriptionCheckout:
         )
         if route.refused:
             raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
-        # Platform (house) and unconfigured routes -> None; a connected route
-        # still routes via setup_intent_data.on_behalf_of.
-        return route.connected_account_id
+        return route
 
 
 class CreateCustomerPortalSessionCommand(BaseModel):
@@ -646,6 +673,8 @@ class CreateCustomerPortalSessionCommand(BaseModel):
     parent_id: str
     return_url: str
     stripe_customer_id: str | None = None
+    #: The account the customer lives on (None = platform).
+    stripe_account_id: str | None = None
 
 
 class CreateCustomerPortalSessionResult(BaseModel):
@@ -677,6 +706,7 @@ class CreateCustomerPortalSession:
                 parent_id=cmd.parent_id,
                 return_url=cmd.return_url,
                 stripe_customer_id=cmd.stripe_customer_id,
+                **_on_account(cmd.stripe_account_id),
             )
         except Exception as exc:  # pragma: no cover - infra path
             raise CheckoutCreationFailed(str(exc)) from exc
@@ -696,6 +726,8 @@ class GetCheckoutStatus:
         outbox: Outbox | None = None,
         transaction_runner: TransactionRunner | None = None,
         academy_id: str | Callable[[], str] | None = None,
+        connected_accounts: ConnectedAccountRepository | None = None,
+        settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._payments = payments
@@ -707,7 +739,25 @@ class GetCheckoutStatus:
         self._outbox = outbox
         self._transaction_runner = transaction_runner
         self._academy_id = academy_id
+        self._connected_accounts = connected_accounts
+        self._settings = settings
         self._now = clock
+
+    async def _checkout_account(self) -> str | None:
+        """The Stripe account this academy's checkouts run on (None = platform).
+
+        The session a parent returns from was created on the academy's charge
+        route (a direct charge lives on its connected account), so it can only
+        be read back there. House and unconfigured routes -> the platform.
+        """
+        if self._connected_accounts is None:
+            return None
+        route = await resolve_charge_route(
+            connected_accounts=self._connected_accounts,
+            settings=self._settings,
+            context="checkout_status",
+        )
+        return route.connected_account_id
 
     def _resolved_academy_id(self) -> str | None:
         # Resolved at call time so a request-time tenant provider (issue #532)
@@ -741,18 +791,23 @@ class GetCheckoutStatus:
         if self._subscriptions is not None:
             subscription = await self._subscriptions.get_by_checkout_session(checkout_session_id)
         if subscription is None and self._stripe is not None:
-            checkout = await self._stripe.retrieve_checkout_session(checkout_session_id)
+            stripe_account = await self._checkout_account()
+            checkout = await self._stripe.retrieve_checkout_session(
+                checkout_session_id, **_on_account(stripe_account)
+            )
             if _is_autopay_setup_checkout(checkout):
                 return await self._status_from_autopay_setup_checkout(
                     checkout,
                     expected_parent_id=parent_id,
                     consent_context=consent_context,
+                    stripe_account=stripe_account,
                 )
             if _is_autopay_optin_payment_checkout(checkout):
                 return await self._status_from_autopay_optin_payment_checkout(
                     checkout,
                     expected_parent_id=parent_id,
                     consent_context=consent_context,
+                    stripe_account=stripe_account,
                 )
             if _is_plain_payment_checkout(checkout):
                 return self._status_from_plain_payment_checkout(
@@ -770,14 +825,20 @@ class GetCheckoutStatus:
                 checkout_session_id=checkout_session_id,
             )
         if self._stripe is not None and subscription.status == "incomplete":
-            checkout = await self._stripe.retrieve_checkout_session(checkout_session_id)
+            stripe_account = await self._checkout_account()
+            checkout = await self._stripe.retrieve_checkout_session(
+                checkout_session_id, **_on_account(stripe_account)
+            )
             if _is_autopay_setup_checkout(checkout):
                 return await self._status_from_autopay_setup_checkout(
                     checkout,
                     expected_parent_id=parent_id,
                     consent_context=consent_context,
+                    stripe_account=stripe_account,
                 )
-            subscription = await self._reconcile_subscription_checkout(subscription, checkout)
+            subscription = await self._reconcile_subscription_checkout(
+                subscription, checkout, stripe_account=stripe_account
+            )
         return CheckoutStatusResult(
             checkout_session_id=checkout_session_id,
             payment_id=None,
@@ -791,6 +852,7 @@ class GetCheckoutStatus:
         *,
         expected_parent_id: str,
         consent_context: AutopayConsentCaptureContext | None = None,
+        stripe_account: str | None = None,
     ) -> CheckoutStatusResult:
         checkout_id = _stripe_id(checkout.get("id")) or ""
         checkout_parent_id = _checkout_parent_id(checkout)
@@ -825,6 +887,7 @@ class GetCheckoutStatus:
             checkout,
             expected_parent_id=expected_parent_id,
             consent_context=consent_context,
+            **_on_account(stripe_account),
         )
         return CheckoutStatusResult(
             checkout_session_id=checkout_id,
@@ -868,6 +931,7 @@ class GetCheckoutStatus:
         *,
         expected_parent_id: str,
         consent_context: AutopayConsentCaptureContext | None = None,
+        stripe_account: str | None = None,
     ) -> CheckoutStatusResult:
         """Status for an opted-in invoice/balance payment checkout, running
         autopay activation synchronously on completion (parity with the
@@ -910,6 +974,7 @@ class GetCheckoutStatus:
                 checkout,
                 expected_parent_id=expected_parent_id,
                 consent_context=consent_context,
+                **_on_account(stripe_account),
             )
         except PaymentNotFound:
             raise
@@ -931,6 +996,8 @@ class GetCheckoutStatus:
         self,
         subscription: Subscription,
         checkout: dict[str, object],
+        *,
+        stripe_account: str | None = None,
     ) -> Subscription:
         status = str(checkout.get("status") or "")
         stripe_subscription_id = str(checkout.get("subscription") or "")
@@ -958,6 +1025,7 @@ class GetCheckoutStatus:
             await self._parent_customers.set_stripe_customer_id(
                 parent_id=updated.parent_id,
                 stripe_customer_id=stripe_customer_id,
+                **_stored_account(stripe_account),
             )
         if self._enrollment_autopay is not None and updated.enrollment_id:
             await self._enrollment_autopay.mark_autopay_active_from_setup(
@@ -976,6 +1044,18 @@ def _success_url_with_checkout_session_placeholder(success_url: str) -> str:
 def _success_url_with_checkout_session(success_url: str, checkout_session_id: str) -> str:
     with_placeholder = _success_url_with_checkout_session_placeholder(success_url)
     return with_placeholder.replace("{CHECKOUT_SESSION_ID}", checkout_session_id)
+
+
+def _on_account(stripe_account: str | None) -> dict[str, Any]:
+    """Gateway kwarg for a read/write on ``stripe_account``; empty for the
+    platform so a house-academy call is byte-identical to before."""
+    return {"stripe_account": stripe_account} if stripe_account else {}
+
+
+def _stored_account(stripe_account: str | None) -> dict[str, Any]:
+    """Repository kwarg recording which account a customer/card lives on;
+    empty for the platform (the historical, field-less record shape)."""
+    return {"stripe_account_id": stripe_account} if stripe_account else {}
 
 
 def _string_metadata(value: object) -> dict[str, str]:

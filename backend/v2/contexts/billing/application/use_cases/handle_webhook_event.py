@@ -593,13 +593,16 @@ class HandleWebhookEvent:
         if not object_id:
             return event
         current: dict[str, Any] | None = None
+        # A direct charge's objects live on the connected account the event
+        # names; a platform event carries no account and reads the platform.
+        on_account = _on_account_kwargs(_event_account(event))
         if event_type in (
             "checkout.session.completed",
             "checkout.session.expired",
             "checkout.session.async_payment_succeeded",
             "checkout.session.async_payment_failed",
         ):
-            current = await self._stripe.retrieve_checkout_session(object_id)
+            current = await self._stripe.retrieve_checkout_session(object_id, **on_account)
         elif event_type in ("invoice.paid", "invoice.payment_failed"):
             current = await self._stripe.retrieve_invoice(object_id)
         elif event_type in (
@@ -613,9 +616,9 @@ class HandleWebhookEvent:
             "payment_intent.payment_failed",
             "payment_intent.processing",
         ):
-            current = await self._stripe.retrieve_payment_intent(object_id)
+            current = await self._stripe.retrieve_payment_intent(object_id, **on_account)
         elif event_type == "setup_intent.succeeded":
-            current = await self._stripe.retrieve_setup_intent(object_id)
+            current = await self._stripe.retrieve_setup_intent(object_id, **on_account)
         if not current:
             return event
         merged = dict(obj)
@@ -848,6 +851,9 @@ class HandleWebhookEvent:
             await self._complete_autopay_setup.execute_from_checkout(
                 checkout,
                 consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+                # A direct-charge checkout ran ON the academy's connected
+                # account; the event names it. Platform events carry none.
+                **_on_account_kwargs(_event_account(event)),
             )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
@@ -862,6 +868,7 @@ class HandleWebhookEvent:
             await self._complete_autopay_setup.execute_from_setup_intent(
                 setup_intent,
                 consent_context=AutopayConsentCaptureContext(source="setup_intent_webhook"),
+                **_on_account_kwargs(_event_account(event)),
             )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
@@ -906,7 +913,7 @@ class HandleWebhookEvent:
                 currency=currency,
                 payment_intent_id=payment_intent_id,
             )
-            await self._maybe_activate_autopay_optin(obj)
+            await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
             return
 
         now = self._now()
@@ -951,9 +958,11 @@ class HandleWebhookEvent:
                 amount_total,
             )
 
-        await self._maybe_activate_autopay_optin(obj)
+        await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
 
-    async def _maybe_activate_autopay_optin(self, checkout: dict[str, Any]) -> None:
+    async def _maybe_activate_autopay_optin(
+        self, checkout: dict[str, Any], *, stripe_account: str | None = None
+    ) -> None:
         """Autopay activation for an opted-in payment checkout.
 
         Runs after the ledger bookkeeping, whose writes are idempotent, so it
@@ -975,6 +984,7 @@ class HandleWebhookEvent:
             await self._complete_autopay_setup.execute_from_payment_checkout(
                 checkout,
                 consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+                **_on_account_kwargs(stripe_account),
             )
         except (PaymentNotFound, ValueError) as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
@@ -1040,7 +1050,7 @@ class HandleWebhookEvent:
                 currency=currency,
                 payment_intent_id=payment_intent_id,
             )
-            await self._maybe_activate_autopay_optin(obj)
+            await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
             return
 
         if await self._payment_intent_already_credited(
@@ -1081,7 +1091,7 @@ class HandleWebhookEvent:
             allocated,
         )
 
-        await self._maybe_activate_autopay_optin(obj)
+        await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
 
     async def _payment_intent_already_credited(
         self,
@@ -1289,7 +1299,12 @@ class HandleWebhookEvent:
         checkout_id = obj["id"]
         payment = await self._payments.get_by_checkout_session(checkout_id)
         subscription = await self._sync_subscription_from_checkout(obj)
-        await self._persist_checkout_customer(obj, payment=payment, subscription=subscription)
+        await self._persist_checkout_customer(
+            obj,
+            payment=payment,
+            subscription=subscription,
+            stripe_account=_event_account(event),
+        )
         if payment is None:
             log.warning("checkout.completed for unknown checkout_id=%s", checkout_id)
             return
@@ -1324,7 +1339,10 @@ class HandleWebhookEvent:
         *,
         payment: Payment | None,
         subscription: Any | None,
+        stripe_account: str | None = None,
     ) -> None:
+        """Record the checkout's customer on the account the checkout ran on
+        (``stripe_account``; None = the platform)."""
         if self._parent_customers is None:
             return
         stripe_customer_id = str(checkout.get("customer") or "")
@@ -1346,6 +1364,7 @@ class HandleWebhookEvent:
         await self._parent_customers.set_stripe_customer_id(
             parent_id=parent_id,
             stripe_customer_id=stripe_customer_id,
+            **({"stripe_account_id": stripe_account} if stripe_account else {}),
         )
 
     async def _sync_subscription_from_checkout(self, checkout: dict[str, Any]) -> Any | None:
@@ -2914,3 +2933,16 @@ def _identity_value(
     else:
         value = getattr(identity, key)
     return str(value) if value else None
+
+
+def _event_account(event: dict[str, Any]) -> str | None:
+    """The connected account a Stripe event occurred on (Connect events carry
+    a top-level ``account``); None for a platform event."""
+    account = event.get("account")
+    return str(account) if account else None
+
+
+def _on_account_kwargs(stripe_account: str | None) -> dict[str, Any]:
+    """``stripe_account`` kwarg for a completion on a connected account; empty
+    for the platform so a house-academy call is unchanged."""
+    return {"stripe_account": stripe_account} if stripe_account else {}

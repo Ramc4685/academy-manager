@@ -123,11 +123,13 @@ class InvoiceStripeGateway(Protocol):
         save_payment_method_for_autopay: bool = False,
         autopay_enrollment_ids: list[str] | None = None,
         application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, checkout_url).
 
-        ``application_fee_cents`` is the academy's platform fee on a
-        connected-account destination charge (default 0).
+        ``stripe_account`` creates the session ON that connected account (a
+        direct charge); ``application_fee_cents`` is the academy's platform fee
+        on it (default 0). Omitted, the session is on the platform.
         """
         ...
 
@@ -390,7 +392,6 @@ class SendInvoice:
         # Same posture as ChargeInvoiceViaAutopay: when the connected-accounts
         # repo is wired, funds must route to the academy's connected account —
         # refuse to mint a platform-charge pay link if it is not charge-ready.
-        connected_account_id: str | None = None
         route: ChargeRoute | None = None
         connected_account_blocked = False
         # (failure_code, failure_message) kept together so they can never drift.
@@ -442,10 +443,6 @@ class SendInvoice:
                         "Academy Stripe connected account exists but is not ready for "
                         "charges, and platform-charge fallback is off.",
                     )
-                else:
-                    # House academy -> platform (None); otherwise the ready
-                    # connected account (destination charge).
-                    connected_account_id = route.connected_account_id
         if can_create_checkout and self._stripe is not None and not connected_account_blocked:
             if is_bundled:
                 # Same "balance_payment" contract as the parent portal's
@@ -496,6 +493,13 @@ class SendInvoice:
                 }
             fee_cents = route.application_fee_cents(amount_cents) if route else 0
             idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
+            # House academy -> platform: no account kwarg and the key is
+            # unchanged. Otherwise a DIRECT charge on the academy's ready
+            # connected account, with the account in the idempotency key.
+            on_account: dict[str, Any] = {}
+            if route is not None:
+                idempotency_key = route.idempotency_key(idempotency_key)
+                on_account = route.on_account_kwargs()
             try:
                 session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
                     invoice_id=gateway_invoice_id,
@@ -505,7 +509,7 @@ class SendInvoice:
                     cancel_url=self._cancel_url,
                     metadata=checkout_metadata,
                     idempotency_key=idempotency_key,
-                    connected_account_id=connected_account_id,
+                    **on_account,
                     **autopay_kwargs,
                     **application_fee_kwargs(fee_cents),
                 )

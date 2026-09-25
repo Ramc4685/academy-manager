@@ -106,6 +106,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    stored_stripe_account,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
@@ -449,10 +450,15 @@ class _StripeCheckoutAttemptRetirement:
         payments: Any,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         unretired: Any = None,
+        stripe_account: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
         self._stripe = stripe
         self._payments = payments
         self._now = clock
+        # The Stripe account the academy's checkouts run on (None = platform).
+        # A direct-charge session lives on the connected account and can only
+        # be expired there. Unset -> the platform, as before.
+        self._stripe_account = stripe_account
         # Worklist for sessions that stayed payable because Stripe could not be
         # reached. Optional so the older two-argument construction in tests
         # keeps working; when it is None the failure is still logged loudly.
@@ -483,7 +489,8 @@ class _StripeCheckoutAttemptRetirement:
         # away as another benign "already paid" expiry failure.
         expire = self._stripe.expire_checkout_session
         try:
-            await expire(checkout_session_id)
+            account = await self._stripe_account() if self._stripe_account else None
+            await expire(checkout_session_id, **({"stripe_account": account} if account else {}))
         except StripeCheckoutSessionNotExpirable as exc:
             # The ONLY benign failure: Stripe will not expire a session that is
             # already complete or expired, which is precisely the race this call
@@ -783,6 +790,8 @@ def compose_parent(
         outbox=outbox,
         transaction_runner=transaction_runner,
         academy_id=request_academy_id,
+        connected_accounts=connected_accounts_repo,
+        settings=billing_settings_repo,
     )
 
     handle_webhook = HandleWebhookEvent(
@@ -1045,11 +1054,21 @@ def compose_parent(
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
     accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=request_academy_id)
+
+    async def _checkout_stripe_account() -> str | None:
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context="checkout_retirement",
+        )
+        return route.connected_account_id
+
     checkout_retirement = _StripeCheckoutAttemptRetirement(
         stripe=stripe,
         payments=payments_repo,
         clock=clock,
         unretired=MongoUnretiredCheckoutSessionRepository(db),
+        stripe_account=_checkout_stripe_account,
     )
     start_app = StartApplication(
         apps=apps_repo,
@@ -1964,7 +1983,6 @@ def compose_parent(
                 "balance payment unavailable",
                 reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account_exists else None),
             )
-        connected_account_stripe_id = route.connected_account_id
         currencies = {inv.currency for inv in payable}
         if len(currencies) != 1:
             raise ValueError("cannot pay invoices with mixed currencies in one checkout")
@@ -2000,6 +2018,8 @@ def compose_parent(
         # Roadmap L9b: the academy's platform application fee (0 by default).
         fee_cents = route.application_fee_cents(total_cents)
         idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
+        # House: unchanged key. A direct charge scopes it to the academy account.
+        idempotency_key = route.idempotency_key(idempotency_key)
         # Same reasoning as the single-invoice path (issue #635): every return
         # needs a checkout_session_id so the settlement poll can run, and the
         # opted-in case also picks up autopay activation from it.
@@ -2019,7 +2039,9 @@ def compose_parent(
                     "type": "balance_payment",
                 },
                 idempotency_key=idempotency_key,
-                connected_account_id=connected_account_stripe_id,
+                # House: platform. Otherwise a DIRECT charge on the academy's
+                # own connected account.
+                **route.on_account_kwargs(),
                 **autopay_kwargs,
                 **application_fee_kwargs(fee_cents),
             )
@@ -2398,14 +2420,15 @@ def compose_parent(
         # Request-time tenant (C4): re-scoping to the boot academy here would
         # look up another tenant's Stripe customer in multi-academy mode.
         with tenant_scope(request_academy_id()):
-            stripe_customer_id = await parent_customers_repo.get_stripe_customer_id(
-                parent_id=parent_id
-            )
+            customer_doc = await parent_customers_repo.get_academy_customer(parent_id=parent_id)
+        customer_doc = customer_doc or {}
         result = await create_portal.execute(
             CreateCustomerPortalSessionCommand(
                 parent_id=parent_id,
                 return_url=return_url,
-                stripe_customer_id=stripe_customer_id,
+                stripe_customer_id=str(customer_doc.get("stripe_customer_id") or "") or None,
+                # A direct-charge customer lives on the academy's account.
+                stripe_account_id=stored_stripe_account(customer_doc),
             )
         )
         return result.model_dump()

@@ -16,7 +16,10 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
+from backend.v2.contexts.billing.application.charge_route import (
+    ChargeRoute,
+    resolve_charge_route,
+)
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -105,7 +108,7 @@ class EnrollChildInSessionType:
         now = self._now()
 
         # 4. Start Stripe setup checkout so the app owns future invoices.
-        connected_account_id = await self._ready_connected_account_id()
+        route = await self._ready_charge_route()
         (
             _checkout_id,
             redirect_url,
@@ -123,7 +126,8 @@ class EnrollChildInSessionType:
                 "session_type_id": cmd.session_type_id,
                 "source": "autopay_setup",
             },
-            connected_account_id=connected_account_id,
+            # House: platform. Otherwise ON the academy's connected account.
+            **route.on_account_kwargs(),
         )
 
         # 5. Persist enrollment with active status
@@ -148,7 +152,7 @@ class EnrollChildInSessionType:
 
         return {"enrollment": enrollment, "redirect_url": redirect_url}
 
-    async def _ready_connected_account_id(self) -> str | None:
+    async def _ready_charge_route(self) -> ChargeRoute:
         route = await resolve_charge_route(
             connected_accounts=self._connected_accounts,
             settings=self._settings,
@@ -156,9 +160,7 @@ class EnrollChildInSessionType:
         )
         if route.refused:
             raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
-        # Platform (house) and unconfigured routes -> None; a connected route
-        # still routes via setup_intent_data.on_behalf_of.
-        return route.connected_account_id
+        return route
 
 
 class CancelBillingEnrollment:

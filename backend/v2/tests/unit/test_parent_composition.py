@@ -324,7 +324,8 @@ async def test_parent_single_invoice_payment_routes_checkout_to_ready_connected_
         "invoice_id": "inv-1",
         "checkout_url": "https://checkout.stripe.test/balance",
     }
-    assert stripe.invoice_checkout_calls[0]["connected_account_id"] == "acct_ready"
+    assert stripe.invoice_checkout_calls[0]["stripe_account"] == "acct_ready"
+    assert "connected_account_id" not in stripe.invoice_checkout_calls[0]
 
 
 @pytest.mark.asyncio
@@ -405,7 +406,8 @@ async def test_parent_balance_payment_routes_checkout_to_ready_connected_account
     assert stripe.invoice_checkout_calls
     call = stripe.invoice_checkout_calls[0]
     assert call["amount_cents"] == 12_000
-    assert call["connected_account_id"] == "acct_ready"
+    assert call["stripe_account"] == "acct_ready"
+    assert str(call["idempotency_key"]).endswith(":acct:acct_ready")
     assert call["metadata"]["invoice_ids"] == "inv-earlier,inv-later"
     assert call["metadata"]["type"] == "balance_payment"
 
@@ -444,7 +446,7 @@ async def test_parent_single_invoice_payment_with_enroll_autopay_forwards_flag(
     call = stripe.invoice_checkout_calls[0]
     assert call["save_payment_method_for_autopay"] is True
     assert call["autopay_enrollment_ids"] == ["enroll-a"]
-    assert call["connected_account_id"] == "acct_ready"
+    assert call["stripe_account"] == "acct_ready"
     # Opted-in redirects must carry a checkout_session_id placeholder so the
     # parent app's checkout-status poll fires on return (not just the
     # webhook) — Stripe substitutes {CHECKOUT_SESSION_ID} at redirect time.
@@ -588,7 +590,7 @@ async def test_parent_balance_payment_with_enroll_autopay_collects_distinct_enro
     assert call["autopay_enrollment_ids"] == ["enroll-a", "enroll-b"]
     # A distinct idempotency key so an earlier one-time balance session is not
     # replayed without the saved-payment-method params.
-    assert str(call["idempotency_key"]).endswith(":autopay-optin")
+    assert str(call["idempotency_key"]).endswith(":autopay-optin:acct:acct_ready")
     # Same checkout_session_id placeholder requirement as the single-invoice
     # path (see test above) — the balance payment path builds its own Stripe
     # call directly rather than delegating to SendInvoice.
@@ -719,7 +721,12 @@ async def test_parent_balance_payment_falls_back_to_platform_when_flag_on(
         )
 
     assert result == {"redirect_url": "https://checkout.stripe.test/balance"}
-    assert stripe.invoice_checkout_calls[0]["connected_account_id"] is None
+    # House academy: the platform call, byte-identical (no account kwarg, and
+    # the historical idempotency key).
+    call = stripe.invoice_checkout_calls[0]
+    assert "stripe_account" not in call
+    assert "connected_account_id" not in call
+    assert ":acct:" not in str(call["idempotency_key"])
 
 
 @pytest.mark.asyncio
@@ -754,7 +761,7 @@ async def test_parent_balance_payment_provider_failure_returns_unavailable(
                 cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
             )
 
-    assert stripe.invoice_checkout_calls[0]["connected_account_id"] == "acct_ready"
+    assert stripe.invoice_checkout_calls[0]["stripe_account"] == "acct_ready"
     # The parent portal's primary CTA blew up: loud, attributed, and recorded
     # once per invoice behind the link (issue #426).
     assert exc.value.details.get("reason") == "checkout_creation_failed"
@@ -1018,14 +1025,14 @@ class _AutopaySetupStripe(_PortalStripe):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
-        connected_account_id: str | None = None,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         self.autopay_setup_checkouts.append(
             {
                 "parent_id": parent_id,
                 "enrollment_id": enrollment_id,
                 "session_id": session_id,
-                "connected_account_id": connected_account_id,
+                "stripe_account": stripe_account,
                 "metadata": metadata,
             }
         )
@@ -1099,7 +1106,7 @@ async def test_start_autopay_does_not_stamp_dangling_subscription_fields(
         )
 
     assert result.redirect_url == "https://checkout.stripe.test/autopay"
-    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+    assert stripe.autopay_setup_checkouts[0]["stripe_account"] == "acct_ready"
 
     enrollment_updates = db["enrollments"].updates
     assert len(enrollment_updates) == 1
@@ -1615,13 +1622,17 @@ async def test_restarting_checkout_repoints_the_application_at_the_new_payment(
         def __init__(self) -> None:
             self.calls: list[dict[str, Any]] = []
             self.expired: list[str] = []
+            self.expired_on: list[str | None] = []
 
         async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
             self.calls.append(kwargs)
             return "cs_second", "https://checkout.stripe.test/second"
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.expired.append(checkout_session_id)
+            self.expired_on.append(stripe_account)
 
     stripe = _Stripe()
     parent = compose_parent(
@@ -1651,6 +1662,9 @@ async def test_restarting_checkout_repoints_the_application_at_the_new_payment(
     # its pending Payment parked, so the parent cannot be charged twice for the
     # same enrollment by going back to the old tab.
     assert stripe.expired == ["cs_first"]
+    # A direct-charge session lives on the academy's connected account and is
+    # expired there.
+    assert stripe.expired_on == ["acct_ready"]
     first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
     assert first_payment["status"] == "expired"
 
@@ -1739,7 +1753,9 @@ async def test_retiring_an_already_paid_checkout_does_not_corrupt_state(
         async def create_checkout_session(self, **_: Any) -> tuple[str, str]:
             return "cs_second", "https://checkout.stripe.test/second"
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.expire_attempts.append(checkout_session_id)
             raise StripeCheckoutSessionNotExpirable("You may only expire an open Checkout Session.")
 
@@ -1799,7 +1815,9 @@ class _RecordingStripe:
         self.created.append(kwargs)
         return self.checkout_session_id, "https://checkout.stripe.test/new"
 
-    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+    async def expire_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> None:
         self.expired.append(checkout_session_id)
 
 
@@ -1939,7 +1957,9 @@ async def test_retiring_the_same_checkout_attempt_twice_is_harmless(
         def __init__(self) -> None:
             self.expired: list[str] = []
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.expired.append(checkout_session_id)
             if len(self.expired) > 1:
                 raise StripeCheckoutSessionNotExpirable(
@@ -2618,7 +2638,9 @@ async def test_a_transient_stripe_failure_parks_the_session_for_reconciliation(
     await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
 
     class _UnreachableStripe:
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             raise stripe_lib.APIConnectionError(
                 "Unexpected error communicating with Stripe: connection reset"
             )
@@ -2671,7 +2693,9 @@ async def test_an_already_terminal_stripe_session_is_not_parked_for_reconciliati
     await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
 
     class _AlreadyCompleteStripe:
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             raise StripeCheckoutSessionNotExpirable("You may only expire an open Checkout Session.")
 
     retirement = _StripeCheckoutAttemptRetirement(
@@ -2712,7 +2736,9 @@ async def test_a_later_successful_retirement_clears_the_worklist_entry(
         def __init__(self) -> None:
             self.attempts = 0
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.attempts += 1
             if self.attempts == 1:
                 raise stripe_lib.APIConnectionError("connection reset")

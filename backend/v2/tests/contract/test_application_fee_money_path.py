@@ -106,7 +106,7 @@ async def test_default_fee_is_zero_and_a_platform_set_fee_is_sent(real_db) -> No
 
     # Default: no settings document at all -> application_fee_amount 0.
     await _checkout(real_db, stripe, ACAD, 15_000)
-    assert stripe.checkouts[-1]["connected_account_id"] == f"acct_{ACAD}"
+    assert stripe.checkouts[-1]["stripe_account"] == f"acct_{ACAD}"
     assert stripe.checkouts[-1]["application_fee_amount"] == 0
 
     # A platform admin sets 2.5% for ACAD only (the platform route's use case).
@@ -128,7 +128,7 @@ async def test_default_fee_is_zero_and_a_platform_set_fee_is_sent(real_db) -> No
 
     # The other academy is untouched.
     await _checkout(real_db, stripe, OTHER, 15_000)
-    assert stripe.checkouts[-1]["connected_account_id"] == f"acct_{OTHER}"
+    assert stripe.checkouts[-1]["stripe_account"] == f"acct_{OTHER}"
     assert stripe.checkouts[-1]["application_fee_amount"] == 0
     assert (await platform.get.execute(OTHER)).application_fee_bps == 0
 

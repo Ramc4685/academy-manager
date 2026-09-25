@@ -48,8 +48,13 @@ class _FakeOutbox:
 
 
 class _SavedCardStripe(FakeStripeGateway):
-    async def get_default_payment_method(self, *, academy_id: str, parent_id: str):
-        return f"cus-{parent_id}", f"pm-{parent_id}"
+    """The parent's saved card lives ON the academy's connected account (a
+    direct charge), where the stored record says it is."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.register_object(f"cus-{PARENT}", stripe_account="acct-charge-ready")
+        self.register_object(f"pm-{PARENT}", stripe_account="acct-charge-ready")
 
 
 @pytest.fixture
@@ -77,6 +82,9 @@ async def _seed_chargeable_invoice(db: Any) -> None:
         {
             "academy_id": ACAD,
             "parent_id": PARENT,
+            "stripe_customer_id": f"cus-{PARENT}",
+            "default_payment_method_id": f"pm-{PARENT}",
+            "stripe_account_id": "acct-charge-ready",
             "payment_method_label": "Visa",
             "payment_method_last4": "4242",
             "created_at": NOW,

@@ -225,7 +225,11 @@ async def test_enroll_routes_autopay_setup_through_ready_connected_account():
     )
 
     assert connected_accounts.calls == 1
-    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+    setup = stripe.autopay_setup_checkouts[0]
+    assert setup["stripe_account"] == "acct_ready"
+    assert setup["connected_account_id"] is None
+    # Checkout's customer lives on the academy's account, not the platform.
+    assert stripe.account_of(setup["customer_id"]) == "acct_ready"
 
 
 @pytest.mark.asyncio

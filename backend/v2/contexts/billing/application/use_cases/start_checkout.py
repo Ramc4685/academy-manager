@@ -74,7 +74,6 @@ class StartCheckout:
         # #532) stamps the CURRENT academy, never a boot-time one.
         academy_id = self._academy_id() if callable(self._academy_id) else self._academy_id
         route = await self._charge_route()
-        connected_account_id = route.connected_account_id
         fee_cents = route.application_fee_cents(cmd.amount_cents)
         payment_id = str(new_ulid())
         try:
@@ -91,7 +90,9 @@ class StartCheckout:
                     "session_id": cmd.session_id,
                     "calculation_snapshot_id": cmd.calculation_snapshot_id or "",
                 },
-                connected_account_id=connected_account_id,
+                # House academy: platform call, no account kwarg. Any other
+                # academy: a DIRECT charge on its own connected account.
+                **route.on_account_kwargs(),
                 **application_fee_kwargs(fee_cents),
             )
         except Exception as exc:  # pragma: no cover - infra-only path
@@ -125,7 +126,7 @@ class StartCheckout:
         )
         if route.refused:
             raise CheckoutCreationFailed("Stripe connected account is not ready for checkout.")
-        # A connected route still uses destination-charge params (on_behalf_of +
-        # transfer_data) via ``connected_account_id``; ``unconfigured`` (no
-        # connected-accounts store wired) keeps its historical platform charge.
+        # A connected route is a direct charge on the academy's account
+        # (``stripe_account``); ``unconfigured`` (no connected-accounts store
+        # wired) keeps its historical platform charge.
         return route

@@ -69,7 +69,7 @@ class _RaisingBillingSettings:
 
 
 @pytest.mark.asyncio
-async def test_start_checkout_routes_destination_charge_when_connected_account_ready() -> None:
+async def test_start_checkout_is_a_direct_charge_on_the_ready_connected_account() -> None:
     stripe = FakeStripeGateway()
     repo = FakePaymentRepo()
     uc = StartCheckout(
@@ -88,7 +88,11 @@ async def test_start_checkout_routes_destination_charge_when_connected_account_r
         )
     )
     assert result.payment_id
-    assert stripe.checkouts[0]["connected_account_id"] == "acct_ready_1"
+    checkout = stripe.checkouts[0]
+    # Created ON the academy's account; no destination-charge params.
+    assert checkout["stripe_account"] == "acct_ready_1"
+    assert checkout["connected_account_id"] is None
+    assert stripe.account_of(result.checkout_session_id) == "acct_ready_1"
 
 
 @pytest.mark.asyncio

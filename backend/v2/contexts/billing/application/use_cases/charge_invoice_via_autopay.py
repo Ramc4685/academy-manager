@@ -6,6 +6,17 @@ axis (sent_at, delivery_status) is never touched here.
 
 PI idempotency is scoped to invoice, billing period, and attempted balance so true
 replays dedupe without replaying stale amounts after the invoice balance changes.
+
+Where the charge runs follows the academy's ChargeRoute:
+
+* House academy (platform): the saved card is found by the platform-wide
+  Customer search (``get_default_payment_method``) and the PaymentIntent is
+  created on the platform — exactly as before direct charges existed.
+* Any other academy: a DIRECT charge on its connected account. The customer
+  and payment method are the ones the app STORED for that account
+  (``SavedPaymentMethodReader``); the PaymentIntent is created on that account
+  (``stripe_account``), carries the academy's ``application_fee_amount`` when
+  non-zero, and its idempotency key names the account.
 """
 
 from __future__ import annotations
@@ -26,6 +37,7 @@ from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
     LedgerRepository,
+    SavedPaymentMethodReader,
 )
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
@@ -106,7 +118,9 @@ class AutopayStripeGateway(Protocol):
         """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
         ...
 
-    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+    async def retrieve_payment_method(
+        self, stripe_payment_method_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch the saved PaymentMethod so funding type is known at charge time."""
         ...
 
@@ -119,7 +133,8 @@ class AutopayStripeGateway(Protocol):
         payment_method_id: str,
         idempotency_key: str,
         metadata: dict[str, str],
-        connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         """Return (pi_id, pi_status, decline_code_or_None)."""
         ...
@@ -164,6 +179,7 @@ class ChargeInvoiceViaAutopay:
         enrollment_autopay: EnrollmentAutopayGateway | None = None,
         settings: BillingSettingsRepository | None = None,
         connected_accounts: ConnectedAccountRepository | None = None,
+        parent_customers: SavedPaymentMethodReader | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
@@ -171,6 +187,7 @@ class ChargeInvoiceViaAutopay:
         self._enrollment_autopay = enrollment_autopay
         self._settings = settings
         self._connected_accounts = connected_accounts
+        self._parent_customers = parent_customers
         self._now = clock
 
     async def execute(
@@ -300,19 +317,35 @@ class ChargeInvoiceViaAutopay:
                 decline_code="connected_account_not_ready",
             )
         # House academy (and an unwired connected-accounts store) -> platform;
-        # otherwise the ready connected account (destination charge).
+        # otherwise a direct charge on the ready connected account.
+        on_account = route.on_account_kwargs()
         connected_account_id = route.connected_account_id
 
-        saved = await self._stripe.get_default_payment_method(
-            academy_id=invoice.academy_id,
-            parent_id=invoice.parent_id,
-        )
+        if connected_account_id is None:
+            # Platform: the historical Customer search, byte-identical.
+            saved = await self._stripe.get_default_payment_method(
+                academy_id=invoice.academy_id,
+                parent_id=invoice.parent_id,
+            )
+        elif self._parent_customers is None:
+            # Fail closed: a platform-wide search cannot see the connected
+            # account's customers, so there is nothing safe to charge.
+            log.error(
+                "charge_autopay: no stored-card reader wired for a direct charge invoice=%s",
+                invoice_id,
+            )
+            saved = None
+        else:
+            saved = await self._parent_customers.get_saved_payment_method(
+                parent_id=invoice.parent_id,
+                stripe_account_id=connected_account_id,
+            )
         if saved is None:
             raise ValueError(
                 f"no_saved_payment_method: parent {invoice.parent_id!r} has no saved Stripe card"
             )
         customer_id, pm_id = saved
-        settings, funding_type = await self._resolve_discount_inputs(pm_id)
+        settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
         invoice, discount_metadata = await self._apply_ach_discount_if_needed(
             invoice=invoice,
             settings=settings,
@@ -328,6 +361,7 @@ class ChargeInvoiceViaAutopay:
         )
         fee_cents = route.application_fee_cents(invoice.balance_due_cents)
         idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
+        idempotency_key = route.idempotency_key(idempotency_key)
         pi_metadata = {
             "invoice_id": invoice.invoice_id,
             "academy_id": invoice.academy_id,
@@ -345,7 +379,7 @@ class ChargeInvoiceViaAutopay:
                 payment_method_id=pm_id,
                 idempotency_key=idempotency_key,
                 metadata=pi_metadata,
-                connected_account_id=connected_account_id,
+                **on_account,
                 **application_fee_kwargs(fee_cents),
             )
         except Exception as exc:
@@ -551,6 +585,7 @@ class ChargeInvoiceViaAutopay:
     async def _resolve_discount_inputs(
         self,
         payment_method_id: str,
+        on_account: dict[str, Any],
     ) -> tuple[BillingSettings | None, str | None]:
         if self._settings is None or self._stripe is None:
             return None, None
@@ -560,7 +595,9 @@ class ChargeInvoiceViaAutopay:
             log.warning("charge_autopay: billing settings lookup failed; no discount err=%s", exc)
             return None, None
         try:
-            payment_method = await self._stripe.retrieve_payment_method(payment_method_id)
+            payment_method = await self._stripe.retrieve_payment_method(
+                payment_method_id, **on_account
+            )
         except Exception as exc:
             log.warning(
                 "charge_autopay: payment method lookup failed pm=%s; no discount err=%s",

@@ -18,7 +18,7 @@ repository reads and calls :func:`decide_charge_route`.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -88,6 +88,27 @@ class ChargeRoute(BaseModel):
     def connected_account_id(self) -> str | None:
         """The connected account a charge routes to, or None on the platform."""
         return self.stripe_account_id if self.kind == "connected" else None
+
+    def on_account_kwargs(self) -> dict[str, Any]:
+        """Gateway kwargs that put one Stripe call on this route's account.
+
+        ``{"stripe_account": <acct>}`` on a ``connected`` route (a DIRECT
+        charge: the object is created on / read from the academy's own
+        account); empty on every other route, so a platform (house academy)
+        call passes exactly the kwargs it always did.
+        """
+        account = self.connected_account_id
+        return {"stripe_account": account} if account else {}
+
+    def idempotency_key(self, key: str) -> str:
+        """Scope a Stripe idempotency key to this route's account.
+
+        A connected route appends the account id, so a key minted for one
+        account never collides with, or replays, a request on another. Every
+        other route returns ``key`` unchanged: house keys stay byte-identical.
+        """
+        account = self.connected_account_id
+        return f"{key}:acct:{account}" if account else key
 
     def application_fee_cents(self, amount_cents: int) -> int:
         """The platform fee for one charge on this route, in cents.

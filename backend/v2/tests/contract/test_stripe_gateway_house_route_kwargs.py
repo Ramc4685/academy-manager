@@ -437,3 +437,180 @@ async def test_house_refund_kwargs(calls: _Calls) -> None:
     assert direct_pi == {"stripe_account": ACCT}
     _, direct = calls.last("Refund.create")
     _assert_only_header_added(house, direct)
+
+
+# --- use case -> real gateway: the route decides the SDK kwargs ---------------
+#
+# The tests above pin the gateway on its own. These drive the real charge use
+# cases (route resolution included) into RealStripeGateway, so a use case that
+# forgot the account, sent a destination charge, or changed a house key would
+# show up in the exact kwargs Stripe receives.
+
+
+class _Account:
+    def __init__(self, stripe_account_id: str) -> None:
+        self.stripe_account_id = stripe_account_id
+
+    def is_ready_for_charges(self) -> bool:
+        return True
+
+
+class _Accounts:
+    def __init__(self, stripe_account_id: str) -> None:
+        self._account = _Account(stripe_account_id)
+
+    async def get_for_academy(self) -> _Account:
+        return self._account
+
+
+class _Settings:
+    def __init__(self, *, house: bool, fee_bps: int = 0) -> None:
+        self._house = house
+        self._fee_bps = fee_bps
+
+    async def get(self) -> Any:
+        from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+
+        return BillingSettings(
+            academy_id="acad_x",
+            allow_platform_charge_fallback=self._house,
+            application_fee_bps=self._fee_bps,
+        )
+
+
+async def _start_checkout(*, house: bool, fee_bps: int = 0) -> None:
+    from backend.v2.contexts.billing.application.use_cases.start_checkout import (
+        StartCheckout,
+        StartCheckoutCommand,
+    )
+
+    class _Payments:
+        async def save(self, payment: Any) -> None:
+            return None
+
+    await StartCheckout(
+        payment_repo=_Payments(),  # type: ignore[arg-type]
+        stripe=_gw(),
+        academy_id="acad_x",
+        # A ready account exists either way: the house must still use the platform.
+        connected_accounts=_Accounts(ACCT),  # type: ignore[arg-type]
+        settings=_Settings(house=house, fee_bps=fee_bps),  # type: ignore[arg-type]
+    ).execute(
+        StartCheckoutCommand(
+            parent_id="par-1",
+            session_id="sess-1",
+            amount_cents=15_000,
+            success_url="https://app.test/ok",
+            cancel_url="https://app.test/cancel",
+        )
+    )
+
+
+async def test_house_start_checkout_use_case_sends_the_platform_call(calls: _Calls) -> None:
+    await _start_checkout(house=True, fee_bps=250)
+    _, house = calls.last("checkout.Session.create")
+    assert "stripe_account" not in house
+    # No fee on the platform, so no payment_intent_data at all: the exact
+    # key set the house registration checkout has always sent.
+    assert set(house) == {
+        "mode",
+        "line_items",
+        "success_url",
+        "cancel_url",
+        "metadata",
+        "expires_at",
+    }
+
+
+async def test_direct_start_checkout_carries_the_fee_on_the_academy_account(
+    calls: _Calls,
+) -> None:
+    await _start_checkout(house=False, fee_bps=250)
+    _, direct = calls.last("checkout.Session.create")
+    assert direct["stripe_account"] == ACCT
+    assert direct["payment_intent_data"] == {
+        "metadata": direct["metadata"],
+        "application_fee_amount": 375,  # 2.5% of $150.00
+    }
+    assert "on_behalf_of" not in str(direct) and "transfer_data" not in str(direct)
+
+
+async def test_direct_start_checkout_with_no_fee_omits_the_fee(calls: _Calls) -> None:
+    await _start_checkout(house=False, fee_bps=0)
+    _, direct = calls.last("checkout.Session.create")
+    assert direct["stripe_account"] == ACCT
+    assert "payment_intent_data" not in direct
+
+
+class _StoredCard:
+    def __init__(self) -> None:
+        self.calls: list[str | None] = []
+
+    async def get_saved_payment_method(
+        self, *, parent_id: str, stripe_account_id: str | None
+    ) -> tuple[str, str] | None:
+        self.calls.append(stripe_account_id)
+        return ("cus_on_acct", "pm_on_acct") if stripe_account_id == ACCT else None
+
+
+async def _autopay(*, house: bool, fee_bps: int = 0) -> _StoredCard:
+    from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
+        ChargeInvoiceViaAutopay,
+    )
+    from backend.v2.tests.unit.test_charge_autopay_use_case import FakeLedgerRepo, _invoice
+
+    stored = _StoredCard()
+    result = await ChargeInvoiceViaAutopay(
+        ledger=FakeLedgerRepo(invoices=[_invoice(status="open")]),  # type: ignore[arg-type]
+        stripe=_gw(),
+        settings=_Settings(house=house, fee_bps=fee_bps),  # type: ignore[arg-type]
+        connected_accounts=_Accounts(ACCT),  # type: ignore[arg-type]
+        parent_customers=stored,
+    ).execute("inv-1")
+    assert result.success is True
+    return stored
+
+
+async def test_house_autopay_use_case_sends_the_historical_calls(calls: _Calls) -> None:
+    stored = await _autopay(house=True, fee_bps=250)
+    # The platform Customer search, not the stored-card reader.
+    assert stored.calls == []
+    _, search = calls.last("Customer.search")
+    assert search == {
+        "query": 'metadata["academy_id"]:"acad-1" AND metadata["parent_id"]:"parent-1"',
+        "limit": 1,
+    }
+    _, pm_read = calls.last("PaymentMethod.retrieve")
+    assert pm_read == {}
+    _, house = calls.last("PaymentIntent.create")
+    assert house == {
+        "amount": 10_000,
+        "currency": "usd",
+        "customer": "cus_1",
+        "payment_method": "pm_1",
+        "off_session": True,
+        "confirm": True,
+        "idempotency_key": "autopay:inv-1:2026-06:10000",
+        "metadata": {
+            "invoice_id": "inv-1",
+            "academy_id": "acad-1",
+            "parent_id": "parent-1",
+            "source": "autopay",
+        },
+    }
+
+
+async def test_direct_autopay_charges_the_stored_card_on_the_academy_account(
+    calls: _Calls,
+) -> None:
+    stored = await _autopay(house=False, fee_bps=250)
+    assert stored.calls == [ACCT]
+    assert not [name for name, _, _ in calls.log if name == "Customer.search"]
+    _, pm_read = calls.last("PaymentMethod.retrieve")
+    assert pm_read == {"stripe_account": ACCT}
+    _, direct = calls.last("PaymentIntent.create")
+    assert direct["stripe_account"] == ACCT
+    assert (direct["customer"], direct["payment_method"]) == ("cus_on_acct", "pm_on_acct")
+    assert direct["application_fee_amount"] == 250  # 2.5% of $100.00
+    assert direct["idempotency_key"] == f"autopay:inv-1:2026-06:10000:fee250:acct:{ACCT}"
+    assert "on_behalf_of" not in direct and "transfer_data" not in direct

@@ -76,3 +76,52 @@ If one exists, the owner must decide whether to re-onboard it as a new account.
 `connect-account:{academy_id}`. If a create call for an academy ran with the old
 body in the 24 hours before deploy and is retried with the new body, Stripe
 returns `409 idempotency_error`. It will not create a duplicate account.
+
+## Checkout, autopay setup and autopay (charge paths)
+
+`ChargeRoute` (`domain/charge_route.py`) decides the account for every charge:
+
+| Route | Stripe calls | Idempotency key |
+| --- | --- | --- |
+| house academy (platform) | no `stripe_account`, no fee, same kwargs as before | unchanged |
+| any other academy (connected) | `stripe_account=<acct>`, no `on_behalf_of` or `transfer_data`; `application_fee_amount` from `application_fee_bps` (floored), left out when 0 | `<key>[:fee<N>]:acct:<acct>` |
+
+This covers registration checkout (`StartCheckout`), autopay setup checkout
+(`StartSubscriptionCheckout`, `EnrollChildInSessionType`), invoice pay links and
+bundled balance links (`SendInvoice`), the parent balance checkout
+(`composition/parent.py`) and off-session autopay (`ChargeInvoiceViaAutopay`).
+The parent return poll (`GetCheckoutStatus`), superseded-checkout expiry, and
+webhook object hydration and autopay-setup completion read the session on the
+same account. Webhooks use the event's top-level `account`.
+
+### Where a parent's customer and card are recorded
+
+`parent_billing_customers` stays one row per `(academy_id, parent_id)`. The new
+`stripe_account_id` field (migration `0204`, optional string) names the account
+that holds `stripe_customer_id` and every saved payment method. If the field is
+missing, the account is the platform. That covers every existing row and every
+house-academy row.
+
+- A write for a different account than the stored one replaces the customer and
+  drops the old account's saved payment methods. A platform card is never
+  charged on a connected account, and the reverse is also blocked.
+- `promote_payment_method_to_default` only changes the row stored for the same
+  account.
+
+### Autopay
+
+- House: unchanged. The platform `Customer.search` finds the saved card, and the
+  PaymentIntent is created on the platform.
+- Connected: charges the customer and card **stored** for the academy's account
+  (`get_saved_payment_method`). It never runs a platform search. If no card is
+  stored for that account, it raises `no_saved_payment_method` and Stripe is not
+  called.
+
+### Existing non-house parents
+
+Before this change, a non-house academy's parents saved cards as platform
+customers (destination charges). Those rows have no `stripe_account_id`, so the
+connected route does not find them, and autopay for those parents fails with
+`no_saved_payment_method` until they set up autopay again, on the academy's
+account. Before deploying, count them with a read-only query:
+`db.parent_billing_customers.countDocuments({academy_id: {$ne: "<HOUSE_ACADEMY_ID>"}, stripe_customer_id: {$type: "string"}, stripe_account_id: {$exists: false}})`.
