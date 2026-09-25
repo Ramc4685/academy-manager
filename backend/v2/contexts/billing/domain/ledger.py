@@ -15,6 +15,12 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
+
+#: ``InvoiceLine.source_type`` of account credit spent on an invoice (a negative
+#: line). Credit settles part of the charge rather than repricing it, so
+#: ``recompute_totals`` keeps it out of the subtotal and takes it off the total,
+#: the same place ``discount_cents`` comes off.
+ACCOUNT_CREDIT_SOURCE_TYPE = "account_credit"
 LedgerPaymentStatus = Literal[
     "pending", "succeeded", "failed", "refunded", "partially_refunded", "voided"
 ]
@@ -356,9 +362,19 @@ def recompute_totals(
     When omitted, it falls back to inferring ``total_cents - balance_due_cents`` from the
     passed invoice (only safe under a single writer; persistence guards concurrency via the
     invoice ``version`` token).
+
+    An ``account_credit`` line is not a charge, so it stays out of the subtotal
+    and comes off the total. That keeps the monthly generator's header shape
+    (subtotal = gross charges, total net of discount AND credit) across a
+    recompute, instead of billing the already-spent credit a second time.
     """
-    subtotal = sum(line.amount_cents for line in lines)
-    total = max(0, subtotal - invoice.discount_cents)
+    credit_cents = sum(
+        -line.amount_cents
+        for line in lines
+        if line.source_type == ACCOUNT_CREDIT_SOURCE_TYPE and line.amount_cents < 0
+    )
+    subtotal = sum(line.amount_cents for line in lines) + credit_cents
+    total = max(0, subtotal - invoice.discount_cents - credit_cents)
     if allocated_cents is None:
         allocated = invoice.total_cents - invoice.balance_due_cents  # already-allocated amount
     else:

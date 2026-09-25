@@ -24,7 +24,11 @@ from backend.v2.contexts.billing.application.use_cases.invoice_numbering import 
     mint_invoice_number,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import (
+    ACCOUNT_CREDIT_SOURCE_TYPE,
+    InvoiceLine,
+    LedgerInvoice,
+)
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
 from backend.v2.contexts.billing.domain.proration import (
     BILLABLE_CLASSES_PER_MONTH,
@@ -381,6 +385,7 @@ class MongoMonthlyBillingGenerator:
         gross_cents: int,
         discount_cents: int = 0,
         total_cents: int | None = None,
+        applied_credit_cents: int = 0,
         discount_policy: TuitionDiscount | None = None,
         tuition_description: str | None = None,
         now: datetime,
@@ -388,6 +393,12 @@ class MongoMonthlyBillingGenerator:
         """Write a LedgerInvoice for a monthly-generated enrollment charge.
 
         Uses a deterministic invoice_id for idempotency so re-runs are safe.
+
+        Account credit spent on the charge is recorded as its own negative
+        ``account_credit`` line, keyed by ``payment_id`` like the credit
+        application itself. A header-only credit was lost by every later
+        ``recompute_totals`` (late fee, added line, ACH discount), which billed
+        the family the already-spent credit again.
         """
         _log = logging.getLogger(__name__)
         invoice_id = self._monthly_invoice_id(enrollment_id, period)
@@ -460,6 +471,22 @@ class MongoMonthlyBillingGenerator:
                     discount_kind=discount_policy.kind,
                     gross_cents=gross_cents,
                     net_cents=max(gross_cents - discount_cents, 0),
+                    created_at=now,
+                )
+            )
+        if applied_credit_cents > 0:
+            lines.append(
+                InvoiceLine(
+                    line_id=f"{self._monthly_invoice_line_id(enrollment_id, period)}-credit",
+                    academy_id=academy_id,
+                    invoice_id=invoice_id,
+                    line_type="credit",
+                    description="Account credit applied",
+                    quantity=1,
+                    unit_amount_cents=-applied_credit_cents,
+                    amount_cents=-applied_credit_cents,
+                    source_type=ACCOUNT_CREDIT_SOURCE_TYPE,
+                    source_id=payment_id,
                     created_at=now,
                 )
             )
@@ -603,8 +630,9 @@ class MongoMonthlyBillingGenerator:
         """Force a pre-existing monthly invoice header onto the canonical shape.
 
         ``create_invoice`` never updates an existing header, and when it back-fills a
-        missing line it recomputes totals from the lines alone - which knows nothing
-        about applied credit and double-subtracts a discount line. Recovery repairs a
+        missing line it recomputes totals from the lines alone - which double-subtracts
+        a discount line, and knows nothing about a header-only credit written before
+        credit became an ``account_credit`` line. Recovery repairs a
         header that predates it, so it restates the header itself. Only the header is
         touched, and only when the lines already match what we expect; a conflicting
         line is left for the caller to report as a failed repair. Allocations already
@@ -624,7 +652,9 @@ class MongoMonthlyBillingGenerator:
             return
         lines = await self._ledger_repo.get_lines_for_invoice(invoice_id)
         tuition_cents = sum(
-            line.amount_cents for line in lines if line.source_type != "tuition_discount"
+            line.amount_cents
+            for line in lines
+            if line.source_type not in ("tuition_discount", ACCOUNT_CREDIT_SOURCE_TYPE)
         )
         discount_line_cents = sum(
             abs(line.amount_cents) for line in lines if line.source_type == "tuition_discount"
@@ -679,6 +709,7 @@ class MongoMonthlyBillingGenerator:
 
         gross_line_cents = 0
         discount_line_cents = 0
+        credit_line_cents = 0
         async for line_doc in self._db["invoice_lines"].find(
             {
                 "academy_id": academy_id,
@@ -688,6 +719,8 @@ class MongoMonthlyBillingGenerator:
             amount = int(line_doc.get("amount_cents", 0))
             if line_doc.get("source_type") == "tuition_discount":
                 discount_line_cents += abs(amount)
+            elif line_doc.get("source_type") == ACCOUNT_CREDIT_SOURCE_TYPE:
+                credit_line_cents += abs(amount)
             else:
                 gross_line_cents += amount
 
@@ -700,7 +733,7 @@ class MongoMonthlyBillingGenerator:
         return (
             (amount_cents is None or gross_line_cents == amount_cents)
             and (gross_shape or net_shape)
-            and total_cents == max(subtotal_cents - discount_cents, 0)
+            and total_cents == max(subtotal_cents - discount_cents - credit_line_cents, 0)
             and 0 <= balance_due_cents <= total_cents
         )
 
@@ -897,6 +930,7 @@ class MongoMonthlyBillingGenerator:
             gross_cents=gross_amount_cents,
             discount_cents=discount_cents,
             total_cents=amount_cents,
+            applied_credit_cents=applied_credit_cents,
             discount_policy=discount_policy,
             tuition_description=tuition_description,
             now=now,
@@ -1236,6 +1270,7 @@ class MongoMonthlyBillingGenerator:
                     gross_cents=gross_amount_cents,
                     discount_cents=discount_cents,
                     total_cents=amount_cents,
+                    applied_credit_cents=applied_credit_cents,
                     discount_policy=discount_policy,
                     tuition_description=tuition_description,
                     now=now,
