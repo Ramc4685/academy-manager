@@ -35,6 +35,10 @@ class AdminUserDetail(AdminUserSummary):
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None
+    # Roles on the tenant's `academy_memberships` row, which is what auth
+    # grants from. `roles` above mirrors the `users` doc and can drift (0165
+    # skips the mirror in some cases), so rank checks use both (X3).
+    membership_roles: tuple[str, ...] = ()
 
 
 class CreateAdminUserCommand(BaseModel):

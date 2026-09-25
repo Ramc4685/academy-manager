@@ -1349,3 +1349,20 @@ async def test_governance_audit_records_both_sides_roles(db) -> None:
         "target_roles": ["owner", "admin"],
         "attempted": "edit:email",
     }
+
+
+@pytest.mark.asyncio
+async def test_admin_detail_carries_the_membership_roles(db) -> None:
+    """X3 review: the rank check needs the roles auth actually grants, which
+    live on the membership, not only the directory doc's `roles`."""
+    await _seed_editable_parent(db)
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"}, {"$set": {"roles": ["parent", "owner"]}}
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    detail = await repo.get_admin_user("roster-parent-9", academy_id="academy-b")
+
+    assert detail is not None
+    assert "owner" not in detail.roles
+    assert detail.membership_roles == ("parent", "owner")

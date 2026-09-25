@@ -179,3 +179,31 @@ def test_rank_fails_closed_without_a_user_lookup(admin_only_client):
 )
 def test_staff_rank(roles, rank):
     assert staff_rank(roles) == rank
+
+
+def test_membership_only_owner_is_ranked_as_owner(admin_only_client):
+    """X3 review: auth grants from `academy_memberships`, and the `users` doc
+    can lag it (0165 skips the mirror in some cases). An owner whose directory
+    doc says only "coach" must still outrank a plain admin."""
+    modifier = admin_only_client.use_cases.get_admin_user
+    modifier.roles["o-drift"] = ["coach"]
+    real_detail = modifier._detail
+
+    def detail_with_membership(user_id):
+        detail = real_detail(user_id)
+        if user_id == "o-drift":
+            return detail.model_copy(update={"membership_roles": ("owner", "admin")})
+        return detail
+
+    modifier._detail = detail_with_membership
+
+    r = admin_only_client.patch(
+        "/api/v2/admin/users/o-drift",
+        json={"email": "attacker@example.com", "reason": "takeover"},
+    )
+
+    assert r.status_code == 403
+    assert admin_only_client.use_cases.update_admin_user._users.commands == []
+    [row] = _audit_rows(admin_only_client)
+    assert row["action"] == "user.change_denied"
+    assert "owner" in row["target_roles"]

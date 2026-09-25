@@ -302,6 +302,7 @@ class MongoUserRepository:
         linked_student_count: int,
         session_count: int = 0,
         login_invite_sent_at: datetime | None = None,
+        membership_roles: tuple[str, ...] = (),
     ) -> AdminUserDetail:
         summary = self._to_admin_summary(doc)
         return AdminUserDetail(
@@ -315,6 +316,7 @@ class MongoUserRepository:
             # successful send -- and each re-send mints a new Firebase oobCode
             # that invalidates the link already emailed to the parent.
             login_invite_sent_at=login_invite_sent_at,
+            membership_roles=membership_roles,
         )
 
     @staticmethod
@@ -889,6 +891,9 @@ class MongoUserRepository:
             session_count=session_count,
             login_invite_sent_at=cast(
                 "datetime | None", (membership or {}).get("login_invite_sent_at")
+            ),
+            membership_roles=tuple(
+                str(role) for role in cast("list[object]", (membership or {}).get("roles") or [])
             ),
         )
 

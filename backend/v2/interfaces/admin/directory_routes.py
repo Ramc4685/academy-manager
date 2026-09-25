@@ -133,7 +133,17 @@ async def _guard_user_change(
     target = await lookup.execute(user_id, academy_id=claims.academy_id)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
-    target_roles = tuple(getattr(target, "roles", None) or (target.role,))
+    # Rank on the users doc AND the tenant membership: auth grants from the
+    # membership, and the two can drift (X3 review).
+    target_roles = tuple(
+        dict.fromkeys(
+            (
+                *(getattr(target, "roles", None) or ()),
+                target.role,
+                *(getattr(target, "membership_roles", None) or ()),
+            )
+        )
+    )
     try:
         ensure_can_manage_user(claims, user_id, target_roles)
     except HTTPException:
