@@ -1450,3 +1450,88 @@ async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
     assert call["connected_account_id"] is None
     assert call["application_fee_cents"] == 0
     assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
+def _seed_generator_discounted_month(repo: FakeLedgerRepo) -> None:
+    """The shape the monthly generator writes for a month with a tuition discount:
+    a gross tuition line, a negative ``tuition_discount`` line, AND the same
+    discount mirrored in the header's ``discount_cents`` (``subtotal_cents`` gross)."""
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={
+            "subtotal_cents": 10_000,
+            "discount_cents": 2_000,
+            "total_cents": 8_000,
+            "balance_due_cents": 8_000,
+        }
+    )
+    repo.lines_by_invoice["inv-1"] = [
+        InvoiceLine(
+            line_id="ledger-monthly-line-enr-1-2026-06",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="tuition",
+            description="Monthly tuition 2026-06",
+            quantity=1,
+            unit_amount_cents=10_000,
+            amount_cents=10_000,
+            source_type="payment",
+            source_id="pay-legacy-1",
+            created_at=NOW,
+        ),
+        InvoiceLine(
+            line_id="ledger-monthly-line-enr-1-2026-06-discount",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="discount",
+            description="Sibling discount",
+            quantity=1,
+            unit_amount_cents=-2_000,
+            amount_cents=-2_000,
+            source_type="tuition_discount",
+            source_id="disc-1",
+            created_at=NOW,
+        ),
+    ]
+
+
+class _AchDeclines(FakeStripeDeclines):
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        return {"id": stripe_payment_method_id, "type": "us_bank_account"}
+
+
+def _ach_settings() -> FakeBillingSettingsRepo:
+    return FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+            ach_discount_label="ACH autopay savings",
+            disclosure_version="cash-discount-v1",
+        )
+    )
+
+
+def _ach_line_cents(repo: FakeLedgerRepo) -> int:
+    return next(
+        line.amount_cents
+        for line in repo.lines_by_invoice["inv-1"]
+        if line.line_type == "ach_discount"
+    )
+
+
+async def test_ach_discount_base_on_a_tuition_discounted_month_pins_current_behavior() -> None:
+    """PIN (2026-09-25): the first attempt bases the ACH discount on the header's
+    GROSS subtotal ($100 → -$2.50), a retry that finds the line already written
+    bases it on the non-ACH lines, which are NET of the sibling discount
+    ($80 → -$2.00). The same month gets two different cash discounts."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    first_attempt_cents = _ach_line_cents(repo)
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    retry_cents = _ach_line_cents(repo)
+
+    assert first_attempt_cents == -250
+    assert retry_cents == -200
