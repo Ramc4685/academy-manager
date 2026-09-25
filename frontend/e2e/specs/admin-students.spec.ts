@@ -434,8 +434,9 @@ test.describe("admin students", () => {
     await expect(page.getByRole("tab", { name: "Training" })).toBeVisible();
 
     // #897, the two geometry acceptance criteria. This test runs on
-    // chromium-mobile and chromium-desktop, so each branch is really
-    // exercised: a phone must give the parent's number a 44px tap target and
+    // chromium-mobile (Pixel 7, 412px), webkit-mobile (iPhone 14, 390px) and
+    // chromium-desktop, so each branch is really exercised: a phone must give
+    // the parent's number a 44px tap target and
     // must show the tabs without scrolling; a desktop must NOT inflate an
     // inline link to 44px (the `md:min-h-0` collapse).
     const viewport = page.viewportSize();

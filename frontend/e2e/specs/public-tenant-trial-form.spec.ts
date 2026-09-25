@@ -16,7 +16,26 @@ function fixtureAgent(name: string): string {
   return `Mozilla/5.0 (Playwright e2e) cm-e2e-public-fixture/${name}`;
 }
 
+/**
+ * The page is server-rendered, so the form is on screen (and fillable) before
+ * React hydrates it. A field filled in that window never reaches the form's
+ * state, and the next render clears it: on webkit-mobile the name was wiped
+ * and submit answered with "Enter your name." instead of posting. React sets
+ * its props key on a node when it hydrates it, and the form's onSubmit lives
+ * there, so wait for that before typing.
+ */
+async function waitForHydratedForm(page: Page): Promise<void> {
+  const form = page.getByTestId("trial-request-form");
+  await expect(form).toBeVisible();
+  await expect
+    .poll(() =>
+      form.evaluate((node) => Object.keys(node).some((key) => key.startsWith("__reactProps$"))),
+    )
+    .toBe(true);
+}
+
 async function fillValid(page: Page, name = "Jamie Testparent"): Promise<void> {
+  await waitForHydratedForm(page);
   const form = page.getByTestId("trial-request-form");
   await form.getByLabel("Your name").fill(name);
   await form.getByLabel("Email").fill("jamie.e2e@example.test");
@@ -64,6 +83,7 @@ test.describe("trial form, trials open", () => {
 
   test("shows an error summary that takes focus and links to each field", async ({ page }) => {
     await page.goto("/");
+    await waitForHydratedForm(page);
     const form = page.getByTestId("trial-request-form");
     await form.getByTestId("trial-request-submit").click();
 
