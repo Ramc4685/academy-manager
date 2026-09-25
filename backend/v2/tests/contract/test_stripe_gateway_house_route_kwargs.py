@@ -614,3 +614,31 @@ async def test_direct_autopay_charges_the_stored_card_on_the_academy_account(
     assert direct["application_fee_amount"] == 250  # 2.5% of $100.00
     assert direct["idempotency_key"] == f"autopay:inv-1:2026-06:10000:fee250:acct:{ACCT}"
     assert "on_behalf_of" not in direct and "transfer_data" not in direct
+
+
+async def test_direct_charge_refund_has_no_destination_flags(
+    calls: _Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A direct charge's PaymentIntent lives on the academy's account with an
+    ``application_fee_amount`` but no ``transfer_data``: the refund is created
+    on that account with neither ``reverse_transfer`` (there is no transfer)
+    nor ``refund_application_fee`` (the platform keeps its fee by default)."""
+    stripe_mod = sys.modules["stripe"]
+
+    def _retrieve(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.log.append(("PaymentIntent.retrieve", args, kwargs))
+        return {"id": "pi_1", "application_fee_amount": 150, "transfer_data": None}
+
+    monkeypatch.setattr(stripe_mod.PaymentIntent, "retrieve", staticmethod(_retrieve))
+
+    await _gw().issue_refund("pi_1", 500, idempotency_key="refund:pay-1:500", stripe_account=ACCT)
+
+    _, retrieved = calls.last("PaymentIntent.retrieve")
+    assert retrieved == {"stripe_account": ACCT}
+    _, refund = calls.last("Refund.create")
+    assert refund == {
+        "payment_intent": "pi_1",
+        "amount": 500,
+        "idempotency_key": "refund:pay-1:500",
+        "stripe_account": ACCT,
+    }

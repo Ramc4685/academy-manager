@@ -112,6 +112,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
     MongoParentBillingCustomerRepository,
     stored_stripe_account,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
+    MongoPaymentDisputeRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
@@ -655,6 +658,7 @@ def compose_parent_webhook_handler(
             academy_id,
             directory=MongoConnectedAccountDirectory(db),
         ),
+        payment_disputes=MongoPaymentDisputeRepository(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -822,6 +826,7 @@ def compose_parent(
             academy_id,
             directory=MongoConnectedAccountDirectory(db),
         ),
+        payment_disputes=MongoPaymentDisputeRepository(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True

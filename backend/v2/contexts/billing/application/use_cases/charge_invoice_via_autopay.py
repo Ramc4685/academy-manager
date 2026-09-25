@@ -508,6 +508,9 @@ class ChargeInvoiceViaAutopay:
                 status="succeeded",
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
+                # A direct charge lives on the academy's connected account;
+                # a refund of it must be issued there. None = platform.
+                stripe_account_id=connected_account_id,
                 paid_at=now,
                 metadata=discount_metadata or None,
                 created_at=now,

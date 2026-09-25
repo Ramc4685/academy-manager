@@ -160,3 +160,12 @@ class ApplicationFeeAcademyNotFound(DomainError):
 
     code = "Billing.AcademyNotFound"
     status_code = 404
+
+
+class StripeAccountMismatch(DomainError):
+    """A Stripe event names a different connected account than the one the
+    app recorded the payment on. The two cannot both be true, so the event is
+    not projected (the webhook quarantines it for a human)."""
+
+    code = "Billing.StripeAccountMismatch"
+    status_code = 409

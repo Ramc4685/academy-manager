@@ -14,6 +14,7 @@ from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
     ConnectedAccountStatus,
 )
+from backend.v2.contexts.billing.domain.events import PaymentDisputeNoticePayload
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -28,6 +29,7 @@ from backend.v2.contexts.billing.domain.models import (
     Payment,
     Subscription,
 )
+from backend.v2.contexts.billing.domain.payment_dispute import PaymentDispute
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -871,6 +873,34 @@ class ConnectedAccountDirectory(Protocol):
     """
 
     async def owner_academy_id(self, stripe_account_id: str) -> str | None: ...
+
+
+class PaymentDisputeRepository(Protocol):
+    """Tenant-scoped store of Stripe disputes (``payment_disputes``).
+
+    Record-keeping only: nothing here moves money or touches a payment's
+    amount, refund or allocation fields. A dispute is the academy's to answer
+    in its own Stripe dashboard; the app surfaces it and notifies the owner.
+    """
+
+    async def get(self, dispute_id: str) -> PaymentDispute | None: ...
+
+    async def save(self, dispute: PaymentDispute) -> None:
+        """Upsert by ``dispute_id`` within the request academy."""
+
+    async def stamp_payment(self, dispute: PaymentDispute) -> None:
+        """Mirror the dispute's id/status/reason/amount/outcome onto the
+        payment row(s) holding its PaymentIntent, in this academy only."""
+
+    async def list_open(self, *, limit: int = 20) -> list[PaymentDispute]: ...
+
+    async def count_open(self) -> int: ...
+
+
+class DisputeNoticePort(Protocol):
+    """Delivers the "a payment was disputed" e-mail to the academy owner."""
+
+    async def send_dispute_notice(self, *, payload: PaymentDisputeNoticePayload) -> None: ...
 
 
 class LedgerRepository(Protocol):

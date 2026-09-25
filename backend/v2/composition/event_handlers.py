@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from backend.v2.contexts.billing.application.ports import DisputeNoticePort
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
@@ -27,6 +28,7 @@ from backend.v2.contexts.billing.application.use_cases.process_dunning_retries i
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
     DunningNoticeRequested,
+    PaymentDisputeNoticeRequested,
     PaymentSucceeded,
 )
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
@@ -98,6 +100,18 @@ def install_dunning_notifier(notifier: DunningNotificationPort | None) -> None:
     handler is unreachable rather than permanently failing."""
     global _dunning_notifier
     _dunning_notifier = notifier
+
+
+# The dispute notice adapter (direct charges, slice 6) is installed by
+# ``compose_admin`` beside the dunning notifier, for the same reason.
+_dispute_notifier: DisputeNoticePort | None = None
+
+
+def install_dispute_notifier(notifier: DisputeNoticePort | None) -> None:
+    """Called once by the admin composition root; ``None`` when e-mail delivery
+    is not configured."""
+    global _dispute_notifier
+    _dispute_notifier = notifier
 
 
 def _require_deps() -> HandlerDeps:
@@ -308,3 +322,23 @@ async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
             attempt_no=payload.attempt_no,
             terminal=payload.terminal,
         )
+
+
+@handler(event=PaymentDisputeNoticeRequested, schema_version=1)  # type: ignore[arg-type]
+async def on_payment_dispute_notice_requested(event: PaymentDisputeNoticeRequested) -> None:
+    """E-mail the academy owner that a payment was disputed / a dispute closed.
+
+    Exactly-once per (dispute, opened|closed): the event id is deterministic
+    and the dispatcher records ``(event_id, handler)`` runs. A delivery failure
+    propagates into the dispatcher's retry ladder, like the dunning notice.
+    With e-mail delivery unconfigured there is nobody to hand it to, so the
+    notice is logged and skipped; the dispute is still on Billing Health.
+    """
+    if _dispute_notifier is None:
+        log.warning(
+            "dispute_notice_skipped_no_notifier",
+            extra={"academy_id": event.academy_id, "dispute_id": event.payload.dispute_id},
+        )
+        return
+    with tenant_scope(event.academy_id):
+        await _dispute_notifier.send_dispute_notice(payload=event.payload)

@@ -110,6 +110,7 @@ class IssueRefund:
                 payment.stripe_payment_intent_id,
                 amount_cents=amount,
                 idempotency_key=keys.stripe_key,
+                **_refund_account_kwargs(payment.stripe_account_id),
             )
         except Exception as exc:
             raise RefundFailed(str(exc)) from exc
@@ -144,6 +145,26 @@ class IssueRefund:
         )
         stored = await remember(self._idempotency_store, keys, result.model_dump(mode="json"))
         return IssueRefundResult.model_validate(stored)
+
+
+def _refund_account_kwargs(stripe_account_id: str | None) -> dict[str, str]:
+    """Where the refund is created: the account the charge lives on.
+
+    A DIRECT charge (a non-house academy's payment, ``stripe_account_id`` set)
+    is refunded ON that connected account: the money comes back out of the
+    academy's balance, and there is no transfer to reverse. Its application
+    fee is NOT refunded (``refund_application_fee`` is left off, Stripe's
+    default): the platform keeps its fee on a refunded direct charge unless
+    the owner decides otherwise.
+
+    A platform payment (house academy, or a legacy destination charge made
+    before direct charges) passes no account at all, so the gateway call is
+    byte-identical to before; the gateway's #969 logic still adds
+    ``reverse_transfer`` / ``refund_application_fee`` for a legacy
+    destination charge, which it recognises from the PaymentIntent's
+    ``transfer_data``.
+    """
+    return {"stripe_account": stripe_account_id} if stripe_account_id else {}
 
 
 def _normalize_reason(reason: str) -> str:

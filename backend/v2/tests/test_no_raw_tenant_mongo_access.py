@@ -115,6 +115,8 @@ TENANT_OWNED_COLLECTIONS = {
     # stripe_account_id cross academies ONLY through the documented directory
     # in APPROVED_CROSS_TENANT_EXCEPTIONS.
     "academy_connected_accounts",
+    # Stripe disputes per academy (migration 0205, direct charges slice 6)
+    "payment_disputes",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

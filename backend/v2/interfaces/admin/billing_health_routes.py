@@ -135,6 +135,30 @@ class AutopayDisableFailuresDto(BaseModel):
     truncated: bool = False
 
 
+class OpenDisputeDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    dispute_id: str
+    payment_id: str | None = None
+    amount_cents: int = 0
+    currency: str = "usd"
+    reason: str = "general"
+    status: str
+    evidence_due_by: datetime | None = None
+    opened_at: datetime | None = None
+
+
+class OpenDisputesDto(BaseModel):
+    """Open Stripe disputes (chargebacks) on the academy's charges. Answered
+    in the academy's own Stripe dashboard; shown here so the owner sees them."""
+
+    model_config = {"extra": "ignore"}
+
+    count: int = 0
+    rows: list[OpenDisputeDto] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class ConnectReadinessResponse(BaseModel):
     model_config = {"extra": "ignore"}
 
@@ -151,6 +175,7 @@ class ConnectReadinessResponse(BaseModel):
     autopay_disable_failures: AutopayDisableFailuresDto = Field(
         default_factory=AutopayDisableFailuresDto
     )
+    disputes: OpenDisputesDto = Field(default_factory=OpenDisputesDto)
     health: BillingHealthDto
 
 

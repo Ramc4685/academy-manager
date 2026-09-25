@@ -22,6 +22,7 @@ from typing import Any
 
 from backend.v2.contexts.billing.application.billing_health import (
     CHECK_AUTOPAY_DISABLE,
+    CHECK_DISPUTES,
     CHECK_RECONCILIATION,
     CHECK_WEBHOOKS,
     LastReconciliationRun,
@@ -48,6 +49,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import 
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
+    MongoPaymentDisputeRepository,
+)
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     mask_stripe_account_id,
 )
@@ -73,6 +77,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
     billing_settings_repo = MongoBillingSettingsRepository(db)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     dunning_state_repo = MongoDunningStateRepository(db)
+    payment_disputes_repo = MongoPaymentDisputeRepository(db)
 
     async def get_connect_readiness() -> dict[str, Any]:
         """Can a parent payment physically succeed right now, and is Stripe well?
@@ -144,6 +149,13 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             disable_failures = {"count": 0, "rows": [], "truncated": False}
             unavailable.append(CHECK_AUTOPAY_DISABLE)
 
+        try:
+            disputes = await _open_disputes(payment_disputes_repo)
+        except Exception:
+            log.warning("connect_readiness_disputes_failed", exc_info=True)
+            disputes = {"count": 0, "rows": [], "truncated": False}
+            unavailable.append(CHECK_DISPUTES)
+
         ready = bool(account and account.is_ready_for_charges())
         # Same routing rule the charge paths use (domain/charge_route.py): the
         # house academy charges on the platform; anyone else needs a ready
@@ -159,6 +171,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             autopay_disable_failures=int(disable_failures.get("count") or 0),
             now=datetime.now(UTC),
             unavailable_checks=unavailable,
+            open_disputes=int(disputes.get("count") or 0),
         )
 
         return {
@@ -184,6 +197,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             "funds_route_to_academy": route.is_connected,
             "webhook_events": stuck,
             "autopay_disable_failures": disable_failures,
+            "disputes": disputes,
             "health": verdict.as_dict(),
         }
 
@@ -553,3 +567,27 @@ def _as_utc(value: Any) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+async def _open_disputes(repo: MongoPaymentDisputeRepository, *, limit: int = 20) -> dict[str, Any]:
+    """Open Stripe disputes for the request academy: an aggregate count (the
+    verdict never reads a capped list) and the newest rows for the page."""
+    count = await repo.count_open()
+    rows = await repo.list_open(limit=limit)
+    return {
+        "count": count,
+        "rows": [
+            {
+                "dispute_id": d.dispute_id,
+                "payment_id": d.payment_id,
+                "amount_cents": d.amount_cents,
+                "currency": d.currency,
+                "reason": d.reason,
+                "status": d.status,
+                "evidence_due_by": d.evidence_due_by,
+                "opened_at": d.opened_at,
+            }
+            for d in rows
+        ],
+        "truncated": count > len(rows),
+    }

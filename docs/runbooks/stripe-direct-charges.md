@@ -163,3 +163,56 @@ db.stripe_webhook_events.find(
   { event_id: 1, event_type: 1, academy_id: 1, stripe_account: 1, error_message: 1 }
 )
 ```
+
+## Refunds, dashboard refunds and disputes
+
+### Which account a refund is created on
+
+A payment records the Stripe account its charge lives on in
+`stripe_account_id` (`ledger_payments`, and `payments` for historical rows).
+The webhook that confirms the charge writes it (Connect event `account`), as do
+the synchronous autopay path and reconciliation of PaymentIntents found on the
+connected account. Absent means the platform account.
+
+- Direct charge (`stripe_account_id` set): the refund is created ON that
+  account (`Stripe-Account` header). The academy's balance funds it. There is
+  no transfer to reverse, and `refund_application_fee` is left off (Stripe's
+  default), so the platform keeps its application fee on a refunded direct
+  charge. This is the default until the owner decides otherwise.
+- House academy, and legacy destination charges made before direct charges:
+  no account, so the refund request is exactly what it was before. The #969
+  logic still adds `reverse_transfer` and `refund_application_fee` when the
+  PaymentIntent carries `transfer_data` (a legacy destination charge).
+
+### Refunds made in the academy's Stripe Dashboard
+
+They arrive as a Connect `charge.refunded` and go through the same handler as
+platform refunds. The handler is idempotent on the cumulative
+`amount_refunded`, so the echo of an in-app refund does nothing. An event
+whose `account` contradicts the payment's recorded account is quarantined.
+
+### Disputes (`charge.dispute.created`, `charge.dispute.closed`)
+
+- Recorded in `payment_disputes` (migration 0205), one row per dispute. A late
+  `created` never reopens a closed dispute.
+- Mirrored onto the payment row as `dispute_id`, `dispute_status`,
+  `dispute_reason`, `dispute_amount_cents`, `dispute_outcome` and
+  `disputed_at`. Money fields (status, refunded, allocations) are never
+  touched, and no platform-side adjustment is created.
+- Shown on Billing Health (`disputes` in `/admin/billing/connect-readiness`;
+  a `payments_disputed` attention reason while any are open).
+- The academy owner is e-mailed once per (dispute, opened|closed) through the
+  outbox event `Billing.PaymentDisputeNoticeRequested`. Its `event_id` is
+  deterministic, so replays do not re-send.
+
+### Before deploy
+
+- Apply migration 0205 by hand (migrations do not run on boot in prod).
+- The Connect webhook endpoint must subscribe to `charge.refunded`,
+  `charge.dispute.created` and `charge.dispute.closed`, and the platform
+  endpoint must subscribe to the two dispute events for the house academy.
+  Check in the Stripe Dashboard (read-only).
+- In `multi_academy` mode a platform dispute event has no
+  `metadata.academy_id` and no `account`, so it is quarantined as
+  unattributed. House disputes are only recorded automatically in
+  `single_academy` mode.

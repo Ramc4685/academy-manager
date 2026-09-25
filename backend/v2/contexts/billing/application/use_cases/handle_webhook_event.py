@@ -26,6 +26,7 @@ from backend.v2.contexts.billing.application.ports import (
     EnrollmentBillingIdentityRepository,
     LedgerRepository,
     ParentStripeCustomerRepository,
+    PaymentDisputeRepository,
     PaymentRepository,
     StripeEventDedup,
     StripeGateway,
@@ -44,10 +45,17 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     AutopayConsentCaptureContext,
     CompleteAutopaySetup,
 )
+from backend.v2.contexts.billing.application.use_cases.record_payment_dispute import (
+    RecordPaymentDispute,
+)
 from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
 from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_hold
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
+from backend.v2.contexts.billing.domain.errors import (
+    InvalidWebhookSignature,
+    PaymentNotFound,
+    StripeAccountMismatch,
+)
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
     CheckoutExpiredPayload,
@@ -209,6 +217,7 @@ class HandleWebhookEvent:
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
+        payment_disputes: PaymentDisputeRepository | None = None,
         expected_livemode: bool | None = None,
         tenancy_mode: str = "single_academy",
         clock=lambda: datetime.now(UTC),
@@ -233,6 +242,16 @@ class HandleWebhookEvent:
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
+        self._record_dispute: RecordPaymentDispute | None = None
+        if payment_disputes is not None:
+            self._record_dispute = RecordPaymentDispute(
+                disputes=payment_disputes,
+                payments=payments,
+                ledger=billing_ledger,
+                outbox=outbox,
+                academy_id=academy_id,
+                clock=clock,
+            )
         self._complete_autopay_setup: CompleteAutopaySetup | None = None
         if parent_customers is not None and enrollment_autopay is not None:
             self._complete_autopay_setup = CompleteAutopaySetup(
@@ -797,6 +816,8 @@ class HandleWebhookEvent:
             await self._on_invoice_payment_failed(event)
         elif event_type == "charge.refunded":
             await self._on_charge_refunded(event)
+        elif event_type in ("charge.dispute.created", "charge.dispute.closed"):
+            await self._on_charge_dispute(event)
         elif event_type == "setup_intent.succeeded":
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay_setup":
@@ -970,6 +991,7 @@ class HandleWebhookEvent:
                 status="succeeded",
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
+                stripe_account_id=_event_account(event),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -1103,6 +1125,7 @@ class HandleWebhookEvent:
                 status="succeeded",
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
+                stripe_account_id=_event_account(event),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -1353,6 +1376,9 @@ class HandleWebhookEvent:
             update={
                 "status": "succeeded",
                 "stripe_payment_intent_id": obj.get("payment_intent"),
+                # The account the charge settled on (None = platform), so a
+                # refund is later issued on the same account.
+                "stripe_account_id": _event_account(event) or payment.stripe_account_id,
                 "updated_at": self._now(),
             }
         )
@@ -1554,6 +1580,7 @@ class HandleWebhookEvent:
                 status="succeeded",
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
+                stripe_account_id=_event_account(event),
                 paid_at=now,
                 metadata=payment_metadata or None,
                 created_at=now,
@@ -1834,6 +1861,7 @@ class HandleWebhookEvent:
         updated = payment.model_copy(
             update={
                 "status": "succeeded",
+                "stripe_account_id": _event_account(event) or payment.stripe_account_id,
                 "updated_at": self._now(),
             }
         )
@@ -1999,6 +2027,30 @@ class HandleWebhookEvent:
             legacy_payment_id=payment.payment_id,
         )
 
+    async def _on_charge_dispute(self, event: dict[str, Any]) -> None:
+        """``charge.dispute.created`` / ``charge.dispute.closed``.
+
+        On a direct charge the dispute arrives as a Connect event (``account``
+        = the academy's connected account, already verified to belong to this
+        academy by the processing guard); a house-academy dispute is a
+        platform event. Either way it is recorded, mirrored onto the payment
+        and the owner is notified, with no money moved: the dispute is the
+        academy's to answer, and Stripe (not the platform) debits its account.
+        """
+        if self._record_dispute is None:
+            log.warning(
+                "charge_dispute: dispute store not configured; event %s not recorded",
+                event.get("id"),
+            )
+            return
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            return
+        try:
+            await self._record_dispute.execute(obj, stripe_account_id=_event_account(event))
+        except StripeAccountMismatch as exc:
+            raise _QuarantineStripeEvent(str(exc)) from exc
+
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
         ch["_event_id"] = str(event.get("id") or "")
@@ -2010,8 +2062,11 @@ class HandleWebhookEvent:
             # Autopay / invoice pay-link / balance-checkout charges are recorded
             # only in the ledger (no legacy `payments` row), so fall back to the
             # ledger; otherwise the refund is silently dropped.
-            await self._on_charge_refunded_ledger(str(pi_id), ch)
+            await self._on_charge_refunded_ledger(str(pi_id), ch, event=event)
             return
+        _require_same_account(
+            event, payment.stripe_account_id, what=f"payment {payment.payment_id}"
+        )
         total_refunded = int(ch.get("amount_refunded", 0))
         if total_refunded == 0 or total_refunded == payment.refunded_cents:
             return
@@ -2038,7 +2093,9 @@ class HandleWebhookEvent:
             )
         )
 
-    async def _on_charge_refunded_ledger(self, pi_id: str, ch: dict[str, Any]) -> None:
+    async def _on_charge_refunded_ledger(
+        self, pi_id: str, ch: dict[str, Any], *, event: dict[str, Any] | None = None
+    ) -> None:
         """Record a refund for a charge that exists only in the ledger.
 
         Autopay direct charges, invoice pay-link checkouts, and balance
@@ -2055,6 +2112,10 @@ class HandleWebhookEvent:
         payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
         if payment is None:
             return
+        if event is not None:
+            _require_same_account(
+                event, payment.stripe_account_id, what=f"payment {payment.payment_id}"
+            )
         total_refunded = int(ch.get("amount_refunded", 0))
         if total_refunded == 0:
             return
@@ -2989,3 +3050,17 @@ def _on_account_kwargs(stripe_account: str | None) -> dict[str, Any]:
     """``stripe_account`` kwarg for a completion on a connected account; empty
     for the platform so a house-academy call is unchanged."""
     return {"stripe_account": stripe_account} if stripe_account else {}
+
+
+def _require_same_account(
+    event: dict[str, Any], recorded_account: str | None, *, what: str
+) -> None:
+    """Refuse an event whose Connect ``account`` contradicts the account the
+    app recorded the payment on. Stripe object ids are global, so this cannot
+    happen honestly; if it does, neither side is trusted to project."""
+    event_account = _event_account(event)
+    if event_account and recorded_account and event_account != recorded_account:
+        raise _QuarantineStripeEvent(
+            f"stripe account mismatch: event account={event_account} but {what} "
+            f"lives on {recorded_account}"
+        )

@@ -39,6 +39,7 @@ REASON_CODES: frozenset[str] = frozenset(
         "reconciliation_failed",
         "reconciliation_stale",
         "autopay_disable_failed",
+        "payments_disputed",
     }
 )
 
@@ -55,6 +56,7 @@ OK_HEADLINE = "Stripe is healthy"
 CHECK_WEBHOOKS = "the webhook backlog"
 CHECK_RECONCILIATION = "the reconciliation history"
 CHECK_AUTOPAY_DISABLE = "the autopay switch-off backlog"
+CHECK_DISPUTES = "open payment disputes"
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,7 @@ def evaluate_billing_health(
     autopay_disable_failures: int,
     now: datetime,
     unavailable_checks: Sequence[str] = (),
+    open_disputes: int = 0,
 ) -> HealthVerdict:
     """One verdict for the Billing Health header.
 
@@ -184,6 +187,18 @@ def evaluate_billing_health(
                 f"Autopay switch-off failed for {autopay_disable_failures} "
                 f"{_plural(autopay_disable_failures, 'invoice', 'invoices')}; "
                 "the card may still be attached in Stripe.",
+            )
+        )
+
+    if open_disputes > 0:
+        # The dispute is the academy's to answer in its own Stripe dashboard
+        # (direct charges); the platform only makes sure the owner sees it.
+        attention.append(
+            HealthReason(
+                "payments_disputed",
+                f"{open_disputes} payment {_plural(open_disputes, 'dispute', 'disputes')} "
+                f"{_plural(open_disputes, 'is', 'are')} open; respond from the "
+                "Disputes page of your Stripe dashboard.",
             )
         )
 
