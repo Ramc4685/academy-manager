@@ -1,6 +1,6 @@
 # Nightly E2E WebKit green again: student header fits an iPhone, trial form spec waits for hydration
 
-PR: #TBD
+PR: #979
 
 ## What changed
 - Admin student profile header (`/admin/students/[id]`): on a phone the actions menu now shares the name row, and the parent's contact links use the card's full width. At 390px (iPhone 14) the links used to sit beside the menu, which wrapped WhatsApp onto a third 44px row and pushed the tabs 28px below the fold. That broke #897's own "tabs visible without scrolling" acceptance check on webkit-mobile. From `sm` up the layout is one row, as before.
