@@ -58,6 +58,9 @@ from backend.v2.contexts.billing.domain.ledger import (
 
 log = logging.getLogger(__name__)
 
+# ``InvoiceLine.source_type`` of a recurring tuition discount line (#244).
+_TUITION_DISCOUNT_SOURCE_TYPE = "tuition_discount"
+
 # Maps this use case's internal `payment_attempts` status vocabulary onto the
 # per-enrollment `AutopayAttemptOutcome` projection axis
 # (Slice B — see `contexts.billing.domain.autopay_status`).
@@ -797,14 +800,29 @@ def _discount_base_subtotal_cents(
     lines: list[InvoiceLine],
     existing_discount: InvoiceLine | None,
 ) -> int:
-    if existing_discount is None:
-        return invoice.subtotal_cents
+    """The amount the ACH cash discount is a percentage of.
 
+    It is the price AFTER every tuition discount (owner decision 2026-09-25), and
+    it is the same on the first attempt and on every retry. It comes from the
+    lines, never the header subtotal, because the monthly generator writes that
+    subtotal GROSS with the tuition discount mirrored in ``discount_cents``.
+    Summing the lines already takes a ``tuition_discount`` line off, so only the
+    part of ``discount_cents`` no such line carries is subtracted too.
+    """
     non_discount_lines = [line for line in lines if line.line_type != "ach_discount"]
     if non_discount_lines:
-        return sum(line.amount_cents for line in non_discount_lines)
+        line_discount_cents = sum(
+            -line.amount_cents
+            for line in non_discount_lines
+            if line.source_type == _TUITION_DISCOUNT_SOURCE_TYPE and line.amount_cents < 0
+        )
+        header_only_discount_cents = max(0, invoice.discount_cents - line_discount_cents)
+        return sum(line.amount_cents for line in non_discount_lines) - header_only_discount_cents
 
-    return invoice.subtotal_cents + abs(existing_discount.amount_cents)
+    subtotal = invoice.subtotal_cents
+    if existing_discount is not None:
+        subtotal += abs(existing_discount.amount_cents)
+    return subtotal - max(0, invoice.discount_cents)
 
 
 def _remove_discount_from_invoice_projection(

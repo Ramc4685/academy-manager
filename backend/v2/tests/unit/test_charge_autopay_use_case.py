@@ -1548,7 +1548,7 @@ async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
 def _seed_generator_discounted_month(repo: FakeLedgerRepo) -> None:
     """The shape the monthly generator writes for a month with a tuition discount:
     a gross tuition line, a negative ``tuition_discount`` line, AND the same
-    discount mirrored in the header's ``discount_cents``."""
+    discount mirrored in the header's ``discount_cents`` (``subtotal_cents`` gross)."""
     repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
         update={
             "subtotal_cents": 10_000,
@@ -1642,3 +1642,60 @@ async def test_ach_retry_on_a_tuition_discounted_month_charges_the_discount_once
     )
     assert result.success is True
     assert retry.create_calls[0]["amount_cents"] == 8_000 + ach_line.amount_cents
+
+
+def _ach_line_cents(repo: FakeLedgerRepo) -> int:
+    return next(
+        line.amount_cents
+        for line in repo.lines_by_invoice["inv-1"]
+        if line.line_type == "ach_discount"
+    )
+
+
+async def test_ach_discount_base_is_the_price_after_the_tuition_discount_on_every_attempt() -> None:
+    """The ACH cash discount is a percentage of the price after the tuition
+    discount (owner decision 2026-09-25): $100 month, $20 sibling discount, 2.5%
+    → -$2.00 on the first attempt AND on a retry. The first attempt used to base
+    it on the header's GROSS subtotal (-$2.50) and a retry rewrote it to -$2.00."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    first_attempt_cents = _ach_line_cents(repo)
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    retry_cents = _ach_line_cents(repo)
+
+    assert first_attempt_cents == -200
+    assert retry_cents == -200
+
+
+async def test_ach_discount_base_subtracts_a_header_only_discount() -> None:
+    """A header-only ``discount_cents`` with no discount line is still a tuition
+    discount the family does not pay, so the ACH base excludes it too."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={"discount_cents": 2_000, "total_cents": 8_000, "balance_due_cents": 8_000}
+    )
+    repo.lines_by_invoice["inv-1"] = [
+        InvoiceLine(
+            line_id="line-tuition",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="tuition",
+            description="Tuition",
+            quantity=1,
+            unit_amount_cents=10_000,
+            amount_cents=10_000,
+            source_type="manual",
+            source_id=None,
+            created_at=NOW,
+        )
+    ]
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    first_attempt_cents = _ach_line_cents(repo)
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+
+    assert first_attempt_cents == -200
+    assert _ach_line_cents(repo) == -200
