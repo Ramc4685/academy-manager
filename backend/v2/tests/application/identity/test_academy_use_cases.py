@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -90,8 +91,7 @@ async def test_get_academy_fees():
     repo = AsyncMock()
     repo.find_by_id.return_value = {
         "_id": "acad-1",
-        "late_fee_cents": 1500,
-        "grace_days": 3,
+        "fees": {"late_fee_cents": 1500, "grace_days": 3},
     }
     use_case = GetAcademyFeesUseCase(academy_repo=repo)
     output = await use_case.execute("acad-1")
@@ -102,14 +102,15 @@ async def test_get_academy_fees():
 @pytest.mark.asyncio
 async def test_update_academy_fees():
     repo = AsyncMock()
+    repo.find_by_id.return_value = {"_id": "acad-1", "fees": {"late_fee_cents": 1500}}
     repo.update_by_id.return_value = {
         "_id": "acad-1",
-        "late_fee_cents": 2000,
-        "grace_days": 3,
+        "fees": {"late_fee_cents": 2000, "grace_days": 3},
     }
     use_case = UpdateAcademyFeesUseCase(academy_repo=repo)
     output = await use_case.execute("acad-1", {"late_fee_cents": 2000})
     assert output.late_fee_cents == 2000
+    # Already on: raising the amount must not move the start date.
     repo.update_by_id.assert_awaited_once_with("acad-1", {"fees.late_fee_cents": 2000})
 
 
@@ -240,8 +241,14 @@ async def test_a_zero_late_fee_reads_back_as_zero_not_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_missing_late_fee_still_falls_back_to_the_legacy_alias() -> None:
-    """The fallback must survive the fix — only absence should trigger it."""
+async def test_a_late_cancellation_amount_is_never_read_as_the_late_fee() -> None:
+    """Money audit X8 (2026-09-25).
+
+    ``late_cancellation_fee_cents`` is the fee for cancelling a class with
+    short notice. The hourly late-fee pass read it as the late-*payment* fee
+    whenever ``late_fee_cents`` was absent, and charged it on every overdue
+    invoice.
+    """
     repo = AsyncMock()
     repo.find_by_id.return_value = {
         "_id": "acad-1",
@@ -250,4 +257,60 @@ async def test_a_missing_late_fee_still_falls_back_to_the_legacy_alias() -> None
 
     result = await GetAcademyFeesUseCase(academy_repo=repo).execute("acad-1")
 
-    assert result.late_fee_cents == 750
+    assert result.late_fee_cents is None
+
+
+@pytest.mark.asyncio
+async def test_fees_are_read_only_from_the_fees_subdocument() -> None:
+    """An academy doc with no ``fees`` was read flat, so any top-level
+    ``late_fee_cents``/``late_cancellation_fee_cents`` became a charge."""
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-1",
+        "late_fee_cents": 1500,
+        "late_cancellation_fee_cents": 750,
+        "grace_days": 3,
+    }
+
+    result = await GetAcademyFeesUseCase(academy_repo=repo).execute("acad-1")
+
+    assert result.late_fee_cents is None
+    assert result.grace_days is None
+
+
+@pytest.mark.parametrize("stored", [None, 0])
+@pytest.mark.asyncio
+async def test_turning_the_late_fee_on_stamps_when_it_took_effect(stored: int | None) -> None:
+    """The late-fee pass only charges invoices that become late after this."""
+    now = datetime(2026, 9, 25, 15, 0, tzinfo=UTC)
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {"_id": "acad-1", "fees": {"late_fee_cents": stored}}
+    repo.update_by_id.return_value = {
+        "_id": "acad-1",
+        "fees": {"late_fee_cents": 500, "late_fee_effective_from": now},
+    }
+
+    output = await UpdateAcademyFeesUseCase(academy_repo=repo, clock=lambda: now).execute(
+        "acad-1", {"late_fee_cents": 500}
+    )
+
+    repo.update_by_id.assert_awaited_once_with(
+        "acad-1", {"fees.late_fee_cents": 500, "fees.late_fee_effective_from": now}
+    )
+    assert output.late_fee_effective_from == now
+
+
+@pytest.mark.asyncio
+async def test_update_response_does_not_echo_the_late_cancellation_alias() -> None:
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {"_id": "acad-1", "fees": {"late_fee_cents": 500}}
+    repo.update_by_id.return_value = {
+        "_id": "acad-1",
+        "fees": {"late_fee_cents": 0, "late_cancellation_fee_cents": 750, "grace_days": 2},
+    }
+
+    output = await UpdateAcademyFeesUseCase(academy_repo=repo).execute(
+        "acad-1", {"late_fee_cents": 0}
+    )
+
+    assert output.late_fee_cents == 0

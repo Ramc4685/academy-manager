@@ -3,81 +3,44 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import {
-  getSelfServicePolicy,
-  updateSelfServicePolicy,
-  type SelfServicePolicyView,
-} from "@/lib/api/admin";
+import { getSelfServicePolicy, updateSelfServicePolicy } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { isPolicyDirty, policyPatch, policyToForm, type PolicyForm } from "@/lib/self-service-policy-form";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
-type PolicyForm = {
-  absence_notice_min_hours: string;
-  makeup_expiry_days: string;
-  makeup_requires_notice: boolean;
-  cancellation_minimum_notice_days: string;
-  cancellation_fee_dollars: string;
-  cancellation_effective_timing: "immediate" | "end_of_period";
-};
-
-function centsToDollarInput(cents: number | null | undefined): string {
-  if (cents === null || cents === undefined) return "";
-  return (cents / 100).toFixed(2);
-}
-
-function dollarsToCents(dollars: string): number {
-  const value = Number(dollars);
-  return Number.isFinite(value) ? Math.round(value * 100) : 0;
-}
-
-function normalize(data: SelfServicePolicyView | null | undefined): PolicyForm {
-  return {
-    absence_notice_min_hours: data?.absence_notice_min_hours?.toString() ?? "",
-    makeup_expiry_days: data?.makeup_expiry_days?.toString() ?? "",
-    makeup_requires_notice: data?.makeup_requires_notice ?? false,
-    cancellation_minimum_notice_days: data?.cancellation_minimum_notice_days?.toString() ?? "",
-    cancellation_fee_dollars: centsToDollarInput(data?.cancellation_fee_cents),
-    cancellation_effective_timing: data?.cancellation_effective_timing ?? "immediate",
-  };
-}
-
-function isDirty(original: PolicyForm, form: PolicyForm): boolean {
-  return (Object.keys(form) as Array<keyof PolicyForm>).some((key) => form[key] !== original[key]);
-}
-
 export function SelfServicePanel() {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<PolicyForm>(() => normalize(null));
+  const isOwner = useIsOwner();
+  const [form, setForm] = useState<PolicyForm>(() => policyToForm(null));
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const query = useQuery({
     queryKey: queryKeys.admin.selfServicePolicy(),
     queryFn: getSelfServicePolicy,
   });
-  const original = useMemo(() => normalize(query.data), [query.data]);
+  const original = useMemo(() => policyToForm(query.data), [query.data]);
 
   useEffect(() => {
-    if (query.data) setForm(normalize(query.data));
+    if (query.data) setForm(policyToForm(query.data));
   }, [query.data]);
 
-  const dirty = isDirty(original, form);
+  const dirty = isPolicyDirty(original, form);
   useReportSettingsDirty("self-service", dirty);
+  // Only the changed fields are sent (money audit X5), and a blank or
+  // out-of-range box is an error rather than a silent 0 (X20).
+  const patch = useMemo(() => policyPatch(query.data, form), [query.data, form]);
+  const hasErrors = Object.keys(patch.errors).length > 0;
   const mutation = useMutation({
-    mutationFn: () =>
-      updateSelfServicePolicy({
-        absence_notice_min_hours: Number(form.absence_notice_min_hours) || 0,
-        makeup_expiry_days: Number(form.makeup_expiry_days) || 0,
-        makeup_requires_notice: form.makeup_requires_notice,
-        cancellation_minimum_notice_days: Number(form.cancellation_minimum_notice_days) || 0,
-        cancellation_fee_cents: dollarsToCents(form.cancellation_fee_dollars),
-        cancellation_effective_timing: form.cancellation_effective_timing,
-      }),
-    onSuccess: () => {
+    mutationFn: () => updateSelfServicePolicy(patch.payload),
+    onSuccess: (data) => {
       setSavedAt(savedAtNow());
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServicePolicy() });
+      queryClient.setQueryData(queryKeys.admin.selfServicePolicy(), data);
+      // Billing rules shows the same cancellation fee and notice.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.billingRules() });
     },
   });
 
@@ -97,12 +60,15 @@ export function SelfServicePanel() {
               label="Minimum absence notice (hours)"
               hint="A notice filed at least this long before the class starts counts as on time."
               value={form.absence_notice_min_hours}
+              error={patch.errors.absence_notice_min_hours}
               onChange={(value) => setForm((prev) => ({ ...prev, absence_notice_min_hours: value }))}
             />
             <NumberField
               label="Makeup expiry (days)"
               hint="A makeup must be requested within this many days of the missed class."
+              min="1"
               value={form.makeup_expiry_days}
+              error={patch.errors.makeup_expiry_days}
               onChange={(value) => setForm((prev) => ({ ...prev, makeup_expiry_days: value }))}
             />
           </div>
@@ -124,11 +90,18 @@ export function SelfServicePanel() {
           <div className="mt-8">
             <Overline>Cancellation</Overline>
           </div>
+          <p className="mt-2 text-xs text-rally-muted" data-testid="self-service-cancellation-owner-note">
+            {isOwner
+              ? "The notice and fee are also shown in Billing rules. Changes are recorded in the billing audit log."
+              : "Only the academy owner can change the cancellation notice and fee."}
+          </p>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <NumberField
               label="Minimum cancellation notice (days)"
               hint="Cancelling with less notice than this is charged the fee below."
               value={form.cancellation_minimum_notice_days}
+              error={patch.errors.cancellation_minimum_notice_days}
+              disabled={!isOwner}
               onChange={(value) => setForm((prev) => ({ ...prev, cancellation_minimum_notice_days: value }))}
             />
             <NumberField
@@ -136,6 +109,8 @@ export function SelfServicePanel() {
               hint="Flat charge to the parent when notice is short. Zero never charges."
               value={form.cancellation_fee_dollars}
               step="0.01"
+              error={patch.errors.cancellation_fee_dollars}
+              disabled={!isOwner}
               onChange={(value) => setForm((prev) => ({ ...prev, cancellation_fee_dollars: value }))}
             />
           </div>
@@ -161,7 +136,7 @@ export function SelfServicePanel() {
           </label>
 
           <Footer
-            dirty={dirty}
+            dirty={dirty && !hasErrors}
             pending={mutation.isPending}
             savedAt={savedAt}
             error={mutation.isError ? mutation.error : null}
@@ -178,6 +153,9 @@ function NumberField({
   value,
   hint,
   step = "1",
+  min = "0",
+  error,
+  disabled = false,
   onChange,
 }: {
   label: string;
@@ -185,6 +163,9 @@ function NumberField({
   /** One line on what the number changes for parents — these fields move money. */
   hint?: string;
   step?: string;
+  min?: string;
+  error?: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
@@ -192,14 +173,24 @@ function NumberField({
       {label}
       <input
         type="number"
-        min="0"
+        min={min}
         step={step}
         inputMode={step === "0.01" ? "decimal" : "numeric"}
         value={value}
+        disabled={disabled}
+        aria-invalid={error ? true : undefined}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 rounded-md border border-rally-line bg-white px-3 font-mono text-sm tabular-nums outline-none focus:border-blue-500"
+        className={`h-10 rounded-md border bg-white px-3 font-mono text-sm tabular-nums outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted ${
+          error ? "border-red-500" : "border-rally-line"
+        }`}
       />
-      {hint && <span className="text-xs font-normal text-rally-muted">{hint}</span>}
+      {error ? (
+        <span className="text-xs font-normal text-red-700" role="alert">
+          {error}
+        </span>
+      ) : (
+        hint && <span className="text-xs font-normal text-rally-muted">{hint}</span>
+      )}
     </label>
   );
 }

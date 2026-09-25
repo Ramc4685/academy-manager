@@ -11,6 +11,7 @@ import {
   rowToInput,
   saveSummary,
   toForm,
+  turnsLateFeeOn,
 } from "./billing-rules-form.ts";
 import { formatCents, parseDollarsToCents } from "./money.ts";
 
@@ -73,7 +74,7 @@ function view() {
       {
         key: "late_payments",
         title: "Late payments",
-        note: "Not applied automatically yet — these values are stored for when late fees ship.",
+        note: "Applied automatically. Every hour, each open invoice whose grace period has ended gets the late fee once.",
         rows: [
           editable("grace_days", 3, "days", 0, 60, "Grace days after due"),
           editable("late_fee_cents", 2500, "cents", 0, 100000, "Late fee"),
@@ -244,4 +245,54 @@ test("out-of-range and non-numeric reminder days are refused inline", () => {
   const junk = diffForm(reminderView([15]), { reminder_days: "15, soon" }, MONEY);
   assert.ok(junk.errors.reminder_days);
   assert.deepEqual(junk.payload, {});
+});
+
+// --- Money audit 2026-09-25 ---------------------------------------------------
+
+function viewWith(key, value) {
+  const v = view();
+  for (const group of v.groups) {
+    group.rows = group.rows.map((row) => (row.key === key ? { ...row, value } : row));
+  }
+  return v;
+}
+
+test("an out-of-bounds value already stored does not lock the other fields (X16)", () => {
+  // The Self-service tab and the legacy fees route allowed values Billing rules
+  // does not. The untouched row used to fail validation and disable Save.
+  const stored = viewWith("late_fee_cents", 250000);
+  const diff = diffForm(stored, { ...toForm(stored), grace_days: "5" }, MONEY);
+  assert.deepEqual(diff.errors, {});
+  assert.deepEqual(diff.payload, { grace_days: 5 });
+  assert.equal(canSave(diff), true);
+});
+
+test("editing an out-of-bounds value still has to land inside the bounds", () => {
+  const stored = viewWith("late_fee_cents", 250000);
+  const diff = diffForm(stored, { ...toForm(stored), late_fee_cents: "2000.00" }, MONEY);
+  assert.ok(diff.errors.late_fee_cents);
+  assert.equal(canSave(diff), false);
+});
+
+test("turning a late fee on from unset or $0 is detected (X4 warning)", () => {
+  for (const before of [null, 0]) {
+    const stored = viewWith("late_fee_cents", before);
+    const diff = diffForm(stored, { ...toForm(stored), late_fee_cents: "15.00" }, MONEY);
+    assert.equal(turnsLateFeeOn(stored, diff), true);
+  }
+});
+
+test("changing a fee that is already on, or turning it off, is not a turn-on", () => {
+  const raised = diffForm(view(), { ...toForm(view()), late_fee_cents: "30.00" }, MONEY);
+  assert.equal(turnsLateFeeOn(view(), raised), false);
+  const off = diffForm(view(), { ...toForm(view()), late_fee_cents: "0" }, MONEY);
+  assert.equal(turnsLateFeeOn(view(), off), false);
+  const untouched = diffForm(view(), { ...toForm(view()), grace_days: "9" }, MONEY);
+  assert.equal(turnsLateFeeOn(view(), untouched), false);
+});
+
+test("turning a fee on needs an explicit acknowledgement before Save is enabled", () => {
+  assert.match(panel, /billing-rules-late-fee-warning/);
+  assert.match(panel, /turnsLateFeeOn\(/);
+  assert.match(panel, /lateFeeAcknowledged/);
 });

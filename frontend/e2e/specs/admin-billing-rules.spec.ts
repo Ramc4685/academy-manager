@@ -64,11 +64,14 @@ async function stubShell(page: Page, me: typeof OWNER_ME) {
 }
 
 /** Returns a getter for the last PUT body seen on /admin/billing/rules. */
-function stubBillingRules(page: Page, opts: { error?: { status: number; body: unknown } } = {}) {
+function stubBillingRules(
+  page: Page,
+  opts: { error?: { status: number; body: unknown }; initial?: Record<string, number> } = {},
+) {
   const seen: { put: unknown } = { put: null };
   void page.route("**/api/v2/admin/billing/rules", (route) => {
     const request = route.request();
-    if (request.method() === "GET") return fulfillJson(route, billingRulesFixture());
+    if (request.method() === "GET") return fulfillJson(route, billingRulesFixture(opts.initial));
     if (request.method() === "PUT") {
       seen.put = request.postDataJSON();
       if (opts.error) return fulfillJson(route, opts.error.body, opts.error.status);
@@ -109,9 +112,9 @@ test.describe("admin settings → billing rules", () => {
       "09:00 academy time on the due date",
     );
 
-    // The honest caveat, above the two late-fee inputs.
+    // What the hourly late-fee pass does, above the two late-fee inputs.
     const note = page.getByTestId("billing-rules-note-late_payments");
-    await expect(note).toContainText("Not applied automatically yet");
+    await expect(note).toContainText("Applied automatically");
     const noteBox = await note.boundingBox();
     const inputBox = await page.getByTestId("billing-rules-input-late_fee_cents").boundingBox();
     expect(noteBox && inputBox && noteBox.y < inputBox.y).toBe(true);
@@ -131,6 +134,24 @@ test.describe("admin settings → billing rules", () => {
 
     await expect.poll(() => seen.put).toEqual({ late_fee_cents: 1750 });
     await expect(page.getByTestId("billing-rules-saved")).toBeVisible();
+  });
+
+  test("turning a late fee on needs an acknowledgement of what it charges", async ({ page }) => {
+    // Money audit X4: the next hourly run starts charging parents.
+    await stubShell(page, OWNER_ME);
+    const seen = stubBillingRules(page, { initial: { late_fee_cents: 0 } });
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    await expect(page.getByTestId("billing-rules-late-fee-warning")).toHaveCount(0);
+    await page.getByTestId("billing-rules-input-late_fee_cents").fill("15.00");
+
+    const warning = page.getByTestId("billing-rules-late-fee-warning");
+    await expect(warning).toContainText("already overdue are not charged");
+    await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
+
+    await page.getByTestId("billing-rules-late-fee-ack").check();
+    await page.getByTestId("billing-rules-save").click();
+    await expect.poll(() => seen.put).toEqual({ late_fee_cents: 1500 });
   });
 
   test("a bound violation renders inline against the offending field", async ({ page }) => {

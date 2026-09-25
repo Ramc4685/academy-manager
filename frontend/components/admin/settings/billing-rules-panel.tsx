@@ -10,6 +10,7 @@ import {
   isListRow,
   saveSummary,
   toForm,
+  turnsLateFeeOn,
   type BillingRuleGroup,
   type BillingRuleRow,
   type BillingRulesForm,
@@ -39,17 +40,26 @@ export function BillingRulesPanel() {
   const query = useQuery({ queryKey: queryKeys.admin.billingRules(), queryFn: getBillingRules });
   const [form, setForm] = useState<BillingRulesForm>({});
   const [saved, setSaved] = useState(false);
+  const [lateFeeAcknowledged, setLateFeeAcknowledged] = useState(false);
 
   useEffect(() => {
     if (query.data) setForm(toForm(query.data));
   }, [query.data]);
 
   const diff = useMemo(() => diffForm(query.data, form, MONEY), [query.data, form]);
+  // Money audit X4: switching the fee on starts real charges on the next
+  // hourly run, so the owner must acknowledge it before Save is enabled.
+  const needsLateFeeAck = turnsLateFeeOn(query.data, diff);
+  const saveEnabled = canSave(diff) && (!needsLateFeeAck || lateFeeAcknowledged);
   const mutation = useMutation({
     mutationFn: () => updateBillingRules(diff.payload),
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.admin.billingRules(), data);
+      // The cancellation fee and notice are shared with the Self-service tab;
+      // drop its cached copy so it never shows (or re-saves) the old values.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServicePolicy() });
       setForm(toForm(data));
+      setLateFeeAcknowledged(false);
       setSaved(true);
     },
   });
@@ -81,12 +91,37 @@ export function BillingRulesPanel() {
           }}
         />
       ))}
+      {query.data && needsLateFeeAck && (
+        <div
+          role="alert"
+          className="max-w-3xl rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          data-testid="billing-rules-late-fee-warning"
+        >
+          <p className="font-semibold">You are turning on a late fee.</p>
+          <p className="mt-1">
+            From the next hourly run, the fee is added once to each unpaid invoice whose grace
+            period ends today or later. Invoices that are already overdue are not charged. Autopay
+            invoices wait until their card retries finish. Parents see the fee on the invoice and in
+            the next reminder.
+          </p>
+          <label className="mt-3 flex items-start gap-2 font-medium">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={lateFeeAcknowledged}
+              onChange={(event) => setLateFeeAcknowledged(event.target.checked)}
+              data-testid="billing-rules-late-fee-ack"
+            />
+            <span>I understand parents will be charged this fee.</span>
+          </label>
+        </div>
+      )}
       {query.data && (
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            variant={canSave(diff) ? "volt" : "secondary"}
+            variant={saveEnabled ? "volt" : "secondary"}
             size="sm"
-            disabled={!canSave(diff) || mutation.isPending}
+            disabled={!saveEnabled || mutation.isPending}
             onClick={() => mutation.mutate()}
             data-testid="billing-rules-save"
           >

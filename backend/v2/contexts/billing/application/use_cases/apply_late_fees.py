@@ -13,7 +13,15 @@ Rules, in the order they are checked:
   ``void`` and ``draft`` are never touched — :func:`add_line` refuses the
   first two anyway, and charging a draft would bill work not yet finalised.
 * **The grace period must have fully elapsed**: the fee lands the day *after*
-  ``due_date + grace_days``, so the last grace day is still free.
+  ``due_date + grace_days``, so the last grace day is still free. "Day" is the
+  academy's calendar day, not UTC's: in Chicago the UTC date turns over
+  around 7 pm, which charged the fee on the evening of the last free day.
+* **Turning the fee on never back-charges.** When the fee goes from unset/$0
+  to a positive amount the academy records ``late_fee_effective_from``; an
+  invoice whose grace period had already ended by that day is left alone. The
+  first hourly pass used to charge the oldest 200 overdue invoices at once.
+  Academies that switched the fee on before the date was recorded have none,
+  and keep being treated exactly as before.
 * **One fee per invoice, ever.** The guard is a check-then-add over the
   invoice's existing lines, so a hand-added late fee also suppresses the
   automatic one — the parent is never charged twice for the same lateness.
@@ -34,9 +42,10 @@ that field — quotes the new total with no change to the notifier.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from collections.abc import Awaitable, Callable
+from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
@@ -79,6 +88,12 @@ LATE_FEE_SOURCE_TYPE = "late_fee_policy"
 #: Audit actor for an unattended write. Mirrors the other worker-written
 #: entries: a human id would be a lie about who decided this.
 LATE_FEE_ACTOR_ID = "system:late_fee_policy"
+
+#: Rows fetched per query, and the most pages one tick will walk. 50 pages of
+#: 200 is 10,000 overdue invoices per academy per hour, far beyond any real
+#: academy; the cap only stops a runaway loop.
+LATE_FEE_PAGE_SIZE = 200
+LATE_FEE_MAX_PAGES = 50
 
 
 def _is_late_fee_line(line: InvoiceLine) -> bool:
@@ -128,6 +143,7 @@ class ApplyLateFees:
         fees: AcademyFeesReader,
         dunning: DunningRetryLookup | None = None,
         audit: BillingAuditAppender | None = None,
+        academy_timezone: Callable[[str], Awaitable[str | None]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._ledger = ledger
@@ -135,9 +151,16 @@ class ApplyLateFees:
         self._fees = fees
         self._dunning = dunning
         self._audit = audit
+        self._academy_timezone = academy_timezone
         self._now = clock
 
-    async def execute(self, *, academy_id: str, limit: int = 200) -> ApplyLateFeesResult:
+    async def execute(
+        self,
+        *,
+        academy_id: str,
+        page_size: int = LATE_FEE_PAGE_SIZE,
+        max_pages: int = LATE_FEE_MAX_PAGES,
+    ) -> ApplyLateFeesResult:
         fees = await self._fees.execute(academy_id)
         fee_cents = int(fees.late_fee_cents or 0)
         if fee_cents <= 0:
@@ -145,11 +168,19 @@ class ApplyLateFees:
         grace_days = max(int(fees.grace_days or 0), 0)
 
         now = self._now()
+        today = await self._local_date(academy_id, now)
         # `due_before` is exclusive: an invoice due exactly `grace_days` ago is
         # spending its last free day today and must not be charged until
         # tomorrow.
-        due_before = now.date() - timedelta(days=grace_days)
-        invoices = await self._ledger.list_overdue_invoices(due_before=due_before, limit=limit)
+        due_before = today - timedelta(days=grace_days)
+        # Inclusive floor: an invoice whose last free day (due + grace) fell on
+        # or after the day the fee was switched on became late under the fee.
+        effective_from = getattr(fees, "late_fee_effective_from", None)
+        due_on_or_after = (
+            await self._local_date(academy_id, effective_from) - timedelta(days=grace_days)
+            if isinstance(effective_from, datetime)
+            else None
+        )
 
         counts = {
             "scanned": 0,
@@ -158,23 +189,55 @@ class ApplyLateFees:
             "skipped_in_retry": 0,
             "fee_cents_applied": 0,
         }
-        for invoice in invoices:
-            counts["scanned"] += 1
-            if invoice.status not in ("open", "partially_paid") or invoice.balance_due_cents <= 0:
-                continue
-            lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
-            if any(_is_late_fee_line(line) for line in lines):
-                counts["skipped_existing"] += 1
-                continue
-            if self._dunning is not None and await self._dunning.has_active_retry(
-                invoice.invoice_id
-            ):
-                counts["skipped_in_retry"] += 1
-                continue
-            await self._charge(invoice, fee_cents=fee_cents, grace_days=grace_days, now=now)
-            counts["applied"] += 1
-            counts["fee_cents_applied"] += fee_cents
+        after: tuple[date, str] | None = None
+        for _ in range(max_pages):
+            invoices = await self._ledger.list_overdue_invoices(
+                due_before=due_before,
+                due_on_or_after=due_on_or_after,
+                after=after,
+                limit=page_size,
+            )
+            for invoice in invoices:
+                await self._consider(invoice, counts, fee_cents, grace_days, now)
+            if len(invoices) < page_size:
+                break
+            after = (invoices[-1].due_date, invoices[-1].invoice_id)
         return ApplyLateFeesResult(**counts)
+
+    async def _consider(
+        self,
+        invoice: LedgerInvoice,
+        counts: dict[str, int],
+        fee_cents: int,
+        grace_days: int,
+        now: datetime,
+    ) -> None:
+        counts["scanned"] += 1
+        if invoice.status not in ("open", "partially_paid") or invoice.balance_due_cents <= 0:
+            return
+        lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
+        if any(_is_late_fee_line(line) for line in lines):
+            counts["skipped_existing"] += 1
+            return
+        if self._dunning is not None and await self._dunning.has_active_retry(invoice.invoice_id):
+            counts["skipped_in_retry"] += 1
+            return
+        await self._charge(invoice, fee_cents=fee_cents, grace_days=grace_days, now=now)
+        counts["applied"] += 1
+        counts["fee_cents_applied"] += fee_cents
+
+    async def _local_date(self, academy_id: str, moment: datetime) -> date:
+        """``moment``'s calendar date on the academy's clock (UTC when unset)."""
+        aware = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+        if self._academy_timezone is None:
+            return aware.date()
+        try:
+            zone = await self._academy_timezone(academy_id)
+            return aware.astimezone(ZoneInfo(zone)).date() if zone else aware.date()
+        except Exception:
+            # A bad zone name must not stop collection; UTC is the old rule.
+            log.warning("late_fee_timezone_unresolved", extra={"academy_id": academy_id})
+            return aware.date()
 
     async def _charge(
         self, invoice: LedgerInvoice, *, fee_cents: int, grace_days: int, now: datetime

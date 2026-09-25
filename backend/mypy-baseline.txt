@@ -742,7 +742,6 @@ backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None"
 backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "DenyTrialRequest | None" has no attribute "execute"  [union-attr]
 backend/v2/interfaces/admin/self_service_request_routes.py:0: error: Item "None" of "ListSelfCancellationsForAdmin | None" has no attribute "execute"  [union-attr]
 backend/v2/interfaces/admin/self_service_policy_routes.py:0: error: Item "None" of "GetSelfServicePolicy | None" has no attribute "execute"  [union-attr]
-backend/v2/interfaces/admin/self_service_policy_routes.py:0: error: Item "None" of "UpdateSelfServicePolicy | None" has no attribute "execute"  [union-attr]
 backend/v2/interfaces/admin/progress_routes.py:0: error: Module "backend.v2.contexts.student_progress.application.use_cases.get_skill_board" does not explicitly export attribute "SkillBoardStudentRef"  [attr-defined]
 backend/v2/interfaces/admin/progress_routes.py:0: error: No overload variant of "int" matches argument type "object"  [call-overload]
 backend/v2/interfaces/admin/progress_routes.py:0: note: Possible overload variants:
