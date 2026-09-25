@@ -1,6 +1,6 @@
 # House academy replaces the platform-charge fallback switch
 
-PR: #TBD
+PR: #975
 
 ## What changed
 
