@@ -43,13 +43,17 @@ from backend.v2.composition.digests import (
     compose_send_coach_digest_test,
     is_real_email_sender,
 )
+from backend.v2.composition.dispute_notices import build_dispute_notifier
 from backend.v2.composition.dues_reminders import compose_dues_reminders
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
-from backend.v2.composition.event_handlers import install_dunning_notifier
+from backend.v2.composition.event_handlers import (
+    install_dispute_notifier,
+    install_dunning_notifier,
+)
 from backend.v2.composition.invoice_contact_copies import build_invoice_contact_copies
 from backend.v2.composition.invoice_naming import (
     build_invoice_naming_resolver,
@@ -1213,7 +1217,7 @@ def compose_admin(
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         result = await SendInvoice(
             ledger=billing_ledger_repo,
-            stripe=invoice_stripe,  # type: ignore[arg-type]
+            stripe=invoice_stripe,
             email=_invoice_email_port(),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
@@ -1266,10 +1270,11 @@ def compose_admin(
             raise RuntimeError("Stripe autopay not configured")
         result = await ChargeInvoiceViaAutopay(
             ledger=billing_ledger_repo,
-            stripe=stripe,  # type: ignore[arg-type]
+            stripe=stripe,
             enrollment_autopay=student_billing_enrollment_repo,
             settings=billing_settings_repo,
             connected_accounts=connected_accounts_repo,
+            parent_customers=parent_customers_repo,
         ).execute(
             invoice_id,
             source=source,
@@ -1448,6 +1453,7 @@ def compose_admin(
         enrollment_autopay=student_billing_enrollment_repo,
         settings=billing_settings_repo,
         connected_accounts=connected_accounts_repo,
+        parent_customers=parent_customers_repo,
         email_port=_invoice_email_port,
         outbox=outbox,
     )
@@ -4309,6 +4315,15 @@ def compose_admin(
     # Must come after every repo above is bound — `_invoice_email_port` closes
     # over `academy_repo`.
     install_dunning_notifier(_invoice_email_port())
+    install_dispute_notifier(
+        build_dispute_notifier(
+            db,
+            sender=_email_sender,
+            users=MongoUserRepository(db, default_academy_id=academy_id),
+            academies=academy_repo,
+            enabled=bool(settings.email_delivery_enabled and settings.resend_api_key),
+        )
+    )
 
     return admin
 

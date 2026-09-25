@@ -313,7 +313,12 @@ def app_origin(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 async def _seed_ready_account(db: Any, academy_id: str) -> None:
-    account = ConnectedAccount.new(academy_id=academy_id, stripe_account_id=f"acct_{academy_id}")
+    account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id=academy_id,
+        stripe_account_id=f"acct_{academy_id}",
+    )
     account = account.with_status(status="active", charges_enabled=True)
     await db["academy_connected_accounts"].insert_one(account.model_dump(mode="python"))
 
@@ -355,7 +360,7 @@ async def test_pay_balance_totals_invoices_under_every_alias(real_db: Any, app_o
     assert call["amount_cents"] == 15_000
     assert call["metadata"]["invoice_ids"] == "inv-bal-alias,inv-bal-user-id"
     assert call["metadata"]["parent_id"] == PARENT
-    assert call["connected_account_id"] == f"acct_{ACAD}"
+    assert call["stripe_account"] == f"acct_{ACAD}"
 
 
 @pytest.mark.asyncio

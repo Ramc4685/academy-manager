@@ -136,6 +136,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             stripe_payment_intent_id=doc.get("stripe_payment_intent_id")
             or doc.get("stripe_payment_intent"),
             stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),
+            stripe_account_id=doc.get("stripe_account_id"),
             calculation_snapshot_id=doc.get("calculation_snapshot_id"),
             amount_cents=cls._amount_cents(doc),
             currency=str(doc.get("currency", "usd")),
@@ -147,6 +148,10 @@ class MongoPaymentRepository(TenantScopedRepository):
 
     async def save(self, payment: Payment) -> None:
         doc = payment.model_dump(mode="python")
+        if doc.get("stripe_account_id") is None:
+            # Platform payment: never write (or clear) the account field, so
+            # house-academy and legacy rows keep exactly the shape they had.
+            doc.pop("stripe_account_id", None)
         academy_id = current_academy_id()
         ledger_existing = await self._db["ledger_payments"].find_one(
             {"academy_id": academy_id, "payment_id": payment.payment_id},

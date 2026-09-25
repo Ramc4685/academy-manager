@@ -139,6 +139,10 @@ class LedgerPayment(BaseModel):
     refunded_cents: int = Field(default=0, ge=0)
     payment_method: str | None = None
     stripe_payment_intent_id: str | None = None
+    #: The connected Stripe account the charge lives on (a DIRECT charge on a
+    #: non-house academy's account). None = the platform account: the house
+    #: academy, and every legacy destination charge. Refunds go to this account.
+    stripe_account_id: str | None = None
     stripe_invoice_id: str | None = None
     paid_at: datetime | None = None
     recorded_by: str | None = None

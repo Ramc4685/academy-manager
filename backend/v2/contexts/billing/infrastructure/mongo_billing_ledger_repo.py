@@ -84,6 +84,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             refunded_cents=int(doc.get("refunded_cents", 0)),
             payment_method=doc.get("payment_method"),
             stripe_payment_intent_id=doc.get("stripe_payment_intent_id"),
+            stripe_account_id=doc.get("stripe_account_id"),
             stripe_invoice_id=doc.get("stripe_invoice_id"),
             paid_at=doc.get("paid_at"),
             recorded_by=doc.get("recorded_by"),
@@ -338,6 +339,10 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             return self._payment_from_doc(existing)
 
         doc = _mongo_doc(payment)
+        if doc.get("stripe_account_id") is None:
+            # Platform payment (house academy / legacy destination charge):
+            # the row keeps exactly the shape it always had.
+            doc.pop("stripe_account_id", None)
         doc["ledger_idempotency_key"] = idempotency_key
         try:
             await self.ledger_payments.insert_one(

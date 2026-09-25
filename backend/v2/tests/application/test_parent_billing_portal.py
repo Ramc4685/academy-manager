@@ -290,6 +290,8 @@ async def test_start_autopay_stripe_rejection_maps_to_checkout_creation_failed()
 @pytest.mark.asyncio
 async def test_start_autopay_setup_routes_checkout_through_ready_connected_account() -> None:
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)
@@ -305,13 +307,19 @@ async def test_start_autopay_setup_routes_checkout_through_ready_connected_accou
     await uc.execute(_checkout_command())
 
     assert connected_accounts.calls == 1
-    assert gateway.setup_created[0]["connected_account_id"] == "acct_ready"
+    assert gateway.setup_created[0]["stripe_account"] == "acct_ready"
+    assert "connected_account_id" not in gateway.setup_created[0]
 
 
 @pytest.mark.asyncio
 async def test_start_autopay_setup_fails_closed_without_ready_connected_account() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -344,7 +352,12 @@ class _SettingsRepo:
 @pytest.mark.asyncio
 async def test_start_autopay_setup_falls_back_to_platform_when_flag_on() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -358,13 +371,20 @@ async def test_start_autopay_setup_falls_back_to_platform_when_flag_on() -> None
     result = await uc.execute(_checkout_command())
 
     assert result.redirect_url == "https://checkout.stripe.com/c/setup"
-    assert gateway.setup_created[0]["connected_account_id"] is None
+    # House academy: the platform call, with no account kwarg at all.
+    assert "stripe_account" not in gateway.setup_created[0]
+    assert "connected_account_id" not in gateway.setup_created[0]
 
 
 @pytest.mark.asyncio
 async def test_start_autopay_setup_still_fails_closed_when_flag_off() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -383,7 +403,12 @@ async def test_start_autopay_setup_still_fails_closed_when_flag_off() -> None:
 @pytest.mark.asyncio
 async def test_start_autopay_setup_fails_closed_when_settings_lookup_errors() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -504,6 +529,8 @@ async def test_start_autopay_does_not_reuse_legacy_checkout_when_connect_is_enfo
         )
     )
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)
@@ -520,7 +547,7 @@ async def test_start_autopay_does_not_reuse_legacy_checkout_when_connect_is_enfo
 
     assert result.subscription_id != "sub-existing"
     assert result.checkout_session_id == "cs_setup_1"
-    assert gateway.setup_created[0]["connected_account_id"] == "acct_ready"
+    assert gateway.setup_created[0]["stripe_account"] == "acct_ready"
 
 
 class _NoPaymentRepo:

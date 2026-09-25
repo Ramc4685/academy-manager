@@ -36,6 +36,7 @@ from backend.v2.contexts.billing.application.collections_buckets import (
     build_collections_view_from_rows,
     classify_family,
 )
+from backend.v2.contexts.billing.domain.charge_route import decide_charge_route
 from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
     exclude_non_charge_attempts,
 )
@@ -703,5 +704,8 @@ class MongoCollectionsReadModel:
         except Exception:
             log.warning("collections read model: connected-account lookup failed", exc_info=True)
             return None
-        ready = account is not None and account.is_ready_for_charges()
-        return bool(ready or getattr(settings, "allow_platform_charge_fallback", False))
+        # Same routing rule the charge paths use (domain/charge_route.py).
+        return decide_charge_route(
+            is_house_academy=bool(getattr(settings, "allow_platform_charge_fallback", False)),
+            account=account,
+        ).payments_possible

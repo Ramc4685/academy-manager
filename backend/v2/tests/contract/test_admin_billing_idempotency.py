@@ -350,6 +350,9 @@ async def test_billing_setup_autopay_retry_converges_state_and_audit(admin_db) -
         {
             "academy_id": ACAD,
             "parent_id": "parent-1",
+            "stripe_customer_id": "cus-parent-1",
+            "default_payment_method_id": "pm-parent-1",
+            "stripe_account_id": "acct-ready",
             "payment_method_label": "Visa",
             "payment_method_last4": "4242",
         }
@@ -400,8 +403,12 @@ async def test_billing_setup_autopay_retry_converges_state_and_audit(admin_db) -
 
 
 class _BillingSetupStripe(FakeStripeGateway):
-    async def get_default_payment_method(self, *, academy_id: str, parent_id: str):
-        return "cus-parent-1", "pm-parent-1"
+    """The saved card lives ON the academy's connected account (direct charge)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.register_object("cus-parent-1", stripe_account="acct-ready")
+        self.register_object("pm-parent-1", stripe_account="acct-ready")
 
 
 @pytest.mark.asyncio
@@ -414,6 +421,9 @@ async def test_billing_setup_charge_claim_and_result_are_replayable(admin_db) ->
         {
             "academy_id": ACAD,
             "parent_id": "parent-1",
+            "stripe_customer_id": "cus-parent-1",
+            "default_payment_method_id": "pm-parent-1",
+            "stripe_account_id": "acct-ready",
             "payment_method_label": "Visa",
             "payment_method_last4": "4242",
         }
@@ -425,6 +435,8 @@ async def test_billing_setup_charge_claim_and_result_are_replayable(admin_db) ->
             "status": "active",
             "capabilities": {},
             "charges_enabled": True,
+            "fees_collector": "stripe",
+            "losses_collector": "stripe",
             "payouts_enabled": True,
             "created_at": NOW,
             "updated_at": NOW,
@@ -515,6 +527,9 @@ async def test_billing_setup_processing_audit_records_attempted_not_received_amo
         {
             "academy_id": ACAD,
             "parent_id": "parent-1",
+            "stripe_customer_id": "cus-parent-1",
+            "default_payment_method_id": "pm-parent-1",
+            "stripe_account_id": "acct-ready",
             "payment_method_label": "Bank",
             "payment_method_last4": "6789",
         }
@@ -526,6 +541,8 @@ async def test_billing_setup_processing_audit_records_attempted_not_received_amo
             "status": "active",
             "capabilities": {},
             "charges_enabled": True,
+            "fees_collector": "stripe",
+            "losses_collector": "stripe",
             "payouts_enabled": True,
             "created_at": NOW,
             "updated_at": NOW,

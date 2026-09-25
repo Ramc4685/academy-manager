@@ -145,6 +145,9 @@ class _StubConnectedAccount:
     def is_ready_for_charges(self) -> bool:
         return self._ready
 
+    def supports_direct_charges(self) -> bool:
+        return True
+
 
 class _FakeConnectedAccounts:
     def __init__(self, account: _StubConnectedAccount | None) -> None:
@@ -382,13 +385,13 @@ async def test_checkout_url_is_passed_to_successful_email_before_marking_sent() 
     result = await uc.execute("inv-1")
 
     assert result.checkout_url == "https://checkout.stripe.com/pay/test"
-    assert stripe.calls[0]["connected_account_id"] == "acct_ready_1"
+    assert stripe.calls[0]["stripe_account"] == "acct_ready_1"
     assert result.invoice.delivery_status == "sent"
     assert result.invoice.sent_at == NOW
     assert email.calls[0]["checkout_url"] == "https://checkout.stripe.com/pay/test"
 
 
-async def test_checkout_routes_destination_charge_when_connected_account_ready() -> None:
+async def test_checkout_is_a_direct_charge_on_the_ready_connected_account() -> None:
     stripe = FakeInvoiceStripe()
     repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
     uc = SendInvoice(
@@ -401,7 +404,12 @@ async def test_checkout_routes_destination_charge_when_connected_account_ready()
     result = await uc.execute("inv-1")
 
     assert result.checkout_url == "https://checkout.stripe.com/pay/test"
-    assert stripe.calls[0]["connected_account_id"] == "acct_ready_1"
+    call = stripe.calls[0]
+    # Direct charge: the session is created ON the academy's account, never
+    # as a platform destination charge.
+    assert call["stripe_account"] == "acct_ready_1"
+    assert "connected_account_id" not in call
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_checkout_refused_when_connected_account_not_ready() -> None:
@@ -457,9 +465,9 @@ async def test_execute_with_enroll_autopay_requests_saved_payment_method() -> No
     assert call["autopay_enrollment_ids"] == ["enroll-1"]
     # A distinct idempotency key: an earlier one-time pay link for the same
     # balance must not be replayed without the saved-payment-method params.
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:autopay-optin"
-    # Destination-charge routing is unchanged by the opt-in flag.
-    assert call["connected_account_id"] == "acct_ready_1"
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:autopay-optin:acct:acct_ready_1"
+    # Direct-charge routing is unchanged by the opt-in flag.
+    assert call["stripe_account"] == "acct_ready_1"
 
 
 async def test_execute_with_enroll_autopay_and_no_enrollment_id_sends_empty_ids() -> None:
@@ -498,7 +506,7 @@ async def test_execute_default_keeps_gateway_call_unchanged() -> None:
     call = stripe.calls[0]
     assert "save_payment_method_for_autopay" not in call
     assert "autopay_enrollment_ids" not in call
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_email_failure_records_delivery_failed_without_sent_at() -> None:
@@ -517,7 +525,8 @@ async def test_email_failure_records_delivery_failed_without_sent_at() -> None:
 
 
 async def test_platform_fallback_enabled_mints_pay_link_with_platform_charge() -> None:
-    """Flag on + account not ready → pay link minted with connected_account_id=None."""
+    """Flag on (house academy) + account not ready → platform pay link: no
+    account kwarg at all and the historical idempotency key."""
     stripe = FakeInvoiceStripe()
     repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
     uc = SendInvoice(
@@ -533,7 +542,10 @@ async def test_platform_fallback_enabled_mints_pay_link_with_platform_charge() -
     result = await uc.execute("inv-1")
 
     assert result.checkout_url == "https://checkout.stripe.com/pay/test"
-    assert stripe.calls[0]["connected_account_id"] is None
+    call = stripe.calls[0]
+    assert "stripe_account" not in call
+    assert "connected_account_id" not in call
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
 
 
 async def test_platform_fallback_disabled_still_blocks_when_account_not_ready() -> None:
@@ -625,7 +637,7 @@ async def test_bundle_student_balance_noop_when_only_one_payable_invoice() -> No
     assert call["amount_cents"] == 10_000
     assert call["metadata"]["invoice_id"] == "inv-1"
     assert call["metadata"]["source"] == "invoice_pay_link"
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_bundle_student_balance_excludes_other_students_invoices() -> None:
@@ -1311,9 +1323,9 @@ async def test_pay_link_default_fee_keeps_the_call_byte_identical() -> None:
     await _fee_uc(stripe, 0).execute("inv-1")
 
     call = stripe.calls[0]
-    assert call["connected_account_id"] == "acct_ready_1"
+    assert call["stripe_account"] == "acct_ready_1"
     assert "application_fee_cents" not in call
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_pay_link_sends_the_academy_fee_and_scopes_the_idempotency_key() -> None:
@@ -1323,4 +1335,4 @@ async def test_pay_link_sends_the_academy_fee_and_scopes_the_idempotency_key() -
 
     call = stripe.calls[0]
     assert call["application_fee_cents"] == 125  # 1.25% of $100.00
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:fee125"
+    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:fee125:acct:acct_ready_1"

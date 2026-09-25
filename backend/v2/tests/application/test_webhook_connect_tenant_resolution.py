@@ -35,6 +35,7 @@ class _FakeConnectAccountResolver:
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
         skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
     ) -> bool:
         self.status_updates.append(
             {
@@ -44,6 +45,7 @@ class _FakeConnectAccountResolver:
                 "payouts_enabled": payouts_enabled,
                 "capabilities": capabilities,
                 "skip_if_disconnected": skip_if_disconnected,
+                "liability": liability,
             }
         )
         return True
@@ -157,5 +159,158 @@ async def test_account_updated_projects_connected_account_status() -> None:
             "payouts_enabled": True,
             "capabilities": {"card_payments": "active"},
             "skip_if_disconnected": True,
+            # The payload names no controller: the liability is left alone.
+            "liability": {},
         }
     ]
+
+
+# --- ingest/processing hardening ----------------------------------------------
+
+
+class _RecordingStripe:
+    """Records every Stripe read; verifies any payload into ``event``."""
+
+    def __init__(self, event: dict | None = None) -> None:
+        self.event = event
+        self.reads: list[tuple[str, str, dict]] = []
+
+    def verify_webhook(self, payload: bytes, signature: str) -> dict:
+        assert self.event is not None
+        return self.event
+
+    async def retrieve_payment_intent(self, object_id: str, **kwargs: object) -> dict:
+        self.reads.append(("payment_intent", object_id, dict(kwargs)))
+        return {"id": object_id}
+
+    async def retrieve_checkout_session(self, object_id: str, **kwargs: object) -> dict:
+        self.reads.append(("checkout_session", object_id, dict(kwargs)))
+        return {"id": object_id}
+
+
+class _StoredEventDedup:
+    def __init__(self, event: dict) -> None:
+        self._event = event
+        self.stored: list[dict] = []
+        self.quarantined: list[tuple[str, str]] = []
+        self.processed: list[str] = []
+
+    async def claim_next(self, **_: object) -> dict | None:
+        return {
+            "event_id": self._event["id"],
+            "event_type": self._event["type"],
+            "raw_payload": self._event,
+        }
+
+    async def mark_quarantined(self, event_id: str, reason: str, **_: object) -> None:
+        self.quarantined.append((event_id, reason))
+
+    async def mark_processed(self, event_id: str) -> None:
+        self.processed.append(event_id)
+
+    async def mark_failed(self, event_id: str, error: str) -> str:
+        return "failed"
+
+    async def store_received(self, event: dict, **_: object) -> bool:
+        self.stored.append(event)
+        return True
+
+
+def _pi_event(account: str) -> dict:
+    return {
+        "id": "evt_pi",
+        "type": "payment_intent.succeeded",
+        "account": account,
+        "livemode": False,
+        "data": {"object": {"id": "pi_1", "object": "payment_intent", "metadata": {}}},
+    }
+
+
+async def test_unknown_account_is_quarantined_before_any_stripe_read() -> None:
+    """Hydration reads the object with a ``Stripe-Account`` header; for an
+    account no academy owns that read must never happen."""
+    event = _pi_event("acct_unknown")
+    stripe = _RecordingStripe()
+    dedup = _StoredEventDedup(event)
+    handler = HandleWebhookEvent(
+        stripe=stripe,  # type: ignore[arg-type]
+        dedup=dedup,  # type: ignore[arg-type]
+        payments=object(),  # type: ignore[arg-type]
+        subscriptions=object(),  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        academy_id="acad-1",
+        connected_accounts=_FakeConnectAccountResolver({}),  # type: ignore[arg-type]
+    )
+
+    result = await handler.process_next(processor_id="p1")
+
+    assert result["status"] == "quarantined"
+    assert dedup.quarantined and dedup.quarantined[0][0] == "evt_pi"
+    assert stripe.reads == []
+
+
+async def test_other_academys_account_is_quarantined_before_any_stripe_read() -> None:
+    event = _pi_event("acct_B")
+    stripe = _RecordingStripe()
+    dedup = _StoredEventDedup(event)
+    handler = HandleWebhookEvent(
+        stripe=stripe,  # type: ignore[arg-type]
+        dedup=dedup,  # type: ignore[arg-type]
+        payments=object(),  # type: ignore[arg-type]
+        subscriptions=object(),  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        academy_id="acad-1",
+        connected_accounts=_FakeConnectAccountResolver({"acct_B": "acad-2"}),  # type: ignore[arg-type]
+    )
+
+    result = await handler.process_next(processor_id="p1")
+
+    assert result["status"] == "quarantined"
+    assert stripe.reads == []
+
+
+class _BrokenResolver(_FakeConnectAccountResolver):
+    async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
+        raise RuntimeError("mongo unavailable")
+
+
+async def test_owner_lookup_failure_at_ingest_propagates_so_stripe_retries() -> None:
+    from backend.v2.contexts.billing.domain.errors import WebhookAccountLookupUnavailable
+
+    event = _pi_event("acct_A")
+    dedup = _StoredEventDedup(event)
+    handler = HandleWebhookEvent(
+        stripe=_RecordingStripe(event),  # type: ignore[arg-type]
+        dedup=dedup,  # type: ignore[arg-type]
+        payments=object(),  # type: ignore[arg-type]
+        subscriptions=object(),  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        academy_id="acad-1",
+        connected_accounts=_BrokenResolver({}),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(WebhookAccountLookupUnavailable) as caught:
+        await handler.accept(b"{}", "sig")
+
+    # 5xx so Stripe redelivers; nothing was stored under the boot academy.
+    assert caught.value.status_code >= 500
+    assert dedup.stored == []
+
+
+async def test_unknown_account_at_ingest_is_still_stored_not_5xx() -> None:
+    event = _pi_event("acct_unknown")
+    dedup = _StoredEventDedup(event)
+    handler = HandleWebhookEvent(
+        stripe=_RecordingStripe(event),  # type: ignore[arg-type]
+        dedup=dedup,  # type: ignore[arg-type]
+        payments=object(),  # type: ignore[arg-type]
+        subscriptions=object(),  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        academy_id="acad-1",
+        connected_accounts=_FakeConnectAccountResolver({}),  # type: ignore[arg-type]
+    )
+
+    result = await handler.accept(b"{}", "sig")
+
+    assert result["stored"] is True
+    assert len(dedup.stored) == 1

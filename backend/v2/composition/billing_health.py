@@ -22,6 +22,7 @@ from typing import Any
 
 from backend.v2.contexts.billing.application.billing_health import (
     CHECK_AUTOPAY_DISABLE,
+    CHECK_DISPUTES,
     CHECK_RECONCILIATION,
     CHECK_WEBHOOKS,
     LastReconciliationRun,
@@ -32,6 +33,7 @@ from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices imp
     ConfirmLegacyMatch,
     ConfirmLegacyMatchCommand,
 )
+from backend.v2.contexts.billing.domain.charge_route import decide_charge_route
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -46,6 +48,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
+    MongoPaymentDisputeRepository,
 )
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     mask_stripe_account_id,
@@ -72,6 +77,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
     billing_settings_repo = MongoBillingSettingsRepository(db)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     dunning_state_repo = MongoDunningStateRepository(db)
+    payment_disputes_repo = MongoPaymentDisputeRepository(db)
 
     async def get_connect_readiness() -> dict[str, Any]:
         """Can a parent payment physically succeed right now, and is Stripe well?
@@ -143,8 +149,19 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             disable_failures = {"count": 0, "rows": [], "truncated": False}
             unavailable.append(CHECK_AUTOPAY_DISABLE)
 
+        try:
+            disputes = await _open_disputes(payment_disputes_repo)
+        except Exception:
+            log.warning("connect_readiness_disputes_failed", exc_info=True)
+            disputes = {"count": 0, "rows": [], "truncated": False}
+            unavailable.append(CHECK_DISPUTES)
+
         ready = bool(account and account.is_ready_for_charges())
-        payments_possible = ready or fallback_allowed
+        # Same routing rule the charge paths use (domain/charge_route.py): the
+        # house academy charges on the platform; anyone else needs a ready
+        # connected account.
+        route = decide_charge_route(is_house_academy=fallback_allowed, account=account)
+        payments_possible = route.payments_possible
 
         verdict = evaluate_billing_health(
             payments_possible=payments_possible,
@@ -154,6 +171,12 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             autopay_disable_failures=int(disable_failures.get("count") or 0),
             now=datetime.now(UTC),
             unavailable_checks=unavailable,
+            open_disputes=int(disputes.get("count") or 0),
+            # Only the platform-liable refusal overrides the verdict's copy:
+            # its fix (reconnect Stripe) differs from "finish onboarding".
+            payments_blocked_reason=(
+                route.refusal_message if route.kind == "account_platform_liable" else None
+            ),
         )
 
         return {
@@ -163,6 +186,12 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
                 "charges_enabled": bool(account and account.charges_enabled),
                 "payouts_enabled": bool(account and account.payouts_enabled),
                 "ready_for_charges": ready,
+                # Direct charges need Stripe to collect fees and carry losses;
+                # a legacy express (platform-liable) account is refused.
+                "direct_charges_supported": bool(account and account.supports_direct_charges()),
+                "fees_collector": account.fees_collector if account else None,
+                "losses_collector": account.losses_collector if account else None,
+                "dashboard": account.dashboard if account else None,
                 # Same masking as GET /admin/academy/gateway — the account id
                 # is a Stripe identifier, not a secret, but there is no reason
                 # for two admin surfaces to disagree about showing it.
@@ -176,9 +205,12 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             # platform fallback is on — in which case the money lands on the
             # platform account instead of theirs.
             "payments_possible": payments_possible,
-            "funds_route_to_academy": ready,
+            "funds_route_to_academy": route.is_connected,
+            # Why parents cannot pay (None when they can): the route's reason.
+            "payments_blocked_reason": route.refusal_message,
             "webhook_events": stuck,
             "autopay_disable_failures": disable_failures,
+            "disputes": disputes,
             "health": verdict.as_dict(),
         }
 
@@ -548,3 +580,27 @@ def _as_utc(value: Any) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+async def _open_disputes(repo: MongoPaymentDisputeRepository, *, limit: int = 20) -> dict[str, Any]:
+    """Open Stripe disputes for the request academy: an aggregate count (the
+    verdict never reads a capped list) and the newest rows for the page."""
+    count = await repo.count_open()
+    rows = await repo.list_open(limit=limit)
+    return {
+        "count": count,
+        "rows": [
+            {
+                "dispute_id": d.dispute_id,
+                "payment_id": d.payment_id,
+                "amount_cents": d.amount_cents,
+                "currency": d.currency,
+                "reason": d.reason,
+                "status": d.status,
+                "evidence_due_by": d.evidence_due_by,
+                "opened_at": d.opened_at,
+            }
+            for d in rows
+        ],
+        "truncated": count > len(rows),
+    }

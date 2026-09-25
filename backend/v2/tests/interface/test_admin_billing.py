@@ -226,6 +226,9 @@ class _StubConnectedAccount:
     def is_ready_for_charges(self) -> bool:
         return self._ready
 
+    def supports_direct_charges(self) -> bool:
+        return True
+
 
 class _FakeConnectedAccounts:
     def __init__(self, account: _StubConnectedAccount | None) -> None:
@@ -1112,8 +1115,8 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
                 "academy_id": "acad",
                 "parent_id": "parent-1",
             },
-            "idempotency_key": "invoice-checkout:inv-1:7000",
-            "connected_account_id": "acct_ready_1",
+            "idempotency_key": "invoice-checkout:inv-1:7000:acct:acct_ready_1",
+            "stripe_account": "acct_ready_1",
         }
     ]
 
@@ -1136,7 +1139,7 @@ def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client
     body = response.json()
     assert body["checkout_url"] == "https://checkout.stripe.test/invoice"
     assert body["delivery_status"] == "sent"
-    assert stripe.calls[0]["connected_account_id"] == "acct_ready_1"
+    assert stripe.calls[0]["stripe_account"] == "acct_ready_1"
     assert email.calls == [
         {
             "parent_id": "parent-1",

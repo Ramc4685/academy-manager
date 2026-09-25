@@ -29,7 +29,10 @@ class ConnectedAccountGatewayReader:
             account = await self._repo.get_for_academy()
         if account is None:
             return False, None
-        return account.is_ready_for_charges(), account.stripe_account_id
+        # Ready means the charge route would actually use it: a platform-liable
+        # (legacy express) account is refused for direct charges.
+        ready = account.is_ready_for_charges() and account.supports_direct_charges()
+        return ready, account.stripe_account_id
 
 
 class ConnectedAccountGatewayDisabler:

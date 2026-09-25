@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from backend.v2.contexts.billing.domain.connected_account import (
+    LIABILITY_FIELDS,
     ConnectedAccount,
     ConnectedAccountStatus,
 )
@@ -50,6 +51,7 @@ class MongoConnectedAccountRepository(TenantScopedRepository):
         charges_enabled: bool | None = None,
         payouts_enabled: bool | None = None,
         skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
     ) -> bool:
         """Apply a status change; returns False when no row was updated.
 
@@ -67,6 +69,11 @@ class MongoConnectedAccountRepository(TenantScopedRepository):
             update["charges_enabled"] = charges_enabled
         if payouts_enabled is not None:
             update["payouts_enabled"] = payouts_enabled
+        # Only the liability fields the Stripe payload reported; a payload
+        # without them (capability.*) leaves the stored model untouched.
+        for key, value in (liability or {}).items():
+            if key in LIABILITY_FIELDS and value:
+                update[key] = value
         filter_: dict[str, object] = {"stripe_account_id": stripe_account_id}
         if skip_if_disconnected:
             # Matches a missing field too, so rows written before the marker

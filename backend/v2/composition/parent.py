@@ -34,7 +34,9 @@ from backend.v2.composition.waitlist_offers import compose_confirm_waitlist_offe
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
+    ConnectedAccountDirectory,
     StripeCheckoutSessionNotExpirable,
     StripeGateway,
 )
@@ -45,7 +47,6 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
     idempotency_key_with_fee,
-    resolve_application_fee_cents,
 )
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
@@ -98,6 +99,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_directory import (
+    MongoConnectedAccountDirectory,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
@@ -106,6 +110,10 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    stored_stripe_account,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
+    MongoPaymentDisputeRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
@@ -449,10 +457,15 @@ class _StripeCheckoutAttemptRetirement:
         payments: Any,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         unretired: Any = None,
+        stripe_account: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
         self._stripe = stripe
         self._payments = payments
         self._now = clock
+        # The Stripe account the academy's checkouts run on (None = platform).
+        # A direct-charge session lives on the connected account and can only
+        # be expired there. Unset -> the platform, as before.
+        self._stripe_account = stripe_account
         # Worklist for sessions that stayed payable because Stripe could not be
         # reached. Optional so the older two-argument construction in tests
         # keeps working; when it is None the failure is still logged loudly.
@@ -483,7 +496,8 @@ class _StripeCheckoutAttemptRetirement:
         # away as another benign "already paid" expiry failure.
         expire = self._stripe.expire_checkout_session
         try:
-            await expire(checkout_session_id)
+            account = await self._stripe_account() if self._stripe_account else None
+            await expire(checkout_session_id, **({"stripe_account": account} if account else {}))
         except StripeCheckoutSessionNotExpirable as exc:
             # The ONLY benign failure: Stripe will not expire a session that is
             # already complete or expired, which is precisely the race this call
@@ -639,7 +653,12 @@ def compose_parent_webhook_handler(
         transaction_runner=transaction_runner,
         enrollment_identity=_EnrollmentBillingIdentity(),
         invoice_processing=invoice_processing,
-        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            connected_accounts_repo,
+            academy_id,
+            directory=MongoConnectedAccountDirectory(db),
+        ),
+        payment_disputes=MongoPaymentDisputeRepository(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -783,6 +802,8 @@ def compose_parent(
         outbox=outbox,
         transaction_runner=transaction_runner,
         academy_id=request_academy_id,
+        connected_accounts=connected_accounts_repo,
+        settings=billing_settings_repo,
     )
 
     handle_webhook = HandleWebhookEvent(
@@ -800,7 +821,12 @@ def compose_parent(
         transaction_runner=transaction_runner,
         enrollment_identity=enrollment_identity,
         invoice_processing=invoice_processing,
-        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            connected_accounts_repo,
+            academy_id,
+            directory=MongoConnectedAccountDirectory(db),
+        ),
+        payment_disputes=MongoPaymentDisputeRepository(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -1045,11 +1071,21 @@ def compose_parent(
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
     accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=request_academy_id)
+
+    async def _checkout_stripe_account() -> str | None:
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context="checkout_retirement",
+        )
+        return route.connected_account_id
+
     checkout_retirement = _StripeCheckoutAttemptRetirement(
         stripe=stripe,
         payments=payments_repo,
         clock=clock,
         unretired=MongoUnretiredCheckoutSessionRepository(db),
+        stripe_account=_checkout_stripe_account,
     )
     start_app = StartApplication(
         apps=apps_repo,
@@ -1875,7 +1911,7 @@ def compose_parent(
         redirect_success_url = _success_url_with_checkout_session_placeholder(success_url)
         result = await SendInvoice(
             ledger=billing_ledger_repo,
-            stripe=invoice_stripe,  # type: ignore[arg-type]
+            stripe=invoice_stripe,
             email=None,
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
@@ -1929,56 +1965,42 @@ def compose_parent(
             # No Stripe wiring at all — nothing is broken, this academy just
             # does not collect online. Same 409, no failure recorded.
             raise InvoicePayLinkUnavailable("balance payment unavailable")
-        # Destination-charge routing (Slice I posture): funds must settle to the
-        # academy's connected account; refuse a platform charge if not ready
-        # unless the temporary allow_platform_charge_fallback escape hatch is on.
-        account = await connected_accounts_repo.get_for_academy()
-        connected_account_stripe_id: str | None = None
-        if account is not None and account.is_ready_for_charges():
-            connected_account_stripe_id = account.stripe_account_id
-        else:
-            fallback_enabled = False
-            try:
-                fallback_enabled = (
-                    await billing_settings_repo.get()
-                ).allow_platform_charge_fallback
-            except Exception as exc:
-                log.warning(
-                    "start_balance_payment: billing settings lookup failed; keeping "
-                    "fail-closed connected-account requirement parent=%s err=%s",
+        # One routing rule (billing/application/charge_route.py): the house
+        # academy charges on the platform; any other academy needs a
+        # charge-ready connected account or the pay link is refused.
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context=f"start_balance_payment parent={parent_id}",
+        )
+        if route.refused:
+            # Same split as SendInvoice (issue #426): an academy with no
+            # Connect account at all has simply never onboarded online
+            # payments — nothing is broken, so record nothing. An account
+            # that EXISTS but cannot charge is a real, operator-visible
+            # failure.
+            account_exists = route.kind != "no_account"
+            if account_exists:
+                log.error(
+                    "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
+                    "— connected account not ready",
                     parent_id,
-                    exc,
+                    len(payable),
                 )
-            if not fallback_enabled:
-                # Same split as SendInvoice (issue #426): an academy with no
-                # Connect account at all has simply never onboarded online
-                # payments — nothing is broken, so record nothing. An account
-                # that EXISTS but cannot charge is a real, operator-visible
-                # failure.
-                if account is not None:
-                    log.error(
-                        "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
-                        "— connected account not ready",
-                        parent_id,
-                        len(payable),
-                    )
-                    await record_checkout_mint_failure(
-                        billing_ledger_repo,
-                        invoices=payable,
-                        failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
-                        failure_message=(
-                            "Academy Stripe connected account exists but is not ready for "
-                            "charges, and platform-charge fallback is off."
-                        ),
-                    )
-                raise InvoicePayLinkUnavailable(
-                    "balance payment unavailable",
-                    reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account is not None else None),
+                await record_checkout_mint_failure(
+                    billing_ledger_repo,
+                    invoices=payable,
+                    failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+                    failure_message=(
+                        route.refusal_message
+                        if route.kind == "account_platform_liable" and route.refusal_message
+                        else "Academy Stripe connected account exists but is not ready for "
+                        "charges, and platform-charge fallback is off."
+                    ),
                 )
-            log.warning(
-                "start_balance_payment: connected account not ready — falling back to "
-                "PLATFORM charge (allow_platform_charge_fallback=on) parent=%s",
-                parent_id,
+            raise InvoicePayLinkUnavailable(
+                "balance payment unavailable",
+                reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account_exists else None),
             )
         currencies = {inv.currency for inv in payable}
         if len(currencies) != 1:
@@ -2013,12 +2035,10 @@ def compose_parent(
                 "autopay_enrollment_ids": active_ids,
             }
         # Roadmap L9b: the academy's platform application fee (0 by default).
-        fee_cents = await resolve_application_fee_cents(
-            billing_settings_repo,
-            amount_cents=total_cents,
-            connected_account_id=connected_account_stripe_id,
-        )
+        fee_cents = route.application_fee_cents(total_cents)
         idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
+        # House: unchanged key. A direct charge scopes it to the academy account.
+        idempotency_key = route.idempotency_key(idempotency_key)
         # Same reasoning as the single-invoice path (issue #635): every return
         # needs a checkout_session_id so the settlement poll can run, and the
         # opted-in case also picks up autopay activation from it.
@@ -2038,7 +2058,9 @@ def compose_parent(
                     "type": "balance_payment",
                 },
                 idempotency_key=idempotency_key,
-                connected_account_id=connected_account_stripe_id,
+                # House: platform. Otherwise a DIRECT charge on the academy's
+                # own connected account.
+                **route.on_account_kwargs(),
                 **autopay_kwargs,
                 **application_fee_kwargs(fee_cents),
             )
@@ -2417,14 +2439,15 @@ def compose_parent(
         # Request-time tenant (C4): re-scoping to the boot academy here would
         # look up another tenant's Stripe customer in multi-academy mode.
         with tenant_scope(request_academy_id()):
-            stripe_customer_id = await parent_customers_repo.get_stripe_customer_id(
-                parent_id=parent_id
-            )
+            customer_doc = await parent_customers_repo.get_academy_customer(parent_id=parent_id)
+        customer_doc = customer_doc or {}
         result = await create_portal.execute(
             CreateCustomerPortalSessionCommand(
                 parent_id=parent_id,
                 return_url=return_url,
-                stripe_customer_id=stripe_customer_id,
+                stripe_customer_id=str(customer_doc.get("stripe_customer_id") or "") or None,
+                # A direct-charge customer lives on the academy's account.
+                stripe_account_id=stored_stripe_account(customer_doc),
             )
         )
         return result.model_dump()
@@ -2904,20 +2927,36 @@ class _StripeGatewayProto(Protocol):
 
 
 class _ConnectAccountResolver:
-    """Resolve a connected Stripe account id -> owning academy for the webhook
-    guard (Slice I). Bridges the repo method name (``get_by_stripe_account_id``)
-    to the resolver name the webhook handler expects (``academy_id_for_account``)
-    — the Slice-B name-mismatch lesson, covered by a port-drive test.
+    """Connected-account access for the webhook handler (Slice I).
+
+    ``academy_id_for_account`` answers which academy OWNS an account, across
+    every academy: direct charges deliver each academy's payment events as
+    Connect events to the one boot-academy endpoint, so ingest must attribute
+    an account it does not own, and the processing guard must be able to say
+    "this belongs to academy B" rather than "unknown". That lookup goes
+    through the platform-scoped ``ConnectedAccountDirectory``, never through
+    the tenant-scoped repo.
+
+    ``get_by_stripe_account_id`` / ``update_status`` stay tenant-scoped to the
+    handler's own academy: only the owner's processor may read or change the
+    account row. Bridges the repo method names to the resolver names the
+    handler expects — the Slice-B name-mismatch lesson, covered by a
+    port-drive test.
     """
 
-    def __init__(self, repo: MongoConnectedAccountRepository, academy_id: str) -> None:
+    def __init__(
+        self,
+        repo: MongoConnectedAccountRepository,
+        academy_id: str,
+        *,
+        directory: ConnectedAccountDirectory,
+    ) -> None:
         self._repo = repo
         self._academy_id = academy_id
+        self._directory = directory
 
     async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
-        with tenant_scope(self._academy_id):
-            account = await self._repo.get_by_stripe_account_id(stripe_account_id)
-        return account.academy_id if account else None
+        return await self._directory.owner_academy_id(stripe_account_id)
 
     async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None:
         with tenant_scope(self._academy_id):
@@ -2932,6 +2971,7 @@ class _ConnectAccountResolver:
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
         skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
     ) -> bool:
         with tenant_scope(self._academy_id):
             return await self._repo.update_status(
@@ -2941,6 +2981,7 @@ class _ConnectAccountResolver:
                 payouts_enabled=payouts_enabled,
                 capabilities=capabilities,
                 skip_if_disconnected=skip_if_disconnected,
+                liability=liability,
             )
 
 

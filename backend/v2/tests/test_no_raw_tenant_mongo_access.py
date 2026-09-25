@@ -111,6 +111,12 @@ TENANT_OWNED_COLLECTIONS = {
     "invoice_contact_email_sends",
     # CSV family and student import batches (migration 0199, roadmap L8a)
     "import_batches",
+    # Stripe Connect account per academy (migration 0139). Owner lookups by
+    # stripe_account_id cross academies ONLY through the documented directory
+    # in APPROVED_CROSS_TENANT_EXCEPTIONS.
+    "academy_connected_accounts",
+    # Stripe disputes per academy (migration 0205, direct charges slice 6)
+    "payment_disputes",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
@@ -200,6 +206,16 @@ APPROVED_CROSS_TENANT_EXCEPTIONS = {
         "invoices, students, waiver_acceptances and email_suppressions across every "
         "academy, the same way its sibling ops_digest does. It runs only from the "
         "scheduler (no request path reaches it) and writes nothing at all."
+    ),
+    Path("contexts/billing/infrastructure/mongo_connected_account_directory.py"): (
+        "By design cross-tenant and read-only: Stripe delivers each direct-charge "
+        "academy's payment events as Connect events to the one boot-academy "
+        "webhook endpoint, so ingest must find which academy owns an event's "
+        "`account` before any tenant scope exists. It reads only the owner's "
+        "academy_id of the single academy_connected_accounts row matching the "
+        "exact stripe_account_id (unique index, migration 0139), returns nothing "
+        "else, and writes nothing. Not operator-facing, but no tenant request "
+        "path reaches it: only the signature-verified Stripe webhook does."
     ),
     Path("shared/observability/ops_digest.py"): (
         "By design cross-tenant and read-only: the daily owner ops digest counts "

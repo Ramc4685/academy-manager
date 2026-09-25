@@ -118,41 +118,56 @@ async def test_create_connected_account_uses_accounts_v2_payload_not_legacy_cont
 ) -> None:
     gw = _gateway()
 
-    account_id = await gw.create_connected_account(
+    created = await gw.create_connected_account(
         academy_id="acad-1",
         display_name="North Shore Badminton",
         contact_email="owner@example.com",
     )
 
-    assert account_id == "acct_v2_123"
+    assert created["id"] == "acct_v2_123"
     call = fake_stripe.calls["v2.core.accounts.create"]
     assert "type" not in call
     assert "controller" not in call
-    assert call["dashboard"] == "express"
+    # Direct charges: the academy gets the full Stripe Dashboard and Stripe
+    # (not the platform) collects processing fees and carries losses.
+    assert call["dashboard"] == "full"
     assert call["idempotency_key"] == "connect-account:acad-1"
     assert call["configuration"] == {
         "merchant": {
             "capabilities": {
                 "card_payments": {"requested": True},
-            }
-        },
-        # Destination charges require the recipient stripe_transfers capability.
-        "recipient": {
-            "capabilities": {
-                "stripe_balance": {
-                    "stripe_transfers": {"requested": True},
-                }
+                # Accounts v2 name of v1 ``us_bank_account_ach_payments``.
+                "ach_debit_payments": {"requested": True},
             }
         },
     }
+    # No recipient configuration: direct charges never transfer funds, so the
+    # stripe_transfers capability is not requested.
+    assert "recipient" not in call["configuration"]
     assert call["defaults"] == {
         "currency": "usd",
         "responsibilities": {
-            "fees_collector": "application",
-            "losses_collector": "application",
+            "fees_collector": "stripe",
+            "losses_collector": "stripe",
         },
     }
-    assert call["idempotency_key"] == "connect-account:acad-1"
+    assert call["identity"] == {"country": "us"}
+    assert call["metadata"] == {"academy_id": "acad-1"}
+    assert call["display_name"] == "North Shore Badminton"
+    assert call["contact_email"] == "owner@example.com"
+
+
+async def test_create_connected_account_honours_explicit_idempotency_key(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_connected_account(academy_id="acad-1", idempotency_key="connect-account:k2")
+
+    call = fake_stripe.calls["v2.core.accounts.create"]
+    assert call["idempotency_key"] == "connect-account:k2"
+    assert "display_name" not in call
+    assert "contact_email" not in call
 
 
 async def test_create_account_onboarding_link_uses_account_link(

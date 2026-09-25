@@ -229,6 +229,7 @@ class FakeStripeSucceeds:
         self.pi_id = pi_id
         self.lookup_calls: list[dict[str, str]] = []
         self.retrieve_payment_method_calls: list[str] = []
+        self.retrieve_payment_method_accounts: list[str | None] = []
         self.payment_method: dict = {"id": pm_id, "type": "card"}
         self.create_calls: list[dict] = []
 
@@ -238,8 +239,11 @@ class FakeStripeSucceeds:
         self.lookup_calls.append({"academy_id": academy_id, "parent_id": parent_id})
         return (self.customer_id, self.pm_id)
 
-    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+    async def retrieve_payment_method(
+        self, stripe_payment_method_id: str, *, stripe_account: str | None = None
+    ) -> dict:
         self.retrieve_payment_method_calls.append(stripe_payment_method_id)
+        self.retrieve_payment_method_accounts.append(stripe_account)
         return dict(self.payment_method)
 
     async def create_off_session_payment_intent(
@@ -251,7 +255,7 @@ class FakeStripeSucceeds:
         payment_method_id: str,
         idempotency_key: str,
         metadata: dict,
-        connected_account_id: str | None = None,
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         self.create_calls.append(
             {
@@ -261,10 +265,24 @@ class FakeStripeSucceeds:
                 "payment_method_id": payment_method_id,
                 "idempotency_key": idempotency_key,
                 "metadata": metadata,
-                "connected_account_id": connected_account_id,
+                "stripe_account": stripe_account,
             }
         )
         return (self.pi_id, "succeeded", None)
+
+
+class FakeSavedCards:
+    """The stored-card reader: one (customer, pm) per Stripe account."""
+
+    def __init__(self, cards: dict[str | None, tuple[str, str]] | None = None) -> None:
+        self._cards = cards or {}
+        self.calls: list[dict[str, str | None]] = []
+
+    async def get_saved_payment_method(
+        self, *, parent_id: str, stripe_account_id: str | None
+    ) -> tuple[str, str] | None:
+        self.calls.append({"parent_id": parent_id, "stripe_account_id": stripe_account_id})
+        return self._cards.get(stripe_account_id)
 
 
 class FakeStripeDeclines:
@@ -431,6 +449,7 @@ def _uc(
     enrollment_autopay: FakeEnrollmentAutopay | None = None,
     settings: FakeBillingSettingsRepo | None = None,
     connected_accounts: FakeConnectedAccounts | None = None,
+    parent_customers: FakeSavedCards | None = None,
 ) -> ChargeInvoiceViaAutopay:
     return ChargeInvoiceViaAutopay(
         ledger=repo,  # type: ignore[arg-type]
@@ -438,6 +457,7 @@ def _uc(
         enrollment_autopay=enrollment_autopay,  # type: ignore[arg-type]
         settings=settings,  # type: ignore[arg-type]
         connected_accounts=connected_accounts,  # type: ignore[arg-type]
+        parent_customers=parent_customers,
         clock=lambda: NOW,
     )
 
@@ -496,23 +516,41 @@ async def test_charge_routes_payment_intent_through_ready_connected_account() ->
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad-1",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)
     connected_accounts = FakeConnectedAccounts(connected_account)
+    saved = FakeSavedCards({"acct_ready": ("cus_on_acct", "pm_on_acct")})
 
-    result = await _uc(repo, stripe, connected_accounts=connected_accounts).execute("inv-1")
+    result = await _uc(
+        repo, stripe, connected_accounts=connected_accounts, parent_customers=saved
+    ).execute("inv-1")
 
     assert result.success is True
     assert connected_accounts.calls == 1
-    assert stripe.create_calls[0]["connected_account_id"] == "acct_ready"
+    call = stripe.create_calls[0]
+    # Direct charge: the STORED customer + card on the academy's account, the
+    # PaymentIntent created ON that account, the account in the key.
+    assert call["stripe_account"] == "acct_ready"
+    assert (call["customer_id"], call["payment_method_id"]) == ("cus_on_acct", "pm_on_acct")
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:acct:acct_ready"
+    assert saved.calls == [{"parent_id": "parent-1", "stripe_account_id": "acct_ready"}]
+    # Never the platform-wide Customer search on a direct route.
+    assert stripe.lookup_calls == []
 
 
 async def test_charge_fails_closed_without_ready_connected_account() -> None:
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
 
     result = await _uc(repo, stripe, connected_accounts=connected_accounts).execute("inv-1")
@@ -1307,7 +1345,12 @@ async def test_platform_fallback_enabled_charges_via_platform_when_account_not_r
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
     settings = FakeBillingSettingsRepo(
         BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=True)
@@ -1319,8 +1362,38 @@ async def test_platform_fallback_enabled_charges_via_platform_when_account_not_r
 
     assert result.success is True
     assert result.decline_code is None
-    assert stripe.create_calls[0]["connected_account_id"] is None
-    assert connected_accounts.calls == 1
+    assert stripe.create_calls[0]["stripe_account"] is None
+    # The house academy charges on the platform without consulting its
+    # connected account at all (billing/domain/charge_route.py).
+    assert connected_accounts.calls == 0
+
+
+async def test_house_academy_charges_on_platform_even_with_a_ready_connected_account() -> None:
+    """House academy is ALWAYS a platform charge — a ready account never re-routes it."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    ready = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id="acad-1",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
+    connected_accounts = FakeConnectedAccounts(ready)
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1", allow_platform_charge_fallback=True, application_fee_bps=250
+        )
+    )
+
+    result = await _uc(
+        repo, stripe, settings=settings, connected_accounts=connected_accounts
+    ).execute("inv-1")
+
+    assert result.success is True
+    assert stripe.create_calls[0]["stripe_account"] is None
+    # No platform fee on a platform charge, and the idempotency key is unscoped.
+    assert "application_fee_cents" not in stripe.create_calls[0]
+    assert ":fee" not in stripe.create_calls[0]["idempotency_key"]
 
 
 async def test_platform_fallback_disabled_still_declines_when_account_not_ready() -> None:
@@ -1328,7 +1401,12 @@ async def test_platform_fallback_disabled_still_declines_when_account_not_ready(
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
     settings = FakeBillingSettingsRepo(
         BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
@@ -1353,7 +1431,12 @@ async def test_platform_fallback_settings_lookup_failure_fails_closed_to_decline
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
 
     result = await _uc(
@@ -1382,11 +1465,18 @@ class _FakeStripeRecordsFee(FakeStripeSucceeds):
         return result
 
 
+def _stored_card_on_ready_account() -> FakeSavedCards:
+    return FakeSavedCards({"acct_ready": ("cus_on_acct", "pm_on_acct")})
+
+
 def _ready_accounts() -> FakeConnectedAccounts:
     return FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_ready").with_status(
-            status="active", charges_enabled=True
-        )
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_ready",
+        ).with_status(status="active", charges_enabled=True)
     )
 
 
@@ -1399,12 +1489,13 @@ async def test_autopay_default_fee_is_zero_and_request_is_unchanged() -> None:
         stripe,
         settings=FakeBillingSettingsRepo(BillingSettings(academy_id="acad-1")),
         connected_accounts=_ready_accounts(),
+        parent_customers=_stored_card_on_ready_account(),
     ).execute("inv-1")
 
     assert result.success is True
     call = stripe.create_calls[0]
     assert call["application_fee_cents"] == 0
-    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:acct:acct_ready"
 
 
 async def test_autopay_sends_the_academy_fee_and_scopes_the_idempotency_key() -> None:
@@ -1418,14 +1509,16 @@ async def test_autopay_sends_the_academy_fee_and_scopes_the_idempotency_key() ->
             BillingSettings(academy_id="acad-1", application_fee_bps=250)
         ),
         connected_accounts=_ready_accounts(),
+        parent_customers=_stored_card_on_ready_account(),
     ).execute("inv-1")
 
     assert result.success is True
     call = stripe.create_calls[0]
-    assert call["connected_account_id"] == "acct_ready"
+    assert call["stripe_account"] == "acct_ready"
     assert call["application_fee_cents"] == 250  # 2.5% of $100.00
-    # A fee change inside Stripe's idempotency window must not replay the old key.
-    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:fee250"
+    # A fee change inside Stripe's idempotency window must not replay the old
+    # key, and a direct charge's key names the account.
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:fee250:acct:acct_ready"
 
 
 async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
@@ -1447,7 +1540,7 @@ async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
 
     assert result.success is True
     call = stripe.create_calls[0]
-    assert call["connected_account_id"] is None
+    assert call["stripe_account"] is None
     assert call["application_fee_cents"] == 0
     assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"
 

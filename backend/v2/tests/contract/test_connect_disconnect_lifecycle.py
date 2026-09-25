@@ -29,6 +29,9 @@ from backend.v2.contexts.billing.domain.connected_account import ConnectedAccoun
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_directory import (
+    MongoConnectedAccountDirectory,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
@@ -55,7 +58,9 @@ def _webhook_handler(repo: MongoConnectedAccountRepository, academy_id: str) -> 
         subscriptions=object(),  # type: ignore[arg-type]
         outbox=object(),  # type: ignore[arg-type]
         academy_id=academy_id,
-        connected_accounts=_ConnectAccountResolver(repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            repo, academy_id, directory=MongoConnectedAccountDirectory(repo._db)
+        ),
     )
 
 
@@ -279,9 +284,163 @@ async def test_reconnect_with_failed_resync_resets_to_pending(db, acad) -> None:
 async def test_refreshing_link_on_live_account_does_not_resync(db, acad) -> None:
     repo = MongoConnectedAccountRepository(db)
     await _seed_active(repo, acad)
+    # A direct-charge account: its liability model is already known.
+    await repo.collection.update_one(
+        {"stripe_account_id": _ACCT},
+        {"$set": {"fees_collector": "stripe", "losses_collector": "stripe"}},
+    )
     stripe = FakeStripeGateway()
 
     result = await _start(_onboarding(stripe, repo, acad), acad)
 
     assert result["status"] == "active"
     assert stripe.retrieved_connected_accounts == []
+
+
+# --- liability model: direct charges only on Stripe-liable accounts ----------
+
+_V1_EXPRESS_CONTROLLER = {
+    "fees": {"payer": "application_express"},
+    "losses": {"payments": "application"},
+    "stripe_dashboard": {"type": "express"},
+}
+_V1_DIRECT_CONTROLLER = {
+    "fees": {"payer": "account"},
+    "losses": {"payments": "stripe"},
+    "stripe_dashboard": {"type": "full"},
+}
+
+
+async def test_new_account_persists_the_liability_stripe_reported(db, acad) -> None:
+    repo = MongoConnectedAccountRepository(db)
+    stripe = FakeStripeGateway()
+
+    result = await _start(_onboarding(stripe, repo, acad), acad)
+
+    account = await repo.get_for_academy()
+    assert account is not None
+    assert account.stripe_account_id == result["stripe_account_id"]
+    assert (account.fees_collector, account.losses_collector, account.dashboard) == (
+        "stripe",
+        "stripe",
+        "full",
+    )
+    assert account.supports_direct_charges()
+
+
+async def test_legacy_row_round_trips_with_unknown_liability(db, acad) -> None:
+    repo = MongoConnectedAccountRepository(db)
+    await _seed_active(repo, acad)
+    await repo.collection.update_one(
+        {"stripe_account_id": _ACCT},
+        {"$unset": {"fees_collector": "", "losses_collector": "", "dashboard": ""}},
+    )
+
+    account = await repo.get_for_academy()
+    assert account is not None
+    assert account.fees_collector is None and account.losses_collector is None
+    assert not account.supports_direct_charges()
+
+
+async def test_account_updated_refreshes_the_liability_model(db, acad) -> None:
+    repo = MongoConnectedAccountRepository(db)
+    await _seed_active(repo, acad)
+    event = _account_updated(charges_enabled=True)
+    event["data"]["object"]["controller"] = _V1_EXPRESS_CONTROLLER
+
+    await _webhook_handler(repo, acad)._dispatch("account.updated", event)
+
+    account = await repo.get_for_academy()
+    assert account is not None
+    assert account.fees_collector == "application_express"
+    assert account.losses_collector == "application"
+    assert account.dashboard == "express"
+    assert not account.supports_direct_charges()
+
+    # An event without a controller (capability.*) leaves it as it is.
+    await _webhook_handler(repo, acad)._dispatch("capability.updated", _capability_updated())
+    account = await repo.get_for_academy()
+    assert account is not None and account.losses_collector == "application"
+
+
+async def test_onboarding_replaces_a_platform_liable_account_with_a_direct_one(db, acad) -> None:
+    """``reconnect Stripe`` is the fix the refusal names: starting onboarding
+    on an account Stripe reports as platform-liable creates a fresh
+    direct-charge account instead of reusing the express one (its
+    responsibilities cannot be changed)."""
+    repo = MongoConnectedAccountRepository(db)
+    await _seed_active(repo, acad)
+    stripe = FakeStripeGateway()
+    stripe.account_snapshots[_ACCT] = {
+        "id": _ACCT,
+        "object": "account",
+        "charges_enabled": True,
+        "payouts_enabled": True,
+        "controller": _V1_EXPRESS_CONTROLLER,
+    }
+
+    result = await _start(_onboarding(stripe, repo, acad), acad)
+
+    assert result["stripe_account_id"] != _ACCT
+    assert len(stripe.connected_accounts) == 1
+    assert stripe.connected_accounts[0]["idempotency_key"] == (
+        f"connect-account:{acad}:direct:{_ACCT}"
+    )
+    account = await repo.get_for_academy()
+    assert account is not None
+    assert account.stripe_account_id == result["stripe_account_id"]
+    assert account.status == "pending"
+    assert account.supports_direct_charges()
+
+
+async def test_onboarding_resync_confirms_a_direct_account_without_replacing(db, acad) -> None:
+    repo = MongoConnectedAccountRepository(db)
+    await _seed_active(repo, acad)
+    stripe = FakeStripeGateway()
+    stripe.account_snapshots[_ACCT] = {
+        "id": _ACCT,
+        "object": "account",
+        "charges_enabled": True,
+        "payouts_enabled": True,
+        "controller": _V1_DIRECT_CONTROLLER,
+    }
+
+    result = await _start(_onboarding(stripe, repo, acad), acad)
+
+    assert result["stripe_account_id"] == _ACCT
+    assert stripe.connected_accounts == []
+    account = await repo.get_for_academy()
+    assert account is not None
+    assert account.supports_direct_charges()
+    assert account.is_ready_for_charges()
+
+
+async def test_onboarding_keeps_an_account_whose_liability_stripe_did_not_report(db, acad) -> None:
+    repo = MongoConnectedAccountRepository(db)
+    await _seed_active(repo, acad)
+    stripe = FakeStripeGateway()  # default snapshot carries no controller
+
+    result = await _start(_onboarding(stripe, repo, acad), acad)
+
+    assert result["stripe_account_id"] == _ACCT
+    assert stripe.connected_accounts == []
+    account = await repo.get_for_academy()
+    assert account is not None
+    assert not account.supports_direct_charges()  # still fails closed
+
+
+async def test_billing_health_names_the_platform_liable_refusal(db, acad) -> None:
+    from backend.v2.composition.billing_health import compose_admin_billing_health
+
+    repo = MongoConnectedAccountRepository(db)
+    await _seed_active(repo, acad)  # ready, but a legacy row: liability unknown
+
+    readiness = await compose_admin_billing_health(db, FakeStripeGateway()).get_connect_readiness()
+
+    assert readiness["payments_possible"] is False
+    assert readiness["connected_account"]["ready_for_charges"] is True
+    assert readiness["connected_account"]["direct_charges_supported"] is False
+    assert "reconnect Stripe" in readiness["payments_blocked_reason"]
+    assert readiness["health"]["state"] == "blocked"
+    details = [r["detail"] for r in readiness["health"]["reasons"]]
+    assert any("reconnect Stripe" in d for d in details)

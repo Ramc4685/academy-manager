@@ -152,6 +152,8 @@ async def _seed_connect_ready(db, *, academy_id: str) -> None:
             "stripe_account_id": f"acct_{academy_id}",
             "status": "active",
             "charges_enabled": True,
+            "fees_collector": "stripe",
+            "losses_collector": "stripe",
             "payouts_enabled": True,
             "details_submitted": True,
             "capabilities": {},
