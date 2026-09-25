@@ -4,7 +4,9 @@ import { offerExpiryLabel } from "./waitlist-offer";
 
 describe("offerExpiryLabel", () => {
   it("names when the held seat moves on", () => {
-    expect(offerExpiryLabel("2026-09-28T17:00:00Z")).toMatch(/^Held until /);
+    expect(offerExpiryLabel("2026-09-28T17:00:00Z", "America/Chicago")).toMatch(
+      /^Held until .*12:00 PM CDT$/,
+    );
   });
 
   it("returns null when there is no usable deadline", () => {

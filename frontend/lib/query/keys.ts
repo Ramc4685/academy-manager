@@ -198,6 +198,9 @@ export const queryKeys = {
       ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
     trials: () => ["parent", "trials"] as const,
     waitlist: () => ["parent", "waitlist"] as const,
+    // Same arrays the Requests page and shell already use inline.
+    academy: () => ["parent", "academy"] as const,
+    children: () => ["parent", "children"] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
     messages: () => ["parent", "messages"] as const,

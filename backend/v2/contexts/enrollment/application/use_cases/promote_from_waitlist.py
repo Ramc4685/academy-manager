@@ -230,6 +230,15 @@ class PromoteFromWaitlist:
                 extra={"session_id": session_id},
             )
             return None
+        # X2: an open seatless offer is first in line for a seat that frees
+        # up. Otherwise the free seat would go to the next family while that
+        # offer's confirm still reclaims a held family's seat.
+        if await self._waitlist.count_seatless_offers(session_id):
+            if await self._sessions.try_reserve_seat(session_id):
+                upgraded = await self._waitlist.give_seat_to_seatless_offer(session_id)
+                if upgraded is not None:
+                    return upgraded.waitlist_id
+                await self._release_quietly(session_id, None)
         entry = await self._waitlist.next_waiting(session_id)
         if entry is None:
             return None

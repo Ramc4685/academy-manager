@@ -187,6 +187,13 @@ class FakeWaitlist:
             None,
         )
 
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        current = next((e for e in self.entries if e.waitlist_id == waitlist_id), None)
+        if current is None or current.status != expected:
+            return False
+        await self.update_status(waitlist_id, to)
+        return True
+
     async def update_status(self, waitlist_id: str, status: str) -> None:
         self.statuses[waitlist_id] = status
         self.entries = [

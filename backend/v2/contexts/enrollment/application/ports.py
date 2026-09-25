@@ -304,6 +304,11 @@ class WaitlistRepository(Protocol):
     async def count_seatless_offers(self, session_id: str) -> int:
         """Open ``offered`` rows on the session that hold no seat yet (X2)."""
 
+    async def give_seat_to_seatless_offer(self, session_id: str) -> WaitlistEntry | None:
+        """Atomically flip the oldest open seatless offer to seat-holding and
+        return it; ``None`` when there is none (X2). The caller has already
+        reserved the seat."""
+
     async def find_expired_offers(self, *, before: datetime) -> list[WaitlistEntry]:
         """Every ``offered`` entry whose ``offer_expires_at`` is at or before
         ``before`` — the sweep's work list."""

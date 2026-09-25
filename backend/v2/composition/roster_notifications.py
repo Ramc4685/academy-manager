@@ -432,7 +432,7 @@ def render_waitlist_offer_email(
         f"A seat opened in {safe_session} for {safe_student}</h2>",
         _para(
             f"{safe_student} is next on the waitlist. We are holding the seat until "
-            f"<strong>{html.escape(deadline)}</strong> — confirm by then and it is yours."
+            f"<strong>{html.escape(deadline)}</strong> — confirm by then to claim it."
         ),
         _para(
             f"<strong>When:</strong> "
@@ -442,7 +442,11 @@ def render_waitlist_offer_email(
     if session.location:
         parts.append(_para(f"<strong>Where:</strong> {html.escape(session.location)}"))
     parts.append(
-        _para("If we do not hear from you by then, the seat goes to the next family on the list.")
+        _para(
+            "If we do not hear from you by then, the seat goes to the next family on the list. "
+            "In the rare case the class fills up again before you confirm, you stay first on "
+            "the waitlist."
+        )
     )
     if portal_url:
         parts.append(_branded_button(label="Confirm the seat", url=portal_url))

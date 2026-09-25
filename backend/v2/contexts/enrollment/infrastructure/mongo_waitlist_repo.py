@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import cast
 
+from pymongo import ReturnDocument
+
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.tenancy import TenantScopedRepository
 from backend.v2.shared.time.mongo import ensure_utc
@@ -83,6 +85,17 @@ class MongoWaitlistRepository(TenantScopedRepository):
                 }
             },
         )
+
+    async def give_seat_to_seatless_offer(self, session_id: str) -> WaitlistEntry | None:
+        doc = await self.collection.find_one_and_update(
+            self._scoped(
+                {"session_id": session_id, "status": "offered", "offer_holds_seat": False}
+            ),
+            {"$set": {"offer_holds_seat": True}},
+            sort=[("joined_at", 1)],
+            return_document=ReturnDocument.AFTER,
+        )
+        return self._to_domain(doc) if doc else None
 
     async def count_seatless_offers(self, session_id: str) -> int:
         return int(

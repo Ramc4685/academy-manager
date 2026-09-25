@@ -39,12 +39,20 @@ export function WaitlistOffers({ highlightId }: { highlightId: string | null }) 
     queryFn: listParentWaitlist,
   });
   const academyQuery = useQuery({
-    queryKey: ["parent", "academy"],
+    queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
   });
   const now = useNow(30_000);
+  // A confirmed or declined offer drops out of the refetched list (the
+  // backend lists only open rows). Keep the answer on screen for this visit,
+  // or the family would see "no longer open" right after a successful click.
+  const [settled, setSettled] = useState<Record<string, Settled>>({});
 
-  const entries = sortWaitlistEntries(waitlistQuery.data?.entries ?? []);
+  const live = waitlistQuery.data?.entries ?? [];
+  const remembered = Object.values(settled)
+    .filter((s) => !live.some((e) => e.waitlist_id === s.entry.waitlist_id))
+    .map((s) => s.entry);
+  const entries = sortWaitlistEntries([...live, ...remembered]);
   const timezone = academyQuery.data?.timezone ?? null;
   const highlightMissing =
     Boolean(highlightId) &&
@@ -82,27 +90,38 @@ export function WaitlistOffers({ highlightId }: { highlightId: string | null }) 
           now={now}
           timezone={timezone}
           highlighted={entry.waitlist_id === highlightId}
+          outcome={settled[entry.waitlist_id]?.outcome ?? null}
+          onSettled={(outcome) =>
+            setSettled((prev) => ({ ...prev, [entry.waitlist_id]: { entry, outcome } }))
+          }
         />
       ))}
     </section>
   );
 }
 
+type Outcome = "confirmed" | "declined";
+type Settled = { entry: ParentWaitlistEntry; outcome: Outcome };
+
 function WaitlistEntryCard({
   entry,
   now,
   timezone,
   highlighted,
+  outcome,
+  onSettled,
 }: {
   entry: ParentWaitlistEntry;
   now: number;
   timezone: string | null;
   highlighted: boolean;
+  outcome: Outcome | null;
+  onSettled: (outcome: Outcome) => void;
 }) {
   const queryClient = useQueryClient();
   const cardRef = useRef<HTMLDivElement>(null);
   const [declineOpen, setDeclineOpen] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+  const confirmed = outcome === "confirmed";
 
   useEffect(() => {
     if (highlighted) cardRef.current?.scrollIntoView({ block: "center" });
@@ -112,12 +131,12 @@ function WaitlistEntryCard({
     void queryClient.invalidateQueries({ queryKey: queryKeys.parent.waitlist() });
     // A confirmed seat is a new enrollment: the children and schedule reads
     // must pick it up without a reload.
-    void queryClient.invalidateQueries({ queryKey: ["parent", "children"] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.parent.children() });
   };
   const confirmMutation = useMutation({
     mutationFn: () => confirmWaitlistOffer(entry.waitlist_id),
     onSuccess: () => {
-      setConfirmed(true);
+      onSettled("confirmed");
       refresh();
     },
     // Expired or already-closed: the row's real state has moved on.
@@ -127,6 +146,7 @@ function WaitlistEntryCard({
     mutationFn: () => declineWaitlistOffer(entry.waitlist_id),
     onSuccess: () => {
       setDeclineOpen(false);
+      onSettled("declined");
       refresh();
     },
     onError: refresh,
@@ -153,14 +173,18 @@ function WaitlistEntryCard({
             </p>
             {entry.location && <p className="text-xs text-rally-muted">{entry.location}</p>}
           </div>
-          <StatusChip entry={entry} open={open} confirmed={confirmed} />
+          <StatusChip entry={entry} open={open && !outcome} outcome={outcome} />
         </div>
 
         {confirmed ? (
           <p role="status" data-testid="waitlist-offer-confirmed" className="mt-3 rounded-md bg-status-green-50 p-3 text-sm text-status-green-800">
             The seat is yours. {entry.student_name} is now enrolled in {entry.session_title}.
           </p>
-        ) : open ? (
+        ) : outcome === "declined" ? (
+          <p role="status" data-testid="waitlist-offer-declined" className="mt-3 text-sm text-rally-muted">
+            You declined this seat. It has been released to the next family on the waitlist.
+          </p>
+        ) : open && !outcome ? (
           <div className="mt-3 space-y-3">
             <p className="text-sm text-rally-ink">
               A seat opened for {entry.student_name}. We are holding it until{" "}
@@ -257,13 +281,14 @@ function WaitlistEntryCard({
 function StatusChip({
   entry,
   open,
-  confirmed,
+  outcome,
 }: {
   entry: ParentWaitlistEntry;
   open: boolean;
-  confirmed: boolean;
+  outcome: Outcome | null;
 }) {
-  if (confirmed) return <Chip variant="enrolled" label="ENROLLED" />;
+  if (outcome === "confirmed") return <Chip variant="enrolled" label="ENROLLED" />;
+  if (outcome === "declined") return <Chip variant="expired" label="DECLINED" />;
   if (open) return <Chip variant="offered" label="SEAT OFFERED" />;
   if (entry.status === "waiting") return <Chip variant="waitlist" label="WAITING" />;
   return <Chip variant="expired" label="EXPIRED" />;

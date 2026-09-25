@@ -256,3 +256,26 @@ async def test_declining_a_seatless_offer_releases_nothing() -> None:
     assert world.sessions.reserved_seats["sess-1"] == 1
     assert world.enrollments.rows["held-1"].status == "held"
     assert world.waitlist.entries["wl-2"].status == "offered"
+
+
+@pytest.mark.asyncio
+async def test_a_freed_seat_goes_to_the_seatless_offer_not_the_next_family() -> None:
+    """Review finding: without this, a cancellation's free seat went to
+    family 2 while family 1's confirm still reclaimed a hold."""
+    world = _World()
+    world.sessions.sessions["sess-1"] = make_session("sess-1", capacity=2)
+    world.sessions.reserved_seats["sess-1"] = 2  # hold + one active
+    await world.promote().execute("sess-1")
+    assert world.waitlist.entries["wl-1"].offer_holds_seat is False
+
+    # The active student cancels: one seat frees and promotion runs.
+    world.sessions.reserved_seats["sess-1"] = 1
+    assert await world.promote().execute("sess-1") == "wl-1"
+
+    assert world.waitlist.entries["wl-1"].offer_holds_seat is True
+    assert world.waitlist.entries["wl-2"].status == "waiting"
+    assert world.sessions.reserved_seats["sess-1"] == 2
+
+    await world.confirm().execute("wl-1", parent_id="p-1")
+    assert world.enrollments.rows["held-1"].status == "held"  # nobody dropped
+    assert world.notifier.reclaimed_calls == []

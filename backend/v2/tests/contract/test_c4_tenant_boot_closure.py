@@ -346,10 +346,23 @@ class FakeWaitlist:
     async def update_status(self, waitlist_id: str, status: str) -> None:
         self.entry = self.entry.model_copy(update={"status": status})
 
-    async def mark_offered(self, waitlist_id: str, *, offer_expires_at) -> None:
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at, holds_seat=True) -> None:
         self.entry = self.entry.model_copy(
-            update={"status": "offered", "offer_expires_at": offer_expires_at}
+            update={
+                "status": "offered",
+                "offer_expires_at": offer_expires_at,
+                "offer_holds_seat": holds_seat,
+            }
         )
+
+    async def count_seatless_offers(self, session_id: str) -> int:
+        return int(self.entry.status == "offered" and not self.entry.offer_holds_seat)
+
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        if self.entry.status != expected:
+            return False
+        self.entry = self.entry.model_copy(update={"status": to})
+        return True
 
 
 @pytest.mark.asyncio

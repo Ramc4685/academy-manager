@@ -301,6 +301,8 @@ export default function AdminSessionDetailPage() {
     mutationFn: (entryId: string) => deleteWaitlistEntry(entryId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
+      // X2: withdrawing an offer releases (and re-offers) a held seat.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
     },
   });
 
@@ -759,6 +761,7 @@ export default function AdminSessionDetailPage() {
           ) : (
             <WaitlistTable
               entries={waitlist}
+              academyTimezone={session?.timezone ?? null}
               onSkip={(id) => skipWaitlistMutation.mutate(id)}
               onRemove={(id) =>
                 setWaitlistRemoveTarget(waitlist.find((w) => w.waitlist_id === id) ?? null)

@@ -98,6 +98,21 @@ class FakeWaitlistRepository:
             }
         )
 
+    async def give_seat_to_seatless_offer(self, session_id):
+        open_ = sorted(
+            (
+                e
+                for e in self.entries.values()
+                if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+            ),
+            key=lambda e: e.joined_at,
+        )
+        if not open_:
+            return None
+        upgraded = open_[0].model_copy(update={"offer_holds_seat": True})
+        self.entries[upgraded.waitlist_id] = upgraded
+        return upgraded
+
     async def count_seatless_offers(self, session_id):
         return sum(
             1

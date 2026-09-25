@@ -60,10 +60,13 @@ async function stubParent(page: Page, entries: unknown[]) {
   await page.route("**/api/v2/parent/children", (route) => json(route, { children: [] }));
   await page.route("**/api/v2/parent/absences", (route) => json(route, { notices: [] }));
   let current = entries;
-  await page.route("**/api/v2/parent/waitlist", (route) =>
-    route.request().method() === "GET" ? json(route, { entries: current }) : route.fallback(),
-  );
-  return { setEntries: (next: unknown[]) => (current = next) };
+  let reads = 0;
+  await page.route("**/api/v2/parent/waitlist", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    reads += 1;
+    return json(route, { entries: current });
+  });
+  return { setEntries: (next: unknown[]) => (current = next), reads: () => reads };
 }
 
 test.describe("parent — waitlist seat offer", () => {
@@ -89,6 +92,10 @@ test.describe("parent — waitlist seat offer", () => {
 
     await expect(page.getByTestId("waitlist-offer-confirmed")).toContainText("The seat is yours");
     expect(confirmCalls).toEqual(["POST"]);
+    // Survives the refetch that no longer lists the promoted row.
+    await expect.poll(() => list.reads()).toBeGreaterThanOrEqual(2);
+    await expect(page.getByTestId("waitlist-offer-confirmed")).toBeVisible();
+    await expect(page.getByTestId("waitlist-offer-missing")).toHaveCount(0);
   });
 
   test("Decline asks first, then gives the seat back", async ({ page }) => {
@@ -108,7 +115,10 @@ test.describe("parent — waitlist seat offer", () => {
     expect(declineCalls).toEqual([]);
     await page.getByTestId("waitlist-offer-decline-confirm").click();
 
-    await expect(page.getByTestId(`waitlist-entry-${OFFER_ID}`)).toHaveCount(0);
+    // The refetched list no longer has the row; the card keeps the answer.
+    await expect(page.getByTestId("waitlist-offer-declined")).toBeVisible();
+    await expect(page.getByTestId("waitlist-offer-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("waitlist-offer-missing")).toHaveCount(0);
     expect(declineCalls).toEqual(["POST"]);
   });
 

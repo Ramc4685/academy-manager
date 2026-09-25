@@ -20,10 +20,12 @@ const WAITLIST_CHIP: Record<WaitlistStatus, { variant: ChipVariant; label: strin
 
 export function WaitlistTable({
   entries,
+  academyTimezone,
   onSkip,
   onRemove,
 }: {
   entries: AdminWaitlistEntry[];
+  academyTimezone?: string | null;
   onSkip: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
@@ -53,12 +55,12 @@ export function WaitlistTable({
                 <td className="px-4 py-3 font-display font-semibold text-rally-ink">{w.full_name}</td>
                 <td className="px-4 py-3">
                   <Chip variant={chip.variant} label={chip.label} />
-                  {w.status === "offered" && offerExpiryLabel(w.offer_expires_at) && (
+                  {w.status === "offered" && offerExpiryLabel(w.offer_expires_at, academyTimezone) && (
                     <div
                       className="mt-1 text-[12px] text-rally-muted"
                       data-testid={`waitlist-offer-expiry-${w.waitlist_id}`}
                     >
-                      {offerExpiryLabel(w.offer_expires_at)}
+                      {offerExpiryLabel(w.offer_expires_at, academyTimezone)}
                     </div>
                   )}
                   {w.status === "offered" && w.offer_holds_seat === false && (

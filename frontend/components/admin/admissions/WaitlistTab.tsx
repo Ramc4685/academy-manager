@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  getAdminAcademy,
   listGlobalWaitlist,
   type AdminGlobalWaitlistSession,
   type AdminWaitlistEntry,
@@ -40,6 +41,9 @@ export function WaitlistTab() {
     queryKey: queryKeys.admin.globalWaitlist(),
     queryFn: listGlobalWaitlist,
   });
+  // X2: offer deadlines on the academy's clock, as the family's email has them.
+  const academyQuery = useQuery({ queryKey: queryKeys.admin.academy(), queryFn: getAdminAcademy });
+  const timezone = academyQuery.data?.timezone ?? null;
   const sessions = query.data?.sessions ?? [];
   const total = query.data?.total_waitlisted ?? 0;
   const offered = query.data?.total_offered ?? 0;
@@ -70,7 +74,7 @@ export function WaitlistTab() {
       ) : (
         <div className="space-y-4">
           {sessions.map((session) => (
-            <SessionWaitlist key={session.session_id} session={session} />
+            <SessionWaitlist key={session.session_id} session={session} timezone={timezone} />
           ))}
         </div>
       )}
@@ -89,7 +93,13 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
+function SessionWaitlist({
+  session,
+  timezone,
+}: {
+  session: AdminGlobalWaitlistSession;
+  timezone: string | null;
+}) {
   return (
     <Card p={0}>
       <div className="flex flex-col gap-4 border-b border-rally-line p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -113,7 +123,7 @@ function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
           Manage session
         </a>
       </div>
-      <WaitlistEntries entries={session.entries} />
+      <WaitlistEntries entries={session.entries} timezone={timezone} />
     </Card>
   );
 }
@@ -124,7 +134,13 @@ function SessionWaitlist({ session }: { session: AdminGlobalWaitlistSession }) {
  * full-width blocks per waiting student, so one screen held two people. The
  * shared phone row says the same thing in two lines.
  */
-function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
+function WaitlistEntries({
+  entries,
+  timezone,
+}: {
+  entries: AdminWaitlistEntry[];
+  timezone: string | null;
+}) {
   const isPhone = useIsPhone();
   if (isPhone) {
     return (
@@ -147,7 +163,7 @@ function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
                 <>
                   {offer ? (
                     <div>
-                      {offerExpiryLabel(entry.offer_expires_at)}
+                      {offerExpiryLabel(entry.offer_expires_at, timezone)}
                       {entry.offer_holds_seat === false && <div>{SEATLESS_OFFER_NOTE}</div>}
                     </div>
                   ) : (
@@ -169,6 +185,7 @@ function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
           key={entry.waitlist_id}
           entry={entry}
           position={entry.position || index + 1}
+          timezone={timezone}
         />
       ))}
     </div>
@@ -178,9 +195,11 @@ function WaitlistEntries({ entries }: { entries: AdminWaitlistEntry[] }) {
 function WaitlistRow({
   entry,
   position,
+  timezone,
 }: {
   entry: AdminWaitlistEntry;
   position: number;
+  timezone: string | null;
 }) {
   return (
     <div
@@ -203,7 +222,7 @@ function WaitlistRow({
         <div data-testid={`admin-waitlist-offer-expiry-${entry.waitlist_id}`}>
           <Overline>Offer</Overline>
           <div className="mt-1 text-[12px] font-semibold text-rally-ink">
-            {offerExpiryLabel(entry.offer_expires_at) ?? "Held"}
+            {offerExpiryLabel(entry.offer_expires_at, timezone) ?? "Held"}
           </div>
           {entry.offer_holds_seat === false && (
             <div className="mt-1 text-[12px] text-status-amber-800">{SEATLESS_OFFER_NOTE}</div>

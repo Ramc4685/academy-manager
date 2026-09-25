@@ -160,6 +160,24 @@ class ConfirmWaitlistOffer:
             raise WaitlistOfferExpired(f"The offer on {waitlist_id} has expired")
 
         academy_id = self._academy_id()
+        # Claim the row first (compare-and-set). A decline, a staff withdraw or
+        # the sweep closes an offer the same way and then releases its seat;
+        # whoever loses must not go on to use that seat, or two families end
+        # up on one place.
+        if not await self._waitlist.transition_status(
+            waitlist_id, expected="offered", to="promoted"
+        ):
+            current = await self._waitlist.get(waitlist_id)
+            if current is not None and current.status == "promoted":
+                again = await self._enrollments.find_for_session_student(
+                    entry.session_id, entry.student_id
+                )
+                if again is not None:
+                    return again.enrollment_id
+            if current is not None and current.status == "expired":
+                raise WaitlistOfferExpired(f"The offer on {waitlist_id} has expired")
+            raise WaitlistOfferNotOpen(f"Waitlist entry {waitlist_id} is not an open offer")
+
         took_seat = False
         acquisition: SeatAcquisition | None = None
         if not entry.offer_holds_seat and not (
@@ -171,7 +189,7 @@ class ConfirmWaitlistOffer:
                 # policy changed). Their place in the queue is kept: back to
                 # waiting, still first by joined_at.
                 await self._waitlist.transition_status(
-                    waitlist_id, expected="offered", to="waiting"
+                    waitlist_id, expected="promoted", to="waiting"
                 )
                 raise WaitlistOfferSeatUnavailable(
                     f"No seat is free for waitlist entry {waitlist_id} any more"
@@ -196,6 +214,9 @@ class ConfirmWaitlistOffer:
         except BaseException:
             if took_seat:
                 await self._give_seat_back(entry, acquisition)
+            # Reopen the offer: the family can try again before the deadline,
+            # and the sweep still owns it after.
+            await self._waitlist.transition_status(waitlist_id, expected="promoted", to="offered")
             raise
 
         await record_promotion(
@@ -349,7 +370,17 @@ class DeclineWaitlistOffer:
             raise WaitlistOfferNotOpen(f"Waitlist entry {waitlist_id} is not an open offer")
 
         if entry.offer_holds_seat:
-            await self._sessions.release_seat(entry.session_id)
+            try:
+                await self._sessions.release_seat(entry.session_id)
+            except Exception:
+                # The decline has landed (the row is closed); a 500 now would
+                # only make the family retry into a 409. The reserved-seat
+                # reconciler recovers the counter.
+                log.exception(
+                    "enrollment.waitlist_decline_seat_release_failed",
+                    extra={"session_id": entry.session_id, "waitlist_id": waitlist_id},
+                )
+                return True
         # Hand the seat to the next family. Best-effort: the decline itself
         # has landed, and a failed re-offer leaves a free seat the next
         # cancellation or the admin "Promote" button will fill.

@@ -106,6 +106,13 @@ class FakeWaitlist:
         ]
         return sorted(waiting, key=lambda entry: entry.joined_at)[0] if waiting else None
 
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        entry = self.entries.get(waitlist_id)
+        if entry is None or entry.status != expected:
+            return False
+        self.entries[waitlist_id] = entry.model_copy(update={"status": to})
+        return True
+
     async def update_status(self, waitlist_id: str, status: str) -> None:
         self.entries[waitlist_id] = self.entries[waitlist_id].model_copy(update={"status": status})
 

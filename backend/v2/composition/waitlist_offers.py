@@ -8,6 +8,7 @@ offer notifier, so one helper serves every caller.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -138,9 +139,17 @@ def compose_list_parent_waitlist(
         }
         academy = await academies.find_by_id(current_academy_id()) or {}
         timezone = str(academy.get("timezone") or "") or None
+        session_ids = sorted({e.session_id for e in entries})
+        by_session = dict(
+            zip(
+                session_ids,
+                await asyncio.gather(*(sessions.get(sid) for sid in session_ids)),
+                strict=True,
+            )
+        )
         rows: list[dict[str, Any]] = []
         for entry in entries:
-            session = await sessions.get(entry.session_id)
+            session = by_session[entry.session_id]
             rows.append(
                 {
                     "waitlist_id": entry.waitlist_id,

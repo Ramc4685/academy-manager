@@ -60,6 +60,21 @@ class FakeWaitlist:
             }
         )
 
+    async def give_seat_to_seatless_offer(self, session_id):
+        open_ = sorted(
+            (
+                e
+                for e in self.entries.values()
+                if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+            ),
+            key=lambda e: e.joined_at,
+        )
+        if not open_:
+            return None
+        upgraded = open_[0].model_copy(update={"offer_holds_seat": True})
+        self.entries[upgraded.waitlist_id] = upgraded
+        return upgraded
+
     async def count_seatless_offers(self, session_id):
         return sum(
             1
@@ -440,3 +455,31 @@ async def test_the_sweep_leaves_an_offer_that_was_confirmed_after_its_read() -> 
     assert racing.entries["wl-1"].status == "promoted"
     assert sessions.releases == []
     assert sessions.reserved == 1
+
+
+@pytest.mark.asyncio
+async def test_a_confirm_that_loses_to_a_decline_does_not_enroll_on_a_released_seat() -> None:
+    """Review finding: confirm used to read `offered` and write `promoted`
+    blindly, so a decline/withdraw (or the sweep) in between released the seat
+    and confirm still enrolled the child — two families on one seat."""
+    waitlist, sessions, enrollments, notifier = await _offered_pair()
+    confirm = _confirm(waitlist, enrollments, FakeOutbox())
+
+    class _DeclineWins(FakeWaitlist):
+        async def transition_status(self, waitlist_id, *, expected, to):
+            # The staff withdraw lands first.
+            await DeclineWaitlistOffer(
+                waitlist=waitlist,
+                sessions=sessions,
+                promote=_promote(waitlist, sessions, enrollments, FakeOutbox(), notifier),
+                clock=lambda: NOW,
+            ).execute(waitlist_id, outcome="removed")
+            return await waitlist.transition_status(waitlist_id, expected=expected, to=to)
+
+    racing = _DeclineWins(entries=waitlist.entries)
+    confirm._waitlist = racing  # the confirm reads through the racing store
+
+    with pytest.raises(WaitlistOfferNotOpen):
+        await confirm.execute("wl-1", parent_id="par-1")
+    assert [e for e in enrollments.rows.values() if e.student_id == "stu-1"] == []
+    assert sessions.reserved == 1  # wl-2 now holds the one seat
