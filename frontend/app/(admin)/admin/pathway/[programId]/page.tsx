@@ -6,16 +6,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   addExternalRef,
+  buildCreateSkillBody,
   createLevel,
   createSkill,
   getFullPathway,
   listLessonCards,
   seedLessonCards,
+  SKILL_SCORING_TYPES,
   type ExternalLessonReference,
   type ExternalSource,
   type PathwayLevel,
   type SeedLessonCardsResult,
   type Skill,
+  type SkillScoringType,
 } from "@/lib/api/curriculum";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
@@ -219,16 +222,19 @@ function LevelAccordion({
   const [skillName, setSkillName] = useState("");
   const [skillDescription, setSkillDescription] = useState("");
   const [skillRequired, setSkillRequired] = useState(true);
-  const [skillScoringType, setSkillScoringType] = useState("binary");
+  const [skillScoringType, setSkillScoringType] = useState<SkillScoringType>("ATTEMPT_BASED");
 
   const addSkillMutation = useMutation({
     mutationFn: () =>
-      createSkill(pathwayLevel.level.level_id, {
-        name: skillName,
-        description: skillDescription,
-        is_required: skillRequired,
-        scoring_type: skillScoringType,
-      }),
+      createSkill(
+        pathwayLevel.level.level_id,
+        buildCreateSkillBody(pathwayLevel.level, pathwayLevel.skills.map((s) => s.skill), {
+          name: skillName,
+          description: skillDescription,
+          is_required: skillRequired,
+          scoring_type: skillScoringType,
+        }),
+      ),
     onSuccess: () => {
       onSkillAdded();
       setShowAddSkill(false);
@@ -320,12 +326,14 @@ function LevelAccordion({
                   </label>
                   <select
                     value={skillScoringType}
-                    onChange={(e) => setSkillScoringType(e.target.value)}
+                    onChange={(e) => setSkillScoringType(e.target.value as SkillScoringType)}
                     className="rounded-md border border-neutral-300 px-2 py-1 text-sm focus:outline-none"
                   >
-                    <option value="binary">Binary (pass/fail)</option>
-                    <option value="percentage">Percentage</option>
-                    <option value="count">Count</option>
+                    {SKILL_SCORING_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 {addSkillMutation.isError && (

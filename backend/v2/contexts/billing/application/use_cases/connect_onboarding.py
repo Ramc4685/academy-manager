@@ -4,10 +4,16 @@ Creates the academy's Accounts v2 connected account on first run (persisting a
 ``ConnectedAccount`` aggregate), then always mints a fresh hosted onboarding
 AccountLink. Idempotent: a second call reuses the existing connected account and
 just refreshes the link.
+
+Reconnect: when the existing account was disconnected by the owner (or is
+disabled), starting onboarding again is the explicit reconnect. It clears the
+disconnect marker, resets the status, and resyncs it from Stripe so an account
+that is still charge-ready is usable again without waiting on a webhook.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
@@ -19,9 +25,12 @@ from backend.v2.contexts.billing.domain.connected_account import ConnectedAccoun
 from backend.v2.contexts.billing.domain.errors import (
     AcademyMismatchError,
     ConnectOnboardingFailed,
+    HouseAcademyUsesPlatformAccount,
 )
 from backend.v2.shared.security.redirect import validate_redirect_url
 from backend.v2.shared.tenancy import tenant_scope
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,7 @@ class StartConnectOnboarding:
         connected_accounts: ConnectedAccountRepository,
         allowed_redirect_origins: Iterable[str] | Callable[[], Iterable[str]],
         academy_id: str | None = None,
+        house_academy_id: str | None = None,
     ) -> None:
         self._stripe = stripe
         self._connected_accounts = connected_accounts
@@ -53,6 +63,9 @@ class StartConnectOnboarding:
             else tuple(allowed_redirect_origins)
         )
         self._academy_id = academy_id
+        # The house academy charges on the platform account; it never onboards
+        # a connected account (see infrastructure/house_academy.py).
+        self._house_academy_id = house_academy_id
 
     def _current_allowed_origins(self) -> tuple[str, ...]:
         source = self._allowed_redirect_origins
@@ -69,6 +82,11 @@ class StartConnectOnboarding:
     ) -> dict[str, str]:
         if self._academy_id is not None and academy_id != self._academy_id:
             raise AcademyMismatchError("academy_id mismatch for connect onboarding")
+        if self._house_academy_id is not None and academy_id == self._house_academy_id:
+            raise HouseAcademyUsesPlatformAccount(
+                "This academy collects payments on the CourtMastr platform Stripe "
+                "account, so it does not connect a separate Stripe account."
+            )
 
         # Same allowlist as parent checkout redirects: these URLs become browser
         # redirects via Stripe's hosted onboarding, so an unvalidated value is an
@@ -96,6 +114,8 @@ class StartConnectOnboarding:
                     stripe_account_id=stripe_account_id,
                 )
                 await self._connected_accounts.upsert(account)
+            elif existing.is_disconnected or existing.status == "disabled":
+                account = await self._reconnect(existing)
             else:
                 account = existing
 
@@ -116,3 +136,25 @@ class StartConnectOnboarding:
             "onboarding_url": onboarding_url,
             "status": account.status,
         }
+
+    async def _reconnect(self, existing: ConnectedAccount) -> ConnectedAccount:
+        try:
+            snapshot = await self._stripe.retrieve_connected_account(existing.stripe_account_id)
+        except Exception:  # a failed resync must not block reconnect
+            # Fail safe: reset to pending (not charge-ready); the next
+            # account.updated webhook, no longer blocked, brings it current.
+            log.warning(
+                "connect_reconnect_resync_failed account=%s",
+                existing.stripe_account_id,
+                exc_info=True,
+            )
+            snapshot = None
+        account = existing.reconnected(stripe_account=snapshot)
+        await self._connected_accounts.upsert(account)
+        log.info(
+            "connect_account_reconnected account=%s status=%s resynced=%s",
+            account.stripe_account_id,
+            account.status,
+            snapshot is not None,
+        )
+        return account

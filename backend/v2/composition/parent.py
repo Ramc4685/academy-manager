@@ -88,6 +88,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutCommand,
     StartCheckoutResult,
 )
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable, QuoteExpired
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
@@ -2928,6 +2929,10 @@ class _ConnectAccountResolver:
             account = await self._repo.get_by_stripe_account_id(stripe_account_id)
         return account.academy_id if account else None
 
+    async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None:
+        with tenant_scope(self._academy_id):
+            return await self._repo.get_by_stripe_account_id(stripe_account_id)
+
     async def update_status(
         self,
         *,
@@ -2936,14 +2941,16 @@ class _ConnectAccountResolver:
         charges_enabled: bool | None,
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
-    ) -> None:
+        skip_if_disconnected: bool = False,
+    ) -> bool:
         with tenant_scope(self._academy_id):
-            await self._repo.update_status(
+            return await self._repo.update_status(
                 stripe_account_id=stripe_account_id,
-                status=status,
+                status=status,  # type: ignore[arg-type]
                 charges_enabled=charges_enabled,
                 payouts_enabled=payouts_enabled,
                 capabilities=capabilities,
+                skip_if_disconnected=skip_if_disconnected,
             )
 
 

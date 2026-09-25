@@ -31,12 +31,12 @@ class BillingSettings(BaseModel):
     effective_at: datetime | None = None
     invoice_number_prefix: str = "BLNO"
 
-    # TEMPORARY escape hatch while the platform's Stripe Connect application is
-    # under review: when true, checkout/invoice/autopay may charge the
-    # platform account directly instead of refusing when the academy's
-    # connected account isn't charge-ready. Only safe while academy funds and
-    # platform funds settle to the same Stripe account — remove once Connect
-    # onboarding is fully rolled out.
+    # Whether this academy's parent charges may settle on the PLATFORM Stripe
+    # account instead of refusing when it has no charge-ready connected
+    # account. Derived on read by the billing-settings repository: true only
+    # for the house academy (BLNO, which owns the platform account), false for
+    # every other academy. Never written by the app. See
+    # ``infrastructure/house_academy.py``.
     allow_platform_charge_fallback: bool = False
 
     # Automated monthly invoicing (issue #288). ``billing_day`` is the

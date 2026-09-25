@@ -308,9 +308,8 @@ class ApplyOccurrenceCancellation:
 
         Not ``subtotal_cents - discount_cents``: ``recompute_totals`` rebuilds
         the subtotal from every line, so an equipment charge or registration
-        fee added to the same monthly invoice inflates it — and once a line is
-        added the invoice's own ``discount_cents`` is subtracted twice. Summing
-        the tuition and discount lines is right in both states (#671).
+        fee added to the same monthly invoice inflates it. Summing the tuition
+        and discount lines is right whatever else is on the invoice (#671).
         """
         try:
             lines = await self._invoices.get_lines_for_invoice(invoice.invoice_id)

@@ -2167,13 +2167,9 @@ export function reconcileStripeBilling(
   });
 }
 
+/** True only for the house academy, whose charges settle on the platform account. */
 export interface PlatformChargeFallbackView {
   allow_platform_charge_fallback: boolean;
-}
-
-export interface SetPlatformChargeFallbackRequest {
-  enabled: boolean;
-  reason?: string | null;
 }
 
 export interface InvoiceScheduleView {
@@ -2222,15 +2218,6 @@ export function updateBillingRules(
 export function getPlatformChargeFallback(): Promise<PlatformChargeFallbackView> {
   return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
     method: "GET",
-  });
-}
-
-export function setPlatformChargeFallback(
-  payload: SetPlatformChargeFallbackRequest,
-): Promise<PlatformChargeFallbackView> {
-  return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
-    method: "PUT",
-    body: JSON.stringify(payload),
   });
 }
 

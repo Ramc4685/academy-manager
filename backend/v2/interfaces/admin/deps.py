@@ -158,6 +158,7 @@ from backend.v2.contexts.identity.application.get_academy_notifications_use_case
     GetAcademyNotificationsUseCase,
 )
 from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+from backend.v2.contexts.identity.application.ports import UserGovernanceAudit
 from backend.v2.contexts.identity.application.update_academy_fees_use_case import (
     UpdateAcademyFeesUseCase,
 )
@@ -299,6 +300,8 @@ class AdminUseCases:
     provision_parent_login: ProvisionParentLogin | None = None
     provision_student_login: ProvisionStudentLogin | None = None
     send_login_invite: SendLoginInvite | None = None
+    # X3: refused user changes and set-password sends (`audit_logs`).
+    user_governance_audit: UserGovernanceAudit | None = None
     add_user_role: AddUserRole | None = None
     remove_user_role: RemoveUserRole | None = None
     get_admin_student: GetAdminStudent | None = None
@@ -433,10 +436,9 @@ class AdminUseCases:
     deny_trial_request: DenyTrialRequest | None = None
     # Self-cancel audit list (R4, Task 8)
     list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
-    # Platform-charge fallback escape hatch (2026-07-04 incident follow-up):
-    # audited admin toggle for billing_settings.allow_platform_charge_fallback.
+    # Read-only view of billing_settings.allow_platform_charge_fallback, which
+    # is derived from the house-academy setting (no admin toggle).
     get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback
-    set_platform_charge_fallback: object | None = None  # SetPlatformChargeFallback
     # audited admin control for billing_settings.billing_day/invoice_due_days,
     # which drive the automated monthly invoice generation job.
     get_invoice_schedule: object | None = None  # GetInvoiceScheduleSettings

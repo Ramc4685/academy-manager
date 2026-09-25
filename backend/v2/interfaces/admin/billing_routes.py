@@ -21,7 +21,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 )
 from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
     SetInvoiceScheduleCommand,
-    SetPlatformChargeFallbackCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpenseCommand,
@@ -101,15 +100,10 @@ class PlatformChargeFallbackResponse(BaseModel):
     allow_platform_charge_fallback: bool
 
 
-class SetPlatformChargeFallbackRequest(BaseModel):
-    enabled: bool
-    reason: str | None = None
-
-
 @router.get(
     "/billing/settings/platform-fallback",
     response_model=PlatformChargeFallbackResponse,
-    summary="Read the platform-charge fallback escape hatch",
+    summary="Read whether this academy charges on the platform Stripe account (house academy)",
 )
 async def get_platform_charge_fallback(
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -119,31 +113,6 @@ async def get_platform_charge_fallback(
         use_cases.get_platform_charge_fallback, "get_platform_charge_fallback"
     )
     result = await use_case.execute()  # type: ignore[attr-defined]
-    return PlatformChargeFallbackResponse(
-        allow_platform_charge_fallback=result.allow_platform_charge_fallback
-    )
-
-
-@router.put(
-    "/billing/settings/platform-fallback",
-    response_model=PlatformChargeFallbackResponse,
-    summary="Toggle the platform-charge fallback escape hatch (audited)",
-)
-async def set_platform_charge_fallback(
-    body: SetPlatformChargeFallbackRequest,
-    claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> PlatformChargeFallbackResponse:
-    use_case = _required_callable(
-        use_cases.set_platform_charge_fallback, "set_platform_charge_fallback"
-    )
-    result = await use_case.execute(  # type: ignore[attr-defined]
-        SetPlatformChargeFallbackCommand(
-            enabled=body.enabled,
-            actor_id=claims.user_id,
-            reason=body.reason,
-        )
-    )
     return PlatformChargeFallbackResponse(
         allow_platform_charge_fallback=result.allow_platform_charge_fallback
     )
