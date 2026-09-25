@@ -809,19 +809,39 @@ export default function AdminSessionDetailPage() {
         <ConfirmActionDialog
           open
           onOpenChange={(open) => !open && setWaitlistRemoveTarget(null)}
-          overline="Remove from waitlist"
-          title="Drop this student off the waitlist?"
-          subject={`${waitlistRemoveTarget.full_name} · position ${waitlistRemoveTarget.position}`}
-          consequence={
-            <>
-              <p>
-                They lose their place in the queue and will not be offered a seat when one opens.
-                Nothing is invoiced either way — a waitlisted student is never billed.
-              </p>
-              <p>Re-adding them later puts them at the back of the queue.</p>
-            </>
+          overline={waitlistRemoveTarget.status === "offered" ? "Withdraw offer" : "Remove from waitlist"}
+          title={
+            waitlistRemoveTarget.status === "offered"
+              ? "Withdraw the seat offered to this family?"
+              : "Drop this student off the waitlist?"
           }
-          confirmLabel="Remove from waitlist"
+          subject={
+            waitlistRemoveTarget.status === "offered"
+              ? `${waitlistRemoveTarget.full_name} · seat offered`
+              : `${waitlistRemoveTarget.full_name} · position ${waitlistRemoveTarget.position}`
+          }
+          consequence={
+            waitlistRemoveTarget.status === "offered" ? (
+              <>
+                <p>
+                  The seat being held for them is released and offered to the next family on the
+                  waitlist, who is emailed. They can no longer confirm it.
+                </p>
+                <p>Nothing is invoiced — they were never enrolled.</p>
+              </>
+            ) : (
+              <>
+                <p>
+                  They lose their place in the queue and will not be offered a seat when one opens.
+                  Nothing is invoiced either way — a waitlisted student is never billed.
+                </p>
+                <p>Re-adding them later puts them at the back of the queue.</p>
+              </>
+            )
+          }
+          confirmLabel={
+            waitlistRemoveTarget.status === "offered" ? "Withdraw offer" : "Remove from waitlist"
+          }
           pending={removeWaitlistMutation.isPending}
           onConfirm={() => {
             removeWaitlistMutation.mutate(waitlistRemoveTarget.waitlist_id);

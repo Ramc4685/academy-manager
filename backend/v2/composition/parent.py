@@ -30,7 +30,11 @@ from backend.v2.composition.registration_decision_email import (
     compose_registration_decision_notifier,
 )
 from backend.v2.composition.roster_notifications import compose_roster_notifier
-from backend.v2.composition.waitlist_offers import compose_confirm_waitlist_offer
+from backend.v2.composition.waitlist_offers import (
+    compose_confirm_waitlist_offer,
+    compose_decline_waitlist_offer,
+    compose_list_parent_waitlist,
+)
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
@@ -169,6 +173,7 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
 )
 from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
     ConfirmWaitlistOffer,
+    DeclineWaitlistOffer,
 )
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.domain.lifecycle import (
@@ -361,6 +366,9 @@ class ParentComposition:
     get_parent_home: object  # callable
     # #828: claiming a held seat inside the three-day offer window.
     confirm_waitlist_offer: ConfirmWaitlistOffer
+    # X2: the family's own offers (the email's landing page) and "no thanks".
+    decline_waitlist_offer: DeclineWaitlistOffer
+    list_parent_waitlist: object  # callable(parent_id)
     enroll_child: object
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
@@ -2881,6 +2889,8 @@ def compose_parent(
         get_parent_home=get_parent_home,
         # #828: claiming a held seat inside the three-day window.
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
+        decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),
+        list_parent_waitlist=compose_list_parent_waitlist(db),
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,

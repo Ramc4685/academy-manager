@@ -668,3 +668,32 @@ class WaitlistOfferConfirmation(BaseModel):
 
     waitlist_id: str
     enrollment_id: str
+
+
+class ParentWaitlistEntryView(BaseModel):
+    """One of the family's own waitlist rows (X2).
+
+    ``offer_expires_at`` is set while ``status == "offered"``: the seat is
+    held until then. ``expired`` rows stay listed for two weeks so a late
+    click on the offer email explains itself.
+    """
+
+    waitlist_id: str
+    session_id: str
+    session_title: str
+    schedule_label: str | None = None
+    location: str | None = None
+    student_id: str
+    student_name: str
+    status: Literal["waiting", "offered", "expired"]
+    joined_at: datetime
+    offer_expires_at: datetime | None = None
+
+
+class ParentWaitlistList(BaseModel):
+    entries: list[ParentWaitlistEntryView]
+
+
+class WaitlistOfferDecline(BaseModel):
+    waitlist_id: str
+    status: Literal["removed"] = "removed"

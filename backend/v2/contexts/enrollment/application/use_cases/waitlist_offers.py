@@ -1,7 +1,7 @@
-"""The two halves of the waitlist confirmation window (issue #828).
+"""The waitlist confirmation window (issue #828).
 
 ``PromoteFromWaitlist`` holds a freed seat and marks the entry ``offered``
-with a deadline. Exactly one of these two use cases then closes the offer:
+with a deadline. Exactly one of these three use cases then closes the offer:
 
 - :class:`ConfirmWaitlistOffer` — the family claimed it. The seat is ALREADY
   reserved (the offer is what holds it), so this creates the enrollment
@@ -9,10 +9,13 @@ with a deadline. Exactly one of these two use cases then closes the offer:
 - :class:`SweepExpiredWaitlistOffers` — nobody answered. The held seat goes
   back, the entry is marked ``expired``, the family is told, and the next
   family on the list is offered the same seat.
+- :class:`DeclineWaitlistOffer` — the family said no (or staff withdrew the
+  offer). Same release-and-reoffer as the sweep, just without the wait.
 
-Both are idempotent on the entry's status: confirming an already-``promoted``
+All three key off the entry's status: confirming an already-``promoted``
 offer returns the existing enrollment rather than creating a second one, and
-the sweep only ever reads rows still marked ``offered``.
+the sweep and the decline close a row only by compare-and-set from
+``offered``, so at most one of them ever releases its seat.
 
 Scope: #828 was written with a second, unrelated half — the last-class,
 pause-ending, first-class and level-up notices — and NONE of it is implemented
@@ -173,7 +176,13 @@ class SweepExpiredWaitlistOffers:
             # last, a crash between the two would leave an `offered` row whose
             # seat is already gone, and the next sweep would release a seat
             # that belongs to somebody else.
-            await self._waitlist.update_status(entry.waitlist_id, "expired")
+            # Compare-and-set, not a blind write: a family that confirmed (or
+            # declined) between the read above and here already owns this
+            # row's seat, and releasing it would hand the seat out twice.
+            if not await self._waitlist.transition_status(
+                entry.waitlist_id, expected="offered", to="expired"
+            ):
+                continue
             try:
                 await self._sessions.release_seat(entry.session_id)
             except Exception:
@@ -208,3 +217,78 @@ class SweepExpiredWaitlistOffers:
                     extra={"session_id": entry.session_id},
                 )
         return {"expired": len(expired), "released": released, "reoffered": reoffered}
+
+
+class DeclineWaitlistOffer:
+    """``offered`` -> ``removed`` (or ``skipped``): the held seat goes back now.
+
+    Two callers. A family declining from the parent app passes ``parent_id``
+    and gets the same not-found answer for a stranger's entry that confirm
+    gives. Staff withdrawing an offer (the admin Remove/Skip on an ``offered``
+    row) pass no ``parent_id``: before this existed, those buttons wrote a
+    blind status over an ``offered`` row and the held seat was never released
+    — the sweep only reads rows still marked ``offered``.
+    """
+
+    def __init__(
+        self,
+        *,
+        waitlist: WaitlistRepository,
+        sessions: SessionWriter,
+        promote: PromoteFromWaitlist,
+        clock: Clock = lambda: datetime.now(UTC),
+    ) -> None:
+        self._waitlist = waitlist
+        self._sessions = sessions
+        self._promote = promote
+        self._now = clock
+
+    async def execute(
+        self,
+        waitlist_id: str,
+        *,
+        parent_id: str | None = None,
+        outcome: str = "removed",
+    ) -> bool:
+        """``True`` when an open offer was closed and its seat released.
+
+        For staff (no ``parent_id``) a row that is not an open offer returns
+        ``False`` so the caller falls back to the plain skip/remove. For a
+        family it raises the same errors confirm does.
+        """
+        entry = await self._waitlist.get(waitlist_id)
+        if parent_id is None and (entry is None or entry.status != "offered"):
+            return False
+        if entry is None or (parent_id is not None and entry.parent_id != parent_id):
+            raise WaitlistOfferNotFound(f"No open waitlist offer {waitlist_id}")
+        if entry.status != "offered":
+            if entry.status == "expired":
+                raise WaitlistOfferExpired(f"The offer on {waitlist_id} has expired")
+            raise WaitlistOfferNotOpen(f"Waitlist entry {waitlist_id} is not an open offer")
+        if (
+            parent_id is not None
+            and entry.offer_expires_at is not None
+            and entry.offer_expires_at <= self._now()
+        ):
+            # Past the deadline the seat belongs to the sweep; a decline now
+            # would race it for the same release.
+            raise WaitlistOfferExpired(f"The offer on {waitlist_id} has expired")
+
+        if not await self._waitlist.transition_status(waitlist_id, expected="offered", to=outcome):
+            # Lost to a confirm or the sweep between the read and the write.
+            if parent_id is None:
+                return False
+            raise WaitlistOfferNotOpen(f"Waitlist entry {waitlist_id} is not an open offer")
+
+        await self._sessions.release_seat(entry.session_id)
+        # Hand the seat to the next family. Best-effort: the decline itself
+        # has landed, and a failed re-offer leaves a free seat the next
+        # cancellation or the admin "Promote" button will fill.
+        try:
+            await self._promote.execute(entry.session_id)
+        except Exception:
+            log.exception(
+                "enrollment.waitlist_reoffer_after_decline_failed",
+                extra={"session_id": entry.session_id, "waitlist_id": waitlist_id},
+            )
+        return True

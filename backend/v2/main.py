@@ -61,7 +61,10 @@ from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
 from backend.v2.composition.student import compose_student
-from backend.v2.composition.waitlist_offers import compose_sweep_expired_waitlist_offers
+from backend.v2.composition.waitlist_offers import (
+    compose_decline_waitlist_offer,
+    compose_sweep_expired_waitlist_offers,
+)
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsCommand,
@@ -742,6 +745,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
+    # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back
+    # (and re-offer it); a bare status write leaked the seat. Same promote
+    # instance as the admin route and the sweep, so the SeatBroker applies.
+    app.state.admin.withdraw_waitlist_offer = compose_decline_waitlist_offer(
+        db, promote=app.state.admin.promote_from_waitlist
+    )
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)

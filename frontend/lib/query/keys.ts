@@ -197,6 +197,7 @@ export const queryKeys = {
     makeupTargets: (studentId: string, missedOccurrenceId: string) =>
       ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
     trials: () => ["parent", "trials"] as const,
+    waitlist: () => ["parent", "waitlist"] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
     messages: () => ["parent", "messages"] as const,

@@ -81,3 +81,13 @@ class MongoWaitlistRepository(TenantScopedRepository):
             sort=[("offer_expires_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        result = await self._update_one(
+            {"waitlist_id": waitlist_id, "status": expected}, {"$set": {"status": to}}
+        )
+        return result.modified_count == 1
+
+    async def list_for_parent(self, parent_id: str) -> list[WaitlistEntry]:
+        cursor = self._find_many({"parent_id": parent_id}, sort=[("joined_at", 1)])
+        return [self._to_domain(doc) async for doc in cursor]

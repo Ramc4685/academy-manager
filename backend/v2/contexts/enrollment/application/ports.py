@@ -302,6 +302,15 @@ class WaitlistRepository(Protocol):
         """Every ``offered`` entry whose ``offer_expires_at`` is at or before
         ``before`` — the sweep's work list."""
 
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        """Compare-and-set ``expected`` -> ``to``; ``False`` when the row had
+        already moved on. Closing an offer (decline, expiry) releases a seat,
+        so exactly one closer may win — a blind ``update_status`` would let an
+        expiry overwrite a confirmation and hand the same seat out twice."""
+
+    async def list_for_parent(self, parent_id: str) -> list[WaitlistEntry]:
+        """Every entry one family owns, oldest first — the parent's own read."""
+
 
 class EnrollmentEventRepository(Protocol):
     async def record(self, event: EnrollmentLifecycleEvent) -> None: ...
