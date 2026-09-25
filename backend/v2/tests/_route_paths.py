@@ -33,6 +33,28 @@ def iter_route_paths(routes: Iterable[Any], prefix: str = "") -> Iterator[str]:
             yield prefix + path
 
 
+def iter_route_methods(routes: Iterable[Any], prefix: str = "") -> Iterator[tuple[str, str]]:
+    """Yield ``(method, full_path)`` for every concrete HTTP route under ``routes``.
+
+    Same tree walk as ``iter_route_paths``; routes without ``methods`` (e.g.
+    websockets, mounts) are skipped.
+    """
+    for route in routes:
+        if type(route).__name__ == "_IncludedRouter":
+            include_context = getattr(route, "include_context", None)
+            sub_prefix = prefix + (getattr(include_context, "prefix", "") or "")
+            original = getattr(route, "original_router", None)
+            if original is not None:
+                yield from iter_route_methods(original.routes, sub_prefix)
+            continue
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if path is None or not methods:
+            continue
+        for method in methods:
+            yield method, prefix + path
+
+
 def route_paths(app: Any) -> set[str]:
     """Return the set of full paths registered on ``app``."""
     return set(iter_route_paths(app.routes))
