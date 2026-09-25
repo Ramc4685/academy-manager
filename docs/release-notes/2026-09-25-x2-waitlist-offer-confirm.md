@@ -1,6 +1,6 @@
 # X2: parents can confirm waitlist seat offers; offers never end a held family's seat
 
-PR: #971
+PR: #976
 
 ## What changed
 - Families can now answer a waitlist seat offer. The "a seat opened" email links to `/parent/requests?offer=<id>`, which shows the offer, a countdown, **Confirm seat** and **Decline** (with a second look), plus honest states for expired, closed or already-taken offers. New routes: `GET /api/v2/parent/waitlist`, `POST /api/v2/parent/waitlist/{id}/decline` (confirm already existed but nothing called it, so every offer since 0183 on ~2026-09-14 expired unclaimed).
