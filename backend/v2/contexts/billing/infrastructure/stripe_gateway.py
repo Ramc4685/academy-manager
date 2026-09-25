@@ -542,6 +542,14 @@ class RealStripeGateway(StripeGateway):
             kwargs: dict[str, Any] = {"payment_intent": payment_intent_id}
             if amount_cents is not None:
                 kwargs["amount"] = amount_cents
+            # A destination charge's funds sit with the connected academy; pull
+            # the refund back from it and return the platform fee pro-rata.
+            # Derived from the PaymentIntent (immutable once paid), so a retry
+            # with the same idempotency key sends identical parameters.
+            payment_intent = _stripe_object_to_dict(
+                self._stripe.PaymentIntent.retrieve(payment_intent_id)
+            )
+            kwargs.update(destination_refund_params(payment_intent))
             if idempotency_key:
                 kwargs["idempotency_key"] = idempotency_key
             return self._stripe.Refund.create(**kwargs)
@@ -735,6 +743,15 @@ class RealStripeGateway(StripeGateway):
             raise ValueError(f"Stripe account onboarding link creation failed: {exc}") from exc
         return str(link["url"])
 
+    async def retrieve_connected_account(self, stripe_account_id: str) -> dict[str, Any]:
+        """Read the connected account's live flags (v1 Account retrieve)."""
+
+        def _retrieve() -> Any:
+            return self._stripe.Account.retrieve(stripe_account_id)
+
+        result = await self._run_stripe_retrieve(_retrieve, label="Stripe Account")
+        return _stripe_object_to_dict(result)
+
     async def _run_stripe_retrieve(self, fn: Any, *, label: str) -> Any:
         try:
             return await asyncio.to_thread(fn)
@@ -825,6 +842,24 @@ class RealStripeGateway(StripeGateway):
             return "", "failed", str(getattr(err, "decline_code", None) or str(exc))
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe PaymentIntent creation failed: {exc}") from exc
+
+
+def destination_refund_params(payment_intent: dict[str, Any]) -> dict[str, bool]:
+    """Refund flags for a destination charge (platform policy, 2026-09-25).
+
+    ``reverse_transfer`` pulls the refunded amount back from the connected
+    account, so the platform balance does not fund the academy's refund.
+    ``refund_application_fee`` returns the platform fee on the refunded
+    portion. Both are pro-rata on partial refunds. A platform charge (no
+    ``transfer_data``) gets neither.
+    """
+    transfer_data = payment_intent.get("transfer_data") or {}
+    if not isinstance(transfer_data, dict) or not transfer_data.get("destination"):
+        return {}
+    params = {"reverse_transfer": True}
+    if payment_intent.get("application_fee_amount"):
+        params["refund_application_fee"] = True
+    return params
 
 
 def _stripe_object_to_dict(result: Any) -> dict[str, Any]:

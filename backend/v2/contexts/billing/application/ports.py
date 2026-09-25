@@ -591,6 +591,12 @@ class StripeGateway(Protocol):
         """Create a hosted onboarding AccountLink for a connected account."""
         ...
 
+    async def retrieve_connected_account(self, stripe_account_id: str) -> dict[str, Any]:
+        """Return the connected account's current Stripe state (a v1 Account:
+        ``charges_enabled``, ``payouts_enabled``, ``capabilities``,
+        ``requirements.disabled_reason``). Raises ``ValueError`` on failure."""
+        ...
+
     async def create_off_session_payment_intent(
         self,
         *,
@@ -753,7 +759,8 @@ class ConnectedAccountRepository(Protocol):
         capabilities: dict[str, str] | None = None,
         charges_enabled: bool | None = None,
         payouts_enabled: bool | None = None,
-    ) -> None: ...
+        skip_if_disconnected: bool = False,
+    ) -> bool: ...
 
 
 class LedgerRepository(Protocol):

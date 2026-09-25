@@ -34,7 +34,8 @@ class _FakeConnectAccountResolver:
         charges_enabled: bool | None,
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
-    ) -> None:
+        skip_if_disconnected: bool = False,
+    ) -> bool:
         self.status_updates.append(
             {
                 "stripe_account_id": stripe_account_id,
@@ -42,8 +43,10 @@ class _FakeConnectAccountResolver:
                 "charges_enabled": charges_enabled,
                 "payouts_enabled": payouts_enabled,
                 "capabilities": capabilities,
+                "skip_if_disconnected": skip_if_disconnected,
             }
         )
+        return True
 
 
 def _handler(*, academy_id: str, resolver: _FakeConnectAccountResolver) -> HandleWebhookEvent:
@@ -153,5 +156,6 @@ async def test_account_updated_projects_connected_account_status() -> None:
             "charges_enabled": True,
             "payouts_enabled": True,
             "capabilities": {"card_payments": "active"},
+            "skip_if_disconnected": True,
         }
     ]
