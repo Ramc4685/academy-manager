@@ -1,8 +1,11 @@
 """ConnectedAccount — per-academy Stripe Connect merchant identity (Slice I).
 
-Each academy is its own merchant-of-record. Autopay fund flow routes through
-its connected Stripe account via destination charges (``on_behalf_of`` +
-``transfer_data.destination``); the platform initially accepts liability.
+Each academy (other than the house academy) is its own merchant-of-record and
+is charged with DIRECT charges on its connected account (``Stripe-Account``).
+Stripe collects processing fees from, and carries losses for, the account; the
+academy gets the full Stripe Dashboard. See docs/runbooks/stripe-direct-charges.md.
+Accounts created before direct charges were destination-charge (express,
+platform-liable) accounts; readiness accepts both.
 
 Pure domain model. No infra imports. The account is created via the Accounts v2
 API (``POST /v2/core/accounts``) with ``configuration`` and
@@ -18,6 +21,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 ConnectedAccountStatus = Literal["pending", "active", "restricted", "disabled"]
+
+# The v1 Account capability key (Accounts v2
+# ``configuration.merchant.capabilities.card_payments``) for card charges.
+CARD_PAYMENTS_CAPABILITY = "card_payments"
 
 
 class ConnectedAccount(BaseModel):
@@ -65,8 +72,22 @@ class ConnectedAccount(BaseModel):
         return self.disconnected_at is not None
 
     def is_ready_for_charges(self) -> bool:
-        """Only route fund flow once Stripe has enabled charges on the account."""
-        return self.status == "active" and self.charges_enabled and not self.is_disconnected
+        """Only route fund flow once Stripe has enabled charges on the account.
+
+        Direct charges settle on the connected account itself, so readiness is
+        the merchant ``card_payments`` capability plus ``charges_enabled``. The
+        recipient ``transfers`` / ``stripe_transfers`` capability (destination
+        charges only) is never required, so accounts created either way work.
+
+        A ``card_payments`` entry that is present but not ``active`` blocks
+        charges. An absent entry falls back to ``charges_enabled``: rows written
+        before capabilities were tracked, or last written by a ``capability.*``
+        event for a different capability, carry no ``card_payments`` key.
+        """
+        if self.status != "active" or not self.charges_enabled or self.is_disconnected:
+            return False
+        card_payments = self.capabilities.get(CARD_PAYMENTS_CAPABILITY)
+        return card_payments is None or card_payments == "active"
 
     def reconnected(
         self,

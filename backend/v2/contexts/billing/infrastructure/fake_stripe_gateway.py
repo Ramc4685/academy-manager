@@ -611,19 +611,22 @@ class FakeStripeGateway(StripeGateway):
                 "display_name": display_name,
                 "contact_email": contact_email,
                 "idempotency_key": idempotency_key or f"connect-account:{academy_id}",
+                # Mirrors RealStripeGateway.create_connected_account (direct
+                # charges: full dashboard, Stripe collects fees and losses).
                 "dashboard": "full",
                 "configuration": {
                     "merchant": {
                         "capabilities": {
                             "card_payments": {"requested": True},
+                            "ach_debit_payments": {"requested": True},
                         }
                     }
                 },
                 "defaults": {
                     "currency": "usd",
                     "responsibilities": {
-                        "fees_collector": "application",
-                        "losses_collector": "application",
+                        "fees_collector": "stripe",
+                        "losses_collector": "stripe",
                     },
                 },
             }

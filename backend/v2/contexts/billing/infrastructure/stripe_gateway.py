@@ -739,37 +739,45 @@ class RealStripeGateway(StripeGateway):
 
         Configured through Accounts v2 ``configuration`` and
         ``defaults.responsibilities`` (never legacy ``type`` or v1
-        ``controller``). The platform accepts payment liability for destination
-        charges and uses an idempotency key so retries after local persistence
-        failures do not create duplicate Stripe accounts.
+        ``controller``). Uses an idempotency key so retries after local
+        persistence failures do not create duplicate Stripe accounts.
+
+        Direct charges (verified against Stripe docs 2026-09-25; see
+        docs/runbooks/stripe-direct-charges.md):
+
+        * ``dashboard="full"`` — the academy manages refunds and disputes in
+          its own Stripe Dashboard. Stripe recommends direct charges for
+          full-dashboard accounts (docs.stripe.com/connect/direct-charges).
+        * ``fees_collector="stripe"`` — Stripe takes its processing fee from
+          the connected account, so the platform pays no Stripe fee; an
+          ``application_fee_amount`` is then only the platform's own fee.
+        * ``losses_collector="stripe"`` — Stripe, not the platform, is liable
+          for the account's negative balances (refunds, disputes). ``express``
+          would require both collectors to be ``application``
+          (error ``account_controller_express_dash_without_application_losses_or_fees``).
+        * Merchant ``card_payments`` + ``ach_debit_payments`` (the v2 name of
+          v1 ``us_bank_account_ach_payments``). No ``recipient`` configuration:
+          ``stripe_transfers`` is only for destination/separate charges.
+
+        Responsibilities cannot be changed after the merchant configuration is
+        added, so accounts created before this change stay express +
+        platform-liable destination-charge accounts.
         """
         request: dict[str, Any] = {
-            # Express dashboard: Stripe rejects "full" when the application
-            # collects fees/losses (destination charges, platform liability).
-            "dashboard": "express",
+            "dashboard": "full",
             "configuration": {
                 "merchant": {
                     "capabilities": {
                         "card_payments": {"requested": True},
-                    }
-                },
-                # Destination charges transfer funds to the connected account,
-                # which requires the recipient stripe_transfers capability —
-                # without it Stripe rejects checkout/PI creation with
-                # insufficient_capabilities_for_transfer.
-                "recipient": {
-                    "capabilities": {
-                        "stripe_balance": {
-                            "stripe_transfers": {"requested": True},
-                        }
+                        "ach_debit_payments": {"requested": True},
                     }
                 },
             },
             "defaults": {
                 "currency": "usd",
                 "responsibilities": {
-                    "fees_collector": "application",
-                    "losses_collector": "application",
+                    "fees_collector": "stripe",
+                    "losses_collector": "stripe",
                 },
             },
             "identity": {"country": "us"},
