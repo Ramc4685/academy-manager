@@ -49,9 +49,6 @@ class ConnectedAccountGatewayDisabler:
             account = await self._repo.get_for_academy()
             if account is None:
                 return
-            await self._repo.update_status(
-                stripe_account_id=account.stripe_account_id,
-                status="disabled",
-                charges_enabled=False,
-                payouts_enabled=False,
-            )
+            # Sticky: the marker keeps Connect webhooks from re-activating
+            # the account until the owner explicitly reconnects.
+            await self._repo.mark_disconnected(stripe_account_id=account.stripe_account_id)

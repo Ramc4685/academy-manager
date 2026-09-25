@@ -92,6 +92,22 @@ class _FakePaymentIntent:
         status = "processing" if 'status:"processing"' in query else "succeeded"
         return SimpleNamespace(data=[{"id": f"pi_search_{status}", "status": status}])
 
+    # payment_intent_id -> PaymentIntent dict served by retrieve().
+    by_id: ClassVar[dict[str, dict[str, object]]] = {}
+
+    @classmethod
+    def retrieve(cls, payment_intent_id: str) -> object:
+        return cls.by_id.get(payment_intent_id, {"id": payment_intent_id, "transfer_data": None})
+
+
+class _FakeRefund:
+    calls: ClassVar[list[dict[str, object]]] = []
+
+    @classmethod
+    def create(cls, **kwargs: object) -> SimpleNamespace:
+        cls.calls.append(kwargs)
+        return SimpleNamespace(id=f"re_{len(cls.calls)}")
+
 
 class _FakeWebhook:
     calls: ClassVar[list[str]] = []
@@ -131,6 +147,8 @@ def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeCustomer.calls.clear()
     _FakeCustomer.modify_calls.clear()
     _FakePaymentIntent.calls.clear()
+    _FakePaymentIntent.by_id = {}
+    _FakeRefund.calls.clear()
     _FakeWebhook.calls.clear()
     _FakeWebhook.valid_secret = "whsec_fake"
     fake_stripe = SimpleNamespace(
@@ -142,7 +160,7 @@ def fake_stripe_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
         SetupIntent=_FakeSetupIntent,
         PaymentMethod=_FakePaymentMethod,
         Webhook=_FakeWebhook,
-        Refund=SimpleNamespace(),
+        Refund=_FakeRefund,
         Subscription=SimpleNamespace(),
         Invoice=SimpleNamespace(),
         StripeError=_FakeStripeError,
@@ -419,3 +437,113 @@ async def test_default_payment_method_search_is_academy_and_parent_scoped() -> N
             "limit": 1,
         }
     ]
+
+
+# --- Refunds of destination charges (audit 2026-09-25 X7) --------------------
+
+_DESTINATION_PI = {
+    "id": "pi_destination",
+    "object": "payment_intent",
+    "amount": 10000,
+    "application_fee_amount": 300,
+    "on_behalf_of": "acct_academy",
+    "transfer_data": {"destination": "acct_academy"},
+}
+
+
+@pytest.mark.asyncio
+async def test_refund_of_destination_charge_reverses_transfer_and_fee() -> None:
+    _FakePaymentIntent.by_id["pi_destination"] = dict(_DESTINATION_PI)
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    refund_id = await gateway.issue_refund("pi_destination", 2500, idempotency_key="refund:inv_1")
+
+    assert refund_id == "re_1"
+    assert _FakeRefund.calls == [
+        {
+            "payment_intent": "pi_destination",
+            "amount": 2500,
+            "reverse_transfer": True,
+            "refund_application_fee": True,
+            "idempotency_key": "refund:inv_1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refund_of_platform_charge_sends_no_connect_flags() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.issue_refund("pi_platform", None, idempotency_key="refund:inv_2")
+
+    assert _FakeRefund.calls == [
+        {"payment_intent": "pi_platform", "idempotency_key": "refund:inv_2"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refund_retry_with_same_key_sends_identical_parameters() -> None:
+    """Stripe rejects a reused idempotency key with different parameters, so
+    the Connect flags must be deterministic for a given PaymentIntent."""
+    _FakePaymentIntent.by_id["pi_destination"] = dict(_DESTINATION_PI)
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.issue_refund("pi_destination", 2500, idempotency_key="refund:inv_1")
+    await gateway.issue_refund("pi_destination", 2500, idempotency_key="refund:inv_1")
+
+    assert len(_FakeRefund.calls) == 2
+    assert _FakeRefund.calls[0] == _FakeRefund.calls[1]
+
+
+def test_destination_refund_params_without_application_fee_reverses_transfer_only() -> None:
+    from backend.v2.contexts.billing.infrastructure.stripe_gateway import (
+        destination_refund_params,
+    )
+
+    assert destination_refund_params(
+        {"transfer_data": {"destination": "acct_academy"}, "application_fee_amount": None}
+    ) == {"reverse_transfer": True}
+    assert destination_refund_params({"transfer_data": None}) == {}
+    assert destination_refund_params({}) == {}
+
+
+@pytest.mark.asyncio
+async def test_retrieve_connected_account_returns_account_dict(monkeypatch) -> None:
+    import stripe as fake_stripe
+
+    monkeypatch.setattr(
+        fake_stripe,
+        "Account",
+        SimpleNamespace(
+            retrieve=lambda account_id: {
+                "id": account_id,
+                "charges_enabled": True,
+                "requirements": {"disabled_reason": None},
+            }
+        ),
+        raising=False,
+    )
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    account = await gateway.retrieve_connected_account("acct_academy")
+
+    assert account["id"] == "acct_academy"
+    assert account["charges_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_refund_is_not_sent_when_payment_intent_read_fails(monkeypatch) -> None:
+    """A refund must never go out without its Connect flags: if the PaymentIntent
+    read fails, the error propagates (as a failed Refund.create would) and no
+    refund request is made."""
+
+    def _boom(payment_intent_id: str) -> object:
+        raise _FakeStripeError("api_connection_error")
+
+    monkeypatch.setattr(_FakePaymentIntent, "retrieve", classmethod(lambda cls, pi: _boom(pi)))
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    with pytest.raises(_FakeStripeError):
+        await gateway.issue_refund("pi_destination", 2500, idempotency_key="refund:inv_1")
+
+    assert _FakeRefund.calls == []

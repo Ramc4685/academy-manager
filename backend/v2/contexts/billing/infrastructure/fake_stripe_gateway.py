@@ -37,6 +37,10 @@ class FakeStripeGateway(StripeGateway):
         # Slice I — Connect (Accounts v2 + destination charges).
         self.connected_accounts: list[dict[str, Any]] = []
         self.account_onboarding_links: list[dict[str, Any]] = []
+        # stripe_account_id -> v1 Account snapshot returned by
+        # retrieve_connected_account; unknown ids read as not yet onboarded.
+        self.account_snapshots: dict[str, dict[str, Any]] = {}
+        self.retrieved_connected_accounts: list[str] = []
         self.off_session_payment_intents: list[dict[str, Any]] = []
         self.payment_intents: list[dict[str, Any]] = []
         self.setup_intents: dict[str, dict[str, Any]] = {}
@@ -440,6 +444,20 @@ class FakeStripeGateway(StripeGateway):
             }
         )
         return f"https://fake-stripe-connect.example.com/onboard/{stripe_account_id}"
+
+    async def retrieve_connected_account(self, stripe_account_id: str) -> dict[str, Any]:
+        self.retrieved_connected_accounts.append(stripe_account_id)
+        return self.account_snapshots.get(
+            stripe_account_id,
+            {
+                "id": stripe_account_id,
+                "object": "account",
+                "charges_enabled": False,
+                "payouts_enabled": False,
+                "capabilities": {},
+                "requirements": {"disabled_reason": None},
+            },
+        )
 
     async def create_off_session_payment_intent(
         self,
