@@ -1,6 +1,6 @@
 # Stripe Connect: sticky disconnect, reconnect resync, destination refunds
 
-PR: #TBD
+PR: #969
 
 ## What changed
 
