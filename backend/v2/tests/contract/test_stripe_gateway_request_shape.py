@@ -118,13 +118,13 @@ async def test_create_connected_account_uses_accounts_v2_payload_not_legacy_cont
 ) -> None:
     gw = _gateway()
 
-    account_id = await gw.create_connected_account(
+    created = await gw.create_connected_account(
         academy_id="acad-1",
         display_name="North Shore Badminton",
         contact_email="owner@example.com",
     )
 
-    assert account_id == "acct_v2_123"
+    assert created["id"] == "acct_v2_123"
     call = fake_stripe.calls["v2.core.accounts.create"]
     assert "type" not in call
     assert "controller" not in call

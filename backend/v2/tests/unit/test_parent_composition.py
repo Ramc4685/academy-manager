@@ -201,6 +201,8 @@ def _enrollment_doc(
 
 def _connected_account_doc(*, ready: bool = True) -> dict[str, Any]:
     account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad",
         stripe_account_id="acct_ready",
     )

@@ -175,9 +175,12 @@ def seeded_db(allow_app_origin):
 async def _seed(db: Any, quote_now: datetime, *, status: str, **app_extra: Any) -> None:
     await db["onboarding_applications"].insert_one(_application_doc(status, **app_extra))
     await db["sessions"].insert_one(_session_doc(quote_now))
-    account = ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_ready").with_status(
-        status="active", charges_enabled=True
-    )
+    account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id="acad",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
     await db["academy_connected_accounts"].insert_one(account.model_dump(mode="python"))
 
 

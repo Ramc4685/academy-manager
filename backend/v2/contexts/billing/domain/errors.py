@@ -10,6 +10,19 @@ class InvalidWebhookSignature(DomainError):
     status_code = 400
 
 
+class WebhookAccountLookupUnavailable(DomainError):
+    """The Connect account-owner lookup failed while ingesting a webhook.
+
+    503 on purpose: the event is NOT stored, so Stripe redelivers it once the
+    directory is reachable, instead of it being filed under the boot academy
+    and later quarantined there. An account that simply has no owner is not
+    this error (that event is stored and quarantined by the processor).
+    """
+
+    code = "Billing.WebhookAccountLookupUnavailable"
+    status_code = 503
+
+
 class PaymentNotFound(DomainError):
     code = "Billing.PaymentNotFound"
     status_code = 404

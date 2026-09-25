@@ -65,6 +65,8 @@ async def _seed_academy(db: Any, academy_id: str) -> None:
     with tenant_scope(academy_id):
         await MongoConnectedAccountRepository(db).upsert(
             ConnectedAccount(
+                fees_collector="stripe",
+                losses_collector="stripe",
                 academy_id=academy_id,
                 stripe_account_id=f"acct_{academy_id}",
                 status="active",

@@ -1979,7 +1979,7 @@ def compose_parent(
             # payments — nothing is broken, so record nothing. An account
             # that EXISTS but cannot charge is a real, operator-visible
             # failure.
-            account_exists = route.kind == "account_not_ready"
+            account_exists = route.kind != "no_account"
             if account_exists:
                 log.error(
                     "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
@@ -1992,7 +1992,9 @@ def compose_parent(
                     invoices=payable,
                     failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
                     failure_message=(
-                        "Academy Stripe connected account exists but is not ready for "
+                        route.refusal_message
+                        if route.kind == "account_platform_liable" and route.refusal_message
+                        else "Academy Stripe connected account exists but is not ready for "
                         "charges, and platform-charge fallback is off."
                     ),
                 )
@@ -2969,6 +2971,7 @@ class _ConnectAccountResolver:
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
         skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
     ) -> bool:
         with tenant_scope(self._academy_id):
             return await self._repo.update_status(
@@ -2978,6 +2981,7 @@ class _ConnectAccountResolver:
                 payouts_enabled=payouts_enabled,
                 capabilities=capabilities,
                 skip_if_disconnected=skip_if_disconnected,
+                liability=liability,
             )
 
 

@@ -50,11 +50,15 @@ from backend.v2.contexts.billing.application.use_cases.record_payment_dispute im
 )
 from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
 from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_hold
-from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+from backend.v2.contexts.billing.domain.connected_account import (
+    ConnectedAccount,
+    liability_from_stripe_account,
+)
 from backend.v2.contexts.billing.domain.errors import (
     InvalidWebhookSignature,
     PaymentNotFound,
     StripeAccountMismatch,
+    WebhookAccountLookupUnavailable,
 )
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -193,6 +197,7 @@ class AccountAcademyResolver(Protocol):
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
         skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
     ) -> bool: ...
 
 
@@ -339,12 +344,16 @@ class HandleWebhookEvent:
              Metadata never overrides the account. The owner's processing
              guard would reject it too (metadata != its academy), so a drain
              racing the quarantine mark cannot project it either.
-           - no owner (unknown account, or the lookup failed): stored under
-             this handler's academy, where the processing-side guard
+           - no owner (unknown account): stored under this handler's
+             academy, where the processing-side guard
              (``resolve_academy_for_event``) re-resolves and quarantines with
-             its own alert. Deferring keeps a lookup blip, or an account row
-             written a moment after Stripe emitted its first event, from
-             becoming a terminal ingest quarantine.
+             its own alert. Deferring keeps an account row written a moment
+             after Stripe emitted its first event from becoming a terminal
+             ingest quarantine.
+           - the lookup itself FAILED: ``WebhookAccountLookupUnavailable``
+             (503). Nothing is stored, so Stripe redelivers the event later;
+             storing it under the boot academy would strand it there as a
+             quarantined row the owner's processor never claims.
         2. No ``account`` (a platform event — the house academy, and legacy
            destination charges): ``metadata.academy_id`` exactly as before.
         3. Neither marker:
@@ -357,8 +366,8 @@ class HandleWebhookEvent:
              a tenant at random. The event is stored under
              ``UNATTRIBUTED_QUARANTINE_ACADEMY`` and quarantined by ``accept``.
 
-        Never raises past signature verification: a resolver failure is logged
-        and treated as "did not resolve".
+        Raises only ``WebhookAccountLookupUnavailable`` past signature
+        verification, and only when the owner lookup errors.
         """
         metadata_academy = self._event_metadata(event).get("academy_id")
         account_id = str(event.get("account") or "")
@@ -373,7 +382,9 @@ class HandleWebhookEvent:
                         account_id,
                         exc,
                     )
-                    owner = None
+                    raise WebhookAccountLookupUnavailable(
+                        "Connected-account owner lookup failed; retry the delivery."
+                    ) from exc
             if not owner:
                 return self._academy_id, None, QUARANTINE_UNATTRIBUTED
             if metadata_academy and metadata_academy != owner:
@@ -417,8 +428,14 @@ class HandleWebhookEvent:
                 event = self._event_from_stored_payload(event_doc)
                 event_type = event_type or str(event.get("type", ""))
                 self._validate_livemode(event)
+                # Account ownership BEFORE hydration: hydrating reads the
+                # object from Stripe with the event's ``Stripe-Account``
+                # header, which must never happen for an account this
+                # academy does not own (or no academy owns).
+                await self.resolve_academy_for_event(event)
                 event = await self._hydrate_current_stripe_object(event_type, event)
-                await self._validate_event_guards_async(event)
+                # Metadata guards run on the hydrated object, as before.
+                self._validate_event_guards(event)
                 await self._dispatch(event_type, event)
                 await self._dedup.mark_processed(event_id)
                 return {"processed": True, "event_id": event_id, "type": event_type}
@@ -889,6 +906,10 @@ class HandleWebhookEvent:
             payouts_enabled=payouts_enabled,
             capabilities=capabilities,
             skip_if_disconnected=True,
+            # The account's fee/loss responsibilities as this payload reports
+            # them (v1 ``controller``); the charge route refuses direct
+            # charges unless both are Stripe's.
+            liability=liability_from_stripe_account(obj),
         )
         if applied is False:
             log.info(

@@ -11,7 +11,12 @@ from backend.v2.contexts.billing.domain.connected_account import ConnectedAccoun
 
 
 def _account(*, ready: bool, stripe_account_id: str = "acct_x") -> ConnectedAccount:
-    account = ConnectedAccount.new(academy_id="acad", stripe_account_id=stripe_account_id)
+    account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id="acad",
+        stripe_account_id=stripe_account_id,
+    )
     if ready:
         account = account.with_status(status="active", charges_enabled=True)
     return account

@@ -662,12 +662,14 @@ class StripeGateway(Protocol):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
-    ) -> str:
-        """Create an Accounts v2 connected account and return its id.
+    ) -> dict[str, Any]:
+        """Create an Accounts v2 connected account and return it as a plain dict.
 
         Slice I: NEVER the legacy ``type: express/custom/standard`` or v1
-        ``controller`` shape. The platform accepts payment liability through
-        ``defaults.responsibilities``.
+        ``controller`` shape. Liability is set through
+        ``defaults.responsibilities``; the returned account carries ``id`` and
+        what Stripe recorded for ``dashboard`` / ``defaults.responsibilities``
+        (read with ``liability_from_stripe_account``).
         """
         ...
 
@@ -860,6 +862,7 @@ class ConnectedAccountRepository(Protocol):
         charges_enabled: bool | None = None,
         payouts_enabled: bool | None = None,
         skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
     ) -> bool: ...
 
 

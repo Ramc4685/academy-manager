@@ -454,6 +454,9 @@ class _Account:
     def is_ready_for_charges(self) -> bool:
         return True
 
+    def supports_direct_charges(self) -> bool:
+        return True
+
 
 class _Accounts:
     def __init__(self, stripe_account_id: str) -> None:

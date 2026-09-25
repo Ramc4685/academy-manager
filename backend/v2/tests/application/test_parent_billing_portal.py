@@ -290,6 +290,8 @@ async def test_start_autopay_stripe_rejection_maps_to_checkout_creation_failed()
 @pytest.mark.asyncio
 async def test_start_autopay_setup_routes_checkout_through_ready_connected_account() -> None:
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)
@@ -312,7 +314,12 @@ async def test_start_autopay_setup_routes_checkout_through_ready_connected_accou
 @pytest.mark.asyncio
 async def test_start_autopay_setup_fails_closed_without_ready_connected_account() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -345,7 +352,12 @@ class _SettingsRepo:
 @pytest.mark.asyncio
 async def test_start_autopay_setup_falls_back_to_platform_when_flag_on() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -367,7 +379,12 @@ async def test_start_autopay_setup_falls_back_to_platform_when_flag_on() -> None
 @pytest.mark.asyncio
 async def test_start_autopay_setup_still_fails_closed_when_flag_off() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -386,7 +403,12 @@ async def test_start_autopay_setup_still_fails_closed_when_flag_off() -> None:
 @pytest.mark.asyncio
 async def test_start_autopay_setup_fails_closed_when_settings_lookup_errors() -> None:
     connected_accounts = _ConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     gateway = _CheckoutGateway()
     uc = StartSubscriptionCheckout(
@@ -507,6 +529,8 @@ async def test_start_autopay_does_not_reuse_legacy_checkout_when_connect_is_enfo
         )
     )
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)

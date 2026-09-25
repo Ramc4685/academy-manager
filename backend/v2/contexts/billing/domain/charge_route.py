@@ -7,10 +7,16 @@ invoice pay links, balance checkout, off-session autopay) and every
 1. The HOUSE academy (the academy that owns the platform Stripe account,
    BLNO) charges on the platform account. It never uses a connected account.
 2. Any other academy charges through its own connected account, but only once
-   that account is ready for charges (``ConnectedAccount.is_ready_for_charges``).
+   that account is ready for charges (``ConnectedAccount.is_ready_for_charges``)
+   AND Stripe, not the platform, collects its fees and carries its losses
+   (``ConnectedAccount.supports_direct_charges``).
 3. Otherwise the charge is refused: ``no_account`` when the academy never
    onboarded online payments, ``account_not_ready`` when an account exists but
-   cannot take charges yet.
+   cannot take charges yet, ``account_platform_liable`` when the account is (or
+   may be — unknown fails closed) an express account where the platform pays
+   Stripe's fees and carries losses. A direct charge on such an account would
+   make the platform liable for money it never held; the owner reconnects
+   Stripe, which creates a direct-charge account.
 
 Pure domain. The application layer (``application/charge_route.py``) does the
 repository reads and calls :func:`decide_charge_route`.
@@ -34,10 +40,26 @@ ChargeRouteKind = Literal[
     "no_account",
     # Refused: a connected account exists but is not ready for charges.
     "account_not_ready",
+    # Refused: the account's liability model is not Stripe-collected fees and
+    # Stripe-carried losses (legacy express accounts, or unknown).
+    "account_platform_liable",
     # The connected-account store is not wired (test/dev compositions only).
     # Callers keep their historical handling of that wiring state.
     "unconfigured",
 ]
+
+
+#: Owner-facing reason for each refused route (billing health, logs).
+REFUSAL_MESSAGES: dict[str, str] = {
+    "no_account": "No Stripe account is connected, so parents cannot pay online.",
+    "account_not_ready": (
+        "The connected Stripe account cannot take charges yet; finish Stripe onboarding."
+    ),
+    "account_platform_liable": (
+        "Payments are paused until you reconnect Stripe: this account is not set up "
+        "for direct charges (Stripe must collect its fees and carry its losses)."
+    ),
+}
 
 
 class ChargeRoute(BaseModel):
@@ -82,7 +104,12 @@ class ChargeRoute(BaseModel):
     @property
     def refused(self) -> bool:
         """True when the academy must not be charged (no ready account)."""
-        return self.kind in ("no_account", "account_not_ready")
+        return self.kind in ("no_account", "account_not_ready", "account_platform_liable")
+
+    @property
+    def refusal_message(self) -> str | None:
+        """Why this route refuses charges, in owner-facing words; None if not refused."""
+        return REFUSAL_MESSAGES.get(self.kind) if self.refused else None
 
     @property
     def connected_account_id(self) -> str | None:
@@ -134,6 +161,8 @@ def decide_charge_route(
         return ChargeRoute(kind="no_account")
     if not account.is_ready_for_charges():
         return ChargeRoute(kind="account_not_ready")
+    if not account.supports_direct_charges():
+        return ChargeRoute(kind="account_platform_liable")
     return ChargeRoute.connected(
         account.stripe_account_id, application_fee_bps=max(0, int(application_fee_bps))
     )

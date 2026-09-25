@@ -98,6 +98,8 @@ async def _seed_chargeable_invoice(db: Any) -> None:
             "status": "active",
             "capabilities": {},
             "charges_enabled": True,
+            "fees_collector": "stripe",
+            "losses_collector": "stripe",
             "payouts_enabled": True,
             "created_at": NOW,
             "updated_at": NOW,

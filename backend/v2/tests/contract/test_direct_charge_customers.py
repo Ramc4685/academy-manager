@@ -94,6 +94,8 @@ async def _seed_ready_account(db: Any) -> None:
                 status="active",
                 charges_enabled=True,
                 payouts_enabled=True,
+                fees_collector="stripe",
+                losses_collector="stripe",
                 created_at=NOW,
                 updated_at=NOW,
             )
@@ -304,12 +306,15 @@ async def test_customer_record_account_moves_only_with_its_ids(real_db) -> None:
         doc = await customers.get_academy_customer(parent_id=PARENT)
         assert doc is not None and doc["default_payment_method_id"] == "pm_on_acct"
 
-        # A platform customer replaces the record: the account's cards go with it.
-        await customers.set_stripe_customer_id(parent_id=PARENT, stripe_customer_id="cus_plat")
+        # A different CONNECTED account replaces the record: the old
+        # account's cards go with it (a reconnect onto a new account).
+        await customers.set_stripe_customer_id(
+            parent_id=PARENT, stripe_customer_id="cus_other", stripe_account_id="acct_other"
+        )
         doc = await customers.get_academy_customer(parent_id=PARENT)
         assert doc is not None
-        assert doc["stripe_customer_id"] == "cus_plat"
-        assert "stripe_account_id" not in doc
+        assert doc["stripe_customer_id"] == "cus_other"
+        assert doc["stripe_account_id"] == "acct_other"
         for field in (
             "default_payment_method_id",
             "primary_payment_method_id",
@@ -319,11 +324,9 @@ async def test_customer_record_account_moves_only_with_its_ids(real_db) -> None:
         ):
             assert field not in doc, field
         assert await customers.has_saved_card(parent_id=PARENT) is False
-        assert (
-            await customers.get_saved_payment_method(parent_id=PARENT, stripe_account_id=None)
-            is None
-        )
 
+    # The same-account platform rules on a platform-only record.
+    with tenant_scope(HOUSE):
         # Same account again: the customer write keeps an existing card.
         await customers.set_default_payment_method(
             parent_id=PARENT,
@@ -341,6 +344,53 @@ async def test_customer_record_account_moves_only_with_its_ids(real_db) -> None:
         ) == ("cus_plat", "pm_plat")
         doc = await customers.get_academy_customer(parent_id=PARENT)
         assert doc is not None and "stripe_account_id" not in doc
+
+
+async def test_a_platform_write_never_clobbers_a_connected_record(real_db) -> None:
+    """A stale platform write (e.g. a pre-deploy platform checkout completing
+    after the academy moved to direct charges) must not wipe the parent's
+    connected-account card or its account marker: it is logged and skipped."""
+    customers = MongoParentBillingCustomerRepository(real_db)
+    with tenant_scope(ACAD):
+        await customers.set_default_payment_method(
+            parent_id=PARENT,
+            stripe_customer_id="cus_on_acct",
+            stripe_payment_method_id="pm_on_acct",
+            payment_method_type="card",
+            stripe_mandate_id=None,
+            setup_intent_id="seti_on_acct",
+            checkout_session_id="cs_on_acct",
+            completed_at=NOW,
+            payment_method_label="Visa",
+            payment_method_last4="4242",
+            stripe_account_id=ACCT,
+        )
+        await customers.promote_payment_method_to_default(
+            parent_id=PARENT,
+            stripe_payment_method_id="pm_on_acct",
+            payment_method_type="card",
+            stripe_mandate_id=None,
+            stripe_account_id=ACCT,
+        )
+        before = await customers.get_academy_customer(parent_id=PARENT)
+
+        await customers.set_stripe_customer_id(parent_id=PARENT, stripe_customer_id="cus_plat")
+        await customers.set_default_payment_method(
+            parent_id=PARENT,
+            stripe_customer_id="cus_plat",
+            stripe_payment_method_id="pm_plat",
+            payment_method_type="card",
+            stripe_mandate_id=None,
+            setup_intent_id="seti_plat",
+            checkout_session_id="cs_plat",
+            completed_at=NOW,
+        )
+
+        after = await customers.get_academy_customer(parent_id=PARENT)
+        assert after == before
+        assert await customers.get_saved_payment_method(
+            parent_id=PARENT, stripe_account_id=ACCT
+        ) == ("cus_on_acct", "pm_on_acct")
 
 
 async def test_validator_accepts_the_account_and_rejects_a_non_string(real_db) -> None:

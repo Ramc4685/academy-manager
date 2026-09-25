@@ -516,6 +516,8 @@ async def test_charge_routes_payment_intent_through_ready_connected_account() ->
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad-1",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)
@@ -543,7 +545,12 @@ async def test_charge_fails_closed_without_ready_connected_account() -> None:
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
 
     result = await _uc(repo, stripe, connected_accounts=connected_accounts).execute("inv-1")
@@ -1338,7 +1345,12 @@ async def test_platform_fallback_enabled_charges_via_platform_when_account_not_r
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
     settings = FakeBillingSettingsRepo(
         BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=True)
@@ -1360,9 +1372,12 @@ async def test_house_academy_charges_on_platform_even_with_a_ready_connected_acc
     """House academy is ALWAYS a platform charge — a ready account never re-routes it."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
-    ready = ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_ready").with_status(
-        status="active", charges_enabled=True
-    )
+    ready = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id="acad-1",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
     connected_accounts = FakeConnectedAccounts(ready)
     settings = FakeBillingSettingsRepo(
         BillingSettings(
@@ -1386,7 +1401,12 @@ async def test_platform_fallback_disabled_still_declines_when_account_not_ready(
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
     settings = FakeBillingSettingsRepo(
         BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
@@ -1411,7 +1431,12 @@ async def test_platform_fallback_settings_lookup_failure_fails_closed_to_decline
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
 
     result = await _uc(
@@ -1446,9 +1471,12 @@ def _stored_card_on_ready_account() -> FakeSavedCards:
 
 def _ready_accounts() -> FakeConnectedAccounts:
     return FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_ready").with_status(
-            status="active", charges_enabled=True
-        )
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_ready",
+        ).with_status(status="active", charges_enabled=True)
     )
 
 

@@ -61,16 +61,56 @@ capabilities were tracked and rows last written by a `capability.*` event for
 another capability. The `transfers` (v1) / `stripe_transfers` (v2) capability is
 never required.
 
-## Accounts created before this change
+## Accounts created before this change (platform-liable accounts)
 
 Accounts created earlier (express dashboard, `application` fees and losses, and
 `stripe_transfers` requested) keep those responsibilities. Stripe does not allow
-changing them. They still pass readiness. When they are charged directly,
-Stripe bills processing fees to the platform (fees_collector `application`) and
-the platform stays liable for losses. Before charging one of those accounts
-directly, check with read-only calls:
-`stripe accounts retrieve acct_... ` or `GET /v2/core/accounts/acct_...?include=defaults`.
-If one exists, the owner must decide whether to re-onboard it as a new account.
+changing them. A direct charge on one would make the platform pay Stripe's
+fees and carry the account's losses, so **they are never charged directly**.
+
+`ConnectedAccount` persists the liability model Stripe reports:
+`fees_collector`, `losses_collector` and `dashboard` (optional fields on
+`academy_connected_accounts`; no migration). They are written:
+
+- on create, from the Accounts v2 create response
+  (`defaults.responsibilities`, `dashboard`), not from what was requested;
+- on every `account.updated` webhook, from the v1 Account `controller`
+  (`fees.payer = "account"` is stored as `stripe`; any `application*` value is
+  stored as-is; `losses.payments`; `stripe_dashboard.type`). A payload without
+  a `controller` (e.g. `capability.*`) leaves the stored values alone;
+- on reconnect / onboarding resync (`Account.retrieve`), the same way.
+
+`decide_charge_route` refuses a non-house academy with the route
+`account_platform_liable` unless BOTH `fees_collector` and `losses_collector`
+are `stripe`. Missing values (every row written before this change) are
+refused too (fail closed). The house academy is unaffected. Charge paths treat
+it like `account_not_ready` (pay links are not minted and record
+`connected_account_not_ready` with the refusal message; autopay declines with
+`connected_account_not_ready`). Billing Health
+(`/admin/billing/connect-readiness`) shows `payments_blocked_reason`,
+`connected_account.direct_charges_supported` and the three liability fields,
+and its `connect_not_ready` reason reads: "Payments are paused until you
+reconnect Stripe: this account is not set up for direct charges".
+
+### What "reconnect Stripe" does
+
+Starting Stripe onboarding (the owner's connect/reconnect button) on an
+account whose liability is not known to be `stripe`/`stripe` first resyncs it
+from Stripe (`Account.retrieve`, read-only):
+
+- Stripe reports `stripe`/`stripe`: the values are stored and the same account
+  is used.
+- Stripe reports the platform as fee or loss collector: a **new** direct-charge
+  account is created (idempotency key
+  `connect-account:{academy_id}:direct:{old_account_id}`) and replaces the
+  academy's row. The old express account is left untouched on Stripe; events
+  from it no longer resolve to an academy and are quarantined. Legacy
+  destination charges and their refunds were on the platform, so nothing moves.
+- The read fails or reports no liability: the row is kept and stays refused.
+
+Check an academy's account before deploy (read-only):
+`stripe accounts retrieve acct_...` or
+`GET /v2/core/accounts/acct_...?include=defaults`.
 
 `create_connected_account` still uses the idempotency key
 `connect-account:{academy_id}`. If a create call for an academy ran with the old
@@ -107,6 +147,12 @@ house-academy row.
   charged on a connected account, and the reverse is also blocked.
 - `promote_payment_method_to_default` only changes the row stored for the same
   account.
+- A **platform** write (`stripe_account_id=None`: `set_stripe_customer_id` or
+  `set_default_payment_method`) never replaces a row stored on a connected
+  account. It can only be stale (for example a platform checkout minted before
+  deploy completing afterwards) and would drop the parent's connected autopay
+  card, so it is logged (`parent_billing_customer_platform_write_skipped`) and
+  skipped. Rows without an account (house academy) behave exactly as before.
 
 ### Autopay
 
@@ -148,7 +194,12 @@ How an event is attributed (`HandleWebhookEvent._ingest_academy_id`):
      connect_account_metadata_conflict`. Metadata never overrides the account.
    - If no academy owns the account, the event is stored under the boot
      academy and the processing guard quarantines it ("unknown connected
-     account").
+     account"). The guard runs BEFORE the object is read back from Stripe,
+     so no `Stripe-Account` read is ever made for an account the processing
+     academy does not own.
+   - If the owner lookup itself fails (e.g. Mongo unavailable), nothing is
+     stored and the endpoint returns 503
+     (`Billing.WebhookAccountLookupUnavailable`), so Stripe redelivers later.
 2. No `account` (the house academy, and older destination charges):
    `metadata.academy_id`, as before.
 

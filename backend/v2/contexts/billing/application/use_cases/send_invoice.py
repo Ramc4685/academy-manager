@@ -440,7 +440,9 @@ class SendInvoice:
                     connected_account_blocked = True
                     checkout_failure = (
                         CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
-                        "Academy Stripe connected account exists but is not ready for "
+                        route.refusal_message
+                        if route.kind == "account_platform_liable" and route.refusal_message
+                        else "Academy Stripe connected account exists but is not ready for "
                         "charges, and platform-charge fallback is off.",
                     )
         if can_create_checkout and self._stripe is not None and not connected_account_blocked:

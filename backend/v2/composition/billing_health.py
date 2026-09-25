@@ -172,6 +172,11 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             now=datetime.now(UTC),
             unavailable_checks=unavailable,
             open_disputes=int(disputes.get("count") or 0),
+            # Only the platform-liable refusal overrides the verdict's copy:
+            # its fix (reconnect Stripe) differs from "finish onboarding".
+            payments_blocked_reason=(
+                route.refusal_message if route.kind == "account_platform_liable" else None
+            ),
         )
 
         return {
@@ -181,6 +186,12 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
                 "charges_enabled": bool(account and account.charges_enabled),
                 "payouts_enabled": bool(account and account.payouts_enabled),
                 "ready_for_charges": ready,
+                # Direct charges need Stripe to collect fees and carry losses;
+                # a legacy express (platform-liable) account is refused.
+                "direct_charges_supported": bool(account and account.supports_direct_charges()),
+                "fees_collector": account.fees_collector if account else None,
+                "losses_collector": account.losses_collector if account else None,
+                "dashboard": account.dashboard if account else None,
                 # Same masking as GET /admin/academy/gateway — the account id
                 # is a Stripe identifier, not a secret, but there is no reason
                 # for two admin surfaces to disagree about showing it.
@@ -195,6 +206,8 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             # platform account instead of theirs.
             "payments_possible": payments_possible,
             "funds_route_to_academy": route.is_connected,
+            # Why parents cannot pay (None when they can): the route's reason.
+            "payments_blocked_reason": route.refusal_message,
             "webhook_events": stuck,
             "autopay_disable_failures": disable_failures,
             "disputes": disputes,

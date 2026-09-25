@@ -16,14 +16,24 @@ charges on exactly one account at a time — and a write that names a
 DIFFERENT account than the stored one replaces the customer and drops every
 saved payment method of the old account, so a platform customer or card can
 never be charged on a connected account, or the reverse.
+
+One exception: a PLATFORM write (``stripe_account_id=None``) never replaces a
+record stored on a connected account. Such a write can only be stale (e.g. a
+platform checkout minted before the academy moved to direct charges,
+completing afterwards); letting it through would drop the parent's connected
+autopay card. It is logged and skipped. Records with no account (the house
+academy) are unaffected.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.shared.tenancy import TenantScopedRepository
+
+log = logging.getLogger(__name__)
 
 #: Every field that names a saved payment method (or the setup that saved it).
 #: All of them belong to the Stripe account in ``stripe_account_id``; an
@@ -60,6 +70,25 @@ def stored_stripe_account(doc: dict[str, Any] | None) -> str | None:
         return None
     account = doc.get("stripe_account_id")
     return str(account) if account else None
+
+
+def _platform_write_onto_connected(
+    doc: dict[str, Any] | None, stripe_account_id: str | None, *, parent_id: str, op: str
+) -> bool:
+    """True (and logged) when a platform write targets a connected record.
+
+    The caller must skip the write: see the module docstring.
+    """
+    stored = stored_stripe_account(doc)
+    if stripe_account_id is None and stored is not None:
+        log.warning(
+            "parent_billing_customer_platform_write_skipped op=%s parent_id=%s stored_account=%s",
+            op,
+            parent_id,
+            stored,
+        )
+        return True
+    return False
 
 
 def _account_switch_unsets(
@@ -126,6 +155,10 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         one replaces it and drops the old account's saved payment methods."""
         now = datetime.now(UTC)
         doc = await self._find_one({"parent_id": parent_id})
+        if _platform_write_onto_connected(
+            doc, stripe_account_id, parent_id=parent_id, op="set_stripe_customer_id"
+        ):
+            return
         update: dict[str, object] = {
             "parent_id": parent_id,
             "stripe_customer_id": stripe_customer_id,
@@ -165,7 +198,13 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         stripe_account_id: str | None = None,
     ) -> None:
         """``stripe_account_id`` is the account the customer and payment
-        method live on (None = platform)."""
+        method live on (None = platform). A platform write onto a record
+        stored on a connected account is skipped (see the module docstring)."""
+        existing = await self._find_one({"parent_id": parent_id}, session=session)
+        if _platform_write_onto_connected(
+            existing, stripe_account_id, parent_id=parent_id, op="set_default_payment_method"
+        ):
+            return
         now = datetime.now(UTC)
         role = payment_method_role if payment_method_role in {"primary", "fallback"} else "primary"
         method_projection: dict[str, object] = {
@@ -241,7 +280,6 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             unset["current_ach_mandate_version"] = ""
         if stripe_account_id is not None:
             update["stripe_account_id"] = stripe_account_id
-        existing = await self._find_one({"parent_id": parent_id}, session=session)
         for field in _account_switch_unsets(existing, stripe_account_id, keep=set(update)):
             unset.setdefault(field, "")
         mutation: dict[str, object] = {

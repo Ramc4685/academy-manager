@@ -46,6 +46,9 @@ class _StubConnectedAccount:
     def is_ready_for_charges(self) -> bool:
         return self._ready
 
+    def supports_direct_charges(self) -> bool:
+        return True
+
 
 class _FakeConnectedAccounts:
     def __init__(self, account: _StubConnectedAccount | None) -> None:

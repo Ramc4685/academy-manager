@@ -162,6 +162,8 @@ async def _seed_family(db, acad: str, *, parent_id: str = "p-1") -> None:
             "stripe_account_id": "acct_1",
             "status": "active",
             "charges_enabled": True,
+            "fees_collector": "stripe",
+            "losses_collector": "stripe",
             "payouts_enabled": True,
             "details_submitted": True,
             "capabilities": {},

@@ -11,6 +11,8 @@ lesson).
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.connect_onboarding import (
@@ -61,7 +63,7 @@ class _FailingConnectAccountGateway(FakeStripeGateway):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         raise ValueError("Stripe account_create_activation_required: sensitive provider detail")
 
 
@@ -189,7 +191,12 @@ async def test_autopay_setup_checkout_drives_real_connected_account_repo(db, aca
     stripe = FakeStripeGateway()
     repo = MongoConnectedAccountRepository(db)
     await repo.upsert(
-        ConnectedAccount.new(academy_id=acad, stripe_account_id="acct_ready").with_status(
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id=acad,
+            stripe_account_id="acct_ready",
+        ).with_status(
             status="active",
             charges_enabled=True,
         )

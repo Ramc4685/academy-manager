@@ -734,7 +734,7 @@ class RealStripeGateway(StripeGateway):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Create an Accounts v2 connected account via ``POST /v2/core/accounts``.
 
         Configured through Accounts v2 ``configuration`` and
@@ -798,7 +798,12 @@ class RealStripeGateway(StripeGateway):
             account = await asyncio.to_thread(_create)
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe connected account creation failed: {exc}") from exc
-        return str(account["id"])
+        # The whole account, not just its id: the caller persists the
+        # liability model Stripe actually recorded (an idempotent replay can
+        # return an account created with a different request).
+        created = _stripe_object_to_dict(account)
+        created["id"] = str(account["id"])
+        return created
 
     async def create_account_onboarding_link(
         self,

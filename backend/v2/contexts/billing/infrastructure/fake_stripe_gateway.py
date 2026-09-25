@@ -602,7 +602,7 @@ class FakeStripeGateway(StripeGateway):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         account_id = f"acct_fake_{academy_id}_{new_ulid()}"
         self.connected_accounts.append(
             {
@@ -631,7 +631,16 @@ class FakeStripeGateway(StripeGateway):
                 },
             }
         )
-        return account_id
+        # The v2 create response: the id plus the recorded liability model.
+        return {
+            "id": account_id,
+            "object": "v2.core.account",
+            "dashboard": "full",
+            "defaults": {
+                "currency": "usd",
+                "responsibilities": {"fees_collector": "stripe", "losses_collector": "stripe"},
+            },
+        }
 
     async def create_account_onboarding_link(
         self,

@@ -102,6 +102,7 @@ def evaluate_billing_health(
     now: datetime,
     unavailable_checks: Sequence[str] = (),
     open_disputes: int = 0,
+    payments_blocked_reason: str | None = None,
 ) -> HealthVerdict:
     """One verdict for the Billing Health header.
 
@@ -118,10 +119,14 @@ def evaluate_billing_health(
     reasons: list[HealthReason] = []
 
     if not payments_possible:
+        # ``payments_blocked_reason`` is the charge route's own refusal
+        # message (e.g. a platform-liable account that must be reconnected),
+        # so the owner reads the actual cause rather than a generic one.
         reasons.append(
             HealthReason(
                 "connect_not_ready",
-                "No Stripe account is ready to take charges and the platform "
+                payments_blocked_reason
+                or "No Stripe account is ready to take charges and the platform "
                 "fallback is off, so no parent payment can succeed.",
             )
         )

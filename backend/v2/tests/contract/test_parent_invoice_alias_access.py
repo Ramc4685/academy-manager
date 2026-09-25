@@ -313,7 +313,12 @@ def app_origin(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 async def _seed_ready_account(db: Any, academy_id: str) -> None:
-    account = ConnectedAccount.new(academy_id=academy_id, stripe_account_id=f"acct_{academy_id}")
+    account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id=academy_id,
+        stripe_account_id=f"acct_{academy_id}",
+    )
     account = account.with_status(status="active", charges_enabled=True)
     await db["academy_connected_accounts"].insert_one(account.model_dump(mode="python"))
 
