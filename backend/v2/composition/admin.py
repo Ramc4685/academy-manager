@@ -134,7 +134,6 @@ from backend.v2.contexts.billing.application.use_cases.billing_settings_admin im
     GetInvoiceScheduleSettings,
     GetPlatformChargeFallback,
     SetInvoiceScheduleSettings,
-    SetPlatformChargeFallback,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
     ListBillingSetup,
@@ -1078,10 +1077,6 @@ def compose_admin(
     )
     list_payout_audit_entries = ListPayoutAuditEntries(audit=payout_audit_log)
     get_platform_charge_fallback = GetPlatformChargeFallback(settings=billing_settings_repo)
-    set_platform_charge_fallback = SetPlatformChargeFallback(
-        settings=billing_settings_repo,
-        audit=billing_audit_log,
-    )
     get_invoice_schedule = GetInvoiceScheduleSettings(settings=billing_settings_repo)
     set_invoice_schedule = SetInvoiceScheduleSettings(
         settings=billing_settings_repo,
@@ -1863,6 +1858,7 @@ def compose_admin(
             *settings.cors_allowed_origins(),
             *current_tenant_origins(),
         ),
+        house_academy_id=settings.house_academy_id,
     )
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
     # Fail closed (#547): the Connect OAuth callback is unauthenticated, so the
@@ -4148,7 +4144,6 @@ def compose_admin(
         deny_trial_request=deny_trial_request,
         list_self_cancellations_for_admin=list_self_cancellations_for_admin,
         get_platform_charge_fallback=get_platform_charge_fallback,
-        set_platform_charge_fallback=set_platform_charge_fallback,
         get_invoice_schedule=get_invoice_schedule,
         set_invoice_schedule=set_invoice_schedule,
         generate_monthly_payments=generate_monthly_payments,

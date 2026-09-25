@@ -433,10 +433,9 @@ class AdminUseCases:
     deny_trial_request: DenyTrialRequest | None = None
     # Self-cancel audit list (R4, Task 8)
     list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
-    # Platform-charge fallback escape hatch (2026-07-04 incident follow-up):
-    # audited admin toggle for billing_settings.allow_platform_charge_fallback.
+    # Read-only view of billing_settings.allow_platform_charge_fallback, which
+    # is derived from the house-academy setting (no admin toggle).
     get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback
-    set_platform_charge_fallback: object | None = None  # SetPlatformChargeFallback
     # audited admin control for billing_settings.billing_day/invoice_due_days,
     # which drive the automated monthly invoice generation job.
     get_invoice_schedule: object | None = None  # GetInvoiceScheduleSettings

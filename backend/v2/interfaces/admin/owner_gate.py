@@ -61,7 +61,6 @@ GOVERNANCE_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner", "billing"
 OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
         # billing_routes.py — money governance
-        ("PUT", f"{_ADMIN}/billing/settings/platform-fallback"),
         ("PUT", f"{_ADMIN}/billing/settings/invoice-schedule"),
         # billing_rules_routes.py — the merged Settings panel write
         # (GET /billing/rules stays admin).

@@ -25,6 +25,7 @@ from backend.v2.contexts.billing.domain.connected_account import ConnectedAccoun
 from backend.v2.contexts.billing.domain.errors import (
     AcademyMismatchError,
     ConnectOnboardingFailed,
+    HouseAcademyUsesPlatformAccount,
 )
 from backend.v2.shared.security.redirect import validate_redirect_url
 from backend.v2.shared.tenancy import tenant_scope
@@ -48,6 +49,7 @@ class StartConnectOnboarding:
         connected_accounts: ConnectedAccountRepository,
         allowed_redirect_origins: Iterable[str] | Callable[[], Iterable[str]],
         academy_id: str | None = None,
+        house_academy_id: str | None = None,
     ) -> None:
         self._stripe = stripe
         self._connected_accounts = connected_accounts
@@ -61,6 +63,9 @@ class StartConnectOnboarding:
             else tuple(allowed_redirect_origins)
         )
         self._academy_id = academy_id
+        # The house academy charges on the platform account; it never onboards
+        # a connected account (see infrastructure/house_academy.py).
+        self._house_academy_id = house_academy_id
 
     def _current_allowed_origins(self) -> tuple[str, ...]:
         source = self._allowed_redirect_origins
@@ -77,6 +82,11 @@ class StartConnectOnboarding:
     ) -> dict[str, str]:
         if self._academy_id is not None and academy_id != self._academy_id:
             raise AcademyMismatchError("academy_id mismatch for connect onboarding")
+        if self._house_academy_id is not None and academy_id == self._house_academy_id:
+            raise HouseAcademyUsesPlatformAccount(
+                "This academy collects payments on the CourtMastr platform Stripe "
+                "account, so it does not connect a separate Stripe account."
+            )
 
         # Same allowlist as parent checkout redirects: these URLs become browser
         # redirects via Stripe's hosted onboarding, so an unvalidated value is an
