@@ -36,7 +36,10 @@ from backend.v2.contexts.identity.application.use_cases.provision_student_login 
     ProvisionStudentLoginCommand,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
-from backend.v2.interfaces.admin.owner_gate import ensure_can_assign_role
+from backend.v2.interfaces.admin.owner_gate import (
+    ensure_can_assign_role,
+    ensure_can_manage_user,
+)
 from backend.v2.interfaces.admin.views import (
     AdminStudentDetailView,
     AdminStudentList,
@@ -75,6 +78,89 @@ async def _attach_tuition_discounts(data: dict, use_cases: AdminUseCases) -> Non
     """
     discounts_repo = getattr(use_cases, "tuition_discounts", None)
     await attach_tuition_discount_badges(data.get("enrolled_sessions") or [], discounts_repo)
+
+
+async def _record_governance(
+    claims: AuthClaims,
+    use_cases: AdminUseCases,
+    *,
+    action: str,
+    target_id: str,
+    target_roles: tuple[str, ...],
+    reason: str | None = None,
+    detail: dict[str, object] | None = None,
+) -> None:
+    """Best-effort `audit_logs` row for a governance event (X3).
+
+    A failed audit write must never turn a refusal into a 500 or undo a
+    committed change, so it is logged and swallowed.
+    """
+    audit = use_cases.user_governance_audit
+    if audit is None:
+        return
+    try:
+        await audit.record(
+            academy_id=claims.academy_id,
+            actor_id=claims.user_id,
+            actor_roles=claims.roles,
+            action=action,
+            target_id=target_id,
+            target_roles=target_roles,
+            reason=reason,
+            detail=detail,
+        )
+    except Exception:
+        logger.exception("user governance audit failed: %s on %s", action, target_id)
+
+
+async def _guard_user_change(
+    claims: AuthClaims,
+    use_cases: AdminUseCases,
+    user_id: str,
+    *,
+    attempted: str,
+    reason: str | None = None,
+) -> tuple[str, ...]:
+    """Apply the rank rule to `user_id` and return the roles it holds (X3).
+
+    Fails closed: with no user lookup wired the route cannot know whom it is
+    changing, so it refuses (503) instead of treating the target as unranked.
+    A refusal is audited as ``user.change_denied`` with what was attempted.
+    """
+    lookup = use_cases.get_admin_user
+    if lookup is None:
+        raise HTTPException(status_code=503, detail="Admin user detail is not configured")
+    target = await lookup.execute(user_id, academy_id=claims.academy_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Rank on the users doc AND the tenant membership: auth grants from the
+    # membership, and the two can drift (X3 review).
+    target_roles = tuple(
+        dict.fromkeys(
+            (
+                *(getattr(target, "roles", None) or ()),
+                target.role,
+                *(getattr(target, "membership_roles", None) or ()),
+            )
+        )
+    )
+    try:
+        ensure_can_manage_user(claims, user_id, target_roles)
+    except HTTPException:
+        logger.warning(
+            "refused %s on %s by %s (roles %s)", attempted, user_id, claims.user_id, claims.roles
+        )
+        await _record_governance(
+            claims,
+            use_cases,
+            action="user.change_denied",
+            target_id=user_id,
+            target_roles=target_roles,
+            reason=reason,
+            detail={"attempted": attempted},
+        )
+        raise
+    return target_roles
 
 
 AdminRole = Literal["admin", "coach", "assistant_coach", "parent", "owner", "billing", "front_desk"]
@@ -211,6 +297,9 @@ async def add_user_role(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminUserDetailView:
     ensure_can_assign_role(claims, payload.role)
+    await _guard_user_change(
+        claims, use_cases, user_id, attempted=f"role.add:{payload.role}", reason=payload.reason
+    )
     use_case = use_cases.add_user_role
     if use_case is None:
         raise HTTPException(status_code=503, detail="Role management is not configured")
@@ -233,6 +322,9 @@ async def remove_user_role(
     if claims.user_id == user_id and role in ("admin", "owner"):
         raise HTTPException(status_code=409, detail=f"You cannot remove your own {role} role")
     ensure_can_assign_role(claims, role)
+    await _guard_user_change(
+        claims, use_cases, user_id, attempted=f"role.remove:{role}", reason=reason
+    )
     use_case = use_cases.remove_user_role
     if use_case is None:
         raise HTTPException(status_code=503, detail="Role management is not configured")
@@ -261,10 +353,23 @@ async def update_user(
     lock the user out. The use case sends one fresh invite and reports the
     outcome in `login_invite` so the admin sees a failed send instead of
     assuming it worked (issue #436).
+
+    X3: only a caller who outranks the target may edit them (an owner may
+    edit anyone), and nobody may disable their own account.
     """
     use_case = use_cases.update_admin_user
     if use_case is None:
         raise HTTPException(status_code=503, detail="Admin user edit is not configured")
+    if user_id == claims.user_id and payload.status not in (None, "active"):
+        raise HTTPException(status_code=409, detail="You cannot disable your own account")
+    attempted = ",".join(
+        field
+        for field in ("email", "status", "display_name", "phone")
+        if getattr(payload, field) is not None
+    )
+    target_roles = await _guard_user_change(
+        claims, use_cases, user_id, attempted=f"edit:{attempted}", reason=payload.reason
+    )
     result = await use_case.execute(
         user_id,
         UpdateAdminUserCommand(
@@ -273,10 +378,21 @@ async def update_user(
             phone=payload.phone,
             status=payload.status,
             actor_id=claims.user_id,
+            actor_roles=claims.roles,
             reason=payload.reason,
         ),
         academy_id=claims.academy_id,
     )
+    if result.login_invite.status == "sent":
+        await _record_governance(
+            claims,
+            use_cases,
+            action="user.login_invite_sent",
+            target_id=user_id,
+            target_roles=target_roles,
+            reason="email changed",
+            detail={"email": str(result.user.email)},
+        )
     return AdminUserUpdatedView(
         **result.user.model_dump(),
         login_invite=LoginInviteOutcomeView(**result.login_invite.model_dump()),
@@ -302,11 +418,11 @@ async def update_user_role(
     # Replacing a role also revokes every role the target holds today, so an
     # admin-only caller must not be able to demote an owner/admin by setting
     # their role to "parent". Check the held roles, not just the requested one.
-    detail_use_case = use_cases.get_admin_user
-    if detail_use_case is not None:
-        current = await detail_use_case.execute(user_id, academy_id=claims.academy_id)
-        for held in getattr(current, "roles", None) or ():
-            ensure_can_assign_role(claims, held)
+    held_roles = await _guard_user_change(
+        claims, use_cases, user_id, attempted=f"role.replace:{payload.role}", reason=payload.reason
+    )
+    for held in held_roles:
+        ensure_can_assign_role(claims, held)
     user = await use_cases.change_user_role.execute(
         user_id,
         ChangeUserRoleCommand(
@@ -328,6 +444,8 @@ async def send_login_invite(
     use_case = use_cases.send_login_invite
     if use_case is None:
         raise HTTPException(status_code=503, detail="Login invites are not configured")
+    # A set-password link is a password reset: rank-gated like an email edit.
+    target_roles = await _guard_user_change(claims, use_cases, user_id, attempted="login_invite")
     try:
         result = await use_case.execute(user_id, academy_id=claims.academy_id)
     except LoginInviteSendFailed as exc:
@@ -335,6 +453,14 @@ async def send_login_invite(
         raise HTTPException(
             status_code=502, detail=f"Could not send the invite email: {exc}"
         ) from exc
+    await _record_governance(
+        claims,
+        use_cases,
+        action="user.login_invite_sent",
+        target_id=user_id,
+        target_roles=target_roles,
+        reason="admin sent login invite",
+    )
     return LoginInviteResponse(sent_at=result.sent_at)
 
 

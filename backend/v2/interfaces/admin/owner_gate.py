@@ -12,6 +12,10 @@ split from:
 * :func:`ensure_can_assign_role` — the action-level rule inside the (still
   admin-reachable) role-management routes: granting or revoking ``admin`` or
   ``owner`` needs the caller to hold ``owner``.
+* :func:`ensure_can_manage_user` — the rank rule inside every route that
+  changes an existing user (X3, 2026-09-25 audit): profile, email, status,
+  roles and set-password invites. A caller may only change a user they
+  outrank; an owner may change anyone else, including another owner.
 * :func:`ensure_owner_for_withdrawal_credit` — the action-level rule inside
   ``POST /enrollments/{id}/withdraw`` (issue #670): the ``credit`` outcome
   issues an account credit, which was owner-only when it had its own route
@@ -39,6 +43,7 @@ already inside an authorized admin route and the message is the point.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Final
 
 from fastapi import HTTPException
@@ -166,6 +171,54 @@ def ensure_can_assign_role(claims: AuthClaims, role: str) -> None:
         raise HTTPException(
             status_code=403,
             detail="Only the academy owner can grant or revoke admin, owner and staff roles",
+        )
+
+
+def staff_rank(roles: Iterable[str]) -> int:
+    """Rank for user management: owner 2, admin 1, everyone else 0.
+
+    Roles are additive and the highest one wins, so an admin who is also a
+    parent ranks as an admin. ``billing`` and ``front_desk`` rank with
+    coaches and parents: they are granted by the owner (``GOVERNANCE_ROLES``)
+    but hold no user-management power of their own.
+    """
+
+    held = set(roles)
+    if "owner" in held:
+        return 2
+    if "admin" in held:
+        return 1
+    return 0
+
+
+def ensure_can_manage_user(
+    claims: AuthClaims, target_user_id: str, target_roles: Iterable[str]
+) -> None:
+    """Refuse to change a user the caller does not outrank (X3).
+
+    Before this, a plain admin could ``PATCH /users/{id}`` an owner's email,
+    which moved the owner's Firebase login and mailed a set-password link to
+    the new address: an account takeover. The rule, applied to every route
+    that changes an existing user's profile, email, status, roles or sends
+    them a set-password link:
+
+    * an owner may change anyone, including another owner;
+    * anyone else may only change a user of strictly lower rank, so a plain
+      admin cannot touch an owner **or a peer admin** (owner policy: admins
+      do not disable or re-home each other; the owner does);
+    * a caller acting on their own account is not ranked here: the self
+      rules (no self-disable, no self role change) live in the routes.
+
+    403, like :func:`ensure_can_assign_role`: the caller already passed the
+    admin guard and can see the user in the directory, so nothing leaks.
+    """
+
+    if target_user_id == claims.user_id or "owner" in claims.roles:
+        return
+    if staff_rank(target_roles) >= staff_rank(claims.roles):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the academy owner can change an owner's or admin's account",
         )
 
 

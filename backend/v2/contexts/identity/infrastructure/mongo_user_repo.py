@@ -302,6 +302,7 @@ class MongoUserRepository:
         linked_student_count: int,
         session_count: int = 0,
         login_invite_sent_at: datetime | None = None,
+        membership_roles: tuple[str, ...] = (),
     ) -> AdminUserDetail:
         summary = self._to_admin_summary(doc)
         return AdminUserDetail(
@@ -315,6 +316,7 @@ class MongoUserRepository:
             # successful send -- and each re-send mints a new Firebase oobCode
             # that invalidates the link already emailed to the parent.
             login_invite_sent_at=login_invite_sent_at,
+            membership_roles=membership_roles,
         )
 
     @staticmethod
@@ -890,6 +892,9 @@ class MongoUserRepository:
             login_invite_sent_at=cast(
                 "datetime | None", (membership or {}).get("login_invite_sent_at")
             ),
+            membership_roles=tuple(
+                str(role) for role in cast("list[object]", (membership or {}).get("roles") or [])
+            ),
         )
 
     async def record_login_invite(
@@ -1087,6 +1092,9 @@ class MongoUserRepository:
                 changed_keys=changed,
                 before=before,
                 after=doc,
+                metadata={"actor_roles": list(command.actor_roles)}
+                if command.actor_roles
+                else None,
             )
         return await self.get_admin_user(self._to_domain(doc).user_id, academy_id=academy_id)
 
@@ -1697,14 +1705,17 @@ class MongoUserRepository:
         changed_keys: list[str],
         before: dict[str, Any],
         after: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         from backend.v2.shared.ids import new_ulid
 
         def pick(doc: dict[str, Any]) -> dict[str, Any]:
             return {key: doc.get(key) for key in changed_keys}
 
+        extra: dict[str, Any] = {"metadata": metadata} if metadata else {}
         await self._db["audit_logs"].insert_one(
             {
+                **extra,
                 "audit_id": str(new_ulid()),
                 "academy_id": academy_id,
                 "actor_id": actor_id,
