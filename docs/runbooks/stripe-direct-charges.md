@@ -258,7 +258,7 @@ whose `account` contradicts the payment's recorded account is quarantined.
 
 ### Before deploy
 
-- Apply migration 0205 by hand (migrations do not run on boot in prod).
+- Migrations 0204 (parent_billing_customers validator) and 0205 (payment_disputes indexes) run in the deploy pipeline's release command (`python -m backend.v2.migrations`), not on boot. Confirm both are applied before traffic moves.
 - The Connect webhook endpoint must subscribe to `charge.refunded`,
   `charge.dispute.created` and `charge.dispute.closed`, and the platform
   endpoint must subscribe to the two dispute events for the house academy.
