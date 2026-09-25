@@ -371,8 +371,11 @@ test.describe("Coach Today", () => {
     await page.getByTestId("mark-st1-absent").click();
     await expect(page.getByTestId("mark-st1-absent")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("mark-error-st1")).toHaveCount(0);
-    expect(mock.correctionCalls).toEqual([
-      expect.objectContaining({ student_id: "st1", status: "absent" }),
-    ]);
+    // The button reflects the mark before the correction PATCH reaches the
+    // mock, so read the recorded calls with a poll, not once: under CI load on
+    // webkit-mobile a single read still saw an empty list.
+    await expect
+      .poll(() => mock.correctionCalls)
+      .toEqual([expect.objectContaining({ student_id: "st1", status: "absent" })]);
   });
 });
