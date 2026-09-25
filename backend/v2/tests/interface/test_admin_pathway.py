@@ -575,3 +575,22 @@ def test_add_skill_rejects_unknown_scoring_type_with_422_not_500():
 
     assert r.status_code == 422, r.text
     create.execute.assert_not_awaited()
+
+
+def test_real_router_create_program_returns_409_when_one_is_active():
+    from backend.v2.contexts.curriculum.application.errors import ActiveProgramExists
+    from backend.v2.shared.http.errors import register_exception_handlers
+
+    create = SimpleNamespace(
+        execute=AsyncMock(side_effect=ActiveProgramExists("already active", program_id="prog-1"))
+    )
+    app = _build_real_router_app(curriculum=SimpleNamespace(create_program=create))
+    register_exception_handlers(app)
+
+    r = TestClient(app).post(
+        "/api/v2/admin/curriculum/programs",
+        json={"name": "Juniors", "sport": "badminton", "description": ""},
+    )
+
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "Curriculum.ActiveProgramExists"
