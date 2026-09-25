@@ -41,11 +41,15 @@ class AdminBillingRules:
 
 
 class _CancellationPolicyAdapter:
-    """Write the two cancellation fields, carrying the other four through.
+    """Write the two cancellation fields and nothing else.
 
     The Self-service panel owns the wider policy; Billing rules owns the two
     cancellation numbers. Both write the same stored document through
-    ``UpdateSelfServicePolicy``, so there is one value, not two.
+    ``UpdateSelfServicePolicy``, so there is one value, not two. The write is
+    partial: re-sending the other four fields from a read taken moments
+    earlier could put back a value another admin had just saved (money audit
+    X5). ``PUT /admin/self-service/policy`` also routes its cancellation
+    changes through ``UpdateBillingRules``, and so through this adapter.
     """
 
     def __init__(self, *, reader: Any, writer: Any) -> None:
@@ -55,18 +59,13 @@ class _CancellationPolicyAdapter:
     async def execute(
         self,
         *,
-        cancellation_minimum_notice_days: int,
-        cancellation_fee_cents: int,
+        cancellation_minimum_notice_days: int | None = None,
+        cancellation_fee_cents: int | None = None,
     ) -> CancellationPolicyLike:
-        current = await self._reader.execute()
         updated = await self._writer.execute(
             UpdateSelfServicePolicyCommand(
-                absence_notice_min_hours=current.absence_notice_min_hours,
-                makeup_expiry_days=current.makeup_expiry_days,
-                makeup_requires_notice=current.makeup_requires_notice,
                 cancellation_minimum_notice_days=cancellation_minimum_notice_days,
                 cancellation_fee_cents=cancellation_fee_cents,
-                cancellation_effective_timing=current.cancellation_effective_timing,
             )
         )
         return cast(CancellationPolicyLike, updated)

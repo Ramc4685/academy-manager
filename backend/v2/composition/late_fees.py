@@ -29,6 +29,7 @@ from backend.v2.contexts.identity.application.get_academy_fees_use_case import (
     GetAcademyFeesUseCase,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 
 def compose_apply_late_fees(db: Any) -> ApplyLateFees:
@@ -41,4 +42,6 @@ def compose_apply_late_fees(db: Any) -> ApplyLateFees:
         fees=GetAcademyFeesUseCase(MongoAcademyRepository(db)),
         dunning=MongoDunningStateRepository(db),
         audit=MongoBillingAuditLogRepository(db),
+        # Takes the academy id the scheduler passes in; nothing is captured.
+        academy_timezone=academy_timezone_lookup(db),
     )

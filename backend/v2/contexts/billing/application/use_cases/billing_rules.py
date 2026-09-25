@@ -90,6 +90,9 @@ class InvoiceScheduleWriter(Protocol):
 class AcademyFeesLike(Protocol):
     """Read-only view of the two fee fields this panel owns.
 
+    ``late_fee_effective_from`` is read with ``getattr`` by the late-fee pass
+    rather than declared here, so older readers and test doubles still fit.
+
     Declared as properties rather than attributes because the identity use
     cases return a *frozen* dataclass, and a frozen dataclass cannot satisfy a
     protocol whose members are mutable attributes.
@@ -123,16 +126,17 @@ class CancellationPolicyWriter(Protocol):
     """Narrow port over ``UpdateSelfServicePolicy``.
 
     The self-service policy has six fields and lives in the enrollment
-    context; the billing-rules panel owns two of them. The adapter in
-    ``composition/billing_rules.py`` carries the other four through unchanged,
-    so both surfaces keep writing one stored value.
+    context; the billing-rules panel owns two of them. The write is partial:
+    ``None`` leaves that field as stored, and the adapter in
+    ``composition/billing_rules.py`` never touches the other four, so a save
+    here cannot put back a value the Self-service panel just wrote.
     """
 
     async def execute(
         self,
         *,
-        cancellation_minimum_notice_days: int,
-        cancellation_fee_cents: int,
+        cancellation_minimum_notice_days: int | None = None,
+        cancellation_fee_cents: int | None = None,
     ) -> CancellationPolicyLike: ...
 
 
@@ -185,8 +189,14 @@ class BillingRulesView(BaseModel):
         return tuple(row.key for group in self.groups for row in group.rows if row.editable)
 
 
+#: The late-fee pass has run hourly on the dunning tick since #803
+#: (``apply_late_fees.py``). This note used to say "Not applied automatically
+#: yet", which told owners a live money setting was inert (money audit X4).
 LATE_FEE_NOTE: Final[str] = (
-    "Not applied automatically yet — these values are stored for when late fees ship."
+    "Applied automatically. Every hour, each open invoice whose grace period has ended "
+    "gets the late fee once. Autopay invoices still in their retry schedule wait until "
+    "the retries finish. Turning a fee on only affects invoices whose grace period ends "
+    "on or after that day; invoices already overdue are not charged."
 )
 
 
@@ -640,14 +650,10 @@ class UpdateBillingRules:
             if f in changed
         ]
         if policy_fields:
+            # Only the changed field(s); `None` leaves the other as stored.
             await self._cancellation_writer.execute(
-                cancellation_minimum_notice_days=changed.get(
-                    "cancellation_minimum_notice_days",
-                    before["cancellation_minimum_notice_days"],
-                ),
-                cancellation_fee_cents=changed.get(
-                    "cancellation_fee_cents", before["cancellation_fee_cents"]
-                ),
+                cancellation_minimum_notice_days=changed.get("cancellation_minimum_notice_days"),
+                cancellation_fee_cents=changed.get("cancellation_fee_cents"),
             )
             applied.extend(policy_fields)
 

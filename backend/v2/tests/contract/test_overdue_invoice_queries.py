@@ -76,6 +76,34 @@ async def test_list_overdue_invoices_returns_only_collectable_past_due_rows(db, 
 
 
 @pytest.mark.asyncio
+async def test_list_overdue_invoices_honours_the_floor_and_walks_pages(db, acad) -> None:
+    """X8/X18 (money audit 2026-09-25): the floor keeps a newly enabled fee off
+    invoices that were already late, and the cursor lets the pass reach rows
+    behind a page it had to skip."""
+    repo = MongoBillingLedgerRepository(db)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-a", due_date=date(2026, 8, 1))
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-b", due_date=date(2026, 9, 2))
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-c", due_date=date(2026, 9, 2))
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-d", due_date=date(2026, 9, 5))
+
+    with tenant_scope(acad):
+        floored = await repo.list_overdue_invoices(
+            due_before=date(2026, 9, 8), due_on_or_after=date(2026, 9, 2)
+        )
+        first = await repo.list_overdue_invoices(due_before=date(2026, 9, 8), limit=2)
+        second = await repo.list_overdue_invoices(
+            due_before=date(2026, 9, 8),
+            after=(first[-1].due_date, first[-1].invoice_id),
+            limit=2,
+        )
+
+    assert [r.invoice_id for r in floored] == ["inv-b", "inv-c", "inv-d"]
+    assert [r.invoice_id for r in first] == ["inv-a", "inv-b"]
+    # Same due date as the cursor row, higher id: must not be lost.
+    assert [r.invoice_id for r in second] == ["inv-c", "inv-d"]
+
+
+@pytest.mark.asyncio
 async def test_has_active_retry_is_true_only_while_the_ladder_is_running(db, acad) -> None:
     repo = MongoDunningStateRepository(db)
     with tenant_scope(acad):

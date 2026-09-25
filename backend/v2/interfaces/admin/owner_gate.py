@@ -29,6 +29,13 @@ split from:
   Every other void stays owner-only, which is why this route is conditional
   and therefore not in ``OWNER_ONLY_ROUTE_PATHS``.
 
+* :func:`ensure_owner_for_cancellation_terms` — the action-level rule inside
+  ``PUT /self-service/policy`` (money audit X5, 2026-09-25): the late
+  cancellation fee and notice are the same stored values the owner-only
+  ``PUT /billing/rules`` edits, so changing them from Self-service needs
+  ``owner`` too. The route's other fields stay admin work, which is why it is
+  not in ``OWNER_ONLY_ROUTE_PATHS``.
+
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
 and dues; refunds, credits, pricing, payouts/payroll, financial reports,
@@ -216,3 +223,20 @@ def ensure_owner_for_invoice_void(claims: AuthClaims, *, is_unsent_draft: bool) 
 
     if not is_unsent_draft and "owner" not in claims.roles:
         raise HTTPException(status_code=404, detail="Not found")
+
+
+def ensure_owner_for_cancellation_terms(claims: AuthClaims) -> None:
+    """Only an owner may change the late-cancellation fee or notice (money audit X5).
+
+    Called only when the request actually changes one of them, so an admin
+    saving absence settings with the cancellation values untouched is not
+    refused. 403, not 404, like :func:`ensure_can_assign_role`: the caller is
+    already inside an admin route that shows these fields, and the message is
+    what the Settings page needs to show.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the academy owner can change the cancellation fee and notice",
+        )

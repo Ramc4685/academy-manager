@@ -276,7 +276,12 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         return [self._invoice_from_doc(doc) async for doc in cursor]
 
     async def list_overdue_invoices(
-        self, *, due_before: date, limit: int = 200
+        self,
+        *,
+        due_before: date,
+        due_on_or_after: date | None = None,
+        after: tuple[date, str] | None = None,
+        limit: int = 200,
     ) -> list[LedgerInvoice]:
         """Collectable invoices whose due date is strictly before ``due_before``.
 
@@ -286,17 +291,28 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         boundary is compared as one too rather than as a ``date``, which BSON
         cannot order against a stored datetime.
 
-        Oldest-first so an academy holding more overdue invoices than ``limit``
-        drains deterministically across ticks instead of starving the tail.
+        Oldest-first, one page per call. The pass skips rows that already
+        carry a fee only after fetching them, so it walks pages with ``after``
+        (the last row's ``(due_date, invoice_id)``). Without the cursor every
+        tick re-read the same oldest page and newer invoices starved.
         """
-        cutoff = datetime.combine(due_before, time.min, tzinfo=UTC)
+        due_date_filter: dict[str, Any] = {"$lt": _utc_midnight(due_before)}
+        if due_on_or_after is not None:
+            due_date_filter["$gte"] = _utc_midnight(due_on_or_after)
+        query: dict[str, Any] = {
+            "academy_id": current_academy_id(),
+            "status": {"$in": ["open", "partially_paid"]},
+            "balance_due_cents": {"$gt": 0},
+            "due_date": due_date_filter,
+        }
+        if after is not None:
+            after_due = _utc_midnight(after[0])
+            query["$or"] = [
+                {"due_date": {"$gt": after_due}},
+                {"due_date": after_due, "invoice_id": {"$gt": after[1]}},
+            ]
         cursor = self.collection.find(
-            {
-                "academy_id": current_academy_id(),
-                "status": {"$in": ["open", "partially_paid"]},
-                "balance_due_cents": {"$gt": 0},
-                "due_date": {"$lt": cutoff},
-            },
+            query,
             sort=[("due_date", 1), ("invoice_id", 1)],
             limit=limit,
         )
@@ -1874,3 +1890,8 @@ def _sort_instant(value: datetime | None) -> datetime:
     if value is None:
         return datetime.min.replace(tzinfo=UTC)
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _utc_midnight(day: date) -> datetime:
+    """A calendar date as the UTC-midnight datetime ``due_date`` is stored as."""
+    return datetime.combine(day, time.min, tzinfo=UTC)

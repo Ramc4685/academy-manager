@@ -3299,7 +3299,12 @@ export interface SelfServicePolicyView {
   cancellation_effective_timing: "immediate" | "end_of_period";
 }
 
-export type UpdateSelfServicePolicyRequest = SelfServicePolicyView;
+/**
+ * Only the fields that changed. The cancellation fee and notice are shared
+ * with Billing rules, and re-sending a stale copy of them reverted the
+ * owner's edit (money audit X5); changing them is owner-only and audited.
+ */
+export type UpdateSelfServicePolicyRequest = Partial<SelfServicePolicyView>;
 
 export interface AbsenceNoticeAdminRow {
   notice_id: string;

@@ -159,6 +159,8 @@ export function diffForm(
       // reminders at all, which is how an academy turns them off (#774).
       const days = inputToDays(raw);
       const stored = row.values ?? [];
+      // Untouched is never an error, even if the stored list is out of bounds.
+      if (days !== null && sameDays(days, stored)) continue;
       if (
         days === null ||
         days.some(
@@ -183,6 +185,10 @@ export function diffForm(
       errors[row.key] = boundsMessage(row, money);
       continue;
     }
+    // An untouched row is not an edit. Checking its bounds anyway locked the
+    // whole page whenever another route had stored a value outside them
+    // (money audit X16): every row failed and Save stayed disabled.
+    if (parsed === row.value) continue;
     if (
       (row.min_value !== null && parsed < row.min_value) ||
       (row.max_value !== null && parsed > row.max_value)
@@ -210,4 +216,20 @@ export function saveSummary(diff: BillingRulesDiff): string {
   if (diff.changedLabels.length === 1) return `Save ${diff.changedLabels[0]}`;
   const head = diff.changedLabels.slice(0, -1).join(", ");
   return `Save ${head} and ${diff.changedLabels[diff.changedLabels.length - 1]}`;
+}
+
+/**
+ * True when this save switches the late fee on: stored unset or $0, saved as
+ * more than $0. The hourly late-fee pass starts charging from that day, so
+ * the panel asks the owner to acknowledge what that means before Save is
+ * enabled (money audit X4).
+ */
+export function turnsLateFeeOn(
+  view: BillingRulesView | null | undefined,
+  diff: BillingRulesDiff,
+): boolean {
+  const next = diff.payload.late_fee_cents;
+  if (typeof next !== "number" || next <= 0) return false;
+  const stored = editableRows(view).find((row) => row.key === "late_fee_cents")?.value ?? 0;
+  return stored <= 0;
 }

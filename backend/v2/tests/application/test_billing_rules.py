@@ -103,19 +103,30 @@ class _FakeFees:
 class _FakePolicy:
     def __init__(self, notice_days: int = 14, fee_cents: int = 0) -> None:
         self.current = _Policy(notice_days, fee_cents)
-        self.writes: list[tuple[int, int]] = []
+        self.writes: list[tuple[int | None, int | None]] = []
         self.fail = False
 
     async def read(self) -> _Policy:
         return self.current
 
     async def write(
-        self, *, cancellation_minimum_notice_days: int, cancellation_fee_cents: int
+        self,
+        *,
+        cancellation_minimum_notice_days: int | None = None,
+        cancellation_fee_cents: int | None = None,
     ) -> _Policy:
+        """Partial, like the real adapter: ``None`` leaves the stored value."""
         if self.fail:
             raise RuntimeError("policy store down")
         self.writes.append((cancellation_minimum_notice_days, cancellation_fee_cents))
-        self.current = _Policy(cancellation_minimum_notice_days, cancellation_fee_cents)
+        self.current = _Policy(
+            self.current.cancellation_minimum_notice_days
+            if cancellation_minimum_notice_days is None
+            else cancellation_minimum_notice_days,
+            self.current.cancellation_fee_cents
+            if cancellation_fee_cents is None
+            else cancellation_fee_cents,
+        )
         return self.current
 
 
@@ -216,11 +227,16 @@ async def test_fixed_rows_are_not_editable_and_state_a_value() -> None:
 
 
 @pytest.mark.asyncio
-async def test_late_payments_box_carries_the_not_applied_note() -> None:
+async def test_late_payments_box_says_the_fee_is_applied_automatically() -> None:
+    """Money audit X4: the note said "Not applied automatically yet" while the
+    hourly pass (#803) was charging the fee. The note must describe the pass,
+    including that turning the fee on does not back-charge."""
     view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy()).execute("acad-1")
     late = next(group for group in view.groups if group.key == "late_payments")
     assert late.note == LATE_FEE_NOTE
-    assert "Not applied automatically yet" in LATE_FEE_NOTE
+    assert "Not applied" not in LATE_FEE_NOTE
+    assert LATE_FEE_NOTE.startswith("Applied automatically.")
+    assert "already overdue are not charged" in LATE_FEE_NOTE
 
 
 @pytest.mark.asyncio
@@ -303,13 +319,16 @@ async def test_schedule_write_carries_the_unchanged_half_through() -> None:
 
 
 @pytest.mark.asyncio
-async def test_policy_write_carries_the_unchanged_half_through() -> None:
+async def test_policy_write_sends_only_the_changed_field() -> None:
+    """Money audit X5: re-sending the unchanged half from an earlier read could
+    put back a value another panel had just saved."""
     policy = _FakePolicy(14, 500)
     await _update(_FakeSchedule(), _FakeFees(), policy).execute(
         "acad-1",
         UpdateBillingRulesCommand(cancellation_fee_cents=900, actor_id="user-1"),
     )
-    assert policy.writes == [(14, 900)]
+    assert policy.writes == [(None, 900)]
+    assert policy.current == _Policy(14, 900)
 
 
 @pytest.mark.asyncio

@@ -63,7 +63,7 @@ export function billingRulesFixture(
       {
         key: "late_payments",
         title: "Late payments",
-        note: "Not applied automatically yet — these values are stored for when late fees ship.",
+        note: "Applied automatically. Every hour, each open invoice whose grace period has ended gets the late fee once.",
         rows: [
           editable("grace_days", "Grace days after due", 5, "days", 0, 60),
           editable("late_fee_cents", "Late fee", 1500, "cents", 0, 100000),

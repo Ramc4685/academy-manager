@@ -783,13 +783,22 @@ class LedgerRepository(Protocol):
         self, period: str, *, limit: int = 100
     ) -> list[LedgerInvoice]: ...
     async def list_overdue_invoices(
-        self, *, due_before: date, limit: int = 200
+        self,
+        *,
+        due_before: date,
+        due_on_or_after: date | None = None,
+        after: tuple[date, str] | None = None,
+        limit: int = 200,
     ) -> list[LedgerInvoice]:
         """Collectable invoices whose due date is strictly before ``due_before``.
 
         Drives the automated late-fee pass (issue #552). ``due_before`` is
         exclusive so the caller can express "the grace period has fully
         elapsed" as ``today - grace_days`` without an off-by-one.
+        ``due_on_or_after`` is the inclusive floor for "only invoices that
+        became late after the fee was switched on". ``after`` is a keyset
+        cursor, the ``(due_date, invoice_id)`` of the last row of the previous
+        page, so a caller can walk past rows it has to skip.
         """
         ...
 

@@ -75,9 +75,19 @@ class _Stores:
         return self.policy
 
     async def write_policy(
-        self, *, cancellation_minimum_notice_days: int, cancellation_fee_cents: int
+        self,
+        *,
+        cancellation_minimum_notice_days: int | None = None,
+        cancellation_fee_cents: int | None = None,
     ) -> _Policy:
-        self.policy = _Policy(cancellation_minimum_notice_days, cancellation_fee_cents)
+        self.policy = _Policy(
+            self.policy.cancellation_minimum_notice_days
+            if cancellation_minimum_notice_days is None
+            else cancellation_minimum_notice_days,
+            self.policy.cancellation_fee_cents
+            if cancellation_fee_cents is None
+            else cancellation_fee_cents,
+        )
         return self.policy
 
     async def append(self, entry: Any) -> None:
