@@ -19,6 +19,12 @@ InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
 #: ``InvoiceLine.source_type`` of a recurring tuition discount line (#244). The
 #: monthly generator also mirrors that amount in the header's ``discount_cents``.
 TUITION_DISCOUNT_SOURCE_TYPE = "tuition_discount"
+
+#: ``InvoiceLine.source_type`` of account credit spent on an invoice (a negative
+#: line). Credit settles part of the charge rather than repricing it, so
+#: ``recompute_totals`` keeps it out of the subtotal and takes it off the total,
+#: the same place ``discount_cents`` comes off.
+ACCOUNT_CREDIT_SOURCE_TYPE = "account_credit"
 LedgerPaymentStatus = Literal[
     "pending", "succeeded", "failed", "refunded", "partially_refunded", "voided"
 ]
@@ -373,6 +379,11 @@ def recompute_totals(
     ``discount_cents`` NOT carried by a ``tuition_discount`` line is subtracted
     again. The mirrored part is added back to the subtotal, which keeps the
     generator's gross-subtotal shape intact across a recompute.
+
+    An ``account_credit`` line is not a charge, so it stays out of the subtotal
+    and comes off the total. That keeps the monthly generator's header shape
+    (subtotal = gross charges, total net of discount AND credit) across a
+    recompute, instead of billing the already-spent credit a second time.
     """
     discount_line_cents = sum(
         -line.amount_cents
@@ -380,8 +391,13 @@ def recompute_totals(
         if line.source_type == TUITION_DISCOUNT_SOURCE_TYPE and line.amount_cents < 0
     )
     mirrored_cents = min(max(invoice.discount_cents, 0), discount_line_cents)
-    subtotal = sum(line.amount_cents for line in lines) + mirrored_cents
-    total = max(0, subtotal - invoice.discount_cents)
+    credit_cents = sum(
+        -line.amount_cents
+        for line in lines
+        if line.source_type == ACCOUNT_CREDIT_SOURCE_TYPE and line.amount_cents < 0
+    )
+    subtotal = sum(line.amount_cents for line in lines) + mirrored_cents + credit_cents
+    total = max(0, subtotal - invoice.discount_cents - credit_cents)
     if allocated_cents is None:
         allocated = invoice.total_cents - invoice.balance_due_cents  # already-allocated amount
     else:

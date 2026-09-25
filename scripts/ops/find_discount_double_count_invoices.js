@@ -94,6 +94,17 @@ const rows = db.invoices
     },
     {
       $addFields: {
+        // Since #971 applied credit is an `account_credit` line, already in
+        // line_sum_cents; only an older header-only credit is subtracted here.
+        credit_line_cents: {
+          $sum: {
+            $map: {
+              input: "$lines",
+              as: "l",
+              in: { $cond: [{ $eq: ["$$l.source_type", "account_credit"] }, 1, 0] },
+            },
+          },
+        },
         credit_applied_cents: { $ifNull: [{ $first: "$credit.cents" }, 0] },
         allocated_cents: { $ifNull: [{ $first: "$alloc.cents" }, 0] },
         // Discount counted once: every line, minus only the header discount no
@@ -126,7 +137,17 @@ const rows = db.invoices
       $addFields: {
         // What the family should owe in total, net of the account credit the
         // generator applied (credit is on no line; the buggy recompute dropped it too).
-        correct_total_cents: { $max: [0, { $subtract: ["$correct_total_before_credit_cents", "$credit_applied_cents"] }] },
+        correct_total_cents: {
+          $max: [
+            0,
+            {
+              $subtract: [
+                "$correct_total_before_credit_cents",
+                { $cond: [{ $gt: ["$credit_line_cents", 0] }, 0, "$credit_applied_cents"] },
+              ],
+            },
+          ],
+        },
       },
     },
     { $addFields: { under_charged_cents: { $subtract: ["$correct_total_cents", "$total_cents"] } } },

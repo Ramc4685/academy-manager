@@ -510,6 +510,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_audit_actors import Mongo
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_user_governance_audit import (
+    MongoUserGovernanceAudit,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     ManageAdminWaiverTemplates,
@@ -4252,6 +4255,7 @@ def compose_admin(
         provision_parent_login=provision_parent_login,
         provision_student_login=provision_student_login,
         send_login_invite=send_login_invite,
+        user_governance_audit=MongoUserGovernanceAudit(db),
         add_user_role=add_user_role,
         remove_user_role=remove_user_role,
         get_admin_student=get_admin_student,

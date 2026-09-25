@@ -469,3 +469,17 @@ def test_allocate_raises_when_payment_has_no_unapplied_money() -> None:
             allocation_id="alloc-5",
             now=NOW,
         )
+
+
+def test_recompute_totals_generator_shape_with_discount_and_credit_lines() -> None:
+    """#973 + #971 together: discount mirrored once, credit off the total once."""
+    credit = _line(-3_000, line_id="credit").model_copy(
+        update={"line_type": "credit", "source_type": "account_credit"}
+    )
+    lines = [_line(10_000), _tuition_discount_line(), credit, _line(1_500, line_id="late-fee")]
+    inv = _generator_shape(total_cents=5_000, balance_due_cents=5_000)
+    result = recompute_totals(inv, lines)
+    assert result.subtotal_cents == 11_500
+    assert result.total_cents == 6_500  # 100 + 15 - 20 discount - 30 credit
+    assert result.balance_due_cents == 6_500
+    assert recompute_totals(result, lines) == result

@@ -2080,7 +2080,7 @@ def admin_seed():
 class _FakeLoginInviteSender:
     def __init__(self) -> None:
         self.sent: list[str] = []
-        self.known = {"coach-1", "u-admin", "p-1"}
+        self.known = {"coach-1", "u-admin", "p-1", "o-1", "a-2"}
 
     async def execute(self, user_id, *, academy_id):
         from datetime import UTC, datetime
@@ -2592,6 +2592,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                 "u-admin": ["admin"],
                 # An owner other than the caller, for demotion-rule tests.
                 "o-1": ["owner", "admin"],
+                # A plain admin other than the caller, for the X3 rank rule.
+                "a-2": ["admin"],
+                # The PATCH /users fake's parents: the route reads a target's
+                # held roles through this lookup before editing (X3).
+                "p-1": ["parent"],
+                "p-2": ["parent"],
             }
 
         async def execute(self, user_id: str, *, academy_id: str) -> AdminUserDetail:
@@ -2675,7 +2681,24 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     status="active",
                     roles=("parent",),
                 ),
+                "o-1": AdminUserDetail(
+                    user_id="o-1",
+                    email="o-1@example.com",
+                    display_name="Other Owner",
+                    role="owner",
+                    status="active",
+                    roles=("owner", "admin"),
+                ),
+                "a-2": AdminUserDetail(
+                    user_id="a-2",
+                    email="a-2@example.com",
+                    display_name="Peer Admin",
+                    role="admin",
+                    status="active",
+                    roles=("admin",),
+                ),
             }
+            self.commands: list[object] = []
 
         async def get_admin_user(self, user_id, *, academy_id):
             _ = academy_id
@@ -2683,6 +2706,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
         async def update_admin_user(self, user_id, command, *, academy_id):
             _ = academy_id
+            self.commands.append(command)
             user = self.users.get(user_id)
             if user is None:
                 return None
@@ -2698,6 +2722,13 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
     _admin_user_editor = _FakeAdminUserEditor()
 
+    class _FakeGovernanceAudit:
+        def __init__(self) -> None:
+            self.rows: list[dict[str, object]] = []
+
+        async def record(self, **row):
+            self.rows.append(row)
+
     cancel_session_occurrence = CancelSessionOccurrence(
         occurrences=occurrences,
         sessions=sessions,
@@ -2710,6 +2741,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
         send_login_invite=_login_invite_sender,  # type: ignore[arg-type]
+        user_governance_audit=_FakeGovernanceAudit(),
         update_admin_user=UpdateAdminUser(
             _admin_user_editor,  # type: ignore[arg-type]
             reader=_admin_user_editor,  # type: ignore[arg-type]

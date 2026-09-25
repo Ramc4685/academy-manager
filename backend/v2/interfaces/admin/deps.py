@@ -155,6 +155,7 @@ from backend.v2.contexts.identity.application.get_academy_notifications_use_case
     GetAcademyNotificationsUseCase,
 )
 from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+from backend.v2.contexts.identity.application.ports import UserGovernanceAudit
 from backend.v2.contexts.identity.application.update_academy_fees_use_case import (
     UpdateAcademyFeesUseCase,
 )
@@ -296,6 +297,8 @@ class AdminUseCases:
     provision_parent_login: ProvisionParentLogin | None = None
     provision_student_login: ProvisionStudentLogin | None = None
     send_login_invite: SendLoginInvite | None = None
+    # X3: refused user changes and set-password sends (`audit_logs`).
+    user_governance_audit: UserGovernanceAudit | None = None
     add_user_role: AddUserRole | None = None
     remove_user_role: RemoveUserRole | None = None
     get_admin_student: GetAdminStudent | None = None

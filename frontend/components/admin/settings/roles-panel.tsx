@@ -12,9 +12,9 @@ import {
   type AdminUserView,
 } from "@/lib/api/admin";
 import { roleLabel } from "@/lib/admin/role-label";
-import { assignableRoles } from "@/lib/auth/assignable-roles";
+import { assignableRoles, canManageUser } from "@/lib/auth/assignable-roles";
 import { queryKeys } from "@/lib/query/keys";
-import { useIsOwner } from "@/components/admin/owner-context";
+import { OwnerOnlyHint, useIsOwner } from "@/components/admin/owner-context";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -102,6 +102,8 @@ function RoleRow({
   onToggleEdit: () => void;
   onSaved: () => void;
 }) {
+  // X3: only the owner changes an owner's or admin's roles (the BFF 403s).
+  const canManage = canManageUser(useIsOwner(), user.roles?.length ? user.roles : [user.role]);
   return (
     <>
       <tr className="border-b border-rally-line last:border-0">
@@ -118,12 +120,16 @@ function RoleRow({
           <Chip variant={roleVariant(user.role)} label={roleLabel(user.role).toUpperCase()} />
         </td>
         <td className="px-2 py-3">
-          <Button size="sm" variant="ghost" onClick={onToggleEdit}>
-            {editing ? "Cancel" : "Edit roles"}
-          </Button>
+          {canManage ? (
+            <Button size="sm" variant="ghost" onClick={onToggleEdit}>
+              {editing ? "Cancel" : "Edit roles"}
+            </Button>
+          ) : (
+            <OwnerOnlyHint />
+          )}
         </td>
       </tr>
-      {editing && (
+      {editing && canManage && (
         <tr className="border-b border-rally-line last:border-0">
           <td colSpan={3} className="bg-rally-paper px-2 py-4">
             <RoleEditor user={user} onSaved={onSaved} />

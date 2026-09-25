@@ -46,6 +46,7 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
 )
 from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
 from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_hold
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
@@ -160,6 +161,8 @@ class AccountAcademyResolver(Protocol):
 
     async def academy_id_for_account(self, stripe_account_id: str) -> str | None: ...
 
+    async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None: ...
+
     async def update_status(
         self,
         *,
@@ -168,7 +171,8 @@ class AccountAcademyResolver(Protocol):
         charges_enabled: bool | None,
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
-    ) -> None: ...
+        skip_if_disconnected: bool = False,
+    ) -> bool: ...
 
 
 class HandleWebhookEvent:
@@ -817,13 +821,24 @@ class HandleWebhookEvent:
         if str(obj.get("disabled_reason") or ""):
             status = "disabled"
 
-        await self._connected_accounts.update_status(
+        # An owner disconnect is local: Stripe keeps the account and keeps
+        # emitting account.updated for it. Until an explicit reconnect, those
+        # events must not flip it back to active (the write is conditional on
+        # the row not being disconnected, atomically).
+        applied = await self._connected_accounts.update_status(
             stripe_account_id=stripe_account_id,
             status=status,
             charges_enabled=charges_enabled,
             payouts_enabled=payouts_enabled,
             capabilities=capabilities,
+            skip_if_disconnected=True,
         )
+        if applied is False:
+            log.info(
+                "connect_account_status_ignored_disconnected account=%s type=%s",
+                stripe_account_id,
+                event_type,
+            )
 
     async def _handle_autopay_setup_checkout_completed(self, event: dict[str, Any]) -> None:
         if self._complete_autopay_setup is None:

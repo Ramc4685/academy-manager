@@ -35,6 +35,10 @@ class AdminUserDetail(AdminUserSummary):
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None
+    # Roles on the tenant's `academy_memberships` row, which is what auth
+    # grants from. `roles` above mirrors the `users` doc and can drift (0165
+    # skips the mirror in some cases), so rank checks use both (X3).
+    membership_roles: tuple[str, ...] = ()
 
 
 class CreateAdminUserCommand(BaseModel):
@@ -56,6 +60,11 @@ class UpdateAdminUserCommand(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     status: str | None = Field(default=None, max_length=32)
     actor_id: str = Field(min_length=1)
+    # The caller's academy roles at the time of the edit, stamped on the
+    # `user.edited` audit row so "who changed an owner's email" can be
+    # answered without joining today's memberships (X3). Empty for the
+    # coach/parent self-service paths.
+    actor_roles: tuple[str, ...] = ()
     reason: str = Field(min_length=1, max_length=500)
 
 
