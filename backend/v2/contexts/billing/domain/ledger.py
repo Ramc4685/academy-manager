@@ -15,6 +15,10 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 
 InvoiceStatus = Literal["draft", "open", "partially_paid", "paid", "void"]
+
+#: ``InvoiceLine.source_type`` of a recurring tuition discount line (#244). The
+#: monthly generator also mirrors that amount in the header's ``discount_cents``.
+TUITION_DISCOUNT_SOURCE_TYPE = "tuition_discount"
 LedgerPaymentStatus = Literal[
     "pending", "succeeded", "failed", "refunded", "partially_refunded", "voided"
 ]
@@ -356,8 +360,27 @@ def recompute_totals(
     When omitted, it falls back to inferring ``total_cents - balance_due_cents`` from the
     passed invoice (only safe under a single writer; persistence guards concurrency via the
     invoice ``version`` token).
+
+    The discount comes off exactly once. Two header shapes are live:
+
+    * the monthly generator's — a GROSS tuition line, a negative
+      ``tuition_discount`` line, and the same amount MIRRORED in
+      ``discount_cents`` (``subtotal_cents`` gross);
+    * every other writer's — ``discount_cents`` 0 with any discount carried by
+      lines, or a header-only ``discount_cents`` with no discount line.
+
+    Summing the lines already takes a discount line off, so only the part of
+    ``discount_cents`` NOT carried by a ``tuition_discount`` line is subtracted
+    again. The mirrored part is added back to the subtotal, which keeps the
+    generator's gross-subtotal shape intact across a recompute.
     """
-    subtotal = sum(line.amount_cents for line in lines)
+    discount_line_cents = sum(
+        -line.amount_cents
+        for line in lines
+        if line.source_type == TUITION_DISCOUNT_SOURCE_TYPE and line.amount_cents < 0
+    )
+    mirrored_cents = min(max(invoice.discount_cents, 0), discount_line_cents)
+    subtotal = sum(line.amount_cents for line in lines) + mirrored_cents
     total = max(0, subtotal - invoice.discount_cents)
     if allocated_cents is None:
         allocated = invoice.total_cents - invoice.balance_due_cents  # already-allocated amount

@@ -101,6 +101,77 @@ def test_recompute_totals_applies_discount() -> None:
     assert result.total_cents == 9_000
 
 
+def _tuition_discount_line(amount_cents: int = -2_000) -> InvoiceLine:
+    return _line(amount_cents, line_id="line-discount").model_copy(
+        update={"line_type": "discount", "source_type": "tuition_discount"}
+    )
+
+
+def _generator_shape(**overrides) -> LedgerInvoice:
+    """The monthly generator's header: gross subtotal, discount mirrored."""
+    fields = {
+        "subtotal_cents": 10_000,
+        "discount_cents": 2_000,
+        "total_cents": 8_000,
+        "balance_due_cents": 8_000,
+    }
+    return _invoice(**{**fields, **overrides})
+
+
+def test_recompute_totals_generator_shape_takes_the_discount_off_once() -> None:
+    lines = [_line(10_000), _tuition_discount_line(), _line(1_500, line_id="late-fee")]
+    result = recompute_totals(_generator_shape(), lines)
+    assert result.total_cents == 9_500
+    assert result.balance_due_cents == 9_500
+    # Header shape preserved: gross subtotal, discount still mirrored.
+    assert result.subtotal_cents == 11_500
+    assert result.discount_cents == 2_000
+
+
+def test_recompute_totals_generator_shape_is_a_fixed_point() -> None:
+    lines = [_line(10_000), _tuition_discount_line()]
+    once = recompute_totals(_generator_shape(), lines)
+    twice = recompute_totals(once, lines)
+    assert (once.subtotal_cents, once.total_cents, once.balance_due_cents) == (
+        10_000,
+        8_000,
+        8_000,
+    )
+    assert twice == once
+
+
+def test_recompute_totals_net_shape_is_unchanged() -> None:
+    """Hand-billed shape: discount carried by the line alone, header discount 0."""
+    inv = _invoice(subtotal_cents=8_000, total_cents=8_000, balance_due_cents=8_000)
+    result = recompute_totals(inv, [_line(10_000), _tuition_discount_line()])
+    assert (result.subtotal_cents, result.discount_cents, result.total_cents) == (8_000, 0, 8_000)
+
+
+def test_recompute_totals_header_only_discount_still_applies() -> None:
+    """A header discount with no discount line behind it is still subtracted."""
+    result = recompute_totals(_generator_shape(), [_line(10_000)])
+    assert result.total_cents == 8_000
+
+
+def test_recompute_totals_other_negative_lines_do_not_absorb_the_header_discount() -> None:
+    """An ACH or credit line is not the tuition discount; the header's still applies."""
+    ach = _line(-250, line_id="ach").model_copy(
+        update={"line_type": "ach_discount", "source_type": "autopay_cash_discount"}
+    )
+    result = recompute_totals(_generator_shape(), [_line(10_000), ach])
+    assert result.total_cents == 7_750
+
+
+def test_recompute_totals_heals_a_header_the_double_count_already_wrote() -> None:
+    """A header an earlier recompute left at net - discount is restored to net,
+    and the balance grows by exactly the under-charge, keeping what was paid."""
+    corrupted = _generator_shape(subtotal_cents=8_000, total_cents=6_000, balance_due_cents=1_000)
+    result = recompute_totals(corrupted, [_line(10_000), _tuition_discount_line()])
+    assert result.total_cents == 8_000
+    assert result.balance_due_cents == 3_000  # 5_000 was paid
+    assert result.status == "partially_paid"
+
+
 def test_recompute_totals_preserves_allocated_amount() -> None:
     # Invoice already has 4000 allocated (total=10000, balance=6000)
     inv = _invoice(total_cents=10_000, balance_due_cents=6_000)

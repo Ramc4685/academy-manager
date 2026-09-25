@@ -604,7 +604,7 @@ class MongoMonthlyBillingGenerator:
 
         ``create_invoice`` never updates an existing header, and when it back-fills a
         missing line it recomputes totals from the lines alone - which knows nothing
-        about applied credit and double-subtracts a discount line. Recovery repairs a
+        about applied credit (the credit is on no line). Recovery repairs a
         header that predates it, so it restates the header itself. Only the header is
         touched, and only when the lines already match what we expect; a conflicting
         line is left for the caller to report as a failed repair. Allocations already
@@ -657,9 +657,11 @@ class MongoMonthlyBillingGenerator:
 
         * the generator's own shape - ``subtotal_cents`` GROSS with the tuition
           discount mirrored in ``discount_cents`` alongside its discount line;
-        * the ledger's shape (``recompute_totals``, used by every hand-billed
-          invoice) - ``subtotal_cents`` NET of the negative discount line, with
+        * every other writer's shape (e.g. ``BillEnrollmentPeriod``) -
+          ``subtotal_cents`` NET of the negative discount line, with
           ``discount_cents`` left at 0.
+
+        ``recompute_totals`` keeps whichever of the two it is given.
 
         A line-less invoice is consistent only when every header amount is 0: that is
         the blank draft ``create_student_invoice`` opens for an admin to fill in.

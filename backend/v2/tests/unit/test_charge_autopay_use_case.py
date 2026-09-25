@@ -1450,3 +1450,102 @@ async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
     assert call["connected_account_id"] is None
     assert call["application_fee_cents"] == 0
     assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
+def _seed_generator_discounted_month(repo: FakeLedgerRepo) -> None:
+    """The shape the monthly generator writes for a month with a tuition discount:
+    a gross tuition line, a negative ``tuition_discount`` line, AND the same
+    discount mirrored in the header's ``discount_cents``."""
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={
+            "subtotal_cents": 10_000,
+            "discount_cents": 2_000,
+            "total_cents": 8_000,
+            "balance_due_cents": 8_000,
+        }
+    )
+    repo.lines_by_invoice["inv-1"] = [
+        InvoiceLine(
+            line_id="ledger-monthly-line-enr-1-2026-06",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="tuition",
+            description="Monthly tuition 2026-06",
+            quantity=1,
+            unit_amount_cents=10_000,
+            amount_cents=10_000,
+            source_type="payment",
+            source_id="pay-legacy-1",
+            created_at=NOW,
+        ),
+        InvoiceLine(
+            line_id="ledger-monthly-line-enr-1-2026-06-discount",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="discount",
+            description="Sibling discount",
+            quantity=1,
+            unit_amount_cents=-2_000,
+            amount_cents=-2_000,
+            source_type="tuition_discount",
+            source_id="disc-1",
+            created_at=NOW,
+        ),
+    ]
+
+
+class _AchDeclines(FakeStripeDeclines):
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        return {"id": stripe_payment_method_id, "type": "us_bank_account"}
+
+
+def _ach_settings() -> FakeBillingSettingsRepo:
+    return FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+            ach_discount_label="ACH autopay savings",
+            disclosure_version="cash-discount-v1",
+        )
+    )
+
+
+async def test_ach_discount_on_a_tuition_discounted_month_charges_the_discount_once() -> None:
+    """ACH line added → header recomputed. It used to take the tuition discount
+    off twice: $100 gross, $20 sibling discount, ACH line → charged $57.50."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+
+    result = await _uc(repo, stripe, settings=_ach_settings()).execute("inv-1")
+
+    ach_line = next(
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    )
+    expected = 8_000 + ach_line.amount_cents
+    assert result.success is True
+    assert stripe.create_calls[0]["amount_cents"] == expected
+    assert repo.allocation_calls[0][2] == expected
+
+
+async def test_ach_retry_on_a_tuition_discounted_month_charges_the_discount_once() -> None:
+    """A retry that finds its ACH line already written recomputes the header
+    on every attempt; that path double-counted too."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+    first = _AchDeclines()
+    declined = await _uc(repo, first, settings=_ach_settings()).execute("inv-1")
+    assert declined.success is False
+    assert any(line.line_type == "ach_discount" for line in repo.lines_by_invoice["inv-1"])
+
+    retry = FakeStripeSucceeds()
+    retry.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    result = await _uc(repo, retry, settings=_ach_settings()).execute("inv-1")
+
+    ach_line = next(
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    )
+    assert result.success is True
+    assert retry.create_calls[0]["amount_cents"] == 8_000 + ach_line.amount_cents
