@@ -1789,6 +1789,32 @@ test.describe("Rally admin shell", () => {
     await page.getByRole("tab", { name: "Overview" }).click();
     await expect(fullName).toHaveValue("Guard Student E2E");
 
+    // The race the nightly WebKit job hit: a leave that lands in the same
+    // task as the keystroke. The edit's dirty report used to reach the guard
+    // a render late, so this switched tabs with no dialog and dropped the
+    // edit. Typing and clicking in one evaluate makes it deterministic.
+    await page.evaluate(() => {
+      const input = [...document.querySelectorAll("label")]
+        .find((label) => label.textContent?.trim() === "Full name")
+        ?.control as HTMLInputElement | null | undefined;
+      if (!input) throw new Error("Full name input not found");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "Guard Student Edited",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const tab = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+        (el) => el.textContent?.trim() === "Training",
+      );
+      if (!tab) throw new Error("Training tab not found");
+      tab.click();
+    });
+    await expect(guard).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).not.toHaveURL(/tab=training/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
     await fullName.fill("Guard Student Edited");
 
     // Keyboard: the tab is reachable and Enter opens the guard, focus moves

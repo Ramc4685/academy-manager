@@ -7,6 +7,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -75,7 +76,12 @@ export function useUnsavedChanges(): UnsavedChangesValue {
  */
 export function useReportUnsavedChanges(key: string, unsaved: boolean): void {
   const { setUnsaved } = useUnsavedChanges();
-  useEffect(() => {
+  // A layout effect, not a passive one: a controlled input's change commits
+  // at the end of its own input event, and layout effects run inside that
+  // commit, so the guard knows before any later click or keypress is
+  // handled. A passive effect can be deferred past the next event; on the
+  // nightly WebKit job that let a tab switch through with no dialog.
+  useLayoutEffect(() => {
     setUnsaved(key, unsaved);
     return () => setUnsaved(key, false);
   }, [key, unsaved, setUnsaved]);
@@ -87,23 +93,25 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<(() => void) | null>(null);
   const hasUnsaved = keys.size > 0;
 
-  const hasUnsavedRef = useRef(hasUnsaved);
-  useEffect(() => {
-    hasUnsavedRef.current = hasUnsaved;
-  }, [hasUnsaved]);
+  // The leave checks read this, never `hasUnsaved`: state (and a ref synced
+  // from it in an effect) only catches up a render after the surface reports,
+  // so a tab switch or link click that followed a keystroke that closely
+  // left without the dialog and dropped the edit. The ref is written in
+  // `setUnsaved` itself, as the surface reports.
+  const unsavedKeysRef = useRef<ReadonlySet<string>>(new Set<string>());
 
   const setUnsaved = useCallback((key: string, unsaved: boolean) => {
-    setKeys((prev) => {
-      if (prev.has(key) === unsaved) return prev;
-      const next = new Set(prev);
-      if (unsaved) next.add(key);
-      else next.delete(key);
-      return next;
-    });
+    const prev = unsavedKeysRef.current;
+    if (prev.has(key) === unsaved) return;
+    const next = new Set(prev);
+    if (unsaved) next.add(key);
+    else next.delete(key);
+    unsavedKeysRef.current = next;
+    setKeys(next);
   }, []);
 
   const requestLeave = useCallback((leave: () => void) => {
-    if (!hasUnsavedRef.current) {
+    if (unsavedKeysRef.current.size === 0) {
       leave();
       return;
     }
@@ -112,8 +120,9 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!hasUnsaved) return;
+    // Always attached, for the same reason as the ref above.
     function onClickCapture(event: MouseEvent) {
+      if (unsavedKeysRef.current.size === 0) return;
       if (event.defaultPrevented || event.button !== 0) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const target = event.target;
@@ -137,7 +146,7 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     }
     document.addEventListener("click", onClickCapture, true);
     return () => document.removeEventListener("click", onClickCapture, true);
-  }, [hasUnsaved, router]);
+  }, [router]);
 
   useEffect(() => {
     if (!hasUnsaved) return;
