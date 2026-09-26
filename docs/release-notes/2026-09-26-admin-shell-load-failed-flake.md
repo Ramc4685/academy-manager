@@ -1,6 +1,6 @@
 # Nightly E2E WebKit: user-detail dirty-guard spec no longer aborts its own navigation
 
-PR: #TBD
+PR: #985
 
 ## What changed
 - `e2e/specs/admin-shell.spec.ts` ("user detail warns before a link discards an unsaved profile edit") now waits for the `/admin/users` list to render after each link leave. Before, it waited only for the URL, then called `page.goto` straight away.
