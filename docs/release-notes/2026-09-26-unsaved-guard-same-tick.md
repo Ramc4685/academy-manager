@@ -1,6 +1,6 @@
 # Unsaved-changes guard catches a leave that follows a keystroke closely
 
-PR: #TBD
+PR: #984
 
 ## What changed
 - The admin shell's unsaved-changes guard (`components/admin/unsaved-changes-guard.tsx`) now records a surface's dirty state at the moment the surface reports it, in a ref written by `setUnsaved`. Before, `requestLeave` and the link listener read a ref that an effect synced from React state, which caught up a render after the keystroke. A student tab switch (Enter or click) or an in-app link click that landed inside that window left with no dialog and silently dropped the typed edit. The in-app link listener is now always attached and checks the same ref.
