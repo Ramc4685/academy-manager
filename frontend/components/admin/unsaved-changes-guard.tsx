@@ -7,6 +7,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -75,7 +76,12 @@ export function useUnsavedChanges(): UnsavedChangesValue {
  */
 export function useReportUnsavedChanges(key: string, unsaved: boolean): void {
   const { setUnsaved } = useUnsavedChanges();
-  useEffect(() => {
+  // A layout effect, not a passive one: a controlled input's change commits
+  // at the end of its own input event, and layout effects run inside that
+  // commit, so the guard knows before any later click or keypress is
+  // handled. A passive effect can be deferred past the next event; on the
+  // nightly WebKit job that let a tab switch through with no dialog.
+  useLayoutEffect(() => {
     setUnsaved(key, unsaved);
     return () => setUnsaved(key, false);
   }, [key, unsaved, setUnsaved]);
