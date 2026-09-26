@@ -1893,6 +1893,11 @@ test.describe("Rally admin shell", () => {
     ).toBeVisible();
     await Promise.all([page.waitForURL(/\/admin\/users$/), back.click()]);
     await expect(guard).toHaveCount(0);
+    // The URL flips before the soft navigation's RSC payload and chunks land.
+    // Wait for the list to render: a page.goto while that fetch is in flight
+    // aborts it, and WebKit surfaces the abort as `TypeError: Load failed`
+    // through the root error boundary's console.error.
+    await expect(page.getByTestId("admin-users")).toBeVisible();
 
     // Edit again and leave on purpose through the confirm.
     await page.goto("/admin/users/staff-guard-e2e");
@@ -1904,6 +1909,7 @@ test.describe("Rally admin shell", () => {
       page.waitForURL(/\/admin\/users$/),
       guard.getByTestId("confirm-action-submit").click(),
     ]);
+    await expect(page.getByTestId("admin-users")).toBeVisible();
     expect(
       errors,
       `App console errors on the user dirty guard: ${errors.join("\n")}`,
