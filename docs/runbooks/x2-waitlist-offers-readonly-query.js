@@ -2,7 +2,9 @@
 // confirm (live since migration 0183, ~2026-09-14).
 // Run: mongosh "<prod uri>" --quiet --file docs/runbooks/x2-waitlist-offers-readonly-query.js
 // Only aggregate() reads; nothing here writes.
-const ACADEMY = "blno";
+// The production academy_id is "acad_blno_badminton" (not the "blno" slug used
+// by local seeds): with "blno" every section comes back empty.
+const ACADEMY = "acad_blno_badminton";
 const SINCE = ISODate("2026-09-14T00:00:00Z");
 
 const join = (from, localField, foreignField, as, project) => ({
