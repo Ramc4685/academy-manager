@@ -1,6 +1,6 @@
 # X2 waitlist runbook: use the production academy ID
 
-PR: #TBD
+PR: #986
 
 ## What changed
 
