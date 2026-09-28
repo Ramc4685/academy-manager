@@ -162,6 +162,8 @@ export interface BootstrapAcademyResult {
   owner_role: string;
   created: boolean;
   default_records: string[];
+  /** Derived from the slug at creation (e.g. "ACE"); unique across academies. */
+  invoice_prefix?: string | null;
 }
 
 export function bootstrapPlatformAcademy(

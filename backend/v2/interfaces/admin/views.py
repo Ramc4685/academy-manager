@@ -1801,6 +1801,10 @@ class AdminAcademyView(BaseModel):
     currency: str = "USD"
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+    # Read-only here: set per academy by the platform (derived from the slug
+    # at creation, locked after the first numbered invoice). Settings overhaul
+    # Phase 1 PR 2. Deliberately absent from UpdateAdminAcademyRequest.
+    invoice_prefix: str | None = None
 
 
 class UpdateAdminAcademyRequest(BaseModel):

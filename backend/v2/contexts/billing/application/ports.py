@@ -834,11 +834,21 @@ class BillingSettingsRepository(Protocol):
     async def get(self) -> BillingSettings: ...
 
     async def upsert(self, settings: BillingSettings) -> None:
-        """Persist academy-editable settings. Never writes ``application_fee_bps``."""
+        """Persist academy-editable settings.
+
+        Never writes ``application_fee_bps`` or ``invoice_number_prefix``.
+        """
         ...
 
     async def set_application_fee_bps(self, fee_bps: int) -> None:
         """Platform-admin only: set this academy's application fee (basis points)."""
+        ...
+
+    async def set_invoice_number_prefix(self, prefix: str) -> None:
+        """Platform only: set this academy's invoice prefix.
+
+        Raises ``InvoicePrefixTaken`` when another academy holds it.
+        """
         ...
 
 

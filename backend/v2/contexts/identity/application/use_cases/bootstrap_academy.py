@@ -73,6 +73,17 @@ class TenantBootstrapStore(Protocol):
     async def ensure_feature_flags(self, flags: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class InvoicePrefixAssigner(Protocol):
+    """Gives a new academy its invoice-number prefix (billing owns the rules).
+
+    Wired in composition to billing's ``AssignInvoicePrefix``, which derives
+    the prefix from the slug (``ace-badminton`` -> ``ACE``), keeps it unique
+    across academies, and returns the existing one on a re-bootstrap.
+    """
+
+    async def execute(self, *, academy_id: str, slug: str) -> str: ...
+
+
 class BootstrapAcademyCommand(BaseModel):
     display_name: str = Field(min_length=1)
     slug: str = Field(min_length=1)
@@ -131,6 +142,8 @@ class BootstrapAcademyResult(BaseModel):
     owner_role: Role
     created: bool
     default_records: tuple[str, ...] = DEFAULT_RECORDS
+    #: ``None`` only when no assigner is wired (tests, legacy fixtures).
+    invoice_prefix: str | None = None
 
 
 class BootstrapAcademy:
@@ -140,8 +153,10 @@ class BootstrapAcademy:
         store: TenantBootstrapStore,
         id_factory: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        invoice_prefix_assigner: InvoicePrefixAssigner | None = None,
     ) -> None:
         self._store = store
+        self._invoice_prefix_assigner = invoice_prefix_assigner
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -260,6 +275,12 @@ class BootstrapAcademy:
             }
         )
 
+        invoice_prefix = None
+        if self._invoice_prefix_assigner is not None:
+            invoice_prefix = await self._invoice_prefix_assigner.execute(
+                academy_id=academy_id, slug=str(academy["slug"])
+            )
+
         return BootstrapAcademyResult(
             academy_id=academy_id,
             slug=str(academy["slug"]),
@@ -268,6 +289,7 @@ class BootstrapAcademy:
             membership_id=str(membership["membership_id"]),
             owner_role=OWNER_ACADEMY_ROLE,
             created=created,
+            invoice_prefix=invoice_prefix,
         )
 
 

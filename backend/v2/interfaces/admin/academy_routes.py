@@ -34,7 +34,7 @@ async def get_academy_settings(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminAcademyView:
     out = await use_cases.get_academy_use_case.execute(claims.academy_id)
-    return AdminAcademyView(**asdict(out))
+    return AdminAcademyView(**asdict(out), invoice_prefix=await _invoice_prefix(use_cases))
 
 
 @router.patch("/academy", response_model=AdminAcademyView)
@@ -46,7 +46,16 @@ async def update_academy_settings(
     out = await use_cases.update_academy_use_case.execute(
         claims.academy_id, payload.model_dump(exclude_unset=True)
     )
-    return AdminAcademyView(**asdict(out))
+    return AdminAcademyView(**asdict(out), invoice_prefix=await _invoice_prefix(use_cases))
+
+
+async def _invoice_prefix(use_cases: AdminUseCases) -> str | None:
+    """The academy's platform-set invoice prefix, shown read-only in Settings."""
+    reader = getattr(use_cases, "get_invoice_prefix", None)
+    if reader is None:
+        return None
+    prefix: str | None = await reader.execute()
+    return prefix
 
 
 # --- Fees ---

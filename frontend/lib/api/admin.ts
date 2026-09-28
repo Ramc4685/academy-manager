@@ -1530,6 +1530,12 @@ export interface AdminAcademyView {
   email_sender_name?: string | null;
   /** Where replies to academy email go. Null = unchanged per-email default. */
   email_reply_to?: string | null;
+  /**
+   * Invoice-number prefix ("BLNO" -> BLNO-2026-09-0042). Read-only for the
+   * academy: CourtMastr sets it per academy and it locks after the first
+   * numbered invoice. Null = not set yet (no invoice numbers are issued).
+   */
+  invoice_prefix?: string | null;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{

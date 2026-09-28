@@ -41,6 +41,7 @@ class BootstrapAcademyResponse(BaseModel):
     owner_role: str
     created: bool
     default_records: tuple[str, ...]
+    invoice_prefix: str | None = None
 
 
 class TenantLimitsPayload(BaseModel):
