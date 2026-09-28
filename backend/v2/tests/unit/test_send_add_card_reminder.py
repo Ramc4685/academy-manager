@@ -16,6 +16,10 @@ ACADEMY_ID = "academy-1"
 RETURN_URL = "https://app.example.com/parent/billing"
 
 
+async def _return_url_for(academy_id: str) -> str:
+    return RETURN_URL
+
+
 class FakeContacts:
     def __init__(self, contacts: dict[str, ParentContact]):
         self._contacts = contacts
@@ -75,7 +79,7 @@ async def test_sends_one_reminder_email_with_setup_link():
         links=links,
         sender=sender,
         academies=FakeAcademies(),
-        return_url=RETURN_URL,
+        return_url_for=_return_url_for,
     )
 
     outcome = await use_case.execute(academy_id=ACADEMY_ID, parent_id="p1")
@@ -98,7 +102,7 @@ async def test_unknown_parent_returns_failure_without_sending():
         links=FakeLinks(),
         sender=FakeSender(),
         academies=FakeAcademies(),
-        return_url=RETURN_URL,
+        return_url_for=_return_url_for,
     )
 
     outcome = await use_case.execute(academy_id=ACADEMY_ID, parent_id="missing")
@@ -118,7 +122,7 @@ async def test_email_send_failure_surfaces_reason():
         links=FakeLinks(),
         sender=sender,
         academies=FakeAcademies(),
-        return_url=RETURN_URL,
+        return_url_for=_return_url_for,
     )
 
     outcome = await use_case.execute(academy_id=ACADEMY_ID, parent_id="p1")
@@ -144,7 +148,7 @@ async def test_escapes_parent_and_academy_names_in_html_email():
         links=FakeLinks(),
         sender=sender,
         academies=FakeAcademies(),
-        return_url=RETURN_URL,
+        return_url_for=_return_url_for,
     )
 
     await use_case.execute(academy_id=ACADEMY_ID, parent_id="p1")
@@ -163,3 +167,64 @@ def test_reminder_body_uses_shared_shell() -> None:
     body = _reminder_body(display_name="P", academy_name="A", setup_link="https://x.test")
     assert FONT_STACK in body
     assert "Sent by A" in body
+
+
+@pytest.mark.asyncio
+async def test_return_url_is_built_per_call_for_the_academy_being_reminded():
+    """Row 9: the Stripe return lands on the reminded academy's own host.
+
+    BLNO's link moves from the platform host to its tenant host by design:
+    ``https://blno-academy.courtmastr.com/parent/payments``.
+    """
+    seen: list[str] = []
+
+    async def per_academy(academy_id: str) -> str:
+        seen.append(academy_id)
+        host = "blno-academy" if academy_id == "acad_blno_badminton" else "other"
+        return f"https://{host}.courtmastr.com/parent/payments"
+
+    blno_link = "https://blno-academy.courtmastr.com/parent/payments"
+    contacts = FakeContacts(
+        {"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat Lee")}
+    )
+    links = FakeLinks(link=blno_link)
+    sender = FakeSender()
+    use_case = SendAddCardReminder(
+        contacts=contacts,
+        links=links,
+        sender=sender,
+        academies=FakeAcademies(),
+        return_url_for=per_academy,
+    )
+
+    outcome = await use_case.execute(academy_id="acad_blno_badminton", parent_id="p1")
+
+    assert outcome.ok is True
+    assert seen == ["acad_blno_badminton"]
+    assert links.calls[0]["return_url"] == blno_link
+    assert blno_link in sender.calls[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_link_on_another_host_than_the_academy_return_url_is_refused():
+    contacts = FakeContacts(
+        {"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat Lee")}
+    )
+
+    async def blno(academy_id: str) -> str:
+        return "https://blno-academy.courtmastr.com/parent/payments"
+
+    sender = FakeSender()
+    use_case = SendAddCardReminder(
+        contacts=contacts,
+        links=FakeLinks(link="https://academy.courtmastr.com/parent/payments"),
+        sender=sender,
+        academies=FakeAcademies(),
+        return_url_for=blno,
+    )
+
+    outcome = await use_case.execute(academy_id="acad_blno_badminton", parent_id="p1")
+
+    assert outcome.ok is False
+    assert outcome.failed_reason == "card_setup_link_unavailable"
+    assert sender.calls == []

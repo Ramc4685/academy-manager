@@ -16,6 +16,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
+from backend.v2.composition.academy_links import academy_frontend_base_url_lookup
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     compose_registration_decline_refunds,
@@ -2113,15 +2114,19 @@ def compose_admin(
             # records consent before any off-session charge is allowed.
             return return_url
 
-    _billing_setup_return_url = (
-        f"{(settings.frontend_url or 'https://app.example.com').rstrip('/')}/parent/payments"
+    academy_base_url = academy_frontend_base_url_lookup(
+        db, frontend_url=settings.frontend_url, default="https://app.example.com"
     )
+
+    async def _billing_setup_return_url(academy_id: str) -> str:
+        return f"{await academy_base_url(academy_id)}/parent/payments"
+
     send_add_card_reminder = SendAddCardReminder(
         contacts=_BillingSetupParentContactAdapter(users_r),
         links=_BillingSetupCardSetupLinkAdapter(),
         sender=AddCardReminderEmailAdapter(sender=_email_sender),
         academies=academy_repo,
-        return_url=_billing_setup_return_url,
+        return_url_for=_billing_setup_return_url,
     )
     get_admin_student = compose_get_admin_student(db, students_r)
     update_admin_student = UpdateAdminStudent(students_r)
@@ -4269,6 +4274,9 @@ def compose_admin(
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         start_stripe_connect_use_case=start_stripe_connect_use_case,
         start_connect_onboarding_use_case=start_connect_onboarding_use_case,
+        academy_frontend_base_url=academy_frontend_base_url_lookup(
+            db, frontend_url=settings.frontend_url
+        ),
         complete_stripe_connect_use_case=complete_stripe_connect_use_case,
         disconnect_stripe_use_case=disconnect_stripe_use_case,
         change_user_role=change_user_role,
