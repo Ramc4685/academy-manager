@@ -1,6 +1,6 @@
 # Owner daily brief: one brief per academy, sent to its owners
 
-PR: #TBD
+PR: #989
 
 ## What changed
 
