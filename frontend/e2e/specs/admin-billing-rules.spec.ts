@@ -83,6 +83,24 @@ function stubBillingRules(
   return seen;
 }
 
+const ALL_SIX_METHODS = ["cash", "check", "zelle", "venmo", "bank_transfer", "other"];
+
+/** Row 22: Offline payments card. Returns the last PUT body seen. */
+function stubPaymentMethods(page: Page, initial: string[] = ALL_SIX_METHODS) {
+  const seen: { put: unknown } = { put: null };
+  void page.route("**/api/v2/admin/academy/payment-methods", (route) => {
+    const request = route.request();
+    if (request.method() === "GET") return fulfillJson(route, { manual_methods: initial });
+    if (request.method() === "PUT") {
+      seen.put = request.postDataJSON();
+      const body = request.postDataJSON() as { manual_methods: string[] };
+      return fulfillJson(route, { manual_methods: body.manual_methods });
+    }
+    return route.fallback();
+  });
+  return seen;
+}
+
 test.describe("admin settings → billing rules", () => {
   test("the four boxes render, fixed rows are not inputs, and the note sits above the fees", async ({
     page,
@@ -183,6 +201,45 @@ test.describe("admin settings → billing rules", () => {
     await expect(page.getByTestId("billing-rules-error-late_fee_cents")).toContainText(
       "must be between 0 and 100000",
     );
+  });
+
+  test("offline payments: all six ticked by default, and the owner saves a narrower list", async ({
+    page,
+  }) => {
+    await stubShell(page, OWNER_ME);
+    stubBillingRules(page);
+    const seen = stubPaymentMethods(page);
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    const card = page.getByTestId("offline-payments-card");
+    await expect(card).toBeVisible();
+    for (const method of ALL_SIX_METHODS) {
+      await expect(page.getByTestId(`offline-payments-method-${method}`)).toBeChecked();
+    }
+    await expect(page.getByTestId("offline-payments-save")).toBeDisabled();
+
+    await page.getByTestId("offline-payments-method-venmo").uncheck();
+    await page.getByTestId("offline-payments-save").click();
+
+    await expect
+      .poll(() => seen.put)
+      .toEqual({ manual_methods: ["cash", "check", "zelle", "bank_transfer", "other"] });
+    await expect(page.getByTestId("offline-payments-saved")).toBeVisible();
+  });
+
+  test("offline payments: at least one method must stay ticked", async ({ page }) => {
+    await stubShell(page, OWNER_ME);
+    stubBillingRules(page);
+    const seen = stubPaymentMethods(page, ["cash"]);
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    await expect(page.getByTestId("offline-payments-method-cash")).toBeChecked();
+    await expect(page.getByTestId("offline-payments-method-zelle")).not.toBeChecked();
+    await page.getByTestId("offline-payments-method-cash").uncheck();
+
+    await expect(page.getByTestId("offline-payments-empty")).toBeVisible();
+    await expect(page.getByTestId("offline-payments-save")).toBeDisabled();
+    expect(seen.put).toBeNull();
   });
 
   test("?panel=fees still lands on Billing rules", async ({ page }) => {
