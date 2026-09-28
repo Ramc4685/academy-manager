@@ -16,6 +16,7 @@
 import type { ReactNode } from "react";
 
 import { mailtoHref, telHref, whatsappHref } from "@/lib/contact-links";
+import { usePhoneCountryCode } from "@/lib/phone-country";
 
 import type { MenuItem } from "./menu";
 
@@ -50,8 +51,10 @@ export function ContactLinks({
   className?: string;
   "data-testid"?: string;
 }) {
+  // Row 11: a bare national number gets the academy's calling code.
+  const countryCode = usePhoneCountryCode();
   const tel = telHref(phone);
-  const whatsapp = whatsappHref(phone);
+  const whatsapp = whatsappHref(phone, countryCode);
   const mailto = mailtoHref(email);
   const who = name ? ` ${name}` : "";
 
@@ -98,10 +101,13 @@ export function ContactLinks({
  * caller's own actions, so a spec that clicks a row's first action still lands
  * where it did before (#857's helpers match items by exact label).
  */
-export function contactMenuItems({ phone, email }: ContactPoints): MenuItem[] {
+export function contactMenuItems(
+  { phone, email }: ContactPoints,
+  countryCode?: string,
+): MenuItem[] {
   const items: MenuItem[] = [];
   const tel = telHref(phone);
-  const whatsapp = whatsappHref(phone);
+  const whatsapp = whatsappHref(phone, countryCode);
   const mailto = mailtoHref(email);
   if (tel) items.push({ key: "contact-call", label: "Call", externalHref: tel });
   if (whatsapp) items.push({ key: "contact-whatsapp", label: "WhatsApp", externalHref: whatsapp });

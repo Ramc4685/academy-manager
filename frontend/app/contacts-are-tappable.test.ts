@@ -47,7 +47,9 @@ describe("the shared contact links (#865)", () => {
     // to branch on the helper returning undefined.
     const src = source("components/ds/contact-links.tsx");
     expect(src).toContain("telHref(phone)");
-    expect(src).toContain("whatsappHref(phone)");
+    // Row 11: with the academy's calling code, so a bare US number links.
+    expect(src).toContain("whatsappHref(phone, countryCode)");
+    expect(src).toContain("usePhoneCountryCode()");
     expect(src).toContain("mailtoHref(email)");
   });
 });
@@ -105,6 +107,7 @@ describe("phone rows offer contact from their 44px menu (#865)", () => {
     const src = source("components/ds/phone-row.tsx");
     expect(src).toContain("contact?:");
     expect(src).toContain("contactMenuItems");
+    expect(src).toContain("contactMenuItems(contact, countryCode)");
   });
 
   it("the contact items are appended, so an existing first item stays first", () => {
@@ -117,5 +120,18 @@ describe("phone rows offer contact from their 44px menu (#865)", () => {
   it("students and families rows pass the contact they already display", () => {
     expect(appSource("(admin)/admin/students/page.tsx")).toContain("contact={{");
     expect(appSource("(admin)/admin/families/page.tsx")).toContain("contact={{");
+  });
+});
+
+describe("WhatsApp links use the academy's calling code (row 11)", () => {
+  it("the admin shell provides phone_country_code from the academy it already loads", () => {
+    const src = appSource("(admin)/layout.tsx");
+    expect(src).toContain("PhoneCountryProvider");
+    expect(src).toContain("academyQuery.data?.phone_country_code");
+  });
+
+  it("the family Messages handoff passes the same code", () => {
+    const src = appSource("(admin)/admin/families/[parentId]/MessagesTab.tsx");
+    expect(src).toContain("handoffHref(ch, { phone, email }, countryCode)");
   });
 });

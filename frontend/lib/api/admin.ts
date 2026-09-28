@@ -1536,6 +1536,11 @@ export interface AdminAcademyView {
    * numbered invoice. Null = not set yet (no invoice numbers are issued).
    */
   invoice_prefix?: string | null;
+  /**
+   * Read-only calling code for bare national phone numbers in WhatsApp links,
+   * derived from the academy's country ("1" when unset, every academy today).
+   */
+  phone_country_code?: string;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{

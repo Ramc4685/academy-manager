@@ -24,6 +24,8 @@ import type { Route } from "next";
 import { MoreVertical } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { usePhoneCountryCode } from "@/lib/phone-country";
+
 import { contactMenuItems, type ContactPoints } from "./contact-links";
 import { OverflowMenu, type MenuItem } from "./menu";
 
@@ -94,9 +96,10 @@ export function PhoneListRow({
   actionsTestId,
   ...rest
 }: PhoneListRowProps) {
+  const countryCode = usePhoneCountryCode();
   const menuItems: MenuItem[] = [
     ...(actions ?? []),
-    ...(contact ? contactMenuItems(contact) : []),
+    ...(contact ? contactMenuItems(contact, countryCode) : []),
   ];
 
   const titleNode = href ? (
