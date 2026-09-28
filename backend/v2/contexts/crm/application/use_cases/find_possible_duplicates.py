@@ -26,6 +26,7 @@ best effort and must never block the form.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -37,6 +38,7 @@ from backend.v2.contexts.crm.application.ports import (
     FamilyIndexSource,
 )
 from backend.v2.contexts.crm.domain.duplicates import (
+    DEFAULT_COUNTRY_CODE,
     MAX_DUPLICATE_MATCHES,
     DuplicateKind,
     DuplicateMatch,
@@ -112,14 +114,21 @@ class FindPossibleDuplicates:
         family_contacts: FamilyContactLookup,
         members: AcademyMemberLookup,
         inquiries: CrmContactLookup,
+        calling_code: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self._families = families
         self._family_contacts = family_contacts
         self._members = members
         self._inquiries = inquiries
+        # The academy's phone calling code (from ``academies.country``), read
+        # per request for the asking academy. None folds with "+1" as before.
+        self._calling_code = calling_code
 
     async def execute(self, academy_id: str, query: DuplicateCheckQuery) -> list[DuplicateMatch]:
-        probe = build_probe(email=query.email, phone=query.phone, name=query.name)
+        country_code = await self._country_code(academy_id, query)
+        probe = build_probe(
+            email=query.email, phone=query.phone, name=query.name, country_code=country_code
+        )
         if probe.is_empty:
             return []
         found = _Collector()
@@ -130,6 +139,11 @@ class FindPossibleDuplicates:
         await self._match_member(academy_id, probe, index, found)
         await self._match_inquiries(probe, found)
         return found.result()
+
+    async def _country_code(self, academy_id: str, query: DuplicateCheckQuery) -> str:
+        if self._calling_code is None or not (query.phone or "").strip():
+            return DEFAULT_COUNTRY_CODE
+        return await self._calling_code(academy_id)
 
     async def _family_index(self, academy_id: str) -> FamilyIndex | None:
         try:

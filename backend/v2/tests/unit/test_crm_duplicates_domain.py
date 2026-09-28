@@ -99,3 +99,28 @@ def test_a_roster_family_matches_on_its_students_parent_email_and_phone() -> Non
     # A legacy NAME key is never an email match.
     assert family_record_matches(roster, build_probe(email="nova testparent")) == ()
     assert family_record_matches(roster, build_probe(phone="555-010-9999")) == ()
+
+
+def test_phone_fold_defaults_to_the_north_american_code() -> None:
+    # Row 11: the fold is parameterised by the academy's calling code, and
+    # "1" (every academy today, BLNO included) folds exactly as before.
+    assert probe_phone_variants("555 010 2030", country_code="1") == probe_phone_variants(
+        "555 010 2030"
+    )
+    assert build_probe(phone="555-010-2030").country_code == "1"
+
+
+def test_phone_fold_uses_the_academy_calling_code() -> None:
+    assert probe_phone_variants("98765 43210", country_code="91") == (
+        "9876543210",
+        "919876543210",
+    )
+    assert probe_phone_variants("+91 98765 43210", country_code="91") == (
+        "9876543210",
+        "919876543210",
+    )
+    # A +1 number is not folded for a +91 academy: it keeps its own spelling.
+    assert probe_phone_variants("15550102030", country_code="91") == ("15550102030",)
+    probe = build_probe(phone="9876543210", country_code="91")
+    assert phone_matches("+91 98765 43210", probe)
+    assert not phone_matches("+1 987 654 3210", probe)
