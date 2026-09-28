@@ -343,3 +343,70 @@ async def test_fake_mark_calls_from_another_academy_are_no_ops():
 
     await repo.mark_sent(ACADEMY_ID, own["send_id"])
     assert repo.sent_ids == [own["send_id"]]
+
+
+class FakeWinBackSwitch:
+    def __init__(self, enabled_by_academy: dict[str, bool]) -> None:
+        self._enabled = enabled_by_academy
+        self.asked: list[str] = []
+
+    async def is_enabled(self, academy_id: str) -> bool:
+        self.asked.append(academy_id)
+        return self._enabled.get(academy_id, True)
+
+
+def _with_switch(use_case: SendWinBackNotices, switch: FakeWinBackSwitch) -> SendWinBackNotices:
+    return SendWinBackNotices(
+        enrollment_events=use_case._enrollment_events,
+        enrollments=use_case._enrollments,
+        students=use_case._students,
+        send_repo=use_case._send_repo,
+        balance_lookup=use_case._balance_lookup,
+        notifier=use_case._notifier,
+        clock=use_case._now,
+        switch=switch,
+    )
+
+
+@pytest.mark.asyncio
+async def test_switch_on_sends_exactly_as_before():
+    """BLNO pin: no ``win_back_enabled`` stored means on, so the 30-day notice
+    goes out exactly as it did before the switch existed."""
+    now = datetime(2026, 9, 13, tzinfo=UTC)
+    event = _dropped_event("stu-1", effective_at=now - timedelta(days=30))
+    use_case, _, notifier = _build(events=[event], students=[_student("stu-1")], now=now)
+    switch = FakeWinBackSwitch({})
+
+    sent = await _with_switch(use_case, switch).execute(academy_id=ACADEMY_ID)
+
+    assert sent == 1
+    assert switch.asked == [ACADEMY_ID]
+    assert notifier.sent[0]["milestone_days"] == 30
+
+
+@pytest.mark.asyncio
+async def test_switch_off_sends_nothing_and_claims_nothing():
+    now = datetime(2026, 9, 13, tzinfo=UTC)
+    event = _dropped_event("stu-1", effective_at=now - timedelta(days=30))
+    use_case, send_repo, notifier = _build(events=[event], students=[_student("stu-1")], now=now)
+
+    sent = await _with_switch(use_case, FakeWinBackSwitch({ACADEMY_ID: False})).execute(
+        academy_id=ACADEMY_ID
+    )
+
+    assert sent == 0
+    assert notifier.sent == []
+    assert send_repo._claimed == set()
+
+
+@pytest.mark.asyncio
+async def test_switch_is_asked_for_the_running_academy_only():
+    now = datetime(2026, 9, 13, tzinfo=UTC)
+    event = _dropped_event("stu-1", effective_at=now - timedelta(days=30))
+    use_case, _, _ = _build(events=[event], students=[_student("stu-1")], now=now)
+    switch = FakeWinBackSwitch({"other-academy": False})
+
+    sent = await _with_switch(use_case, switch).execute(academy_id=ACADEMY_ID)
+
+    assert sent == 1
+    assert switch.asked == [ACADEMY_ID]

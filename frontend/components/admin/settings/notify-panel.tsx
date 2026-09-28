@@ -23,17 +23,21 @@ import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
-function normalize(data: AdminNotificationsView | null | undefined): AdminNotificationsView {
+export function normalize(
+  data: Partial<AdminNotificationsView> | null | undefined
+): AdminNotificationsView {
   return {
     daily_digest_to_admin: data?.daily_digest_to_admin ?? false,
     coach_digest_enabled: data?.coach_digest_enabled ?? false,
     coach_digest_hour: data?.coach_digest_hour ?? 6,
     parent_digest_enabled: data?.parent_digest_enabled ?? false,
     parent_digest_hour: data?.parent_digest_hour ?? 6,
+    // On unless the academy switched it off: the backend reads it the same way.
+    win_back_enabled: data?.win_back_enabled ?? true,
   };
 }
 
-function toPayload(
+export function toPayload(
   original: AdminNotificationsView,
   form: AdminNotificationsView
 ): UpdateAdminNotificationsRequest {
@@ -90,6 +94,14 @@ export function NotifyPanel() {
           <p className="text-sm text-rally-muted" data-testid="notify-dues-reminders-moved">
             Past-due reminder emails are configured in Settings &rarr; Billing rules.
           </p>
+          <Toggle
+            label="Win-back emails (30/60/90 days after leaving)"
+            testId="notify-win-back-enabled"
+            checked={form.win_back_enabled}
+            onChange={(checked) =>
+              setForm((prev) => ({ ...prev, win_back_enabled: checked }))
+            }
+          />
           <Toggle
             label="Daily admin digest"
             checked={form.daily_digest_to_admin}
@@ -346,10 +358,12 @@ function Toggle({
   label,
   checked,
   onChange,
+  testId,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  testId?: string;
 }) {
   return (
     <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-rally-line px-4 text-sm font-medium text-rally-ink">
@@ -357,6 +371,7 @@ function Toggle({
       <input
         type="checkbox"
         checked={checked}
+        data-testid={testId}
         onChange={(event) => onChange(event.target.checked)}
         className="size-4 accent-blue-600"
       />

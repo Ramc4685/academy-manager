@@ -1850,6 +1850,7 @@ class AdminNotificationsView(BaseModel):
     coach_digest_hour: int = 6
     parent_digest_enabled: bool = False
     parent_digest_hour: int = 6
+    win_back_enabled: bool = True
 
 
 class UpdateAdminNotificationsRequest(BaseModel):
@@ -1858,6 +1859,7 @@ class UpdateAdminNotificationsRequest(BaseModel):
     coach_digest_hour: int | None = Field(default=None, ge=0, le=23)
     parent_digest_enabled: bool | None = None
     parent_digest_hour: int | None = Field(default=None, ge=0, le=23)
+    win_back_enabled: bool | None = None
 
 
 class CoachDigestTestSendRequest(BaseModel):

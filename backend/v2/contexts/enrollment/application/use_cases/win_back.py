@@ -80,6 +80,14 @@ class WinBackNotifier(Protocol):
     ) -> None: ...
 
 
+class WinBackSwitch(Protocol):
+    """The academy's "Win-back emails" on/off setting (hardcoded-values row
+    10). Adapted in the composition root over the academy document; absent
+    setting means on."""
+
+    async def is_enabled(self, academy_id: str) -> bool: ...
+
+
 @dataclass(frozen=True)
 class WinBackMilestoneRecord:
     """A row written for the timeline the same way `family_billing.py`
@@ -108,6 +116,7 @@ class SendWinBackNotices:
         balance_lookup: FamilyBalanceLookup,
         notifier: WinBackNotifier | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        switch: WinBackSwitch | None = None,
     ) -> None:
         self._enrollment_events = enrollment_events
         self._enrollments = enrollments
@@ -116,9 +125,16 @@ class SendWinBackNotices:
         self._balance_lookup = balance_lookup
         self._notifier = notifier
         self._now = clock
+        #: ``None`` = always on (the behaviour before the switch existed).
+        self._switch = switch
 
     async def execute(self, *, academy_id: str) -> int:
         if self._notifier is None:
+            return 0
+        # Checked before any claim: a milestone skipped while the switch is
+        # off is never claimed, and once it is back on only the milestone due
+        # at that moment is sent (the window logic never back-sends).
+        if self._switch is not None and not await self._switch.is_enabled(academy_id):
             return 0
         now = self._now()
         window_start = now - timedelta(days=_LOOKBACK_DAYS)
