@@ -90,7 +90,14 @@ export function SiteHeader({
 }
 
 /** Fixed footer with the non-removable CourtMastr credit (brief section 9). */
-export function SiteFooter({ privacyUrl }: { privacyUrl?: string | null }) {
+export function SiteFooter({
+  privacyUrl,
+  supportEmail,
+}: {
+  privacyUrl?: string | null;
+  /** The academy's support email only (owner decision: no phone here). */
+  supportEmail?: string | null;
+}) {
   const privacy = safeHttpsUrl(privacyUrl) ?? "/privacy";
   return (
     <footer className={`${styles.footer} ${styles.night}`}>
@@ -102,6 +109,13 @@ export function SiteFooter({ privacyUrl }: { privacyUrl?: string | null }) {
           <li>
             <Link href="/register">Register</Link>
           </li>
+          {supportEmail ? (
+            <li>
+              <a href={`mailto:${supportEmail}`} data-testid="academy-support-email">
+                {supportEmail}
+              </a>
+            </li>
+          ) : null}
           <li>
             <a href={privacy}>Privacy</a>
           </li>

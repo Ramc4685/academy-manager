@@ -39,7 +39,7 @@ export function PlatformLandingPage() {
           </div>
           <div className={styles.brandText}>
             <span className={styles.b1}>{brand.productName}</span>
-            <span className={styles.b2}>Badminton - Operations</span>
+            <span className={styles.b2}>Academy - Operations</span>
           </div>
         </div>
         <div className={styles.topbarRight}>
@@ -74,9 +74,9 @@ export function PlatformLandingPage() {
           <h1 className={styles.heroTitle}>
             Run your
             <br />
-            <em>badminton</em>
+            <em>academy</em>
             <br />
-            <span className={styles.muted}>academy.</span>
+            <span className={styles.muted}>your way.</span>
           </h1>
         </div>
         <aside className={styles.heroSide}>

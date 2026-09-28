@@ -69,7 +69,7 @@ def test_healthz_returns_503_when_a_wired_component_is_broken(app: FastAPI) -> N
 
 
 def test_openapi_title_is_public_product_name(app: FastAPI) -> None:
-    assert app.title == "Academy Manager API"
+    assert app.title == "CourtMastr API"
     assert app.version == "2.0.0"
 
 

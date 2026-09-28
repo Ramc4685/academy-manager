@@ -107,6 +107,7 @@ def _page(profile: PublicAcademyProfile, catalog: PublicCatalog) -> PublicAcadem
             venue=PublicVenueDto(address=profile.address, hours_text=profile.hours_text),
             timezone=profile.timezone,
             currency=profile.currency,
+            support_email=profile.support_email,
         ),
         page=PublicPageFlagsDto(
             trials_open=settings.trials_open,

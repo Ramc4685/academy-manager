@@ -16,6 +16,9 @@ status fields, and it never creates a record (an anonymous GET must not
 * **Logo.** Only an http(s) URL, re-checked on read so a hand-edited
   ``javascript:`` value never reaches an ``src``.
 * **Venue.** The academy's ``address`` and ``hours_text`` ("Find us").
+* **Support email.** ``contact_email`` only, re-validated as a plausible
+  email address. No phone number is ever exposed (owner decision: public
+  page shows a support email only).
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from backend.v2.shared.comms.email_theme import COBALT
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
 _HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _MAX_TEXT = 500
 _FALLBACK_NAME = "Academy"
 
@@ -53,6 +57,9 @@ class PublicAcademyProfile:
     brand_on_color: str
     address: str | None
     hours_text: str | None
+    #: The academy's support email, or None when it has not set one. Never
+    #: the phone number (owner decision).
+    support_email: str | None
     timezone: str | None
     currency: str
     settings: PublicPageSettings
@@ -77,6 +84,7 @@ class GetPublicAcademyProfile:
             brand_on_color=on_color,
             address=_text(doc.get("address")),
             hours_text=_text(doc.get("hours_text")),
+            support_email=_email_or_none(doc.get("contact_email")),
             timezone=_text(doc.get("timezone")),
             currency=(_text(doc.get("currency")) or "USD").upper()[:3],
             settings=PublicPageSettings.from_stored(doc.get(PUBLIC_PAGE_FIELD)),
@@ -94,6 +102,13 @@ def _public_name(doc: dict[str, Any], academy_id: str) -> str:
 def _hex_or_none(value: object) -> str | None:
     text = str(value or "").strip()
     return text.lower() if _HEX.match(text) else None
+
+
+def _email_or_none(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text[:_MAX_TEXT] if text and _EMAIL.match(text) else None
 
 
 def _http_url_or_none(value: object) -> str | None:

@@ -296,7 +296,7 @@ export function PublicTenantPage({
         ) : null}
       </main>
 
-      <SiteFooter privacyUrl={page.page.privacy_notice_url} />
+      <SiteFooter privacyUrl={page.page.privacy_notice_url} supportEmail={page.academy.support_email} />
       <div className={styles.stick}>
         <a className={`${styles.btn} ${styles.btnBrand}`} href={view.primary.href}>
           {view.primary.label}

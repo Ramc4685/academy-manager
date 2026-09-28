@@ -58,8 +58,10 @@ BANNED_FIELD_FRAGMENTS = (
     "status_reason",
     "plan",
 )
-#: The deliberately allowed public identifiers (opaque digests).
-ALLOWED_FIELDS = {"public_id"}
+#: The deliberately allowed public identifiers (opaque digests) and the one
+#: intentionally public contact field: a support email only, never a phone
+#: (owner decision, row 21 of the hardcoded-values sweep).
+ALLOWED_FIELDS = {"public_id", "support_email"}
 
 
 def _models_in(annotation: Any) -> list[type[BaseModel]]:
@@ -162,10 +164,16 @@ def test_seeded_private_values_never_reach_the_response() -> None:
         "/api/v2/public/academy", headers={"host": RIVERSIDE_HOST}
     )
     assert response.status_code == 200
-    assert response.json()["state"] == "published"
+    body = response.json()
+    assert body["state"] == "published"
     raw = response.text
-    leaked = {key: value for key, value in SECRETS.items() if value in raw}
+    # contact_email is the one deliberately public field (support_email, row
+    # 21): it must appear, at exactly that path, and never as a phone number.
+    assert body["academy"]["support_email"] == SECRETS["contact_email"]
+    still_private = {k: v for k, v in SECRETS.items() if k != "contact_email"}
+    leaked = {key: value for key, value in still_private.items() if value in raw}
     assert not leaked, f"private values in the public page response: {leaked}"
+    assert SECRETS["contact_phone"] not in raw
     # Seat counts: capacity 10 and 2 must not appear as numbers either.
     body = response.json()
     for cls in [c for p in body["programs"] for c in p["classes"]] + body["ungrouped_classes"]:
