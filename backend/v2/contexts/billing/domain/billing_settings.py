@@ -29,7 +29,16 @@ class BillingSettings(BaseModel):
     disclosure_text: str | None = None
     disclosure_version: str | None = None
     effective_at: datetime | None = None
-    invoice_number_prefix: str = "BLNO"
+
+    # Human-facing invoice-number prefix (``BLNO`` -> ``BLNO-2026-09-0042``).
+    # No default on purpose: it used to default to "BLNO", so every new
+    # academy would have issued BLNO-numbered invoices. It is set per academy
+    # by the PLATFORM (derived from the slug at creation, editable by a
+    # platform admin until the first numbered invoice; see
+    # ``domain.invoice_prefix``). The tenant settings write
+    # (``BillingSettingsRepository.upsert``) never persists it. ``None`` means
+    # "not configured": ``mint_invoice_number`` then mints nothing.
+    invoice_number_prefix: str | None = None
 
     # Whether this academy's parent charges may settle on the PLATFORM Stripe
     # account instead of refusing when it has no charge-ready connected

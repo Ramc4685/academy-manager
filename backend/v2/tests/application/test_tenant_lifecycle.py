@@ -348,3 +348,27 @@ def test_tenant_counts_as_accepted_only_with_all_three_fields() -> None:
         platform_agreement_accepted_by="owner@example.test",
     )
     assert full.has_accepted_platform_agreement() is True
+
+
+class _Assigner:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def execute(self, *, academy_id: str, slug: str) -> str:
+        self.calls.append((academy_id, slug))
+        return "NORTH"
+
+
+@pytest.mark.asyncio
+async def test_create_tenant_assigns_an_invoice_prefix_from_the_slug() -> None:
+    assigner = _Assigner()
+    service = TenantLifecycleService(
+        tenants=FakeTenantRepository(),
+        id_factory=lambda prefix: f"{prefix}001",
+        clock=_clock,
+        invoice_prefix_assigner=assigner,
+    )
+
+    tenant = await service.create_tenant(_create_command())
+
+    assert assigner.calls == [(tenant.academy_id, "north-shore")]

@@ -442,6 +442,9 @@ class AdminUseCases:
     # audited admin control for billing_settings.billing_day/invoice_due_days,
     # which drive the automated monthly invoice generation job.
     get_invoice_schedule: object | None = None  # GetInvoiceScheduleSettings
+    # Read-only view of billing_settings.invoice_number_prefix, which only the
+    # platform sets (Settings overhaul Phase 1 PR 2).
+    get_invoice_prefix: object | None = None  # ReadAcademyInvoicePrefix
     set_invoice_schedule: object | None = None  # SetInvoiceScheduleSettings
     # Student attendance correction (#517). Optional for fixtures that
     # predate it; real admin composition always sets it.

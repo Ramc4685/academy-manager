@@ -52,8 +52,36 @@ def test_get_academy_contract(admin_client):
         "currency": "USD",
         "email_sender_name": None,
         "email_reply_to": None,
+        "invoice_prefix": None,
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
+
+
+def test_get_academy_shows_the_platform_set_invoice_prefix(admin_client, monkeypatch):
+    # Read-only for the academy: set by the platform (Settings overhaul P1 PR 2).
+    admin_client.use_cases.get_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None
+    )
+    prefix_reader = AsyncMock()
+    prefix_reader.execute.return_value = "BLNO"
+    monkeypatch.setattr(admin_client.use_cases, "get_invoice_prefix", prefix_reader)
+
+    r = admin_client.get("/api/v2/admin/academy")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["invoice_prefix"] == "BLNO"
+    prefix_reader.execute.assert_awaited_once_with()
+
+
+def test_patch_academy_cannot_set_the_invoice_prefix(admin_client):
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"invoice_prefix": "EVIL"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with("acad", {})
 
 
 def test_patch_academy_contract(admin_client):

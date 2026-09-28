@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -98,6 +99,15 @@ class RecordAgreementAcceptanceCommand(BaseModel):
         return stripped
 
 
+class InvoicePrefixAssigner(Protocol):
+    """Gives a new academy its invoice-number prefix (billing owns the rules).
+
+    Wired in composition to billing's ``AssignInvoicePrefix``.
+    """
+
+    async def execute(self, *, academy_id: str, slug: str) -> str: ...
+
+
 class TenantLifecycleService:
     """Application service for platform tenant lifecycle operations."""
 
@@ -108,8 +118,10 @@ class TenantLifecycleService:
         id_factory: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
         audit_recorder: AuditRecorder | None = None,
+        invoice_prefix_assigner: InvoicePrefixAssigner | None = None,
     ) -> None:
         self._tenants = tenants
+        self._invoice_prefix_assigner = invoice_prefix_assigner
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
         self._audit_recorder = audit_recorder
@@ -174,6 +186,10 @@ class TenantLifecycleService:
             updated_at=now,
         )
         created = await self._tenants.create(tenant)
+        if self._invoice_prefix_assigner is not None:
+            await self._invoice_prefix_assigner.execute(
+                academy_id=created.academy_id, slug=created.slug
+            )
         await self._emit_audit(
             actor_user_id=command.actor_user_id,
             academy_id=created.academy_id,

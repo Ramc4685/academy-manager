@@ -42,7 +42,11 @@ def _invoice(acad: str, *, invoice_number: str | None = None) -> LedgerInvoice:
     )
 
 
-async def _seed_roster(db, acad: str) -> None:
+async def _seed_roster(db, acad: str, *, invoice_prefix: str | None = "BLNO") -> None:
+    if invoice_prefix:
+        await db["billing_settings"].update_one(
+            {"academy_id": acad}, {"$set": {"invoice_number_prefix": invoice_prefix}}, upsert=True
+        )
     await db["students"].insert_one(
         {
             "academy_id": acad,
@@ -111,6 +115,25 @@ async def test_legacy_invoice_gets_a_number_lazily_and_keeps_it(db, acad) -> Non
     stored = await ledger.get_invoice("inv-monthly-enroll-1-2026-09")
     assert stored is not None
     assert stored.invoice_number == first.invoice_number
+
+
+async def test_no_prefix_leaves_the_invoice_unnumbered_until_the_platform_sets_one(
+    db, acad
+) -> None:
+    """An academy without a prefix never gets a guessed (or BLNO-) number, and
+    no counter value is burned; once the platform sets one, the same invoice is
+    numbered on its next display from sequence 1 (Settings overhaul P1 PR 2)."""
+    ledger = MongoBillingLedgerRepository(db)
+    await _seed_roster(db, acad, invoice_prefix=None)
+    await ledger.create_invoice(_invoice(acad), lines=[], idempotency_key="k1")
+    resolve = _resolver(db, ledger)
+
+    assert (await resolve("inv-monthly-enroll-1-2026-09")).invoice_number is None
+    assert await db["billing_counters"].count_documents({}) == 0
+
+    await MongoBillingSettingsRepository(db).set_invoice_number_prefix("ACE")
+
+    assert (await resolve("inv-monthly-enroll-1-2026-09")).invoice_number == "ACE-2026-09-0001"
 
 
 async def test_lazy_mint_does_not_break_the_delivery_write_that_follows_it(db, acad) -> None:

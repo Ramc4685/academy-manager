@@ -26,6 +26,7 @@ async def test_upsert_then_get_round_trip(db, acad) -> None:
     )
 
     await repo.upsert(settings)
+    await repo.set_invoice_number_prefix("BLNO")
     fetched = await repo.get()
 
     assert fetched.academy_id == acad
@@ -33,7 +34,9 @@ async def test_upsert_then_get_round_trip(db, acad) -> None:
     assert fetched.ach_discount_percent == 2.0
     assert fetched.disclosure_text == "ACH autopay saves 2%."
     assert fetched.disclosure_version == "v1"
-    assert fetched.invoice_number_prefix == "INV"
+    # The prefix is platform-only: the tenant upsert ignores the model's "INV",
+    # only set_invoice_number_prefix writes it (Settings overhaul P1 PR 2).
+    assert fetched.invoice_number_prefix == "BLNO"
 
 
 async def test_upsert_is_idempotent_and_updates_existing_doc(db, acad) -> None:
