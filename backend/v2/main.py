@@ -57,6 +57,7 @@ from backend.v2.composition.family_record import compose_admin_family_record
 from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
+from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.composition.public_page_admin import compose_admin_public_page
@@ -226,10 +227,6 @@ from backend.v2.shared.observability.ops_digest import (
     record_job_run,
     render_ops_digest,
     seed_job_heartbeats,
-)
-from backend.v2.shared.observability.owner_daily_brief import (
-    collect_owner_daily_brief,
-    render_owner_daily_brief,
 )
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
@@ -1372,41 +1369,36 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # the ops digest — different audience, different content, and the
         # channel that reports "email is broken" keeps its own recipient.
         #
+        # One brief per academy, scoped to that academy's rows and sent to its
+        # active owners (composition/owner_brief.py). The house academy (BLNO)
+        # keeps OWNER_BRIEF_EMAIL / OPS_ALERT_EMAIL as its recipient when set;
+        # no other academy's brief ever goes to those addresses.
+        #
         # The 30-minute lease is what stops the 2026-09-02 hourly-resend class
-        # of bug: two app instances ticking the same cron send one brief, not
-        # two.
-        recipient_email = (settings.owner_brief_email or settings.ops_alert_email or "").strip()
-        if not recipient_email:
-            log.info("owner_brief_skipped: OWNER_BRIEF_EMAIL is not configured")
-            return
+        # of bug: two app instances ticking the same cron send one brief per
+        # academy, not two.
         # Scheduler-timezone stamp: the cron fires at 07:30 local, so a UTC
         # stamp would put yesterday's date on the subject in any UTC+ deploy.
-        brief = await collect_owner_daily_brief(db, now=datetime.now(scheduler.timezone))  # type: ignore[union-attr]
-        subject, body = render_owner_daily_brief(brief)
-        outcome = await app.state.ops_digest_sender.send(
-            recipient=ResolvedRecipient(
-                user_id="owner-brief",
-                email=recipient_email,
-                display_name="Owner",
+        summary = await send_owner_daily_briefs(
+            db,
+            sender=app.state.ops_digest_sender,
+            academy_ids=await _scheduler_academy_ids(
+                MongoAcademyRepository(db), runtime_academy_id
             ),
-            subject=subject,
-            body=body,
+            house_academy_id=settings.house_academy_id or runtime_academy_id,
+            override_email=settings.owner_brief_email or settings.ops_alert_email,
+            now=datetime.now(scheduler.timezone),  # type: ignore[union-attr]
         )
-        extra = {
-            "ok": bool(getattr(outcome, "ok", False)),
-            "failed_reason": getattr(outcome, "failed_reason", None),
-            "new_enrollments": brief.new_enrollments,
-            "departures": brief.departures_total,
-            "approvals_waiting": brief.approvals_waiting,
-            "payments_failed": brief.payments_failed,
-            "waivers_missing": brief.waivers_missing,
-            "emails_undeliverable": brief.emails_undeliverable,
-        }
-        if extra["ok"]:
-            log.info("owner_brief_processed", extra=extra)
-        else:
-            log.error("owner_brief_send_failed", extra=extra)
-            capture_message(f"Owner daily brief send failed: {extra['failed_reason']}")
+        log.info(
+            "owner_briefs_run",
+            extra={
+                "academies": summary.academies,
+                "sent": summary.sent,
+                "send_failed": summary.send_failed,
+                "skipped_no_recipient": summary.skipped_no_recipient,
+                "failed": summary.failed,
+            },
+        )
 
     async def _send_coach_daily_digests() -> None:
         await _run_leased_job(
@@ -1781,9 +1773,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
-    # Issue #776: the owner's brief, half an hour behind the ops digest so the
-    # two never contend for the same send window. Same gated send port; skipped
-    # entirely when neither OWNER_BRIEF_EMAIL nor OPS_ALERT_EMAIL is set.
+    # Issue #776: the owners' briefs, half an hour behind the ops digest so the
+    # two never contend for the same send window. Same gated send port; one
+    # brief per academy to its owners (the house academy keeps
+    # OWNER_BRIEF_EMAIL / OPS_ALERT_EMAIL when set).
     scheduler.add_job(
         _send_owner_daily_brief,
         "cron",
