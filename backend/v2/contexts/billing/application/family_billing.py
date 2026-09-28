@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.family_money import (
     open_balance,
     registration_state,
 )
+from backend.v2.shared.comms.email_theme import format_money
 
 TIMELINE_CAP = 200
 
@@ -285,11 +286,8 @@ def _local_day(value: date | datetime | None, zone: tzinfo) -> date | None:
 
 
 def _money(cents: int) -> str:
-    sign = "-" if cents < 0 else ""
-    cents = abs(cents)
-    if cents % 100 == 0:
-        return f"{sign}${cents // 100:,}"
-    return f"{sign}${cents // 100:,}.{cents % 100:02d}"
+    # The timeline's short form: "$60", "$60.50", "$1,200" (USD is locked).
+    return format_money(cents, "USD", drop_zero_cents=True)
 
 
 def _period_label(period: str) -> str:
