@@ -361,3 +361,69 @@ def test_fly_toml_pins_blno_as_the_house_academy() -> None:
 
     fly = (Path(__file__).resolve().parents[3] / "fly.toml").read_text()
     assert 'HOUSE_ACADEMY_ID = "acad_blno_badminton"' in fly
+
+
+# -- sender address -----------------------------------------------------------
+
+
+def _fly_prod_env(monkeypatch) -> None:
+    """``_prod_env`` plus the email-relevant lines of backend/fly.toml [env]."""
+    _prod_env(monkeypatch)
+    monkeypatch.setenv("V2_ENV", "prod")
+    monkeypatch.setenv("V2_EMAIL_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("FRONTEND_URL", "https://academy.courtmastr.com")
+    monkeypatch.setenv(
+        "CORS_ORIGINS", "https://academy.courtmastr.com,https://blno-academy.courtmastr.com"
+    )
+
+
+def test_prod_with_the_fly_toml_env_shape_boots_and_resolves_the_same_sender(
+    monkeypatch,
+) -> None:
+    _fly_prod_env(monkeypatch)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env == "prod"
+    assert settings.resolved_sender_email() == "noreply@academy.courtmastr.com"
+
+
+def test_prod_sender_email_secret_still_wins(monkeypatch) -> None:
+    _fly_prod_env(monkeypatch)
+    monkeypatch.setenv("SENDER_EMAIL", "hello@courtmastr.com")
+
+    assert Settings(_env_file=None).resolved_sender_email() == "hello@courtmastr.com"
+
+
+def test_prod_refuses_to_boot_when_delivery_is_on_and_no_sender_resolves(monkeypatch) -> None:
+    _fly_prod_env(monkeypatch)
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+
+    with pytest.raises(ValidationError, match="sender_email_or_frontend_url"):
+        Settings(_env_file=None)
+
+
+def test_prod_without_delivery_does_not_need_a_sender(monkeypatch) -> None:
+    _fly_prod_env(monkeypatch)
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+    monkeypatch.setenv("V2_EMAIL_DELIVERY_ENABLED", "false")
+
+    assert Settings(_env_file=None).resolved_sender_email() is None
+
+
+@pytest.mark.parametrize(
+    ("sender_email", "frontend_url", "expected"),
+    [
+        ("a@courtmastr.com", "https://academy.courtmastr.com", "a@courtmastr.com"),
+        (None, "https://academy.courtmastr.com", "noreply@academy.courtmastr.com"),
+        ("", "https://academy.courtmastr.com/", "noreply@academy.courtmastr.com"),
+        (None, "http://localhost:3000", "noreply@localhost:3000"),
+        (None, None, None),
+        (None, "", None),
+        (None, "https://", None),
+    ],
+)
+def test_resolve_sender_address(sender_email, frontend_url, expected) -> None:
+    from backend.v2.shared.config.settings import resolve_sender_address
+
+    assert resolve_sender_address(sender_email, frontend_url) == expected

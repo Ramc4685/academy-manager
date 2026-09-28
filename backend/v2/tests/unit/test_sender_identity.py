@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from email.header import decode_header, make_header
 from email.utils import parseaddr
 from typing import Any
 
+import httpx
 import pytest
 
 from backend.v2.contexts.communications.application.ports import ResolvedRecipient, SendOutcome
@@ -163,11 +165,11 @@ async def test_resend_adapter_sends_academy_name_on_platform_address(
 ) -> None:
     captured: list[dict[str, Any]] = []
 
-    def fake_send(params: dict[str, Any]) -> dict[str, str]:
-        captured.append(params)
-        return {"id": "msg-1"}
+    def fake_api(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "msg-1"})
 
-    monkeypatch.setattr(resend_send_port.resend.Emails, "send", fake_send)
+    monkeypatch.setattr(resend_send_port, "default_transport", httpx.MockTransport(fake_api))
     port = ResendEmailSendPort(api_key="re_test", from_address=PLATFORM)
     recipient = ResolvedRecipient(user_id="u1", email="family@example.com")
 

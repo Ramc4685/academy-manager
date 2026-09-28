@@ -154,6 +154,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_teaching_foc
 from backend.v2.shared.comms.email_theme import EmailBrand, format_money
 from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.config import get_settings
+from backend.v2.shared.config.settings import resolve_sender_address
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
@@ -1035,15 +1036,25 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
     email from local/test environments." A dev or test deployment that has
     inherited delivery flags and Resend credentials must still fall back to the
     stub.
+
+    The From address comes from ``resolve_sender_address`` (``SENDER_EMAIL``,
+    else ``noreply@<FRONTEND_URL host>``). There is no hardcoded fallback any
+    more: the old ``noreply@academy.app`` was not a domain we own. If the real
+    adapter would be wired and nothing resolves, this raises rather than send
+    from a made-up address (prod settings validation already refuses to boot in
+    that state). The stub carries no From address, so dev/test need none.
     """
-    from_address = settings.sender_email or (
-        f"noreply@{settings.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
-        if settings.frontend_url
-        else "noreply@academy.app"
-    )
     env = str(getattr(settings, "env", "") or "").lower()
     inner: Any
     if settings.email_delivery_enabled and settings.resend_api_key and env in _REAL_EMAIL_ENVS:
+        from_address = resolve_sender_address(
+            getattr(settings, "sender_email", None), getattr(settings, "frontend_url", None)
+        )
+        if not from_address:
+            raise RuntimeError(
+                "Email delivery is enabled but no sender address resolves: set "
+                "SENDER_EMAIL (or V2_SENDER_EMAIL) or FRONTEND_URL."
+            )
         inner = ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
     else:
         inner = StubEmailSendPort()
