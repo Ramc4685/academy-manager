@@ -57,6 +57,11 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.time import (
+    LEGACY_FALLBACK_TIMEZONE,
+    academy_timezone_lookup,
+    resolve_session_doc_timezone,
+)
 
 if TYPE_CHECKING:
     from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
@@ -1528,7 +1533,9 @@ def _session_occurrences(
     doc: dict[str, object],
     period: BillingPeriod,
 ) -> list[ClassOccurrence]:
-    timezone_name = str(doc.get("timezone") or period.timezone or "America/Chicago")
+    # ``period`` was built on this session's resolved clock (session ->
+    # academy -> legacy), so its zone is the right fallback for a zoneless doc.
+    timezone_name = str(doc.get("timezone") or period.timezone or LEGACY_FALLBACK_TIMEZONE)
     tz = ZoneInfo(timezone_name)
     session_id = str(doc.get("session_id") or doc.get("_id") or "")
     if doc.get("days_of_week"):
@@ -1604,7 +1611,9 @@ async def resolve_monthly_charge(
         or enrollment.get("created_at")
     )
     enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-    timezone_name = str(session_doc.get("timezone") or "America/Chicago")
+    timezone_name = await resolve_session_doc_timezone(
+        academy_timezone_lookup(repo._db), session_doc
+    )
     billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
     occurrences = await repo._occurrences_for_session(session_doc, billing_period)
 

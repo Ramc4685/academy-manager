@@ -10,13 +10,20 @@ a 6:00 PM class render as 1:00 PM to paying parents.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
 
 UTC_NAME = "UTC"
+
+#: Last-resort zone for LEGACY rows that carry neither their own ``timezone``
+#: nor a resolvable academy zone. It is the single-tenant guess every site used
+#: to hardcode (BLNO's zone), kept so reads never raise and BLNO's output never
+#: moves. This is the ONLY place the literal may live
+#: (tests/structural/test_no_chicago_literal.py); reaching it is logged.
+LEGACY_FALLBACK_TIMEZONE = "America/Chicago"
 
 AcademyTimezoneReader = Callable[[str], Awaitable[str | None]]
 
@@ -77,3 +84,55 @@ async def resolve_reporting_timezone(reader: AcademyTimezoneReader, academy_id: 
         log.warning("unknown academy timezone %r, using UTC", name)
         return UTC_NAME
     return name
+
+
+def resolve_session_timezone(session_tz: str | None, academy_tz: str | None) -> str:
+    """The wall clock a session runs on: session zone -> academy zone -> legacy.
+
+    A non-empty session zone is returned verbatim: sessions are validated at
+    write time, and money/write paths build their own ``ZoneInfo`` and fail on
+    a bad name exactly as they always did. The academy rung is skipped when
+    unset or not a real IANA name. The legacy rung never raises but logs, since
+    it is a single-tenant guess rather than the tenant's own clock.
+    """
+    session_name = str(session_tz or "").strip()
+    if session_name:
+        return session_name
+    academy_name = str(academy_tz or "").strip()
+    if academy_name:
+        try:
+            ZoneInfo(academy_name)
+        except Exception:
+            log.warning(
+                "unknown academy timezone %r, falling back to %s",
+                academy_name,
+                LEGACY_FALLBACK_TIMEZONE,
+            )
+        else:
+            return academy_name
+    log.warning(
+        "session has no timezone and no academy timezone; falling back to %s",
+        LEGACY_FALLBACK_TIMEZONE,
+    )
+    return LEGACY_FALLBACK_TIMEZONE
+
+
+async def resolve_session_doc_timezone(
+    reader: AcademyTimezoneReader, doc: Mapping[str, Any]
+) -> str:
+    """``resolve_session_timezone`` for a raw ``sessions`` document.
+
+    The academy zone is read from the doc's OWN ``academy_id`` (the row is
+    already tenant-scoped), and only when the doc carries no zone, so the
+    common case costs no extra read. A failed lookup degrades to the legacy
+    rung instead of raising.
+    """
+    session_name = str(doc.get("timezone") or "").strip()
+    if session_name:
+        return session_name
+    try:
+        academy_name = await reader(str(doc.get("academy_id") or ""))
+    except Exception:
+        log.warning("academy timezone lookup failed for session doc", exc_info=True)
+        academy_name = None
+    return resolve_session_timezone(None, academy_name)

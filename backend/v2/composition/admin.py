@@ -564,7 +564,11 @@ from backend.v2.shared.tenancy import (
     current_tenant_origins,
 )
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
-from backend.v2.shared.time import ensure_utc, request_scoped_academy_timezone
+from backend.v2.shared.time import (
+    ensure_utc,
+    request_scoped_academy_timezone,
+    resolve_session_timezone,
+)
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 
@@ -2218,12 +2222,17 @@ def compose_admin(
     def _recurring_template_filter() -> dict[str, Any]:
         return {"days_of_week": {"$exists": True}, **_NOT_CANCELLED_SESSION}
 
-    def _series_occurrence_candidates(session) -> list[dict[str, Any]]:
+    async def _session_zone(session) -> str:
+        # Session zone, else this tenant's zone, else the legacy constant (row 7).
+        if session.timezone:
+            return str(session.timezone)
+        return resolve_session_timezone(None, await session_tz(request_academy_id()))
+
+    def _series_occurrence_candidates(session, timezone_name: str) -> list[dict[str, Any]]:
         if not session.days_of_week or not session.start_time or not session.end_time:
             return []
         if session.status == "cancelled":
             return []
-        timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         target_days = {
             WEEKDAY_INDEX[str(day).casefold()]
@@ -2267,10 +2276,10 @@ def compose_admin(
     def _series_occurrence_candidate_for_date(
         session,
         occurrence_date: date,
+        timezone_name: str,
     ) -> dict[str, Any]:
         if session.status == "cancelled":
             raise ValueError("Replacement cannot be added to a cancelled session")
-        timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         target_days = {
             WEEKDAY_INDEX[str(day).casefold()]
@@ -2311,12 +2320,12 @@ def compose_admin(
     def _dated_occurrence_candidate_for_date(
         session,
         occurrence_date: date,
+        timezone_name: str,
         *,
         matched_session_doc: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if session.status == "cancelled":
             raise ValueError("Replacement cannot be added to a cancelled session")
-        timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         starts_at = ensure_utc(session.start_at)
         ends_at = ensure_utc(session.end_at)
@@ -2383,8 +2392,7 @@ def compose_admin(
         target_signature = session_series_signature(_session_domain_row(session), session.timezone)
         if target_signature is None:
             return None
-        timezone_name = session.timezone or "America/Chicago"
-        tz = ZoneInfo(timezone_name)
+        tz = ZoneInfo(await _session_zone(session))
         cursor = sessions_r._find_many(
             {
                 "coach_id": session.coach_id,
@@ -2442,14 +2450,16 @@ def compose_admin(
         session,
         occurrence_date: date,
     ) -> dict[str, Any]:
+        timezone_name = await _session_zone(session)
         if session.days_of_week and session.start_time and session.end_time:
-            return _series_occurrence_candidate_for_date(session, occurrence_date)
+            return _series_occurrence_candidate_for_date(session, occurrence_date, timezone_name)
         matched_doc = await _matching_dated_series_session_doc(session, occurrence_date)
         if matched_doc is None:
             raise ValueError("Replacement date must match a scheduled session date")
         return _dated_occurrence_candidate_for_date(
             session,
             occurrence_date,
+            timezone_name,
             matched_session_doc=matched_doc,
         )
 
@@ -2525,7 +2535,7 @@ def compose_admin(
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
 
-        candidates = _series_occurrence_candidates(session)
+        candidates = _series_occurrence_candidates(session, await _session_zone(session))
         session_is_cancelled = session.status == "cancelled"
         if not candidates and not session_is_cancelled:
             return
@@ -3629,6 +3639,7 @@ def compose_admin(
         sessions=payments_repo,
         snapshots=payments_repo,
         occurrences=payments_repo,
+        academy_timezone=academy_timezone_lookup(db),
     )
 
     async def quote_enrollment(

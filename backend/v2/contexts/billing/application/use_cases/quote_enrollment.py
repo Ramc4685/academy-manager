@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.domain.proration import (
     BillingPeriod,
     FirstMonthProrationPolicy,
 )
+from backend.v2.shared.time import AcademyTimezoneReader, resolve_session_timezone
 
 
 @dataclass(frozen=True)
@@ -52,11 +53,15 @@ class QuoteEnrollment:
         snapshots: SnapshotWriter,
         occurrences: OccurrenceCatalog,
         clock=lambda: datetime.now(UTC),
+        academy_timezone: AcademyTimezoneReader | None = None,
     ) -> None:
         self._sessions = sessions
         self._snapshots = snapshots
         self._occurrences = occurrences
         self._clock = clock
+        # Zone for a legacy session doc with no ``timezone`` of its own. Unset
+        # (tests, old wiring) means the legacy constant, i.e. today's behaviour.
+        self._academy_timezone = academy_timezone
 
     async def execute(self, cmd: QuoteEnrollmentCommand) -> BillingCalculationSnapshot:
         session_doc = await self._sessions.get_by_id(cmd.session_id)
@@ -64,7 +69,7 @@ class QuoteEnrollment:
             raise PaymentNotFound("session not found", payment_id=cmd.session_id)
 
         now = self._clock()
-        timezone_name = str(session_doc.get("timezone") or "America/Chicago")
+        timezone_name = await self._session_timezone(session_doc)
         billing_start_at = _resolve_billing_start(
             instant=cmd.billing_start_at,
             start_date=cmd.billing_start_date,
@@ -96,6 +101,14 @@ class QuoteEnrollment:
             now=now,
         )
         return stored
+
+    async def _session_timezone(self, session_doc: dict) -> str:
+        """Session zone, else the session's academy zone, else the legacy zone."""
+        session_tz = str(session_doc.get("timezone") or "")
+        if session_tz or self._academy_timezone is None:
+            return resolve_session_timezone(session_tz, None)
+        academy_tz = await self._academy_timezone(str(session_doc.get("academy_id") or ""))
+        return resolve_session_timezone(None, academy_tz)
 
 
 def _zone(timezone_name: str) -> ZoneInfo:
