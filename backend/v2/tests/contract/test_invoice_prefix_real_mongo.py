@@ -230,3 +230,22 @@ async def test_migration_recognises_the_local_seed_blno_id(real_db) -> None:
 async def test_migration_on_an_empty_database_writes_nothing(real_db) -> None:
     await migration.up(real_db)
     assert await real_db["billing_settings"].count_documents({}) == 0
+
+
+async def test_a_duplicate_key_on_another_index_is_not_reported_as_prefix_taken(
+    real_db, monkeypatch
+) -> None:
+    from pymongo.errors import DuplicateKeyError
+
+    repo = MongoBillingSettingsRepository(real_db)
+
+    async def _academy_index_clash(*_: Any, **__: Any) -> None:
+        raise DuplicateKeyError(
+            "E11000 billing_settings_academy_unique",
+            11000,
+            {"keyPattern": {"academy_id": 1}, "keyValue": {"academy_id": ACE}},
+        )
+
+    monkeypatch.setattr(repo, "_update_one", _academy_index_clash)
+    with tenant_scope(ACE), pytest.raises(DuplicateKeyError):
+        await repo.set_invoice_number_prefix("ACE")

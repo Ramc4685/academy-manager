@@ -29,6 +29,7 @@ database is left empty.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -39,6 +40,8 @@ from backend.v2.contexts.billing.domain.invoice_prefix import (
 )
 
 version = "0206_invoice_prefix_per_academy"
+
+log = logging.getLogger(__name__)
 
 BLNO_PREFIX = "BLNO"
 #: Production id first, then the local seed's.
@@ -85,6 +88,14 @@ async def up(db: AsyncIOMotorDatabase[Any]) -> None:
         prefix = planned[academy_id]
         if current.get(academy_id) == prefix:
             continue
+        before = current.get(academy_id)
+        if before:
+            # Not expected in production (single academy). When it happens the
+            # academy's FUTURE numbers change prefix; past numbers stay. Logged
+            # so the migration run records it (the release note has the query).
+            log.warning(
+                "0206 invoice prefix changed academy_id=%s %s -> %s", academy_id, before, prefix
+            )
         await db["billing_settings"].update_one(
             {"academy_id": academy_id},
             {"$set": {"invoice_number_prefix": prefix}},

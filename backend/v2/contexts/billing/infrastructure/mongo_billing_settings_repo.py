@@ -91,6 +91,13 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
                 upsert=True,
             )
         except DuplicateKeyError as exc:
+            # Only the prefix index means "taken". A clash on the one-doc-per-
+            # academy index (two first-time upserts racing) is not about the
+            # prefix, and mapping it would make AssignInvoicePrefix skip a
+            # free prefix or the platform route return a false 409.
+            key_pattern = (exc.details or {}).get("keyPattern") or {}
+            if "invoice_number_prefix" not in key_pattern:
+                raise
             raise InvoicePrefixTaken(
                 "another academy already uses this invoice prefix", invoice_prefix=prefix
             ) from exc
