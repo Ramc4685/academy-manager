@@ -2227,7 +2227,7 @@ def compose_admin(
     def _recurring_template_filter() -> dict[str, Any]:
         return {"days_of_week": {"$exists": True}, **_NOT_CANCELLED_SESSION}
 
-    async def _session_zone(session) -> str:
+    async def _session_zone(session: Any) -> str:
         # Session zone, else this tenant's zone, else the legacy constant (row 7).
         if session.timezone:
             return str(session.timezone)

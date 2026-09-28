@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from backend.v2.contexts.billing.application.ports import (
@@ -102,7 +103,7 @@ class QuoteEnrollment:
         )
         return stored
 
-    async def _session_timezone(self, session_doc: dict) -> str:
+    async def _session_timezone(self, session_doc: dict[str, Any]) -> str:
         """Session zone, else the session's academy zone, else the legacy zone."""
         session_tz = str(session_doc.get("timezone") or "")
         if session_tz or self._academy_timezone is None:

@@ -823,9 +823,7 @@ async def test_single_mode_still_runs_blno_when_the_academies_list_is_empty() ->
     from backend.v2.main import _scheduler_fallback_academy_id
 
     fallback = _scheduler_fallback_academy_id(_settings())
-    assert await _scheduler_academy_ids(_FakeAcademyRepo([]), fallback) == [
-        "acad_blno_badminton"
-    ]
+    assert await _scheduler_academy_ids(_FakeAcademyRepo([]), fallback) == ["acad_blno_badminton"]
 
 
 @pytest.mark.asyncio
