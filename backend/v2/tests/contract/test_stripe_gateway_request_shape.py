@@ -613,3 +613,32 @@ async def test_application_fee_equal_to_the_charge_is_allowed(fake_stripe: _Reco
     await _call_each_charge_method(_gateway(), fee=1000, account="acct_v2_123")
 
     assert fake_stripe.calls["PaymentIntent.create"]["application_fee_amount"] == 1000
+
+
+async def test_create_connected_account_explicit_us_usd_matches_the_default_payload(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_connected_account(academy_id="acad-1")
+    default_call = dict(fake_stripe.calls["v2.core.accounts.create"])
+    await gw.create_connected_account(academy_id="acad-1", country="US", currency="USD")
+    explicit_call = fake_stripe.calls["v2.core.accounts.create"]
+
+    # US/USD is byte-for-byte the payload sent before country/currency became
+    # parameters.
+    assert explicit_call == default_call
+    assert explicit_call["identity"] == {"country": "us"}
+    assert explicit_call["defaults"]["currency"] == "usd"
+
+
+async def test_create_connected_account_sends_country_and_currency_lowercased(
+    fake_stripe: _Recorder,
+) -> None:
+    gw = _gateway()
+
+    await gw.create_connected_account(academy_id="acad-1", country="Us", currency="UsD")
+
+    call = fake_stripe.calls["v2.core.accounts.create"]
+    assert call["identity"] == {"country": "us"}
+    assert call["defaults"]["currency"] == "usd"

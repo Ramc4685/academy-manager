@@ -29,6 +29,9 @@ from backend.v2.contexts.billing.domain.connected_account import ConnectedAccoun
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
     FakeStripeGateway,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
+    MongoAcademyBillingRegionReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_directory import (
     MongoConnectedAccountDirectory,
 )
@@ -102,6 +105,7 @@ def _onboarding(stripe: FakeStripeGateway, repo, academy_id: str) -> StartConnec
     return StartConnectOnboarding(
         stripe=stripe,
         connected_accounts=repo,
+        academy_regions=MongoAcademyBillingRegionReader(repo.collection.database),
         allowed_redirect_origins=_ALLOWED_ORIGINS,
         academy_id=academy_id,
     )

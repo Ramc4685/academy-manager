@@ -16,6 +16,9 @@ from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.errors import HouseAcademyUsesPlatformAccount
 from backend.v2.contexts.billing.infrastructure import house_academy
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
+    MongoAcademyBillingRegionReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
@@ -124,6 +127,7 @@ def _onboarding(
     return StartConnectOnboarding(
         stripe=stripe,
         connected_accounts=MongoConnectedAccountRepository(db),
+        academy_regions=MongoAcademyBillingRegionReader(db),
         allowed_redirect_origins=("https://app.test",),
         academy_id=academy_id,
         house_academy_id=house,

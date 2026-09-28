@@ -734,8 +734,14 @@ class RealStripeGateway(StripeGateway):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
+        country: str = "US",
+        currency: str = "USD",
     ) -> dict[str, Any]:
         """Create an Accounts v2 connected account via ``POST /v2/core/accounts``.
+
+        ``country`` / ``currency`` are sent lowercased as ``identity.country``
+        and ``defaults.currency`` (US / USD gives the same payload as before
+        they were parameters). The use case refuses unsupported regions first.
 
         Configured through Accounts v2 ``configuration`` and
         ``defaults.responsibilities`` (never legacy ``type`` or v1
@@ -774,13 +780,13 @@ class RealStripeGateway(StripeGateway):
                 },
             },
             "defaults": {
-                "currency": "usd",
+                "currency": currency.strip().lower(),
                 "responsibilities": {
                     "fees_collector": "stripe",
                     "losses_collector": "stripe",
                 },
             },
-            "identity": {"country": "us"},
+            "identity": {"country": country.strip().lower()},
             "metadata": {"academy_id": academy_id},
         }
         if display_name:

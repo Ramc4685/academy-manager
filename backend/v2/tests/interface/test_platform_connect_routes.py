@@ -8,7 +8,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.v2.contexts.billing.domain.errors import AcademyMismatchError
+from backend.v2.contexts.billing.domain.errors import (
+    AcademyMismatchError,
+    UnsupportedConnectAccountRegion,
+)
 from backend.v2.interfaces.platform.connect_routes import (
     ConnectOnboardingUseCase,
 )
@@ -151,3 +154,28 @@ def test_start_onboarding_academy_mismatch_returns_clean_4xx_not_500() -> None:
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "Billing.AcademyMismatch"
     assert mismatched_use_case.calls == ["acad-1"]
+
+
+class _UnsupportedRegionConnectOnboarding:
+    async def start(self, *, academy_id: str, refresh_url: str, return_url: str) -> dict:
+        raise UnsupportedConnectAccountRegion(
+            "Stripe accounts can only be created for academies in the US billing in USD "
+            "today (academy has country=CA, currency=CAD)"
+        )
+
+
+def test_start_onboarding_unsupported_region_returns_409_with_message() -> None:
+    with TestClient(_app(_platform_claims(), _UnsupportedRegionConnectOnboarding())) as client:
+        response = client.post(
+            "/api/v2/platform/academies/acad-1/connect/onboarding", json=_payload()
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "Billing.UnsupportedConnectAccountRegion",
+        "message": (
+            "Stripe accounts can only be created for academies in the US billing in USD "
+            "today (academy has country=CA, currency=CAD)"
+        ),
+        "details": {},
+    }
