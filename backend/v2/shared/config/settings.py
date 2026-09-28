@@ -343,6 +343,7 @@ class Settings(BaseSettings):
             )
         self._validate_launch_settings()
         self._validate_production_settings()
+        self._validate_production_tenancy()
         return self
 
     def cors_allowed_origins(self) -> list[str]:
@@ -409,6 +410,38 @@ class Settings(BaseSettings):
             # The owner rollup spans academies; single_academy mode exists to
             # refuse every tenant but primary_academy_id.
             raise ValueError("enable_owner_role requires tenancy_mode=multi_academy")
+
+    def _validate_production_tenancy(self) -> None:
+        """Refuse half-switched multi-academy configs in production.
+
+        Runs after ``_validate_production_settings`` so a missing secret is
+        still the first thing an operator sees.
+        """
+        if self.env == "prod" and self.tenancy_mode == "multi_academy" and not self.saas_mode:
+            # Without saas_mode the request resolver maps EVERY request to
+            # default_academy_id ("default-academy"), so BLNO's users stop
+            # matching and nobody else is served either. Switching on a second
+            # academy is the pair of flags, never one of them
+            # (docs/runbooks/enable-multi-academy.md).
+            raise ValueError(
+                "tenancy_mode=multi_academy in production requires saas_mode=true "
+                "(V2_SAAS_MODE); see docs/runbooks/enable-multi-academy.md"
+            )
+        if self.env == "prod" and self.saas_mode:
+            # SaaS mode takes the tenant from the request host. Without a base
+            # domain any "<slug>.<anything>" host resolves by its first label,
+            # and without the proxy secret a client-supplied x-forwarded-host
+            # picks the tenant.
+            missing = [
+                name
+                for name, value in (
+                    ("platform_base_domain", self.platform_base_domain),
+                    ("proxy_shared_secret", self.proxy_shared_secret),
+                )
+                if not (value and value.strip())
+            ]
+            if missing:
+                raise ValueError("saas_mode in production requires " + ", ".join(missing))
 
 
 def resolve_sender_address(sender_email: str | None, frontend_url: str | None) -> str | None:

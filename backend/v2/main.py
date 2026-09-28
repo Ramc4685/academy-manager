@@ -12,6 +12,7 @@ Run standalone::
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import uuid
@@ -23,7 +24,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
@@ -56,6 +57,7 @@ from backend.v2.composition.family_record import compose_admin_family_record
 from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
+from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.composition.public_page_admin import compose_admin_public_page
@@ -78,6 +80,9 @@ from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.infrastructure.house_academy import configure_house_academy
+from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
+    MongoAcademyBillingRegionReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -226,15 +231,12 @@ from backend.v2.shared.observability.ops_digest import (
     render_ops_digest,
     seed_job_heartbeats,
 )
-from backend.v2.shared.observability.owner_daily_brief import (
-    collect_owner_daily_brief,
-    render_owner_daily_brief,
-)
 from backend.v2.shared.scheduling import job_lease
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
 from backend.v2.shared.tenancy.origins import TenantOriginsResolver
 from backend.v2.shared.tenancy.resolver import (
+    PROXY_AUTH_HEADER,
     TenantResolutionError,
     TenantResolver,
 )
@@ -591,6 +593,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tenancy_mode = settings.tenancy_mode
     app.state.primary_academy_id = settings.primary_academy_id
     app.state.default_academy_id = settings.default_academy_id
+    app.state.proxy_shared_secret = settings.proxy_shared_secret
     # Platform audit + governance services (issues #78, #79).
     # Constructed before TenantLifecycleService so the lifecycle service can
     # receive a recorder callable that emits one platform_audit_events row
@@ -650,6 +653,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.platform_connect_onboarding = StartConnectOnboarding(
         stripe=stripe_gw,
         connected_accounts=MongoConnectedAccountRepository(db),
+        academy_regions=MongoAcademyBillingRegionReader(db),
         # Callable, not a frozen list: an admin onboarding Stripe from their own
         # tenant host needs that host allowlisted too (same defect as parent
         # checkout). Tenant origins come from stored records, never the Host.
@@ -1369,41 +1373,36 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # the ops digest — different audience, different content, and the
         # channel that reports "email is broken" keeps its own recipient.
         #
+        # One brief per academy, scoped to that academy's rows and sent to its
+        # active owners (composition/owner_brief.py). The house academy (BLNO)
+        # keeps OWNER_BRIEF_EMAIL / OPS_ALERT_EMAIL as its recipient when set;
+        # no other academy's brief ever goes to those addresses.
+        #
         # The 30-minute lease is what stops the 2026-09-02 hourly-resend class
-        # of bug: two app instances ticking the same cron send one brief, not
-        # two.
-        recipient_email = (settings.owner_brief_email or settings.ops_alert_email or "").strip()
-        if not recipient_email:
-            log.info("owner_brief_skipped: OWNER_BRIEF_EMAIL is not configured")
-            return
+        # of bug: two app instances ticking the same cron send one brief per
+        # academy, not two.
         # Scheduler-timezone stamp: the cron fires at 07:30 local, so a UTC
         # stamp would put yesterday's date on the subject in any UTC+ deploy.
-        brief = await collect_owner_daily_brief(db, now=datetime.now(scheduler.timezone))  # type: ignore[union-attr]
-        subject, body = render_owner_daily_brief(brief)
-        outcome = await app.state.ops_digest_sender.send(
-            recipient=ResolvedRecipient(
-                user_id="owner-brief",
-                email=recipient_email,
-                display_name="Owner",
+        summary = await send_owner_daily_briefs(
+            db,
+            sender=app.state.ops_digest_sender,
+            academy_ids=await _scheduler_academy_ids(
+                MongoAcademyRepository(db), runtime_academy_id
             ),
-            subject=subject,
-            body=body,
+            house_academy_id=settings.house_academy_id or runtime_academy_id,
+            override_email=settings.owner_brief_email or settings.ops_alert_email,
+            now=datetime.now(scheduler.timezone),  # type: ignore[union-attr]
         )
-        extra = {
-            "ok": bool(getattr(outcome, "ok", False)),
-            "failed_reason": getattr(outcome, "failed_reason", None),
-            "new_enrollments": brief.new_enrollments,
-            "departures": brief.departures_total,
-            "approvals_waiting": brief.approvals_waiting,
-            "payments_failed": brief.payments_failed,
-            "waivers_missing": brief.waivers_missing,
-            "emails_undeliverable": brief.emails_undeliverable,
-        }
-        if extra["ok"]:
-            log.info("owner_brief_processed", extra=extra)
-        else:
-            log.error("owner_brief_send_failed", extra=extra)
-            capture_message(f"Owner daily brief send failed: {extra['failed_reason']}")
+        log.info(
+            "owner_briefs_run",
+            extra={
+                "academies": summary.academies,
+                "sent": summary.sent,
+                "send_failed": summary.send_failed,
+                "skipped_no_recipient": summary.skipped_no_recipient,
+                "failed": summary.failed,
+            },
+        )
 
     async def _send_coach_daily_digests() -> None:
         await _run_leased_job(
@@ -1778,9 +1777,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
-    # Issue #776: the owner's brief, half an hour behind the ops digest so the
-    # two never contend for the same send window. Same gated send port; skipped
-    # entirely when neither OWNER_BRIEF_EMAIL nor OPS_ALERT_EMAIL is set.
+    # Issue #776: the owners' briefs, half an hour behind the ops digest so the
+    # two never contend for the same send window. Same gated send port; one
+    # brief per academy to its owners (the house academy keeps
+    # OWNER_BRIEF_EMAIL / OPS_ALERT_EMAIL when set).
     scheduler.add_job(
         _send_owner_daily_brief,
         "cron",
@@ -2373,10 +2373,24 @@ def _build_request_tenant_resolver(app: FastAPI):
     primary_academy_id = getattr(app.state, "primary_academy_id", None)
     default_academy_id = getattr(app.state, "default_academy_id", None)
     resolver = getattr(app.state, "tenant_resolver", None)
+    proxy_secret = getattr(app.state, "proxy_shared_secret", None)
+
+    def _request_host(request: Request) -> str:
+        # The BFF proxy forwards the tenant's host in x-forwarded-host. With a
+        # proxy secret configured (required for production SaaS mode), only a
+        # request that presents it may choose the host that way; anyone
+        # calling the API directly is resolved by its real Host header, so a
+        # forged x-forwarded-host cannot pick another academy.
+        forwarded = request.headers.get("x-forwarded-host")
+        if forwarded and proxy_secret:
+            presented = request.headers.get(PROXY_AUTH_HEADER)
+            if presented is None or not hmac.compare_digest(presented, proxy_secret):
+                forwarded = None
+        return str(forwarded or request.headers.get("host", ""))
 
     async def _resolve(request):
         if saas_mode and resolver is not None:
-            host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+            host = _request_host(request)
             headers = dict(request.headers)
             try:
                 result = await resolver.resolve(host=host, headers=headers)

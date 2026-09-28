@@ -18,6 +18,11 @@ collector (a pre-direct-charges express account, whose responsibilities
 cannot be changed), a NEW direct-charge account replaces it. This is what
 "reconnect Stripe" in the charge route's refusal does. When Stripe does not
 report the model, the account is kept and stays refused (fail closed).
+
+Region: a new account is created in the academy record's ``country`` /
+``currency`` (absent -> US / USD). Only US / USD is supported today; any other
+region is refused with ``UnsupportedConnectAccountRegion`` before Stripe is
+asked to create an account. Existing accounts are not re-checked.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from backend.v2.contexts.billing.application.ports import (
+    AcademyBillingRegionReader,
     ConnectedAccountRepository,
     StripeGateway,
 )
@@ -59,12 +65,14 @@ class StartConnectOnboarding:
         *,
         stripe: StripeGateway,
         connected_accounts: ConnectedAccountRepository,
+        academy_regions: AcademyBillingRegionReader,
         allowed_redirect_origins: Iterable[str] | Callable[[], Iterable[str]],
         academy_id: str | None = None,
         house_academy_id: str | None = None,
     ) -> None:
         self._stripe = stripe
         self._connected_accounts = connected_accounts
+        self._academy_regions = academy_regions
         # A callable is evaluated per call so the allowlist can include the
         # REQUEST's resolved tenant origins (dynamically onboarded academies
         # are not in the static env-var list). A plain iterable is materialized
@@ -166,12 +174,18 @@ class StartConnectOnboarding:
         contact_email: str | None,
         idempotency_key: str,
     ) -> ConnectedAccount:
+        # Before Stripe is asked for anything on the new-account path: an
+        # academy outside US / USD must not get an account at all.
+        region = await self._academy_regions.get_region(academy_id)
+        region.require_supported()
         try:
             created = await self._stripe.create_connected_account(
                 academy_id=academy_id,
                 display_name=display_name,
                 contact_email=contact_email,
                 idempotency_key=idempotency_key,
+                country=region.country,
+                currency=region.currency,
             )
         except ValueError as exc:
             raise ConnectOnboardingFailed(

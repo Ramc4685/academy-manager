@@ -2995,28 +2995,37 @@ class _ConnectAccountResolver:
             )
 
 
-# Boot-frozen tenant wiring that intentionally survives in compose_parent
-# (issue #532). Everything on this list is either per-academy composed by the
-# scheduler, request-guarded upstream, or a read path still pending conversion
-# to the request_academy_id() pattern:
+# Boot-frozen tenant wiring (issue #532), re-audited 2026-09-28 (P1 hardcoded
+# #1). What is left, and why each item is safe:
 #
 # - HandleWebhookEvent / _EnrollmentBillingIdentity: per-academy BY DESIGN —
 #   the scheduler composes one processor per academy, ingest resolves the
 #   tenant from the event payload, and the handler's cross-academy guards
 #   quarantine mismatches.
-# - Parent read-path closures (payments/credits/children/enrollments/
-#   attendance/invoices/schedule listings): still close over the boot
-#   academy_id. Safe while only one academy is actually served; NOT safe once
-#   saas_mode serves multiple tenants — which is exactly what
-#   ensure_multi_academy_composable refuses.
+# - The parent read-path closures (payments/credits/children/enrollments/
+#   attendance/invoices/schedule) all re-read ``current_academy_id()`` at call
+#   time now; none of them uses the boot value.
+# - compose_admin / compose_coach: the cancellation, pause-approval, session,
+#   waitlist, expense, message and coach-attendance use cases take the
+#   request-tenant callable (tests/contract/test_boot_academy_cancellation_
+#   isolation.py), and TenantScopedRepository re-stamps academy_id in update
+#   bodies. ``MongoUserRepository(default_academy_id=...)`` still falls back to
+#   the boot academy for legacy ``users`` rows that carry no academy_id; the
+#   multi-academy pre-flight lists those rows.
+#
+# The guard below stays fail-closed: switching production to SaaS mode is an
+# owner decision taken after the pre-flight in
+# docs/runbooks/enable-multi-academy.md passes, and the acknowledgement flag is
+# how that decision is recorded in config.
 _STATIC_TENANT_WIRING_NOTE = (
-    "compose_parent still contains boot-frozen academy_id read paths "
-    "(see _STATIC_TENANT_WIRING_NOTE in backend/v2/composition/parent.py). "
     "Serving multiple academies (saas_mode=True with tenancy_mode=multi_academy) "
-    "would silently stamp/read the boot academy for other tenants (issue #532). "
-    "Either set APP_TENANCY_MODE=single_academy, finish converting the read "
-    "paths to request_academy_id(), or explicitly acknowledge the risk with "
-    "V2_ALLOW_STATIC_TENANT_PARENT_WIRING=true."
+    "is an explicit owner decision. Run the pre-flight in "
+    "docs/runbooks/enable-multi-academy.md "
+    "(python -m backend.scripts.multi_academy_preflight), then set "
+    "V2_ALLOW_STATIC_TENANT_PARENT_WIRING=true to acknowledge the remaining "
+    "boot-frozen academy_id fallback for legacy users rows without academy_id "
+    "(see _STATIC_TENANT_WIRING_NOTE in backend/v2/composition/parent.py, "
+    "issue #532). Otherwise keep APP_TENANCY_MODE=single_academy."
 )
 
 

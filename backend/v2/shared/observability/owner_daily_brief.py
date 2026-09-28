@@ -10,13 +10,15 @@ accepting mail) were only visible to someone who went looking.
 This is that second email. It deliberately does NOT replace the ops digest:
 the audiences and the content share nothing, and the channel that reports
 "email is broken" must keep its own recipient. ``main.py`` owns the cron job,
-the lease and the send port, exactly as it does for the ops digest.
+the lease and the send port; ``composition/owner_brief.py`` loops the
+academies and decides who receives each one.
 
-Read-only, cross-tenant and collection-name-driven for the same reason
-``ops_digest`` is: the brief spans onboarding, enrollment, billing and
-communications at once, so binding it to any one context's repositories would
-drag a bounded context into ``shared/``. Registered as a documented cross-
-tenant exception in ``v2/tests/test_no_raw_tenant_mongo_access.py``.
+One brief per academy. Every probe filters by the ``academy_id`` it is given,
+so an owner only ever sees their own academy's numbers (the first version
+summed every tenant into one email). Read-only and collection-name-driven:
+the brief spans onboarding, enrollment, billing and communications at once,
+so binding it to any one context's repositories would drag a bounded context
+into ``shared/`` (which may not import ``contexts/``).
 
 Every probe is isolated: one unreadable collection becomes a line under
 "could not be read" rather than losing the whole brief. A partially readable
@@ -66,6 +68,9 @@ class DepartureReason:
 class OwnerDailyBrief:
     generated_at: datetime
     lookback_hours: int
+    academy_id: str = ""
+    #: Display name from the ``academies`` registry, falling back to the id.
+    academy_name: str = ""
     new_enrollments: int = 0
     departures: tuple[DepartureReason, ...] = ()
     approvals_waiting: int = 0
@@ -99,19 +104,22 @@ class OwnerDailyBrief:
 async def collect_owner_daily_brief(
     db: AsyncIOMotorDatabase[Any],
     *,
+    academy_id: str,
     now: datetime | None = None,
     lookback: timedelta = LOOKBACK,
 ) -> OwnerDailyBrief:
+    if not academy_id:
+        raise ValueError("collect_owner_daily_brief requires an academy_id")
     generated_at = now or datetime.now(UTC)
     since = generated_at - lookback
 
     probes: list[tuple[str, Any]] = [
-        ("new_enrollments", _new_enrollments(db, since)),
-        ("departures", _departures(db, since)),
-        ("approvals_waiting", _approvals_waiting(db)),
-        ("money", _money(db, since)),
-        ("waivers_missing", _waivers_missing(db)),
-        ("emails_undeliverable", _emails_undeliverable(db, since)),
+        ("new_enrollments", _new_enrollments(db, academy_id, since)),
+        ("departures", _departures(db, academy_id, since)),
+        ("approvals_waiting", _approvals_waiting(db, academy_id)),
+        ("money", _money(db, academy_id, since)),
+        ("waivers_missing", _waivers_missing(db, academy_id)),
+        ("emails_undeliverable", _emails_undeliverable(db, academy_id, since)),
     ]
     results = await asyncio.gather(*(coro for _, coro in probes), return_exceptions=True)
 
@@ -126,17 +134,41 @@ async def collect_owner_daily_brief(
     return OwnerDailyBrief(
         generated_at=generated_at,
         lookback_hours=int(lookback.total_seconds() // 3600),
+        academy_id=academy_id,
+        academy_name=await _academy_name(db, academy_id),
         errors=errors,
         **values,
     )
 
 
-async def _new_enrollments(db: AsyncIOMotorDatabase[Any], since: datetime) -> dict[str, Any]:
-    count = await db["enrollments"].count_documents({"enrolled_at": {"$gte": since}})
+async def _academy_name(db: AsyncIOMotorDatabase[Any], academy_id: str) -> str:
+    """The academy's display name; the id when the registry cannot say.
+
+    Never raises: a missing name must not cost the owner their brief.
+    """
+    try:
+        doc = await db["academies"].find_one(
+            {"academy_id": academy_id}, {"display_name": 1, "name": 1}
+        )
+    except Exception:  # degrade to the id, like every probe
+        log.warning("owner_brief_academy_name_unreadable academy_id=%s", academy_id)
+        return academy_id
+    name = (doc or {}).get("display_name") or (doc or {}).get("name")
+    return str(name) if name else academy_id
+
+
+async def _new_enrollments(
+    db: AsyncIOMotorDatabase[Any], academy_id: str, since: datetime
+) -> dict[str, Any]:
+    count = await db["enrollments"].count_documents(
+        {"academy_id": academy_id, "enrolled_at": {"$gte": since}}
+    )
     return {"new_enrollments": int(count)}
 
 
-async def _departures(db: AsyncIOMotorDatabase[Any], since: datetime) -> dict[str, Any]:
+async def _departures(
+    db: AsyncIOMotorDatabase[Any], academy_id: str, since: datetime
+) -> dict[str, Any]:
     """Who left in the window, grouped by the reason recorded at the time.
 
     The reason is the point of this line: "3 students left" starts a search,
@@ -146,6 +178,7 @@ async def _departures(db: AsyncIOMotorDatabase[Any], since: datetime) -> dict[st
         [
             {
                 "$match": {
+                    "academy_id": academy_id,
                     "event_type": {"$in": list(DEPARTURE_EVENT_TYPES)},
                     "occurred_at": {"$gte": since},
                 }
@@ -165,51 +198,127 @@ async def _departures(db: AsyncIOMotorDatabase[Any], since: datetime) -> dict[st
     return {"departures": tuple(rows)}
 
 
-async def _approvals_waiting(db: AsyncIOMotorDatabase[Any]) -> dict[str, Any]:
+async def _approvals_waiting(db: AsyncIOMotorDatabase[Any], academy_id: str) -> dict[str, Any]:
     # Not windowed: an application that has waited three days is more urgent
     # than one that arrived this morning, not less.
-    count = await db["onboarding_applications"].count_documents({"status": "PENDING_APPROVAL"})
+    count = await db["onboarding_applications"].count_documents(
+        {"academy_id": academy_id, "status": "PENDING_APPROVAL"}
+    )
     return {"approvals_waiting": int(count)}
 
 
-async def _money(db: AsyncIOMotorDatabase[Any], since: datetime) -> dict[str, Any]:
+async def _money(db: AsyncIOMotorDatabase[Any], academy_id: str, since: datetime) -> dict[str, Any]:
     failed = await db["payments"].count_documents(
-        {"status": "failed", "updated_at": {"$gte": since}}
+        {"academy_id": academy_id, "status": "failed", "updated_at": {"$gte": since}}
     )
     open_invoices = await db["invoices"].count_documents(
-        {"status": {"$in": list(OPEN_INVOICE_STATUSES)}, "balance_due_cents": {"$gt": 0}}
+        {
+            "academy_id": academy_id,
+            "status": {"$in": list(OPEN_INVOICE_STATUSES)},
+            "balance_due_cents": {"$gt": 0},
+        }
     )
     return {"payments_failed": int(failed), "invoices_open": int(open_invoices)}
 
 
-async def _waivers_missing(db: AsyncIOMotorDatabase[Any]) -> dict[str, Any]:
-    """Students with no waiver acceptance on file at all.
+async def _waivers_missing(db: AsyncIOMotorDatabase[Any], academy_id: str) -> dict[str, Any]:
+    """This academy's students with no waiver acceptance on file at all.
 
     Set difference rather than a join: both collections are small, and a
     ``$lookup`` here would need an index this once-a-day query is the only
     caller of. Outdated-version waivers are the admin waivers page's job; this
     line is the one that carries legal risk.
+
+    Acceptances are matched the way the admin waivers page matches them
+    (``MongoAdminWaiverRepository``): this academy's rows OR pre-tenancy rows
+    with no ``academy_id``, restricted to this academy's own student ids — so
+    a legacy acceptance still counts for its student and never for anyone
+    else's.
     """
     students = {
         str(doc.get("student_id") or doc.get("_id"))
-        async for doc in db["students"].find({}, {"student_id": 1})
-    }
+        async for doc in db["students"].find({"academy_id": academy_id}, {"student_id": 1})
+    } - {"None", ""}
+    if not students:
+        return {"waivers_missing": 0}
     signed = {
         str(doc.get("student_id"))
-        async for doc in db["waiver_acceptances"].find({}, {"student_id": 1})
+        async for doc in db["waiver_acceptances"].find(
+            {
+                "student_id": {"$in": sorted(students)},
+                "$or": [
+                    {"academy_id": academy_id},
+                    {"academy_id": {"$exists": False}},
+                    {"academy_id": None},
+                ],
+            },
+            {"student_id": 1},
+        )
     }
-    return {"waivers_missing": len(students - signed - {"None", ""})}
+    return {"waivers_missing": len(students - signed)}
 
 
-async def _emails_undeliverable(db: AsyncIOMotorDatabase[Any], since: datetime) -> dict[str, Any]:
-    """Addresses that started bouncing in the window and are still suppressed.
+async def _family_emails(db: AsyncIOMotorDatabase[Any], academy_id: str) -> set[str]:
+    """Lower-cased addresses of this academy's families.
+
+    "The academy's families" is the definition the session audience resolver
+    uses (``MongoAudienceResolver.resolve_session_audience`` and
+    ``_with_family_contacts``): the parent ids on this academy's students,
+    resolved against this academy's user docs or legacy global ones (by
+    ``user_id`` or the ``auth_uid`` alias), plus this academy's
+    ``family_contacts`` rows.
+    """
+    parent_ids: set[str] = set()
+    async for doc in db["students"].find(
+        {"academy_id": academy_id}, {"parent_id": 1, "parent_user_id": 1}
+    ):
+        pid = doc.get("parent_id") or doc.get("parent_user_id")
+        if pid:
+            parent_ids.add(str(pid))
+
+    emails: set[str] = set()
+    if parent_ids:
+        ids = sorted(parent_ids)
+        async for doc in db["users"].find(
+            {
+                "academy_id": {"$in": [academy_id, None]},
+                "$or": [{"user_id": {"$in": ids}}, {"auth_uid": {"$in": ids}}],
+            },
+            {"email": 1},
+        ):
+            if doc.get("email"):
+                emails.add(str(doc["email"]).strip().lower())
+    async for doc in db["family_contacts"].find({"academy_id": academy_id}, {"email": 1}):
+        if doc.get("email"):
+            emails.add(str(doc["email"]).strip().lower())
+    emails.discard("")
+    return emails
+
+
+async def _emails_undeliverable(
+    db: AsyncIOMotorDatabase[Any], academy_id: str, since: datetime
+) -> dict[str, Any]:
+    """This academy's family addresses that started bouncing in the window
+    and are still suppressed.
 
     These are families the academy can no longer reach at all — every later
     invoice, digest and class notice to them is silently dropped by the #556
     gate until someone collects a new address.
+
+    ``email_suppressions`` is deliberately global, keyed by address (the
+    Resend sender domain is shared, so a bounce seen by one academy must stop
+    every academy mailing that address — see ``MongoSuppressionRepository``).
+    Its ``first_seen_academy_id`` is best-effort audit attribution and must
+    not be used as a filter. So the suppression list is intersected with this
+    academy's own family addresses instead: an address shared by two
+    academies' families is (correctly) reported to both owners, and a
+    stranger's bounce is reported to nobody.
     """
+    emails = await _family_emails(db, academy_id)
+    if not emails:
+        return {"emails_undeliverable": 0}
     count = await db["email_suppressions"].count_documents(
-        {"active": True, "first_seen_at": {"$gte": since}}
+        {"email": {"$in": sorted(emails)}, "active": True, "first_seen_at": {"$gte": since}}
     )
     return {"emails_undeliverable": int(count)}
 
@@ -222,11 +331,16 @@ def render_owner_daily_brief(brief: OwnerDailyBrief) -> tuple[str, str]:
     yesterday's date on a 07:00 email in any UTC+ deployment.
     """
     date_label = brief.generated_at.strftime("%Y-%m-%d")
+    # The "Academy brief <date> — ..." prefix is what existing inbox filters
+    # match on, so the academy name goes at the end.
     subject = (
         f"Academy brief {date_label} — action needed"
         if brief.has_attention_items
         else f"Academy brief {date_label} — nothing waiting"
     )
+    academy_label = brief.academy_name or brief.academy_id
+    if academy_label:
+        subject = f"{subject} · {academy_label}"
 
     window = f"last {brief.lookback_hours}h"
     rows = [
@@ -246,7 +360,11 @@ def render_owner_daily_brief(brief: OwnerDailyBrief) -> tuple[str, str]:
     )
 
     parts = [
-        f"<h2>Academy brief — {escape(date_label)}</h2>",
+        (
+            f"<h2>{escape(academy_label)} — academy brief {escape(date_label)}</h2>"
+            if academy_label
+            else f"<h2>Academy brief — {escape(date_label)}</h2>"
+        ),
         "<table cellpadding='6' cellspacing='0' border='0'>",
         "<tr><th align='left'>Signal</th><th align='right'>Count</th>",
         "<th align='left'>Window</th></tr>",

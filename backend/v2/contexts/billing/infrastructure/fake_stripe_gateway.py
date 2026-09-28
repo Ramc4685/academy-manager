@@ -602,6 +602,8 @@ class FakeStripeGateway(StripeGateway):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
+        country: str = "US",
+        currency: str = "USD",
     ) -> dict[str, Any]:
         account_id = f"acct_fake_{academy_id}_{new_ulid()}"
         self.connected_accounts.append(
@@ -611,6 +613,8 @@ class FakeStripeGateway(StripeGateway):
                 "display_name": display_name,
                 "contact_email": contact_email,
                 "idempotency_key": idempotency_key or f"connect-account:{academy_id}",
+                "country": country,
+                "currency": currency,
                 # Mirrors RealStripeGateway.create_connected_account (direct
                 # charges: full dashboard, Stripe collects fees and losses).
                 "dashboard": "full",
@@ -623,12 +627,13 @@ class FakeStripeGateway(StripeGateway):
                     }
                 },
                 "defaults": {
-                    "currency": "usd",
+                    "currency": currency.strip().lower(),
                     "responsibilities": {
                         "fees_collector": "stripe",
                         "losses_collector": "stripe",
                     },
                 },
+                "identity": {"country": country.strip().lower()},
             }
         )
         # The v2 create response: the id plus the recorded liability model.
@@ -637,7 +642,7 @@ class FakeStripeGateway(StripeGateway):
             "object": "v2.core.account",
             "dashboard": "full",
             "defaults": {
-                "currency": "usd",
+                "currency": currency.strip().lower(),
                 "responsibilities": {"fees_collector": "stripe", "losses_collector": "stripe"},
             },
         }

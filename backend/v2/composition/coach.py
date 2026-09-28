@@ -629,13 +629,9 @@ def compose_coach(
         session_announcements=compose_announcements(
             db,
             settings,
-            # Same construction as admin.py. `academy_id` here only labels the
-            # returned domain object; every write is scoped by the tenant-aware
-            # repository, and `post_session_announcement` reads the live tenant.
-            comms=CommsService(
-                messages=messages_repo,
-                academy_id=settings.primary_academy_id or settings.default_academy_id,
-            ),
+            # Same construction as admin.py: the tenant is read per message,
+            # never the academy the server booted with.
+            comms=CommsService(messages=messages_repo, academy_id=request_academy_id),
             users=user_repo,
             sessions=sessions_repo,
         ),

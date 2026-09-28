@@ -24,6 +24,7 @@ from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions impo
 )
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
 
@@ -252,7 +253,7 @@ class ApprovePauseRequest:
         billing_deferrals: BillingDeferralRepository | None = None,
         autopay_status: EnrollmentAutopayStatusGateway | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
-        academy_id: str | None = None,
+        academy_id: str | Callable[[], str] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._pause_requests = pause_requests
@@ -263,6 +264,17 @@ class ApprovePauseRequest:
         self._billing_sync = billing_sync
         self._academy_id = academy_id
         self._now = clock
+
+    def _tenant_id(self) -> str:
+        # Resolved at execute time (P1 hardcoded #1): the composition root
+        # passes ``request_academy_id`` so the resume row lands in the tenant
+        # that approved the pause, never the academy the server booted with.
+        # The old ``or request.parent_id`` fallback stamped a parent id as an
+        # academy id; with no source the tenant in scope is the only answer.
+        source = self._academy_id
+        if source is None:
+            return current_academy_id()
+        return source() if callable(source) else source
 
     async def execute(self, cmd: DecidePauseRequestCommand) -> PauseRequest:
         existing = await self._pause_requests.get(cmd.pause_request_id)
@@ -365,7 +377,7 @@ class ApprovePauseRequest:
             await self._scheduled_actions.add(
                 ScheduledEnrollmentAction(
                     action_id=str(new_ulid()),
-                    academy_id=self._academy_id or request.parent_id,
+                    academy_id=self._tenant_id(),
                     action_type="resume_from_pause",
                     enrollment_id=request.enrollment_id,
                     pause_request_id=request.pause_request_id,
