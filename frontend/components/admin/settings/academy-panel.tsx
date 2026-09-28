@@ -118,6 +118,7 @@ export function AcademyPanel() {
             value={form.currency}
             onChange={(value) => setForm((prev) => ({ ...prev, currency: value }))}
           />
+          <InvoicePrefixField prefix={query.data?.invoice_prefix ?? null} />
         </div>
         <PanelFooter
           dirty={dirty}
@@ -128,6 +129,36 @@ export function AcademyPanel() {
         />
       </Card>
     </section>
+  );
+}
+
+/** Helper text under the read-only invoice prefix. */
+export function invoicePrefixHint(prefix: string | null): string {
+  if (!prefix) {
+    return "Not set yet. CourtMastr sets it before your first invoice.";
+  }
+  return `Invoice numbers look like ${prefix}-2026-09-0001. Set by CourtMastr.`;
+}
+
+function InvoicePrefixField({ prefix }: { prefix: string | null }) {
+  // Read-only: the platform sets the prefix per academy and locks it after
+  // the first numbered invoice, so it has no place in the save payload.
+  return (
+    <div className="grid gap-1.5 text-sm font-medium text-rally-ink">
+      <span id="academy-invoice-prefix-label">Invoice prefix</span>
+      <input
+        aria-labelledby="academy-invoice-prefix-label"
+        aria-describedby="academy-invoice-prefix-hint"
+        data-testid="academy-invoice-prefix"
+        value={prefix ?? ""}
+        placeholder="Not set"
+        readOnly
+        className="h-10 rounded-md border border-rally-line bg-rally-paper px-3 font-mono text-sm font-normal text-rally-muted outline-none"
+      />
+      <span id="academy-invoice-prefix-hint" className="text-xs font-normal text-rally-muted">
+        {invoicePrefixHint(prefix)}
+      </span>
+    </div>
   );
 }
 

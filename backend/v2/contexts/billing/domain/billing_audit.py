@@ -58,6 +58,11 @@ BillingAuditAction = Literal[
     # future destination charge the platform keeps. Same actor/before/after
     # trail as the other charge-routing settings.
     "application_fee_changed",
+    # Platform config, not money movement: a PLATFORM admin changed this
+    # academy's invoice-number prefix (Settings overhaul Phase 1 PR 2). Only
+    # possible before the academy's first numbered invoice; the trail shows
+    # who chose the prefix parents see on every invoice.
+    "invoice_prefix_changed",
 ]
 
 

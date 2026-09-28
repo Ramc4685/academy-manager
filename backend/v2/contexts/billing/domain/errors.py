@@ -175,6 +175,34 @@ class ApplicationFeeAcademyNotFound(DomainError):
     status_code = 404
 
 
+class InvoicePrefixAcademyNotFound(DomainError):
+    """Platform admin tried to read/set the invoice prefix of an unknown academy."""
+
+    code = "Billing.AcademyNotFound"
+    status_code = 404
+
+
+class InvalidInvoicePrefix(DomainError):
+    """The invoice prefix breaks the format rules (2-6 of A-Z/0-9, letter first)."""
+
+    code = "Billing.InvalidInvoicePrefix"
+    status_code = 422
+
+
+class InvoicePrefixTaken(DomainError):
+    """Another academy already uses this invoice prefix; prefixes are unique."""
+
+    code = "Billing.InvoicePrefixTaken"
+    status_code = 409
+
+
+class InvoicePrefixLocked(DomainError):
+    """The academy has issued a numbered invoice, so its prefix can no longer change."""
+
+    code = "Billing.InvoicePrefixLocked"
+    status_code = 409
+
+
 class StripeAccountMismatch(DomainError):
     """A Stripe event names a different connected account than the one the
     app recorded the payment on. The two cannot both be true, so the event is

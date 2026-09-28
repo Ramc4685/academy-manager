@@ -209,3 +209,58 @@ def test_bootstrap_requires_a_timezone() -> None:
 def test_bootstrap_rejects_a_non_iana_timezone() -> None:
     with pytest.raises(ValidationError):
         _command(timezone="Central Time")
+
+
+class FakeInvoicePrefixAssigner:
+    """Mirrors AssignInvoicePrefix: idempotent per academy, unique across academies."""
+
+    def __init__(self) -> None:
+        self.prefixes: dict[str, str] = {}
+        self.calls: list[tuple[str, str]] = []
+
+    async def execute(self, *, academy_id: str, slug: str) -> str:
+        self.calls.append((academy_id, slug))
+        if academy_id in self.prefixes:
+            return self.prefixes[academy_id]
+        base = slug.split("-")[0].upper()[:6]
+        prefix, n = base, 2
+        while prefix in self.prefixes.values():
+            prefix, n = f"{base[:5]}{n}", n + 1
+        self.prefixes[academy_id] = prefix
+        return prefix
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_assigns_an_invoice_prefix_from_the_slug() -> None:
+    store = FakeBootstrapStore()
+    assigner = FakeInvoicePrefixAssigner()
+    use_case = BootstrapAcademy(
+        store=store,
+        id_factory=lambda prefix: f"{prefix}001",
+        invoice_prefix_assigner=assigner,
+    )
+
+    result = await use_case.execute(_command())
+
+    assert assigner.calls == [(result.academy_id, "north-shore")]
+    assert result.invoice_prefix == "NORTH"
+
+
+@pytest.mark.asyncio
+async def test_rebootstrap_keeps_the_invoice_prefix() -> None:
+    store = FakeBootstrapStore()
+    assigner = FakeInvoicePrefixAssigner()
+    use_case = BootstrapAcademy(store=store, invoice_prefix_assigner=assigner)
+
+    first = await use_case.execute(_command())
+    second = await use_case.execute(_command())
+
+    assert second.created is False
+    assert second.invoice_prefix == first.invoice_prefix == "NORTH"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_without_an_assigner_reports_no_prefix() -> None:
+    result = await _use_case(FakeBootstrapStore()).execute(_command())
+
+    assert result.invoice_prefix is None

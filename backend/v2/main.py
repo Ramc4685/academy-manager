@@ -57,6 +57,7 @@ from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
@@ -530,6 +531,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
+        invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
     )
     # Public parent magic-link consume. Tenant is resolved per-request from the
     # host; the use case itself checks the token's academy binding against it.
@@ -612,6 +614,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tenant_lifecycle = TenantLifecycleService(
         tenants=MongoTenantLifecycleRepository(db),
         audit_recorder=_record_lifecycle_audit,
+        invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
     )
     app.state.platform_billing = build_platform_billing_use_cases(db)
 
@@ -663,6 +666,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     app.state.platform_application_fee = compose_platform_application_fee(db)
+
+    # Per-academy invoice prefix (Settings overhaul P1 PR 2) — platform BFF only.
+    from backend.v2.composition.platform_billing_identity import (
+        compose_platform_billing_identity,
+    )
+
+    app.state.platform_billing_identity = compose_platform_billing_identity(db)
 
     # Tenant data export + purge dry-run (roadmap L9d) — platform BFF only.
     from backend.v2.composition.tenant_data_offboarding import (
@@ -1792,6 +1802,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
+        invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
     )
 
     try:

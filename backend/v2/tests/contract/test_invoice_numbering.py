@@ -20,7 +20,6 @@ from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
 )
-from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
     MongoBillingCounterRepository,
 )
@@ -32,6 +31,14 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 )
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+
+async def _set_prefix(db, academy_id: str, prefix: str) -> None:
+    """Seed the prefix the way the platform does (only the platform writes it)."""
+    from backend.v2.shared.tenancy import tenant_scope
+
+    with tenant_scope(academy_id):
+        await MongoBillingSettingsRepository(db).set_invoice_number_prefix(prefix)
 
 
 def _use_case(db) -> AddInvoiceLine:
@@ -60,6 +67,7 @@ async def test_concurrent_invoice_creation_across_many_parents_has_no_collisions
     """~250 parents concurrently trigger on-the-fly invoice creation in the same
     academy+month. Every minted invoice_number must be unique and the set of
     sequence numbers must be exactly 1..N (monotonic, no gaps, no collisions)."""
+    await _set_prefix(db, acad, "BLNO")
     uc = _use_case(db)
 
     async def _create(i: int):
@@ -85,6 +93,7 @@ async def test_concurrent_invoice_creation_across_many_parents_has_no_collisions
 
 
 async def test_invoice_numbering_resets_across_months(db, acad) -> None:
+    await _set_prefix(db, acad, "BLNO")
     uc = _use_case(db)
 
     june = await uc.execute(
@@ -121,7 +130,10 @@ async def test_invoice_numbering_resets_across_months(db, acad) -> None:
 
 
 async def test_invoice_numbering_isolated_across_academies(db, acad, other_acad) -> None:
-    """Two academies minting invoices in the same month get independent sequences."""
+    """Two academies minting invoices in the same month get independent sequences
+    and their own prefixes."""
+    await _set_prefix(db, acad, "BLNO")
+    await _set_prefix(db, other_acad, "OTHR")
     from backend.v2.shared.tenancy.context import _current as _tv
 
     token = _tv.set(acad)
@@ -165,13 +177,13 @@ async def test_invoice_numbering_isolated_across_academies(db, acad, other_acad)
 
     assert first_a.invoice.invoice_number == "BLNO-2026-06-0001"
     assert second_a.invoice.invoice_number == "BLNO-2026-06-0002"
-    # Other academy's sequence starts fresh at 1 — no leakage from academy A.
-    assert first_b.invoice.invoice_number == "BLNO-2026-06-0001"
+    # Other academy's sequence starts fresh at 1 under its own prefix — no
+    # leakage from academy A, and never a BLNO- number.
+    assert first_b.invoice.invoice_number == "OTHR-2026-06-0001"
 
 
 async def test_invoice_numbering_uses_academys_configured_prefix(db, acad) -> None:
-    settings_repo = MongoBillingSettingsRepository(db)
-    await settings_repo.upsert(BillingSettings(academy_id=acad, invoice_number_prefix="ACAD"))
+    await _set_prefix(db, acad, "ACAD")
 
     uc = _use_case(db)
     result = await uc.execute(
