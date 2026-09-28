@@ -163,3 +163,72 @@ def test_reminder_body_uses_shared_shell() -> None:
     body = _reminder_body(display_name="P", academy_name="A", setup_link="https://x.test")
     assert FONT_STACK in body
     assert "Sent by A" in body
+
+
+class FakeBrands:
+    def __init__(self, brand=None, raises: Exception | None = None):
+        self._brand = brand
+        self._raises = raises
+        self.calls: list[str] = []
+
+    async def get_academy_brand(self, academy_id: str):
+        self.calls.append(academy_id)
+        if self._raises is not None:
+            raise self._raises
+        return self._brand
+
+
+def _branded_use_case(brands: FakeBrands, sender: FakeSender) -> SendAddCardReminder:
+    return SendAddCardReminder(
+        contacts=FakeContacts(
+            {"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat")}
+        ),
+        links=FakeLinks(),
+        sender=sender,
+        academies=FakeAcademies(),
+        return_url=RETURN_URL,
+        brands=brands,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reminder_carries_the_academy_logo_colour_and_contact_footer():
+    from backend.v2.shared.comms.email_theme import EmailBrand
+
+    brands = FakeBrands(
+        EmailBrand(
+            academy_name="Acme Tennis Academy",
+            logo_url="https://cdn.test/acme.png",
+            brand_color="#0f766e",
+            contact_phone="+1 555 0100",
+        )
+    )
+    sender = FakeSender()
+    await _branded_use_case(brands, sender).execute(academy_id=ACADEMY_ID, parent_id="p1")
+
+    assert brands.calls == [ACADEMY_ID]
+    body = sender.calls[0]["body"]
+    assert '<img src="https://cdn.test/acme.png"' in body
+    assert "background:#0f766e" in body
+    assert "+1 555 0100" in body
+
+
+@pytest.mark.asyncio
+async def test_a_failing_brand_lookup_still_sends_the_name_only_reminder():
+    sender = FakeSender()
+    plain_sender = FakeSender()
+    outcome = await _branded_use_case(FakeBrands(raises=RuntimeError("down")), sender).execute(
+        academy_id=ACADEMY_ID, parent_id="p1"
+    )
+    await SendAddCardReminder(
+        contacts=FakeContacts(
+            {"p1": ParentContact(parent_id="p1", email="parent@example.com", display_name="Pat")}
+        ),
+        links=FakeLinks(),
+        sender=plain_sender,
+        academies=FakeAcademies(),
+        return_url=RETURN_URL,
+    ).execute(academy_id=ACADEMY_ID, parent_id="p1")
+
+    assert outcome.ok is True
+    assert sender.calls[0]["body"] == plain_sender.calls[0]["body"]

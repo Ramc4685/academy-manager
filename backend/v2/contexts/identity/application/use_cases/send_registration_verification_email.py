@@ -25,14 +25,17 @@ from typing import Protocol
 
 from backend.v2.contexts.identity.application.ports import TokenVerifier
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
+    AcademyBrandLookup,
     InviteEmailOutcome,
     InviteEmailPort,
+    resolve_email_brand,
 )
 from backend.v2.contexts.identity.domain.errors import (
     InvalidToken,
     LoginInviteSendFailed,
     VerificationEmailThrottled,
 )
+from backend.v2.shared.comms.email_brand import branded_as
 from backend.v2.shared.comms.email_theme import INK, MUTED, EmailBrand, button, shell
 from backend.v2.shared.http.errors import DomainError
 
@@ -51,7 +54,9 @@ class VerificationEmailCooldownPort(Protocol):
     async def claim_send(self, email: str) -> bool: ...
 
 
-def _verification_body(*, academy_name: str, verify_link: str) -> str:
+def _verification_body(
+    *, academy_name: str, verify_link: str, brand: EmailBrand | None = None
+) -> str:
     safe_academy_name = escape(academy_name)
     inner = (
         f'<h2 style="color:{INK};font-size:20px;margin:0 0 12px;">'
@@ -62,7 +67,7 @@ def _verification_body(*, academy_name: str, verify_link: str) -> str:
         f'<p style="color:{MUTED};font-size:13px;">If you didn&rsquo;t request this, '
         f"you can ignore this email.</p>"
     )
-    return shell(brand=EmailBrand(academy_name=academy_name), inner_html=inner)
+    return shell(brand=branded_as(brand, academy_name), inner_html=inner)
 
 
 class SendRegistrationVerificationEmail:
@@ -74,12 +79,14 @@ class SendRegistrationVerificationEmail:
         sender: InviteEmailPort,
         academies: AcademyNameLookup,
         cooldown: VerificationEmailCooldownPort,
+        brands: AcademyBrandLookup | None = None,
     ) -> None:
         self._verifier = verifier
         self._links = links
         self._sender = sender
         self._academies = academies
         self._cooldown = cooldown
+        self._brands = brands
 
     async def execute(self, id_token: str, *, academy_id: str) -> None:
         token_claims = await self._verify(id_token)
@@ -111,12 +118,15 @@ class SendRegistrationVerificationEmail:
         except Exception as exc:
             raise LoginInviteSendFailed(f"could not prepare verification email: {exc}") from exc
 
+        brand = await resolve_email_brand(self._brands, academy_id, academy_name=academy_name)
         outcome: InviteEmailOutcome = await self._sender.send_invite_email(
             user_id=uid,
             email=email,
             display_name=display_name,
             subject=f"Verify your email for {academy_name}",
-            body=_verification_body(academy_name=academy_name, verify_link=verify_link),
+            body=_verification_body(
+                academy_name=academy_name, verify_link=verify_link, brand=brand
+            ),
         )
         if not outcome.ok:
             raise LoginInviteSendFailed(outcome.failed_reason or "send failed")

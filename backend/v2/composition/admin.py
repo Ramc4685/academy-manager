@@ -552,6 +552,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
+from backend.v2.shared.comms.email_brand import AcademyEmailBrands
 from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
@@ -1938,6 +1939,7 @@ def compose_admin(
         sender=LoginInviteEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
         portals=_AcademyPortalUrlAdapter(),
+        brands=AcademyEmailBrands(academy_repo),
     )
     # #436: an admin email edit clears Firebase's `email_verified`, so the
     # edit must carry a fresh set-password invite or the user is locked out
@@ -2118,6 +2120,7 @@ def compose_admin(
         sender=AddCardReminderEmailAdapter(sender=_email_sender),
         academies=academy_repo,
         return_url=_billing_setup_return_url,
+        brands=AcademyEmailBrands(academy_repo),
     )
     get_admin_student = compose_get_admin_student(db, students_r)
     update_admin_student = UpdateAdminStudent(students_r)

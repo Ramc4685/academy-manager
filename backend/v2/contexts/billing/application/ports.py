@@ -40,6 +40,7 @@ from backend.v2.contexts.billing.domain.session_type import (
     SessionType,
     StudentBillingEnrollment,
 )
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 T = TypeVar("T")
 
@@ -184,6 +185,14 @@ class CardSetupLinkPort(Protocol):
 
 class AcademyNameLookup(Protocol):
     async def get_academy_name(self, academy_id: str) -> str | None: ...
+
+
+class AcademyBrandLookup(Protocol):
+    """The academy's full email brand (logo, colour, contact footer), or
+    ``None`` when none is on file. Composition implements it with
+    ``shared.comms.email_brand.AcademyEmailBrands``."""
+
+    async def get_academy_brand(self, academy_id: str) -> EmailBrand | None: ...
 
 
 class AcademyBillingRegionReader(Protocol):
