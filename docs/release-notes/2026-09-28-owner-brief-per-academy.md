@@ -19,5 +19,6 @@ PR: #TBD
 ## Risk / rollback
 
 - Low. The brief only reads data. The main change is who receives it: owners of any other academy now get their own brief each morning. BLNO's recipient does not change while the env address is set.
+- The loop covers every row in `academies`, the same list every other per-academy job uses, in single-academy mode too. If production holds any academy row besides BLNO that has an active owner membership with an email, that owner starts getting a brief for that academy.
 - The subject now ends with the academy name. A filter that matched the whole subject exactly would need updating. Filters that match on the prefix are unaffected.
 - Rollback: revert this PR. The brief goes back to one combined email sent to the env address.
