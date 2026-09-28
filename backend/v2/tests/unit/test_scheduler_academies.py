@@ -788,3 +788,65 @@ async def test_generation_without_a_send_pass_behaves_as_before() -> None:
 
     assert totals["created"] == 3
     assert totals["invoices_emailed"] == 0
+
+
+# --- Row 24: no phantom ``default-academy`` tenant in multi-academy mode ------
+
+
+def _settings(**overrides: object):
+    from types import SimpleNamespace
+
+    base: dict[str, object] = {
+        "tenancy_mode": "single_academy",
+        "primary_academy_id": "acad_blno_badminton",
+        "default_academy_id": "default-academy",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_single_academy_scheduler_fallback_is_the_primary_academy() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    # BLNO prod: single_academy, PRIMARY_ACADEMY_ID set. Unchanged.
+    assert _scheduler_fallback_academy_id(_settings()) == "acad_blno_badminton"
+
+
+def test_multi_academy_scheduler_has_no_fallback_academy() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    assert _scheduler_fallback_academy_id(_settings(tenancy_mode="multi_academy")) == ""
+
+
+@pytest.mark.asyncio
+async def test_single_mode_still_runs_blno_when_the_academies_list_is_empty() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    fallback = _scheduler_fallback_academy_id(_settings())
+    assert await _scheduler_academy_ids(_FakeAcademyRepo([]), fallback) == [
+        "acad_blno_badminton"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_multi_mode_loops_only_real_academies() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    fallback = _scheduler_fallback_academy_id(_settings(tenancy_mode="multi_academy"))
+    academies = _FakeAcademyRepo([{"academy_id": "academy-a"}, {"academy_id": "academy-b"}])
+    assert await _scheduler_academy_ids(academies, fallback) == ["academy-a", "academy-b"]
+
+
+def test_every_scheduler_loop_uses_the_mode_aware_fallback() -> None:
+    import backend.v2.main as main_module
+
+    source = inspect.getsource(main_module)
+    calls = [m.start() for m in re.finditer(r"_scheduler_academy_ids\(", source)]
+    call_args = [
+        source[start : source.index(")", source.index(",", start))]
+        for start in calls
+        if not source[max(0, start - 10) : start].endswith("def ")
+    ]
+    assert call_args, "expected scheduler loops"
+    offenders = [args for args in call_args if "scheduler_fallback_academy_id" not in args]
+    assert not offenders, offenders
