@@ -200,13 +200,6 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
 # say what it reads and why the read cannot be tenant-scoped. Admission bar:
 # read-only, operator-facing, never reachable from a tenant request path.
 APPROVED_CROSS_TENANT_EXCEPTIONS = {
-    Path("shared/observability/owner_daily_brief.py"): (
-        "By design cross-tenant and read-only: the daily owner brief (issue #776) "
-        "counts enrollments, enrollment_events, onboarding_applications, payments, "
-        "invoices, students, waiver_acceptances and email_suppressions across every "
-        "academy, the same way its sibling ops_digest does. It runs only from the "
-        "scheduler (no request path reaches it) and writes nothing at all."
-    ),
     Path("contexts/billing/infrastructure/mongo_connected_account_directory.py"): (
         "By design cross-tenant and read-only: Stripe delivers each direct-charge "
         "academy's payment events as Connect events to the one boot-academy "
@@ -272,6 +265,15 @@ def test_cross_tenant_exceptions_are_explicit_and_documented() -> None:
         # and say it does not write tenant-owned data.
         assert "cross-tenant" in rationale, rel_path
         assert "read-only" in rationale, rel_path
+
+
+def test_owner_daily_brief_is_not_a_cross_tenant_exception() -> None:
+    # The owner brief used to sum every academy into one email. It is per
+    # academy now (every probe filters by academy_id); the exemption must not
+    # come back.
+    path = Path("shared/observability/owner_daily_brief.py")
+    assert path not in APPROVED_CROSS_TENANT_EXCEPTIONS
+    assert not _is_approved_path(path)
 
 
 def test_infrastructure_and_transitional_composition_are_no_longer_blanket_exempt() -> None:
