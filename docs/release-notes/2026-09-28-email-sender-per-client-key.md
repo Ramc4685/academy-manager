@@ -1,6 +1,6 @@
 # Email sender: each Resend sender uses its own API key
 
-PR: #TBD
+PR: #991
 
 ## What changed
 
