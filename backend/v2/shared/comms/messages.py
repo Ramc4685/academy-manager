@@ -9,7 +9,7 @@ Stored in `messages` and `announcements` collections.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -252,7 +252,13 @@ class CommsService:
     """Thin CRUD service used by admin/parent/coach BFFs alike."""
 
     messages: MongoMessageRepository
-    academy_id: str
+    #: A callable (the composition roots pass their request-tenant resolver) is
+    #: read per message, so a boot-time academy id never labels another
+    #: tenant's message (P1 hardcoded #1). A plain string still works in tests.
+    academy_id: str | Callable[[], str]
+
+    def _tenant_id(self) -> str:
+        return self.academy_id() if callable(self.academy_id) else self.academy_id
 
     async def send_dm(
         self,
@@ -264,7 +270,7 @@ class CommsService:
     ) -> Message:
         m = Message(
             message_id=str(new_ulid()),
-            academy_id=self.academy_id,
+            academy_id=self._tenant_id(),
             kind="dm",
             sender_id=sender_id,
             sender_persona=sender_persona,
@@ -285,7 +291,7 @@ class CommsService:
     ) -> Message:
         m = Message(
             message_id=str(new_ulid()),
-            academy_id=self.academy_id,
+            academy_id=self._tenant_id(),
             kind="announcement",
             sender_id=sender_id,
             sender_persona="admin",

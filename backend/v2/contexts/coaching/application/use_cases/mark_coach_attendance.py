@@ -57,7 +57,7 @@ class MarkCoachAttendance:
         *,
         coach_attendance: CoachAttendanceRepository,
         occurrence_lookup: OccurrenceLookup,
-        academy_id: str,
+        academy_id: str | Callable[[], str],
         payout_lock: PayoutPeriodLock | None = None,
         clock: Callable[[], datetime] | None = None,
         coach_attendance_audit: CoachAttendanceAuditRepository | None = None,
@@ -102,7 +102,7 @@ class MarkCoachAttendance:
         )
         row = CoachAttendance(
             attendance_id=existing.attendance_id if existing else new_ulid(),
-            academy_id=self._academy_id,
+            academy_id=(self._academy_id() if callable(self._academy_id) else self._academy_id),
             occurrence_id=command.occurrence_id,
             coach_id=command.coach_id,
             status=command.status,
@@ -125,7 +125,9 @@ class MarkCoachAttendance:
             await self._coach_attendance_audit.append(
                 CoachAttendanceAuditEntry(
                     audit_id=new_ulid(),
-                    academy_id=self._academy_id,
+                    academy_id=(
+                        self._academy_id() if callable(self._academy_id) else self._academy_id
+                    ),
                     occurrence_id=command.occurrence_id,
                     coach_id=command.coach_id,
                     actor_id=actor_id,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -616,6 +617,53 @@ def test_main_resolver_prefers_forwarded_host_for_frontend_proxy() -> None:
     assert response.status_code == 200
     assert response.json() == {"academy_id": "academy-court"}
     assert tenant_resolver.hosts == ["courtmastr.app.example.com"]
+
+
+@pytest.mark.parametrize(
+    ("presented", "expected_host"),
+    [
+        (None, "backend"),  # no proxy auth: the client-supplied header is ignored
+        ("forged", "backend"),  # wrong secret: same
+        ("proxy-s3cret", "tenant-b.courtmastr.com"),  # the BFF proxy: trusted
+    ],
+)
+def test_forwarded_host_is_trusted_only_from_the_authenticated_proxy(
+    presented: str | None, expected_host: str
+) -> None:
+    """With a proxy secret configured (required in production SaaS mode), a
+    caller that reaches the API directly cannot pick a tenant by sending its
+    own X-Forwarded-Host; only the BFF proxy, which presents the secret, can."""
+
+    class _RecordingTenantResolver:
+        def __init__(self) -> None:
+            self.hosts: list[str] = []
+
+        async def resolve(self, *, host: str, headers: dict[str, str]):
+            self.hosts.append(host)
+
+            class _Result:
+                academy_id = "academy-court"
+
+            return _Result()
+
+    tenant_resolver = _RecordingTenantResolver()
+    app = FastAPI()
+    app.state.saas_mode = True
+    app.state.default_academy_id = None
+    app.state.tenant_resolver = tenant_resolver
+    app.state.proxy_shared_secret = "proxy-s3cret"
+    resolve_tenant = _build_request_tenant_resolver(app)
+
+    @app.get("/resolve")
+    async def resolve(request: Request) -> dict[str, str | None]:
+        return {"academy_id": await resolve_tenant(request)}
+
+    headers = {"X-Forwarded-Host": "tenant-b.courtmastr.com"}
+    if presented is not None:
+        headers["x-cm-proxy-auth"] = presented
+    client = TestClient(app, base_url="http://backend")
+    assert client.get("/resolve", headers=headers).status_code == 200
+    assert tenant_resolver.hosts == [expected_host]
 
 
 def test_main_resolver_uses_primary_academy_in_single_academy_launch_mode() -> None:

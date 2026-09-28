@@ -736,7 +736,7 @@ def compose_admin(
 
     session_tz = request_scoped_academy_timezone(db, request_academy_id)
     create_session = CreateSession(
-        sessions=sessions_w, academy_id=academy_id, get_academy_timezone=session_tz
+        sessions=sessions_w, academy_id=request_academy_id, get_academy_timezone=session_tz
     )
     edit_session = EditSession(
         sessions=sessions_w,
@@ -753,7 +753,7 @@ def compose_admin(
         enrollments_query=enrollments_r,
         enrollments_writer=enrollments_w,
         outbox=outbox,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
         billing_sync=enrollment_billing_sync,
@@ -770,7 +770,7 @@ def compose_admin(
         billing_sync=enrollment_billing_sync,
         occurrence_roster=occurrence_roster_repo,
         scheduled_actions=scheduled_actions,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
 
     async def resend_stale_move_notice(invoice_id: str) -> None:
@@ -834,7 +834,7 @@ def compose_admin(
     join_waitlist = JoinWaitlist(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
@@ -859,7 +859,7 @@ def compose_admin(
         billing_deferrals=billing_deferrals,
         autopay_status=enrollment_autopay_status_gateway,
         billing_sync=enrollment_billing_sync,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     decline_pause_request = DeclinePauseRequest(
         pause_requests=pause_requests, notifier=notifiers.roster
@@ -959,7 +959,7 @@ def compose_admin(
     session_type_repo = MongoSessionTypeRepository(db)
     create_session_type = CreateSessionType(
         session_types=session_type_repo,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     list_session_types = ListSessionTypes(session_types=session_type_repo)
     update_session_type = UpdateSessionType(session_types=session_type_repo)
@@ -1138,14 +1138,14 @@ def compose_admin(
         rates=coach_rates_repo,
         audit=coach_rate_audit,
     )
-    record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
+    record_expense = RecordExpense(expenses=expenses_repo, academy_id=request_academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
     revenue_query = AdminEffectiveRevenueQuery(db)
     tuition_discount_summary = MongoTuitionDiscountSummaryQuery(db)
 
     # Comms
-    comms = CommsService(messages=MongoMessageRepository(db), academy_id=academy_id)
+    comms = CommsService(messages=MongoMessageRepository(db), academy_id=request_academy_id)
 
     # Real delivery needs email_delivery_enabled + resend_api_key AND an
     # approved environment (staging/prod). The gate lives in exactly one place,
@@ -2985,7 +2985,7 @@ def compose_admin(
         coach_attendance=coach_attendance_repo,
         coach_attendance_audit=coach_attendance_audit_repo,
         occurrence_lookup=_AdminOccurrenceLookup(),
-        academy_id=academy_id,
+        academy_id=request_academy_id,
         # #787: attendance status and rate overrides are payroll inputs; a
         # frozen payout period will never re-read them.
         payout_lock=PayoutInputLock(payout_periods_repo),

@@ -11,6 +11,7 @@ For now: simple CRUD aggregations.
 from __future__ import annotations
 
 from calendar import monthrange
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Literal
@@ -460,14 +461,17 @@ class RecordExpenseCommand(BaseModel):
 
 # FINANCE
 class RecordExpense:
-    def __init__(self, *, expenses: MongoExpenseRepository, academy_id: str) -> None:
+    def __init__(
+        self, *, expenses: MongoExpenseRepository, academy_id: str | Callable[[], str]
+    ) -> None:
         self._expenses = expenses
         self._academy_id = academy_id
 
     async def execute(self, cmd: RecordExpenseCommand) -> Expense:
         e = Expense(
             expense_id=str(new_ulid()),
-            academy_id=self._academy_id,
+            # Resolved per call: composition passes the request-tenant callable.
+            academy_id=(self._academy_id() if callable(self._academy_id) else self._academy_id),
             category=cmd.category,
             amount_cents=cmd.amount_cents,
             note=cmd.note,

@@ -29,6 +29,8 @@ academy needs the multi-academy regime (`V2_SAAS_MODE=true`,
 `DEPLOYMENT.md` "SaaS v2 Production Readiness"). Do not flip it until every box
 below is ticked; the flip is an owner decision and a deploy, never a console
 edit made mid-onboarding.
+The exact pre-flight and switch steps are in
+[`enable-multi-academy.md`](enable-multi-academy.md).
 
 - [ ] `docs/requirements/2026-05-22-saas-production-readiness.md` has no open
       launch gate.

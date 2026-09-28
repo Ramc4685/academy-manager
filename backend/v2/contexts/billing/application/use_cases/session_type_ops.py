@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -108,7 +109,7 @@ class CreateSessionType:
         self,
         *,
         session_types: SessionTypeRepository,
-        academy_id: str,
+        academy_id: str | Callable[[], str],
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._session_types = session_types
@@ -119,7 +120,8 @@ class CreateSessionType:
         now = self._now()
         session_type = SessionType(
             session_type_id=str(new_ulid()),
-            academy_id=self._academy_id,
+            # Resolved per call: composition passes the request-tenant callable.
+            academy_id=(self._academy_id() if callable(self._academy_id) else self._academy_id),
             name=cmd.name,
             description=cmd.description,
             price_cents=cmd.price_cents,
