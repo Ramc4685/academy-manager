@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from backend.v2.contexts.identity.domain.manual_payment_methods import effective_manual_methods
+
 
 class AcademyRepo(Protocol):
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
@@ -63,9 +65,8 @@ class GetAcademyGatewayUseCase:
         doc = await self._repo.find_by_id(academy_id)
         if not doc:
             doc = await self._repo.upsert_defaults(academy_id)
-        manual_methods = doc.get("manual_methods")
-        if not isinstance(manual_methods, list) or not manual_methods:
-            manual_methods = ["cash", "check"]
+        # All six until the owner saves a choice (domain/manual_payment_methods).
+        manual_methods = effective_manual_methods(doc)
 
         if self._connected_accounts is not None:
             # Source of truth for "connected" is the Connect-account status
@@ -84,5 +85,5 @@ class GetAcademyGatewayUseCase:
             stripe_account_id_masked=_mask_account_id(
                 str(stripe_account_id) if stripe_account_id else None
             ),
-            manual_methods=[str(method) for method in manual_methods],
+            manual_methods=manual_methods,
         )

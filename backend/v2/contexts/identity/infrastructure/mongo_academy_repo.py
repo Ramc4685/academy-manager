@@ -48,7 +48,8 @@ class MongoAcademyRepository:
                 "late_fee_cents": None,
                 "grace_days": None,
             },
-            "manual_methods": ["cash", "check"],
+            # No manual_methods: until the owner saves a choice every academy
+            # offers all six (identity/domain/manual_payment_methods.py).
             "notifications": {
                 "daily_digest_to_admin": False,
                 # coach_digest_enabled / coach_digest_hour are intentionally
