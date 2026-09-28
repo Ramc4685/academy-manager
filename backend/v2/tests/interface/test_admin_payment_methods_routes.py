@@ -128,3 +128,10 @@ def test_put_validation_422_names_the_field() -> None:
         assert response.json()["detail"]["field"] == "manual_methods"
         assert store.by_academy == {}
         assert store.audit == []
+
+
+def test_put_refuses_oversized_input_before_the_use_case() -> None:
+    for body in ({"manual_methods": ["x" * 33]}, {"manual_methods": ["cash"] * 21}):
+        store = _Store()
+        assert _client("owner", store).put(ROUTE, json=body).status_code == 422
+        assert store.by_academy == {}

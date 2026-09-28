@@ -10,7 +10,7 @@ by ``composition/payment_methods.py``.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -32,7 +32,7 @@ class UpdatePaymentMethodsRequest(BaseModel):
     """The use case owns the rules (known methods, at least one) so one code
     path names the 422; here only the size is bounded."""
 
-    manual_methods: list[str] = Field(max_length=20)
+    manual_methods: list[Annotated[str, Field(max_length=32)]] = Field(max_length=20)
     reason: str | None = Field(default=None, max_length=500)
 
 
