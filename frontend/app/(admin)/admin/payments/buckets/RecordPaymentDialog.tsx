@@ -9,6 +9,7 @@ import {
   type RecordManualPaymentResponse,
 } from "@/lib/api/admin";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
+import { useManualPaymentMethods } from "@/lib/use-manual-payment-methods";
 
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal } from "@/components/ds/dialog-chrome";
@@ -18,15 +19,6 @@ export interface RecordPaymentInvoiceOption {
   label: string;
   balance_due_cents: number;
 }
-
-const METHODS: { value: string; label: string }[] = [
-  { value: "cash", label: "Cash" },
-  { value: "check", label: "Check" },
-  { value: "zelle", label: "Zelle" },
-  { value: "venmo", label: "Venmo" },
-  { value: "bank_transfer", label: "Bank transfer" },
-  { value: "other", label: "Other" },
-];
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
@@ -60,7 +52,7 @@ export function RecordPaymentDialog({
     invoices.find((inv) => inv.invoice_id === initialInvoiceId) ?? invoices[0] ?? null;
   const [invoiceId, setInvoiceId] = useState(initial?.invoice_id ?? "");
   const [amount, setAmount] = useState(initial ? centsToDollarInput(initial.balance_due_cents) : "");
-  const [method, setMethod] = useState("cash");
+  const { options: methodOptions, method, setMethod } = useManualPaymentMethods();
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -164,7 +156,7 @@ export function RecordPaymentDialog({
             className={inputClass}
             data-testid="record-payment-method"
           >
-            {METHODS.map((option) => (
+            {methodOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
