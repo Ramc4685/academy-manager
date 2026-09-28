@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE, calling_code_for_country
+
 
 class AcademyRepo(Protocol):
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
@@ -26,6 +28,9 @@ class GetAcademyOutput:
     #: Outbound email display name / reply-to (L9a). ``None`` = not set.
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+    #: Calling code for bare national phone numbers (WhatsApp links). Read
+    #: only, derived from ``country`` at read time; unset -> "1".
+    phone_country_code: str = DEFAULT_CALLING_CODE
 
 
 class GetAcademyUseCase:
@@ -51,4 +56,5 @@ class GetAcademyUseCase:
             currency=str(doc.get("currency") or "USD"),
             email_sender_name=doc.get("email_sender_name") or None,
             email_reply_to=doc.get("email_reply_to") or None,
+            phone_country_code=calling_code_for_country(doc.get("country")),
         )

@@ -43,6 +43,7 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
 )
+from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -131,6 +132,7 @@ class MongoCollectionsReadModel:
         customers: Any,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         parent_payments_link: Callable[[str], Awaitable[tuple[str | None, str]]] | None = None,
+        phone_calling_code: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self._db = db
         self._academy_timezone = academy_timezone
@@ -142,6 +144,9 @@ class MongoCollectionsReadModel:
         # the WhatsApp reminder text (spec §7). Optional: without it the rows
         # simply carry no WhatsApp link.
         self._parent_payments_link = parent_payments_link
+        # The academy's calling code for bare national phone numbers. Optional:
+        # without it the link prefixes "1", as it always has.
+        self._phone_calling_code = phone_calling_code
 
     # ------------------------------------------------------------------ entry
 
@@ -317,7 +322,15 @@ class MongoCollectionsReadModel:
         except Exception:
             log.warning("collections read model: parent payments link lookup failed", exc_info=True)
             return None
-        return WhatsAppContext(pay_url=pay_url, academy_name=academy_name)
+        country_code = DEFAULT_CALLING_CODE
+        if self._phone_calling_code is not None:
+            try:
+                country_code = await self._phone_calling_code(academy_id)
+            except Exception:
+                log.warning("collections read model: calling code lookup failed", exc_info=True)
+        return WhatsAppContext(
+            pay_url=pay_url, academy_name=academy_name, country_code=country_code
+        )
 
     async def _resolve_timezone(self, academy_id: str) -> str:
         try:

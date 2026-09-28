@@ -314,3 +314,25 @@ async def test_update_response_does_not_echo_the_late_cancellation_alias() -> No
     )
 
     assert output.late_fee_cents == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("country", "expected"), [(None, "1"), ("", "1"), ("US", "1"), ("us", "1"), ("CA", "1")]
+)
+async def test_academy_phone_country_code_is_derived_from_country(country, expected):
+    """Row 11: read-only, derived at read time; no ``country`` (BLNO) -> "1"."""
+    doc = {"_id": "blno", "display_name": "BLNO", "timezone": "America/Chicago"}
+    if country is not None:
+        doc["country"] = country
+    get_repo = AsyncMock()
+    get_repo.find_by_id.return_value = doc
+    assert (await GetAcademyUseCase(academy_repo=get_repo).execute("blno")).phone_country_code == (
+        expected
+    )
+    update_repo = AsyncMock()
+    update_repo.update_by_id.return_value = doc
+    updated = await UpdateAcademyUseCase(academy_repo=update_repo).execute(
+        "blno", {"display_name": "BLNO"}
+    )
+    assert updated.phone_country_code == expected

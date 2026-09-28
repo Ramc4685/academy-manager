@@ -56,6 +56,7 @@ def test_get_academy_contract(admin_client):
         "email_sender_name": None,
         "email_reply_to": None,
         "invoice_prefix": None,
+        "phone_country_code": "1",
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
 

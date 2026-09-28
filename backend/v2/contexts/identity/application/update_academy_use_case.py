@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from backend.v2.shared.comms.phone_country import calling_code_for_country
+
 from .get_academy_use_case import GetAcademyOutput
 
 
@@ -39,4 +41,5 @@ class UpdateAcademyUseCase:
             currency=str(doc.get("currency") or "USD"),
             email_sender_name=doc.get("email_sender_name") or None,
             email_reply_to=doc.get("email_reply_to") or None,
+            phone_country_code=calling_code_for_country(doc.get("country")),
         )

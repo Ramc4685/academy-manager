@@ -552,6 +552,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
+from backend.v2.shared.comms.phone_country import academy_calling_code_lookup
 from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
@@ -3820,6 +3821,7 @@ def compose_admin(
             # One lookup for the whole page: every row shares the same academy,
             # so the pay link and academy name are resolved once, not per row.
             pay_url, academy_name = await _parent_payments_link(request_academy_id)
+            calling_code = await academy_calling_code_lookup(db)(request_academy_id)
             for followup in rows:
                 followup["whatsapp_url"] = whatsapp_deep_link(
                     phone=followup["phone"],
@@ -3831,6 +3833,7 @@ def compose_admin(
                         pay_url=pay_url,
                         academy_name=academy_name,
                     ),
+                    default_country_code=calling_code,
                 )
         return rows
 
