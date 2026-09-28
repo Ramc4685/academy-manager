@@ -1,6 +1,6 @@
 # Stripe Connect accounts use the academy's country and currency
 
-PR: #TBD
+PR: #990
 
 ## What changed
 
