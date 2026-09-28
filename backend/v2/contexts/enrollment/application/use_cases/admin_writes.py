@@ -110,6 +110,18 @@ log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
 
+#: Where a use case gets its tenant. A callable (the composition root passes
+#: ``request_academy_id``) is resolved at execute time, so the request or job
+#: tenant always wins over the academy the server booted with (P1 hardcoded #1:
+#: a boot-time string stamped academy A onto academy B's cancellation events,
+#: and the waitlist/level-up handlers then ran in A). A plain string is still
+#: accepted for tests and single-tenant scripts.
+AcademyIdSource = str | Callable[[], str]
+
+
+def _tenant_id(source: AcademyIdSource) -> str:
+    return source() if callable(source) else source
+
 
 async def _record_lifecycle_event(
     enrollment_events: EnrollmentEventRepository | None,
@@ -316,7 +328,7 @@ class CreateSession:
         self,
         *,
         sessions: SessionWriter,
-        academy_id: str,
+        academy_id: AcademyIdSource,
         get_academy_timezone: AcademyTimezoneReader,
     ) -> None:
         self._sessions = sessions
@@ -330,7 +342,7 @@ class CreateSession:
         # persisted field must all agree on the same zone.
         timezone_name = await _resolve_session_timezone(
             cmd.timezone,
-            academy_id=self._academy_id,
+            academy_id=_tenant_id(self._academy_id),
             reader=self._get_academy_timezone,
         )
         if _has_recurring_schedule(cmd):
@@ -354,7 +366,7 @@ class CreateSession:
             raise ValueError("start_at/end_at or recurring schedule fields are required")
         session = Session(
             session_id=str(new_ulid()),
-            academy_id=self._academy_id,
+            academy_id=_tenant_id(self._academy_id),
             coach_id=cmd.coach_id,
             title=cmd.title,
             location=cmd.location,
@@ -640,7 +652,7 @@ class CancelSession:
         enrollments_query: EnrollmentQuery,
         enrollments_writer: EnrollmentWriter,
         outbox: Outbox,
-        academy_id: str,
+        academy_id: AcademyIdSource,
         enrollment_events: EnrollmentEventRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
@@ -718,7 +730,7 @@ class CancelSession:
             )
             await _record_lifecycle_event(
                 self._enrollment_events,
-                academy_id=self._academy_id,
+                academy_id=_tenant_id(self._academy_id),
                 # Issue #699: renamed from "cancelled" — see domain/models.py
                 # canonical_status().
                 event_type="deleted",
@@ -741,7 +753,7 @@ class CancelSession:
             await self._outbox.append(
                 EnrollmentCancelled(
                     aggregate_id=e.enrollment_id,
-                    academy_id=self._academy_id,
+                    academy_id=_tenant_id(self._academy_id),
                     payload=EnrollmentCancelledPayload(
                         enrollment_id=e.enrollment_id,
                         session_id=cmd.session_id,
@@ -1227,7 +1239,7 @@ class CancelEnrollment:
         enrollments: EnrollmentWriter,
         sessions: SessionWriter,
         outbox: Outbox,
-        academy_id: str,
+        academy_id: AcademyIdSource,
         enrollment_events: EnrollmentEventRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
@@ -1295,7 +1307,7 @@ class CancelEnrollment:
         )
         await _record_lifecycle_event(
             self._enrollment_events,
-            academy_id=self._academy_id,
+            academy_id=_tenant_id(self._academy_id),
             event_type=cmd.event_type,
             enrollment_id=e.enrollment_id,
             session_id=e.session_id,
@@ -1323,7 +1335,7 @@ class CancelEnrollment:
         await self._outbox.append(
             EnrollmentCancelled(
                 aggregate_id=e.enrollment_id,
-                academy_id=self._academy_id,
+                academy_id=_tenant_id(self._academy_id),
                 payload=EnrollmentCancelledPayload(
                     enrollment_id=e.enrollment_id,
                     session_id=e.session_id,
@@ -2311,7 +2323,7 @@ class JoinWaitlist:
         self,
         *,
         waitlist: WaitlistRepository,
-        academy_id: str,
+        academy_id: AcademyIdSource,
         enrollment_events: EnrollmentEventRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
@@ -2324,7 +2336,7 @@ class JoinWaitlist:
         now = self._now()
         entry = WaitlistEntry(
             waitlist_id=str(new_ulid()),
-            academy_id=self._academy_id,
+            academy_id=_tenant_id(self._academy_id),
             session_id=cmd.session_id,
             student_id=cmd.student_id,
             parent_id=cmd.parent_id,
@@ -2334,7 +2346,7 @@ class JoinWaitlist:
         await self._waitlist.add(entry)
         await _record_lifecycle_event(
             self._enrollment_events,
-            academy_id=self._academy_id,
+            academy_id=_tenant_id(self._academy_id),
             event_type="waitlisted",
             waitlist_id=entry.waitlist_id,
             session_id=entry.session_id,

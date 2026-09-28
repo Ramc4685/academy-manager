@@ -12,6 +12,7 @@ Run standalone::
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import uuid
@@ -23,7 +24,7 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
@@ -234,6 +235,7 @@ from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_sco
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
 from backend.v2.shared.tenancy.origins import TenantOriginsResolver
 from backend.v2.shared.tenancy.resolver import (
+    PROXY_AUTH_HEADER,
     TenantResolutionError,
     TenantResolver,
 )
@@ -589,6 +591,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tenancy_mode = settings.tenancy_mode
     app.state.primary_academy_id = settings.primary_academy_id
     app.state.default_academy_id = settings.default_academy_id
+    app.state.proxy_shared_secret = settings.proxy_shared_secret
     # Platform audit + governance services (issues #78, #79).
     # Constructed before TenantLifecycleService so the lifecycle service can
     # receive a recorder callable that emits one platform_audit_events row
@@ -2362,10 +2365,24 @@ def _build_request_tenant_resolver(app: FastAPI):
     primary_academy_id = getattr(app.state, "primary_academy_id", None)
     default_academy_id = getattr(app.state, "default_academy_id", None)
     resolver = getattr(app.state, "tenant_resolver", None)
+    proxy_secret = getattr(app.state, "proxy_shared_secret", None)
+
+    def _request_host(request: Request) -> str:
+        # The BFF proxy forwards the tenant's host in x-forwarded-host. With a
+        # proxy secret configured (required for production SaaS mode), only a
+        # request that presents it may choose the host that way; anyone
+        # calling the API directly is resolved by its real Host header, so a
+        # forged x-forwarded-host cannot pick another academy.
+        forwarded = request.headers.get("x-forwarded-host")
+        if forwarded and proxy_secret:
+            presented = request.headers.get(PROXY_AUTH_HEADER)
+            if presented is None or not hmac.compare_digest(presented, proxy_secret):
+                forwarded = None
+        return str(forwarded or request.headers.get("host", ""))
 
     async def _resolve(request):
         if saas_mode and resolver is not None:
-            host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+            host = _request_host(request)
             headers = dict(request.headers)
             try:
                 result = await resolver.resolve(host=host, headers=headers)
