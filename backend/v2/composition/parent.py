@@ -3023,7 +3023,7 @@ _STATIC_TENANT_WIRING_NOTE = (
     "docs/runbooks/enable-multi-academy.md "
     "(python -m backend.scripts.multi_academy_preflight), then set "
     "V2_ALLOW_STATIC_TENANT_PARENT_WIRING=true to acknowledge the remaining "
-    "boot-academy fallback for legacy users rows without academy_id "
+    "boot-frozen academy_id fallback for legacy users rows without academy_id "
     "(see _STATIC_TENANT_WIRING_NOTE in backend/v2/composition/parent.py, "
     "issue #532). Otherwise keep APP_TENANCY_MODE=single_academy."
 )
