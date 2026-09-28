@@ -77,6 +77,9 @@ from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.infrastructure.house_academy import configure_house_academy
+from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
+    MongoAcademyBillingRegionReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -647,6 +650,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.platform_connect_onboarding = StartConnectOnboarding(
         stripe=stripe_gw,
         connected_accounts=MongoConnectedAccountRepository(db),
+        academy_regions=MongoAcademyBillingRegionReader(db),
         # Callable, not a frozen list: an admin onboarding Stripe from their own
         # tenant host needs that host allowlisted too (same defect as parent
         # checkout). Tenant origins come from stored records, never the Host.

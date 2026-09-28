@@ -115,6 +115,17 @@ class HouseAcademyUsesPlatformAccount(DomainError):
     status_code = 409
 
 
+class UnsupportedConnectAccountRegion(DomainError):
+    """The academy is not in a region a connected account can be created for.
+
+    Only US academies billing in USD are supported today. 409, like the house
+    academy refusal: the request is fine, the academy's configuration is not.
+    """
+
+    code = "Billing.UnsupportedConnectAccountRegion"
+    status_code = 409
+
+
 class PaymentOperationNotAllowed(DomainError):
     code = "Billing.PaymentOperationNotAllowed"
     status_code = 400

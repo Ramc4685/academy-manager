@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.billing.domain.autopay_status import AutopayEnrollmentStatus
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.connect_region import ConnectAccountRegion
 from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
     ConnectedAccountStatus,
@@ -183,6 +184,15 @@ class CardSetupLinkPort(Protocol):
 
 class AcademyNameLookup(Protocol):
     async def get_academy_name(self, academy_id: str) -> str | None: ...
+
+
+class AcademyBillingRegionReader(Protocol):
+    """Reads the country / currency a new connected account is created in.
+
+    Absent academy or field -> US / USD (the academy record's own defaults).
+    """
+
+    async def get_region(self, academy_id: str) -> ConnectAccountRegion: ...
 
 
 class TransactionRunner(Protocol):
@@ -662,8 +672,13 @@ class StripeGateway(Protocol):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
+        country: str = "US",
+        currency: str = "USD",
     ) -> dict[str, Any]:
         """Create an Accounts v2 connected account and return it as a plain dict.
+
+        ``country`` (ISO 3166-1 alpha-2) and ``currency`` (ISO 4217) become
+        ``identity.country`` and ``defaults.currency``; case is not significant.
 
         Slice I: NEVER the legacy ``type: express/custom/standard`` or v1
         ``controller`` shape. Liability is set through

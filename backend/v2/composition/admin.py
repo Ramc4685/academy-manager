@@ -205,6 +205,9 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_revenue_by_category_report,
     make_session_economics_report,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
+    MongoAcademyBillingRegionReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
     MongoBillingAuditLogRepository,
 )
@@ -1857,6 +1860,7 @@ def compose_admin(
     start_connect_onboarding_use_case = StartConnectOnboarding(
         stripe=stripe,
         connected_accounts=connected_accounts_repo,
+        academy_regions=MongoAcademyBillingRegionReader(db),
         # Callable: evaluated per call so an admin onboarding Stripe from their
         # academy's own host is allowlisted. Tenant origins are rebuilt from
         # stored slug/verified domains, never from the request Host header.

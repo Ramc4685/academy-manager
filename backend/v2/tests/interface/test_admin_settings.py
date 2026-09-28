@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from backend.v2.contexts.billing.domain.errors import ConnectOnboardingFailed
+from backend.v2.contexts.billing.domain.errors import (
+    ConnectOnboardingFailed,
+    UnsupportedConnectAccountRegion,
+)
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
@@ -305,6 +308,27 @@ def test_start_stripe_connect_returns_clean_provider_error(admin_client):
         "error": {
             "code": "Billing.ConnectOnboardingFailed",
             "message": "Stripe Connect onboarding is temporarily unavailable.",
+            "details": {},
+        }
+    }
+
+
+def test_start_stripe_connect_refuses_unsupported_region_with_409(admin_client):
+    message = (
+        "Stripe accounts can only be created for academies in the US billing in USD "
+        "today (academy has country=CA, currency=CAD)"
+    )
+    admin_client.use_cases.start_connect_onboarding_use_case = SimpleNamespace(
+        start=AsyncMock(side_effect=UnsupportedConnectAccountRegion(message))
+    )
+
+    response = admin_client.post("/api/v2/admin/academy/gateway/stripe/connect-link")
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "error": {
+            "code": "Billing.UnsupportedConnectAccountRegion",
+            "message": message,
             "details": {},
         }
     }
