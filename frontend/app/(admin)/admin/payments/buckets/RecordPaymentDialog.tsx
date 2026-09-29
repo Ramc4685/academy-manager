@@ -52,7 +52,7 @@ export function RecordPaymentDialog({
     invoices.find((inv) => inv.invoice_id === initialInvoiceId) ?? invoices[0] ?? null;
   const [invoiceId, setInvoiceId] = useState(initial?.invoice_id ?? "");
   const [amount, setAmount] = useState(initial ? centsToDollarInput(initial.balance_due_cents) : "");
-  const { options: methodOptions, method, setMethod } = useManualPaymentMethods();
+  const { options: methodOptions, method, setMethod } = useManualPaymentMethods(open);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
 

@@ -67,7 +67,7 @@ const DIALOGS = [
 describe("incoming-payment dialogs read the academy's methods", () => {
   it.each(DIALOGS)("%s uses the hook and hardcodes no method list", (file) => {
     const source = readFileSync(path.resolve(__dirname, "..", file), "utf8");
-    expect(source).toContain("useManualPaymentMethods()");
+    expect(source).toContain("useManualPaymentMethods(");
     expect(source).not.toMatch(/<option value="(cash|check|zelle|venmo|bank_transfer|other)"/);
     expect(source).not.toMatch(/useState\("cash"\)/);
   });
@@ -77,6 +77,42 @@ describe("incoming-payment dialogs read the academy's methods", () => {
       path.resolve(__dirname, "..", "app/(admin)/admin/payments/dialogs.tsx"),
       "utf8",
     );
-    expect(source.match(/useManualPaymentMethods\(\)/g)).toHaveLength(2);
+    expect(source.match(/useManualPaymentMethods\(/g)).toHaveLength(2);
+  });
+
+  // MarkPaidDialog and InvoiceDialog are mounted unconditionally by
+  // AllInvoicesTab (only their *visibility* toggles on the `payment` prop),
+  // so an ungated read fires on every load of that tab, not just when a
+  // dialog is actually open. Pin the gate so it can't silently regress.
+  it("payments/dialogs.tsx gates both reads on `payment !== null`, not an always-on read", () => {
+    const source = readFileSync(
+      path.resolve(__dirname, "..", "app/(admin)/admin/payments/dialogs.tsx"),
+      "utf8",
+    );
+    expect(source.match(/useManualPaymentMethods\(payment !== null\)/g)).toHaveLength(2);
+  });
+
+  it("a caller that passes enabled: false never fetches", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let fetches = 0;
+    client.setQueryDefaults(queryKeys.admin.paymentMethods(), {
+      queryFn: () => {
+        fetches += 1;
+        return Promise.resolve({ manual_methods: ["cash", "check"] });
+      },
+    });
+
+    function Gated() {
+      const { options } = useManualPaymentMethods(false);
+      return <span>{options.length}</span>;
+    }
+
+    renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <Gated />
+      </QueryClientProvider>,
+    );
+
+    expect(fetches).toBe(0);
   });
 });

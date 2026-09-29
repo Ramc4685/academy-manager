@@ -539,7 +539,7 @@ export function MarkPaidDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const { options: methodOptions, method, setMethod } = useManualPaymentMethods();
+  const { options: methodOptions, method, setMethod } = useManualPaymentMethods(payment !== null);
   const [amountInput, setAmountInput] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [referenceNumber, setReferenceNumber] = useState("");
@@ -651,7 +651,7 @@ export function InvoiceDialog({
     options: manualMethodOptions,
     method: manualMethod,
     setMethod: setManualMethod,
-  } = useManualPaymentMethods();
+  } = useManualPaymentMethods(payment !== null);
   const [manualReference, setManualReference] = useState("");
   const [manualNotes, setManualNotes] = useState("");
   const [adjustmentAmountInput, setAdjustmentAmountInput] = useState("");
