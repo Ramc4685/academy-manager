@@ -45,6 +45,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.shared.comms.email_brand import branded_as, lookup_academy_brand
 from backend.v2.shared.comms.email_theme import (
     COBALT,
     FONT_STACK,
@@ -68,11 +69,20 @@ _BRAND_MUTED = MUTED
 _BRAND_FONT = FONT_STACK
 
 
-def _branded_shell(*, academy_name: str, inner_html: str, footer_note: str | None = None) -> str:
+def _branded_shell(
+    *,
+    academy_name: str,
+    inner_html: str,
+    footer_note: str | None = None,
+    brand: EmailBrand | None = None,
+) -> str:
     """The academy-branded shell shared by every transactional email.
 
     ``footer_note`` is for reminders only ("if you've already paid, please
     disregard"); a welcome or a fresh invoice must not carry it.
+
+    ``brand`` is the academy's full brand (logo, colour, contact footer; see
+    ``shared.comms.email_brand``). Omitted, the shell shows the name only.
     """
     note_html = (
         f'<p style="font-size:12px;color:{MUTED};margin:20px 0 0;">{html.escape(footer_note)}</p>'
@@ -80,8 +90,14 @@ def _branded_shell(*, academy_name: str, inner_html: str, footer_note: str | Non
         else ""
     )
     return shell(
-        brand=EmailBrand(academy_name=academy_name), inner_html=inner_html, footer_html=note_html
+        brand=branded_as(brand, academy_name), inner_html=inner_html, footer_html=note_html
     )
+
+
+async def _academy_brand(academies: Any, academy_name: str) -> EmailBrand:
+    """The request academy's full email brand, named ``academy_name`` so the
+    shell matches the subject line. Never raises (row 6)."""
+    return branded_as(await lookup_academy_brand(academies, current_academy_id()), academy_name)
 
 
 def _branded_button(*, label: str, url: str) -> str:
@@ -363,7 +379,8 @@ class InvoiceEmailAdapter:
             f"{pay_line}"
             f"{self._invoice_number_html(naming)}"
         )
-        body = _branded_shell(academy_name=academy_name, inner_html=inner)
+        brand = await _academy_brand(self._academies, academy_name)
+        body = _branded_shell(academy_name=academy_name, inner_html=inner, brand=brand)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -401,7 +418,7 @@ class InvoiceEmailAdapter:
                 primary_email=email,
                 invoice_id=invoice_id,
                 subject=subject,
-                body=_branded_shell(academy_name=academy_name, inner_html=copy_inner),
+                body=_branded_shell(academy_name=academy_name, inner_html=copy_inner, brand=brand),
             )
         return outcome.provider_message_id
 
@@ -451,7 +468,11 @@ class InvoiceEmailAdapter:
                 "We will retry automatically on the published retry schedule.</p>"
                 f"{number_html}"
             )
-        body = _branded_shell(academy_name=academy_name, inner_html=inner)
+        body = _branded_shell(
+            academy_name=academy_name,
+            inner_html=inner,
+            brand=await _academy_brand(self._academies, academy_name),
+        )
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -526,7 +547,11 @@ class InvoiceEmailAdapter:
                 f"{self._tuition_for(period, naming)}: {amount} will be charged on "
                 f"{charge_on.strftime('%b')} {charge_on.day}"
             ),
-            body=_branded_shell(academy_name=academy_name, inner_html=inner),
+            body=_branded_shell(
+                academy_name=academy_name,
+                inner_html=inner,
+                brand=await _academy_brand(self._academies, academy_name),
+            ),
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "autopay notice delivery failed")
@@ -560,7 +585,11 @@ class InvoiceEmailAdapter:
         outcome = await self._sender.send(
             recipient=recipient,
             subject=f"Receipt: {amount} paid — {self._tuition_for(period, naming)}",
-            body=_branded_shell(academy_name=academy_name, inner_html=inner),
+            body=_branded_shell(
+                academy_name=academy_name,
+                inner_html=inner,
+                brand=await _academy_brand(self._academies, academy_name),
+            ),
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "autopay receipt delivery failed")
@@ -644,6 +673,7 @@ class DuesReminderEmailAdapter:
             academy_name=academy_name,
             inner_html=inner,
             footer_note="If you've already taken care of this, please disregard this message.",
+            brand=await _academy_brand(self._academies, academy_name),
         )
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
@@ -690,6 +720,7 @@ class DuesReminderEmailAdapter:
             academy_name=academy_name,
             inner_html=inner,
             footer_note="If you've already taken care of this, please disregard this message.",
+            brand=await _academy_brand(self._academies, academy_name),
         )
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(

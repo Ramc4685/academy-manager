@@ -22,7 +22,8 @@ from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
 )
-from backend.v2.shared.comms.email_theme import EmailBrand, format_money, shell
+from backend.v2.shared.comms.email_brand import branded_as, lookup_academy_brand
+from backend.v2.shared.comms.email_theme import format_money, shell
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class DisputeNoticeEmailAdapter:
         if not email:
             raise ValueError("academy owner has no e-mail address for the dispute notice")
         academy_name = await self._academies.get_academy_name(academy_id) or "Your academy"
+        brand = branded_as(await lookup_academy_brand(self._academies, academy_id), academy_name)
         subject, inner = render_dispute_notice(payload)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
@@ -59,7 +61,7 @@ class DisputeNoticeEmailAdapter:
                 display_name=str(getattr(user, "display_name", "") or "") or None,
             ),
             subject=subject,
-            body=shell(brand=EmailBrand(academy_name=academy_name), inner_html=inner),
+            body=shell(brand=brand, inner_html=inner),
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "dispute notice delivery failed")

@@ -1571,6 +1571,8 @@ export interface AdminNotificationsView {
   coach_digest_hour: number;
   parent_digest_enabled: boolean;
   parent_digest_hour: number;
+  /** Win-back emails 30/60/90 days after a student leaves. Absent = on. */
+  win_back_enabled: boolean;
 }
 
 export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
