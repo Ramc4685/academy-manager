@@ -54,6 +54,13 @@ describe("handoff links", () => {
     expect(handoffHref("email", contact)).toBe("mailto:family@example.test");
   });
 
+  it("gives a bare national number the academy calling code (row 11)", () => {
+    expect(handoffHref("whatsapp", { phone: "(555) 010-1234" })).toBe("https://wa.me/15550101234");
+    expect(handoffHref("whatsapp", { phone: "98765 43210" }, "91")).toBe(
+      "https://wa.me/919876543210",
+    );
+  });
+
   it("gives no link when the family has no number or email", () => {
     expect(handoffHref("whatsapp", { phone: null })).toBeUndefined();
     expect(handoffHref("sms", { phone: "  " })).toBeUndefined();

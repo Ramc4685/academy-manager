@@ -84,6 +84,7 @@ from backend.v2.interfaces.admin.views import (
     WithdrawalCreditPreviewResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.comms.email_theme import format_money
 from backend.v2.shared.http import require_owner, require_persona
 from backend.v2.shared.ids import new_ulid
 
@@ -1270,7 +1271,9 @@ def _payment_view(row: object) -> AdminPaymentView:
 
 
 def _format_cents(cents: int) -> str:
-    return f"${cents / 100:.2f}"
+    # USD is locked today; ungrouped ("$1234.56") is what this preview has
+    # always returned, so the admin UI's string does not change.
+    return format_money(cents, "USD", group_thousands=False)
 
 
 # --------------------------------------------------------------------------- #

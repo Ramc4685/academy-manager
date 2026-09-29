@@ -32,6 +32,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.shared.comms.phone_country import academy_calling_code_lookup
 
 
 @dataclass(frozen=True)
@@ -81,5 +82,6 @@ def compose_admin_people_duplicates(db: Any, *, cached_index: Any = None) -> Adm
             family_contacts=MongoFamilyContactRepository(db),
             members=_AcademyMemberDirectory(db),
             inquiries=MongoCrmContactRepository(db),
+            calling_code=academy_calling_code_lookup(db),
         )
     )

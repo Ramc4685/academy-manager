@@ -146,12 +146,26 @@ def chip(text: str, *, bg: str, fg: str) -> str:
 _SYMBOLS = {"USD": "$", "CAD": "$", "AUD": "$", "EUR": "€", "GBP": "£", "INR": "₹"}
 
 
-def format_money(cents: int, currency: str) -> str:
+def format_money(
+    cents: int,
+    currency: str,
+    *,
+    group_thousands: bool = True,
+    drop_zero_cents: bool = False,
+) -> str:
     """``6000, "usd"`` → ``$60.00``. Codes without a symbol map render as
-    ``CHF 5.00`` so nothing is ever shown as a wrong currency."""
+    ``CHF 5.00`` so nothing is ever shown as a wrong currency.
+
+    ``group_thousands=False`` gives ``$1234.56`` and ``drop_zero_cents=True``
+    gives ``$60`` for whole amounts: the two older spellings some screens and
+    API strings already show, kept byte-identical while they share this one
+    formatter.
+    """
     code = (currency or "USD").upper()
     sign = "-" if cents < 0 else ""
-    amount = f"{abs(cents) / 100:,.2f}"
+    whole, part = divmod(abs(cents), 100)
+    units = f"{whole:,}" if group_thousands else str(whole)
+    amount = units if drop_zero_cents and part == 0 else f"{units}.{part:02d}"
     symbol = _SYMBOLS.get(code)
     return f"{sign}{symbol}{amount}" if symbol else f"{sign}{code} {amount}"
 

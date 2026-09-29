@@ -865,3 +865,74 @@ async def test_parent_without_users_doc_renders_with_null_name(db, acad) -> None
     family = next(f for b in rendered.buckets for f in b.families)
     assert family.parent_id == "p-orphan"
     assert family.parent_name is None
+
+
+async def _seed_past_due_with_phone(db, acad: str) -> None:
+    await _seed_academy(db, acad)
+    await _seed_session(db, academy_id=acad)
+    await _seed_family(
+        db,
+        academy_id=acad,
+        parent_id="p-wa",
+        student_id="s-wa",
+        enrollment_id="e-wa",
+        autopay_status="not_offered",
+    )
+    await db["users"].update_one({"user_id": "p-wa"}, {"$set": {"phone": "(555) 010-0100"}})
+    await _seed_invoice(
+        db,
+        academy_id=acad,
+        invoice_id="inv-wa",
+        parent_id="p-wa",
+        student_id="s-wa",
+        enrollment_id="e-wa",
+        due_date=date(2026, 9, 5),
+    )
+
+
+async def _pay_link(_academy_id: str) -> tuple[str | None, str]:
+    return "https://blno.example.com/parent/payments", "BLNO"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_link_prefixes_a_bare_number_with_plus_one_by_default(db, acad) -> None:
+    """Row 11 BLNO pin: no calling-code reader (or an academy with no
+    ``country``) keeps today's ``wa.me/1XXXXXXXXXX``."""
+    await _seed_past_due_with_phone(db, acad)
+    model = MongoCollectionsReadModel(
+        db,
+        academy_timezone=academy_timezone_lookup(db),
+        connected_accounts=MongoConnectedAccountRepository(db),
+        billing_settings=MongoBillingSettingsRepository(db),
+        customers=MongoParentBillingCustomerRepository(db),
+        clock=lambda: NOW,
+        parent_payments_link=_pay_link,
+    )
+    view = await model.build(PERIOD)
+    url = _bucket(view, "past_due")["families"][0]["whatsapp_url"]
+    assert url.startswith("https://wa.me/15550100100?text=")
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_link_uses_the_request_academys_calling_code(db, acad) -> None:
+    await _seed_past_due_with_phone(db, acad)
+    asked: list[str] = []
+
+    async def calling_code(academy_id: str) -> str:
+        asked.append(academy_id)
+        return "91"
+
+    model = MongoCollectionsReadModel(
+        db,
+        academy_timezone=academy_timezone_lookup(db),
+        connected_accounts=MongoConnectedAccountRepository(db),
+        billing_settings=MongoBillingSettingsRepository(db),
+        customers=MongoParentBillingCustomerRepository(db),
+        clock=lambda: NOW,
+        parent_payments_link=_pay_link,
+        phone_calling_code=calling_code,
+    )
+    view = await model.build(PERIOD)
+    url = _bucket(view, "past_due")["families"][0]["whatsapp_url"]
+    assert url.startswith("https://wa.me/915550100100?text=")
+    assert asked == [acad]

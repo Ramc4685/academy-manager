@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     invoice_is_chargeable,
 )
 from backend.v2.contexts.billing.domain.dunning import MAX_DUNNING_ATTEMPTS
+from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE
 from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 
 BUCKET_ORDER: tuple[str, ...] = (
@@ -144,6 +145,9 @@ class WhatsAppContext:
 
     pay_url: str | None = None
     academy_name: str | None = None
+    #: The academy's phone calling code for bare national numbers (from
+    #: ``academies.country``; "1" when unset, every academy today).
+    country_code: str = DEFAULT_CALLING_CODE
 
 
 @dataclass(frozen=True)
@@ -372,6 +376,7 @@ def _whatsapp_url(
             pay_url=whatsapp.pay_url,
             academy_name=whatsapp.academy_name,
         ),
+        default_country_code=whatsapp.country_code,
     )
 
 

@@ -14,6 +14,7 @@ import {
   type NewContactLog,
 } from "@/lib/api/admin-family-crm";
 import { getCurrentUser } from "@/lib/api/me";
+import { usePhoneCountryCode } from "@/lib/phone-country";
 import { formatInstantDay } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -89,6 +90,7 @@ function ContactCard({
   const qc = useQueryClient();
   const key = queryKeys.admin.familyMessages(parentId);
   // The handoff that was opened and waits for "Did you send it?".
+  const countryCode = usePhoneCountryCode();
   const [pending, setPending] = useState<HandoffChannel | null>(null);
   const [direct, setDirect] = useState<DirectChannel | null>(null);
   const [note, setNote] = useState("");
@@ -157,7 +159,7 @@ function ContactCard({
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         {HANDOFFS.map(({ channel: ch, label }) => {
-          const href = handoffHref(ch, { phone, email });
+          const href = handoffHref(ch, { phone, email }, countryCode);
           if (!href) {
             return (
               <Button

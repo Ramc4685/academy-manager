@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from backend.v2.contexts.crm.application.family_index import FamilyIndexUnavailable
 from backend.v2.contexts.crm.application.use_cases.find_possible_duplicates import (
@@ -123,12 +124,14 @@ def _use_case(
     contacts: _Lookup | None = None,
     members: _Members | None = None,
     inquiries: _Lookup | None = None,
+    calling_code: Any = None,
 ) -> FindPossibleDuplicates:
     return FindPossibleDuplicates(
         families=index or _Index([]),
         family_contacts=contacts or _Lookup([]),
         members=members or _Members({}),
         inquiries=inquiries or _Lookup([]),
+        calling_code=calling_code,
     )
 
 
@@ -203,3 +206,27 @@ async def test_linked_inquiry_opens_its_family() -> None:
     use_case = _use_case(inquiries=_Lookup([linked]))
     matches = await use_case.execute(A, DuplicateCheckQuery(email="linked@example.test"))
     assert matches[0].link == "/admin/families/fb%2Fuid"
+
+
+async def test_phone_spellings_use_the_asking_academys_calling_code() -> None:
+    """Row 11: the fold comes from the academy (``academies.country``)."""
+    asked: list[str] = []
+
+    async def calling_code(academy_id: str) -> str:
+        asked.append(academy_id)
+        return "91"
+
+    inquiries = _Lookup([_inquiry("l-1", email=None, phone="919876543210")])
+    use_case = _use_case(inquiries=inquiries, calling_code=calling_code)
+    matches = await use_case.execute(A, DuplicateCheckQuery(phone="98765 43210"))
+    assert [(m.kind, m.record_id, m.matched_on) for m in matches] == [
+        ("inquiry", "l-1", ("phone",))
+    ]
+    assert asked == [A]
+    assert inquiries.calls == [("phone", "9876543210"), ("phone", "919876543210")]
+
+
+async def test_without_a_calling_code_reader_us_numbers_fold_as_today() -> None:
+    inquiries = _Lookup([])
+    await _use_case(inquiries=inquiries).execute(A, DuplicateCheckQuery(phone="555-010-2030"))
+    assert inquiries.calls == [("phone", "5550102030"), ("phone", "15550102030")]
