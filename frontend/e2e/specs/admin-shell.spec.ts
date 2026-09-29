@@ -159,8 +159,8 @@ const ADMIN_ROUTES = [
 const SETTINGS_PANELS = [
   { key: "academy", label: "Academy profile", testid: "admin-settings-academy" },
   { key: "billing-rules", label: "Billing rules", testid: "admin-settings-billing-rules" },
-  { key: "gateway", label: "Gateway", testid: "admin-settings-gateway" },
-  { key: "notify", label: "Notify", testid: "admin-settings-notify" },
+  { key: "integrations", label: "Integrations", testid: "admin-settings-gateway" },
+  { key: "notifications", label: "Notifications", testid: "admin-settings-notify" },
   // Session types left Settings for the Pricing page (Settings overhaul PR 11b).
   { key: "public-page", label: "Public page", testid: "admin-settings-public-page" },
 ] as const;
@@ -1239,7 +1239,7 @@ test.describe("Rally admin shell", () => {
       await expect(page.getByTestId("send-login-invite")).toHaveCount(0);
     });
 
-    test("admin without the owner scope sees no Billing rules or Gateway settings", async ({
+    test("admin without the owner scope sees no Billing rules or Integrations settings", async ({
       page,
     }) => {
       const errors = collectConsoleErrors(page);
@@ -1247,8 +1247,8 @@ test.describe("Rally admin shell", () => {
       await page.goto("/admin/settings");
       await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
       await expect(page.getByRole("link", { name: "Billing rules", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "Gateway", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "Notify", exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Integrations", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Notifications", exact: true })).toBeVisible();
 
       // A deep link to an owner-only panel shows the notice, not the form.
       // A retired deep link (?panel=fees) resolves to Billing rules, which is
@@ -1743,7 +1743,7 @@ test.describe("Rally admin shell", () => {
     });
     const guard = page.getByTestId("confirm-action-dialog");
 
-    const notifyTab = page.getByRole("link", { name: "Notify", exact: true });
+    const notifyTab = page.getByRole("link", { name: "Notifications", exact: true });
     await notifyTab.click();
     await expect(guard).toBeVisible();
     await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
@@ -1758,7 +1758,7 @@ test.describe("Rally admin shell", () => {
     await notifyTab.click();
     await expect(guard).toBeVisible();
     await Promise.all([
-      page.waitForURL(/panel=notify/),
+      page.waitForURL(/panel=notifications/),
       guard.getByTestId("confirm-action-submit").click(),
     ]);
     await expect(page.getByTestId("admin-settings-notify")).toBeVisible();

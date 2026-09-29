@@ -66,7 +66,7 @@ const SURFACES: Array<{ name: string; file: string }> = [
   { name: "session detail", file: "app/(admin)/admin/sessions/[id]/page.tsx" },
   { name: "payouts", file: "app/(admin)/admin/payouts/page.tsx" },
   { name: "messages", file: "app/(admin)/admin/messages/page.tsx" },
-  { name: "pathway", file: "app/(admin)/admin/pathway/page.tsx" },
+  { name: "curriculum programs", file: "components/admin/curriculum/program-list.tsx" },
   { name: "requests pauses", file: "components/admin/requests/PausesTab.tsx" },
   { name: "admissions level-ups", file: "components/admin/admissions/LevelUpsTab.tsx" },
   { name: "user detail", file: "app/(admin)/admin/users/[userId]/page.tsx" },

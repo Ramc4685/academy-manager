@@ -219,7 +219,7 @@ test.describe("admin settings → public page", () => {
     await page.getByTestId("public-page-show-price").uncheck();
 
     const guard = page.getByTestId("confirm-action-dialog");
-    const notifyTab = page.getByRole("link", { name: "Notify", exact: true });
+    const notifyTab = page.getByRole("link", { name: "Notifications", exact: true });
     await notifyTab.click();
     await expect(guard).toBeVisible();
     await guard.getByRole("button", { name: "Stay on this page" }).click();
@@ -230,7 +230,7 @@ test.describe("admin settings → public page", () => {
     await notifyTab.click();
     await expect(guard).toBeVisible();
     await Promise.all([
-      page.waitForURL(/panel=notify/),
+      page.waitForURL(/panel=notifications/),
       guard.getByTestId("confirm-action-submit").click(),
     ]);
     await expect(page.getByTestId("admin-settings-notify")).toBeVisible();
@@ -270,8 +270,8 @@ test.describe("admin settings → public page", () => {
 
     // No draft left behind: switching tabs does not ask.
     await Promise.all([
-      page.waitForURL(/panel=notify/),
-      page.getByRole("link", { name: "Notify", exact: true }).click(),
+      page.waitForURL(/panel=notifications/),
+      page.getByRole("link", { name: "Notifications", exact: true }).click(),
     ]);
     await expect(page.getByTestId("confirm-action-dialog")).toHaveCount(0);
   });

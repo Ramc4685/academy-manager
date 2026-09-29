@@ -28,7 +28,7 @@ function checklist(statuses: Partial<Record<string, Status>> = {}) {
     step("academy_profile", "Academy details", statuses.academy_profile ?? "done", "/admin/settings?panel=academy"),
     step("branding", "Branding", statuses.branding ?? "todo", "/admin/settings?panel=branding"),
     step("billing_rules", "Billing rules", statuses.billing_rules ?? "done", "/admin/settings?panel=billing-rules", true),
-    step("stripe_connect", "Card payments", statuses.stripe_connect ?? "todo", "/admin/settings?panel=gateway", true),
+    step("stripe_connect", "Card payments", statuses.stripe_connect ?? "todo", "/admin/settings?panel=integrations", true),
     step("session_types", "Pricing plans", statuses.session_types ?? "done", "/admin/pricing"),
     step("classes", "First classes", statuses.classes ?? "todo", "/admin/sessions"),
     step("staff", "Invite your team", statuses.staff ?? "done", "/admin/users"),
@@ -98,7 +98,7 @@ test.describe("admin setup checklist", () => {
     await expect(page.getByTestId("setup-step-waiver")).toContainText("COULDN'T CHECK");
     await expect(page.getByTestId("setup-step-stripe_connect").getByRole("link")).toHaveAttribute(
       "href",
-      "/admin/settings?panel=gateway",
+      "/admin/settings?panel=integrations",
     );
 
     // Settings overhaul Phase 3 PR 9: Branding merged into Academy profile,
