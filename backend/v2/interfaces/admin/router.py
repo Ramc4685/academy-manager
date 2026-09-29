@@ -28,6 +28,7 @@ from .inbox_routes import router as inbox_router
 from .month_close_routes import router as month_close_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
+from .payment_methods_routes import router as payment_methods_router
 from .payout_period_routes import router as payout_period_router
 from .payroll_routes import router as payroll_router
 from .people_reports_routes import router as people_reports_router
@@ -73,6 +74,7 @@ router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
 router.include_router(billing_rules_router)
+router.include_router(payment_methods_router)
 router.include_router(payout_period_router)
 router.include_router(payroll_router)
 router.include_router(coach_pay_rate_router)

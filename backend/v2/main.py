@@ -59,6 +59,7 @@ from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.composition.payment_methods import compose_admin_payment_methods
 from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
@@ -777,6 +778,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
+    app.state.admin_payment_methods = compose_admin_payment_methods(db)
     app.state.admin_families = compose_admin_families(db)
     # People CRM family index (spec §7 Phase 2; outside admin.py's budget).
     app.state.admin_family_index = compose_admin_family_index(db)
