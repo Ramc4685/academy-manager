@@ -52,6 +52,7 @@ class PricingClassView(BaseModel):
     #: Active plans at exactly this fee: the only plans the class may use.
     matching_plan_ids: list[str]
     stale_link: bool
+    stale_reason: Literal["archived", "price_changed", "plan_removed"] | None = None
 
 
 class PricingSavedOverrideView(BaseModel):

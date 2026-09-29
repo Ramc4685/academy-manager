@@ -34,6 +34,8 @@ export interface PricingClass {
   matching_plan_ids: string[];
   /** A stored link whose plan price no longer matches the fee. */
   stale_link: boolean;
+  /** Why the stored link is stale. */
+  stale_reason?: "archived" | "price_changed" | "plan_removed" | null;
 }
 
 export interface PricingSavedOverride {

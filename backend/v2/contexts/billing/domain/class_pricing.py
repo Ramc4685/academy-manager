@@ -54,6 +54,10 @@ def matching_plan_ids(fee_cents: int, plans: Iterable[PlanPrice]) -> list[str]:
     return [plan.plan_id for plan in plans if plan.is_active and plan.price_cents == fee_cents]
 
 
+#: Why a stored class-to-plan link is no longer shown.
+StaleLinkReason = Literal["archived", "price_changed", "plan_removed"]
+
+
 def initial_plan_link(fee_cents: int, plans: Iterable[PlanPrice]) -> str | None:
     """The plan to link a never-decided class to, or ``None`` to leave it custom.
 
@@ -73,6 +77,26 @@ def effective_plan_link(
         if plan.plan_id == stored_plan_id:
             return stored_plan_id if plan.is_active and plan.price_cents == fee_cents else None
     return None
+
+
+def stale_link_reason(
+    stored_plan_id: str | None, fee_cents: int, plans: Iterable[PlanPrice]
+) -> StaleLinkReason | None:
+    """Why a stored link is no longer shown, or ``None`` when it is not stale.
+
+    ``"archived"`` when the plan was archived, ``"price_changed"`` when the plan
+    price no longer equals the class fee, ``"plan_removed"`` when it is gone.
+    """
+    if stored_plan_id is None:
+        return None
+    for plan in plans:
+        if plan.plan_id == stored_plan_id:
+            if not plan.is_active:
+                return "archived"
+            if plan.price_cents != fee_cents:
+                return "price_changed"
+            return None
+    return "plan_removed"
 
 
 def ensure_link_allowed(fee_cents: int, plan: PlanPrice) -> None:

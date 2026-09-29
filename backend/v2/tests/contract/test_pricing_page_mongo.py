@@ -3,8 +3,9 @@
 The hard rule of this PR: ZERO change to any charged amount. A class-to-plan
 link is a label. These tests pin that:
 
-* the checkout quote and the monthly invoice charge a LINKED class its own
-  monthly fee, including after the plan's price moves away from it;
+* the checkout quote, the monthly invoice, "Bill this month" and the
+  cancellation-credit pricing charge a LINKED class its own monthly fee,
+  including after the plan's price moves away from it;
 * linking never writes to ``sessions`` (the class doc is byte-identical);
 * the link rules: exactly one matching plan links, zero or two stay custom,
   a mismatched price is refused, a decided class is never re-linked;
@@ -41,6 +42,12 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_enrollment_billing_target import (
+    MongoEnrollmentBillingTargetReader,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_occurrence_cancellation import (
+    MongoOccurrenceCancellationReader,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.contexts.billing.infrastructure.mongo_pricing_read_model import (
@@ -198,6 +205,32 @@ async def test_linked_class_is_charged_its_own_fee_even_after_the_plan_price_mov
 
 
 @pytest.mark.asyncio
+async def test_bill_this_month_and_cancellation_credit_read_the_class_fee_not_the_plan(
+    db, acad
+) -> None:
+    """ "Bill this month" and the cancellation-credit pricing ignore a linked plan."""
+    await _plan(db, acad, "group", 10_000)
+    await _class(db, acad, "sess-1", monthly_price_cents=10_000)
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "student-e1", "parent_id": "parent-1"}
+    )
+    await _enroll(db, acad, "e1", "sess-1")
+    _, set_link, _ = _use_cases(db)
+    await set_link.execute(_link_cmd(acad, "sess-1", "group"))
+    await UpdateSessionType(session_types=MongoSessionTypeRepository(db)).execute(
+        UpdateSessionTypeCommand(session_type_id="group", price_cents=13_000)
+    )
+
+    target = await MongoEnrollmentBillingTargetReader(db, clock=_clock).load("e1", "2026-07")
+    assert target is not None
+    assert target.monthly_price_cents == 10_000
+
+    pricing = await MongoOccurrenceCancellationReader(db).session_pricing("sess-1")
+    assert pricing is not None
+    assert pricing.monthly_price_cents == 10_000
+
+
+@pytest.mark.asyncio
 async def test_custom_and_linked_classes_bill_identically(db, acad) -> None:
     """Same fee, one linked and one custom: the monthly invoice is the same."""
     await _plan(db, acad, "group", 9_000)
@@ -342,18 +375,23 @@ async def test_classes_list_students_and_skip_cancelled(db, acad) -> None:
 
 @pytest.mark.asyncio
 async def test_saved_overrides_are_listed_and_never_applied(db, acad) -> None:
+    # The plan price and the class fee differ on purpose: "Charged now" must be
+    # the class fee the family is billed, never the plan price (review P2).
     await _plan(db, acad, "group", 12_000)
-    await _class(db, acad, "sess-1", amount_cents=12_000)
+    await _class(db, acad, "sess-1", amount_cents=10_000)
     await db["students"].insert_one(
         {"academy_id": acad, "student_id": "student-e1", "full_name": "Ada Lovelace"}
     )
     await _enroll(db, acad, "e1", "sess-1", amount_cents=9_000)
     await _enroll(db, acad, "e2", "sess-1")
+    # Same enrollment id in another academy must not leak its class fee.
+    await _class(db, "other-academy", "sess-x", amount_cents=55_500)
+    await _enroll(db, "other-academy", "orphan", "sess-x")
     await db["student_billing_enrollments"].insert_many(
         [
             {
                 "academy_id": acad,
-                "enrollment_id": "bill-1",
+                "enrollment_id": "e1",
                 "student_id": "student-e1",
                 "parent_id": "parent-1",
                 "session_type_id": "group",
@@ -362,11 +400,20 @@ async def test_saved_overrides_are_listed_and_never_applied(db, acad) -> None:
             },
             {
                 "academy_id": acad,
-                "enrollment_id": "bill-2",
+                "enrollment_id": "e2",
                 "student_id": "student-e2",
                 "parent_id": "parent-1",
                 "session_type_id": "group",
                 "override_price_cents": None,
+                "status": "active",
+            },
+            {
+                "academy_id": acad,
+                "enrollment_id": "orphan",
+                "student_id": "student-orphan",
+                "parent_id": "parent-1",
+                "session_type_id": "group",
+                "override_price_cents": 7_000,
                 "status": "active",
             },
         ]
@@ -376,20 +423,28 @@ async def test_saved_overrides_are_listed_and_never_applied(db, acad) -> None:
     rows = (await overview.execute()).saved_overrides
 
     by_source = {(r.source, r.enrollment_id): r for r in rows}
-    assert set(by_source) == {("billing_plan", "bill-1"), ("class_enrollment", "e1")}
-    plan_row = by_source[("billing_plan", "bill-1")]
+    assert set(by_source) == {
+        ("billing_plan", "e1"),
+        ("billing_plan", "orphan"),
+        ("class_enrollment", "e1"),
+    }
+    plan_row = by_source[("billing_plan", "e1")]
     assert (plan_row.label, plan_row.override_cents, plan_row.charged_cents) == (
         "Group",
         8_000,
-        12_000,
+        10_000,
     )
     assert plan_row.student_name == "Ada Lovelace"
+    assert by_source[("billing_plan", "orphan")].charged_cents is None
     class_row = by_source[("class_enrollment", "e1")]
     assert (class_row.label, class_row.override_cents, class_row.charged_cents) == (
         "Class sess-1",
         9_000,
-        12_000,
+        10_000,
     )
+    # Listing never writes: the class fee and both overrides are untouched.
+    session = await db["sessions"].find_one({"academy_id": acad, "session_id": "sess-1"})
+    assert session["amount_cents"] == 10_000
 
 
 @pytest.mark.asyncio

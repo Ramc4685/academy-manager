@@ -14,6 +14,12 @@ import { queryKeys } from "@/lib/query/keys";
 
 const CUSTOM = "";
 
+const STALE_MESSAGE: Record<NonNullable<PricingClass["stale_reason"]>, string> = {
+  archived: "Its plan was archived, so it shows as Custom.",
+  price_changed: "Its plan's price changed, so it shows as Custom.",
+  plan_removed: "Its plan was removed, so it shows as Custom.",
+};
+
 /**
  * "Where each class's price comes from" (Settings overhaul PR 11b).
  *
@@ -145,7 +151,7 @@ export function ClassPricesCard({
                       )}
                       {cls.stale_link && (
                         <p className="mt-1 text-xs text-status-amber-800">
-                          Its plan&apos;s price changed, so it shows as Custom.
+                          {STALE_MESSAGE[cls.stale_reason ?? "price_changed"]}
                         </p>
                       )}
                       {failedId === cls.session_id && (

@@ -15,6 +15,7 @@ from backend.v2.contexts.billing.domain.class_pricing import (
     ensure_link_allowed,
     initial_plan_link,
     matching_plan_ids,
+    stale_link_reason,
 )
 from backend.v2.contexts.billing.domain.errors import PlanPriceMismatch
 
@@ -68,3 +69,12 @@ def test_stored_link_shows_only_while_the_price_still_matches() -> None:
     assert effective_plan_link("gone", 12_000, [GROUP]) is None
     assert effective_plan_link(None, 12_000, [GROUP]) is None
     assert effective_plan_link("old", 18_000, [ARCHIVED]) is None
+
+
+def test_stale_link_reason_names_why_the_link_is_not_shown() -> None:
+    plans = [GROUP, ARCHIVED]
+    assert stale_link_reason(None, 12_000, plans) is None
+    assert stale_link_reason("group", 12_000, plans) is None
+    assert stale_link_reason("group", 10_000, plans) == "price_changed"
+    assert stale_link_reason("old", 18_000, plans) == "archived"
+    assert stale_link_reason("gone", 12_000, plans) == "plan_removed"

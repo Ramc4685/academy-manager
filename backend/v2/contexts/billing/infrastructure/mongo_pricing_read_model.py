@@ -122,6 +122,21 @@ class MongoPricingReadModel(TenantScopedRepository):
         )
         return {str(doc["student_id"]): doc async for doc in cursor}
 
+    async def _enrollment_sessions(self, enrollment_ids: set[str]) -> dict[str, str]:
+        """Class enrollment id -> session id, tenant-scoped."""
+        if not enrollment_ids:
+            return {}
+        cursor = self._find_many_in_collection(
+            "enrollments",
+            {"enrollment_id": {"$in": sorted(enrollment_ids)}},
+            {"_id": 0, "enrollment_id": 1, "session_id": 1},
+        )
+        return {
+            str(doc["enrollment_id"]): str(doc["session_id"])
+            async for doc in cursor
+            if doc.get("enrollment_id") and doc.get("session_id")
+        }
+
     async def _sessions(self, session_ids: set[str]) -> dict[str, dict[str, Any]]:
         if not session_ids:
             return {}
@@ -158,14 +173,23 @@ class MongoPricingReadModel(TenantScopedRepository):
         students = await self._students(
             {str(d["student_id"]) for d in [*billing_docs, *enrollment_docs] if d.get("student_id")}
         )
+        # A billing-plan override row belongs to a class enrollment; the family
+        # is billed that class's fee, never the plan price (#1007 review P2).
+        plan_enrollment_session = await self._enrollment_sessions(
+            {str(d["enrollment_id"]) for d in billing_docs if d.get("enrollment_id")}
+        )
         sessions = await self._sessions(
             {str(d["session_id"]) for d in enrollment_docs if d.get("session_id")}
+            | set(plan_enrollment_session.values())
         )
 
         rows: list[SavedOverrideFacts] = []
         for doc in billing_docs:
             plan = plan_by_id.get(str(doc.get("session_type_id") or ""))
             student_id = _opt_str(doc.get("student_id"))
+            billed_session = sessions.get(
+                plan_enrollment_session.get(str(doc.get("enrollment_id") or ""), "")
+            )
             rows.append(
                 SavedOverrideFacts(
                     source="billing_plan",
@@ -174,7 +198,9 @@ class MongoPricingReadModel(TenantScopedRepository):
                     student_name=_student_name(students.get(student_id or "")),
                     label=plan.name if plan else None,
                     override_cents=int(doc["override_price_cents"]),
-                    charged_cents=plan.price_cents if plan else None,
+                    charged_cents=(
+                        session_amount_cents(billed_session) if billed_session else None
+                    ),
                     status=_opt_str(doc.get("status")),
                 )
             )

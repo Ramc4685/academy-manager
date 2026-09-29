@@ -72,7 +72,19 @@ describe("ClassPricesCard", () => {
     const html = render(
       <ClassPricesCard classes={[cls({ stale_link: true })]} plans={plans} autoLinkable={0} />,
     );
-    expect(html).toContain("shows as Custom");
+    expect(html).toContain("Its plan&#x27;s price changed, so it shows as Custom.");
+  });
+
+  it("says an archived plan was archived, not that its price changed", () => {
+    const html = render(
+      <ClassPricesCard
+        classes={[cls({ stale_link: true, stale_reason: "archived" })]}
+        plans={plans}
+        autoLinkable={0}
+      />,
+    );
+    expect(html).toContain("Its plan was archived, so it shows as Custom.");
+    expect(html).not.toContain("price changed");
   });
 
   it("counts the classes Link matching classes would link", () => {

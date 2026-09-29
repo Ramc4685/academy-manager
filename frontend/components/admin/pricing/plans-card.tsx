@@ -376,6 +376,11 @@ export function PlansTable({
               </td>
               <td className="px-4 py-3" data-testid="plan-type">
                 {PLAN_TYPE_LABEL[row.plan_type ?? "monthly"]}
+                {row.billing_period === "per_session" && (
+                  <p className="text-xs text-rally-subtle" data-testid="plan-legacy-period">
+                    Saved earlier as per session. Billing still uses the class fee.
+                  </p>
+                )}
               </td>
               <td
                 className="px-4 py-3 text-right font-mono tabular-nums"

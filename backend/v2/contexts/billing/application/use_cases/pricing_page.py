@@ -34,10 +34,12 @@ from backend.v2.contexts.billing.application.use_cases.money_setting_audit impor
 )
 from backend.v2.contexts.billing.domain.class_pricing import (
     PlanPrice,
+    StaleLinkReason,
     effective_plan_link,
     ensure_link_allowed,
     initial_plan_link,
     matching_plan_ids,
+    stale_link_reason,
 )
 from backend.v2.contexts.billing.domain.errors import PricingClassNotFound, SessionTypeNotFound
 from backend.v2.contexts.billing.domain.session_type import SessionType
@@ -141,6 +143,8 @@ class PricingClassRow(BaseModel):
     matching_plan_ids: list[str]
     #: A stored link whose plan price no longer equals the fee (shown custom).
     stale_link: bool
+    #: Why the stored link is stale: "archived", "price_changed" or "plan_removed".
+    stale_reason: StaleLinkReason | None = None
 
 
 class PricingSavedOverride(BaseModel):
@@ -215,6 +219,7 @@ class GetPricingOverview:
                     plan_id=plan_id,
                     matching_plan_ids=matching_plan_ids(cls.charged_cents, prices),
                     stale_link=stored_plan is not None and plan_id is None,
+                    stale_reason=stale_link_reason(stored_plan, cls.charged_cents, prices),
                 )
             )
 
