@@ -301,6 +301,12 @@ async function signInForRole(page: Page, role: ManifestRole) {
   throw new Error(`Unsupported dynamic route role: ${role}`);
 }
 
+// /admin/pathway/[programId] redirects into Settings -> Curriculum.
+const REDIRECT_LANDINGS: Array<[RegExp, string]> = [
+  [/^\/admin\/pathway$/, "/admin/settings\\?panel=curriculum"],
+  [/^\/admin\/pathway\/(?!progress(?:[/?#]|$))[^/?#]+$/, "/admin/settings\\?panel=curriculum&program=[^&#]+"],
+];
+
 async function assertRouteRenders(
   page: Page,
   href: string,
@@ -310,7 +316,9 @@ async function assertRouteRenders(
   const priorConsoleErrorCount = runtimeIssues.consoleErrors.length;
   const priorNetworkFailureCount = runtimeIssues.networkFailures.length;
   await page.goto(href, { waitUntil: "domcontentloaded", timeout: 90_000 });
-  await expect(page).toHaveURL(new RegExp(`${escapeRegex(href)}(?:[?#].*)?$`), {
+  // Redirect-only routes land on their successor; everything else stays put.
+  const landing = REDIRECT_LANDINGS.find(([pattern]) => pattern.test(href))?.[1] ?? escapeRegex(href);
+  await expect(page).toHaveURL(new RegExp(`${landing}(?:[?#].*)?$`), {
     timeout: 90_000,
   });
   await expect(page.locator("body")).not.toContainText("Application error");

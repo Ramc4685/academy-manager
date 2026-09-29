@@ -73,6 +73,12 @@ export default function AdminSettingsPage() {
   function hrefForPanel(panel: SettingsPanelKey): UrlObject {
     const next = new URLSearchParams(params);
     next.set("panel", panel);
+    // `program` and `stripe` belong to one panel's state; don't carry them
+    // to a different tab.
+    if (panel !== active) {
+      next.delete("program");
+      next.delete("stripe");
+    }
     return {
       pathname,
       query: Object.fromEntries(next),

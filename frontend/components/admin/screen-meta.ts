@@ -69,7 +69,11 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       { id: "sessions", href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
       // Settings overhaul Phase 3 PR 11: authoring moved to Settings ->
       // Curriculum; this item is now student progress tracking.
-      { id: "progress", href: "/admin/pathway/progress", label: "Progress", icon: "trophy", match: startsWith("/admin/pathway") },
+      // The overview page is behind a build-time flag; without it the page is
+      // a "not enabled" dead end, so the item is hidden instead.
+      ...(process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1"
+        ? [{ id: "progress", href: "/admin/pathway/progress", label: "Progress", icon: "trophy", match: startsWith("/admin/pathway") } as const]
+        : []),
     ],
   },
   {
