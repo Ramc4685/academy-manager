@@ -116,6 +116,8 @@ async def test_bootstrap_creates_tenant_owner_membership_and_defaults() -> None:
     academy = store.academies[result.academy_id]
     assert academy["display_name"] == "North Shore Badminton"
     assert academy["owner_email"] == "owner@example.com"
+    # Row 13: every academy bootstrapped today is badminton by default.
+    assert academy["sport"] == "badminton"
 
     owner = store.users["owner@example.com"]
     assert owner["email"] == "owner@example.com"
@@ -264,3 +266,12 @@ async def test_bootstrap_without_an_assigner_reports_no_prefix() -> None:
     result = await _use_case(FakeBootstrapStore()).execute(_command())
 
     assert result.invoice_prefix is None
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_accepts_an_explicit_sport() -> None:
+    store = FakeBootstrapStore()
+
+    result = await _use_case(store).execute(_command(sport="tennis"))
+
+    assert store.academies[result.academy_id]["sport"] == "tennis"
