@@ -11,6 +11,7 @@ import type {
 } from "@/lib/billing-rules-form";
 import type { DepartureReasonCode } from "@/lib/admin/departure-reasons";
 import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
+import type { ManualPaymentMethod } from "@/lib/payment-methods";
 
 import { apiFetch } from "./client";
 
@@ -581,7 +582,7 @@ export interface MonthlyGenerationSkippedDetail {
 }
 
 export interface MarkPaymentPaidRequest {
-  payment_method: "cash" | "check" | "zelle" | "venmo" | "bank_transfer" | "other";
+  payment_method: ManualPaymentMethod;
   amount_received_cents?: number;
   reference_number?: string;
   notes?: string;
@@ -3808,6 +3809,26 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
 
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
+}
+
+export interface AdminPaymentMethodsView {
+  manual_methods: string[];
+}
+
+/** The offline methods the payment dialogs offer (owner, admin, billing staff). */
+export function getAdminPaymentMethods(): Promise<AdminPaymentMethodsView> {
+  return apiFetch<AdminPaymentMethodsView>("/admin/academy/payment-methods", { method: "GET" });
+}
+
+/** Owner only, audited. At least one of the six known methods. */
+export function updateAdminPaymentMethods(payload: {
+  manual_methods: string[];
+  reason?: string | null;
+}): Promise<AdminPaymentMethodsView> {
+  return apiFetch<AdminPaymentMethodsView>("/admin/academy/payment-methods", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 }
 
 export interface AdminGatewayConnectLinkView {
