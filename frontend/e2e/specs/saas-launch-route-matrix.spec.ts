@@ -20,6 +20,7 @@ import {
   stubMe,
   stubMemberships,
   stubParentProfile,
+  stubParentAcademy,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 
@@ -377,6 +378,7 @@ async function stubParentLaunchBff(page: Page): Promise<void> {
     { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "parent" },
   ]);
   await stubParentMessages(page);
+  await stubParentAcademy(page);
   await page.route("**/api/v2/parent/payments", (route) =>
     fulfillJson(route, { payments: [] })
   );

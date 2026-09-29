@@ -160,8 +160,9 @@ export async function stubParentMessages(
 }
 
 /**
- * Five parent pages — onboarding, dashboard, children and requests — read the
- * academy profile through `getParentAcademy`, so any spec that lands on one of
+ * The parent shell (for the academy mark) and five parent pages — onboarding,
+ * dashboard, children and requests — read the academy profile through
+ * `getParentAcademy`, so any spec that lands on one of
  * them needs this the same way it needs `stubParentProfile`. Unstubbed the call
  * 500s against the dev server and trips the clean-console assertion on a page
  * unrelated to what the spec is testing.

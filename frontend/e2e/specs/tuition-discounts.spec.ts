@@ -15,6 +15,7 @@ import {
   stubAcademy,
   stubMe,
   stubMemberships,
+  stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
 } from "../fixtures/saas-stubs";
@@ -610,6 +611,7 @@ test.describe("tuition discounts", () => {
     // The parent layout fetches this on every /parent/* page (issue #380).
     await stubParentProfile(page);
     await stubParentMessages(page);
+    await stubParentAcademy(page);
     await stubParentInvoiceDiscounts(page);
 
     await page.goto("/parent/payments");
