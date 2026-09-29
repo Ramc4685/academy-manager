@@ -487,6 +487,18 @@ class ParentAvailableSessionsResponse(BaseModel):
 # --- Academy info ---
 
 
+class ParentSelfServiceSwitchesView(BaseModel):
+    """What parents can do in the app (Settings overhaul Phase 1 Lane C).
+    All default True = today's behaviour. Free trial requests are governed
+    separately by the Public page "Accept free trial requests" toggle."""
+
+    can_report_absence: bool = True
+    can_request_makeup: bool = True
+    can_request_pause: bool = True
+    can_request_cancel: bool = True
+    can_claim_waitlist_offer: bool = True
+
+
 class ParentAcademyView(BaseModel):
     display_name: str
     timezone: str | None = None
@@ -496,6 +508,9 @@ class ParentAcademyView(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    self_service: ParentSelfServiceSwitchesView = Field(
+        default_factory=ParentSelfServiceSwitchesView
+    )
 
 
 # ---------------------------------------------------------------------------

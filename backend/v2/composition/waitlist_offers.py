@@ -31,6 +31,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo i
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_writer import (
     MongoEnrollmentWriter,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
@@ -59,6 +62,7 @@ def compose_confirm_waitlist_offer(db: Any, settings: Any) -> ConfirmWaitlistOff
         sessions=MongoSessionWriter(db),
         # Request-time tenant, never the boot value (#532).
         academy_id=current_academy_id,
+        policies=MongoSelfServicePolicyRepository(db),
     )
 
 

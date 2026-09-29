@@ -178,6 +178,13 @@ export async function stubParentAcademy(page: Page): Promise<void> {
       hours_text: null,
       address: null,
       logo_url: null,
+      self_service: {
+        can_report_absence: true,
+        can_request_makeup: true,
+        can_request_pause: true,
+        can_request_cancel: true,
+        can_claim_waitlist_offer: true,
+      },
     });
   });
 }

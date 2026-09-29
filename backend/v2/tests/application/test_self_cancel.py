@@ -17,6 +17,7 @@ import pytest
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
 from backend.v2.contexts.enrollment.domain.self_service import (
+    ParentActionDisabled,
     ParentSelfServicePolicy,
     SelfCancelTerms,
     compute_self_cancel_terms,
@@ -1432,3 +1433,41 @@ async def test_immediate_cancel_still_alerts_staff_as_cancelled() -> None:
     )
 
     assert notifier.changes == ["cancelled"]
+
+
+# --- can_request_cancel switch (Settings overhaul Phase 1 Lane C) -----------
+
+
+async def test_self_cancel_rejected_when_switch_off() -> None:
+    enrollments = _FakeEnrollments([_enrollment()])
+    off_policy = _policy(timing="immediate").model_copy(update={"can_request_cancel": False})
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(off_policy),
+    )
+
+    with pytest.raises(ParentActionDisabled) as exc_info:
+        await uc.execute(
+            SelfCancelEnrollmentCommand(
+                enrollment_id="enr-1", parent_id="parent-1", reason="moving away"
+            )
+        )
+
+    assert exc_info.value.code == "parent_action_disabled"
+    assert enrollments.cancelled_calls == []
+
+
+async def test_self_cancel_allowed_when_switch_on() -> None:
+    enrollments = _FakeEnrollments([_enrollment()])
+    uc = _use_case(
+        enrollments=enrollments,
+        policies=_FakePolicies(_policy(timing="immediate")),  # default -> switch on
+    )
+
+    result = await uc.execute(
+        SelfCancelEnrollmentCommand(
+            enrollment_id="enr-1", parent_id="parent-1", reason="moving away"
+        )
+    )
+
+    assert result.status == "cancelled"

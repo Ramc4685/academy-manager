@@ -125,6 +125,7 @@ from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
 from backend.v2.contexts.enrollment.domain.scheduling import end_of_academy_month
 from backend.v2.contexts.enrollment.domain.self_service import (
     EnrollmentNotCancellable,
+    ParentActionDisabled,
     ParentSelfServicePolicy,
     SelfCancelTerms,
     compute_self_cancel_terms,
@@ -425,6 +426,10 @@ class SelfCancelEnrollment:
         self._now = clock
 
     async def execute(self, cmd: SelfCancelEnrollmentCommand) -> SelfCancelEnrollmentResult:
+        policy = await self._policies.get_or_default()
+        if not policy.can_request_cancel:
+            raise ParentActionDisabled("request_cancel")
+
         enrollment = await self._enrollments.get(cmd.enrollment_id)
         if enrollment is None:
             raise EnrollmentNotFound("enrollment missing", enrollment_id=cmd.enrollment_id)
@@ -439,7 +444,6 @@ class SelfCancelEnrollment:
                 status=enrollment.status,
             )
 
-        policy = await self._policies.get_or_default()
         now = self._now()
         next_start = await self._occurrences.next_upcoming_start_for_session(
             enrollment.session_id, now=now

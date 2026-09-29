@@ -36,6 +36,12 @@ def test_get_self_service_policy_returns_defaults(admin_client):
         "cancellation_minimum_notice_days": 7,
         "cancellation_fee_cents": 0,
         "cancellation_effective_timing": "end_of_period",
+        "can_report_absence": True,
+        "can_request_makeup": True,
+        "can_request_pause": True,
+        "can_request_cancel": True,
+        "can_claim_waitlist_offer": True,
+        "payment_instructions": "",
     }
 
 
@@ -187,6 +193,40 @@ def test_an_admin_without_owner_can_still_save_absence_settings(admin_only_clien
     assert response.json()["absence_notice_min_hours"] == 6
     assert all("cancellation_fee_cents" not in w for w in store.field_writes)
     assert audit.entries == []
+
+
+def test_put_can_turn_a_switch_off_without_touching_cancellation_terms(admin_only_client):
+    store, audit = _wire(admin_only_client)
+
+    response = admin_only_client.put(ROUTE, json={"can_report_absence": False})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["can_report_absence"] is False
+    assert response.json()["can_request_makeup"] is True
+    assert store.field_writes == [{"can_report_absence": False}]
+    assert audit.entries == []
+
+
+def test_put_saves_and_clears_payment_instructions(admin_only_client):
+    _wire(admin_only_client)
+
+    on = admin_only_client.put(
+        ROUTE, json={"payment_instructions": "Pay Sam by Venmo @sam-academy."}
+    )
+    assert on.status_code == 200, on.text
+    assert on.json()["payment_instructions"] == "Pay Sam by Venmo @sam-academy."
+
+    cleared = admin_only_client.put(ROUTE, json={"payment_instructions": ""})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["payment_instructions"] == ""
+
+
+def test_put_rejects_payment_instructions_over_max_length(admin_only_client):
+    _wire(admin_only_client)
+
+    response = admin_only_client.put(ROUTE, json={"payment_instructions": "x" * 1001})
+
+    assert response.status_code == 422, response.text
 
 
 @pytest.mark.parametrize(

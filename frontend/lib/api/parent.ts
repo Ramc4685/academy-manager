@@ -452,6 +452,22 @@ export function getChildSchedule(
   );
 }
 
+export interface ParentSelfServiceSwitches {
+  can_report_absence: boolean;
+  can_request_makeup: boolean;
+  can_request_pause: boolean;
+  can_request_cancel: boolean;
+  can_claim_waitlist_offer: boolean;
+}
+
+export const DEFAULT_PARENT_SELF_SERVICE_SWITCHES: ParentSelfServiceSwitches = {
+  can_report_absence: true,
+  can_request_makeup: true,
+  can_request_pause: true,
+  can_request_cancel: true,
+  can_claim_waitlist_offer: true,
+};
+
 export interface ParentAcademy {
   display_name: string;
   timezone: string | null;
@@ -461,6 +477,7 @@ export interface ParentAcademy {
   address: string | null;
   logo_url: string | null;
   brand_color: string | null;
+  self_service?: ParentSelfServiceSwitches;
 }
 
 export function getParentAcademy(): Promise<ParentAcademy> {

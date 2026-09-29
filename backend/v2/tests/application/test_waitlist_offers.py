@@ -28,6 +28,10 @@ from backend.v2.contexts.enrollment.domain.errors import (
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.contexts.enrollment.domain.self_service import (
+    ParentActionDisabled,
+    ParentSelfServicePolicy,
+)
 
 ACADEMY = "acad"
 NOW = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
@@ -483,3 +487,74 @@ async def test_a_confirm_that_loses_to_a_decline_does_not_enroll_on_a_released_s
         await confirm.execute("wl-1", parent_id="par-1")
     assert [e for e in enrollments.rows.values() if e.student_id == "stu-1"] == []
     assert sessions.reserved == 1  # wl-2 now holds the one seat
+
+
+# --- can_claim_waitlist_offer switch (Settings overhaul Phase 1 Lane C) ----
+
+
+class _FakePolicies:
+    def __init__(self, policy: ParentSelfServicePolicy | None = None) -> None:
+        self._policy = policy or ParentSelfServicePolicy.default(ACADEMY)
+
+    async def get_or_default(self) -> ParentSelfServicePolicy:
+        return self._policy
+
+
+@pytest.mark.asyncio
+async def test_parent_confirm_rejected_when_switch_off() -> None:
+    waitlist = FakeWaitlist(
+        entries={"wl-1": _entry("wl-1", parent_id="par-1", student_id="stu-1", days_ago=10)}
+    )
+    sessions = FakeSessions()
+    enrollments = FakeEnrollments()
+    outbox = FakeOutbox()
+    await _promote(waitlist, sessions, enrollments, outbox, FakeOfferNotifier()).execute("sess-1")
+
+    off_policy = ParentSelfServicePolicy.default(ACADEMY).model_copy(
+        update={"can_claim_waitlist_offer": False}
+    )
+    confirm = ConfirmWaitlistOffer(
+        waitlist=waitlist,
+        enrollments=enrollments,
+        outbox=outbox,
+        academy_id=lambda: ACADEMY,
+        clock=lambda: NOW + timedelta(days=1),
+        policies=_FakePolicies(off_policy),
+    )
+
+    with pytest.raises(ParentActionDisabled) as exc_info:
+        await confirm.execute("wl-1", parent_id="par-1")
+
+    assert exc_info.value.code == "parent_action_disabled"
+    # The offer/seat state must not move at all — off just refuses the claim.
+    assert waitlist.entries["wl-1"].status == "offered"
+    assert enrollments.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_staff_confirm_unaffected_by_switch_off() -> None:
+    """Staff/admin paths are never gated by a parent-facing switch (spec item
+    2). A staff confirm passes no ``parent_id``."""
+    waitlist = FakeWaitlist(
+        entries={"wl-1": _entry("wl-1", parent_id="par-1", student_id="stu-1", days_ago=10)}
+    )
+    sessions = FakeSessions()
+    enrollments = FakeEnrollments()
+    outbox = FakeOutbox()
+    await _promote(waitlist, sessions, enrollments, outbox, FakeOfferNotifier()).execute("sess-1")
+
+    off_policy = ParentSelfServicePolicy.default(ACADEMY).model_copy(
+        update={"can_claim_waitlist_offer": False}
+    )
+    confirm = ConfirmWaitlistOffer(
+        waitlist=waitlist,
+        enrollments=enrollments,
+        outbox=outbox,
+        academy_id=lambda: ACADEMY,
+        clock=lambda: NOW + timedelta(days=1),
+        policies=_FakePolicies(off_policy),
+    )
+
+    enrollment_id = await confirm.execute("wl-1", actor_id="admin-1")
+
+    assert enrollments.rows[enrollment_id].status == "active"

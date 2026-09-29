@@ -1128,7 +1128,11 @@ def compose_parent(
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     # Issue #616: a request nobody is told about sits PENDING for months.
-    request_pause = RequestEnrollmentPause(pause_requests=pause_requests, notifier=roster_notifier)
+    request_pause = RequestEnrollmentPause(
+        pause_requests=pause_requests,
+        notifier=roster_notifier,
+        policies=self_service_policies_repo,
+    )
     list_parent_pause_requests = ListParentPauseRequests(pause_requests=pause_requests)
 
     # Cross-context handlers register themselves at import time via @handler.
@@ -2494,6 +2498,17 @@ def compose_parent(
         return await waivers_repo.get_active()
 
     async def get_academy_info(*, academy_id: str) -> dict[str, Any]:
+        # Settings overhaul Phase 1 Lane C: the parent shell hides disabled
+        # self-service actions rather than only disabling them, so the
+        # switches ride along on the same academy payload it already loads.
+        policy = await self_service_policies_repo.get_or_default()
+        self_service = {
+            "can_report_absence": policy.can_report_absence,
+            "can_request_makeup": policy.can_request_makeup,
+            "can_request_pause": policy.can_request_pause,
+            "can_request_cancel": policy.can_request_cancel,
+            "can_claim_waitlist_offer": policy.can_claim_waitlist_offer,
+        }
         doc = await db["academies"].find_one({"academy_id": academy_id})
         if not doc:
             return {
@@ -2505,6 +2520,7 @@ def compose_parent(
                 "address": None,
                 "logo_url": None,
                 "brand_color": None,
+                "self_service": self_service,
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
@@ -2515,6 +2531,7 @@ def compose_parent(
             "address": doc.get("address"),
             "logo_url": doc.get("logo_url"),
             "brand_color": doc.get("brand_color"),
+            "self_service": self_service,
         }
 
     async def get_child_schedule(

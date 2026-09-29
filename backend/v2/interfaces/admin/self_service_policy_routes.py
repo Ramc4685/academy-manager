@@ -38,6 +38,12 @@ class _PolicyLike(Protocol):
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
     cancellation_effective_timing: Literal["immediate", "end_of_period"]
+    can_report_absence: bool
+    can_request_makeup: bool
+    can_request_pause: bool
+    can_request_cancel: bool
+    can_claim_waitlist_offer: bool
+    payment_instructions: str
 
 
 class SelfServicePolicyView(BaseModel):
@@ -47,6 +53,12 @@ class SelfServicePolicyView(BaseModel):
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
     cancellation_effective_timing: Literal["immediate", "end_of_period"]
+    can_report_absence: bool
+    can_request_makeup: bool
+    can_request_pause: bool
+    can_request_cancel: bool
+    can_claim_waitlist_offer: bool
+    payment_instructions: str
 
     @staticmethod
     def from_domain(policy: _PolicyLike) -> SelfServicePolicyView:
@@ -57,6 +69,12 @@ class SelfServicePolicyView(BaseModel):
             cancellation_minimum_notice_days=policy.cancellation_minimum_notice_days,
             cancellation_fee_cents=policy.cancellation_fee_cents,
             cancellation_effective_timing=policy.cancellation_effective_timing,
+            can_report_absence=policy.can_report_absence,
+            can_request_makeup=policy.can_request_makeup,
+            can_request_pause=policy.can_request_pause,
+            can_request_cancel=policy.can_request_cancel,
+            can_claim_waitlist_offer=policy.can_claim_waitlist_offer,
+            payment_instructions=policy.payment_instructions,
         )
 
 
@@ -74,6 +92,12 @@ class UpdateSelfServicePolicyRequest(BaseModel):
     cancellation_minimum_notice_days: int | None = Field(default=None, ge=0)
     cancellation_fee_cents: int | None = Field(default=None, ge=0)
     cancellation_effective_timing: Literal["immediate", "end_of_period"] | None = None
+    can_report_absence: bool | None = None
+    can_request_makeup: bool | None = None
+    can_request_pause: bool | None = None
+    can_request_cancel: bool | None = None
+    can_claim_waitlist_offer: bool | None = None
+    payment_instructions: str | None = Field(default=None, max_length=1000)
 
 
 #: The two fields Billing rules also edits. A change to either goes through
