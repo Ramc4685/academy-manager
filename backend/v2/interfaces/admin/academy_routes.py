@@ -132,9 +132,10 @@ async def upload_academy_media(
     """Upload the academy logo (PNG or JPEG, up to 2 MB); returns its URL.
 
     The academy is the caller's resolved tenant, never a request field. The
-    URL is saved by the caller through ``PATCH /academy``. The body is bounded
-    by ``Content-Length`` BEFORE it is parsed (h11 enforces that the body
-    matches the header), so an oversized upload is refused unread.
+    URL is saved by the caller through ``PATCH /academy``. ``Content-Length``
+    is a cheap early refusal; the body is also counted as it streams in and
+    cut off past the limit before any parsing, and chunked framing is refused,
+    so no header combination lets an unbounded body reach the parser.
     """
     uploader = use_cases.upload_academy_logo
     if uploader is None:
@@ -150,8 +151,31 @@ async def upload_academy_media(
             status_code=413,
             detail="That image is over 2 MB. Choose a smaller PNG or JPG.",
         )
+    if "transfer-encoding" in request.headers:
+        # Content-Length alone bounds nothing once chunked framing is also
+        # sent (h11 passes both through), so refuse it outright.
+        raise HTTPException(status_code=411, detail="Upload could not be read. Try again.")
+    limit = MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            # Counted on the wire, whatever the headers claim.
+            raise HTTPException(
+                status_code=413,
+                detail="That image is over 2 MB. Choose a smaller PNG or JPG.",
+            )
+    sent = False
+
+    async def replay() -> dict[str, object]:
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": bytes(body), "more_body": False}
+
     try:
-        form = await request.form(max_files=1, max_fields=4)
+        form = await Request(request.scope, replay).form(max_files=1, max_fields=4)
     except Exception:
         raise HTTPException(status_code=422, detail="Choose an image file to upload.") from None
     try:

@@ -127,3 +127,32 @@ def test_patch_logo_url_must_be_https(admin_client):
         r = admin_client.patch("/api/v2/admin/academy", json={"logo_url": bad})
         assert r.status_code == 422, bad
     admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_chunked_framing_is_refused_before_reading(admin_client):
+    """A tiny Content-Length next to chunked framing must not bound nothing."""
+    store, _ = _wire(admin_client)
+    r = admin_client.post(
+        URL,
+        content=b"x" * 10,
+        headers={"content-type": "multipart/form-data; boundary=b", "transfer-encoding": "chunked"},
+    )
+    assert r.status_code == 411
+    assert not store.objects
+
+
+def test_body_is_cut_off_on_the_wire_past_the_limit(admin_client):
+    """Whatever Content-Length claims, a body streamed past the limit is 413."""
+    store, _ = _wire(admin_client)
+
+    def chunks():
+        for _ in range(40):
+            yield b"\x00" * (64 * 1024)
+
+    r = admin_client.post(
+        URL,
+        content=chunks(),
+        headers={"content-type": "multipart/form-data; boundary=b", "content-length": "100"},
+    )
+    assert r.status_code in (411, 413)
+    assert not store.objects

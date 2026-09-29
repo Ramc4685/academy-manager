@@ -128,8 +128,9 @@ class UploadAcademyLogo:
         except LogoRejected:
             await self._repo.update(media_id, {"status": "rejected"})
             raise
-        except Exception:
-            await self._repo.update(media_id, {"status": "failed"})
+        except BaseException:
+            # Includes cancellation (client gone), so no row stays "pending".
+            await asyncio.shield(self._repo.update(media_id, {"status": "failed"}))
             raise
         object_path = f"academies/{academy_id}/logo/{uuid4().hex}.png"
         try:

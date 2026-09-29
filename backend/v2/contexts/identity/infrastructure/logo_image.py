@@ -53,6 +53,10 @@ def _process(raw: bytes) -> ProcessedImage:
             opened.draft("RGB", (MAX_OUTPUT_DIMENSION * 2, MAX_OUTPUT_DIMENSION * 2))
         opened.load()
         oriented = ImageOps.exif_transpose(opened)
+        if oriented.mode in ("I;16", "I;16B", "I;16L", "I"):
+            # 16-bit greyscale saturates to white under a plain RGB convert;
+            # scale it down to 8-bit first.
+            oriented = oriented.point(lambda value: value / 256).convert("L")
         has_alpha = oriented.mode in ("RGBA", "LA", "PA") or "transparency" in oriented.info
         image = oriented.convert("RGBA" if has_alpha else "RGB")
     image.thumbnail((MAX_OUTPUT_DIMENSION, MAX_OUTPUT_DIMENSION), Image.Resampling.LANCZOS)

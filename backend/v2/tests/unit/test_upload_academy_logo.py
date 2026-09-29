@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import re
@@ -144,3 +145,19 @@ async def test_fake_store_refuses_overwrite_like_the_real_adapter() -> None:
     await store.put_public(path="p", data=b"1", content_type="image/png")
     with pytest.raises(MediaStorageUnavailable):
         await store.put_public(path="p", data=b"2", content_type="image/png")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_processing_marks_the_attempt_failed() -> None:
+    """A client that disconnects mid-decode must not leave a 'pending' row."""
+
+    def cancel(_raw: bytes):
+        raise asyncio.CancelledError
+
+    repo = FakeMediaRepo()
+    uc = UploadAcademyLogo(
+        store=FakeMediaStore(), media_repo=repo, process_image=cancel, now=lambda: NOW
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await uc.execute(academy_id="a", uploaded_by="u", raw=_png())
+    assert [r["status"] for r in repo.rows] == ["failed"]

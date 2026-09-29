@@ -140,3 +140,11 @@ def test_pixel_cap_boundary() -> None:
     process_logo_image(_png(size=(2048, 1)))
     with pytest.raises(LogoRejected):
         process_logo_image(_png(size=(2049, 1)))
+
+
+def test_sixteen_bit_greyscale_is_scaled_not_saturated() -> None:
+    buf = io.BytesIO()
+    Image.new("I;16", (32, 32), 32768).save(buf, format="PNG")
+    out = _open(process_logo_image(buf.getvalue()).data).convert("RGB")
+    red, green, blue = out.getpixel((5, 5))
+    assert 100 < red < 160 and red == green == blue
