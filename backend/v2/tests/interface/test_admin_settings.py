@@ -56,8 +56,20 @@ def test_get_academy_contract(admin_client):
         "email_sender_name": None,
         "email_reply_to": None,
         "invoice_prefix": None,
+        "sport": "badminton",
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
+
+
+def test_get_academy_shows_stored_sport(admin_client):
+    admin_client.use_cases.get_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Ace Tennis", timezone=None, sport="tennis"
+    )
+
+    r = admin_client.get("/api/v2/admin/academy")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sport"] == "tennis"
 
 
 def test_get_academy_shows_the_platform_set_invoice_prefix(admin_client, monkeypatch):
@@ -85,6 +97,19 @@ def test_patch_academy_cannot_set_the_invoice_prefix(admin_client):
 
     assert r.status_code == 200, r.text
     admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with("acad", {})
+
+
+def test_patch_academy_cannot_set_sport(admin_client):
+    # Read-only: set by the platform at bootstrap (row 13).
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None, sport="badminton"
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"sport": "tennis"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with("acad", {})
+    assert r.json()["sport"] == "badminton"
 
 
 def test_patch_academy_contract(admin_client):

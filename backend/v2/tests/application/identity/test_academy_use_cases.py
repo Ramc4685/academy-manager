@@ -36,6 +36,9 @@ async def test_get_academy_returns_view_when_found():
     assert output.display_name == "Court 7"
     assert output.timezone == "America/New_York"
     assert output.contact_email is None
+    # Row 13: a doc from before the `sport` field existed (BLNO included)
+    # reads badminton at read time — no migration.
+    assert output.sport == "badminton"
 
 
 @pytest.mark.asyncio
@@ -53,7 +56,22 @@ async def test_get_academy_upserts_with_defaults_when_missing():
     assert output.display_name == "default-academy"
     assert output.timezone == "UTC"
     assert output.contact_email is None
+    assert output.sport == "badminton"
     repo.upsert_defaults.assert_awaited_once_with("default-academy")
+
+
+@pytest.mark.asyncio
+async def test_get_academy_returns_stored_sport_when_present():
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-2",
+        "display_name": "Ace Tennis",
+        "timezone": "America/New_York",
+        "sport": "tennis",
+    }
+    use_case = GetAcademyUseCase(academy_repo=repo)
+    output = await use_case.execute("acad-2")
+    assert output.sport == "tennis"
 
 
 @pytest.mark.asyncio
