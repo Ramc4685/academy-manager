@@ -43,6 +43,10 @@ export interface BillingRuleRow {
   /** `cancellation_effective_timing` only: the stored choice and its options. */
   choice?: string | null;
   choices?: string[] | null;
+  /** `ach_discount` only: on/off, the stored percent and its platform ceiling. */
+  enabled?: boolean | null;
+  percent?: number | null;
+  max_percent?: number | null;
 }
 
 export interface BillingRuleGroup {
@@ -58,7 +62,38 @@ export interface BillingRulesView {
 
 export type BillingRulesForm = Record<string, string>;
 
-export type UpdateBillingRulesRequest = Record<string, number | number[] | string | null>;
+export interface AchDiscountChange {
+  enabled?: boolean;
+  percent?: number;
+}
+
+export type UpdateBillingRulesRequest = Record<
+  string,
+  number | number[] | string | AchDiscountChange | null
+>;
+
+/** The Bank (ACH) discount row (Settings overhaul Phase 4 PR 13). */
+export const ACH_KEY = "ach_discount";
+/** Form-field names for its two inputs (the form is a flat string map). */
+export const ACH_ENABLED_FIELD = "ach_discount_enabled";
+export const ACH_PERCENT_FIELD = "ach_discount_percent";
+
+export function isAchRow(row: BillingRuleRow): boolean {
+  return row.key === ACH_KEY;
+}
+
+const ACH_PERCENT_PATTERN = /^\d+(\.\d{1,2})?$/;
+
+/** "2", "2.5" -> number; anything else (blank, "abc", "2.555") -> null. */
+export function achPercentFromInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  return ACH_PERCENT_PATTERN.test(trimmed) ? Number(trimmed) : null;
+}
+
+export function achBoundsMessage(row: BillingRuleRow): string {
+  const max = row.max_percent ?? 0;
+  return `Enter a percent above 0 and up to ${max}, with at most two decimals.`;
+}
 
 export function editableRows(view: BillingRulesView | null | undefined): BillingRuleRow[] {
   return (view?.groups ?? []).flatMap((group) => group.rows.filter((row) => row.editable));
@@ -105,8 +140,52 @@ function sameDays(a: number[], b: number[]): boolean {
 
 export function toForm(view: BillingRulesView | null | undefined): BillingRulesForm {
   const form: BillingRulesForm = {};
-  for (const row of editableRows(view)) form[row.key] = rowToInput(row);
+  for (const row of editableRows(view)) {
+    if (isAchRow(row)) {
+      form[ACH_ENABLED_FIELD] = row.enabled ? "true" : "false";
+      form[ACH_PERCENT_FIELD] = row.percent ? String(row.percent) : "";
+      continue;
+    }
+    form[row.key] = rowToInput(row);
+  }
   return form;
+}
+
+/**
+ * Diff the ACH row: on/off plus a percent. Only the parts that changed are
+ * sent; the server fills the rest from what is stored and enforces the
+ * platform ceiling. Untouched is never an error (money audit X16).
+ */
+function diffAchRow(
+  row: BillingRuleRow,
+  form: BillingRulesForm,
+  out: { changed: string[]; changedLabels: string[]; payload: UpdateBillingRulesRequest; errors: Record<string, string> },
+): void {
+  const storedEnabled = Boolean(row.enabled);
+  const storedPercent = row.percent ?? 0;
+  const enabled = (form[ACH_ENABLED_FIELD] ?? String(storedEnabled)) === "true";
+  const rawPercent = (form[ACH_PERCENT_FIELD] ?? "").trim();
+  const parsed = rawPercent === "" ? null : achPercentFromInput(rawPercent);
+
+  const enabledChanged = enabled !== storedEnabled;
+  const percentEdited = rawPercent !== "" && !(parsed !== null && parsed === storedPercent);
+  if (!enabledChanged && !percentEdited) return;
+
+  const max = row.max_percent ?? Number.POSITIVE_INFINITY;
+  const effective = percentEdited ? parsed : storedPercent;
+  const invalid =
+    (percentEdited && (parsed === null || parsed <= 0 || parsed > max)) ||
+    (enabled && (effective === null || effective <= 0 || effective > max));
+  if (invalid) {
+    out.errors[row.key] = achBoundsMessage(row);
+    return;
+  }
+  const change: AchDiscountChange = {};
+  if (enabledChanged) change.enabled = enabled;
+  if (percentEdited && parsed !== null) change.percent = parsed;
+  out.changed.push(row.key);
+  out.changedLabels.push(row.label);
+  out.payload[row.key] = change;
 }
 
 /** The input's string → cents/whole number, or null when it is not a number. */
@@ -162,6 +241,10 @@ export function diffForm(
   const errors: Record<string, string> = {};
 
   for (const row of editableRows(view)) {
+    if (isAchRow(row)) {
+      diffAchRow(row, form, { changed, changedLabels, payload, errors });
+      continue;
+    }
     const raw = form[row.key] ?? "";
     if (isListRow(row)) {
       // Blank is a REAL value here, not "leave alone": empty means send no

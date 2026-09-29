@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
+  ACH_ENABLED_FIELD,
+  ACH_PERCENT_FIELD,
   boundsMessage,
   canSave,
   diffForm,
@@ -423,4 +425,80 @@ test("the panel has labels for every drop_default_outcome choice", () => {
   assert.match(panel, /No credit, mid-month \(default\)/);
   assert.match(panel, /Prorated credit, mid-month/);
   assert.match(panel, /No credit, end of period/);
+});
+
+// --- Bank (ACH) discount (Settings overhaul Phase 4 PR 13) -------------------
+
+function achRow(enabled, percent, max = 3) {
+  return {
+    key: "ach_discount",
+    label: "Bank (ACH) discount",
+    editable: true,
+    value: null,
+    unit: null,
+    min_value: null,
+    max_value: null,
+    display: null,
+    detail: "Autopay only.",
+    enabled,
+    percent,
+    max_percent: max,
+  };
+}
+
+const achView = (row) => ({
+  groups: [{ key: "late_payments", title: "Late payments", note: null, rows: [row] }],
+});
+
+test("ach row seeds two form fields from the stored on/off and percent", () => {
+  const form = toForm(achView(achRow(true, 2)));
+  assert.equal(form[ACH_ENABLED_FIELD], "true");
+  assert.equal(form[ACH_PERCENT_FIELD], "2");
+  const off = toForm(achView(achRow(false, 0)));
+  assert.equal(off[ACH_ENABLED_FIELD], "false");
+  assert.equal(off[ACH_PERCENT_FIELD], "");
+});
+
+test("ach untouched is not a change and never an error", () => {
+  const view = achView(achRow(false, 0));
+  const diff = diffForm(view, toForm(view), MONEY);
+  assert.deepEqual(diff.changed, []);
+  assert.deepEqual(diff.errors, {});
+  assert.equal(canSave(diff), false);
+});
+
+test("ach turning on with a percent sends both parts", () => {
+  const view = achView(achRow(false, 0));
+  const diff = diffForm(view, { [ACH_ENABLED_FIELD]: "true", [ACH_PERCENT_FIELD]: "2.5" }, MONEY);
+  assert.deepEqual(diff.payload, { ach_discount: { enabled: true, percent: 2.5 } });
+  assert.deepEqual(diff.changedLabels, ["Bank (ACH) discount"]);
+  assert.equal(canSave(diff), true);
+});
+
+test("ach turning off sends only enabled", () => {
+  const view = achView(achRow(true, 2));
+  const diff = diffForm(view, { [ACH_ENABLED_FIELD]: "false", [ACH_PERCENT_FIELD]: "2" }, MONEY);
+  assert.deepEqual(diff.payload, { ach_discount: { enabled: false } });
+});
+
+test("ach percent above the ceiling, zero, or malformed is an inline error", () => {
+  const view = achView(achRow(false, 0, 3));
+  for (const bad of ["3.01", "0", "-1", "abc", "1.234"]) {
+    const diff = diffForm(view, { [ACH_ENABLED_FIELD]: "true", [ACH_PERCENT_FIELD]: bad }, MONEY);
+    assert.ok(diff.errors.ach_discount, `expected an error for ${bad}`);
+    assert.equal(canSave(diff), false);
+  }
+  const atMax = diffForm(view, { [ACH_ENABLED_FIELD]: "true", [ACH_PERCENT_FIELD]: "3" }, MONEY);
+  assert.deepEqual(atMax.errors, {});
+});
+
+test("ach turning on at a stored 0% with a blank percent is an error", () => {
+  const view = achView(achRow(false, 0));
+  const diff = diffForm(view, { [ACH_ENABLED_FIELD]: "true", [ACH_PERCENT_FIELD]: "" }, MONEY);
+  assert.ok(diff.errors.ach_discount);
+});
+
+test("ach helper text says autopay only", () => {
+  assert.match(panel, /AchDiscountRule/);
+  assert.match(panel, /row\.detail/);
 });
