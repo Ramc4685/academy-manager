@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import fixtures from "@/e2e/fixtures/public-academy-pages.json";
 
-import { buildPublicPageMetadata } from "./metadata";
+import { buildPublicPageMetadata, publicPageBrand } from "./metadata";
 import type { PublicAcademyNotPublished, PublicAcademyPage } from "./types";
 
 const ORIGIN = "https://riverside-academy.courtmastr.com";
@@ -44,5 +44,27 @@ describe("buildPublicPageMetadata", () => {
 
   it("leaves the product host's metadata alone", () => {
     expect(buildPublicPageMetadata({ kind: "platform" }, ORIGIN)).toBeNull();
+  });
+});
+
+describe("publicPageBrand", () => {
+  it("returns the academy's brand for a published page", () => {
+    const brand = publicPageBrand({ kind: "published", page: published });
+    expect(brand?.name).toBe("Riverside Shuttle Club");
+  });
+
+  it("returns the academy's brand for a not-published page", () => {
+    const notPublished = fixtures.not_published as PublicAcademyNotPublished;
+    const brand = publicPageBrand({ kind: "not_published", page: notPublished });
+    expect(brand?.name).toBe(notPublished.academy.name);
+  });
+
+  it("returns null on the platform host — row 15's title falls back to brand.productName", () => {
+    expect(publicPageBrand({ kind: "platform" })).toBeNull();
+  });
+
+  it("returns null for unknown_host and unavailable", () => {
+    expect(publicPageBrand({ kind: "unknown_host" })).toBeNull();
+    expect(publicPageBrand({ kind: "unavailable" })).toBeNull();
   });
 });
