@@ -1078,9 +1078,11 @@ test.describe("Rally admin shell", () => {
       const academy = page.getByTestId("admin-settings-academy");
       await expect(academy).toBeVisible();
       await expect(academy.getByLabel("Timezone")).toBeDisabled();
-      await expect(academy.getByLabel("Currency")).toBeDisabled();
+      // Currency is a read-only USD field for everyone (#1001), so only the
+      // timezone carries the owner-only note.
+      await expect(academy.getByTestId("academy-currency")).toHaveValue("USD");
       await expect(academy.getByLabel("Display name")).toBeEnabled();
-      await expect(academy.getByTestId("owner-only-field-note")).toHaveCount(2);
+      await expect(academy.getByTestId("owner-only-field-note")).toHaveCount(1);
 
       await page.goto("/admin/settings?panel=session-types");
       const types = page.getByTestId("admin-settings-session-types");
