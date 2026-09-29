@@ -27,10 +27,15 @@ test("only the fields the admin changed are sent (money audit X5)", () => {
   assert.deepEqual(errors, {});
 });
 
-test("the cancellation fee is sent in cents only when it changed", () => {
-  const form = { ...policyToForm(STORED), cancellation_fee_dollars: "25.00" };
-  assert.deepEqual(policyPatch(STORED, form).payload, { cancellation_fee_cents: 2500 });
-  assert.deepEqual(policyPatch(STORED, policyToForm(STORED)).payload, {});
+test("the cancellation fee and notice are never sent from Self-service (PR 5)", () => {
+  // Billing rules is their one write path; the BFF refuses a changed value here.
+  const form = policyToForm(STORED);
+  assert.equal("cancellation_fee_dollars" in form, false);
+  assert.equal("cancellation_minimum_notice_days" in form, false);
+  const { payload } = policyPatch(STORED, { ...form, absence_notice_min_hours: "4" });
+  assert.equal("cancellation_fee_cents" in payload, false);
+  assert.equal("cancellation_minimum_notice_days" in payload, false);
+  assert.deepEqual(policyPatch(STORED, form).payload, {});
 });
 
 test("a cleared number is an error, never a silent 0 (X20)", () => {
@@ -49,20 +54,18 @@ test("junk and negative numbers are errors", () => {
   const form = {
     ...policyToForm(STORED),
     absence_notice_min_hours: "-1",
-    cancellation_fee_dollars: "abc",
+    makeup_expiry_days: "abc",
   };
   const { errors } = policyPatch(STORED, form);
   assert.ok(errors.absence_notice_min_hours);
-  assert.ok(errors.cancellation_fee_dollars);
+  assert.ok(errors.makeup_expiry_days);
 });
 
-test("cancellation terms are read-only for an admin who is not the owner", () => {
-  assert.match(panel, /useIsOwner\(\)/);
-  assert.match(panel, /disabled=\{!isOwner\}/);
-});
-
-test("saving here refreshes the Billing rules copy of the shared fields", () => {
-  assert.match(panel, /queryKeys\.admin\.billingRules\(\)/);
+test("the panel points at Billing rules instead of editing the cancellation terms", () => {
+  assert.match(panel, /cancellationTermsSummary\(query\.data\)/);
+  assert.match(panel, /panel=billing-rules/);
+  assert.doesNotMatch(panel, /Cancellation fee \(\$\)/);
+  assert.doesNotMatch(panel, /Minimum cancellation notice/);
 });
 
 test("an out-of-bounds value already stored does not lock the other fields", () => {

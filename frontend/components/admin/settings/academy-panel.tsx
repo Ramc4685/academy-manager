@@ -14,6 +14,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { OwnerOnlyFieldNote, useIsOwner } from "@/components/admin/owner-context";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
@@ -24,7 +25,6 @@ interface AcademyForm {
   contact_phone: string;
   hours_text: string;
   address: string;
-  currency: string;
 }
 
 function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
@@ -38,7 +38,6 @@ function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
     contact_phone: data?.contact_phone ?? "",
     hours_text: data?.hours_text ?? "",
     address: data?.address ?? "",
-    currency: data?.currency ?? "USD",
   };
 }
 
@@ -54,6 +53,9 @@ function changedPayload(original: AcademyForm, form: AcademyForm): UpdateAdminAc
 
 export function AcademyPanel() {
   const queryClient = useQueryClient();
+  // Timezone and currency decide when a billing month starts and what unit
+  // every price is in, so they are owner-only (Settings overhaul P1 PR 5).
+  const isOwner = useIsOwner();
   const [form, setForm] = useState<AcademyForm>(() => normalize(null));
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
@@ -91,6 +93,7 @@ export function AcademyPanel() {
           />
           <TimezoneSelect
             value={form.timezone}
+            locked={!isOwner}
             onChange={(value) => setForm((prev) => ({ ...prev, timezone: value }))}
           />
           <Field
@@ -114,10 +117,7 @@ export function AcademyPanel() {
             value={form.address}
             onChange={(value) => setForm((prev) => ({ ...prev, address: value }))}
           />
-          <CurrencySelect
-            value={form.currency}
-            onChange={(value) => setForm((prev) => ({ ...prev, currency: value }))}
-          />
+          <CurrencyField />
           <InvoicePrefixField prefix={query.data?.invoice_prefix ?? null} />
         </div>
         <PanelFooter
@@ -162,56 +162,41 @@ function InvoicePrefixField({ prefix }: { prefix: string | null }) {
   );
 }
 
-const CURRENCY_OPTIONS: { value: string; label: string }[] = [
-  { value: "USD", label: "USD — US Dollar" },
-  { value: "CAD", label: "CAD — Canadian Dollar" },
-  { value: "EUR", label: "EUR — Euro" },
-  { value: "GBP", label: "GBP — British Pound" },
-  { value: "AUD", label: "AUD — Australian Dollar" },
-  { value: "NZD", label: "NZD — New Zealand Dollar" },
-  { value: "INR", label: "INR — Indian Rupee" },
-  { value: "SGD", label: "SGD — Singapore Dollar" },
-  { value: "MYR", label: "MYR — Malaysian Ringgit" },
-  { value: "AED", label: "AED — UAE Dirham" },
-  { value: "JPY", label: "JPY — Japanese Yen" },
-  { value: "MXN", label: "MXN — Mexican Peso" },
-  { value: "BRL", label: "BRL — Brazilian Real" },
-  { value: "ZAR", label: "ZAR — South African Rand" },
-];
+const LOCKABLE_SELECT_CLASS =
+  "h-10 rounded-md border border-rally-line bg-white px-3 text-sm font-normal outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted";
 
-function CurrencySelect({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const known = CURRENCY_OPTIONS.some((option) => option.value === value);
+/**
+ * Currency is locked to USD (owner decision, Settings overhaul Phase 1 PR 3).
+ * Read-only here; the admin update payload never sends a currency.
+ */
+function CurrencyField() {
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
-      Currency
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm font-normal outline-none focus:border-blue-500"
-      >
-        {!known && value && <option value={value}>{value} (current)</option>}
-        {CURRENCY_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="grid gap-1.5 text-sm font-medium text-rally-ink">
+      <span id="academy-currency-label">Currency</span>
+      <input
+        aria-labelledby="academy-currency-label"
+        aria-describedby="academy-currency-hint"
+        data-testid="academy-currency"
+        value="USD"
+        readOnly
+        className="h-10 rounded-md border border-rally-line bg-rally-paper px-3 text-sm font-normal text-rally-muted outline-none"
+      />
+      <span id="academy-currency-hint" className="text-xs font-normal text-rally-muted">
+        Set by CourtMastr. All charges are in US dollars.
+      </span>
+    </div>
   );
 }
 
-function TimezoneSelect({
+export function TimezoneSelect({
   value,
   onChange,
+  locked = false,
 }: {
   value: string;
   onChange: (value: string) => void;
+  /** True for an admin without the owner scope: shown, not editable. */
+  locked?: boolean;
 }) {
   const showUnknown = value && !TIMEZONE_VALUES.includes(value);
 
@@ -220,8 +205,10 @@ function TimezoneSelect({
       Timezone
       <select
         value={value}
+        disabled={locked}
+        aria-describedby={locked ? "academy-timezone-owner-note" : undefined}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm font-normal outline-none focus:border-blue-500"
+        className={LOCKABLE_SELECT_CLASS}
       >
         {/* An academy with no stored timezone must READ as unset, not as
             "UTC". Defaulting the control to UTC is what let a Chicago academy
@@ -244,6 +231,7 @@ function TimezoneSelect({
           </optgroup>
         ))}
       </select>
+      {locked && <OwnerOnlyFieldNote id="academy-timezone-owner-note" />}
     </label>
   );
 }

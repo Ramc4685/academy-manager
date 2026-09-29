@@ -43,6 +43,7 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import (
     ensure_owner_for_enrollment_delete,
+    ensure_owner_for_price_change,
     ensure_owner_for_withdrawal_credit,
 )
 from backend.v2.interfaces.admin.views import (
@@ -146,12 +147,22 @@ async def list_sessions(
     return AdminSessionList(sessions=[AdminSessionView(**s) for s in rows])
 
 
+def _row_field(row: object, field_name: str) -> object:
+    return row.get(field_name) if isinstance(row, dict) else getattr(row, field_name, None)
+
+
 @router.post("/sessions", response_model=AdminSessionView, summary="Create a session")
 async def create_session(
     body: CreateSessionRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
+    # Money is owner-only (Settings overhaul Phase 1 PR 5). An admin may still
+    # create a class, but only unpriced: no fee is the default an owner gets
+    # too (there is no academy-wide default fee), and the owner sets the
+    # price afterwards. Any fee, including an explicit 0 (free), is a price.
+    if body.amount_cents is not None:
+        ensure_owner_for_price_change(claims)
     await _reject_percent_pay_missing_price(
         use_cases=use_cases,
         coach_id=body.coach_id,
@@ -176,17 +187,23 @@ async def edit_session(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
     field_set = body.model_fields_set
-    amount_is_being_cleared = "amount_cents" in field_set and body.amount_cents is None
+    amount_sent = "amount_cents" in field_set
+    current = None
+    if amount_sent and use_cases.get_admin_session is not None:
+        current = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+    previous_amount = _row_field(current, "amount_cents") if current is not None else None
+    # Money is owner-only (Settings overhaul Phase 1 PR 5): an admin's edit is
+    # refused only when it changes the fee, so the full-form resubmit the
+    # class editor sends (fee untouched) still saves. A class we cannot read
+    # has no known fee to compare against, so a non-owner is refused.
+    amount_changes = amount_sent and (current is None or body.amount_cents != previous_amount)
+    if amount_changes:
+        ensure_owner_for_price_change(claims)
+    amount_is_being_cleared = amount_sent and body.amount_cents is None
     if amount_is_being_cleared:
         coach_id = body.coach_id
-        if coach_id is None and use_cases.get_admin_session is not None:
-            current = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
-            if current is not None:
-                coach_id = (
-                    current.get("coach_id")
-                    if isinstance(current, dict)
-                    else getattr(current, "coach_id", None)
-                )
+        if coach_id is None and current is not None:
+            coach_id = _row_field(current, "coach_id")  # type: ignore[assignment]
         if coach_id is not None:
             await _reject_percent_pay_missing_price(
                 use_cases=use_cases,
@@ -205,6 +222,15 @@ async def edit_session(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AcademyTimezoneUnset as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if amount_changes and current is not None and use_cases.record_money_setting_change:
+        await use_cases.record_money_setting_change.execute(
+            academy_id=claims.academy_id,
+            action="session_fee_changed",
+            actor_id=claims.user_id,
+            before={"session_id": session_id, "amount_cents": previous_amount},
+            after={"session_id": session_id, "amount_cents": body.amount_cents},
+            reason=body.reason,
+        )
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))

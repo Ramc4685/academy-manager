@@ -166,7 +166,9 @@ def build_setup_checklist(
         SetupChecklistItemView(
             key="academy_profile",
             label="Academy details",
-            detail="Set the timezone and a contact email families can reach.",
+            # Timezone is owner-only (it sets when a billing month starts);
+            # the contact email is not, so the link stays for every admin.
+            detail="Add a contact email families can reach. The owner sets the timezone.",
             status=_status(academy_ok, profile_done),
             href="/admin/settings?panel=academy",
         ),
@@ -199,6 +201,8 @@ def build_setup_checklist(
             detail="Add at least one session type (group class, private lesson).",
             status=_status(types_ok, bool(type_rows)),
             href="/admin/settings?panel=session-types",
+            # The price list is owner-only (Settings overhaul Phase 1 PR 5).
+            owner_only=True,
         ),
         SetupChecklistItemView(
             key="classes",

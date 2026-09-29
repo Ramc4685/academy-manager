@@ -34,6 +34,9 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.money_setting_audit import (
+    RecordMoneySettingChange,
+)
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
 )
@@ -416,6 +419,9 @@ class AdminUseCases:
     record_manual_payment: object | None = None
     issue_invoice_refund: object | None = None
     list_billing_audit: object | None = None
+    # Owner changes to a class fee or the academy timezone (Settings overhaul
+    # Phase 1 PR 5), appended to the same billing audit log as Billing rules.
+    record_money_setting_change: RecordMoneySettingChange | None = None
     create_student_invoice: object | None = None
     bill_enrollment_period: object | None = None
     list_billing_products: object | None = None

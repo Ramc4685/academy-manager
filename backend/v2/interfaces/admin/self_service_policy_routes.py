@@ -4,23 +4,14 @@ from __future__ import annotations
 
 from typing import Final, Literal, Protocol
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.billing.application.use_cases.billing_rules import (
-    BillingRulesPartialWriteError,
-    BillingRulesValidationError,
-    UpdateBillingRulesCommand,
-)
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     UpdateSelfServicePolicyCommand,
 )
-from backend.v2.interfaces.admin.billing_rules_routes import get_admin_billing_rules
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
-from backend.v2.interfaces.admin.owner_gate import (
-    ensure_owner_for_cancellation_terms,
-    ensure_owner_for_payment_instructions,
-)
+from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_payment_instructions
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
@@ -87,6 +78,10 @@ class UpdateSelfServicePolicyRequest(BaseModel):
     The Settings page sends just the fields the admin changed. An older
     client that still sends all six is fine: a field equal to the stored value
     is not a change.
+
+    The cancellation fee and notice are accepted only so that such a client
+    keeps working: Billing rules is their one write path (Settings overhaul
+    Phase 1 PR 5), so a changed value here is refused, owner or not.
     """
 
     absence_notice_min_hours: int | None = Field(default=None, ge=0)
@@ -103,11 +98,14 @@ class UpdateSelfServicePolicyRequest(BaseModel):
     payment_instructions: str | None = Field(default=None, max_length=1000)
 
 
-#: The two fields Billing rules also edits. A change to either goes through
-#: ``UpdateBillingRules``: owner only, bounded, and audited.
+#: The two fields Billing rules owns. Self-service shows neither any more.
 CANCELLATION_TERMS: Final[tuple[str, ...]] = (
     "cancellation_minimum_notice_days",
     "cancellation_fee_cents",
+)
+
+CANCELLATION_TERMS_MOVED: Final[str] = (
+    "The cancellation fee and notice are set in Settings -> Billing rules."
 )
 
 
@@ -123,7 +121,6 @@ async def get_self_service_policy(
 @router.put("/self-service/policy", response_model=SelfServicePolicyView)
 async def update_self_service_policy(
     body: UpdateSelfServicePolicyRequest,
-    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> SelfServicePolicyView:
@@ -133,11 +130,19 @@ async def update_self_service_policy(
         raise RuntimeError("self-service policy use cases are not wired on AdminUseCases")
     requested = body.model_dump(exclude_none=True)
     current = await reader.execute()
-    cancellation = {
-        key: requested[key]
+    changed_terms = [
+        key
         for key in CANCELLATION_TERMS
         if key in requested and requested[key] != getattr(current, key)
-    }
+    ]
+    if changed_terms:
+        # Money audit X5 routed these through Billing rules from here; the
+        # Settings overhaul (Phase 1 PR 5) removes the second write path
+        # entirely. Nothing is written, not even the other fields sent.
+        raise HTTPException(
+            status_code=422,
+            detail={"field": changed_terms[0], "message": CANCELLATION_TERMS_MOVED},
+        )
     others = {key: value for key, value in requested.items() if key not in CANCELLATION_TERMS}
 
     if (
@@ -150,35 +155,6 @@ async def update_self_service_policy(
         # (Lane C, 2026-09-29 owner decision): only refuse when the value is
         # actually changing.
         ensure_owner_for_payment_instructions(claims)
-
-    if cancellation:
-        # Money audit X5: this route used to write the cancellation fee with
-        # no owner check, no bound and no audit, while Billing rules gated the
-        # same values. It now takes the Billing rules path, which checks
-        # bounds before any store is touched and writes the audit entry.
-        ensure_owner_for_cancellation_terms(claims)
-        try:
-            await get_admin_billing_rules(request).write.execute(
-                claims.academy_id,
-                UpdateBillingRulesCommand(
-                    **cancellation,
-                    actor_id=claims.user_id,
-                    reason="Settings -> Self-service",
-                ),
-            )
-        except BillingRulesValidationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"field": exc.field, "message": exc.message},
-            ) from exc
-        except BillingRulesPartialWriteError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "message": "The cancellation terms could not be saved.",
-                    "saved_fields": list(exc.applied_fields),
-                },
-            ) from exc
 
     if others:
         await writer.execute(UpdateSelfServicePolicyCommand(**others))
