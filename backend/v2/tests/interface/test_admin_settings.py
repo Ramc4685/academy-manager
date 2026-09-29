@@ -14,9 +14,6 @@ from backend.v2.contexts.billing.domain.errors import (
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
 )
-from backend.v2.contexts.identity.application.get_academy_fees_use_case import (
-    GetAcademyFeesOutput,
-)
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     GetAcademyGatewayOutput,
 )
@@ -228,27 +225,17 @@ def test_patch_academy_sender_identity_requires_admin(coach_on_admin_client):
     assert r.status_code == 404, r.text
 
 
-def test_get_and_patch_fees_contract(admin_client):
-    admin_client.use_cases.get_academy_fees_use_case.execute.return_value = GetAcademyFeesOutput(
-        late_fee_cents=1500,
-        grace_days=5,
-    )
-    admin_client.use_cases.update_academy_fees_use_case.execute.return_value = GetAcademyFeesOutput(
-        late_fee_cents=2000, grace_days=5
-    )
+def test_fees_route_retired(admin_client):
+    """Settings overhaul Lane D: ``GET``/``PATCH /academy/fees`` are gone.
 
+    Nothing called them any more — the Billing rules panel writes through
+    ``POST /admin/billing/rules`` instead, reusing the same use cases.
+    """
     get_response = admin_client.get("/api/v2/admin/academy/fees")
     patch_response = admin_client.patch("/api/v2/admin/academy/fees", json={"late_fee_cents": 2000})
 
-    assert get_response.status_code == 200, get_response.text
-    assert get_response.json() == {
-        "late_fee_cents": 1500,
-        "grace_days": 5,
-    }
-    assert patch_response.status_code == 200, patch_response.text
-    admin_client.use_cases.update_academy_fees_use_case.execute.assert_awaited_once_with(
-        "acad", {"late_fee_cents": 2000}
-    )
+    assert get_response.status_code == 404, get_response.text
+    assert patch_response.status_code == 404, patch_response.text
 
 
 def test_get_and_patch_notifications_contract(admin_client):

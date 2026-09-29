@@ -14,12 +14,10 @@ from backend.v2.interfaces.admin.owner_gate import (
 )
 from backend.v2.interfaces.admin.views import (
     AdminAcademyView,
-    AdminFeesView,
     AdminGatewayConnectLinkView,
     AdminGatewayView,
     AdminNotificationsView,
     UpdateAdminAcademyRequest,
-    UpdateAdminFeesRequest,
     UpdateAdminNotificationsRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -114,16 +112,12 @@ async def _invoice_prefix(use_cases: AdminUseCases) -> str | None:
     return prefix
 
 
-# --- Fees ---
-
-
-@router.get("/academy/fees", response_model=AdminFeesView)
-async def get_academy_fees(
-    claims: AuthClaims = Depends(require_persona("admin")),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> AdminFeesView:
-    out = await use_cases.get_academy_fees_use_case.execute(claims.academy_id)
-    return AdminFeesView(**asdict(out))
+# `GET`/`PATCH /academy/fees` (the legacy Settings -> Data-era fees routes)
+# were retired in the Settings overhaul (Lane D, PR 7): nothing calls them —
+# the frontend has no caller left, and the Billing rules panel writes through
+# `POST /admin/billing/rules` instead (`billing_rules_routes.py`), which
+# reuses `get_academy_fees_use_case` / `update_academy_fees_use_case`
+# directly. Those use cases stay; only the HTTP routes are gone.
 
 
 @router.get("/academy/gateway", response_model=AdminGatewayView)
@@ -196,18 +190,6 @@ async def disconnect_stripe(
             detail="Online payouts are not set up yet. Finish payment setup in academy settings.",
         )
     await use_cases.disconnect_stripe_use_case.execute(claims.academy_id)
-
-
-@router.patch("/academy/fees", response_model=AdminFeesView)
-async def update_academy_fees(
-    payload: UpdateAdminFeesRequest,
-    claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> AdminFeesView:
-    out = await use_cases.update_academy_fees_use_case.execute(
-        claims.academy_id, payload.model_dump(exclude_unset=True)
-    )
-    return AdminFeesView(**asdict(out))
 
 
 # --- Notifications ---

@@ -81,8 +81,6 @@ GOVERNANCE_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner", "billing"
 
 OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
-        # billing_routes.py — money governance
-        ("PUT", f"{_ADMIN}/billing/settings/invoice-schedule"),
         # billing_rules_routes.py — the merged Settings panel write
         # (GET /billing/rules stays admin).
         ("PUT", f"{_ADMIN}/billing/rules"),
@@ -156,9 +154,8 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("GET", f"{_ADMIN}/reports/{{report_name}}.csv"),
         # audit_routes.py
         ("GET", f"{_ADMIN}/audit-logs"),
-        # academy_routes.py — fees and the Stripe gateway (reads stay admin;
-        # the Stripe callback carries no auth dependency at all)
-        ("PATCH", f"{_ADMIN}/academy/fees"),
+        # academy_routes.py — the Stripe gateway (reads stay admin; the
+        # Stripe callback carries no auth dependency at all)
         # payment_methods_routes.py — which offline methods the payment
         # dialogs offer (Settings -> Billing rules -> Offline payments)
         ("PUT", f"{_ADMIN}/academy/payment-methods"),

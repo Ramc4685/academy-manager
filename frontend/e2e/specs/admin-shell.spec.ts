@@ -158,9 +158,7 @@ const SETTINGS_PANELS = [
   { key: "billing-rules", label: "Billing rules", testid: "admin-settings-billing-rules" },
   { key: "gateway", label: "Gateway", testid: "admin-settings-gateway" },
   { key: "notify", label: "Notify", testid: "admin-settings-notify" },
-  { key: "roles", label: "Roles", testid: "admin-settings-roles" },
   { key: "branding", label: "Branding", testid: "admin-settings-branding" },
-  { key: "data", label: "Data", testid: "admin-settings-data" },
   {
     key: "session-types",
     label: "Session types",
@@ -1771,52 +1769,25 @@ test.describe("Rally admin shell", () => {
     ]);
   });
 
-  test("settings warns before a tab switch discards an in-progress role edit", async ({
-    page,
-  }) => {
+  test("?panel=roles redirects to the Staff page", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
-    // The list stub's glob stops at the segment boundary, so the per-user
-    // detail read needs its own route or it falls through to the catch-all.
-    await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
-      fulfillJson(route, {
-        user_id: "coach-e2e",
-        email: "coach@example.com",
-        display_name: "Coach E2E",
-        role: "coach",
-        status: "active",
-        roles: ["coach"],
-      }),
-    );
     await page.goto("/admin/settings?panel=roles");
-    await expect(page.getByTestId("admin-settings-roles")).toBeVisible();
-
-    await page.getByRole("button", { name: "Edit roles" }).click();
-    const parent = page.getByTestId("admin-settings-role-checkbox-coach-e2e-parent");
-    await expect(parent).toBeVisible();
-    await parent.check();
-
-    const guard = page.getByTestId("confirm-action-dialog");
-    const notifyTab = page.getByRole("link", { name: "Notify", exact: true });
-    await notifyTab.click();
-    await expect(guard).toBeVisible();
-
-    // Stay: the editor stays open with the tick still applied.
-    await guard.getByRole("button", { name: "Stay on this page" }).click();
-    await expect(guard).toHaveCount(0);
-    await expect(page).toHaveURL(/panel=roles/);
-    await expect(parent).toBeChecked();
-
-    await notifyTab.click();
-    await expect(guard).toBeVisible();
-    await Promise.all([
-      page.waitForURL(/panel=notify/),
-      guard.getByTestId("confirm-action-submit").click(),
-    ]);
-    await expect(page.getByTestId("admin-settings-notify")).toBeVisible();
+    await page.waitForURL(/\/admin\/users/);
     expect(
       errors,
-      `App console errors on the roles dirty guard: ${errors.join("\n")}`,
+      `App console errors on the roles redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("?panel=data redirects to Reports for an owner", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=data");
+    await page.waitForURL(/\/admin\/reports/);
+    expect(
+      errors,
+      `App console errors on the data redirect: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 

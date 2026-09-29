@@ -1563,13 +1563,6 @@ export type UpdateAdminAcademyRequest = Partial<{
   email_reply_to: string | null;
 }>;
 
-export interface AdminFeesView {
-  late_fee_cents: number | null;
-  grace_days: number | null;
-}
-
-export type UpdateAdminFeesRequest = Partial<AdminFeesView>;
-
 export interface AdminNotificationsView {
   daily_digest_to_admin: boolean;
   coach_digest_enabled: boolean;
@@ -2196,22 +2189,9 @@ export interface InvoiceScheduleView {
   invoice_due_days: number;
 }
 
-export interface SetInvoiceScheduleRequest {
-  billing_day: number;
-  invoice_due_days: number;
-  reason?: string | null;
-}
-
 export function getInvoiceSchedule(): Promise<InvoiceScheduleView> {
   return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
     method: "GET",
-  });
-}
-
-export function setInvoiceSchedule(payload: SetInvoiceScheduleRequest): Promise<InvoiceScheduleView> {
-  return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
-    method: "PUT",
-    body: JSON.stringify(payload),
   });
 }
 
@@ -3779,17 +3759,6 @@ export function updateAdminAcademy(
   payload: UpdateAdminAcademyRequest
 ): Promise<AdminAcademyView> {
   return apiFetch<AdminAcademyView>("/admin/academy", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function getAdminFees(): Promise<AdminFeesView> {
-  return apiFetch<AdminFeesView>("/admin/academy/fees", { method: "GET" });
-}
-
-export function updateAdminFees(payload: UpdateAdminFeesRequest): Promise<AdminFeesView> {
-  return apiFetch<AdminFeesView>("/admin/academy/fees", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });

@@ -9,8 +9,9 @@ values. The use cases are attached at ``app.state.admin_billing_rules`` by
 ``composition/billing_rules.py`` — ``composition/admin.py`` is at its line
 budget — so this module only knows their protocol.
 
-The existing ``/academy/fees`` and ``/billing/settings/invoice-schedule``
-routes are untouched and keep serving their other callers.
+The ``/academy/fees`` routes (GET/PATCH) and the ``/billing/settings/
+invoice-schedule`` PUT were retired in Lane D (Settings overhaul Phase 2);
+only the invoice-schedule GET still serves its other callers.
 """
 
 from __future__ import annotations

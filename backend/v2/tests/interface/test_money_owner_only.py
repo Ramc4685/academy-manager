@@ -48,8 +48,6 @@ OWNER_ONLY_MONEY_WRITES: tuple[tuple[str, str], ...] = (
     ("DELETE", "/session-types/type-new"),
     # Already owner-only before PR 5, listed so the walk is complete.
     ("PUT", "/billing/rules"),  # late fee, grace, cancellation fee + notice
-    ("PATCH", "/academy/fees"),  # late fee (legacy route)
-    ("PUT", "/billing/settings/invoice-schedule"),  # billing day, due days
     ("POST", "/billing/products"),
     ("PATCH", "/billing/products/prod-1"),
     ("DELETE", "/billing/products/prod-1"),

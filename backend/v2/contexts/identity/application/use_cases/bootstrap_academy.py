@@ -33,11 +33,7 @@ DEFAULT_RECORDS = (
     "academy",
     "owner_user",
     "owner_membership",
-    "academy_settings",
-    "billing_policy",
     "waiver_template",
-    "roles",
-    "feature_flags",
 )
 
 
@@ -64,13 +60,7 @@ class TenantBootstrapStore(Protocol):
     async def create_academy(self, academy: dict[str, Any]) -> dict[str, Any]: ...
     async def ensure_owner_user(self, user: dict[str, Any]) -> dict[str, Any]: ...
     async def ensure_owner_membership(self, membership: dict[str, Any]) -> dict[str, Any]: ...
-    async def ensure_academy_settings(self, settings: dict[str, Any]) -> dict[str, Any]: ...
-    async def ensure_billing_policy(self, policy: dict[str, Any]) -> dict[str, Any]: ...
     async def ensure_waiver_template(self, waiver: dict[str, Any]) -> dict[str, Any]: ...
-    async def ensure_default_roles(
-        self, academy_id: str, roles: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]: ...
-    async def ensure_feature_flags(self, flags: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class InvoicePrefixAssigner(Protocol):
@@ -242,42 +232,7 @@ class BootstrapAcademy:
                 "updated_at": now,
             }
         )
-        await self._store.ensure_academy_settings(
-            {
-                "settings_id": self._id_factory("settings_"),
-                "academy_id": academy_id,
-                "display_name": command.display_name,
-                "timezone": command.timezone,
-                "locale": "en-US",
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-        await self._store.ensure_billing_policy(
-            {
-                "policy_id": self._id_factory("policy_"),
-                "academy_id": academy_id,
-                "currency": "usd",
-                "invoice_day": 1,
-                "grace_period_days": 5,
-                "auto_charge_enabled": False,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
         await self._store.ensure_waiver_template(_default_waiver(academy_id, now, self._id_factory))
-        await self._store.ensure_default_roles(academy_id, _default_roles(academy_id, now))
-        await self._store.ensure_feature_flags(
-            {
-                "feature_flags_id": self._id_factory("flags_"),
-                "academy_id": academy_id,
-                "saas_v2_enabled": True,
-                "billing_enabled": False,
-                "messaging_enabled": False,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
 
         invoice_prefix = None
         if self._invoice_prefix_assigner is not None:
@@ -319,32 +274,3 @@ def _default_waiver(
         "created_at": now,
         "updated_at": now,
     }
-
-
-def _default_roles(academy_id: str, now: datetime) -> list[dict[str, Any]]:
-    return [
-        {
-            "academy_id": academy_id,
-            "role": "admin",
-            "display_name": "Admin",
-            "permissions": ["academy.manage", "billing.manage", "members.manage"],
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "academy_id": academy_id,
-            "role": "coach",
-            "display_name": "Coach",
-            "permissions": ["sessions.coach", "attendance.write"],
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "academy_id": academy_id,
-            "role": "parent",
-            "display_name": "Parent",
-            "permissions": ["children.read", "payments.read"],
-            "created_at": now,
-            "updated_at": now,
-        },
-    ]
