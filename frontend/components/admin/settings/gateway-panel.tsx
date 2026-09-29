@@ -14,6 +14,7 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 import { PlatformFallbackCard } from "@/components/admin/settings/platform-fallback-card";
+import { EmailSendingCard } from "@/components/admin/settings/email-sending-card";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 export function GatewayPanel() {
@@ -63,7 +64,7 @@ export function GatewayPanel() {
   return (
     <section data-testid="admin-settings-gateway" className="space-y-4">
       <Card p={24} className="max-w-3xl">
-        <Overline>Gateway</Overline>
+        <Overline>Payments · Stripe</Overline>
 
         {query.isLoading ? (
           <div className="mt-5 h-24 animate-pulse rounded-md bg-rally-paper" />
@@ -141,6 +142,7 @@ export function GatewayPanel() {
         )}
       </Card>
 
+      <EmailSendingCard />
       <PlatformFallbackCard />
       <ConfirmActionDialog
         open={confirmDisconnect}

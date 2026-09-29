@@ -177,7 +177,7 @@ def build_setup_checklist(
             label="Branding",
             detail="Add your logo or brand colour for emails and the public page.",
             status=_status(academy_ok, branding_done),
-            href="/admin/settings?panel=branding",
+            href="/admin/settings?panel=academy",
         ),
         SetupChecklistItemView(
             key="billing_rules",
@@ -192,7 +192,7 @@ def build_setup_checklist(
             label="Card payments",
             detail="Connect Stripe so families can pay online.",
             status=_status(gateway_ok, bool(_field(gateway_row, "stripe_connected", False))),
-            href="/admin/settings?panel=gateway",
+            href="/admin/settings?panel=integrations",
             owner_only=True,
         ),
         SetupChecklistItemView(

@@ -11,6 +11,7 @@ import { NotifyPanel } from "@/components/admin/settings/notify-panel";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
 import { DeparturePolicyPanel } from "@/components/admin/settings/departure-policy-panel";
 import { SessionTypesPanel } from "@/components/admin/settings/session-types-panel";
+import { CurriculumPanel } from "@/components/admin/settings/curriculum-panel";
 import { PublicPagePanel } from "@/components/admin/settings/public-page-panel";
 import {
   OWNER_ONLY_SETTINGS_PANELS,
@@ -41,7 +42,7 @@ export default function AdminSettingsPage() {
   const externalRedirect = rawPanel ? RETIRED_SETTINGS_EXTERNAL_REDIRECTS[rawPanel] : undefined;
   const active = coercePanel(rawPanel);
   const isOwner = useIsOwner();
-  // Billing rules and Gateway are owner-only: the tabs disappear for admins
+  // Billing rules and Integrations are owner-only: the tabs disappear for admins
   // without the scope, and a deep link to one shows the owner-only panel.
   const tabs = isOwner
     ? SETTINGS_TABS
@@ -72,6 +73,12 @@ export default function AdminSettingsPage() {
   function hrefForPanel(panel: SettingsPanelKey): UrlObject {
     const next = new URLSearchParams(params);
     next.set("panel", panel);
+    // `program` and `stripe` belong to one panel's state; don't carry them
+    // to a different tab.
+    if (panel !== active) {
+      next.delete("program");
+      next.delete("stripe");
+    }
     return {
       pathname,
       query: Object.fromEntries(next),
@@ -87,8 +94,8 @@ export default function AdminSettingsPage() {
         {ownerOnlyHere && <OwnerOnlyPanel />}
         {active === "academy" && <AcademyPanel />}
         {active === "billing-rules" && isOwner && <BillingRulesPanel />}
-        {active === "gateway" && isOwner && <GatewayPanel />}
-        {active === "notify" && <NotifyPanel />}
+        {active === "integrations" && isOwner && <GatewayPanel />}
+        {active === "notifications" && <NotifyPanel />}
         {active === "family-policies" && (
           <div className="space-y-6">
             <SelfServicePanel />
@@ -97,6 +104,7 @@ export default function AdminSettingsPage() {
         )}
         {active === "session-types" && <SessionTypesPanel />}
         {active === "public-page" && <PublicPagePanel />}
+        {active === "curriculum" && <CurriculumPanel />}
       </section>
     </SettingsDirtyProvider>
   );

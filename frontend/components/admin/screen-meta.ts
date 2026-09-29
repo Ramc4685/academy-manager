@@ -67,7 +67,13 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
     group: "CLASSES",
     items: [
       { id: "sessions", href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
-      { id: "pathway", href: "/admin/pathway", label: "Pathway", icon: "trophy", match: startsWith("/admin/pathway") },
+      // Settings overhaul Phase 3 PR 11: authoring moved to Settings ->
+      // Curriculum; this item is now student progress tracking.
+      // The overview page is behind a build-time flag; without it the page is
+      // a "not enabled" dead end, so the item is hidden instead.
+      ...(process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1"
+        ? [{ id: "progress", href: "/admin/pathway/progress", label: "Progress", icon: "trophy", match: startsWith("/admin/pathway") } as const]
+        : []),
     ],
   },
   {
@@ -191,7 +197,8 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/dashboard": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
   "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
   "/admin/students": { title: "Students", subtitle: "Every child: classes, attendance, status", breadcrumbs: ["Admin", "People", "Students"] },
-  "/admin/pathway": { title: "Skill Pathways", subtitle: "Curriculum levels and skills", breadcrumbs: ["Admin", "Pathway"] },
+  "/admin/pathway": { title: "Progress", subtitle: "Where each student is on the skill pathway", breadcrumbs: ["Admin", "Progress"] },
+  "/admin/pathway/progress": { title: "Progress", subtitle: "Where each student is on the skill pathway", breadcrumbs: ["Admin", "Progress"] },
   "/admin/users": { title: "Staff", subtitle: "Coaches and admins: logins, roles, pay", breadcrumbs: ["Admin", "People", "Staff"] },
   "/admin/inbox": { title: "Inbox", subtitle: "Registrations, waitlist, level-ups, and parent requests", breadcrumbs: ["Admin", "Inbox"] },
   // The registration detail page is the one route left under /admin/registrations

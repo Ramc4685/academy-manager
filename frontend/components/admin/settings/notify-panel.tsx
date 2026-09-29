@@ -103,7 +103,8 @@ export function NotifyPanel() {
             }
           />
           <Toggle
-            label="Daily admin digest"
+            label="CC admins on coach digests"
+            helper="Admins get a copy of each coach's daily digest email. Needs the coach daily digest turned on."
             checked={form.daily_digest_to_admin}
             onChange={(checked) =>
               setForm((prev) => ({ ...prev, daily_digest_to_admin: checked }))
@@ -359,15 +360,22 @@ function Toggle({
   checked,
   onChange,
   testId,
+  helper,
 }: {
   label: string;
+  helper?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   testId?: string;
 }) {
   return (
     <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-rally-line px-4 text-sm font-medium text-rally-ink">
-      {label}
+      <span>
+        {label}
+        {helper && (
+          <span className="mt-0.5 block text-xs font-normal text-rally-muted">{helper}</span>
+        )}
+      </span>
       <input
         type="checkbox"
         checked={checked}
