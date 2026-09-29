@@ -21,6 +21,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.time import academy_timezone_lookup, resolve_session_doc_timezone
 
 
 class MongoMoveScheduleReader:
@@ -34,7 +35,7 @@ class MongoMoveScheduleReader:
         )
         if doc is None:
             return None
-        timezone_name = str(doc.get("timezone") or "America/Chicago")
+        timezone_name = await resolve_session_doc_timezone(academy_timezone_lookup(self._db), doc)
         billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
         occurrences = await self._payments._occurrences_for_session(doc, billing_period)
         return MoveSessionSchedule(

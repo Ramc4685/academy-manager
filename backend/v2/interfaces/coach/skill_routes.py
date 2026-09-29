@@ -34,7 +34,11 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
     CoachSettableStatus,
     UpdateSkillStatusCommand,
 )
-from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
+from backend.v2.interfaces.coach.deps import (
+    CoachUseCases,
+    academy_zone_for_sessions,
+    get_coach_use_cases,
+)
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_assistant_only, is_coach_supervisor, require_coach_surface
 
@@ -242,6 +246,7 @@ async def _build_session_skills(
     coach_id: str,
     session: object,
     program_id: str,
+    academy_id: str,
 ) -> dict[str, object]:
     session_id = str(session.session_id)
     roster_session_id = str(getattr(session, "roster_session_id", session_id))
@@ -310,7 +315,9 @@ async def _build_session_skills(
         "occurrence_id": str(getattr(session, "occurrence_id", session_id)),
         "title": str(getattr(session, "title", session_id)),
         "location": str(getattr(session, "location", "")),
-        "timezone": getattr(session, "timezone", None),
+        # A zoneless (legacy or unresolved) session reads its academy's clock.
+        "timezone": getattr(session, "timezone", None)
+        or await academy_zone_for_sessions([session], use_cases=use_cases, academy_id=academy_id),
         "start_at": getattr(session, "start_at", None),
         "end_at": getattr(session, "end_at", None),
         "roster": [
@@ -346,6 +353,7 @@ async def get_day_hub(
             coach_id=claims.user_id,
             session=session,
             program_id=program_id,
+            academy_id=claims.academy_id,
         )
         for session in sessions
     ]
@@ -385,6 +393,7 @@ async def get_session_skills(
         coach_id=claims.user_id,
         session=session,
         program_id=resolved_program_id,
+        academy_id=claims.academy_id,
     )
     model["date"] = target_date.isoformat() if target_date else None
     return model

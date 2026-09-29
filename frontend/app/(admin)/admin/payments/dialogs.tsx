@@ -23,6 +23,7 @@ import {
   type RefundRequest,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { useManualPaymentMethods } from "@/lib/use-manual-payment-methods";
 
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
 import { Button, type ButtonVariant } from "@/components/ds/button";
@@ -538,7 +539,7 @@ export function MarkPaidDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [method, setMethod] = useState("cash");
+  const { options: methodOptions, method, setMethod } = useManualPaymentMethods(payment !== null);
   const [amountInput, setAmountInput] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [referenceNumber, setReferenceNumber] = useState("");
@@ -547,7 +548,7 @@ export function MarkPaidDialog({
   const mutation = useMutation({
     mutationFn: () =>
       markPaymentPaid(payment!.payment_id, {
-        payment_method: method as "cash" | "check" | "zelle" | "venmo" | "bank_transfer" | "other",
+        payment_method: method,
         amount_received_cents: amountInput ? Math.round(Number(amountInput) * 100) : undefined,
         reference_number: referenceNumber || undefined,
         notes,
@@ -601,12 +602,11 @@ export function MarkPaidDialog({
         </Field>
         <Field label="Payment method" required>
           <select value={method} onChange={(event) => setMethod(event.target.value)} className={inputClass}>
-            <option value="cash">Cash</option>
-            <option value="check">Check</option>
-            <option value="zelle">Zelle</option>
-            <option value="venmo">Venmo</option>
-            <option value="bank_transfer">Bank transfer</option>
-            <option value="other">Other</option>
+            {methodOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Payment date" required>
@@ -647,7 +647,11 @@ export function InvoiceDialog({
   const invoiceId = invoiceActionId(payment);
   const queryClient = useQueryClient();
   const [manualAmountInput, setManualAmountInput] = useState("");
-  const [manualMethod, setManualMethod] = useState("cash");
+  const {
+    options: manualMethodOptions,
+    method: manualMethod,
+    setMethod: setManualMethod,
+  } = useManualPaymentMethods(payment !== null);
   const [manualReference, setManualReference] = useState("");
   const [manualNotes, setManualNotes] = useState("");
   const [adjustmentAmountInput, setAdjustmentAmountInput] = useState("");
@@ -816,12 +820,11 @@ export function InvoiceDialog({
                     onChange={(event) => setManualMethod(event.target.value)}
                     className={inputClass}
                   >
-                    <option value="cash">Cash</option>
-                    <option value="check">Check</option>
-                    <option value="zelle">Zelle</option>
-                    <option value="venmo">Venmo</option>
-                    <option value="bank_transfer">Bank transfer</option>
-                    <option value="other">Other</option>
+                    {manualMethodOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </Field>
               </div>

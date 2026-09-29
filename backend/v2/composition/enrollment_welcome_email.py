@@ -44,10 +44,11 @@ from backend.v2.contexts.communications.domain.models import SelectedRecipientsA
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEZONE = "America/Chicago"
+_DEFAULT_TIMEZONE = LEGACY_FALLBACK_TIMEZONE
 
 #: Required verbatim by #613 whenever a group link is present. `{session}` is
 #: the only substitution, and it is HTML-escaped before it lands here.

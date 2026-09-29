@@ -7,10 +7,12 @@ never touch infrastructure directly.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import Request
 
@@ -146,6 +148,44 @@ class CoachUseCases:
     # skill-note one is optional like ``create_skill_note`` (503 when unset).
     set_progress_note_visibility: SetProgressNoteVisibility | None = None
     set_skill_note_visibility: SetSkillNoteVisibility | None = None
+
+
+log = logging.getLogger(__name__)
+
+
+async def academy_zone_for_sessions(
+    sessions: Sequence[Any],
+    *,
+    use_cases: CoachUseCases,
+    academy_id: str,
+) -> str | None:
+    """The academy's IANA zone, for filling sessions that carry none (row 19).
+
+    The coach UI renders every time in ``session.timezone`` and only falls
+    back to UTC when it is null. A legacy session with no zone of its own
+    runs on its academy's clock, so the BFF fills ``s.timezone or <this>``.
+    Returns None (the client keeps its last resort) when every session has a
+    zone (no read at all), when the lookup is not composed, fails, or holds
+    an unknown name.
+    """
+    if all(getattr(s, "timezone", None) for s in sessions):
+        return None
+    lookup = getattr(use_cases, "get_academy_timezone", None)
+    if lookup is None:
+        return None
+    try:
+        name = await lookup(academy_id)
+    except Exception:
+        log.warning("academy timezone lookup failed for %s", academy_id, exc_info=True)
+        return None
+    if not name:
+        return None
+    try:
+        ZoneInfo(name)
+    except Exception:
+        log.warning("unknown academy timezone %r for %s", name, academy_id)
+        return None
+    return str(name)
 
 
 def get_coach_use_cases(request: Request) -> CoachUseCases:

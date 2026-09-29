@@ -330,6 +330,12 @@ async def seed_badminton(
 ) -> object:
     if use_cases.curriculum is None:
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    academy = await use_cases.get_academy_use_case.execute(claims.academy_id)
+    if academy.sport != "badminton":
+        raise HTTPException(
+            status_code=409,
+            detail="Badminton seed is only available for badminton academies",
+        )
     program = await use_cases.curriculum.seed_badminton.execute(created_by=claims.user_id)
     return {"program_id": program.program_id, "name": program.name}
 

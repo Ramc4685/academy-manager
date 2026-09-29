@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+#: Every academy that predates the `sport` field (every academy today,
+#: including BLNO) reads as badminton. No migration: this is a read-time
+#: default, not a stored value, so existing docs are untouched.
+DEFAULT_ACADEMY_SPORT = "badminton"
+
 
 class AcademyRepo(Protocol):
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
@@ -26,6 +31,8 @@ class GetAcademyOutput:
     #: Outbound email display name / reply-to (L9a). ``None`` = not set.
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+    #: Platform-set at bootstrap; read-only in the admin academy view.
+    sport: str = DEFAULT_ACADEMY_SPORT
 
 
 class GetAcademyUseCase:
@@ -51,4 +58,5 @@ class GetAcademyUseCase:
             currency=str(doc.get("currency") or "USD"),
             email_sender_name=doc.get("email_sender_name") or None,
             email_reply_to=doc.get("email_reply_to") or None,
+            sport=str(doc.get("sport") or DEFAULT_ACADEMY_SPORT),
         )

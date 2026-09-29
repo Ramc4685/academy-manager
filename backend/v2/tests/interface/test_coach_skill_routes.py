@@ -1930,3 +1930,22 @@ def test_real_skill_router_allows_assigned_coach_to_reach_paused_student() -> No
     assert response.status_code == 200, response.text
     assert spies.get_passport.calls == 1
     assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
+
+
+def test_day_hub_fills_a_zoneless_session_with_the_academy_zone() -> None:
+    """Row 19: the skill day hub no longer ships ``timezone: null`` for a
+    zoneless session; it carries the academy's zone (BLNO: America/Chicago)."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.list_today.result[0].timezone = None
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+
+    async def academy_zone(_academy_id: str) -> str | None:
+        return "America/Chicago"
+
+    use_cases.get_academy_timezone = academy_zone
+    response = TestClient(app).get("/api/v2/coach/day-hub", params={"date": "2026-06-19"})
+    assert response.status_code == 200, response.text
+    assert response.json()["sessions"][0]["timezone"] == "America/Chicago"

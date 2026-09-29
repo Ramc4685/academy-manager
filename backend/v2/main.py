@@ -59,6 +59,7 @@ from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.composition.payment_methods import compose_admin_payment_methods
 from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
@@ -472,6 +473,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.idempotency_store = idempotency_store
 
     runtime_academy_id = _runtime_academy_id(settings)
+    # Scheduler loops walk the real academies; only single_academy mode adds
+    # its primary as a fallback (row 24: no phantom "default-academy").
+    scheduler_fallback_academy_id = _scheduler_fallback_academy_id(settings)
 
     # Identity wiring — needed by TenancyMiddleware for token verification
     # and membership validation (ADR-0007).
@@ -774,6 +778,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
+    app.state.admin_payment_methods = compose_admin_payment_methods(db)
     app.state.admin_families = compose_admin_families(db)
     # People CRM family index (spec §7 Phase 2; outside admin.py's budget).
     app.state.admin_family_index = compose_admin_family_index(db)
@@ -838,7 +843,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await app.state.admin.process_scheduled_resume_actions.execute(limit=100)
@@ -867,7 +872,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await sweep.execute()
@@ -897,7 +902,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await app.state.admin.process_scheduled_cancellation_actions.execute(
@@ -930,7 +935,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"academy_count": 0, "expired": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 worker = getattr(app.state.admin, "expire_makeup_requests", None)
@@ -955,7 +960,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"academy_count": 0, "processed": 0, "expired": 0, "failed": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await app.state.enrollment_holds.expire_due_holds.execute()
@@ -977,7 +982,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"academy_count": 0, "finalized": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 finalized = await app.state.enrollment_holds.process_stalled_reclaims.execute()
@@ -999,7 +1004,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"academy_count": 0, "sent": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 sent = await app.state.enrollment_holds.send_hold_reminders.execute()
@@ -1021,7 +1026,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"academy_count": 0, "sent": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 sent = await app.state.win_back.send_win_back_notices.execute(academy_id=academy_id)
@@ -1040,7 +1045,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"academy_count": 0, "created": 0, "failed": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             try:
                 with tenant_scope(academy_id):
@@ -1070,7 +1075,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"processed": 0, "failed": 0, "quarantined": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             processor = stripe_webhook_processors.get(academy_id)
             if processor is None:
@@ -1114,7 +1119,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await ReconcileStripePaymentIntents(
@@ -1154,7 +1159,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 # Late fees run BEFORE the retries: the fee raises
@@ -1221,7 +1226,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         academy_repo = MongoAcademyRepository(db)
         academy_zone_reader = academy_timezone_lookup(db)
         totals = {"academy_count": 0, "considered": 0, "sent": 0, "already_sent": 0, "failed": 0}
-        for academy_id in await _scheduler_academy_ids(academy_repo, runtime_academy_id):
+        for academy_id in await _scheduler_academy_ids(academy_repo, scheduler_fallback_academy_id):
             with tenant_scope(academy_id):
                 zone_name = await resolve_reporting_timezone(academy_zone_reader, academy_id)
                 local_now = datetime.now(ZoneInfo(zone_name))
@@ -1258,7 +1263,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         now = datetime.now(scheduler.timezone)  # type: ignore[union-attr]
         academy_ids = await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         )
 
         async def _get_billing_settings() -> Any:
@@ -1387,7 +1392,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             db,
             sender=app.state.ops_digest_sender,
             academy_ids=await _scheduler_academy_ids(
-                MongoAcademyRepository(db), runtime_academy_id
+                MongoAcademyRepository(db), scheduler_fallback_academy_id
             ),
             house_academy_id=settings.house_academy_id or runtime_academy_id,
             override_email=settings.owner_brief_email or settings.ops_alert_email,
@@ -1435,7 +1440,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             academy_repo,
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             # Read the raw notifications subdoc so an *unset* override falls back
             # to the env default (key present but False is a deliberate opt-out).
@@ -1509,7 +1514,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             academy_repo,
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             doc = await academy_repo.find_by_id(academy_id)
             notifs = (doc or {}).get("notifications") or {}
@@ -2277,6 +2282,18 @@ def create_app() -> FastAPI:
         app.include_router(owner_router, prefix="/api/v2")
 
     return app
+
+
+def _scheduler_fallback_academy_id(settings: Settings) -> str:
+    """The academy a scheduler loop runs even when ``academies`` lists none.
+
+    single_academy: the configured primary, so BLNO's jobs run exactly as
+    before. multi_academy: none; ``default_academy_id`` is a placeholder, not
+    a tenant, and looping it ran every job for a phantom academy (row 24).
+    """
+    if settings.tenancy_mode == "single_academy":
+        return _runtime_academy_id(settings)
+    return ""
 
 
 def _runtime_academy_id(settings: Settings) -> str:

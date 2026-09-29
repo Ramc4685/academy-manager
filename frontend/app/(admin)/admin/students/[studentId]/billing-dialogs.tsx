@@ -11,6 +11,7 @@ import {
   mintPaymentIdempotencyKey,
 } from "@/lib/api/admin";
 import { type AdminStudentDetail } from "@/lib/api/v2/students";
+import { useManualPaymentMethods } from "@/lib/use-manual-payment-methods";
 import { Button } from "@/components/ds/button";
 import { Modal } from "@/components/ds/modal";
 
@@ -229,7 +230,7 @@ function RecordPaymentDialog({
   onDone: (paymentId: string) => void;
 }) {
   const [amount, setAmount] = useState(() => centsToDollarInput(balanceDueCents));
-  const [method, setMethod] = useState("cash");
+  const { options: methodOptions, method, setMethod } = useManualPaymentMethods();
   const [referenceNumber, setReferenceNumber] = useState("");
   const [notes, setNotes] = useState("");
   // Issue #511: one idempotency key per payment INTENT (this dialog open), held
@@ -278,12 +279,11 @@ function RecordPaymentDialog({
             onChange={(event) => setMethod(event.target.value)}
             className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
           >
-            <option value="cash">Cash</option>
-            <option value="check">Check</option>
-            <option value="zelle">Zelle</option>
-            <option value="venmo">Venmo</option>
-            <option value="bank_transfer">Bank transfer</option>
-            <option value="other">Other</option>
+            {methodOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Reference" htmlFor="billing-payment-reference">

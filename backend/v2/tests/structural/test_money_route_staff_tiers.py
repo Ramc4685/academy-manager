@@ -67,6 +67,8 @@ MONEY_MOVING_ROUTES: tuple[tuple[str, str], ...] = (
 BILLING_TIER_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/record-payment"),
     ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
+    # Row 22: the offline methods those two dialogs list (read only).
+    ("GET", f"{_ADMIN}/academy/payment-methods"),
 )
 
 

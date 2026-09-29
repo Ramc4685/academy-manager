@@ -279,6 +279,16 @@ async function stubAdminShell(page: Page): Promise<void> {
   );
 }
 
+const ALL_SIX_METHODS = ["cash", "check", "zelle", "venmo", "bank_transfer", "other"];
+
+/** Row 22: the academy's offline methods, which the Method select lists. */
+async function stubPaymentMethods(page: Page, manualMethods: string[]): Promise<void> {
+  await page.route("**/api/v2/admin/academy/payment-methods", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { manual_methods: manualMethods });
+  });
+}
+
 async function stubCollections(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/payments/collections*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -356,6 +366,43 @@ test.describe("admin payments buckets", () => {
     await expect(page.getByTestId("record-payment-dialog")).toBeVisible();
     await expect(page.getByTestId("record-payment-invoice")).toHaveValue("inv-past-due");
     await expect(page.getByTestId("record-payment-amount")).toHaveValue("360.00");
+  });
+
+  test("record payment lists all six methods with cash selected by default (BLNO)", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await stubCollections(page);
+    await stubPaymentMethods(page, ALL_SIX_METHODS);
+
+    await page.goto("/admin/payments");
+    await page.getByTestId("action-record_payment-parent-past-due").click();
+
+    const method = page.getByTestId("record-payment-method");
+    await expect(method.locator("option")).toHaveText([
+      "Cash",
+      "Check",
+      "Zelle",
+      "Venmo",
+      "Bank transfer",
+      "Other",
+    ]);
+    await expect(method).toHaveValue("cash");
+  });
+
+  test("record payment lists only the academy's chosen methods, first one selected", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await stubCollections(page);
+    await stubPaymentMethods(page, ["zelle", "other"]);
+
+    await page.goto("/admin/payments");
+    await page.getByTestId("action-record_payment-parent-past-due").click();
+
+    const method = page.getByTestId("record-payment-method");
+    await expect(method.locator("option")).toHaveText(["Zelle", "Other"]);
+    await expect(method).toHaveValue("zelle");
   });
 
   test("send reminder posts the row's parent id and the row reports it", async ({ page }) => {

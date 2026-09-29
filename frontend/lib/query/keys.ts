@@ -141,6 +141,7 @@ export const queryKeys = {
     programsWithArchived: () => ["admin", "programs", "with-archived"] as const,
     classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
     // sessionTypes() is the invalidation prefix; sessionTypesList() is the
     // per-view cache key, since the archived and active lists differ.

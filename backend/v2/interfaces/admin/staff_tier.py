@@ -53,6 +53,8 @@ STAFF_TIER_ROUTE_PATHS: Final[dict[StaffTier, frozenset[tuple[str, str]]]] = {
             ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/record-payment"),
             # billing_routes.py: mark a legacy payment paid (cash, check at the desk)
             ("POST", f"{_ADMIN}/payments/{{payment_id}}/mark-paid"),
+            # payment_methods_routes.py: the methods those two dialogs list
+            ("GET", f"{_ADMIN}/academy/payment-methods"),
         }
     ),
     "front_desk": frozenset(
