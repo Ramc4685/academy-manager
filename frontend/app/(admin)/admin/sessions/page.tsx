@@ -53,6 +53,7 @@ import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Icon } from "@/components/ds/icons";
 import { Overline } from "@/components/ds/typography";
+import { shouldAdoptAcademyCapacity } from "./capacity-seed";
 
 const AdminCalendarView = dynamic(() => import("@/components/admin/AdminCalendarView"), {
   ssr: false,
@@ -842,25 +843,6 @@ const EMPTY_FORM: CreateSessionRequest = {
   capacity: 10,
   amount_cents: null,
 };
-
-/**
- * Issue #148 follow-up: the create-session dialog seeds `capacity` from the
- * academy's Class defaults on open, but the academy query can still be
- * loading at that moment, so the seed falls back to EMPTY_FORM.capacity (10).
- * This mirrors the timezone fix (see CreateSessionDialog) for capacity: once
- * the academy query resolves for an already-open dialog, adopt its real
- * default_class_size — unless the admin already edited capacity themselves.
- */
-export function shouldAdoptAcademyCapacity(params: {
-  open: boolean;
-  wasOpen: boolean;
-  capacityTouched: boolean;
-  defaultClassSize: number | null | undefined;
-}): boolean {
-  return (
-    params.open && params.wasOpen && params.defaultClassSize != null && !params.capacityTouched
-  );
-}
 
 /** `18:00` + 45 minutes -> `18:45`; passes through unparseable input. */
 function addMinutesToTime(time: string, minutes: number): string {

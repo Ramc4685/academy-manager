@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldAdoptAcademyCapacity } from "./page";
+import { shouldAdoptAcademyCapacity } from "./capacity-seed";
 
 describe("shouldAdoptAcademyCapacity (Issue #148 capacity follow-up)", () => {
   it("adopts the academy default when the query resolves after the dialog opened", () => {

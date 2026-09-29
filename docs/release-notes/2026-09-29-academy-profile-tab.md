@@ -18,6 +18,7 @@ PR: #1006
 - No migration (0208 not needed). Every new field is read with an in-code default (`get_academy_use_case.py`), so an academy doc that predates this change reads exactly as today.
 - BLNO is unaffected until an owner/admin opens Academy profile -> Class defaults and saves a value.
 - `UpdateAdminAcademyRequest` gained `default_class_size` / `default_class_length_minutes` / `default_venue_address` / `default_parking_note` / `default_what_to_bring` / `default_arrival_minutes_before` and a `brand_color` hex validator. No route path changed.
+- Backend dependency: `oauthlib` 3.3.1 -> 4.0.0 (CVE-2026-49265, reported by `pip-audit` in CI on 29 Sep). Nothing imports it directly; it is only pulled in through `requests-oauthlib` 2.0.0, and `pip check` is clean with the new version.
 
 ## Risk / rollback
 
