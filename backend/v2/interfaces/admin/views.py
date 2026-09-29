@@ -16,7 +16,7 @@ from backend.v2.contexts.enrollment.application.use_cases.departure_reasons impo
 from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
     PersonLifecycle,
 )
-from backend.v2.contexts.identity.domain.legal_links import validate_https_url
+from backend.v2.contexts.identity.application.update_academy_use_case import validate_https_url
 from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 from backend.v2.shared.comms.colour import _HEX as _HEX_COLOR_RE

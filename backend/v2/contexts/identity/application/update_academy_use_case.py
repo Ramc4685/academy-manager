@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+# Re-exported so the admin views validate legal links through the
+# application layer (interfaces never import a context domain directly).
+from backend.v2.contexts.identity.domain.legal_links import (
+    validate_https_url as validate_https_url,
+)
 from backend.v2.contexts.identity.domain.public_page import PUBLIC_PAGE_FIELD
 from backend.v2.shared.comms.phone_country import calling_code_for_country
 
