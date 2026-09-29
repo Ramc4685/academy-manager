@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getAdminAcademy, getAdminInboxCounts } from "@/lib/api/admin";
+import { brand } from "@/lib/brand";
 import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
@@ -259,7 +260,7 @@ function SidebarBrand({ academyName, bordered = true }: { academyName: string; b
             {academyName}
           </div>
           <div className="font-mono text-[9px] font-bold tracking-lane mt-0.5" style={{ color: "var(--rally-subtle-ink)" }}>
-            Academy Manager
+            {brand.productName}
           </div>
         </div>
       </div>

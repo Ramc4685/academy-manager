@@ -1,6 +1,6 @@
 {
-  "name": "Academy Manager",
-  "short_name": "Academy",
+  "name": "CourtMastr",
+  "short_name": "CourtMastr",
   "description": "Production academy operations for coaches, parents, and admins.",
   "start_url": "/",
   "scope": "/",

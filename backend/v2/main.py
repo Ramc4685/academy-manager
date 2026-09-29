@@ -2212,7 +2212,7 @@ async def _scheduler_academy_ids(
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
-        title="Academy Manager API",
+        title="CourtMastr API",
         version="2.0.0",
         lifespan=_lifespan,
     )
