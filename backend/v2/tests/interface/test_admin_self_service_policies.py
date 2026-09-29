@@ -39,6 +39,7 @@ def test_get_self_service_policy_returns_defaults(admin_client):
         "can_request_cancel": True,
         "can_claim_waitlist_offer": True,
         "payment_instructions": "",
+        "welcome_email_absence_policy_default": "",
     }
 
 

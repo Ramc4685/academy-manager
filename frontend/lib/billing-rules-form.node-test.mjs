@@ -367,3 +367,60 @@ test("the panel renders a select, with labels, for a choice row", () => {
   assert.match(panel, /<select/);
   assert.match(panel, /End of billing period/);
 });
+
+// --- drop_default_outcome (Settings overhaul Phase 3 PR 10, moved from the
+// Holds card) is also a choice row, on the same generic isChoiceRow path. ---
+
+test("drop_default_outcome is a choice row, not a number", () => {
+  const row = choice("drop_default_outcome", "no_credit_mid_month", [
+    "no_credit_mid_month",
+    "credit_mid_month",
+    "no_credit_end_of_period",
+  ]);
+  assert.equal(isChoiceRow(row), true);
+  assert.equal(rowToInput(row), "no_credit_mid_month");
+});
+
+function viewWithDropOutcome(storedOutcome) {
+  const base = view();
+  return {
+    groups: [
+      ...base.groups,
+      {
+        key: "leaving_and_pausing",
+        title: "Leaving and pausing",
+        note: null,
+        rows: [
+          choice(
+            "drop_default_outcome",
+            storedOutcome,
+            ["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"],
+            "Default when staff drop a student",
+          ),
+        ],
+      },
+    ],
+  };
+}
+
+test("changing drop_default_outcome diffs a plain string", () => {
+  const stored = viewWithDropOutcome("no_credit_mid_month");
+  const form = { ...toForm(stored), drop_default_outcome: "credit_mid_month" };
+  const diff = diffForm(stored, form, MONEY);
+  assert.deepEqual(diff.changed, ["drop_default_outcome"]);
+  assert.deepEqual(diff.payload, { drop_default_outcome: "credit_mid_month" });
+  assert.deepEqual(diff.errors, {});
+});
+
+test("leaving drop_default_outcome alone is not a change", () => {
+  const stored = viewWithDropOutcome("credit_mid_month");
+  const diff = diffForm(stored, toForm(stored), MONEY);
+  assert.equal(diff.changed.includes("drop_default_outcome"), false);
+  assert.equal("drop_default_outcome" in diff.payload, false);
+});
+
+test("the panel has labels for every drop_default_outcome choice", () => {
+  assert.match(panel, /No credit, mid-month \(default\)/);
+  assert.match(panel, /Prorated credit, mid-month/);
+  assert.match(panel, /No credit, end of period/);
+});

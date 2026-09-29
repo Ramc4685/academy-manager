@@ -78,6 +78,10 @@ class UpdateBillingRulesRequest(BaseModel):
     reminder_days: list[int] | None = None
     #: Settings overhaul Phase 3 PR 10, moved from Self-service.
     cancellation_effective_timing: Literal["immediate", "end_of_period"] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from the Holds card.
+    drop_default_outcome: (
+        Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
+    ) = None
     reason: str | None = None
 
 

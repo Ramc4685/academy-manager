@@ -117,3 +117,41 @@ test("the settings card names all five switches and links to the trials toggle",
   assert.match(panel, /can_claim_waitlist_offer/);
   assert.match(panel, /Accept free trial requests/);
 });
+
+// --- Welcome-email absence policy default (Settings overhaul Phase 3 PR 10) ---
+
+test("the welcome-email default round-trips through the form and defaults to empty", () => {
+  assert.equal(policyToForm(null).welcome_email_absence_policy_default, "");
+  assert.equal(
+    policyToForm(STORED).welcome_email_absence_policy_default,
+    "",
+  );
+  assert.equal(
+    policyToForm({ ...STORED, welcome_email_absence_policy_default: "Call the front desk." })
+      .welcome_email_absence_policy_default,
+    "Call the front desk.",
+  );
+});
+
+test("editing the welcome-email default sends only that field", () => {
+  const form = {
+    ...policyToForm(STORED),
+    welcome_email_absence_policy_default: "Report absences in the parent app.",
+  };
+  const { payload, errors } = policyPatch(STORED, form);
+  assert.deepEqual(errors, {});
+  assert.deepEqual(payload, {
+    welcome_email_absence_policy_default: "Report absences in the parent app.",
+  });
+});
+
+test("leaving the welcome-email default alone is not a change", () => {
+  const stored = { ...STORED, welcome_email_absence_policy_default: "Existing text." };
+  const form = policyToForm(stored);
+  assert.deepEqual(policyPatch(stored, form).payload, {});
+});
+
+test("the Absences card has the welcome-email default field", () => {
+  assert.match(panel, /welcome_email_absence_policy_default/);
+  assert.match(panel, /Welcome email absence &amp; makeup policy \(default\)/);
+});

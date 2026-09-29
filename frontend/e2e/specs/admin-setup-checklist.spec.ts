@@ -32,7 +32,12 @@ function checklist(statuses: Partial<Record<string, Status>> = {}) {
     step("session_types", "Session types", statuses.session_types ?? "done", "/admin/settings?panel=session-types"),
     step("classes", "First classes", statuses.classes ?? "todo", "/admin/sessions"),
     step("staff", "Invite your team", statuses.staff ?? "done", "/admin/users"),
-    step("waiver", "Waiver", statuses.waiver ?? "unknown", "/admin/waivers"),
+    step(
+      "waiver",
+      "Waiver",
+      statuses.waiver ?? "unknown",
+      "/admin/settings?panel=family-policies",
+    ),
     step("public_page", "Public class page", statuses.public_page ?? "done", "/admin/settings?panel=public-page"),
   ];
   const done = items.filter((row) => row.status === "done").length;

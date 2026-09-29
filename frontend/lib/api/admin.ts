@@ -3307,6 +3307,10 @@ export interface SelfServicePolicyView {
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
   payment_instructions: string;
+  //: Academy-level fallback for a class's welcome-email "Absences and
+  //: make-ups" text (Settings overhaul Phase 3 PR 10). Used only when the
+  //: class leaves its own field empty.
+  welcome_email_absence_policy_default: string;
 }
 
 /**

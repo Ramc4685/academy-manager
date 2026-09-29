@@ -1,121 +1,140 @@
-# Family policies rename + cancellation timing to Billing rules (Settings overhaul Phase 3 PR 10, partial)
+# Family policies: Waivers embed, drop-outcome move, welcome-email default (Settings overhaul Phase 3 PR 10)
 
 PR: #TBD
 
 ## What changed
 
-This lane shipped the backend-safe, mechanically-scoped half of the spec. It
-does **not** ship the waiver embed, the sidebar nav change, the welcome-email
-fallback text, or the `drop_default_outcome` move — see "Not done" below.
+Full lane, mockup sections "2 Billing rules" and "5 Family policies":
 
 - **Settings tab renamed:** `Self-service` -> `Family policies` (key
   `self-service` -> `family-policies`). `?panel=self-service` still works —
-  `RETIRED_SETTINGS_PANELS` now maps it to `family-policies`, the same
-  pattern used for `?panel=fees`. `/admin/settings/self-service` (the old
-  bookmark redirect page) now redirects to `?panel=family-policies`.
+  `RETIRED_SETTINGS_PANELS` maps it to `family-policies`. `/admin/settings/self-service`
+  (the old bookmark redirect page) redirects to `?panel=family-policies`.
+- **Family policies is now separate cards**, per the mockup: "Absences &
+  makeups" (now also carrying the welcome-email default, below), "Holds"
+  (`DeparturePolicyPanel`, unchanged, owner-gated as today), "What parents can
+  do in the app" (#1003, unchanged), "Registration & waivers" (the embedded
+  waiver management UI, see below), and a link card "Cancellation fee &
+  notice — now in Billing rules".
 - **"When a cancellation takes effect" (`cancellation_effective_timing`)
   moved to Billing rules**, owner-only and audited through the existing
   `UpdateBillingRules` / `billing_audit_log` path — the same pattern PR #1002
-  used for the cancellation fee:
-  - New enum-valued editable row in Billing rules' "Leaving and pausing"
-    card, alongside the existing cancellation notice and late-cancellation
-    fee (`backend/v2/contexts/billing/application/use_cases/billing_rules.py`,
-    `backend/v2/composition/billing_rules.py`,
-    `backend/v2/interfaces/admin/billing_rules_routes.py`).
-  - `PUT /admin/self-service/policy` now refuses a **changed**
-    `cancellation_effective_timing` with a 422 naming the field and pointing
-    at Billing rules (`CANCELLATION_TERMS` in
-    `backend/v2/interfaces/admin/self_service_policy_routes.py`); an unchanged
-    value in a full resubmit still passes, so an old client is not broken.
-  - The Family policies panel dropped the "Effective timing" select and now
-    folds it into the existing one-line cancellation-terms summary
-    (`cancellationTermsSummary` in `frontend/lib/self-service-policy-form.ts`),
-    same as the fee and notice.
-  - Billing rules panel gained a `<select>` rendering for choice-typed rows
-    (`isChoiceRow` in `frontend/lib/billing-rules-form.ts` and
-    `frontend/components/admin/settings/billing-rules-panel.tsx`) — the first
-    editable row in that panel that isn't a number, so this is new plumbing,
-    not just a new row.
+  used for the cancellation fee. `PUT /admin/self-service/policy` refuses a
+  **changed** value with a 422 naming the field and pointing at Billing
+  rules; an unchanged value in a full resubmit still passes.
+- **"Default when staff drop a student" (`drop_default_outcome`) also moved
+  to Billing rules**, same pattern. It already existed as a setting — the
+  Holds card's `EnrollmentDeparturePolicy`, edited via the whole-object
+  `PUT /admin/enrollment/departure-policy` with no audit trail. Now:
+  - `UpdateEnrollmentDeparturePolicyCommand` (the Holds write) has every
+    field optional and applies only what's sent, so it can be a genuine
+    partial write instead of a whole-object one
+    (`backend/v2/contexts/enrollment/application/use_cases/departure_policies.py`).
+  - The Holds route (`departure_policy_routes.py`) no longer writes
+    `drop_default_outcome` — it still *accepts* the field (an old client
+    keeps working) but a **changed** value 422s pointing at Billing rules,
+    exactly like the self-service cancellation-terms pattern; unchanged
+    passes through untouched.
+  - Billing rules' "Leaving and pausing" card gets a new row, "Default when
+    staff drop a student", written through `UpdateBillingRules` and audited
+    in `billing_audit_log`
+    (`backend/v2/contexts/billing/application/use_cases/billing_rules.py`,
+    `backend/v2/composition/billing_rules.py` — a new
+    `_DropDefaultOutcomeAdapter` wraps the same partial
+    `UpdateEnrollmentDeparturePolicy` use case, writing only this field).
+  - The Holds card's own "Default Drop outcome" select is removed from
+    `departure-policy-panel.tsx`; `drop_default_outcome` still round-trips
+    through the form state so a Holds save doesn't drop it, it's just no
+    longer editable there.
+- **Waivers move into Family policies.** The waiver template
+  list/editor/publish UI is extracted, unchanged, from
+  `app/(admin)/admin/waivers/page.tsx` into
+  `components/admin/waivers/waivers-management.tsx` (`WaiversManagement`),
+  reused by both the new "Registration & waivers" card and (still) the
+  waiver detail/signature sub-routes' "Open" links. `/admin/waivers` itself
+  now redirects (client-side) to `?panel=family-policies`. `/admin/waivers/
+  [waiverId]` and `/admin/waivers/signatures/[signatureId]` are untouched
+  and still work. The sidebar's standalone "Waivers" nav item
+  (`components/admin/screen-meta.ts`) is removed — its `metaForPath` entry
+  stays, for the sub-routes' title/breadcrumb. The dashboard attention item
+  and the setup-checklist "Waiver" step now link straight at
+  `/admin/settings?panel=family-policies` instead of the (now-redirecting)
+  `/admin/waivers`.
+- **Welcome-email absence & makeup policy gets an academy-level default.**
+  It was previously per-class only (`Session.absence_policy`, used verbatim
+  in `render_welcome_email`). `ParentSelfServicePolicy` gains
+  `welcome_email_absence_policy_default` (default `""`, admin-editable,
+  not owner-gated — same tier as the existing self-service text fields), and
+  `render_welcome_email` falls back to it only when the class's own field is
+  empty: `session.absence_policy or academy_absence_policy_default`. The
+  class value always wins. `EnrollmentWelcomeEmailAdapter` reads the policy
+  defensively (a store hiccup skips only the fallback text, never blocks
+  sending); wired in `composition/roster_notifications.py` via a plain
+  `GetSelfServicePolicy` over the same Mongo store Family policies writes.
+  Editable from the "Absences & makeups" card.
 - **Offline payments card:** unchanged, stays in Billing rules.
-- The "Absences & makeups" and "What parents can do in the app" cards in
-  Family policies are unchanged from Self-service today; they were not
-  re-cut into separate cards per the mockup (see "Not done").
-
-## Not done (out of scope for this pass — flagging rather than rushing)
-
-- **Waiver embed (spec step 3).** Embedding the waiver template
-  list/editor/publish UI from `frontend/app/(admin)/admin/waivers/page.tsx`
-  into Family policies as a "Waivers" section, and removing "Waivers" from
-  the admin sidebar, was not done. Doing the removal without the embed would
-  strand admins with no way to reach waiver management, so the sidebar item
-  (`backend`... `frontend/components/admin/screen-meta.ts` line ~105) was
-  deliberately left in place. `/admin/waivers` and its sub-routes are
-  untouched and still work.
-- **Welcome-email policy text default (spec step 4).** Not investigated or
-  built. Needs a read of the class welcome-email template's field first to
-  confirm whether it's per-class-only today.
-- **"Default when staff drop a student" -> Billing rules.** This setting
-  already exists today as `drop_default_outcome` on
-  `EnrollmentDeparturePolicy` (`backend/v2/contexts/enrollment/domain/departure_policy.py`),
-  edited via the **whole-object** `PUT /admin/enrollment/departure-policy`
-  (owner-only already). It was not moved into the Billing rules
-  "Leaving & pausing" card in this pass: `UpdateBillingRules` writes each
-  store as a *partial* diff (the pattern the other three fields there rely
-  on), while the departure-policy route is a whole-object PUT covering three
-  other fields (`max_hold_days`, `hold_reclaim_policy`,
-  `delete_enrollment_requires_owner`) that stay on the "Holds" card per the
-  spec. Folding one field out of a whole-object PUT into a partial-write
-  pipeline needs its own adapter and its own test pass, not a drive-by edit.
-  Flagged as a follow-up rather than rushed.
-- **Card re-grouping per the mockup** ("2 Billing rules" / "5 Family
-  policies" sections of the settings plan) beyond the one field move above —
-  not done. The existing Self-service card layout (now under the Family
-  policies tab) is unchanged.
-- **Screenshots and e2e spec updates.** Not captured. A repo-wide grep found
-  no e2e spec asserting the `Self-service` tab label, `panel=self-service`,
-  or a `Waivers` nav item, so nothing needed updating for the changes that
-  did ship — but no screenshots were taken (the ones this batch's UI rules
-  ask for require a live dev server + Playwright pass not run here).
 
 ## Tests
 
-- Backend: `backend/v2/tests/application/test_billing_rules.py` (new:
-  `test_cancellation_timing_row_carries_the_stored_choice_and_options`,
-  `test_cancellation_timing_write_lands_and_is_audited`, plus the existing
-  `EDITABLE_RULE_KEYS`/write-model-parity test now covers the new field for
-  free), `backend/v2/tests/interface/test_admin_billing_rules_routes.py`,
-  `backend/v2/tests/interface/test_admin_self_service_policies.py` (new
-  parametrize case: a changed `cancellation_effective_timing` 422s the same
-  way the fee and notice do; the full-resubmit-unchanged case now also
-  asserts it isn't written). All green:
-  `backend/.venv/bin/pytest -n 6 backend/v2/tests/application/test_billing_rules.py backend/v2/tests/interface/test_admin_billing_rules_routes.py backend/v2/tests/interface/test_admin_self_service_policies.py` — 68 passed.
-- Frontend: `frontend/lib/billing-rules-form.node-test.mjs` (new choice-row
-  tests) and `frontend/lib/self-service-policy-form.node-test.mjs` (updated
-  PR-5-style rejection test, new summary-sentence test) — 41 passed via
+- Backend:
+  `backend/v2/tests/application/test_billing_rules.py` (drop-outcome row +
+  write + no-op cases, alongside the existing cancellation-timing ones),
+  `backend/v2/tests/interface/test_admin_billing_rules_routes.py` (GET row
+  shape, owner-only PUT, audit),
+  `backend/v2/tests/interface/test_admin_departure_policy_routes.py` (new
+  file: Holds PUT no longer writes `drop_default_outcome`, an unchanged
+  resubmit passes, a changed one 422s naming Billing rules, owner-only),
+  `backend/v2/tests/interface/test_admin_self_service_policies.py` (updated
+  default-policy shape),
+  `backend/v2/tests/unit/test_enrollment_welcome_email.py` (class-wins,
+  academy-default-fills-in, neither-set-means-no-block, adapter reads the
+  policy store and survives its failure),
+  `backend/v2/tests/interface/test_admin_dashboard_attention.py` (updated
+  href). All green:
+  `backend/.venv/bin/pytest -n 6 backend/v2/tests/application/test_billing_rules.py backend/v2/tests/interface/test_admin_billing_rules_routes.py backend/v2/tests/interface/test_admin_departure_policy_routes.py backend/v2/tests/interface/test_admin_self_service_policies.py backend/v2/tests/interface/test_admin_dashboard_attention.py backend/v2/tests/interface/test_admin_setup_checklist.py backend/v2/tests/unit/test_enrollment_welcome_email.py backend/v2/tests/application/test_self_service_policies.py backend/v2/tests/unit/test_invoice_email_payment_instructions.py backend/v2/tests/interface/test_admin_departure_delete_owner_gate.py backend/v2/tests/application/test_enrollment_holds.py` —
+  177 passed.
+- Backend mypy: `mypy -p backend.v2 | mypy-baseline filter --allow-unsynced`
+  — 0 new violations.
+- Frontend: `frontend/lib/billing-rules-form.node-test.mjs` (drop-outcome
+  choice-row tests) and `frontend/lib/self-service-policy-form.node-test.mjs`
+  (welcome-email default round-trip/diff tests) — 49 passed via
   `node --test`. `pnpm typecheck` and `pnpm eslint` on every changed file are
   clean.
-- Backend mypy: no new violations
-  (`mypy -p backend.v2 | mypy-baseline filter --allow-unsynced`).
+- e2e (updated, not run here — no local dev server in this pass):
+  `admin-shell.spec.ts` (Waivers nav item gone; dashboard attention href),
+  `admin-waivers.spec.ts` and `saas-parent-waivers.spec.ts` (navigate to
+  `?panel=family-policies` instead of `/admin/waivers`, with the sibling
+  self-service-policy/departure-policy cards stubbed),
+  `saas-launch-route-matrix.spec.ts` (waivers route matrix entry follows the
+  redirect; added the `waivers/templates` stub),
+  `admin-setup-checklist.spec.ts` and `a11y-axe.spec.ts` (fixture hrefs),
+  `screen-meta.test.ts` (Waivers nav item removed).
+  **Not done:** `admin-shell.spec.ts`'s generic `SETTINGS_PANELS` sweep
+  still omits `family-policies` (pre-existing gap flagged by the reviewer,
+  not newly caused here) — adding it needs stubbing four more endpoints for
+  that one generic test and was judged not worth the added flake risk in
+  this pass. No Playwright run and no screenshots were captured (no dev
+  server in this environment).
 
 ## Deploy notes
 
-- No migration.
-- BLNO (and every existing academy): `cancellation_effective_timing` already
-  defaults to `"end_of_period"` on the domain model
-  (`backend/v2/contexts/enrollment/domain/self_service.py`) and is read at
-  request time through the same `ParentSelfServicePolicy` document Billing
-  rules now also reads from — no stored value changes, no new field is
-  written until an owner edits it. Behaviour is unchanged unless an owner
-  visits Billing rules and changes it there.
-- An admin (non-owner) who still has `?panel=self-service` bookmarked lands
-  on Family policies, same panel as before, just renamed.
+- No migration. `drop_default_outcome` and
+  `welcome_email_absence_policy_default` are read with `getattr`/Pydantic
+  defaults, so no backfill: BLNO and every existing academy behave exactly
+  as today until an owner or admin visits the new UI.
+- `cancellation_effective_timing` already defaults to `"end_of_period"`
+  (unchanged from the prior pass).
+- An admin (non-owner) who still has `?panel=self-service` bookmarked, or
+  `/admin/waivers`, lands on Family policies — same content, same
+  permissions, just relocated.
 
 ## Risk / rollback
 
-- Main risk: an old client (script, saved draft) that PUTs
-  `cancellation_effective_timing` to `/admin/self-service/policy` with a
-  value that differs from what's stored will now get a 422 instead of a 200,
-  same as the existing behaviour for the fee and notice fields since #1002.
-  This is the intended behaviour per this spec, not a regression.
+- Main risk: an old client that PUTs a *changed* `drop_default_outcome` to
+  `/admin/enrollment/departure-policy` now gets a 422 instead of a 200 —
+  intended per this spec, same shape as the cancellation-terms move.
+- Second risk: the sidebar Waivers nav item is gone; anyone with it bookmarked
+  or muscle-memoried still reaches the same UI via `/admin/waivers`'s
+  redirect or Settings -> Family policies.
 - Rollback: revert this PR. No data was moved or migrated, so nothing needs
   restoring.

@@ -76,6 +76,14 @@ class UserLookup(Protocol):
     async def get_by_id(self, user_id: str) -> Any: ...
 
 
+class SelfServicePolicyLookup(Protocol):
+    """Narrow port over ``GetSelfServicePolicy`` — just the one field this
+    adapter needs, so it never grows a dependency on the whole policy
+    document's other eleven fields."""
+
+    async def execute(self) -> Any: ...
+
+
 class AcademyLookup(Protocol):
     """The academy document, not just its name.
 
@@ -158,6 +166,7 @@ def render_welcome_email(
     student_name: str,
     coach_name: str | None = None,
     academy_timezone: str | None = None,
+    academy_absence_policy_default: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(subject, html_body)``.
 
@@ -226,8 +235,13 @@ def render_welcome_email(
     if coach_lines:
         parts.append(_block("Your coach", _para("<br />".join(coach_lines))))
 
-    if session.absence_policy:
-        parts.append(_block("Absences and make-ups", _para(_multiline(session.absence_policy))))
+    # Settings overhaul Phase 3 PR 10: the class's own text always wins; the
+    # academy-level default (Family policies) fills in only when the class
+    # left this field empty. Default "" means every academy with no class
+    # text and no academy default keeps today's behaviour: no block at all.
+    absence_policy = session.absence_policy or academy_absence_policy_default
+    if absence_policy:
+        parts.append(_block("Absences and make-ups", _para(_multiline(absence_policy))))
 
     body = _branded_shell(academy_name=academy_name, inner_html="".join(parts))
     return f"Welcome to {session.title}", body
@@ -256,12 +270,17 @@ class EnrollmentWelcomeEmailAdapter:
         academies: AcademyLookup,
         audiences: AudienceResolver,
         sender: EmailSendPort,
+        self_service_policy: SelfServicePolicyLookup | None = None,
     ) -> None:
         self._sessions = sessions
         self._users = users
         self._academies = academies
         self._audiences = audiences
         self._sender = sender
+        #: Settings overhaul Phase 3 PR 10. Optional so an older composition
+        #: root (or a test double) that predates this field still works —
+        #: `None` behaves exactly like an academy that never set a default.
+        self._self_service_policy = self_service_policy
 
     async def send_welcome(
         self,
@@ -302,6 +321,7 @@ class EnrollmentWelcomeEmailAdapter:
         )
         academy_timezone = str(academy_doc.get("timezone") or "") or None
         coach_name = await self._coach_name(session.coach_id)
+        absence_default = await self._absence_policy_default()
 
         subject, body = render_welcome_email(
             session=session,
@@ -309,6 +329,7 @@ class EnrollmentWelcomeEmailAdapter:
             student_name=student_name,
             coach_name=coach_name,
             academy_timezone=academy_timezone,
+            academy_absence_policy_default=absence_default,
         )
         identity = resolve_sender(academy_doc)
         outcome = await self._sender.send(
@@ -365,3 +386,19 @@ class EnrollmentWelcomeEmailAdapter:
             return None
         name = str(getattr(coach, "display_name", "") or "").strip()
         return name or None
+
+    async def _absence_policy_default(self) -> str | None:
+        """The academy-level Family policies fallback, or ``None``.
+
+        Defensive like ``_coach_name``: a policy-store hiccup must not block
+        sending the welcome email, it just means the fallback text is left
+        out (the class's own text, if any, is unaffected).
+        """
+        if self._self_service_policy is None:
+            return None
+        try:
+            policy = await self._self_service_policy.execute()
+        except Exception:  # pragma: no cover - defensive
+            return None
+        text = str(getattr(policy, "welcome_email_absence_policy_default", "") or "").strip()
+        return text or None

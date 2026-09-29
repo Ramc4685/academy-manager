@@ -51,6 +51,10 @@ class UpdateSelfServicePolicyCommand(BaseModel):
     payment_instructions: str | None = Field(
         default=None, max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH
     )
+    #: Settings overhaul Phase 3 PR 10: academy-level welcome-email fallback.
+    welcome_email_absence_policy_default: str | None = Field(
+        default=None, max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH
+    )
 
     def fields(self) -> dict[str, Any]:
         return self.model_dump(exclude_none=True)

@@ -84,6 +84,35 @@ def test_each_pack_field_appears_only_when_populated(
     assert expected in with_field
 
 
+# --- academy-level absence-policy default (Settings overhaul Phase 3 PR 10) -
+
+
+def test_academy_default_fills_in_when_the_class_left_absence_policy_empty() -> None:
+    _, body = _render(
+        _session(), academy_absence_policy_default="Report absences in the parent app."
+    )
+    assert "Absences and make-ups" in body
+    assert "Report absences in the parent app." in body
+
+
+def test_class_absence_policy_always_wins_over_the_academy_default() -> None:
+    _, body = _render(
+        _session(absence_policy="Class-specific text."),
+        academy_absence_policy_default="Academy-wide default text.",
+    )
+    assert "Class-specific text." in body
+    assert "Academy-wide default text." not in body
+
+
+def test_no_class_text_and_no_academy_default_renders_no_absences_block() -> None:
+    """BLNO and every academy with nothing configured keeps today's
+    behaviour: no block at all, not an empty one."""
+    _, body = _render(_session(), academy_absence_policy_default=None)
+    assert "Absences and make-ups" not in body
+    _, body_blank = _render(_session(), academy_absence_policy_default="")
+    assert "Absences and make-ups" not in body_blank
+
+
 def test_group_link_renders_a_button_and_the_verbatim_etiquette_line() -> None:
     """The etiquette sentence is the only thing in this email that limits a
     forwarded invite link's blast radius. It is required verbatim."""
@@ -251,6 +280,50 @@ async def test_send_uses_the_transactional_category() -> None:
     assert sender.calls[0]["category"] is EmailCategory.TRANSACTIONAL
     assert sender.calls[0]["recipient"].email == "parent@example.com"
     assert "Coach Kishore" in sender.calls[0]["body"]
+
+
+class _Policy:
+    def __init__(self, welcome_email_absence_policy_default: str = "") -> None:
+        self.welcome_email_absence_policy_default = welcome_email_absence_policy_default
+
+
+class _PolicyReader:
+    def __init__(self, policy: _Policy | None = None, *, fail: bool = False) -> None:
+        self._policy = policy or _Policy()
+        self._fail = fail
+
+    async def execute(self) -> _Policy:
+        if self._fail:
+            raise RuntimeError("policy store down")
+        return self._policy
+
+
+@pytest.mark.asyncio
+async def test_send_uses_the_academy_absence_policy_default() -> None:
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender)
+    adapter._self_service_policy = _PolicyReader(  # type: ignore[attr-defined]
+        _Policy("Report absences in the parent app.")
+    )
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    assert "Report absences in the parent app." in sender.calls[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_send_survives_a_policy_store_failure() -> None:
+    """A policy-store hiccup must not block sending the welcome email at all
+    — it just means the academy-level fallback text is left out."""
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender)
+    adapter._self_service_policy = _PolicyReader(fail=True)  # type: ignore[attr-defined]
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    assert len(sender.calls) == 1
 
 
 @pytest.mark.asyncio

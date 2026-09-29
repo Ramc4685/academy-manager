@@ -151,6 +151,36 @@ test.describe("SaaS v2 — waiver template versioning", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { templates: [] });
     });
+    // Settings overhaul Phase 3 PR 10: waiver management now embeds in
+    // Settings -> Family policies, alongside the self-service policy and
+    // Holds cards — both need a stub so the tab doesn't hang loading them.
+    await page.route("**/api/v2/admin/self-service/policy", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        absence_notice_min_hours: 2,
+        makeup_expiry_days: 30,
+        makeup_requires_notice: true,
+        cancellation_minimum_notice_days: 7,
+        cancellation_fee_cents: 0,
+        cancellation_effective_timing: "end_of_period",
+        can_report_absence: true,
+        can_request_makeup: true,
+        can_request_pause: true,
+        can_request_cancel: true,
+        can_claim_waitlist_offer: true,
+        payment_instructions: "",
+        welcome_email_absence_policy_default: "",
+      });
+    });
+    await page.route("**/api/v2/admin/enrollment/departure-policy", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        max_hold_days: 60,
+        hold_reclaim_policy: "longest_held",
+        drop_default_outcome: "no_credit_mid_month",
+        delete_enrollment_requires_owner: true,
+      });
+    });
     await page.route("**/api/v2/admin/waivers/wt-current", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
@@ -169,7 +199,7 @@ test.describe("SaaS v2 — waiver template versioning", () => {
       });
     });
 
-    await page.goto("/admin/waivers");
+    await page.goto("/admin/settings?panel=family-policies");
     const row = page.getByTestId("admin-waivers-row-waiver-w5-signed");
     await expect(row).toContainText("Asha Iyer");
     await expect(row).toContainText("Meera Iyer");

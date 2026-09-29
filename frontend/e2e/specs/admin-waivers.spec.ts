@@ -89,12 +89,49 @@ async function stubWaiverTemplates(page: Page) {
   });
 }
 
+/**
+ * Settings overhaul Phase 3 PR 10: the waiver management UI now embeds in
+ * Settings -> Family policies, which also mounts the self-service policy and
+ * departure-policy (Holds) cards. Both are stubbed here so navigating to
+ * that tab does not leave those cards stuck loading or erroring.
+ */
+async function stubFamilyPoliciesSiblingCards(page: Page) {
+  await page.route("**/api/v2/admin/self-service/policy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      absence_notice_min_hours: 2,
+      makeup_expiry_days: 30,
+      makeup_requires_notice: true,
+      cancellation_minimum_notice_days: 7,
+      cancellation_fee_cents: 0,
+      cancellation_effective_timing: "end_of_period",
+      can_report_absence: true,
+      can_request_makeup: true,
+      can_request_pause: true,
+      can_request_cancel: true,
+      can_claim_waitlist_offer: true,
+      payment_instructions: "",
+      welcome_email_absence_policy_default: "",
+    });
+  });
+  await page.route("**/api/v2/admin/enrollment/departure-policy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      max_hold_days: 60,
+      hold_reclaim_policy: "longest_held",
+      drop_default_outcome: "no_credit_mid_month",
+      delete_enrollment_requires_owner: true,
+    });
+  });
+}
+
 test.describe("admin waivers", () => {
   test("renders BFF summary counts and waiver student rows", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     const requests: string[] = [];
     await stubAdminShell(page);
     await stubWaiverTemplates(page);
+    await stubFamilyPoliciesSiblingCards(page);
     await page.route("**/api/v2/admin/waivers*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       requests.push(route.request().url());
@@ -148,7 +185,7 @@ test.describe("admin waivers", () => {
       });
     });
 
-    await page.goto("/admin/waivers");
+    await page.goto("/admin/settings?panel=family-policies");
 
     await expect(page.getByTestId("admin-waivers")).toBeVisible();
     await expect(page.getByText("Signed current")).toBeVisible();
@@ -175,6 +212,7 @@ test.describe("admin waivers", () => {
     const errors = collectConsoleErrors(page);
     await stubAdminShell(page);
     await stubWaiverTemplates(page);
+    await stubFamilyPoliciesSiblingCards(page);
     await page.route("**/api/v2/admin/waivers*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
@@ -191,7 +229,7 @@ test.describe("admin waivers", () => {
       });
     });
 
-    await page.goto("/admin/waivers");
+    await page.goto("/admin/settings?panel=family-policies");
     await expect(page.getByTestId("admin-waivers-empty")).toContainText("No waiver rows returned.");
     await expect(page.getByText("Current waiver details are not available yet.")).toBeVisible();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);

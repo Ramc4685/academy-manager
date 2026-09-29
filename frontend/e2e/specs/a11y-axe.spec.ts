@@ -284,7 +284,7 @@ test.describe("axe: admin dashboard", () => {
           title: "Waivers need review",
           detail: "2 pending, 1 outdated.",
           severity: "medium",
-          href: "/admin/waivers",
+          href: "/admin/settings?panel=family-policies",
           count: 3,
         },
       ],

@@ -172,7 +172,14 @@ const ADMIN_ROUTE_MATRIX = [
   { label: "payouts", href: "/admin/payouts", testId: "admin-payouts" },
   { label: "reports", href: "/admin/reports", testId: "admin-month-close" },
   { label: "messages", href: "/admin/messages", testId: "admin-messages" },
-  { label: "waivers", href: "/admin/waivers", testId: "admin-waivers" },
+  // Waivers moved into Settings -> Family policies (Settings overhaul Phase
+  // 3 PR 10); /admin/waivers redirects there and the embedded panel still
+  // carries the "admin-waivers" testid.
+  {
+    label: "waivers",
+    href: "/admin/waivers",
+    testId: "admin-waivers",
+  },
   { label: "settings", href: "/admin/settings", testId: "admin-settings-academy" },
   { label: "audit logs", href: "/admin/audit-logs", testId: "admin-audit-logs" },
 ] as const;
@@ -304,6 +311,8 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/messages*", (route) =>
     fulfillJson(route, { messages: [] })
   );
+  // Registered before the templates route below so the more specific one
+  // wins (Playwright tries routes most-recently-registered first).
   await page.route("**/api/v2/admin/waivers*", (route) =>
     fulfillJson(route, {
       summary: {
@@ -317,6 +326,9 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
       current_waiver: null,
       waivers: [],
     })
+  );
+  await page.route("**/api/v2/admin/waivers/templates*", (route) =>
+    fulfillJson(route, { templates: [] })
   );
   await page.route("**/api/v2/admin/audit-logs*", (route) =>
     fulfillJson(route, { logs: [] })

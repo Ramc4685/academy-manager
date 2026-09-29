@@ -150,7 +150,9 @@ const ADMIN_ROUTES = [
   { href: "/admin/payouts", testid: "admin-payouts" },
   { href: "/admin/audit-logs", testid: "admin-audit-logs" },
   { href: "/admin/messages", testid: "admin-messages" },
-  { href: "/admin/waivers", testid: "admin-waivers" },
+  // Waivers moved into Settings -> Family policies (Settings overhaul Phase
+  // 3 PR 10); /admin/waivers now redirects there instead of rendering its
+  // own testid, so it is no longer a route in this generic nav sweep.
 ] as const;
 
 const SETTINGS_PANELS = [
@@ -440,7 +442,7 @@ async function stubAdminBff(
           title: "Waivers need review",
           detail: "2 pending, 1 outdated.",
           severity: "medium",
-          href: "/admin/waivers",
+          href: "/admin/settings?panel=family-policies",
           count: 3,
         },
       ],
@@ -747,7 +749,9 @@ test.describe("Rally admin shell", () => {
     for (const group of ["TODAY", "CLASSES", "PEOPLE", "REACH", "MONEY", "ACADEMY"]) {
       await expect(nav.getByText(group, { exact: true })).toBeVisible();
     }
-    await expect(nav.getByRole("link", { name: /waivers/i })).toBeVisible();
+    // Waivers moved into Settings -> Family policies (Settings overhaul
+    // Phase 3 PR 10); the sidebar has no standalone Waivers item any more.
+    await expect(nav.getByRole("link", { name: /^waivers$/i })).toHaveCount(0);
     // Only the mobile drawer has a close affordance — the desktop sidebar
     // is always visible and has nothing to close.
     const closeButton = page.getByLabel("Close menu");
@@ -767,7 +771,7 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-dashboard-attention")).toBeVisible();
     await expect(
       page.getByRole("link", { name: /Waivers need review/i }),
-    ).toHaveAttribute("href", "/admin/waivers");
+    ).toHaveAttribute("href", "/admin/settings?panel=family-policies");
     expect(
       errors,
       `App console errors on dashboard attention: ${errors.join("\n")}`,

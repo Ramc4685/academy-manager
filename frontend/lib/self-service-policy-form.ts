@@ -35,6 +35,9 @@ export interface SelfServicePolicy {
   can_request_pause: boolean;
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
+  //: Academy-level fallback for a class's welcome-email "Absences and
+  //: make-ups" text; used only when the class leaves its own field empty.
+  welcome_email_absence_policy_default: string;
 }
 
 export type PolicyForm = {
@@ -46,6 +49,7 @@ export type PolicyForm = {
   can_request_pause: boolean;
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
+  welcome_email_absence_policy_default: string;
 };
 
 /** What Family policies may write: never the Billing rules cancellation terms. */
@@ -74,6 +78,7 @@ export function policyToForm(data: SelfServicePolicy | null | undefined): Policy
     can_request_pause: data?.can_request_pause ?? true,
     can_request_cancel: data?.can_request_cancel ?? true,
     can_claim_waitlist_offer: data?.can_claim_waitlist_offer ?? true,
+    welcome_email_absence_policy_default: data?.welcome_email_absence_policy_default ?? "",
   };
 }
 
@@ -126,6 +131,12 @@ export function policyPatch(
     if (form[key] !== (stored?.[key] ?? true)) {
       payload[key] = form[key];
     }
+  }
+  if (
+    form.welcome_email_absence_policy_default !==
+    (stored?.welcome_email_absence_policy_default ?? "")
+  ) {
+    payload.welcome_email_absence_policy_default = form.welcome_email_absence_policy_default;
   }
   return { payload, errors };
 }

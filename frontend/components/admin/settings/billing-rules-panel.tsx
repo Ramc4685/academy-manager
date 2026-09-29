@@ -266,10 +266,13 @@ function FixedRule({ row }: { row: BillingRuleRow }) {
   );
 }
 
-/** Choice-row option → its label. Only `cancellation_effective_timing` today. */
+/** Choice-row option → its label, across every choice-typed row. */
 const CHOICE_LABELS: Record<string, string> = {
   immediate: "Immediate",
   end_of_period: "End of billing period",
+  no_credit_mid_month: "No credit, mid-month (default)",
+  credit_mid_month: "Prorated credit, mid-month",
+  no_credit_end_of_period: "No credit, end of period",
 };
 
 function choiceLabel(option: string): string {

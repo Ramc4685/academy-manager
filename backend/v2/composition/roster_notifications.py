@@ -76,9 +76,15 @@ from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver i
     MongoAudienceResolver,
 )
 from backend.v2.contexts.enrollment.application.ports import RosterChangeKind
+from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
+    GetSelfServicePolicy,
+)
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -1215,6 +1221,10 @@ def compose_enrollment_notifiers(
             # and that id comes off the tenant-scoped session document.
             audiences=MongoAudienceResolver(db=db),
             sender=sender,
+            # Settings overhaul Phase 3 PR 10: the academy-level "Absences and
+            # make-ups" fallback text, read from the same store Family
+            # policies writes.
+            self_service_policy=GetSelfServicePolicy(policies=MongoSelfServicePolicyRepository(db)),
         ),
         roster=compose_roster_notifier(db, settings, sessions=sessions, academies=academies),
         decision=compose_registration_decision_notifier(db, settings),
