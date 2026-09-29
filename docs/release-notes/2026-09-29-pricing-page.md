@@ -1,6 +1,6 @@
 # Pricing page under Money (Settings overhaul Phase 3 PR 11b)
 
-PR: #TBD
+PR: #1009
 
 ## What changed
 
