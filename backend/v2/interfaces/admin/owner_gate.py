@@ -40,6 +40,15 @@ split from:
   ``owner`` too. The route's other fields stay admin work, which is why it is
   not in ``OWNER_ONLY_ROUTE_PATHS``.
 
+* :func:`ensure_owner_for_payment_instructions` — the action-level rule
+  inside ``PUT /self-service/policy`` (Lane C parent self-service switches,
+  2026-09-29 owner decision): the offline-payment instructions shown to
+  parents are owner-only content, same tier as the cancellation terms above.
+  Only refused when the request would actually change the stored text, so a
+  plain admin saving the other self-service switches with the instructions
+  untouched is not blocked. Not in ``OWNER_ONLY_ROUTE_PATHS`` for the same
+  reason as ``ensure_owner_for_cancellation_terms``.
+
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
 and dues; refunds, credits, pricing, payouts/payroll, financial reports,
@@ -294,4 +303,22 @@ def ensure_owner_for_cancellation_terms(claims: AuthClaims) -> None:
         raise HTTPException(
             status_code=403,
             detail="Only the academy owner can change the cancellation fee and notice",
+        )
+
+
+def ensure_owner_for_payment_instructions(claims: AuthClaims) -> None:
+    """Only an owner may change the offline-payment instructions shown to parents.
+
+    Called only when the request actually changes the stored text, so an
+    admin saving the other self-service switches with the instructions
+    untouched is not refused. 403, not 404, like
+    :func:`ensure_owner_for_cancellation_terms`: the caller is already inside
+    an admin route that shows this field, and the message is what the
+    Settings page needs to show.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the academy owner can change payment instructions.",
         )

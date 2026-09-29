@@ -392,6 +392,7 @@ def render_waitlist_offer_email(
     portal_url: str | None,
     offer_expires_at: datetime | None,
     academy_timezone: str | None = None,
+    can_claim: bool = True,
 ) -> tuple[str, str]:
     """The family's "a seat opened — claim it by <date>" mail, and the "it
     went to the next family" mail when the window closes (#828).
@@ -427,13 +428,20 @@ def render_waitlist_offer_email(
         )
 
     deadline = format_deadline(offer_expires_at, academy_timezone=academy_timezone)
+    hold_sentence = (
+        f"{safe_student} is next on the waitlist. We are holding the seat until "
+        f"<strong>{html.escape(deadline)}</strong> — confirm by then to claim it."
+        if can_claim
+        else (
+            f"{safe_student} is next on the waitlist. We are holding the seat until "
+            f"<strong>{html.escape(deadline)}</strong> — contact "
+            f"{html.escape(academy_name)} by then to claim it."
+        )
+    )
     parts = [
         f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
         f"A seat opened in {safe_session} for {safe_student}</h2>",
-        _para(
-            f"{safe_student} is next on the waitlist. We are holding the seat until "
-            f"<strong>{html.escape(deadline)}</strong> — confirm by then to claim it."
-        ),
+        _para(hold_sentence),
         _para(
             f"<strong>When:</strong> "
             f"{html.escape(format_session_schedule(session, academy_timezone=academy_timezone))}"
@@ -1035,6 +1043,7 @@ class RosterAlertAdapter:
             ),
             offer_expires_at=offer_expires_at,
             academy_timezone=academy_timezone,
+            can_claim=can_claim,
         )
         await self._send_one(
             recipient=recipient,

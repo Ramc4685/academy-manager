@@ -17,7 +17,10 @@ from backend.v2.contexts.enrollment.application.use_cases.self_service_policies 
 )
 from backend.v2.interfaces.admin.billing_rules_routes import get_admin_billing_rules
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
-from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_cancellation_terms
+from backend.v2.interfaces.admin.owner_gate import (
+    ensure_owner_for_cancellation_terms,
+    ensure_owner_for_payment_instructions,
+)
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
@@ -136,6 +139,17 @@ async def update_self_service_policy(
         if key in requested and requested[key] != getattr(current, key)
     }
     others = {key: value for key, value in requested.items() if key not in CANCELLATION_TERMS}
+
+    if (
+        "payment_instructions" in others
+        and others["payment_instructions"] == current.payment_instructions
+    ):
+        del others["payment_instructions"]
+    elif "payment_instructions" in others:
+        # Payment instructions are owner-only content shown to parents
+        # (Lane C, 2026-09-29 owner decision): only refuse when the value is
+        # actually changing.
+        ensure_owner_for_payment_instructions(claims)
 
     if cancellation:
         # Money audit X5: this route used to write the cancellation fee with

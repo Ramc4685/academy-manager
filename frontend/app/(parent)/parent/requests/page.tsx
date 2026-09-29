@@ -97,9 +97,18 @@ export default function ParentRequestsPage() {
         </div>
       )}
 
-      {activeTab === "absences" && <AbsencesPanel />}
-      {activeTab === "makeups" && <MakeupsPanel />}
-      {activeTab === "trials" && <TrialsPanel />}
+      {TABS.length === 0 ? (
+        <EmptyState
+          title="No requests available"
+          description="Your academy has turned off self-service requests. Contact them directly for absences, makeups or trials."
+        />
+      ) : (
+        <>
+          {activeTab === "absences" && <AbsencesPanel />}
+          {activeTab === "makeups" && <MakeupsPanel />}
+          {activeTab === "trials" && <TrialsPanel />}
+        </>
+      )}
     </section>
   );
 }

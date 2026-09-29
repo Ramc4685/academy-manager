@@ -285,6 +285,65 @@ test.describe("parent self-service — absences", () => {
   });
 });
 
+test.describe("parent self-service — all switches off", () => {
+  test("shows an empty state instead of the Absences panel when every request tab is hidden", async ({
+    page,
+  }) => {
+    await stubParentIdentity(page);
+    await page.route("**/api/v2/parent/waitlist", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ entries: [] }),
+      });
+    });
+    // can_report_absence and can_request_makeup off, and the Public page's
+    // trials_open toggle (can_request_trial) also off: TABS is empty, and
+    // the page must not fall back to rendering the Absences form (#P2).
+    await page.route("**/api/v2/parent/academy", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          display_name: "Aces Academy",
+          timezone: "America/Chicago",
+          contact_email: null,
+          contact_phone: null,
+          hours_text: null,
+          address: null,
+          logo_url: null,
+          self_service: {
+            can_report_absence: false,
+            can_request_makeup: false,
+            can_request_pause: false,
+            can_request_cancel: false,
+            can_claim_waitlist_offer: false,
+            can_request_trial: false,
+          },
+        }),
+      });
+    });
+    await page.route("**/api/v2/parent/children", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ children: [] }),
+      });
+    });
+
+    await page.goto("/parent/requests");
+    await expect(page.getByTestId("parent-requests")).toBeVisible();
+
+    // No tab strip and no Absences form.
+    await expect(page.getByRole("tablist")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Report absence" })).toHaveCount(0);
+    await expect(page.getByText("No requests available")).toBeVisible();
+  });
+});
+
 test.describe("parent self-service — makeups", () => {
   test("submitting a makeup request shows a pending status chip", async ({ page }) => {
     await stubParentIdentity(page);

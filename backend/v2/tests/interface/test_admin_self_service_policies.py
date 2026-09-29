@@ -207,26 +207,53 @@ def test_put_can_turn_a_switch_off_without_touching_cancellation_terms(admin_onl
     assert audit.entries == []
 
 
-def test_put_saves_and_clears_payment_instructions(admin_only_client):
-    _wire(admin_only_client)
+def test_put_saves_and_clears_payment_instructions(admin_client):
+    _wire(admin_client)
 
-    on = admin_only_client.put(
-        ROUTE, json={"payment_instructions": "Pay Sam by Venmo @sam-academy."}
-    )
+    on = admin_client.put(ROUTE, json={"payment_instructions": "Pay Sam by Venmo @sam-academy."})
     assert on.status_code == 200, on.text
     assert on.json()["payment_instructions"] == "Pay Sam by Venmo @sam-academy."
 
-    cleared = admin_only_client.put(ROUTE, json={"payment_instructions": ""})
+    cleared = admin_client.put(ROUTE, json={"payment_instructions": ""})
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["payment_instructions"] == ""
 
 
-def test_put_rejects_payment_instructions_over_max_length(admin_only_client):
-    _wire(admin_only_client)
+def test_put_rejects_payment_instructions_over_max_length(admin_client):
+    _wire(admin_client)
 
-    response = admin_only_client.put(ROUTE, json={"payment_instructions": "x" * 1001})
+    response = admin_client.put(ROUTE, json={"payment_instructions": "x" * 1001})
 
     assert response.status_code == 422, response.text
+
+
+def test_an_admin_without_owner_cannot_change_payment_instructions(admin_only_client):
+    store, _ = _wire(admin_only_client)
+
+    response = admin_only_client.put(
+        ROUTE, json={"payment_instructions": "Pay Sam by Venmo @sam-academy."}
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "Only the academy owner can change payment instructions."
+    assert store.field_writes == []
+
+
+def test_an_admin_without_owner_can_resend_the_same_payment_instructions(admin_only_client):
+    """Sending the unchanged value back is not a change and must not be refused."""
+    store, _ = _wire(admin_only_client)
+
+    response = admin_only_client.put(
+        ROUTE,
+        json={
+            "payment_instructions": store.policy.payment_instructions,
+            "can_report_absence": False,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["can_report_absence"] is False
+    assert store.field_writes == [{"can_report_absence": False}]
 
 
 @pytest.mark.parametrize(

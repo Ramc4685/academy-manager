@@ -156,6 +156,10 @@ async def test_offer_email_has_no_claim_link_when_switch_off() -> None:
     body = sender.sent[0]["body"]
     assert "offer=wl-1" not in body
     assert "/parent/requests" not in body
+    # The body copy must not tell the family to "claim it" in-app when there
+    # is no link to do so with.
+    assert "confirm by then to claim it" not in body
+    assert "contact BLNO Badminton" in body
 
 
 @pytest.mark.asyncio

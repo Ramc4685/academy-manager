@@ -18,6 +18,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 
 /** The picked methods in canonical order; the save payload and the dirty check. */
@@ -36,6 +37,7 @@ const PAYMENT_INSTRUCTIONS_MAX_LENGTH = 1000;
 
 export function OfflinePaymentsCard() {
   const queryClient = useQueryClient();
+  const isOwner = useIsOwner();
   const query = useQuery({
     queryKey: queryKeys.admin.paymentMethods(),
     queryFn: getAdminPaymentMethods,
@@ -165,12 +167,18 @@ export function OfflinePaymentsCard() {
             Shown to parents on their invoice/pay screen and in the invoice email, for families
             paying outside Stripe. Leave blank to show nothing.
           </p>
+          <p className="mt-2 text-xs text-rally-muted" data-testid="payment-instructions-owner-note">
+            {isOwner
+              ? "Changes are recorded in the billing audit log."
+              : "Only the academy owner can change payment instructions."}
+          </p>
           <label className="mt-3 block">
             <span className="sr-only">Payment instructions</span>
             <textarea
-              className="min-h-[96px] w-full rounded-md border border-rally-line bg-white p-3 text-sm outline-none focus:border-blue-500"
+              className="min-h-[96px] w-full rounded-md border border-rally-line bg-white p-3 text-sm outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-rally-line/40 disabled:text-rally-muted"
               value={instructions}
-              maxLength={PAYMENT_INSTRUCTIONS_MAX_LENGTH + 200}
+              maxLength={PAYMENT_INSTRUCTIONS_MAX_LENGTH}
+              disabled={!isOwner}
               onChange={(e) => {
                 setInstructionsSaved(false);
                 setInstructions(e.target.value);
@@ -190,7 +198,9 @@ export function OfflinePaymentsCard() {
             <Button
               variant={instructionsDirty && !instructionsTooLong ? "volt" : "secondary"}
               size="sm"
-              disabled={!instructionsDirty || instructionsTooLong || instructionsMutation.isPending}
+              disabled={
+                !isOwner || !instructionsDirty || instructionsTooLong || instructionsMutation.isPending
+              }
               onClick={() => instructionsMutation.mutate()}
               data-testid="payment-instructions-save"
             >
