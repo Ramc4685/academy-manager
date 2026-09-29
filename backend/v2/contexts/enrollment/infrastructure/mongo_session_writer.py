@@ -10,8 +10,13 @@ from __future__ import annotations
 from bson import ObjectId
 
 from backend.v2.contexts.enrollment.domain.models import Session
-from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
-from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import sessions_to_domain
+from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time import (
+    LEGACY_FALLBACK_TIMEZONE,
+    academy_timezone_lookup,
+    resolve_session_timezone,
+)
 
 _DOW_INDEX = {
     "Mon": 0,
@@ -67,7 +72,7 @@ def _series_signature(
         _normalize_days(days_of_week),
         str(start_time or ""),
         str(end_time or ""),
-        str(timezone or "America/Chicago"),
+        str(timezone or LEGACY_FALLBACK_TIMEZONE),
     )
 
 
@@ -76,7 +81,7 @@ class MongoSessionWriter(TenantScopedRepository):
 
     async def get(self, session_id: str) -> Session | None:
         doc = await self._find_one(_session_filter(session_id))
-        return MongoSessionRepository._to_domain(doc) if doc else None
+        return (await sessions_to_domain(self._db, [doc]))[0] if doc else None
 
     async def try_reserve_seat(self, session_id: str) -> bool:
         session_filter = _session_filter(session_id)
@@ -135,6 +140,20 @@ class MongoSessionWriter(TenantScopedRepository):
         timezone: str,
         exclude_session_id: str | None = None,
     ) -> Session | None:
+        # A zoneless side (legacy row, or no zone passed) reads the tenant's
+        # zone, and both sides use the same resolved fallback.
+        academy_zone: list[str] = []
+
+        async def fallback_zone() -> str:
+            if not academy_zone:
+                reader = academy_timezone_lookup(self._db)
+                academy_zone.append(
+                    resolve_session_timezone(None, await reader(current_academy_id()))
+                )
+            return academy_zone[0]
+
+        if not str(timezone or "").strip():
+            timezone = await fallback_zone()
         target = _series_signature(
             title=title,
             location=location,
@@ -165,10 +184,10 @@ class MongoSessionWriter(TenantScopedRepository):
                 days_of_week=doc.get("days_of_week") or [],
                 start_time=doc.get("start_time") or "",
                 end_time=doc.get("end_time") or "",
-                timezone=doc.get("timezone") or "America/Chicago",
+                timezone=doc.get("timezone") or await fallback_zone(),
             )
             if signature == target:
-                return MongoSessionRepository._to_domain(doc)
+                return (await sessions_to_domain(self._db, [doc]))[0]
         return None
 
 

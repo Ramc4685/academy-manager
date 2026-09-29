@@ -73,6 +73,10 @@ NAMING = InvoiceNaming(
 )
 
 
+async def _parity_return_url_for(academy_id: str) -> str:
+    return "https://app.example.test/parent/payments"
+
+
 class _Academies:
     """Academy repo fake: ``find_by_id`` returns the stored document and
     ``get_academy_name`` mirrors ``MongoAcademyRepository`` exactly."""
@@ -314,7 +318,7 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
         links=_CardLinks(),
         sender=card_sender,
         academies=academies,
-        return_url="https://app.example.test/parent/payments",
+        return_url_for=_parity_return_url_for,
         **_brand_kwargs(academies),
     ).execute(academy_id=ACADEMY_ID, parent_id="parent-1")
     bodies["add_card"] = card_sender.sent[0]["body"]

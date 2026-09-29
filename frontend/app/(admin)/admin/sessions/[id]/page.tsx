@@ -774,7 +774,11 @@ export default function AdminSessionDetailPage() {
       {activeTab === "teaching-plan" && (
         <Card p={20} className="min-w-0">
           <LaneHeader index="07" title="Teaching plan" />
-          <AdminTeachingPlan sessionId={sessionId} programId={rosterProgramId || null} />
+          <AdminTeachingPlan
+            sessionId={sessionId}
+            programId={rosterProgramId || null}
+            timezone={session?.timezone ?? null}
+          />
         </Card>
       )}
 

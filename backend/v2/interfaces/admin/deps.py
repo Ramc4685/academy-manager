@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -385,6 +386,9 @@ class AdminUseCases:
     # Accounts-v2 Connect onboarding (Slice I) — supersedes the legacy OAuth
     # trio above for actually unblocking billing; see academy_routes.py.
     start_connect_onboarding_use_case: StartConnectOnboarding | None = None
+    # ``async (academy_id) -> base URL`` on that academy's own host, for
+    # Stripe return links (row 9). None (older fixtures) = settings.frontend_url.
+    academy_frontend_base_url: Callable[[str], Awaitable[str]] | None = None
     # Coach teaching-plan digest: test-send + delivery log (Stream 2 C/D).
     send_coach_digest_test: object | None = None  # SendCoachDigestTest
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog

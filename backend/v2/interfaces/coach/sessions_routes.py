@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from backend.v2.interfaces.coach.deps import CoachUseCases, coach_names_for, get_coach_use_cases
+from backend.v2.interfaces.coach.deps import (
+    CoachUseCases,
+    academy_zone_for_sessions,
+    coach_names_for,
+    get_coach_use_cases,
+)
 from backend.v2.interfaces.coach.views import CoachScheduleEntry, CoachScheduleResponse
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
@@ -32,6 +37,9 @@ async def get_sessions(
     else:
         sessions = await use_cases.list_all_sessions(claims.user_id)  # type: ignore[operator]
     coach_names = await coach_names_for(sessions, use_cases=use_cases, supervisor=supervisor)
+    academy_zone = await academy_zone_for_sessions(
+        sessions, use_cases=use_cases, academy_id=claims.academy_id
+    )
     return CoachScheduleResponse(
         sessions=[
             CoachScheduleEntry(
@@ -39,7 +47,7 @@ async def get_sessions(
                 occurrence_id=s.occurrence_id,
                 title=s.title,
                 location=s.location,
-                timezone=s.timezone,
+                timezone=s.timezone or academy_zone,
                 start_at=s.start_at,
                 end_at=s.end_at,
                 coach_id=getattr(s, "coach_id", None),
