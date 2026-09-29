@@ -145,18 +145,20 @@ export default function AdminUserDetailPage() {
       </div>
       <FamilyPanel user={user} />
       {canManage && <LoginInvitePanel user={user} onSaved={invalidate} />}
-      {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
+      {isCoach && <CoachPayRatePanel coachId={user.user_id} isOwner={isOwner} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
     </section>
   );
 }
 
-function CoachPayRatePanel({ coachId }: { coachId: string }) {
+function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boolean }) {
   const queryClient = useQueryClient();
   const ratesQuery = useQuery({
     queryKey: ["admin", "coaches", coachId, "pay-rates"],
     queryFn: () => listCoachPayRates(coachId),
-    enabled: Boolean(coachId),
+    // Pay rates are owner-only money (owner_gate.py): the route 404s for a
+    // plain admin. Don't even ask — show a read-only note instead (LANE E).
+    enabled: isOwner && Boolean(coachId),
   });
 
   const [billingUnit, setBillingUnit] = useState<CoachPayBillingUnit>("percent_of_revenue");
@@ -229,6 +231,18 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
     "admin-coach-pay-rate",
     payEdited && Boolean(percent || amount || repairReason.trim()),
   );
+
+  if (!isOwner) {
+    return (
+      <Card p={20} data-testid="admin-coach-pay-rate-owner-managed">
+        <Overline>Pay rate</Overline>
+        <p className="mt-3 text-sm text-rally-muted" role="note">
+          Only the academy owner can view or change coach pay rates.{" "}
+          <OwnerOnlyHint />
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <Card p={20} data-testid="admin-coach-pay-rate">
