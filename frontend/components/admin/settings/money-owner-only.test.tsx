@@ -7,7 +7,7 @@ import { OwnerOnlyFieldNote } from "@/components/admin/owner-context";
 import { cancellationTermsSummary } from "@/lib/self-service-policy-form";
 import type { SessionTypeView } from "@/lib/api/v2/session-types";
 
-import { CurrencySelect, TimezoneSelect } from "./academy-panel";
+import { TimezoneSelect } from "./academy-panel";
 import { SessionTypesTable } from "./session-types-panel";
 
 // Settings overhaul Phase 1 PR 5: money is owner-only. An admin without the
@@ -29,13 +29,12 @@ describe("OwnerOnlyFieldNote", () => {
   });
 });
 
-describe("Academy timezone and currency", () => {
+describe("Academy timezone (currency is a read-only USD field)", () => {
   it("are disabled with the owner-only note for an admin", () => {
     const tz = renderToStaticMarkup(
       <TimezoneSelect value="America/Chicago" onChange={noop} locked />,
     );
-    const currency = renderToStaticMarkup(<CurrencySelect value="USD" onChange={noop} locked />);
-    for (const html of [tz, currency]) {
+    for (const html of [tz]) {
       expect(html).toMatch(/<select[^>]*disabled=""/);
       expect(html).toContain("owner-only-field-note");
     }
@@ -43,8 +42,7 @@ describe("Academy timezone and currency", () => {
 
   it("stay editable for the owner", () => {
     const tz = renderToStaticMarkup(<TimezoneSelect value="America/Chicago" onChange={noop} />);
-    const currency = renderToStaticMarkup(<CurrencySelect value="USD" onChange={noop} />);
-    for (const html of [tz, currency]) {
+    for (const html of [tz]) {
       expect(html).not.toMatch(/<select[^>]*disabled=""/);
       expect(html).not.toContain("owner-only-field-note");
     }

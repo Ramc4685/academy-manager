@@ -1822,11 +1822,21 @@ class UpdateAdminAcademyRequest(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    # Currency is locked to USD (owner decision, Settings overhaul Phase 1
+    # PR 3): omitted or "USD" is accepted and a no-op, anything else is a 422.
+    # This never rewrites stored data for academies with a different value.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     #: Display name on outbound email (``"<name>" <SENDER_EMAIL>``). The From
     #: address itself is platform-owned and cannot be set here (L9a).
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str | None) -> str | None:
+        if value is not None and value.upper() != "USD":
+            raise ValueError("Currency is locked to USD.")
+        return value
 
     @field_validator("email_sender_name")
     @classmethod

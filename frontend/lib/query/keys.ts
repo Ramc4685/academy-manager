@@ -219,6 +219,8 @@ export const queryKeys = {
       ["platform", "tenant", academyId, "health"] as const,
     tenantApplicationFee: (academyId: string) =>
       ["platform", "tenant", academyId, "application-fee"] as const,
+    tenantBillingIdentity: (academyId: string) =>
+      ["platform", "tenant", academyId, "billing-identity"] as const,
   },
   student: {
     all: ["student"] as const,

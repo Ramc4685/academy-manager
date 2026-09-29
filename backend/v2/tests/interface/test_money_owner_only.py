@@ -26,7 +26,6 @@ from fastapi.testclient import TestClient
 import backend.v2.composition.admin as admin_composition
 from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyOutput
 from backend.v2.interfaces.admin.owner_gate import (
-    CURRENCY_CHANGE_FORBIDDEN,
     OWNER_ONLY_ROUTE_PATHS,
     PRICE_CHANGE_FORBIDDEN,
     TIMEZONE_CHANGE_FORBIDDEN,
@@ -286,7 +285,6 @@ def _stored_academy(client: TestClient, **overrides: Any) -> _AuditSpy:
     [
         ({"timezone": "America/New_York"}, TIMEZONE_CHANGE_FORBIDDEN),
         ({"timezone": None}, TIMEZONE_CHANGE_FORBIDDEN),
-        ({"currency": "CAD"}, CURRENCY_CHANGE_FORBIDDEN),
         ({"display_name": "Court 8", "timezone": "UTC"}, TIMEZONE_CHANGE_FORBIDDEN),
     ],
 )
@@ -345,12 +343,14 @@ def test_an_owner_timezone_change_saves_and_is_audited(admin_client: TestClient)
     assert call["actor_id"] == "u-admin"
 
 
-def test_an_owner_currency_change_saves(admin_client: TestClient) -> None:
-    spy = _stored_academy(admin_client, currency="CAD")
+def test_currency_stays_usd_even_for_the_owner(admin_client: TestClient) -> None:
+    # Currency is locked to USD (#1001), so a non-USD value is refused for
+    # everyone before the owner check runs.
+    spy = _stored_academy(admin_client)
 
     response = admin_client.patch(f"{_ADMIN}/academy", json={"currency": "CAD"})
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 422, response.text
     assert spy.calls == []
 
 

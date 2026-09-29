@@ -34,6 +34,7 @@ import { TenantStatusChip } from "../status-chip";
 import { AgreementCard } from "./agreement-card";
 import { DataOffboardingCard } from "./data-offboarding-card";
 import { ApplicationFeeCard } from "./application-fee-card";
+import { BillingIdentityCard } from "./billing-identity-card";
 
 /** Which lifecycle transitions the API accepts from each status. */
 function allowedActions(tenant: PlatformTenant) {
@@ -174,6 +175,8 @@ export default function PlatformTenantDetailPage() {
           <AgreementCard tenant={tenant} canEdit={auth.isAdmin} onDone={refresh} />
 
           <ApplicationFeeCard academyId={academyId} canEdit={auth.isAdmin} />
+
+          <BillingIdentityCard academyId={academyId} canEdit={auth.isAdmin} />
 
           {auth.isAdmin && <DataOffboardingCard tenant={tenant} />}
 
