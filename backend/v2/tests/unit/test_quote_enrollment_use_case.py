@@ -453,3 +453,96 @@ async def test_explicit_start_date_is_unchanged_for_a_chicago_session() -> None:
 
     assert result.billing_period_label == "2026-09"
     assert result.billing_period_start.astimezone(UTC) == datetime(2026, 9, 1, 5, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Hardcoded-values row 7: a session with no zone falls back to the ACADEMY's
+# zone, then the legacy constant. BLNO (academy America/Chicago) is pinned.
+# ---------------------------------------------------------------------------
+
+_ZONELESS_SESSION_DOC: dict[str, Any] = {
+    **{k: v for k, v in _SESSION_DOC.items() if k != "timezone"},
+    "academy_id": "acad_blno_badminton",
+}
+
+
+def _academy_reader(zone: str | None, seen: list[str] | None = None):
+    async def read(academy_id: str) -> str | None:
+        if seen is not None:
+            seen.append(academy_id)
+        return zone
+
+    return read
+
+
+async def _quote_zoneless(reader) -> BillingCalculationSnapshot:
+    uc = QuoteEnrollment(
+        sessions=_FakeSessionLoader(_ZONELESS_SESSION_DOC),
+        snapshots=_FakeSnapshotWriter(),
+        occurrences=_FakeOccurrenceCatalog(_august_chicago_occurrences()),
+        clock=lambda: _MONTH_END_EVENING_CHICAGO,
+        academy_timezone=reader,
+    )
+    return await uc.execute(
+        QuoteEnrollmentCommand(
+            session_id="sess-1",
+            billing_start_at=_MONTH_END_EVENING_CHICAGO,
+            calculated_by="parent-1",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_zoneless_blno_session_quotes_exactly_as_before() -> None:
+    seen: list[str] = []
+    with_academy = await _quote_zoneless(_academy_reader("America/Chicago", seen))
+    no_reader = await _quote_zoneless(None)
+
+    # Today's output (legacy Chicago fallback) is unchanged for BLNO.
+    assert with_academy.billing_period_label == "2026-08"
+    assert with_academy.billing_period_start.astimezone(UTC) == datetime(
+        2026, 8, 1, 5, 0, tzinfo=UTC
+    )
+    assert with_academy.final_amount_cents == 2_500
+    assert (
+        with_academy.billing_period_label,
+        with_academy.billing_period_start,
+        with_academy.billing_period_end,
+        with_academy.final_amount_cents,
+    ) == (
+        no_reader.billing_period_label,
+        no_reader.billing_period_start,
+        no_reader.billing_period_end,
+        no_reader.final_amount_cents,
+    )
+    # The zone is read for the session's own academy.
+    assert seen == ["acad_blno_badminton"]
+
+
+@pytest.mark.asyncio
+async def test_zoneless_session_uses_another_academy_zone() -> None:
+    # 8:15pm Chicago on Aug 31 is 9:15pm New York: still August there too,
+    # but the period bounds move to New York midnight.
+    result = await _quote_zoneless(_academy_reader("America/New_York"))
+    assert result.billing_period_start.astimezone(UTC) == datetime(2026, 8, 1, 4, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_session_zone_skips_the_academy_lookup() -> None:
+    seen: list[str] = []
+    uc = QuoteEnrollment(
+        sessions=_FakeSessionLoader(_SESSION_DOC),
+        snapshots=_FakeSnapshotWriter(),
+        occurrences=_FakeOccurrenceCatalog(_august_chicago_occurrences()),
+        clock=lambda: _MONTH_END_EVENING_CHICAGO,
+        academy_timezone=_academy_reader("America/New_York", seen),
+    )
+    result = await uc.execute(
+        QuoteEnrollmentCommand(
+            session_id="sess-1",
+            billing_start_at=_MONTH_END_EVENING_CHICAGO,
+            calculated_by="parent-1",
+        )
+    )
+    assert result.billing_period_start.astimezone(UTC) == datetime(2026, 8, 1, 5, 0, tzinfo=UTC)
+    assert seen == []

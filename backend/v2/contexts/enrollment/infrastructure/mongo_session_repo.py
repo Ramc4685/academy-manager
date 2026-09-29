@@ -18,7 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.public_catalog import 
 )
 from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Session
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
-from backend.v2.shared.time import academy_timezone_lookup, ensure_utc
+from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE, academy_timezone_lookup, ensure_utc
 
 
 def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
@@ -29,11 +29,11 @@ def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
 
 log = logging.getLogger(__name__)
 
-# Last-resort zone for LEGACY rows that carry neither their own `timezone` nor
-# a resolvable tenant zone. Reads must never raise, so this rung stays — but it
-# is a single-tenant guess, so reaching it is logged rather than silent. Writes
-# fail closed instead (see admin_writes._resolve_session_timezone).
-LEGACY_FALLBACK_TIMEZONE = "America/Chicago"
+# ``LEGACY_FALLBACK_TIMEZONE`` (shared/time) is the last-resort zone for LEGACY
+# rows that carry neither their own `timezone` nor a resolvable tenant zone.
+# Reads must never raise, so this rung stays — but it is a single-tenant guess,
+# so reaching it is logged rather than silent. Writes fail closed instead (see
+# admin_writes._resolve_session_timezone).
 
 
 def _template_timezone(template: dict[str, Any], fallback: str | None) -> str:
@@ -258,14 +258,14 @@ class MongoSessionRepository(TenantScopedRepository):
         self._default_amount_cents = default_amount_cents
 
     @staticmethod
-    def _to_domain(doc: dict[str, object]) -> Session:
+    def _to_domain(doc: dict[str, object], fallback_timezone: str | None = None) -> Session:
         status = str(doc.get("status") or "scheduled")
         if status in {"active", "open"}:
             status = "scheduled"
         start_at = doc.get("start_at")
         end_at = doc.get("end_at")
         if start_at is None or end_at is None:
-            start_at, end_at = _representative_template_times(doc)
+            start_at, end_at = _representative_template_times(doc, fallback_timezone)
         # Normalise legacy schema (name/max_students) to v2 schema (title/capacity).
         return Session(
             session_id=str(doc.get("session_id") or doc.get("_id")),
@@ -302,7 +302,7 @@ class MongoSessionRepository(TenantScopedRepository):
             {**_coach_or_assistant_filter(coach_id), "start_at": {"$gte": start, "$lte": end}},
             sort=[("start_at", 1)],
         )
-        return [self._to_domain(doc) async for doc in cursor]
+        return await sessions_to_domain(self._db, [doc async for doc in cursor])
 
     async def assigned_session_ids_for_coach(
         self, coach_id: str, *, include_assistant: bool = True
@@ -336,17 +336,17 @@ class MongoSessionRepository(TenantScopedRepository):
             {**_coach_or_assistant_filter(coach_id), "start_at": {"$gte": now}},
             sort=[("start_at", 1)],
         )
-        return [self._to_domain(doc) async for doc in cursor]
+        return await sessions_to_domain(self._db, [doc async for doc in cursor])
 
     async def get(self, session_id: str) -> Session | None:
         doc = await self._find_one(_session_filter(session_id))
-        return self._to_domain(doc) if doc else None
+        return (await sessions_to_domain(self._db, [doc]))[0] if doc else None
 
     async def get_many(self, session_ids: list[str]) -> list[Session]:
         if not session_ids:
             return []
         cursor = self._find_many(_session_ids_filter(session_ids))
-        return [self._to_domain(doc) async for doc in cursor]
+        return await sessions_to_domain(self._db, [doc async for doc in cursor])
 
     async def available_for_parent_catalog(self) -> list[ParentAvailableSession]:
         now = datetime.now(UTC)
@@ -642,8 +642,28 @@ def _optional_amount_cents(doc: dict[str, object]) -> int | None:
     return None
 
 
-def _representative_template_times(doc: dict[str, object]) -> tuple[datetime, datetime]:
-    timezone_name = str(doc.get("timezone") or "America/Chicago")
+def _needs_template_zone(doc: dict[str, object]) -> bool:
+    """A template row with no dates and no zone of its own (legacy data)."""
+    missing_dates = doc.get("start_at") is None or doc.get("end_at") is None
+    return missing_dates and not str(doc.get("timezone") or "").strip()
+
+
+async def sessions_to_domain(db: Any, docs: list[dict[str, Any]]) -> list[Session]:
+    """Map session docs to ``Session``, expanding zoneless templates in the tenant's zone.
+
+    The academy zone is read (once) only when some row actually needs it, so
+    the usual dated or zoned rows cost no extra query.
+    """
+    fallback: str | None = None
+    if any(_needs_template_zone(doc) for doc in docs):
+        fallback = await academy_timezone_lookup(db)(current_academy_id())
+    return [MongoSessionRepository._to_domain(doc, fallback) for doc in docs]
+
+
+def _representative_template_times(
+    doc: dict[str, object], fallback_timezone: str | None = None
+) -> tuple[datetime, datetime]:
+    timezone_name = _template_timezone(doc, fallback_timezone)
     tz = ZoneInfo(timezone_name)
     current_date = datetime.now(UTC).astimezone(tz).date()
     active_start = _coerce_template_date(doc.get("start_date"))
