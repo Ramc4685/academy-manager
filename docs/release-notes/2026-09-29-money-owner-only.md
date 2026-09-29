@@ -1,6 +1,6 @@
 # Money settings are owner-only (Settings overhaul Phase 1 PR 5)
 
-PR: #TBD
+PR: #1002
 
 ## What changed
 
