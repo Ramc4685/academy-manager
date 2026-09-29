@@ -1,6 +1,6 @@
 # Coach pay rates: admin sees a read-only note, not an error (Settings overhaul Phase 2 PR 8)
 
-PR: #TBD
+PR: #1005
 
 ## What changed
 
