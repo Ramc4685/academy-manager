@@ -22,6 +22,7 @@ import { roleLabel } from "@/lib/admin/role-label";
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
+import { OwnerOnlyFieldNote, useIsOwner } from "@/components/admin/owner-context";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import {
@@ -924,6 +925,9 @@ export function SessionEditDialog({
   onOpenChange: (open: boolean) => void;
   onSaved: (session: AdminSessionView) => void;
 }) {
+  // The monthly fee is owner-only (Settings overhaul P1 PR 5); the form still
+  // sends the stored value, which the BFF accepts as unchanged.
+  const isOwner = useIsOwner();
   const [form, setForm] = useState<EditSessionRequest>({});
   const [error, setError] = useState<string | null>(null);
   const coachesQuery = useQuery({
@@ -1085,19 +1089,25 @@ export function SessionEditDialog({
             min={0}
             step="0.01"
             value={centsToDollarsInput(form.amount_cents)}
+            disabled={!isOwner}
+            data-testid="session-edit-monthly-fee"
             onChange={(event) =>
               setForm((f) => ({
                 ...f,
                 amount_cents: dollarsInputToCents(event.target.value),
               }))
             }
-            className={inputClass}
+            className={`${inputClass} disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted`}
           />
-          <p className="text-xs text-amber-700">
-            Percent-paid coaches require a session price for payroll. Leave
-            blank only when pricing is not configured; enter 0 for an explicitly
-            free session.
-          </p>
+          {isOwner ? (
+            <p className="text-xs text-amber-700">
+              Percent-paid coaches require a session price for payroll. Leave
+              blank only when pricing is not configured; enter 0 for an explicitly
+              free session.
+            </p>
+          ) : (
+            <OwnerOnlyFieldNote />
+          )}
         </Field>
         <CommunicationPackSection form={form} setForm={setForm} />
         <Field label="Reason">

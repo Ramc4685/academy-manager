@@ -1068,6 +1068,32 @@ test.describe("Rally admin shell", () => {
       await expect(form.getByTestId("admin-user-locked-roles")).toContainText("Billing");
     });
 
+    test("admin without the owner scope sees prices and the timezone read-only (Settings PR 5)", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+
+      await page.goto("/admin/settings?panel=academy");
+      const academy = page.getByTestId("admin-settings-academy");
+      await expect(academy).toBeVisible();
+      await expect(academy.getByLabel("Timezone")).toBeDisabled();
+      await expect(academy.getByLabel("Currency")).toBeDisabled();
+      await expect(academy.getByLabel("Display name")).toBeEnabled();
+      await expect(academy.getByTestId("owner-only-field-note")).toHaveCount(2);
+
+      await page.goto("/admin/settings?panel=session-types");
+      const types = page.getByTestId("admin-settings-session-types");
+      await expect(types.getByTestId("session-type-row")).toHaveCount(1);
+      await expect(types.getByTestId("session-type-new")).toHaveCount(0);
+      await expect(types.getByRole("button", { name: "Edit" })).toHaveCount(0);
+      await expect(types.getByTestId("owner-only-hint").first()).toBeVisible();
+      expect(
+        errors,
+        `App console errors on owner-only money fields: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
     test("admin without the owner scope sees an owner's Staff page read-only (X3)", async ({
       page,
     }) => {
