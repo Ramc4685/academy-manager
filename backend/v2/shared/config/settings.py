@@ -427,11 +427,13 @@ class Settings(BaseSettings):
                 "tenancy_mode=multi_academy in production requires saas_mode=true "
                 "(V2_SAAS_MODE); see docs/runbooks/enable-multi-academy.md"
             )
-        if self.env == "prod" and self.saas_mode:
+        if self.env == "prod" and self.saas_mode and self.tenancy_mode == "multi_academy":
             # SaaS mode takes the tenant from the request host. Without a base
             # domain any "<slug>.<anything>" host resolves by its first label,
             # and without the proxy secret a client-supplied x-forwarded-host
-            # picks the tenant.
+            # picks the tenant. In single_academy mode the middleware refuses
+            # every tenant but the primary, so a spoofed host cannot pick one;
+            # prod runs that way today with V2_SAAS_MODE set.
             missing = [
                 name
                 for name, value in (
