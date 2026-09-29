@@ -239,6 +239,43 @@ async def test_update_academy_notifications():
 
 
 @pytest.mark.asyncio
+async def test_win_back_defaults_on_when_never_saved():
+    """BLNO pin (row 10): no stored ``win_back_enabled`` reads back as on."""
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "academy_id": "acad-1",
+        "notifications": {"daily_digest_to_admin": False},
+    }
+    output = await GetAcademyNotificationsUseCase(academy_repo=repo).execute("acad-1")
+    assert output.win_back_enabled is True
+    repo.find_by_id.return_value = {"academy_id": "acad-1"}
+    output = await GetAcademyNotificationsUseCase(academy_repo=repo).execute("acad-1")
+    assert output.win_back_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_win_back_off_round_trips():
+    repo = AsyncMock()
+    repo.update_by_id.return_value = {
+        "academy_id": "acad-1",
+        "notifications": {"win_back_enabled": False},
+    }
+    use_case = UpdateAcademyNotificationsUseCase(academy_repo=repo)
+    output = await use_case.execute("acad-1", {"win_back_enabled": False})
+    assert output.win_back_enabled is False
+    repo.update_by_id.assert_awaited_once_with("acad-1", {"notifications.win_back_enabled": False})
+
+
+@pytest.mark.asyncio
+async def test_win_back_rejects_a_non_boolean():
+    repo = AsyncMock()
+    use_case = UpdateAcademyNotificationsUseCase(academy_repo=repo)
+    with pytest.raises(ValueError):
+        await use_case.execute("acad-1", {"win_back_enabled": "no"})
+    repo.update_by_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_a_zero_late_fee_reads_back_as_zero_not_none() -> None:
     """`or` collapsed a stored 0 to the legacy alias and then to None.
 

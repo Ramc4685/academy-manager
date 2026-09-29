@@ -239,6 +239,8 @@ def test_get_and_patch_notifications_contract(admin_client):
         # New per-academy parent-digest fields default off / hour 6.
         "parent_digest_enabled": False,
         "parent_digest_hour": 6,
+        # Row 10: win-back emails default on (unchanged for BLNO).
+        "win_back_enabled": True,
     }
     assert patch_response.status_code == 200, patch_response.text
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
@@ -280,6 +282,31 @@ def test_patch_notifications_passes_coach_digest_fields(admin_client):
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
         "acad", {"coach_digest_enabled": True, "coach_digest_hour": 7}
     )
+
+
+def test_patch_notifications_passes_win_back_switch(admin_client):
+    admin_client.use_cases.update_academy_notifications_use_case.execute.return_value = (
+        GetAcademyNotificationsOutput(win_back_enabled=False)
+    )
+
+    response = admin_client.patch(
+        "/api/v2/admin/academy/notifications", json={"win_back_enabled": False}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["win_back_enabled"] is False
+    admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
+        "acad", {"win_back_enabled": False}
+    )
+
+
+def test_patch_notifications_rejects_non_boolean_win_back(admin_client):
+    response = admin_client.patch(
+        "/api/v2/admin/academy/notifications", json={"win_back_enabled": "sometimes"}
+    )
+
+    assert response.status_code == 422
+    admin_client.use_cases.update_academy_notifications_use_case.execute.assert_not_awaited()
 
 
 def test_patch_notifications_rejects_out_of_range_hour(admin_client):

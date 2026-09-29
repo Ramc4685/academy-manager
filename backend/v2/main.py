@@ -202,6 +202,7 @@ from backend.v2.interfaces.unsubscribe_routes import router as unsubscribe_route
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import LoadTenantOriginsCallable, TenancyMiddleware
 from backend.v2.shared.caching import TTLCache
+from backend.v2.shared.comms.email_brand import AcademyEmailBrands
 from backend.v2.shared.config import Settings, get_settings
 from backend.v2.shared.events import EventDispatcher, MongoOutbox
 from backend.v2.shared.http import (
@@ -534,6 +535,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
         academies=MongoAcademyRepository(db),
         cooldown=MongoVerificationEmailCooldown(db),
+        brands=AcademyEmailBrands(MongoAcademyRepository(db)),
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
