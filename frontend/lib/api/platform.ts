@@ -199,6 +199,35 @@ export function setPlatformApplicationFee(
   );
 }
 
+/**
+ * An academy's billing identity (Settings overhaul Phase 1 PR 3 / PR #987):
+ * invoice-number prefix, plus whether it can still be changed. Currency is
+ * always "USD" — there is no per-academy currency to fetch or set.
+ */
+export interface BillingIdentity {
+  academy_id: string;
+  invoice_prefix: string | null;
+  /** True once the academy has a numbered invoice; the prefix is then locked. */
+  locked: boolean;
+}
+
+export function getPlatformBillingIdentity(academyId: string): Promise<BillingIdentity> {
+  return apiFetch<BillingIdentity>(
+    `/platform/academies/${encodeURIComponent(academyId)}/billing-identity`,
+    { method: "GET" },
+  );
+}
+
+export function setPlatformBillingIdentity(
+  academyId: string,
+  payload: { invoice_prefix: string; reason?: string },
+): Promise<BillingIdentity> {
+  return apiFetch<BillingIdentity>(
+    `/platform/academies/${encodeURIComponent(academyId)}/billing-identity`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
 /** Tenant data export (roadmap L9d): a zip of every tenant-scoped collection. */
 export function exportPlatformTenantData(academyId: string, reason: string): Promise<Blob> {
   return apiFetchBlob(`/platform/tenants/${encodeURIComponent(academyId)}/data-export`, {

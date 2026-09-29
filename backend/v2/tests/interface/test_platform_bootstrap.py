@@ -107,6 +107,25 @@ def test_platform_bootstrap_route_creates_membership_and_settings_records(
     assert body["academy_id"] in store.feature_flags
 
 
+def test_platform_bootstrap_requires_timezone(platform_client: TestClient) -> None:
+    # A missing or blank timezone must never silently default to UTC — the
+    # operator has to pick one (see BootstrapAcademyDialog's own comment).
+    payload = _payload()
+    del payload["timezone"]
+
+    response = platform_client.post("/api/v2/platform/academies/bootstrap", json=payload)
+
+    assert response.status_code == 422, response.text
+
+
+def test_platform_bootstrap_rejects_blank_timezone(platform_client: TestClient) -> None:
+    response = platform_client.post(
+        "/api/v2/platform/academies/bootstrap", json=_payload(timezone="")
+    )
+
+    assert response.status_code == 422, response.text
+
+
 def test_platform_bootstrap_route_is_idempotent(platform_client: TestClient) -> None:
     first = platform_client.post("/api/v2/platform/academies/bootstrap", json=_payload())
     second = platform_client.post("/api/v2/platform/academies/bootstrap", json=_payload())
