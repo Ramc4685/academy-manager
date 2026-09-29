@@ -28,6 +28,11 @@ after ``STALE_RUNNING_AFTER``, counted against the same attempt budget. A new
 local date is a new marker, so a job never retries a past day here: every job
 body is already a sweep of what is due, so the next day's run covers it.
 
+A job whose body is not safe to repeat (the owner brief records no
+per-recipient send, so a re-run after a crash or a cancelled deploy mid-send
+mails the owners already sent) passes ``max_attempts=1``: its marker is then
+never re-claimed, whether the run raised, was cancelled, or died ``running``.
+
 One academy's failure is logged and reported and never stops the others.
 """
 
@@ -43,6 +48,7 @@ from zoneinfo import ZoneInfo
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.shared.observability.ops_alerts import capture_exception
+from backend.v2.shared.observability.ops_digest import LOCAL_CLOCK_TICK_FIELD
 from backend.v2.shared.tenancy.context import tenant_scope
 
 log = logging.getLogger(__name__)
@@ -98,8 +104,13 @@ async def claim_local_run(
     local_date: date,
     now: datetime,
     worker_id: str,
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> bool:
-    """Claim this (job, academy, local date). True iff this caller should run it."""
+    """Claim this (job, academy, local date). True iff this caller should run it.
+
+    ``max_attempts`` bounds the claims for this key, the first included; 1
+    means a marker, once claimed, is never claimed again.
+    """
     collection = db[MARKERS_COLLECTION]
     key = marker_id(job, academy_id, local_date)
     try:
@@ -125,7 +136,7 @@ async def claim_local_run(
         {
             "_id": key,
             "academy_id": academy_id,
-            "attempts": {"$lt": MAX_ATTEMPTS},
+            "attempts": {"$lt": max_attempts},
             "$or": [
                 {"status": STATUS_FAILED},
                 {"status": STATUS_RUNNING, "claimed_at": {"$lt": now - STALE_RUNNING_AFTER}},
@@ -175,6 +186,7 @@ async def run_daily_at_local_time(
     run: Callable[[str, datetime], Awaitable[None]],
     now: datetime,
     worker_id: str,
+    max_attempts: int = MAX_ATTEMPTS,
 ) -> LocalDailyRunSummary:
     """One tick of a per-academy daily job.
 
@@ -182,6 +194,7 @@ async def run_daily_at_local_time(
     ``at`` and nobody has run ``job`` for it on this local date, claim the
     marker and call ``run(academy_id, local_now)`` inside the academy's
     ``tenant_scope``. ``now`` is any aware instant (the tick time).
+    ``max_attempts`` is the per-local-day claim budget (see the module doc).
     """
     summary = LocalDailyRunSummary()
     instant = _as_aware_utc(now)
@@ -199,6 +212,7 @@ async def run_daily_at_local_time(
                 local_date=local_now.date(),
                 now=instant,
                 worker_id=worker_id,
+                max_attempts=max_attempts,
             )
             if not claimed:
                 summary.already_claimed.append(academy_id)
@@ -218,7 +232,8 @@ async def run_daily_at_local_time(
                 )
             if not isinstance(exc, Exception):
                 # Cancellation (a deploy) or interpreter exit: the marker is
-                # already ``failed`` so a later tick today retries; stop here.
+                # already ``failed`` so a later tick today retries (unless the
+                # job's ``max_attempts`` is spent); stop here.
                 raise
             summary.failed.append(academy_id)
             log.exception(
@@ -245,27 +260,37 @@ async def seed_markers_from_legacy_heartbeats(
     now: datetime,
     heartbeats_collection: str = "ops_job_runs",
 ) -> int:
-    """Mark today as done where the old fixed-hour cron already ran today.
+    """Mark today as done where the OLD fixed-hour cron already ran today.
 
-    Runs at boot, and only for a job that has no marker at all yet (the first
-    boot of this code). Without it, deploying after, say, 07:30 would send a
-    second owner brief that same day: the old cron ran at 07:30 and left no
-    marker, so the new tick would see the target passed and nothing claimed.
-    When the old job's heartbeat (``ops_job_runs.last_tick_at``, written after
-    the body) falls on the academy's local today at or after the target, the
-    old cron already covered today. Best effort; returns markers seeded.
+    Without it, the cutover repeats a job: the old cron ran the owner brief
+    at 07:30 and left no marker, so the new hourly tick would see the target
+    passed and nothing claimed, and send a second brief.
+
+    Called at boot AND at the start of every tick of a local daily job,
+    because a Fly rolling deploy keeps an old machine alive after the new one
+    boots: the old machine can still take the shared lease and run the job
+    after the new machine's boot-time pass saw nothing.
+
+    Only a LEGACY heartbeat counts. Every heartbeat this code writes (each
+    tick, via ``record_job_run(..., local_clock=True)``, and the boot stamp in
+    ``seed_job_heartbeats``) sets ``local_clock_tick_at`` equal to
+    ``last_tick_at``; the old code writes ``last_tick_at`` alone. So a
+    heartbeat whose ``last_tick_at`` differs from ``local_clock_tick_at`` was
+    written by the old cron, and when it falls on the academy's local today at
+    or after the target, the old cron already covered today. An existing
+    marker is never changed. Best effort; returns markers seeded.
     """
     seeded = 0
     instant = _as_aware_utc(now)
     ids = list(academy_ids)
     for job, at in schedules.items():
         try:
-            if await db[MARKERS_COLLECTION].find_one({"job": job, "academy_id": {"$in": ids}}):
-                continue
             heartbeat = await db[heartbeats_collection].find_one({"_id": job})
             last_tick = (heartbeat or {}).get("last_tick_at")
             if not isinstance(last_tick, datetime):
                 continue
+            if (heartbeat or {}).get(LOCAL_CLOCK_TICK_FIELD) == last_tick:
+                continue  # our own tick or boot stamp, not the old cron
             for academy_id in ids:
                 zone = ZoneInfo(await zone_for(academy_id))
                 local_now = instant.astimezone(zone)
@@ -273,7 +298,7 @@ async def seed_markers_from_legacy_heartbeats(
                 if local_tick.date() != local_now.date() or not at.reached_by(local_tick):
                     continue
                 local_date = local_now.date()
-                await db[MARKERS_COLLECTION].update_one(
+                result = await db[MARKERS_COLLECTION].update_one(
                     {"_id": marker_id(job, academy_id, local_date), "academy_id": academy_id},
                     {
                         "$setOnInsert": {
@@ -288,7 +313,8 @@ async def seed_markers_from_legacy_heartbeats(
                     },
                     upsert=True,
                 )
-                seeded += 1
+                if result.upserted_id is not None:
+                    seeded += 1
         except Exception:
             log.warning("scheduler_run_marker_seed_failed job=%s", job, exc_info=True)
     return seeded

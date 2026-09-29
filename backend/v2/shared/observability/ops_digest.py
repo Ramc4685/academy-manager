@@ -69,6 +69,26 @@ JOB_RUNS_COLLECTION = "ops_job_runs"
 
 INVOICE_GENERATION_JOB = "generate_monthly_invoices"
 
+#: Settings Phase 4: set to the same instant as ``last_tick_at`` by every
+#: heartbeat the academy-clock scheduler writes. The pre-Phase-4 fixed-hour
+#: crons wrote ``last_tick_at`` alone, so ``last_tick_at != local_clock_tick_at``
+#: identifies a heartbeat from the OLD code (``local_clock.
+#: seed_markers_from_legacy_heartbeats`` uses it across a rolling deploy).
+LOCAL_CLOCK_TICK_FIELD = "local_clock_tick_at"
+
+#: Scheduler-zone hour the ops digest is sent at (``main._lifespan``).
+OPS_DIGEST_HOUR = 7
+
+
+def ops_digest_cycle(scheduler_now: datetime, *, digest_hour: int = OPS_DIGEST_HOUR) -> str:
+    """The date of the next ops digest, as of ``scheduler_now`` (scheduler zone).
+
+    Everything recorded between two digests shares one cycle, so the digest
+    reports the whole window since the last one, not only its last tick.
+    """
+    return (scheduler_now + timedelta(hours=24 - digest_hour)).date().isoformat()
+
+
 LOOKBACK = timedelta(hours=24)
 # A `failed` webhook event is mid-retry until its next_retry_at is well past
 # due. The drain job ticks every 60s and the dedup backoff tops out well under
@@ -206,6 +226,7 @@ async def record_job_run(
     totals: dict[str, Any],
     *,
     meaningful: bool = True,
+    local_clock: bool = False,
 ) -> None:
     """Store the last run summary for ``name`` so the digest can report it.
 
@@ -215,11 +236,17 @@ async def record_job_run(
     totals with zeros — those totals are the exact signal the digest exists to
     surface.
 
+    ``local_clock=True`` (the academy-clock daily jobs) also stamps
+    ``LOCAL_CLOCK_TICK_FIELD`` with the same instant, marking the heartbeat as
+    this code's rather than the old fixed-hour cron's.
+
     Best-effort: a failure here must never abort the job that produced the
     totals.
     """
     now = datetime.now(UTC)
     update: dict[str, Any] = {"last_tick_at": now}
+    if local_clock:
+        update[LOCAL_CLOCK_TICK_FIELD] = now
     if meaningful:
         update["totals"] = dict(totals)
         update["recorded_at"] = now
@@ -227,6 +254,45 @@ async def record_job_run(
         await db[JOB_RUNS_COLLECTION].update_one({"_id": name}, {"$set": update}, upsert=True)
     except Exception:  # pragma: no cover - defensive
         log.warning("ops_job_run_record_failed job=%s", name, exc_info=True)
+
+
+async def accumulate_job_run(
+    db: AsyncIOMotorDatabase[Any],
+    name: str,
+    totals: Mapping[str, int],
+    *,
+    cycle: str,
+    period: str | None = None,
+) -> None:
+    """Add ``totals`` to ``name``'s recorded run for this ops-digest ``cycle``.
+
+    Settings Phase 4: a daily job now runs per academy on hourly ticks, so a
+    single day's work is spread over several ticks (BLNO at 03:00 Chicago,
+    an LA academy two hours later). Replacing the totals on every meaningful
+    tick would leave the digest showing only the last academy's tick. Within
+    one ``cycle`` (``ops_digest_cycle``) the counts are summed; the first
+    meaningful tick of a new cycle starts them afresh. ``period`` keeps the
+    latest billing period seen. Best-effort like ``record_job_run``.
+    """
+    now = datetime.now(UTC)
+    increments = {f"totals.{key}": int(value) for key, value in totals.items()}
+    try:
+        update: dict[str, Any] = {"$inc": increments, "$set": {"recorded_at": now}}
+        if period is not None:
+            update["$max"] = {"totals.period": period}
+        result = await db[JOB_RUNS_COLLECTION].update_one({"_id": name, "cycle": cycle}, update)
+        if result.matched_count:
+            return
+        fresh: dict[str, Any] = {key: int(value) for key, value in totals.items()}
+        if period is not None:
+            fresh["period"] = period
+        await db[JOB_RUNS_COLLECTION].update_one(
+            {"_id": name},
+            {"$set": {"totals": fresh, "cycle": cycle, "recorded_at": now}},
+            upsert=True,
+        )
+    except Exception:  # pragma: no cover - defensive
+        log.warning("ops_job_run_accumulate_failed job=%s", name, exc_info=True)
 
 
 async def seed_job_heartbeats(
@@ -246,7 +312,11 @@ async def seed_job_heartbeats(
     for name in JOB_STALE_AFTER:
         try:
             await db[JOB_RUNS_COLLECTION].update_one(
-                {"_id": name}, {"$setOnInsert": {"last_tick_at": boot}}, upsert=True
+                {"_id": name},
+                # The boot stamp is not a run: mark it as ours so it never
+                # reads as the old cron having run today.
+                {"$setOnInsert": {"last_tick_at": boot, LOCAL_CLOCK_TICK_FIELD: boot}},
+                upsert=True,
             )
         except Exception:  # pragma: no cover - defensive
             log.warning("ops_job_heartbeat_seed_failed job=%s", name, exc_info=True)

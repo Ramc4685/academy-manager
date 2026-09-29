@@ -228,12 +228,18 @@ from backend.v2.shared.observability.ops_alerts import (
 from backend.v2.shared.observability.ops_digest import (
     INVOICE_GENERATION_JOB,
     JOB_STALE_AFTER,
+    OPS_DIGEST_HOUR,
+    accumulate_job_run,
     collect_ops_digest,
+    ops_digest_cycle,
     record_job_run,
     render_ops_digest,
     seed_job_heartbeats,
 )
 from backend.v2.shared.scheduling import job_lease
+from backend.v2.shared.scheduling.local_clock import (
+    MAX_ATTEMPTS as LOCAL_CLOCK_MAX_ATTEMPTS,
+)
 from backend.v2.shared.scheduling.local_clock import (
     LocalDailyRunSummary,
     LocalDailyTime,
@@ -289,6 +295,50 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "send_owner_daily_brief": LocalDailyTime(7, 30),
     "send_past_due_reminders": LocalDailyTime(_PAST_DUE_REMINDER_LOCAL_HOUR, 20),
 }
+
+#: Per-local-day claim budget for the jobs whose body is NOT safe to repeat
+#: (default ``local_clock.MAX_ATTEMPTS``). The owner brief records no
+#: per-recipient send, so a re-run after a failure, a crash or a deploy that
+#: cancels it mid-send would mail the owners already sent: it gets one claim
+#: per academy-local day, and a failed day is reported, not retried.
+LOCAL_DAILY_JOB_MAX_ATTEMPTS: dict[str, int] = {"send_owner_daily_brief": 1}
+
+
+async def run_local_daily_job(
+    db: Any,
+    job: str,
+    *,
+    academy_ids: Sequence[str],
+    zone_for: Callable[[str], Awaitable[str]],
+    run: Callable[[str, datetime], Awaitable[None]],
+    now: datetime,
+    worker_id: str,
+) -> LocalDailyRunSummary:
+    """One hourly tick of a ``LOCAL_DAILY_JOBS`` job across ``academy_ids``.
+
+    First marks today done for any academy the OLD fixed-hour cron already
+    covered today (a rolling deploy can leave an old machine running the job
+    after this one booted), then runs the job per academy on its own clock.
+    """
+    await seed_markers_from_legacy_heartbeats(
+        db,
+        schedules={job: LOCAL_DAILY_JOBS[job]},
+        academy_ids=academy_ids,
+        zone_for=zone_for,
+        now=now,
+    )
+    return await run_daily_at_local_time(
+        db=db,
+        job=job,
+        at=LOCAL_DAILY_JOBS[job],
+        academy_ids=academy_ids,
+        zone_for=zone_for,
+        run=run,
+        now=now,
+        worker_id=worker_id,
+        max_attempts=LOCAL_DAILY_JOB_MAX_ATTEMPTS.get(job, LOCAL_CLOCK_MAX_ATTEMPTS),
+    )
+
 
 SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     "process_scheduled_resume_actions": {
@@ -860,7 +910,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 return
             async with cron_checkin(name, schedule=SCHEDULED_JOB_MONITORS[name], settings=settings):
                 await body()
-            await record_job_run(db, name, {}, meaningful=False)
+            await record_job_run(
+                db, name, {}, meaningful=False, local_clock=name in LOCAL_DAILY_JOBS
+            )
 
     # Settings Phase 4: the academy clock every per-academy daily job and
     # digest runs on — ``academies.timezone``, else LEGACY_FALLBACK_TIMEZONE.
@@ -878,10 +930,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         ``tenant_scope``, at most once per academy-local date; one academy
         raising is logged and reported and never stops the rest.
         """
-        return await run_daily_at_local_time(
-            db=db,
-            job=job,
-            at=LOCAL_DAILY_JOBS[job],
+        return await run_local_daily_job(
+            db,
+            job,
             academy_ids=await _scheduler_academy_ids(
                 MongoAcademyRepository(db), scheduler_fallback_academy_id
             ),
@@ -1358,27 +1409,30 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         #
         # `academy_count` counts only academies that actually attempted
         # generation this tick, which is exactly the "meaningful" bar: on the
-        # ~29 days a month when nothing is due, record a heartbeat only
-        # (`meaningful=False`) instead of overwriting the last real run's counts
-        # with zeros — those counts are the signal the digest exists to surface.
-        record: dict[str, Any] = {key: value for key, value in totals.items() if key != "created"}
+        # ~29 days a month when nothing is due, record nothing here (the leased
+        # wrapper writes the heartbeat) instead of overwriting the last real
+        # run's counts with zeros — those counts are the signal the digest
+        # exists to surface. A tick that only emailed (issue #430's retry path:
+        # generation was already recorded, but invoices were still undelivered)
+        # is meaningful too — otherwise a month-long email outage would be
+        # invisible in the digest on all 29 days that did not generate.
+        if not (
+            totals["academy_count"] or totals["invoices_emailed"] or totals["invoice_emails_failed"]
+        ):
+            return
+        counts = {key: value for key, value in totals.items() if key != "created"}
         # Match the log line's `created_count` naming (#440) so the email and
         # the structured log read the same.
-        record["created_count"] = totals["created"]
-        record["period"] = max(periods)
-        # A tick that only emailed (issue #430's retry path: generation was
-        # already recorded, but invoices were still undelivered) is meaningful
-        # too — otherwise a month-long email outage would be invisible in the
-        # digest on all 29 days that did not generate.
-        await record_job_run(
+        counts["created_count"] = totals["created"]
+        # Settings Phase 4: academies generate on separate hourly ticks, so
+        # the counts are summed over the ops-digest cycle rather than replaced
+        # per tick (a later academy's tick must not hide BLNO's generation).
+        await accumulate_job_run(
             db,
             INVOICE_GENERATION_JOB,
-            record,
-            meaningful=bool(
-                totals["academy_count"]
-                or totals["invoices_emailed"]
-                or totals["invoice_emails_failed"]
-            ),
+            counts,
+            cycle=ops_digest_cycle(datetime.now(scheduler.timezone)),  # type: ignore[union-attr]
+            period=max(periods),
         )
 
     async def _send_ops_digest() -> None:
@@ -1449,9 +1503,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # stop the 2026-09-02 hourly-resend class of bug: two app instances,
         # or two hourly ticks, send one brief per academy per day, not two.
         # Settings Phase 4: each academy's brief goes out at 07:30 on ITS
-        # clock, stamped with its local now (the subject's date label). A
-        # brief that failed inside send_owner_daily_briefs is reported there
-        # and not retried today: a retry could re-send to owners already sent.
+        # clock, stamped with its local now (the subject's date label). It
+        # gets ONE claim per academy-local day (LOCAL_DAILY_JOB_MAX_ATTEMPTS):
+        # a brief that failed, crashed or was cancelled by a deploy mid-send
+        # is reported and not retried, since a retry could re-send to owners
+        # already sent.
         totals = dict.fromkeys(
             ("academies", "sent", "send_failed", "skipped_no_recipient", "failed"), 0
         )
@@ -1843,7 +1899,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.add_job(
         _send_ops_digest,
         "cron",
-        hour=7,
+        hour=OPS_DIGEST_HOUR,
         minute=0,
         id="send_ops_digest",
         replace_existing=True,
@@ -1865,10 +1921,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Job crashes and misfires previously died in APScheduler's own logger and
     # never reached Sentry (only the request path was instrumented).
     scheduler.add_listener(handle_scheduler_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
-    # First boot of the academy-clock scheduler (Settings Phase 4): where the
+    # Cutover to the academy-clock scheduler (Settings Phase 4): where the
     # old fixed-hour cron already ran today, mark today done so a deploy after
-    # 07:30 does not send a second owner brief (and so on). Must run BEFORE
-    # seed_job_heartbeats, whose boot-time stamp would read as "ran today".
+    # 07:30 does not send a second owner brief (and so on). Every tick repeats
+    # this check (run_local_daily_job) for an old machine still running during
+    # a rolling deploy; seed_job_heartbeats' boot stamp is marked as ours and
+    # never reads as "the old cron ran today".
     try:
         await seed_markers_from_legacy_heartbeats(
             db,

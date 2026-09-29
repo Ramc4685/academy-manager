@@ -9,7 +9,10 @@ mongomock and pin:
 * BLNO does not move: an academy on the production scheduler zone, and one with
   no timezone (``LEGACY_FALLBACK_TIMEZONE``), fire every job at exactly the
   wall-clock time APScheduler fired it before, on ordinary, spring-forward and
-  fall-back days, exactly once per local date.
+  fall-back days, exactly once per local date. The one intended exception is
+  the past-due sweep for a ZONELESS academy: the old code read its day in UTC
+  (``resolve_reporting_timezone``), the spec allows only the legacy fallback,
+  so it moves from 09:20 UTC to 09:20 Chicago (pinned separately below).
 * Another academy fires at its own local time.
 * One academy failing never blocks another, and a failed run retries later the
   same local day, bounded.
@@ -17,15 +20,28 @@ mongomock and pin:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import mongomock_motor
 import pytest
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.v2.main import LOCAL_DAILY_JOBS, SCHEDULED_JOB_MONITORS
+from backend.v2 import main as main_module
+from backend.v2.main import (
+    LOCAL_DAILY_JOB_MAX_ATTEMPTS,
+    LOCAL_DAILY_JOBS,
+    SCHEDULED_JOB_MONITORS,
+    run_local_daily_job,
+)
+from backend.v2.shared.observability.ops_digest import (
+    accumulate_job_run,
+    ops_digest_cycle,
+    seed_job_heartbeats,
+)
 from backend.v2.shared.scheduling import local_clock
 from backend.v2.shared.scheduling.local_clock import (
     MARKERS_COLLECTION,
@@ -57,6 +73,21 @@ OLD_CRON_TIMES = {
     # Hourly cron at :20 whose body only worked in the academy-local 9 o'clock.
     "send_past_due_reminders": (9, 20),
 }
+
+#: The zone the OLD code used for each academy. Every fixed-hour cron ran in
+#: the scheduler zone; the old past-due sweep instead used
+#: ``resolve_reporting_timezone``, whose zoneless fallback was UTC.
+OLD_UTC_FALLBACK = "UTC"
+
+
+def _old_zone(job: str, academy_id: str) -> str:
+    if job == "send_past_due_reminders" and ACADEMY_ZONES[academy_id] is None:
+        return OLD_UTC_FALLBACK
+    return PROD_SCHEDULER_TZ
+
+
+#: (job, academy) pairs whose time the spec deliberately moves.
+INTENDED_MOVES = {("send_past_due_reminders", "no_zone")}
 
 ORDINARY_DAY = date(2026, 9, 29)
 SPRING_FORWARD = date(2026, 3, 8)  # US: 02:00 -> 03:00
@@ -185,16 +216,33 @@ async def test_blno_and_zoneless_academies_fire_exactly_when_the_old_cron_did(
     job: str, day: date
 ) -> None:
     fired = await _replay(job, ["acad_blno_badminton", "no_zone"], day)
-    old = _wall(_old_fire_times(job, PROD_SCHEDULER_TZ, day))
 
-    assert len(old) == 1
     for academy_id in ("acad_blno_badminton", "no_zone"):
+        if (job, academy_id) in INTENDED_MOVES:
+            continue
+        old = _old_fire_times(job, _old_zone(job, academy_id), day)
+        assert len(old) == 1
         runs = _on(fired[academy_id], day)
-        assert _wall(runs) == old, (academy_id, job)
+        assert _wall(runs) == _wall(old), (academy_id, job)
         # Same instant, not only the same wall clock (fall-back repeats 01:xx).
-        assert [r.astimezone(UTC) for r in runs] == [
-            o.astimezone(UTC) for o in _old_fire_times(job, PROD_SCHEDULER_TZ, day)
-        ]
+        assert [r.astimezone(UTC) for r in runs] == [o.astimezone(UTC) for o in old]
+
+
+@pytest.mark.parametrize("day", [ORDINARY_DAY, SPRING_FORWARD, FALL_BACK])
+async def test_zoneless_past_due_sweep_moves_from_utc_to_the_legacy_fallback(day: date) -> None:
+    """The one intended move. The old sweep read a zoneless academy's day in
+    UTC, so its reminders went out at 09:20 UTC. The spec permits only
+    LEGACY_FALLBACK_TIMEZONE, so they now go out at 09:20 Chicago. BLNO is
+    unaffected: its academies.timezone is set (America/Chicago)."""
+    job = "send_past_due_reminders"
+    fired = await _replay(job, ["no_zone"], day)
+
+    old = _old_fire_times(job, OLD_UTC_FALLBACK, day)
+    assert _wall(old) == [(9, 20)]  # 09:20 UTC before
+    runs = _on(fired["no_zone"], day)
+    assert _wall(runs) == [(9, 20)]
+    assert runs[0].tzinfo == ZoneInfo(LEGACY_FALLBACK_TIMEZONE)  # 09:20 Chicago now
+    assert runs[0].astimezone(UTC) != old[0].astimezone(UTC)
 
 
 @pytest.mark.parametrize("job", sorted(OLD_CRON_TIMES))
@@ -205,8 +253,13 @@ async def test_spring_forward_day_runs_once_at_the_first_tick_past_the_target(jo
     hour, minute = OLD_CRON_TIMES[job]
     expected = (3, minute) if hour == 2 else (hour, minute)
 
-    old = [o.astimezone(UTC) for o in _old_fire_times(job, PROD_SCHEDULER_TZ, SPRING_FORWARD)]
     for academy_id in ("acad_blno_badminton", "no_zone"):
+        if (job, academy_id) in INTENDED_MOVES:
+            continue
+        old = [
+            o.astimezone(UTC)
+            for o in _old_fire_times(job, _old_zone(job, academy_id), SPRING_FORWARD)
+        ]
         runs = _on(fired[academy_id], SPRING_FORWARD)
         assert _wall(runs) == [expected], academy_id
         # APScheduler fired a nonexistent 02:xx at the same instant (02:xx
@@ -481,15 +534,15 @@ async def test_first_boot_before_todays_old_run_still_runs_today() -> None:
     assert await db[MARKERS_COLLECTION].count_documents({}) == 0
 
 
-async def test_seeding_is_skipped_once_the_job_has_markers() -> None:
-    """Later boots must not read an hourly heartbeat as 'already ran today'."""
+async def test_seeding_ignores_this_codes_own_heartbeats() -> None:
+    """Every heartbeat the academy-clock scheduler writes (each tick, and the
+    boot stamp) is marked ``local_clock_tick_at``; only an unmarked one is the
+    old cron's. So an hourly tick past the target never reads as 'ran today'."""
     db = _db()
     zone = ZoneInfo(BLNO_ZONE)
-    await db[MARKERS_COLLECTION].insert_one(
-        {"_id": "x", "job": "send_hold_reminders", "academy_id": "la", "local_date": "2026-09-28"}
-    )
+    tick = datetime(2026, 9, 29, 9, 0, tzinfo=zone)
     await db["ops_job_runs"].insert_one(
-        {"_id": "send_hold_reminders", "last_tick_at": datetime(2026, 9, 29, 9, 0, tzinfo=zone)}
+        {"_id": "send_hold_reminders", "last_tick_at": tick, "local_clock_tick_at": tick}
     )
 
     seeded = await seed_markers_from_legacy_heartbeats(
@@ -501,3 +554,249 @@ async def test_seeding_is_skipped_once_the_job_has_markers() -> None:
     )
 
     assert seeded == 0
+
+
+async def test_boot_heartbeat_stamp_is_never_read_as_an_old_cron_run() -> None:
+    db = _db()
+    zone = ZoneInfo(BLNO_ZONE)
+    boot = datetime(2026, 9, 29, 10, 5, tzinfo=zone)
+    await seed_job_heartbeats(db, now=boot)
+
+    seeded = await seed_markers_from_legacy_heartbeats(
+        db,
+        schedules=LOCAL_DAILY_JOBS,
+        academy_ids=["acad_blno_badminton"],
+        zone_for=_zone_for,
+        now=boot + timedelta(minutes=25),
+    )
+
+    assert seeded == 0
+
+
+async def test_rolling_deploy_old_machine_runs_after_new_boot_is_not_repeated() -> None:
+    """A Fly rolling deploy: the new machine boots at 07:25 (nothing to seed),
+    the old machine still takes the shared lease at 07:30 and sends the brief,
+    then the new machine's 08:30 tick must not send it again."""
+    db = _db()
+    zone = ZoneInfo(BLNO_ZONE)
+    job = "send_owner_daily_brief"
+    # The new machine's earlier ticks stamped their heartbeats.
+    earlier = datetime(2026, 9, 29, 6, 30, tzinfo=zone)
+    await db["ops_job_runs"].insert_one(
+        {"_id": job, "last_tick_at": earlier, "local_clock_tick_at": earlier}
+    )
+    boot_seeded = await seed_markers_from_legacy_heartbeats(
+        db,
+        schedules={job: LOCAL_DAILY_JOBS[job]},
+        academy_ids=["acad_blno_badminton"],
+        zone_for=_zone_for,
+        now=datetime(2026, 9, 29, 7, 25, tzinfo=zone),
+    )
+    # The old code's heartbeat write: last_tick_at only.
+    await db["ops_job_runs"].update_one(
+        {"_id": job}, {"$set": {"last_tick_at": datetime(2026, 9, 29, 7, 30, 6, tzinfo=zone)}}
+    )
+    ran: list[str] = []
+
+    async def run(academy_id: str, _local_now: datetime) -> None:
+        ran.append(academy_id)
+
+    summary = await run_local_daily_job(
+        db,
+        job,
+        academy_ids=["acad_blno_badminton"],
+        zone_for=_zone_for,
+        run=run,
+        now=datetime(2026, 9, 29, 8, 30, tzinfo=zone),
+        worker_id="new-machine",
+    )
+
+    assert boot_seeded == 0
+    assert ran == []
+    assert summary.already_claimed == ["acad_blno_badminton"]
+
+
+async def test_rolling_deploy_new_tick_runs_when_the_old_cron_did_not_run_today() -> None:
+    db = _db()
+    zone = ZoneInfo(BLNO_ZONE)
+    job = "send_owner_daily_brief"
+    await db["ops_job_runs"].insert_one(
+        {"_id": job, "last_tick_at": datetime(2026, 9, 28, 7, 30, 6, tzinfo=zone)}
+    )
+    ran: list[str] = []
+
+    async def run(academy_id: str, _local_now: datetime) -> None:
+        ran.append(academy_id)
+
+    await run_local_daily_job(
+        db,
+        job,
+        academy_ids=["acad_blno_badminton"],
+        zone_for=_zone_for,
+        run=run,
+        now=datetime(2026, 9, 29, 7, 30, tzinfo=zone),
+        worker_id="new-machine",
+    )
+
+    assert ran == ["acad_blno_badminton"]
+
+
+# --- owner brief: never re-sent after a failed or cancelled run -------------
+
+
+@pytest.mark.parametrize("error", [RuntimeError("smtp"), asyncio.CancelledError()])
+async def test_owner_brief_is_not_retried_the_same_day_after_a_failure(
+    error: BaseException,
+) -> None:
+    """send_owner_daily_briefs records no per-recipient send: a deploy that
+    cancels it after the first owner was mailed must not mail them again."""
+    db = _db()
+    zone = ZoneInfo(BLNO_ZONE)
+    job = "send_owner_daily_brief"
+    calls: list[datetime] = []
+
+    async def run(_academy_id: str, local_now: datetime) -> None:
+        calls.append(local_now)
+        if len(calls) == 1:
+            raise error
+
+    for local_hour in range(7, 24):
+        try:
+            await run_local_daily_job(
+                db,
+                job,
+                academy_ids=["acad_blno_badminton"],
+                zone_for=_zone_for,
+                run=run,
+                now=datetime(2026, 9, 29, local_hour, 30, tzinfo=zone),
+                worker_id="test",
+            )
+        except asyncio.CancelledError:
+            pass
+
+    assert _wall(calls) == [(7, 30)]
+    assert LOCAL_DAILY_JOB_MAX_ATTEMPTS[job] == 1
+
+
+async def test_owner_brief_stuck_running_is_never_reclaimed() -> None:
+    db = _db()
+    kwargs = {"job": "send_owner_daily_brief", "academy_id": "a", "local_date": ORDINARY_DAY}
+    claimed_at = datetime(2026, 9, 29, 12, 30, tzinfo=UTC)
+
+    assert await claim_local_run(db, now=claimed_at, worker_id="w", max_attempts=1, **kwargs)
+    later = claimed_at + local_clock.STALE_RUNNING_AFTER + timedelta(hours=1)
+    assert not await claim_local_run(db, now=later, worker_id="w", max_attempts=1, **kwargs)
+
+
+# --- ops digest: a day's per-academy invoice ticks add up -------------------
+
+
+async def test_invoice_ops_record_sums_the_cycle_instead_of_keeping_the_last_tick() -> None:
+    db = _db()
+    zone = ZoneInfo(PROD_SCHEDULER_TZ)
+    # BLNO generates at 03:00 CDT; an LA academy's 03:00 PDT tick only emails.
+    blno_cycle = ops_digest_cycle(datetime(2026, 9, 29, 3, 0, tzinfo=zone))
+    la_cycle = ops_digest_cycle(datetime(2026, 9, 29, 5, 0, tzinfo=zone))
+    assert blno_cycle == la_cycle == "2026-09-29"
+    await accumulate_job_run(
+        db,
+        "generate_monthly_invoices",
+        {"academy_count": 1, "created_count": 120, "invoices_emailed": 118},
+        cycle=blno_cycle,
+        period="2026-10",
+    )
+    await accumulate_job_run(
+        db,
+        "generate_monthly_invoices",
+        {"academy_count": 0, "created_count": 0, "invoices_emailed": 1},
+        cycle=la_cycle,
+        period="2026-09",
+    )
+
+    doc = await db["ops_job_runs"].find_one({"_id": "generate_monthly_invoices"})
+    assert doc["totals"] == {
+        "academy_count": 1,
+        "created_count": 120,
+        "invoices_emailed": 119,
+        "period": "2026-10",
+    }
+
+    # After the 07:00 digest, the next cycle starts afresh.
+    next_cycle = ops_digest_cycle(datetime(2026, 9, 29, 7, 0, tzinfo=zone))
+    assert next_cycle == "2026-09-30"
+    await accumulate_job_run(
+        db,
+        "generate_monthly_invoices",
+        {"academy_count": 0, "created_count": 0, "invoices_emailed": 2},
+        cycle=next_cycle,
+    )
+    doc = await db["ops_job_runs"].find_one({"_id": "generate_monthly_invoices"})
+    assert doc["totals"] == {"academy_count": 0, "created_count": 0, "invoices_emailed": 2}
+
+
+# --- main.py wiring: registration and bodies match LOCAL_DAILY_JOBS ---------
+
+
+def _lifespan_ast() -> ast.AsyncFunctionDef:
+    tree = ast.parse(Path(main_module.__file__).read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_lifespan":
+            return node
+    raise AssertionError("_lifespan not found")
+
+
+def _kw(call: ast.Call, name: str) -> ast.expr | None:
+    return next((k.value for k in call.keywords if k.arg == name), None)
+
+
+def test_each_local_daily_job_is_registered_hourly_in_utc_at_its_minute() -> None:
+    registered: dict[str, ast.Call] = {}
+    for node in ast.walk(_lifespan_ast()):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_job"
+        ):
+            job_id = _kw(node, "id")
+            if isinstance(job_id, ast.Constant):
+                registered[job_id.value] = node
+
+    for job in LOCAL_DAILY_JOBS:
+        call = registered[job]
+        hour = _kw(call, "hour")  # no hour= is every hour
+        assert hour is None or ast.unparse(hour) == "'*'", job
+        assert ast.unparse(_kw(call, "minute")) == f"LOCAL_DAILY_JOBS['{job}'].minute", job
+        assert ast.unparse(_kw(call, "timezone")) == "UTC", job
+
+
+def test_each_local_daily_job_body_runs_through_the_academy_clock_runner() -> None:
+    """Every job body hands its own job id to _run_local_daily, and the invoice
+    body passes the ACADEMY-LOCAL now into _run_monthly_invoice_generation."""
+    bodies = {
+        node.name: node
+        for node in ast.walk(_lifespan_ast())
+        if isinstance(node, ast.AsyncFunctionDef) and node.name.endswith("_body")
+    }
+    runner_jobs: dict[str, str] = {}
+    for name, body in bodies.items():
+        for node in ast.walk(body):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_run_local_daily"
+            ):
+                arg = node.args[0]
+                assert isinstance(arg, ast.Constant)
+                runner_jobs[arg.value] = name
+    assert set(runner_jobs) == set(LOCAL_DAILY_JOBS)
+
+    invoice_body = bodies[runner_jobs["generate_monthly_invoices"]]
+    calls = [
+        node
+        for node in ast.walk(invoice_body)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_monthly_invoice_generation"
+    ]
+    assert len(calls) == 1
+    assert ast.unparse(_kw(calls[0], "now")) == "local_now"
