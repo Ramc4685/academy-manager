@@ -26,6 +26,7 @@ from backend.v2.contexts.enrollment.domain.models import SessionOccurrence, Stud
 from backend.v2.contexts.enrollment.domain.self_service import (
     AbsenceWindowClosed,
     DuplicateAbsenceNotice,
+    ParentActionDisabled,
     ParentSelfServicePolicy,
     StudentNotEnrolledInSession,
 )
@@ -163,6 +164,10 @@ class SubmitAbsenceNotice:
         self._notifier = notifier
 
     async def execute(self, cmd: SubmitAbsenceNoticeCommand) -> AbsenceNotice:
+        policy = await self._policies.get_or_default()
+        if not policy.can_report_absence:
+            raise ParentActionDisabled("report_absence")
+
         student = await self._students.get_for_parent(cmd.parent_id, cmd.student_id)
         if student is None:
             raise StudentNotFound("student not found for parent", student_id=cmd.student_id)
@@ -192,7 +197,6 @@ class SubmitAbsenceNotice:
                 student_id=cmd.student_id,
             )
 
-        policy = await self._policies.get_or_default()
         notice_window_met = (occurrence.start_at - now) >= timedelta(
             hours=policy.absence_notice_min_hours
         )

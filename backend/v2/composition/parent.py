@@ -249,6 +249,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
+from backend.v2.contexts.identity.domain.public_page import PUBLIC_PAGE_FIELD, PublicPageSettings
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -912,10 +913,21 @@ def compose_parent(
         occurrence_roster=occurrence_roster_repo,
         policies=self_service_policies_repo,
     )
+
+    class _TrialsOpenGate:
+        """Reads the academy's Public page "Accept free trial requests"
+        toggle at request time (Settings overhaul Phase 1 Lane C: parent
+        trial requests reuse this switch rather than a duplicate one)."""
+
+        async def trials_open(self) -> bool:
+            doc = await db["academies"].find_one({"academy_id": current_academy_id()})
+            return PublicPageSettings.from_stored((doc or {}).get(PUBLIC_PAGE_FIELD)).trials_open
+
     submit_trial_request = SubmitTrialRequest(
         students=students_query,
         sessions=sessions_query,
         trials=trial_requests_repo,
+        trials_open=_TrialsOpenGate(),
     )
     list_parent_trial_requests = ListParentTrialRequests(trials=trial_requests_repo)
 
@@ -1128,7 +1140,11 @@ def compose_parent(
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     # Issue #616: a request nobody is told about sits PENDING for months.
-    request_pause = RequestEnrollmentPause(pause_requests=pause_requests, notifier=roster_notifier)
+    request_pause = RequestEnrollmentPause(
+        pause_requests=pause_requests,
+        notifier=roster_notifier,
+        policies=self_service_policies_repo,
+    )
     list_parent_pause_requests = ListParentPauseRequests(pause_requests=pause_requests)
 
     # Cross-context handlers register themselves at import time via @handler.
@@ -2494,7 +2510,22 @@ def compose_parent(
         return await waivers_repo.get_active()
 
     async def get_academy_info(*, academy_id: str) -> dict[str, Any]:
+        # Settings overhaul Phase 1 Lane C: the parent shell hides disabled
+        # self-service actions rather than only disabling them, so the
+        # switches ride along on the same academy payload it already loads.
+        policy = await self_service_policies_repo.get_or_default()
         doc = await db["academies"].find_one({"academy_id": academy_id})
+        # Free trial requests reuse the Public page "Accept free trial
+        # requests" toggle rather than a duplicate switch (see release note).
+        trials_open = PublicPageSettings.from_stored((doc or {}).get(PUBLIC_PAGE_FIELD)).trials_open
+        self_service = {
+            "can_report_absence": policy.can_report_absence,
+            "can_request_makeup": policy.can_request_makeup,
+            "can_request_pause": policy.can_request_pause,
+            "can_request_cancel": policy.can_request_cancel,
+            "can_claim_waitlist_offer": policy.can_claim_waitlist_offer,
+            "can_request_trial": trials_open,
+        }
         if not doc:
             return {
                 "display_name": "Academy",
@@ -2505,6 +2536,8 @@ def compose_parent(
                 "address": None,
                 "logo_url": None,
                 "brand_color": None,
+                "self_service": self_service,
+                "payment_instructions": policy.payment_instructions or None,
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
@@ -2515,6 +2548,8 @@ def compose_parent(
             "address": doc.get("address"),
             "logo_url": doc.get("logo_url"),
             "brand_color": doc.get("brand_color"),
+            "self_service": self_service,
+            "payment_instructions": policy.payment_instructions or None,
         }
 
     async def get_child_schedule(

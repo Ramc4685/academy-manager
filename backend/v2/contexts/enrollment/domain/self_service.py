@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.shared.http.errors import DomainError
 
@@ -132,6 +132,21 @@ class TrialOutcomeNotAllowed(DomainError):
     status_code = 409
 
 
+class ParentActionDisabled(DomainError):
+    """Raised when a parent tries a self-service action the academy has
+    switched off (Settings overhaul Phase 1, Lane C). Stable code/message so
+    the parent BFF and UI can rely on both without inspecting ``details``."""
+
+    code = "parent_action_disabled"
+    status_code = 403
+
+    def __init__(self, action: str) -> None:
+        super().__init__(
+            "Your academy handles this directly. Please contact them.",
+            action=action,
+        )
+
+
 class EnrollmentNotCancellable(DomainError):
     """Raised when a parent tries to self-cancel an enrollment that isn't
     ``active`` (already cancelled/paused/withdrawn), or when a double-submit
@@ -186,6 +201,11 @@ def compute_self_cancel_terms(
     return SelfCancelTerms(notice_met=notice_met, fee_cents=fee_cents)
 
 
+#: Max length of the owner-edited manual-payer instructions (Settings
+#: overhaul Phase 1 Lane C item 5).
+PAYMENT_INSTRUCTIONS_MAX_LENGTH = 1000
+
+
 class ParentSelfServicePolicy(BaseModel):
     """Academy-scoped policy governing parent self-service actions."""
 
@@ -196,6 +216,22 @@ class ParentSelfServicePolicy(BaseModel):
     cancellation_minimum_notice_days: int = 7  # R4
     cancellation_fee_cents: int = 0  # R4, flat
     cancellation_effective_timing: Literal["immediate", "end_of_period"] = "end_of_period"
+    # "What parents can do in the app" switches (Settings overhaul Phase 1
+    # Lane C). All default True = today's behaviour; a doc missing these
+    # keys (every doc before this change) validates to True via these
+    # defaults, so no migration/backfill is needed. Free trial requests
+    # reuse the existing Public page "Accept free trial requests" toggle
+    # (identity.PublicPageSettings.trials_open) rather than duplicating a
+    # switch here — see interfaces/parent/trial_routes.py.
+    can_report_absence: bool = True
+    can_request_makeup: bool = True
+    can_request_pause: bool = True
+    can_request_cancel: bool = True
+    can_claim_waitlist_offer: bool = True
+    #: Owner-edited plain text shown to parents on the invoice/pay screen and
+    #: in the invoice email when non-empty. Rendered escaped, whitespace
+    #: preserved. Lives next to the offline-payments setting (PR #993).
+    payment_instructions: str = Field(default="", max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH)
 
     @staticmethod
     def default(academy_id: str) -> ParentSelfServicePolicy:

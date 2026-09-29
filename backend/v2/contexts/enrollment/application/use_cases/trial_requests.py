@@ -36,6 +36,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     DuplicateTrialRequest,
     OccurrenceFull,
     OccurrenceRosterEntry,
+    ParentActionDisabled,
     TrialRequest,
     TrialRequestNotFound,
     TrialRequestNotPending,
@@ -90,6 +91,20 @@ class TrialRequestRepository(Protocol):
     async def list_for_parent(self, parent_user_id: str) -> list[TrialRequest]: ...
 
 
+class TrialsOpenQuery(Protocol):
+    """Reads whether the academy accepts trial requests.
+
+    Settings overhaul Phase 1 Lane C: parent trial requests reuse the
+    existing Public page "Accept free trial requests" toggle
+    (``identity.PublicPageSettings.trials_open``) instead of a duplicate
+    switch on ``ParentSelfServicePolicy`` — see release note. Optional so
+    existing constructions/tests that predate the gate keep working; real
+    composition always sets it.
+    """
+
+    async def trials_open(self) -> bool: ...
+
+
 class SubmitTrialRequest:
     def __init__(
         self,
@@ -97,14 +112,18 @@ class SubmitTrialRequest:
         students: StudentQuery,
         sessions: SessionRepository,
         trials: TrialRequestRepository,
+        trials_open: TrialsOpenQuery | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._students = students
         self._sessions = sessions
         self._trials = trials
+        self._trials_open = trials_open
         self._now = clock
 
     async def execute(self, cmd: SubmitTrialRequestCommand) -> TrialRequest:
+        if self._trials_open is not None and not await self._trials_open.trials_open():
+            raise ParentActionDisabled("request_trial")
         if cmd.student_ref == "existing_student":
             assert cmd.student_id is not None  # enforced by command validator
             student = await self._students.get_for_parent(cmd.parent_user_id, cmd.student_id)

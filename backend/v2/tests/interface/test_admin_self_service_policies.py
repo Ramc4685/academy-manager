@@ -33,6 +33,12 @@ def test_get_self_service_policy_returns_defaults(admin_client):
         "cancellation_minimum_notice_days": 7,
         "cancellation_fee_cents": 0,
         "cancellation_effective_timing": "end_of_period",
+        "can_report_absence": True,
+        "can_request_makeup": True,
+        "can_request_pause": True,
+        "can_request_cancel": True,
+        "can_claim_waitlist_offer": True,
+        "payment_instructions": "",
     }
 
 
@@ -144,6 +150,66 @@ def test_a_full_resubmit_with_the_cancellation_terms_unchanged_still_saves(
     assert response.json()["cancellation_fee_cents"] == 1_000
     assert all("cancellation_fee_cents" not in w for w in store.field_writes)
     assert all("cancellation_minimum_notice_days" not in w for w in store.field_writes)
+
+
+def test_put_can_turn_a_switch_off_without_touching_cancellation_terms(admin_only_client):
+    store = _wire(admin_only_client)
+
+    response = admin_only_client.put(ROUTE, json={"can_report_absence": False})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["can_report_absence"] is False
+    assert response.json()["can_request_makeup"] is True
+    assert store.field_writes == [{"can_report_absence": False}]
+
+
+def test_put_saves_and_clears_payment_instructions(admin_client):
+    _wire(admin_client)
+
+    on = admin_client.put(ROUTE, json={"payment_instructions": "Pay Sam by Venmo @sam-academy."})
+    assert on.status_code == 200, on.text
+    assert on.json()["payment_instructions"] == "Pay Sam by Venmo @sam-academy."
+
+    cleared = admin_client.put(ROUTE, json={"payment_instructions": ""})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["payment_instructions"] == ""
+
+
+def test_put_rejects_payment_instructions_over_max_length(admin_client):
+    _wire(admin_client)
+
+    response = admin_client.put(ROUTE, json={"payment_instructions": "x" * 1001})
+
+    assert response.status_code == 422, response.text
+
+
+def test_an_admin_without_owner_cannot_change_payment_instructions(admin_only_client):
+    store = _wire(admin_only_client)
+
+    response = admin_only_client.put(
+        ROUTE, json={"payment_instructions": "Pay Sam by Venmo @sam-academy."}
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "Only the academy owner can change payment instructions."
+    assert store.field_writes == []
+
+
+def test_an_admin_without_owner_can_resend_the_same_payment_instructions(admin_only_client):
+    """Sending the unchanged value back is not a change and must not be refused."""
+    store = _wire(admin_only_client)
+
+    response = admin_only_client.put(
+        ROUTE,
+        json={
+            "payment_instructions": store.policy.payment_instructions,
+            "can_report_absence": False,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["can_report_absence"] is False
+    assert store.field_writes == [{"can_report_absence": False}]
 
 
 def test_a_cleared_makeup_expiry_is_rejected(admin_client):

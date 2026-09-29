@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
 import {
+  getParentAcademy,
   getParentInvoice,
   getCheckoutStatus,
   listParentEnrollments,
@@ -30,6 +31,7 @@ import {
   showAutopayOptinForBalance,
   showAutopayOptinForInvoice,
 } from "@/lib/parent-autopay-optin";
+import { queryKeys } from "@/lib/query/keys";
 
 const AUTOPAY_START_FAILED =
   "Something went wrong starting autopay. Please try again or contact the academy.";
@@ -218,6 +220,10 @@ export default function ParentPaymentsPage() {
     queryFn: listParentInvoices,
     staleTime: returnedFromCheckout ? 0 : undefined,
     refetchOnMount: returnedFromCheckout ? "always" : undefined,
+  });
+  const academyQuery = useQuery({
+    queryKey: queryKeys.parent.academy(),
+    queryFn: getParentAcademy,
   });
   const invoiceDetailQuery = useQuery({
     queryKey: ["parent", "invoice-detail", selectedInvoiceId],
@@ -689,6 +695,14 @@ export default function ParentPaymentsPage() {
                           ))}
                         </ul>
                       ) : null}
+                      {academyQuery.data?.payment_instructions && (
+                        <p
+                          data-testid="invoice-payment-instructions"
+                          className="mt-3 whitespace-pre-wrap rounded-lg bg-rally-paper p-3 text-xs text-rally-muted"
+                        >
+                          {academyQuery.data.payment_instructions}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

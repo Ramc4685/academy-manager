@@ -77,6 +77,12 @@ export default function ParentChildrenPage() {
   const allAttendance = attendanceData?.records ?? [];
   const allEnrollments = enrollmentsData?.enrollments ?? [];
   const academyTimezone = academy?.timezone ?? null;
+  // Settings overhaul Phase 1 Lane C: hide (not just disable) an action the
+  // academy has switched off. Undefined (still loading) defaults true.
+  const selfService = academy?.self_service;
+  const canReportAbsence = selfService?.can_report_absence ?? true;
+  const canRequestPause = selfService?.can_request_pause ?? true;
+  const canRequestCancel = selfService?.can_request_cancel ?? true;
 
   return (
     <section data-testid="parent-children">
@@ -112,6 +118,9 @@ export default function ParentChildrenPage() {
               attendance={allAttendance.filter((r) => r.student_id === child.student_id)}
               enrollments={allEnrollments.filter((e) => e.student_id === child.student_id)}
               academyTimezone={academyTimezone}
+              canReportAbsence={canReportAbsence}
+              canRequestPause={canRequestPause}
+              canRequestCancel={canRequestCancel}
             />
           ))}
         </div>
@@ -125,11 +134,17 @@ function ChildCard({
   attendance,
   enrollments,
   academyTimezone,
+  canReportAbsence,
+  canRequestPause,
+  canRequestCancel,
 }: {
   child: ParentChild;
   attendance: ParentAttendanceRecord[];
   enrollments: ParentEnrollment[];
   academyTimezone: string | null;
+  canReportAbsence: boolean;
+  canRequestPause: boolean;
+  canRequestCancel: boolean;
 }) {
   const { data: scheduleData } = useQuery({
     queryKey: ["parent", "child-schedule", child.student_id],
@@ -195,7 +210,13 @@ function ChildCard({
         ) : (
           <ul className="space-y-2">
             {sessions.map((s) => (
-              <SessionRow key={s.occurrence_id} studentId={child.student_id} entry={s} academyTimezone={academyTimezone} />
+              <SessionRow
+                key={s.occurrence_id}
+                studentId={child.student_id}
+                entry={s}
+                academyTimezone={academyTimezone}
+                canReportAbsence={canReportAbsence}
+              />
             ))}
           </ul>
         )}
@@ -209,7 +230,13 @@ function ChildCard({
           </p>
           <ul className="space-y-2">
             {listedEnrollments.map((e) => (
-              <EnrollmentRow key={e.enrollment_id} enrollment={e} academyTimezone={academyTimezone} />
+              <EnrollmentRow
+                key={e.enrollment_id}
+                enrollment={e}
+                academyTimezone={academyTimezone}
+                canRequestPause={canRequestPause}
+                canRequestCancel={canRequestCancel}
+              />
             ))}
           </ul>
         </div>
@@ -238,10 +265,12 @@ function SessionRow({
   studentId,
   entry,
   academyTimezone,
+  canReportAbsence,
 }: {
   studentId: string;
   entry: ParentScheduleEntry;
   academyTimezone: string | null;
+  canReportAbsence: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -304,7 +333,7 @@ function SessionRow({
         </p>
       )}
 
-      {cancelled ? null : submitted ? (
+      {cancelled || !canReportAbsence ? null : submitted ? (
         <p role="status" className="text-xs font-semibold text-status-green-800">
           Absence reported
         </p>
@@ -327,9 +356,13 @@ function SessionRow({
 function EnrollmentRow({
   enrollment,
   academyTimezone,
+  canRequestPause,
+  canRequestCancel,
 }: {
   enrollment: ParentEnrollment;
   academyTimezone: string | null;
+  canRequestPause: boolean;
+  canRequestCancel: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   // #843: pausing moved here from the Payments page — it belongs with the
@@ -394,30 +427,34 @@ function EnrollmentRow({
             Enroll in a class
           </Link>
         )}
-        {!departed && !held && !pendingLabel && (
+        {!departed && !held && !pendingLabel && (canRequestPause || canRequestCancel) && (
           <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              data-testid={`enrollment-pause-${enrollment.enrollment_id}`}
-              aria-expanded={pausing}
-              onClick={() => setPausing((open) => !open)}
-            >
-              Pause enrollment
-            </Button>
-            <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
-              Cancel enrollment…
-            </Button>
+            {canRequestPause && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid={`enrollment-pause-${enrollment.enrollment_id}`}
+                aria-expanded={pausing}
+                onClick={() => setPausing((open) => !open)}
+              >
+                Pause enrollment
+              </Button>
+            )}
+            {canRequestCancel && (
+              <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
+                Cancel enrollment…
+              </Button>
+            )}
           </div>
         )}
       </div>
-      {pausing && (
+      {pausing && canRequestPause && (
         <PauseEnrollmentForm
           enrollmentId={enrollment.enrollment_id}
           onCancel={() => setPausing(false)}
         />
       )}
-      {confirming && (
+      {confirming && canRequestCancel && (
         <CancelEnrollmentDialog
           enrollment={enrollment}
           academyTimezone={academyTimezone}

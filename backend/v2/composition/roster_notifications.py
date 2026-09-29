@@ -392,6 +392,7 @@ def render_waitlist_offer_email(
     portal_url: str | None,
     offer_expires_at: datetime | None,
     academy_timezone: str | None = None,
+    can_claim: bool = True,
 ) -> tuple[str, str]:
     """The family's "a seat opened — claim it by <date>" mail, and the "it
     went to the next family" mail when the window closes (#828).
@@ -427,13 +428,20 @@ def render_waitlist_offer_email(
         )
 
     deadline = format_deadline(offer_expires_at, academy_timezone=academy_timezone)
+    hold_sentence = (
+        f"{safe_student} is next on the waitlist. We are holding the seat until "
+        f"<strong>{html.escape(deadline)}</strong> — confirm by then to claim it."
+        if can_claim
+        else (
+            f"{safe_student} is next on the waitlist. We are holding the seat until "
+            f"<strong>{html.escape(deadline)}</strong> — contact "
+            f"{html.escape(academy_name)} by then to claim it."
+        )
+    )
     parts = [
         f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
         f"A seat opened in {safe_session} for {safe_student}</h2>",
-        _para(
-            f"{safe_student} is next on the waitlist. We are holding the seat until "
-            f"<strong>{html.escape(deadline)}</strong> — confirm by then to claim it."
-        ),
+        _para(hold_sentence),
         _para(
             f"<strong>When:</strong> "
             f"{html.escape(format_session_schedule(session, academy_timezone=academy_timezone))}"
@@ -487,6 +495,7 @@ class RosterAlertAdapter:
         audiences: AudienceResolver,
         sender: EmailSendPort,
         unsubscribe_links: UnsubscribeLinkBuilder | None = None,
+        self_service_policies: Any | None = None,
     ) -> None:
         self._sessions = sessions
         self._enrollments = enrollments
@@ -495,6 +504,11 @@ class RosterAlertAdapter:
         self._audiences = audiences
         self._sender = sender
         self._unsubscribe_links = unsubscribe_links or UnsubscribeLinkBuilder()
+        # Settings overhaul Phase 1 Lane C: when the waitlist-claim switch is
+        # off, the offer email must not carry a claim link (item 4). Optional
+        # so existing constructions/tests keep working; real composition
+        # always sets it.
+        self._self_service_policies = self_service_policies
 
     async def roster_changed(
         self,
@@ -998,17 +1012,38 @@ class RosterAlertAdapter:
         base = academy_frontend_url(
             frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
         )
+        # Item 4: when the academy has switched off claiming waitlist offers
+        # in the app, the email must not carry a claim link — parents cannot
+        # act on it in-app, so a link that 403s is worse than none. This
+        # applies only to the "seat opened, claim it" email; the "offer
+        # expired" email's portal_url is a read-only "view your requests"
+        # link and is unaffected.
+        can_claim = True
+        if offer_expires_at is not None and self._self_service_policies is not None:
+            try:
+                policy = await self._self_service_policies.get_or_default()
+                can_claim = bool(policy.can_claim_waitlist_offer)
+            except Exception:
+                logger.warning(
+                    "enrollment.waitlist_offer_policy_unresolved",
+                    extra={"waitlist_id": waitlist_id},
+                    exc_info=True,
+                )
         subject, body = render_waitlist_offer_email(
             session=session,
             academy_name=academy_name,
             student_name=await self._student_name(student_id) or "Your child",
             # The Requests page shows the family's offers (X2); the id lets it
-            # scroll to and highlight this one.
+            # scroll to and highlight this one. None when the app-claim
+            # switch is off (item 4).
             portal_url=(
-                f"{base.rstrip('/')}/parent/requests?offer={quote(waitlist_id)}" if base else None
+                f"{base.rstrip('/')}/parent/requests?offer={quote(waitlist_id)}"
+                if base and can_claim
+                else None
             ),
             offer_expires_at=offer_expires_at,
             academy_timezone=academy_timezone,
+            can_claim=can_claim,
         )
         await self._send_one(
             recipient=recipient,
@@ -1199,6 +1234,10 @@ def compose_roster_notifier(
     the waitlist promotion that follows it) and has no welcome adapter to
     build, so it takes this rather than the pair.
     """
+    from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+        MongoSelfServicePolicyRepository,
+    )
+
     return RosterAlertAdapter(
         sessions=sessions or MongoSessionRepository(db),
         enrollments=MongoEnrollmentRepository(db),
@@ -1207,4 +1246,7 @@ def compose_roster_notifier(
         audiences=MongoAudienceResolver(db=db),
         sender=_build_email_sender(settings, db),
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        # Item 4: the "seat opened, claim it" email must not carry a claim
+        # link when the waitlist-claim switch is off.
+        self_service_policies=MongoSelfServicePolicyRepository(db),
     )

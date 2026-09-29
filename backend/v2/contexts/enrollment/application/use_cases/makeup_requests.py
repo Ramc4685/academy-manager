@@ -40,6 +40,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     MakeupWindowExpired,
     OccurrenceFull,
     OccurrenceRosterEntry,
+    ParentActionDisabled,
     ParentSelfServicePolicy,
     StudentNotEnrolledInSession,
     open_slots,
@@ -120,6 +121,10 @@ class SubmitMakeupRequest:
         self._now = clock
 
     async def execute(self, cmd: SubmitMakeupRequestCommand) -> MakeupRequest:
+        policy = await self._policies.get_or_default()
+        if not policy.can_request_makeup:
+            raise ParentActionDisabled("request_makeup")
+
         student = await self._students.get_for_parent(cmd.parent_id, cmd.student_id)
         if student is None:
             raise StudentNotFound("student not found for parent", student_id=cmd.student_id)
@@ -138,8 +143,6 @@ class SubmitMakeupRequest:
                 session_id=missed.session_id,
                 student_id=cmd.student_id,
             )
-
-        policy = await self._policies.get_or_default()
 
         if policy.makeup_requires_notice:
             notice = await self._notices.get_for_occurrence_and_student(

@@ -1222,6 +1222,7 @@ def compose_admin(
                 billing_counters=billing_counters_repo,
                 billing_settings=billing_settings_repo,
             ),
+            self_service_policies=self_service_policy_repo,
             contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
         )
 

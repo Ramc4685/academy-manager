@@ -170,3 +170,64 @@ def test_update_rejects_a_zero_makeup_expiry() -> None:
     input on the Settings page used to save exactly that."""
     with pytest.raises(ValidationError):
         UpdateSelfServicePolicyCommand(makeup_expiry_days=0)
+
+
+# --- "What parents can do in the app" switches (Settings overhaul Phase 1
+# Lane C) --------------------------------------------------------------------
+
+
+def test_default_policy_has_every_switch_on() -> None:
+    """Every academy that predates this change has no stored keys for these
+    switches; the default must be True so behaviour is unchanged (BLNO)."""
+    policy = ParentSelfServicePolicy.default("acad")
+
+    assert policy.can_report_absence is True
+    assert policy.can_request_makeup is True
+    assert policy.can_request_pause is True
+    assert policy.can_request_cancel is True
+    assert policy.can_claim_waitlist_offer is True
+    assert policy.payment_instructions == ""
+
+
+def test_a_doc_missing_the_new_keys_validates_to_the_defaults() -> None:
+    """Simulates a pre-existing Mongo document (no migration/backfill)."""
+    policy = ParentSelfServicePolicy.model_validate(
+        {"academy_id": "acad", "absence_notice_min_hours": 4}
+    )
+
+    assert policy.can_report_absence is True
+    assert policy.can_claim_waitlist_offer is True
+    assert policy.payment_instructions == ""
+
+
+@pytest.mark.asyncio
+async def test_update_can_turn_a_switch_off_and_leaves_others_untouched() -> None:
+    repo = _FakeRepo()
+
+    result = await UpdateSelfServicePolicy(policies=repo).execute(
+        UpdateSelfServicePolicyCommand(can_report_absence=False)
+    )
+
+    assert result.can_report_absence is False
+    assert result.can_request_makeup is True
+    assert repo.field_writes == [{"can_report_absence": False}]
+
+
+@pytest.mark.asyncio
+async def test_update_can_set_and_clear_payment_instructions() -> None:
+    repo = _FakeRepo()
+
+    on = await UpdateSelfServicePolicy(policies=repo).execute(
+        UpdateSelfServicePolicyCommand(payment_instructions="Pay Sam by Venmo @sam-academy.")
+    )
+    assert on.payment_instructions == "Pay Sam by Venmo @sam-academy."
+
+    cleared = await UpdateSelfServicePolicy(policies=repo).execute(
+        UpdateSelfServicePolicyCommand(payment_instructions="")
+    )
+    assert cleared.payment_instructions == ""
+
+
+def test_payment_instructions_over_max_length_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        UpdateSelfServicePolicyCommand(payment_instructions="x" * 1001)

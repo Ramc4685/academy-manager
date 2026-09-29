@@ -45,6 +45,15 @@ split from:
   ``PUT /self-service/policy`` at all; ``PUT /billing/rules`` is their only
   write path.
 
+* :func:`ensure_owner_for_payment_instructions` — the action-level rule
+  inside ``PUT /self-service/policy`` (Lane C parent self-service switches,
+  2026-09-29 owner decision): the offline-payment instructions shown to
+  parents are owner-only content, same tier as prices and fees.
+  Only refused when the request would actually change the stored text, so a
+  plain admin saving the other self-service switches with the instructions
+  untouched is not blocked. Not in ``OWNER_ONLY_ROUTE_PATHS`` for the same
+  reason as the mixed-form rules above.
+
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
 and dues; refunds, credits, pricing, payouts/payroll, financial reports,
@@ -334,3 +343,19 @@ def ensure_owner_for_currency_change(claims: AuthClaims) -> None:
 
     if "owner" not in claims.roles:
         raise HTTPException(status_code=403, detail=CURRENCY_CHANGE_FORBIDDEN)
+
+
+def ensure_owner_for_payment_instructions(claims: AuthClaims) -> None:
+    """Only an owner may change the offline-payment instructions shown to parents.
+
+    Called only when the request actually changes the stored text, so an
+    admin saving the other self-service switches with the instructions
+    untouched is not refused. Same 403 contract as
+    :func:`ensure_owner_for_price_change`.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the academy owner can change payment instructions.",
+        )

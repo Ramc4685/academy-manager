@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Protocol
 
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
@@ -54,12 +55,20 @@ from backend.v2.contexts.enrollment.domain.errors import (
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.contexts.enrollment.domain.self_service import (
+    ParentActionDisabled,
+    ParentSelfServicePolicy,
+)
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
 
 Clock = Callable[[], datetime]
+
+
+class SelfServicePolicyRepository(Protocol):
+    async def get_or_default(self) -> ParentSelfServicePolicy: ...
 
 
 class ConfirmWaitlistOffer:
@@ -82,6 +91,7 @@ class ConfirmWaitlistOffer:
         sessions: SessionWriter | None = None,
         seat_broker: SeatBroker | None = None,
         clock: Clock = lambda: datetime.now(UTC),
+        policies: SelfServicePolicyRepository | None = None,
     ) -> None:
         self._waitlist = waitlist
         self._enrollments = enrollments
@@ -93,6 +103,11 @@ class ConfirmWaitlistOffer:
         # Attached by main.py after composition, like every other seat taker.
         self._seat_broker = seat_broker
         self._now = clock
+        # Optional so existing constructions/tests that predate the switch
+        # keep working; real composition always sets it. Only enforced for
+        # parent-initiated confirms (parent_id set) — staff/admin confirms
+        # (actor_id, no parent_id) are never gated.
+        self._policies = policies
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._seat_broker = seat_broker
@@ -131,6 +146,11 @@ class ConfirmWaitlistOffer:
         actor_id: str | None = None,
     ) -> str:
         """Returns the enrollment id. Confirming twice returns the same one."""
+        if parent_id is not None and self._policies is not None:
+            policy = await self._policies.get_or_default()
+            if not policy.can_claim_waitlist_offer:
+                raise ParentActionDisabled("claim_waitlist_offer")
+
         entry = await self._waitlist.get(waitlist_id)
         # A stranger's entry reads exactly like a missing one: the id travels
         # in an email link, and a distinct 403 would confirm it exists.

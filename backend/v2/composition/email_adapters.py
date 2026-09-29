@@ -286,6 +286,7 @@ class InvoiceEmailAdapter:
         sender: EmailSendPort,
         naming: Callable[[str], Awaitable[InvoiceNaming | None]] | None = None,
         contact_copies: InvoiceContactCopies | None = None,
+        self_service_policies: Any | None = None,
     ) -> None:
         self._memberships = memberships
         self._users = users
@@ -297,6 +298,24 @@ class InvoiceEmailAdapter:
         # L1b2: copies for family contacts with "Gets invoices" on. Unwired
         # means the parent is the only recipient, exactly as before.
         self._contact_copies = contact_copies
+        # Settings overhaul Phase 1 Lane C item 5: owner-edited plain text
+        # for manual payers, shown when non-empty. Unwired (or a read
+        # failure) means the email is exactly as before — no instructions.
+        self._self_service_policies = self_service_policies
+
+    async def _payment_instructions_html(self) -> str:
+        if self._self_service_policies is None:
+            return ""
+        try:
+            policy = await self._self_service_policies.get_or_default()
+        except Exception:
+            log.warning("invoice_email_payment_instructions_unresolved", exc_info=True)
+            return ""
+        text = (getattr(policy, "payment_instructions", "") or "").strip()
+        if not text:
+            return ""
+        # Escaped, whitespace preserved (spec item 5).
+        return f"<p style='color: {_BRAND_MUTED}; white-space: pre-wrap;'>{html.escape(text)}</p>"
 
     async def _naming_for(self, invoice_id: str) -> InvoiceNaming:
         if self._naming is None:
@@ -370,6 +389,7 @@ class InvoiceEmailAdapter:
         subject = self._tuition_for(period, naming)
         if naming.session_label:
             subject = f"{subject} — {naming.session_label}"
+        payment_instructions_html = await self._payment_instructions_html()
         inner = (
             f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
             f"{html.escape(month)} tuition</h2>"
@@ -377,6 +397,7 @@ class InvoiceEmailAdapter:
             f"<p>Balance due: <strong>{safe_amount}</strong> "
             f"(invoice total {safe_total}).</p>"
             f"{pay_line}"
+            f"{payment_instructions_html}"
             f"{self._invoice_number_html(naming)}"
         )
         brand = await _academy_brand(self._academies, academy_name)

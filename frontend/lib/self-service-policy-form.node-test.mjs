@@ -75,3 +75,29 @@ test("an out-of-bounds value already stored does not lock the other fields", () 
   assert.deepEqual(errors, {});
   assert.deepEqual(payload, { absence_notice_min_hours: 6 });
 });
+
+test("a missing switch on the stored policy defaults to on (pre-migration doc)", () => {
+  const form = policyToForm(STORED);
+  assert.equal(form.can_report_absence, true);
+  assert.equal(form.can_claim_waitlist_offer, true);
+  // Untouched switches produce no payload — same "only what changed" rule
+  // as the number fields.
+  assert.deepEqual(policyPatch(STORED, form).payload, {});
+});
+
+test("toggling a switch off sends only that switch", () => {
+  const form = { ...policyToForm(STORED), can_request_pause: false };
+  const { payload, errors } = policyPatch(STORED, form);
+  assert.deepEqual(errors, {});
+  assert.deepEqual(payload, { can_request_pause: false });
+});
+
+test("the settings card names all five switches and links to the trials toggle", () => {
+  assert.match(panel, /What parents can do in the app/);
+  assert.match(panel, /can_report_absence/);
+  assert.match(panel, /can_request_makeup/);
+  assert.match(panel, /can_request_pause/);
+  assert.match(panel, /can_request_cancel/);
+  assert.match(panel, /can_claim_waitlist_offer/);
+  assert.match(panel, /Accept free trial requests/);
+});

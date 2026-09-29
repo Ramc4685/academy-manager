@@ -131,6 +131,47 @@ export function SelfServicePanel() {
             </span>
           </label>
 
+          <div className="mt-8">
+            <Overline>What parents can do in the app</Overline>
+          </div>
+          <p className="mt-2 text-xs text-rally-muted">
+            Off hides the action for parents; a parent who tries anyway gets a clear message to
+            contact the academy directly. Free trial requests are governed by the Public page{" "}
+            <a href="?panel=public-page" className="underline">
+              &quot;Accept free trial requests&quot;
+            </a>{" "}
+            toggle, not a switch here.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <SwitchField
+              label="Report an absence"
+              checked={form.can_report_absence}
+              onChange={(checked) => setForm((prev) => ({ ...prev, can_report_absence: checked }))}
+            />
+            <SwitchField
+              label="Request a makeup"
+              checked={form.can_request_makeup}
+              onChange={(checked) => setForm((prev) => ({ ...prev, can_request_makeup: checked }))}
+            />
+            <SwitchField
+              label="Request a pause / hold"
+              checked={form.can_request_pause}
+              onChange={(checked) => setForm((prev) => ({ ...prev, can_request_pause: checked }))}
+            />
+            <SwitchField
+              label="Request to cancel / withdraw"
+              checked={form.can_request_cancel}
+              onChange={(checked) => setForm((prev) => ({ ...prev, can_request_cancel: checked }))}
+            />
+            <SwitchField
+              label="Claim a waitlist seat offer"
+              checked={form.can_claim_waitlist_offer}
+              onChange={(checked) =>
+                setForm((prev) => ({ ...prev, can_claim_waitlist_offer: checked }))
+              }
+            />
+          </div>
+
           <Footer
             dirty={dirty && !hasErrors}
             pending={mutation.isPending}
@@ -141,6 +182,28 @@ export function SelfServicePanel() {
         </Card>
       )}
     </section>
+  );
+}
+
+function SwitchField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm font-medium text-rally-ink">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        data-testid={`self-service-switch-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+      />
+      {label}
+    </label>
   );
 }
 

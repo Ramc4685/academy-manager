@@ -10,10 +10,22 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     RequestEnrollmentPause,
     RequestEnrollmentPauseCommand,
 )
+from backend.v2.contexts.enrollment.domain.self_service import (
+    ParentActionDisabled,
+    ParentSelfServicePolicy,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_pause_request_repo import (
     MongoPauseRequestRepository,
 )
 from backend.v2.shared.tenancy.context import tenant_scope
+
+
+class _FakePolicies:
+    def __init__(self, policy: ParentSelfServicePolicy | None = None) -> None:
+        self._policy = policy or ParentSelfServicePolicy.default("acad")
+
+    async def get_or_default(self) -> ParentSelfServicePolicy:
+        return self._policy
 
 
 def test_fixed_pause_requires_resume_on() -> None:
@@ -425,3 +437,67 @@ class _FakeSubmittedNotifier:
                 "reason": reason,
             }
         )
+
+
+# --- can_request_pause switch (Settings overhaul Phase 1 Lane C) -----------
+
+
+@pytest.mark.asyncio
+async def test_request_pause_rejected_when_switch_off() -> None:
+    repo = _FakePauseRequests()
+    off_policy = ParentSelfServicePolicy.default("acad").model_copy(
+        update={"can_request_pause": False}
+    )
+    use_case = RequestEnrollmentPause(pause_requests=repo, policies=_FakePolicies(off_policy))
+
+    with pytest.raises(ParentActionDisabled) as exc_info:
+        await use_case.execute(
+            RequestEnrollmentPauseCommand(
+                parent_id="parent-1",
+                enrollment_id="enr-1",
+                pause_kind="fixed",
+                resume_on=date(2026, 7, 15),
+                reason="summer travel",
+            )
+        )
+
+    assert exc_info.value.code == "parent_action_disabled"
+    assert not hasattr(repo, "request")
+
+
+@pytest.mark.asyncio
+async def test_request_pause_allowed_when_switch_on() -> None:
+    repo = _FakePauseRequests()
+    use_case = RequestEnrollmentPause(pause_requests=repo, policies=_FakePolicies())
+
+    request = await use_case.execute(
+        RequestEnrollmentPauseCommand(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            pause_kind="fixed",
+            resume_on=date(2026, 7, 15),
+            reason="summer travel",
+        )
+    )
+
+    assert request.pause_kind == "fixed"
+
+
+@pytest.mark.asyncio
+async def test_request_pause_allowed_when_policies_not_wired() -> None:
+    """Backward compat: fixtures/tests that predate the switch pass no
+    ``policies`` and must keep behaving exactly as before."""
+    repo = _FakePauseRequests()
+    use_case = RequestEnrollmentPause(pause_requests=repo)
+
+    request = await use_case.execute(
+        RequestEnrollmentPauseCommand(
+            parent_id="parent-1",
+            enrollment_id="enr-1",
+            pause_kind="fixed",
+            resume_on=date(2026, 7, 15),
+            reason="summer travel",
+        )
+    )
+
+    assert request.pause_kind == "fixed"

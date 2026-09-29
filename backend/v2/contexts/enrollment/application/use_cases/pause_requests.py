@@ -23,6 +23,10 @@ from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions impo
     ScheduledEnrollmentActionRepository,
 )
 from backend.v2.contexts.enrollment.domain.errors import EnrollmentNotFound
+from backend.v2.contexts.enrollment.domain.self_service import (
+    ParentActionDisabled,
+    ParentSelfServicePolicy,
+)
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
 
@@ -177,17 +181,30 @@ class PauseRequestSubmittedNotifier(Protocol):
     ) -> None: ...
 
 
+class SelfServicePolicyRepository(Protocol):
+    async def get_or_default(self) -> ParentSelfServicePolicy: ...
+
+
 class RequestEnrollmentPause:
     def __init__(
         self,
         *,
         pause_requests: PauseRequestRepository,
         notifier: PauseRequestSubmittedNotifier | None = None,
+        policies: SelfServicePolicyRepository | None = None,
     ) -> None:
         self._pause_requests = pause_requests
         self._notifier = notifier
+        # Optional so existing constructions/tests that predate the switch
+        # keep working; real composition always sets it.
+        self._policies = policies
 
     async def execute(self, cmd: RequestEnrollmentPauseCommand) -> PauseRequest:
+        if self._policies is not None:
+            policy = await self._policies.get_or_default()
+            if not policy.can_request_pause:
+                raise ParentActionDisabled("request_pause")
+
         belongs = await self._pause_requests.enrollment_belongs_to_parent(
             cmd.enrollment_id, cmd.parent_id
         )

@@ -11,7 +11,10 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.enrollment.domain.self_service import ParentSelfServicePolicy
+from backend.v2.contexts.enrollment.domain.self_service import (
+    PAYMENT_INSTRUCTIONS_MAX_LENGTH,
+    ParentSelfServicePolicy,
+)
 
 
 class SelfServicePolicyRepo(Protocol):
@@ -40,6 +43,14 @@ class UpdateSelfServicePolicyCommand(BaseModel):
     cancellation_minimum_notice_days: int | None = Field(default=None, ge=0)
     cancellation_fee_cents: int | None = Field(default=None, ge=0)
     cancellation_effective_timing: Literal["immediate", "end_of_period"] | None = None
+    can_report_absence: bool | None = None
+    can_request_makeup: bool | None = None
+    can_request_pause: bool | None = None
+    can_request_cancel: bool | None = None
+    can_claim_waitlist_offer: bool | None = None
+    payment_instructions: str | None = Field(
+        default=None, max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH
+    )
 
     def fields(self) -> dict[str, Any]:
         return self.model_dump(exclude_none=True)
