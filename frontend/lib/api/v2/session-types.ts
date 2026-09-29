@@ -8,6 +8,8 @@
 import { apiFetch } from "../client";
 
 export type SessionTypeBillingPeriod = "monthly" | "per_session";
+/** Pricing page plan type; only "monthly" can be saved for now (PR 11b). */
+export type SessionTypePlanType = "monthly" | "per_session";
 
 export interface SessionTypeView {
   session_type_id: string;
@@ -17,6 +19,8 @@ export interface SessionTypeView {
   billing_period: SessionTypeBillingPeriod;
   overage_rate_cents: number | null;
   is_active: boolean;
+  /** Read as "monthly" for every stored plan (4 classes, 5th free). */
+  plan_type?: SessionTypePlanType;
   created_at: string;
   updated_at: string;
 }
@@ -31,6 +35,7 @@ export interface CreateSessionTypeRequest {
   price_cents: number;
   billing_period?: SessionTypeBillingPeriod;
   overage_rate_cents?: number | null;
+  plan_type?: "monthly";
 }
 
 export interface UpdateSessionTypeRequest {

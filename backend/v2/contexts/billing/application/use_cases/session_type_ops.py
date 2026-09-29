@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -53,6 +53,8 @@ class CreateSessionTypeCommand(BaseModel):
     price_cents: int = Field(ge=0)
     billing_period: BillingPeriodType = "monthly"
     overage_rate_cents: int | None = Field(default=None, ge=0)
+    # Pricing page (PR 11b): only monthly plans can be saved for now.
+    plan_type: Literal["monthly"] = "monthly"
 
 
 class UpdateSessionTypeCommand(BaseModel):
@@ -65,6 +67,7 @@ class UpdateSessionTypeCommand(BaseModel):
     billing_period: BillingPeriodType | None = None
     overage_rate_cents: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
+    plan_type: Literal["monthly"] | None = None
 
 
 class MoveStudentSessionTypeCommand(BaseModel):
@@ -127,6 +130,7 @@ class CreateSessionType:
             price_cents=cmd.price_cents,
             billing_period=cmd.billing_period,
             overage_rate_cents=cmd.overage_rate_cents,
+            plan_type=cmd.plan_type,
             created_at=now,
             updated_at=now,
         )

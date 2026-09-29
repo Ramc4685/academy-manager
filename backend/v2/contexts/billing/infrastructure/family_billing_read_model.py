@@ -46,6 +46,7 @@ from backend.v2.contexts.billing.domain.charge_route import decide_charge_route
 from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
     exclude_non_charge_attempts,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import session_amount_cents
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
 )
@@ -348,6 +349,7 @@ class MongoFamilyBillingReadModel:
             autopay_status=_opt_str(billing.get("autopay_enrollment_status")),
             recurring_discount=discount,
             resume_on=_to_date((deferral or {}).get("resume_on")),
+            class_fee_cents=session_amount_cents(session) if session else None,
         )
 
     @staticmethod
@@ -587,6 +589,10 @@ class MongoFamilyBillingReadModel:
                 "days_of_week": 1,
                 "start_time": 1,
                 "monthly_price_cents": 1,
+                # The class fee as billed (PR 11b display fix): the generator
+                # reads amount_cents first, then the legacy fields.
+                "amount_cents": 1,
+                "monthly_price": 1,
             },
         )
         return {str(doc["session_id"]): doc async for doc in cursor}

@@ -232,6 +232,20 @@ def test_unavailable_source_is_unknown():
     assert _derive(classes=(False, None))["classes"] == "unknown"
 
 
+def test_price_list_step_links_to_the_pricing_page(admin_client):
+    """Settings overhaul PR 11b: the Session types tab left Settings; the price
+    list is the Plans section of the owner-only Pricing page under Money."""
+    _fresh_academy(admin_client)
+
+    r = admin_client.get(URL)
+
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["key"] == "session_types")
+    assert item["href"] == "/admin/pricing"
+    assert item["label"] == "Pricing plans"
+    assert item["owner_only"] is True
+
+
 def test_checklist_links_land_on_live_settings_tabs():
     """Settings overhaul Phase 3 PR 11: no step links to a retired ?panel= key."""
     view = build_setup_checklist(

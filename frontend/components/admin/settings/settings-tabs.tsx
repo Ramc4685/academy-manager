@@ -13,7 +13,6 @@ export type SettingsPanelKey =
   | "integrations"
   | "notifications"
   | "family-policies"
-  | "session-types"
   | "public-page"
   | "curriculum";
 
@@ -23,7 +22,6 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "integrations", label: "Integrations" },
   { key: "notifications", label: "Notifications" },
   { key: "family-policies", label: "Family policies" },
-  { key: "session-types", label: "Session types" },
   { key: "public-page", label: "Public page" },
   { key: "curriculum", label: "Curriculum" },
 ];
@@ -73,6 +71,9 @@ export const RETIRED_SETTINGS_EXTERNAL_REDIRECTS: Readonly<
 > = {
   data: (isOwner) => (isOwner ? "/admin/reports" : "/admin/settings?panel=academy"),
   roles: () => "/admin/users",
+  // Settings overhaul PR 11b: the price list is the Plans section of the
+  // Pricing page under Money (owner-only; an admin sees its owner-only panel).
+  "session-types": () => "/admin/pricing",
 };
 
 interface SettingsTabsProps {

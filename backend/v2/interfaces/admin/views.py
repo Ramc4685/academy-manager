@@ -306,6 +306,9 @@ class SessionTypeView(BaseModel):
     billing_period: Literal["monthly", "per_session"]
     overage_rate_cents: int | None = None
     is_active: bool
+    # Pricing page (Settings overhaul PR 11b). "monthly" = 4 classes per
+    # weekly slot, 5th date free (today's rule, and every stored plan).
+    plan_type: Literal["monthly", "per_session"] = "monthly"
     created_at: datetime
     updated_at: datetime
 
@@ -320,6 +323,8 @@ class CreateSessionTypeRequest(BaseModel):
     price_cents: int = Field(ge=0)
     billing_period: Literal["monthly", "per_session"] = "monthly"
     overage_rate_cents: int | None = Field(default=None, ge=0)
+    # Only "monthly" for now: "per_session" plans are a later phase.
+    plan_type: Literal["monthly"] = "monthly"
 
 
 class UpdateSessionTypeRequest(BaseModel):
@@ -329,6 +334,8 @@ class UpdateSessionTypeRequest(BaseModel):
     billing_period: Literal["monthly", "per_session"] | None = None
     overage_rate_cents: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
+    # Only "monthly" for now: "per_session" plans are a later phase.
+    plan_type: Literal["monthly"] | None = None
 
 
 class StudentBillingEnrollmentView(BaseModel):

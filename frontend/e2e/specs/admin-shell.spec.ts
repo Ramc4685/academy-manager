@@ -143,6 +143,7 @@ const ADMIN_ROUTES = [
   { href: "/admin/inbox?tab=level-ups", testid: "admin-level-up-queue-tab" },
   { href: "/admin/inbox?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
+  { href: "/admin/pricing", testid: "admin-pricing" },
   { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-month-close" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
@@ -160,13 +161,49 @@ const SETTINGS_PANELS = [
   { key: "billing-rules", label: "Billing rules", testid: "admin-settings-billing-rules" },
   { key: "integrations", label: "Integrations", testid: "admin-settings-gateway" },
   { key: "notifications", label: "Notifications", testid: "admin-settings-notify" },
-  {
-    key: "session-types",
-    label: "Session types",
-    testid: "admin-settings-session-types",
-  },
+  // Session types left Settings for the Pricing page (Settings overhaul PR 11b).
   { key: "public-page", label: "Public page", testid: "admin-settings-public-page" },
 ] as const;
+
+/** GET /admin/pricing for the Pricing page (owner only, PR 11b). */
+const PRICING_E2E = {
+  plans: [
+    {
+      plan_id: "st-e2e",
+      name: "Monthly Unlimited",
+      description: "All weekday squads",
+      price_cents: 12000,
+      plan_type: "monthly",
+      is_active: true,
+      linked_classes: 1,
+      updated_at: "2026-07-01T00:00:00Z",
+    },
+  ],
+  classes: [
+    {
+      session_id: "sess-linked",
+      title: "Juniors Tue/Thu",
+      charged_cents: 12000,
+      fee_set: true,
+      students: 14,
+      plan_id: "st-e2e",
+      matching_plan_ids: ["st-e2e"],
+      stale_link: false,
+    },
+    {
+      session_id: "sess-custom",
+      title: "Competitive squad",
+      charged_cents: 18000,
+      fee_set: true,
+      students: 6,
+      plan_id: null,
+      matching_plan_ids: [],
+      stale_link: false,
+    },
+  ],
+  saved_overrides: [],
+  auto_linkable: 0,
+} as const;
 
 const SESSION_TYPE_E2E = {
   session_type_id: "st-e2e",
@@ -385,6 +422,10 @@ async function stubAdminBff(
         },
       ],
     });
+  });
+  await page.route("**/api/v2/admin/pricing", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, PRICING_E2E);
   });
   await page.route("**/api/v2/admin/session-types*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -891,6 +932,8 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-audit-logs")).toHaveCount(0);
       // Stripe plumbing became owner-only with the Billing Health trim.
       await expect(nav.getByTestId("admin-nav-billing-health")).toHaveCount(0);
+      // The Pricing page is owner-only (Settings overhaul PR 11b).
+      await expect(nav.getByTestId("admin-nav-pricing")).toHaveCount(0);
       await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
       await expect(nav.getByText("Owner", { exact: true })).toHaveCount(0);
 
@@ -955,6 +998,7 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-billing-health")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-pricing")).toBeVisible();
 
       await page.goto("/admin/reports");
       await expect(page.getByTestId("admin-month-close")).toBeVisible({ timeout: 30_000 });
@@ -1154,12 +1198,14 @@ test.describe("Rally admin shell", () => {
       await expect(academy.getByLabel("Display name")).toBeEnabled();
       await expect(academy.getByTestId("owner-only-field-note")).toHaveCount(1);
 
+      // The price list moved to the owner-only Pricing page (PR 11b): the old
+      // Settings link lands there, and a plain admin sees the owner-only panel
+      // and no Pricing item in the sidebar.
       await page.goto("/admin/settings?panel=session-types");
-      const types = page.getByTestId("admin-settings-session-types");
-      await expect(types.getByTestId("session-type-row")).toHaveCount(1);
-      await expect(types.getByTestId("session-type-new")).toHaveCount(0);
-      await expect(types.getByRole("button", { name: "Edit" })).toHaveCount(0);
-      await expect(types.getByTestId("owner-only-hint").first()).toBeVisible();
+      await expect(page).toHaveURL(/\/admin\/pricing$/);
+      await expect(page.getByTestId("owner-only-panel")).toBeVisible();
+      await expect(page.getByTestId("pricing-plans")).toHaveCount(0);
+      await expect(page.getByTestId("admin-nav-pricing")).toHaveCount(0);
       expect(
         errors,
         `App console errors on owner-only money fields: ${errors.join("\n")}`,
@@ -2026,8 +2072,8 @@ test.describe("Rally admin shell", () => {
     const errors = collectConsoleErrors(page);
     await page.setViewportSize({ width: 400, height: 800 });
     await stubAdminBff(page);
-    await page.goto("/admin/settings?panel=session-types");
-    await expect(page.getByTestId("admin-settings-session-types")).toBeVisible();
+    await page.goto("/admin/settings?panel=public-page");
+    await expect(page.getByTestId("admin-settings-public-page")).toBeVisible();
 
     for (const panel of SETTINGS_PANELS) {
       const tab = page.getByRole("link", { name: panel.label, exact: true });
@@ -2038,7 +2084,7 @@ test.describe("Rally admin shell", () => {
 
     // Deep-linked: the strip scrolls the active tab into view by itself, with
     // no scrollIntoView() from the test.
-    const active = page.getByRole("link", { name: "Session types", exact: true });
+    const active = page.getByRole("link", { name: "Public page", exact: true });
     await expect(active).toHaveAttribute("aria-current", "page");
     const activeBox = await active.boundingBox();
     if (!activeBox) throw new Error("no bounding box for the active tab");
@@ -2050,7 +2096,7 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("session types panel lists the catalog and posts a new type", async ({
+  test("pricing page lists plans, class prices and posts a new monthly plan", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
@@ -2066,32 +2112,54 @@ test.describe("Rally admin shell", () => {
       });
     });
 
+    // The old Settings link redirects to the Pricing page (PR 11b).
     await page.goto("/admin/settings?panel=session-types");
-    await expect(page.getByTestId("admin-settings-session-types")).toBeVisible();
-    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
-    // price_cents 12000 / overage 1500 must render as dollars, not raw cents.
-    await expect(page.getByText("$120.00")).toBeVisible();
-    await expect(page.getByText("$15.00")).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/pricing$/);
+    const plans = page.getByTestId("pricing-plans");
+    await expect(plans).toBeVisible();
+    // Sidebar on desktop, drawer on phones.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-pricing")).toBeVisible();
+    const drawer = page.getByTestId("admin-mobile-drawer");
+    if (await drawer.isVisible()) {
+      await drawer.getByRole("button", { name: "Close menu" }).click();
+      await expect(drawer).toBeHidden();
+    }
+    await expect(plans.getByTestId("session-type-row")).toHaveCount(1);
+    // price_cents 12000 must render as dollars, not raw cents.
+    await expect(plans.getByText("$120.00")).toBeVisible();
+    await expect(plans.getByTestId("plan-type")).toHaveText("Monthly · 4 classes, 5th free");
+    await expect(plans.getByTestId("plan-linked-classes")).toHaveText("1");
 
-    await page.getByTestId("session-type-new").click();
+    // Where each class's price comes from: the class fee, linked or Custom.
+    const classes = page.getByTestId("pricing-class-row");
+    await expect(classes).toHaveCount(2);
+    await expect(classes.nth(0).getByTestId("pricing-class-charged")).toHaveText("$120.00");
+    await expect(classes.nth(0).getByTestId("pricing-class-plan")).toHaveValue("st-e2e");
+    await expect(classes.nth(1).getByTestId("pricing-class-plan")).toHaveValue("");
+    await expect(classes.nth(1).getByText("No plan has this price.")).toBeVisible();
+    await expect(page.getByTestId("pricing-saved-overrides-empty")).toBeVisible();
+
+    await plans.getByTestId("session-type-new").click();
     await page.locator("#st-name").fill("Drop-in");
     await page.locator("#st-price").fill("25.50");
-    await page.locator("#st-period").selectOption("per_session");
+    // Per session is a later phase: shown, not selectable.
+    await expect(page.locator("#st-plan-type option[value=per_session]")).toBeDisabled();
     await page.getByTestId("session-type-save").click();
 
     await expect.poll(() => created.length).toBe(1);
     expect(created[0]).toMatchObject({
       name: "Drop-in",
       price_cents: 2550,
-      billing_period: "per_session",
+      plan_type: "monthly",
     });
     expect(
       errors,
-      `App console errors on session types: ${errors.join("\n")}`,
+      `App console errors on the pricing page: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
-  test("session types show-archived toggle lists archived rows and reactivates one", async ({
+  test("pricing plans show-archived toggle lists archived rows and reactivates one", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
@@ -2106,7 +2174,7 @@ test.describe("Rally admin shell", () => {
       return fulfillJson(route, { ...ARCHIVED_SESSION_TYPE_E2E, is_active: true });
     });
 
-    await page.goto("/admin/settings?panel=session-types");
+    await page.goto("/admin/pricing");
     // Archived rows are hidden by default.
     await expect(page.getByTestId("session-type-row")).toHaveCount(1);
     await expect(page.getByText("Retired Saturday Squad")).toHaveCount(0);
@@ -2132,11 +2200,11 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("session types archive confirm warns that enrollments keep billing", async ({
+  test("pricing plan archive confirm warns that enrollments keep billing", async ({
     page,
   }) => {
     await stubAdminBff(page);
-    await page.goto("/admin/settings?panel=session-types");
+    await page.goto("/admin/pricing");
     await expect(page.getByTestId("session-type-row")).toHaveCount(1);
 
     await page.getByRole("button", { name: "Archive", exact: true }).click();

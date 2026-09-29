@@ -9,10 +9,10 @@ import {
   listSessionTypes,
   updateSessionType,
   type CreateSessionTypeRequest,
-  type SessionTypeBillingPeriod,
   type SessionTypeView,
   type UpdateSessionTypeRequest,
 } from "@/lib/api/v2/session-types";
+import { PLAN_TYPE_LABEL } from "@/lib/api/v2/pricing";
 import { queryKeys } from "@/lib/query/keys";
 import {
   Button,
@@ -29,16 +29,10 @@ import {
 } from "@/components/ds";
 import { OwnerOnlyHint, useIsOwner } from "@/components/admin/owner-context";
 
-const PERIOD_LABEL: Record<SessionTypeBillingPeriod, string> = {
-  monthly: "Monthly",
-  per_session: "Per session",
-};
-
 interface FormState {
   name: string;
   description: string;
   price: string;
-  billing_period: SessionTypeBillingPeriod;
   overage_rate: string;
 }
 
@@ -46,7 +40,6 @@ const BLANK_FORM: FormState = {
   name: "",
   description: "",
   price: "",
-  billing_period: "monthly",
   overage_rate: "",
 };
 
@@ -72,7 +65,6 @@ function toFormState(sessionType: SessionTypeView): FormState {
     name: sessionType.name,
     description: sessionType.description ?? "",
     price: centsToDollars(sessionType.price_cents),
-    billing_period: sessionType.billing_period,
     overage_rate: centsToDollars(sessionType.overage_rate_cents),
   };
 }
@@ -101,7 +93,8 @@ function toCreatePayload(form: FormState): CreateSessionTypeRequest {
     name: form.name.trim(),
     description: form.description.trim() || null,
     price_cents: dollarsToCents(form.price) ?? 0,
-    billing_period: form.billing_period,
+    // Only monthly plans can be saved for now (Settings overhaul PR 11b).
+    plan_type: "monthly",
     overage_rate_cents: dollarsToCents(form.overage_rate),
   };
 }
@@ -114,9 +107,6 @@ function toUpdatePayload(original: FormState, form: FormState): UpdateSessionTyp
     payload.description = form.description.trim() || null;
   }
   if (form.price !== original.price) payload.price_cents = dollarsToCents(form.price) ?? 0;
-  if (form.billing_period !== original.billing_period) {
-    payload.billing_period = form.billing_period;
-  }
   if (form.overage_rate !== original.overage_rate) {
     payload.overage_rate_cents = dollarsToCents(form.overage_rate);
   }
@@ -124,17 +114,19 @@ function toUpdatePayload(original: FormState, form: FormState): UpdateSessionTyp
 }
 
 /**
- * Session types are the pricing catalog behind billing enrollments.
+ * Plans: the academy price list (stored as session types), shown on the
+ * Pricing page under Money. It was the Settings "Session types" tab until
+ * Settings overhaul PR 11b.
  *
  * Archive is a soft delete. `GET /admin/session-types` hides archived rows
  * unless `include_archived=true`, so the toggle below is what makes a
- * soft-deleted type reachable again; Reactivate is `PATCH is_active: true`.
+ * soft-deleted plan reachable again; Reactivate is `PATCH is_active: true`.
  *
- * The catalog sets what families are charged, so every write is owner-only
- * (Settings overhaul Phase 1 PR 5). An admin without the owner scope sees the
- * list with an "Owner only" hint in place of the buttons.
+ * Every write is owner-only (Settings overhaul Phase 1 PR 5). A plan price
+ * is not what a class is charged: every class keeps its own monthly fee, so
+ * editing a plan never changes a bill.
  */
-export function SessionTypesPanel() {
+export function PlansCard({ linkedCounts }: { linkedCounts?: Record<string, number> }) {
   const queryClient = useQueryClient();
   const isOwner = useIsOwner();
   const [editing, setEditing] = useState<SessionTypeView | "new" | null>(null);
@@ -147,8 +139,12 @@ export function SessionTypesPanel() {
     retry: false,
   });
 
+  // A plan change moves the class links and counts on the rest of the page.
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionTypes() });
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionTypes() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.pricing() }),
+    ]);
 
   const archiveMutation = useMutation({
     mutationFn: (sessionTypeId: string) => archiveSessionType(sessionTypeId),
@@ -177,12 +173,13 @@ export function SessionTypesPanel() {
   const rows = query.data?.session_types ?? [];
 
   return (
-    <section data-testid="admin-settings-session-types" className="space-y-4">
+    <section data-testid="pricing-plans" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Overline>Billing catalog</Overline>
+          <Overline>Plans</Overline>
           <p className="mt-1 text-sm text-rally-muted">
-            Pricing plans students are billed against.
+            Your price list. Each class keeps its own monthly fee; a plan shows where it
+            comes from.
           </p>
         </div>
         <div className="flex items-center gap-4">
@@ -203,7 +200,7 @@ export function SessionTypesPanel() {
               onClick={() => setEditing("new")}
               data-testid="session-type-new"
             >
-              New session type
+              New plan
             </Button>
           ) : (
             <OwnerOnlyHint />
@@ -222,28 +219,29 @@ export function SessionTypesPanel() {
             data-testid="session-types-error"
             className="p-5 text-sm text-status-red-800"
           >
-            Could not load session types.
+            Could not load plans.
           </p>
         ) : rows.length === 0 ? (
           <EmptyState
             data-testid="session-types-empty"
-            title={showArchived ? "No session types" : "No active session types"}
+            title={showArchived ? "No plans" : "No active plans"}
             description={
               showArchived
-                ? "Create a session type to start billing enrollments against a price."
+                ? "Add a plan for each price you charge, like a group class or a private lesson."
                 : "Nothing active. Tick \u201cShow archived\u201d to look for one you archived."
             }
             action={
               isOwner ? (
                 <Button variant="volt" size="sm" onClick={() => setEditing("new")}>
-                  New session type
+                  New plan
                 </Button>
               ) : undefined
             }
           />
         ) : (
-          <SessionTypesTable
+          <PlansTable
             rows={rows}
+            linkedCounts={linkedCounts}
             canEdit={isOwner}
             onEdit={setEditing}
             onArchive={openArchive}
@@ -277,13 +275,13 @@ export function SessionTypesPanel() {
           size="sm"
         >
           <p className="text-sm text-rally-muted">
-            Students already enrolled keep billing at their current price — archiving
-            does not stop or change them. New enrollments can no longer choose this
-            plan. To bring it back, tick “Show archived” and reactivate it.
+            Students already enrolled keep billing at their current price. Archiving
+            does not stop or change them, and classes linked to it show as Custom. To
+            bring it back, tick “Show archived” and reactivate it.
           </p>
           {archiveMutation.isError && (
             <div className="mt-3">
-              <DialogError message="Could not archive this session type. Try again." />
+              <DialogError message="Could not archive this plan. Try again." />
             </div>
           )}
           <DialogActions>
@@ -306,8 +304,9 @@ export function SessionTypesPanel() {
   );
 }
 
-export function SessionTypesTable({
+export function PlansTable({
   rows,
+  linkedCounts,
   canEdit,
   onEdit,
   onArchive,
@@ -316,6 +315,8 @@ export function SessionTypesTable({
   failedReactivateId,
 }: {
   rows: SessionTypeView[];
+  /** Classes linked to each plan, from the Pricing overview. */
+  linkedCounts?: Record<string, number>;
   /** False for an admin without the owner scope: prices are read-only. */
   canEdit: boolean;
   onEdit: (row: SessionTypeView) => void;
@@ -330,10 +331,10 @@ export function SessionTypesTable({
       <table className="w-full min-w-[640px] text-sm">
         <thead>
           <tr className="border-b border-rally-line">
-            <Th>Name</Th>
+            <Th>Plan</Th>
             <Th>Price</Th>
-            <Th>Billing</Th>
-            <Th>Overage</Th>
+            <Th>Type</Th>
+            <Th align="right">Classes</Th>
             <Th align="right">Actions</Th>
           </tr>
         </thead>
@@ -365,14 +366,27 @@ export function SessionTypesTable({
                 )}
                 {failedReactivateId === row.session_type_id && (
                   <p role="alert" className="mt-1 text-xs text-status-red-800">
-                    Could not reactivate this session type. Try again.
+                    Could not reactivate this plan. Try again.
                   </p>
                 )}
               </td>
-              <td className="px-4 py-3 font-mono tabular-nums">{formatMoney(row.price_cents)}</td>
-              <td className="px-4 py-3">{PERIOD_LABEL[row.billing_period]}</td>
               <td className="px-4 py-3 font-mono tabular-nums">
-                {formatMoney(row.overage_rate_cents)}
+                {formatMoney(row.price_cents)}
+                <span className="font-sans text-xs text-rally-subtle"> / month</span>
+              </td>
+              <td className="px-4 py-3" data-testid="plan-type">
+                {PLAN_TYPE_LABEL[row.plan_type ?? "monthly"]}
+                {row.billing_period === "per_session" && (
+                  <p className="text-xs text-rally-subtle" data-testid="plan-legacy-period">
+                    Saved earlier as per session. Billing still uses the class fee.
+                  </p>
+                )}
+              </td>
+              <td
+                className="px-4 py-3 text-right font-mono tabular-nums"
+                data-testid="plan-linked-classes"
+              >
+                {linkedCounts?.[row.session_type_id] ?? 0}
               </td>
               <td className="px-4 py-3">
                 <div className="flex justify-end gap-2">
@@ -451,7 +465,7 @@ function SessionTypeDialog({
     <Modal
       open
       onClose={onClose}
-      title={sessionType ? `Edit ${sessionType.name}` : "New session type"}
+      title={sessionType ? `Edit ${sessionType.name}` : "New plan"}
       size="md"
     >
       <form
@@ -462,12 +476,13 @@ function SessionTypeDialog({
       >
         <div className="space-y-4">
           {mutation.isError && (
-            <DialogError message="Could not save this session type. Check the values and try again." />
+            <DialogError message="Could not save this plan. Check the values and try again." />
           )}
           {sessionType && (
             <p className="rounded-md bg-status-amber-50 px-3 py-2 text-xs text-status-amber-800">
-              Enrollments resolve their price from this plan, so a price change also
-              applies to students already enrolled on it.
+              Classes keep their own monthly fee, so a new price here does not change what
+              any family pays. Classes linked to this plan show as Custom until their fee
+              matches again.
             </p>
           )}
           <FormField label="Name" htmlFor="st-name" error={shown.name} required>
@@ -502,17 +517,21 @@ function SessionTypeDialog({
                 className="h-10 w-full rounded-md border border-rally-line px-3 font-mono text-sm tabular-nums outline-none focus:border-blue-500"
               />
             </FormField>
-            <FormField label="Billing period" htmlFor="st-period" required>
+            <FormField
+              label="Plan type"
+              htmlFor="st-plan-type"
+              hint="The fee buys 4 classes per weekly slot; a 5th date in the month is free."
+            >
               <select
-                id="st-period"
-                value={form.billing_period}
-                onChange={(event) =>
-                  set("billing_period", event.target.value as SessionTypeBillingPeriod)
-                }
+                id="st-plan-type"
+                value="monthly"
+                onChange={() => undefined}
                 className="h-10 w-full rounded-md border border-rally-line px-3 text-sm outline-none focus:border-blue-500"
               >
-                <option value="monthly">Monthly</option>
-                <option value="per_session">Per session</option>
+                <option value="monthly">{PLAN_TYPE_LABEL.monthly}</option>
+                <option value="per_session" disabled>
+                  Per session - coming later
+                </option>
               </select>
             </FormField>
           </div>

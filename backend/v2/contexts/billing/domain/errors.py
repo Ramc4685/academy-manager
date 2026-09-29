@@ -136,6 +136,24 @@ class SessionTypeNotFound(DomainError):
     status_code = 404
 
 
+class PricingClassNotFound(DomainError):
+    """Pricing page: the class (session) is not in this academy."""
+
+    code = "Billing.PricingClassNotFound"
+    status_code = 404
+
+
+class PlanPriceMismatch(DomainError):
+    """Pricing page: a class may only link to an active plan at its own fee.
+
+    A link is a label, never an amount, so a link to a plan with another price
+    would show a price the family is not charged (Settings overhaul PR 11b).
+    """
+
+    code = "Billing.PlanPriceMismatch"
+    status_code = 409
+
+
 class StudentBillingEnrollmentNotFound(DomainError):
     code = "Billing.StudentBillingEnrollmentNotFound"
     status_code = 404

@@ -101,6 +101,11 @@ class EnrollmentFacts:
     autopay_status: str | None
     recurring_discount: dict[str, Any] | None
     resume_on: date | None
+    #: What the class is actually billed per month, read the way the monthly
+    #: invoice does (Settings overhaul PR 11b display fix). Display only:
+    #: ``monthly_price_cents`` above is unchanged because the manual invoice
+    #: dialog pre-fills from it.
+    class_fee_cents: int | None = None
 
 
 @dataclass(frozen=True)
@@ -822,6 +827,7 @@ def _enrollment_payload(e: EnrollmentFacts) -> dict[str, Any]:
         "status": e.status,
         "monthly_price_cents": e.monthly_price_cents,
         "override_price_cents": e.override_price_cents,
+        "class_fee_cents": e.class_fee_cents,
         "autopay_status": e.autopay_status,
         "recurring_discount": e.recurring_discount,
         "resume_on": _iso(e.resume_on),

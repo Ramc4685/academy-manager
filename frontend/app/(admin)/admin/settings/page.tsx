@@ -10,7 +10,6 @@ import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
 import { DeparturePolicyPanel } from "@/components/admin/settings/departure-policy-panel";
-import { SessionTypesPanel } from "@/components/admin/settings/session-types-panel";
 import { CurriculumPanel } from "@/components/admin/settings/curriculum-panel";
 import { PublicPagePanel } from "@/components/admin/settings/public-page-panel";
 import {
@@ -102,7 +101,6 @@ export default function AdminSettingsPage() {
             <DeparturePolicyPanel />
           </div>
         )}
-        {active === "session-types" && <SessionTypesPanel />}
         {active === "public-page" && <PublicPagePanel />}
         {active === "curriculum" && <CurriculumPanel />}
       </section>

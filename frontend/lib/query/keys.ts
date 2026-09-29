@@ -146,6 +146,8 @@ export const queryKeys = {
     // sessionTypes() is the invalidation prefix; sessionTypesList() is the
     // per-view cache key, since the archived and active lists differ.
     sessionTypes: () => ["admin", "session-types"] as const,
+    // Pricing page (Settings overhaul PR 11b): plans + class links + overrides.
+    pricing: () => ["admin", "pricing"] as const,
     sessionTypesList: (includeArchived: boolean) =>
       ["admin", "session-types", { includeArchived }] as const,
     lessonCards: (programId: string) =>

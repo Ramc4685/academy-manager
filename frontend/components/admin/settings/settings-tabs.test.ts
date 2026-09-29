@@ -22,6 +22,19 @@ describe("Settings tabs (Settings overhaul Phase 3 PR 9)", () => {
   });
 });
 
+describe("Session types moved to the Pricing page (Settings overhaul PR 11b)", () => {
+  it("has no Session types tab any more", () => {
+    expect(SETTINGS_TABS.some((tab) => (tab.key as string) === "session-types")).toBe(false);
+  });
+
+  it("redirects ?panel=session-types to /admin/pricing for everyone", () => {
+    const redirect = RETIRED_SETTINGS_EXTERNAL_REDIRECTS["session-types"];
+    expect(redirect(true)).toBe("/admin/pricing");
+    // A plain admin lands on the page's owner-only panel, not a blank tab.
+    expect(redirect(false)).toBe("/admin/pricing");
+  });
+});
+
 describe("Settings tabs (Settings overhaul Phase 3 PR 11)", () => {
   it("renames Gateway to Integrations and Notify to Notifications", () => {
     const labels = Object.fromEntries(SETTINGS_TABS.map((tab) => [tab.key, tab.label]));
@@ -31,14 +44,13 @@ describe("Settings tabs (Settings overhaul Phase 3 PR 11)", () => {
     expect(labels.notify).toBeUndefined();
   });
 
-  it("orders the tabs as the plan does, Session types staying put until PR 12", () => {
+  it("orders the tabs as the plan does, Session types moved to Pricing", () => {
     expect(SETTINGS_TABS.map((tab) => tab.label)).toEqual([
       "Academy profile",
       "Billing rules",
       "Integrations",
       "Notifications",
       "Family policies",
-      "Session types",
       "Public page",
       "Curriculum",
     ]);
@@ -68,7 +80,7 @@ describe("Settings tabs (Settings overhaul Phase 3 PR 11)", () => {
       expect(live.has(target)).toBe(true);
     }
     // data and roles leave Settings for other pages.
-    expect(Object.keys(RETIRED_SETTINGS_EXTERNAL_REDIRECTS).sort()).toEqual(["data", "roles"]);
+    expect(Object.keys(RETIRED_SETTINGS_EXTERNAL_REDIRECTS).sort()).toEqual(["data", "roles", "session-types"]);
     expect(RETIRED_SETTINGS_EXTERNAL_REDIRECTS.roles(true)).toBe("/admin/users");
     expect(RETIRED_SETTINGS_EXTERNAL_REDIRECTS.data(true)).toBe("/admin/reports");
   });

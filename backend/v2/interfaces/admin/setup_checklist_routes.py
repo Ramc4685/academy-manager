@@ -197,10 +197,12 @@ def build_setup_checklist(
         ),
         SetupChecklistItemView(
             key="session_types",
-            label="Session types",
-            detail="Add at least one session type (group class, private lesson).",
+            label="Pricing plans",
+            detail="Add at least one plan (group class, private lesson).",
             status=_status(types_ok, bool(type_rows)),
-            href="/admin/settings?panel=session-types",
+            # The price list moved from Settings to the Pricing page under
+            # Money (Settings overhaul PR 11b).
+            href="/admin/pricing",
             # The price list is owner-only (Settings overhaul Phase 1 PR 5).
             owner_only=True,
         ),

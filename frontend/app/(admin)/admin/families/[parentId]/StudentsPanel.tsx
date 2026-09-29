@@ -127,7 +127,9 @@ export function StudentsPanel({
                       variant: "pending" as const,
                       label: e.status,
                     };
-                    const price = e.override_price_cents ?? e.monthly_price_cents;
+                    // PR 11b: the class fee as billed. The override is saved but
+                    // never charged, so it is only noted, not shown as the price.
+                    const price = e.class_fee_cents ?? e.monthly_price_cents;
                     return (
                       <PhoneListRow
                         key={e.enrollment_id}
@@ -154,7 +156,7 @@ export function StudentsPanel({
                             </div>
                             {(e.override_price_cents != null || e.recurring_discount) && (
                               <div>
-                                {e.override_price_cents != null ? "Override price" : ""}
+                                {e.override_price_cents != null ? "Saved override, not charged" : ""}
                                 {e.override_price_cents != null && e.recurring_discount
                                   ? " · "
                                   : ""}
@@ -212,7 +214,8 @@ export function StudentsPanel({
                     variant: "pending" as const,
                     label: e.status,
                   };
-                  const price = e.override_price_cents ?? e.monthly_price_cents;
+                  // PR 11b: the class fee as billed, not the uncharged override.
+                  const price = e.class_fee_cents ?? e.monthly_price_cents;
                   return (
                     <li
                       key={e.enrollment_id}
@@ -242,7 +245,7 @@ export function StudentsPanel({
                       <span className="text-rally-ink">
                         {price != null ? `${formatCents(price)}/mo` : "—"}
                         {e.override_price_cents != null && (
-                          <span className="text-xs text-rally-muted"> (override)</span>
+                          <span className="text-xs text-rally-muted"> (saved override, not charged)</span>
                         )}
                         {e.recurring_discount && (
                           <span className="text-xs text-rally-muted"> · discount</span>

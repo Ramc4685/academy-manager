@@ -64,10 +64,10 @@ already inside an authorized admin route and the message is the point.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Final
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
 if TYPE_CHECKING:
     from backend.v2.shared.auth.claims import AuthClaims
@@ -174,6 +174,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # departure_policy_routes.py — governs delete_enrollment_requires_owner
         # and the drop/reclaim defaults (issue #697 design contract §1.1(2)).
         ("PUT", f"{_ADMIN}/enrollment/departure-policy"),
+        # pricing_routes.py — the Pricing page (Settings overhaul PR 11b).
+        # Every route, reads included; guarded by require_owner_or_403 so a
+        # plain admin gets a plain 403 the page can explain.
+        ("GET", f"{_ADMIN}/pricing"),
+        ("PUT", f"{_ADMIN}/pricing/classes/{{session_id}}/plan"),
+        ("POST", f"{_ADMIN}/pricing/link-matching-classes"),
         # departures_routes.py — the leaving report is a financial report,
         # same tier as every other route under /reports/* (issue #698).
         ("GET", f"{_ADMIN}/reports/leaving"),
@@ -295,6 +301,32 @@ def ensure_owner_for_invoice_void(claims: AuthClaims, *, is_unsent_draft: bool) 
 
     if not is_unsent_draft and "owner" not in claims.roles:
         raise HTTPException(status_code=404, detail="Not found")
+
+
+PRICING_FORBIDDEN: Final[str] = "Only the academy owner can see and change pricing."
+
+
+def require_owner_or_403() -> Callable[..., Awaitable[AuthClaims]]:
+    """Owner gate for the Pricing page routes (Settings overhaul PR 11b).
+
+    Like :func:`backend.v2.shared.http.require_owner` (the name keeps it in
+    the ``OWNER_ONLY_ROUTE_PATHS`` walk), except that an academy admin
+    without ``owner`` gets a **403** with a plain sentence rather than a 404:
+    the Pricing page is advertised in the owner's sidebar, the admin already
+    knows it exists, and the message is what the page shows. Anyone who is
+    not an admin still gets the persona guard's 404.
+    """
+
+    from backend.v2.shared.auth.claims import get_auth_claims
+
+    async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
+        if "owner" in claims.roles:
+            return claims
+        if "admin" in claims.roles:
+            raise HTTPException(status_code=403, detail=PRICING_FORBIDDEN)
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return _dep
 
 
 #: 403 messages for the field-level money rules. The Settings and class forms

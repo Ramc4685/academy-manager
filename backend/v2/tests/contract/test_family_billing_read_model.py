@@ -332,6 +332,8 @@ async def test_full_family_view(db, acad) -> None:
     assert hannah["schedule"] == "Wed 18:15"
     assert hannah["monthly_price_cents"] == 7000
     assert hannah["override_price_cents"] == 6500
+    # PR 11b: what the class is billed, not the saved (never charged) override.
+    assert hannah["class_fee_cents"] == 7000
     assert hannah["resume_on"] == "2026-10-01"
     assert hannah["autopay_status"] == "paused"
 
@@ -565,3 +567,24 @@ async def test_display_cap_never_drops_an_open_invoice_from_the_balance(db, acad
     assert view["header"]["balance_cents"] == 7500
     assert view["header"]["open_invoice_count"] == 1
     assert "inv-ancient-open" in {inv["invoice_id"] for inv in view["invoices"]}
+
+
+def test_class_fee_reads_the_fee_the_way_the_monthly_invoice_does() -> None:
+    """PR 11b display fix: a v2 class stores ``amount_cents``; the family view
+    used to read only the legacy ``monthly_price_cents`` and showed no price."""
+    from backend.v2.contexts.billing.infrastructure.family_billing_read_model import (
+        MongoFamilyBillingReadModel,
+    )
+
+    facts = MongoFamilyBillingReadModel._enrollment_facts(
+        {"enrollment_id": "e-1", "student_id": "s-1", "session_id": "sess-1", "status": "active"},
+        {"session_id": "sess-1", "title": "Juniors", "amount_cents": 12_000},
+        {"override_price_cents": 9_000},
+        None,
+        None,
+    )
+
+    assert facts.class_fee_cents == 12_000
+    assert facts.override_price_cents == 9_000
+    # Unchanged: the manual-invoice pre-fill still reads this field.
+    assert facts.monthly_price_cents is None
