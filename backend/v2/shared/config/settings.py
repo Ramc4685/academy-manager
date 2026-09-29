@@ -150,6 +150,16 @@ class Settings(BaseSettings):
         ),
     )
     firebase_project_id: str | None = Field(default=None)
+    media_storage_bucket: str | None = Field(
+        default=None,
+        description=(
+            "Firebase Storage bucket for academy media (logo upload). Deliberately "
+            "NOT derived from the project id: projects created before Oct 2024 use "
+            "<project>.appspot.com and newer ones <project>.firebasestorage.app, so "
+            "guessing would point uploads at a bucket that may not exist. Unset => "
+            "POST /admin/academy/media answers 503 and the logo URL field still works."
+        ),
+    )
     cors_origins: str = Field(default="")
     frontend_url: str | None = Field(default=None)
     scheduler_tz: str = Field(default="UTC")
