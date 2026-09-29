@@ -253,7 +253,12 @@ def _coerce_template_date(value: object) -> date | None:
 class MongoSessionRepository(TenantScopedRepository):
     collection_name = "sessions"
 
-    def __init__(self, db: Any, *, default_amount_cents: int = 15000) -> None:
+    # The parent catalog price of a class with no fee stored. It was a $150
+    # placeholder that no charge path used: checkout quotes and monthly
+    # invoices bill an unpriced class at 0 (``quote_enrollment`` and
+    # ``session_amount_cents``), so the catalog now shows that real amount
+    # (Settings overhaul PR 11b, display fix only).
+    def __init__(self, db: Any, *, default_amount_cents: int = 0) -> None:
         super().__init__(db)
         self._default_amount_cents = default_amount_cents
 

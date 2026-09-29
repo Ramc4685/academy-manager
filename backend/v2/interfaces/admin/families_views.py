@@ -88,6 +88,9 @@ class FamilyEnrollment(_View):
     status: str
     monthly_price_cents: int | None = None
     override_price_cents: int | None = None
+    # What the class is billed per month (the class fee as the monthly
+    # invoice reads it). The override above is saved but never charged.
+    class_fee_cents: int | None = None
     autopay_status: str | None = None
     recurring_discount: dict[str, Any] | None = None
     resume_on: str | None = None

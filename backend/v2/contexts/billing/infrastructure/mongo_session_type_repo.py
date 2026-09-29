@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from backend.v2.contexts.billing.domain.class_pricing import DEFAULT_PLAN_TYPE
 from backend.v2.contexts.billing.domain.session_type import SessionType
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -20,6 +21,8 @@ class MongoSessionTypeRepository(TenantScopedRepository):
             billing_period=doc.get("billing_period", "monthly"),
             overage_rate_cents=doc.get("overage_rate_cents"),
             is_active=bool(doc.get("is_active", True)),
+            # Filled at read time: plans saved before PR 11b have no field.
+            plan_type=doc.get("plan_type") or DEFAULT_PLAN_TYPE,
             created_at=doc["created_at"],
             updated_at=doc["updated_at"],
         )

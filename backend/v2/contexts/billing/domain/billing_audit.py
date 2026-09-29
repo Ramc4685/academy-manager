@@ -73,6 +73,13 @@ BillingAuditAction = Literal[
     # Same PR: the owner changed the academy timezone, which moves the local
     # midnight every billing month and due date is counted from.
     "academy_timezone_changed",
+    # Pricing page (Settings overhaul PR 11b): the owner linked one class to
+    # a plan or marked it custom. A label, never an amount: the class fee is
+    # unchanged, but the trail shows who decided which plan a class uses.
+    "class_plan_link_changed",
+    # Same page: the owner ran "Link matching classes", which linked every
+    # undecided class to the one plan at its exact fee. One entry per run.
+    "class_plan_links_matched",
 ]
 
 

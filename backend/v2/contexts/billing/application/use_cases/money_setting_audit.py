@@ -28,7 +28,12 @@ from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
 
-MoneySettingAction = Literal["session_fee_changed", "academy_timezone_changed"]
+MoneySettingAction = Literal[
+    "session_fee_changed",
+    "academy_timezone_changed",
+    "class_plan_link_changed",
+    "class_plan_links_matched",
+]
 
 
 class RecordMoneySettingChange:

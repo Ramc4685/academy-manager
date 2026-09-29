@@ -161,6 +161,9 @@ forbidden_modules = [
     "backend.v2.contexts.billing.domain.session_type",
     "backend.v2.contexts.billing.domain.session_type_proration",
     "backend.v2.contexts.billing.domain.tuition_discount",
+    # Pricing page class->plan links (Settings overhaul PR 11b): a label for
+    # the owner, never read by the invoicing core or any charge path.
+    "backend.v2.contexts.billing.domain.class_pricing",
 ]
 
 # Rule 5: No cross-context imports. Each context is self-contained.

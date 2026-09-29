@@ -230,3 +230,17 @@ def test_bootstrap_placeholder_waiver_is_not_done():
 
 def test_unavailable_source_is_unknown():
     assert _derive(classes=(False, None))["classes"] == "unknown"
+
+
+def test_price_list_step_links_to_the_pricing_page(admin_client):
+    """Settings overhaul PR 11b: the Session types tab left Settings; the price
+    list is the Plans section of the owner-only Pricing page under Money."""
+    _fresh_academy(admin_client)
+
+    r = admin_client.get(URL)
+
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["key"] == "session_types")
+    assert item["href"] == "/admin/pricing"
+    assert item["label"] == "Pricing plans"
+    assert item["owner_only"] is True

@@ -540,6 +540,9 @@ async def test_parent_available_catalog_includes_available_recurring_templates(
     assert by_id["tpl-not-started"].start_at == datetime(2026, 6, 15, 21, 30, tzinfo=UTC)
     assert by_id["tpl-prod-shaped"].start_at == datetime(2026, 6, 1, 16, 0, tzinfo=UTC)
     assert by_id["tpl-prod-shaped"].amount_cents == 8800
+    # PR 11b: a class with no fee is billed at 0, so the catalog shows 0, not
+    # the old $150 placeholder no charge path ever used.
+    assert by_id["tpl-not-started"].amount_cents == 0
 
 
 @pytest.mark.asyncio
