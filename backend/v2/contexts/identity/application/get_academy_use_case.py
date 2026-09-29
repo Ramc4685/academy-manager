@@ -18,6 +18,15 @@ class AcademyRepo(Protocol):
     async def upsert_defaults(self, academy_id: str) -> dict[str, Any]: ...
 
 
+#: Class defaults (Settings overhaul Phase 3 PR 9, Academy profile / Class
+#: defaults card). These are filled at READ time, never migrated: an academy
+#: doc with no ``default_class_size`` stored reads as 10 today and forever,
+#: so BLNO (and every other pre-existing academy) sees exactly what the
+#: create-class form already defaulted to before this card existed.
+DEFAULT_CLASS_SIZE = 10
+DEFAULT_CLASS_LENGTH_MINUTES = 45
+
+
 @dataclass(frozen=True)
 class GetAcademyOutput:
     academy_id: str
@@ -38,6 +47,15 @@ class GetAcademyOutput:
     phone_country_code: str = DEFAULT_CALLING_CODE
     #: Platform-set at bootstrap; read-only in the admin academy view.
     sport: str = DEFAULT_ACADEMY_SPORT
+    #: Class defaults (Settings overhaul Phase 3 PR 9). Filled at read time;
+    #: the create-class form and the class welcome email fallback both read
+    #: these off the academy view.
+    default_class_size: int = DEFAULT_CLASS_SIZE
+    default_class_length_minutes: int = DEFAULT_CLASS_LENGTH_MINUTES
+    default_venue_address: str | None = None
+    default_parking_note: str | None = None
+    default_what_to_bring: str | None = None
+    default_arrival_minutes_before: int | None = None
 
 
 class GetAcademyUseCase:
@@ -65,4 +83,22 @@ class GetAcademyUseCase:
             email_reply_to=doc.get("email_reply_to") or None,
             phone_country_code=calling_code_for_country(doc.get("country")),
             sport=str(doc.get("sport") or DEFAULT_ACADEMY_SPORT),
+            default_class_size=(
+                int(doc["default_class_size"])
+                if doc.get("default_class_size") is not None
+                else DEFAULT_CLASS_SIZE
+            ),
+            default_class_length_minutes=(
+                int(doc["default_class_length_minutes"])
+                if doc.get("default_class_length_minutes") is not None
+                else DEFAULT_CLASS_LENGTH_MINUTES
+            ),
+            default_venue_address=doc.get("default_venue_address") or None,
+            default_parking_note=doc.get("default_parking_note") or None,
+            default_what_to_bring=doc.get("default_what_to_bring") or None,
+            default_arrival_minutes_before=(
+                int(doc["default_arrival_minutes_before"])
+                if doc.get("default_arrival_minutes_before") is not None
+                else None
+            ),
         )

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { SENDER_NAME_MAX_LENGTH, senderNameError } from "./branding-panel";
+import { SENDER_NAME_MAX_LENGTH, brandColorError, senderNameError } from "./branding-panel";
 
 describe("senderNameError (L9a)", () => {
   it("accepts ordinary and unicode names", () => {
@@ -18,5 +18,21 @@ describe("senderNameError (L9a)", () => {
   it("caps the trimmed length", () => {
     expect(senderNameError("x".repeat(SENDER_NAME_MAX_LENGTH))).toBeNull();
     expect(senderNameError("x".repeat(SENDER_NAME_MAX_LENGTH + 1))).toMatch(/80 characters/);
+  });
+});
+
+describe("brandColorError (Settings overhaul Phase 3 PR 9)", () => {
+  it("accepts blank (unset) and valid 3/6-digit hex", () => {
+    expect(brandColorError("")).toBeNull();
+    expect(brandColorError("   ")).toBeNull();
+    expect(brandColorError("#2563eb")).toBeNull();
+    expect(brandColorError("#fff")).toBeNull();
+  });
+
+  it("rejects anything that is not a hex colour", () => {
+    expect(brandColorError("not-a-color")).toMatch(/hex value/);
+    expect(brandColorError("2563eb")).toMatch(/hex value/);
+    expect(brandColorError("#12")).toMatch(/hex value/);
+    expect(brandColorError("#1234567")).toMatch(/hex value/);
   });
 });

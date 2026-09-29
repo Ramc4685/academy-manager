@@ -106,11 +106,19 @@ describe("Class monthly fee", () => {
 describe("Self-service cancellation terms", () => {
   it("are summarised and pointed at Billing rules, not edited", () => {
     expect(
-      cancellationTermsSummary({ cancellation_minimum_notice_days: 7, cancellation_fee_cents: 2500 }),
-    ).toBe("7 days notice, $25.00 fee when notice is short. Set in Billing rules.");
+      cancellationTermsSummary({
+        cancellation_minimum_notice_days: 7,
+        cancellation_fee_cents: 2500,
+        cancellation_effective_timing: "end_of_period",
+      }),
+    ).toBe("7 days notice, $25.00 fee when notice is short, takes effect at period end. Set in Billing rules.");
     expect(
-      cancellationTermsSummary({ cancellation_minimum_notice_days: 1, cancellation_fee_cents: 0 }),
-    ).toBe("1 day notice, no fee. Set in Billing rules.");
+      cancellationTermsSummary({
+        cancellation_minimum_notice_days: 1,
+        cancellation_fee_cents: 0,
+        cancellation_effective_timing: "immediate",
+      }),
+    ).toBe("1 day notice, no fee, takes effect immediately. Set in Billing rules.");
     expect(cancellationTermsSummary(null)).toBe("Set in Billing rules.");
   });
 });

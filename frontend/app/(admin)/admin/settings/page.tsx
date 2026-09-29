@@ -5,7 +5,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { UrlObject } from "url";
 
 import { AcademyPanel } from "@/components/admin/settings/academy-panel";
-import { BrandingPanel } from "@/components/admin/settings/branding-panel";
 import { BillingRulesPanel } from "@/components/admin/settings/billing-rules-panel";
 import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
@@ -90,7 +89,6 @@ export default function AdminSettingsPage() {
         {active === "billing-rules" && isOwner && <BillingRulesPanel />}
         {active === "gateway" && isOwner && <GatewayPanel />}
         {active === "notify" && <NotifyPanel />}
-        {active === "branding" && <BrandingPanel />}
         {active === "family-policies" && (
           <div className="space-y-6">
             <SelfServicePanel />

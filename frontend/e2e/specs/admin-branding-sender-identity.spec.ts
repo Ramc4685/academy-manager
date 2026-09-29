@@ -1,10 +1,11 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
- * Settings → Branding → Outbound email (roadmap L9a), against a mocked admin
- * BFF: the sender name + reply-to save as a PATCH of only the changed keys,
- * an unsafe sender name blocks Save with an inline error, and the hint shows
- * the display name families will see.
+ * Settings → Academy profile → Outbound email (roadmap L9a; the Branding
+ * panel merged into Academy profile in Settings overhaul Phase 3 PR 9),
+ * against a mocked admin BFF: the sender name + reply-to save as a PATCH of
+ * only the changed keys, an unsafe sender name blocks Save with an inline
+ * error, and the hint shows the display name families will see.
  */
 
 const ADMIN_ME = {
@@ -76,7 +77,7 @@ test.describe("admin settings → branding → outbound email", () => {
   test("saves sender name and reply-to as a PATCH of just those keys", async ({ page }) => {
     const patches = await stub(page);
     await page.goto("/admin/settings?panel=branding");
-    const panel = page.getByTestId("admin-settings-branding");
+    const panel = page.getByTestId("admin-settings-academy");
     await expect(panel).toBeVisible();
 
     const name = panel.getByLabel("Sender name");
@@ -88,7 +89,7 @@ test.describe("admin settings → branding → outbound email", () => {
     await panel.getByLabel("Reply-to email").fill("desk@alpha.example");
     await expect(panel.getByText('Families see email from "Alpha Front Desk"')).toBeVisible();
 
-    await panel.getByRole("button", { name: "Save branding" }).click();
+    await panel.getByRole("button", { name: "Save changes" }).click();
     await expect(panel.getByText(/Saved at/)).toBeVisible();
     expect(patches).toEqual([
       { email_sender_name: "Alpha Front Desk", email_reply_to: "desk@alpha.example" },
@@ -98,7 +99,7 @@ test.describe("admin settings → branding → outbound email", () => {
   test("angle brackets in the sender name block Save with an inline error", async ({ page }) => {
     const patches = await stub(page);
     await page.goto("/admin/settings?panel=branding");
-    const panel = page.getByTestId("admin-settings-branding");
+    const panel = page.getByTestId("admin-settings-academy");
     const name = panel.getByLabel("Sender name");
     await expect(name).toHaveAttribute("placeholder", "Alpha Shuttle Club");
 
@@ -107,7 +108,7 @@ test.describe("admin settings → branding → outbound email", () => {
       panel.getByText("Sender name cannot contain line breaks or angle brackets."),
     ).toBeVisible();
     await expect(name).toHaveAttribute("aria-invalid", "true");
-    await expect(panel.getByRole("button", { name: "Save branding" })).toBeDisabled();
+    await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(patches).toEqual([]);
   });
 });

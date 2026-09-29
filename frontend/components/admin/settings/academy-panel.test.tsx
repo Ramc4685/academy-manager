@@ -59,3 +59,35 @@ describe("AcademyPanel currency (Settings overhaul P1 PR 3)", () => {
     expect(html).toContain('value="BLNO"');
   });
 });
+
+describe("AcademyPanel class defaults (Settings overhaul Phase 3 PR 9)", () => {
+  it("has a Class defaults card seeded 10 / 45 before the academy resolves", () => {
+    const html = renderPanel();
+
+    expect(html).toContain("Class defaults");
+    expect(html).toContain("Default class size");
+    expect(html).toContain("Default class length (minutes)");
+    // Two number inputs seeded 10 and 45 (class size, class length) — the
+    // form's initial state, since read data only lands via a client effect.
+    expect(html).toContain('value="10"');
+    expect(html).toContain('value="45"');
+  });
+});
+
+describe("AcademyPanel brand preview (Settings overhaul Phase 3 PR 9)", () => {
+  it("never hardcodes a different academy's name in the preview", () => {
+    const html = renderPanel({ display_name: "Court 7" });
+
+    expect(html).toContain("Court 7");
+    expect(html).not.toContain("Rally Academy");
+  });
+});
+
+describe("Academy profile tab (Settings overhaul Phase 3 PR 9)", () => {
+  it("is labelled for the merged Academy + Branding tab", () => {
+    const html = renderPanel();
+
+    expect(html).toContain('data-testid="admin-settings-academy"');
+    expect(html).toContain('aria-label="Academy profile tab"');
+  });
+});

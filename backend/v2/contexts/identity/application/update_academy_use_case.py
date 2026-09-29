@@ -6,7 +6,11 @@ from typing import Any, Protocol
 
 from backend.v2.shared.comms.phone_country import calling_code_for_country
 
-from .get_academy_use_case import GetAcademyOutput
+from .get_academy_use_case import (
+    DEFAULT_CLASS_LENGTH_MINUTES,
+    DEFAULT_CLASS_SIZE,
+    GetAcademyOutput,
+)
 
 
 class AcademyWriteRepo(Protocol):
@@ -42,4 +46,22 @@ class UpdateAcademyUseCase:
             email_sender_name=doc.get("email_sender_name") or None,
             email_reply_to=doc.get("email_reply_to") or None,
             phone_country_code=calling_code_for_country(doc.get("country")),
+            default_class_size=(
+                int(doc["default_class_size"])
+                if doc.get("default_class_size") is not None
+                else DEFAULT_CLASS_SIZE
+            ),
+            default_class_length_minutes=(
+                int(doc["default_class_length_minutes"])
+                if doc.get("default_class_length_minutes") is not None
+                else DEFAULT_CLASS_LENGTH_MINUTES
+            ),
+            default_venue_address=doc.get("default_venue_address") or None,
+            default_parking_note=doc.get("default_parking_note") or None,
+            default_what_to_bring=doc.get("default_what_to_bring") or None,
+            default_arrival_minutes_before=(
+                int(doc["default_arrival_minutes_before"])
+                if doc.get("default_arrival_minutes_before") is not None
+                else None
+            ),
         )

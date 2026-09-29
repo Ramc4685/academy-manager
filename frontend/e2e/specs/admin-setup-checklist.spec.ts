@@ -101,8 +101,12 @@ test.describe("admin setup checklist", () => {
       "/admin/settings?panel=gateway",
     );
 
+    // Settings overhaul Phase 3 PR 9: Branding merged into Academy profile,
+    // so `?panel=branding` (still the checklist step's stored href) redirects
+    // to `?panel=academy` and lands on the merged panel.
     await page.getByTestId("setup-step-branding").getByRole("link").click();
-    await expect(page).toHaveURL(/\/admin\/settings\?panel=branding/);
+    await expect(page).toHaveURL(/\/admin\/settings\?panel=academy/);
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
     expect(calls.every((method) => method === "GET")).toBe(true);
     expect(errors, errors.join("\n")).toEqual([]);
   });

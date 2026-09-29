@@ -156,11 +156,10 @@ const ADMIN_ROUTES = [
 ] as const;
 
 const SETTINGS_PANELS = [
-  { key: "academy", label: "Academy", testid: "admin-settings-academy" },
+  { key: "academy", label: "Academy profile", testid: "admin-settings-academy" },
   { key: "billing-rules", label: "Billing rules", testid: "admin-settings-billing-rules" },
   { key: "gateway", label: "Gateway", testid: "admin-settings-gateway" },
   { key: "notify", label: "Notify", testid: "admin-settings-notify" },
-  { key: "branding", label: "Branding", testid: "admin-settings-branding" },
   {
     key: "session-types",
     label: "Session types",
