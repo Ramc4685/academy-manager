@@ -73,6 +73,9 @@ export interface PublicAcademy extends PublicBrand {
   venue: PublicVenue;
   timezone: string | null;
   currency: string;
+  /** The academy's support email only; null when it has not set one. No
+   * phone number is ever exposed here (owner decision). */
+  support_email: string | null;
 }
 
 export interface PublicPageFlags {

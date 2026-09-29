@@ -85,6 +85,9 @@ class PublicAcademyDto(PublicBrandDto):
     venue: PublicVenueDto
     timezone: str | None = None
     currency: str
+    #: The academy's support email only (owner decision: no phone on the
+    #: public page). Null when the academy has not set a contact email.
+    support_email: str | None = None
 
 
 class PublicPageFlagsDto(BaseModel):

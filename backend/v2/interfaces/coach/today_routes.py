@@ -17,7 +17,12 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 
-from backend.v2.interfaces.coach.deps import CoachUseCases, coach_names_for, get_coach_use_cases
+from backend.v2.interfaces.coach.deps import (
+    CoachUseCases,
+    academy_zone_for_sessions,
+    coach_names_for,
+    get_coach_use_cases,
+)
 from backend.v2.interfaces.coach.views import (
     CoachRosterEntry,
     CoachSession,
@@ -102,6 +107,9 @@ async def get_today(
             claims.user_id, target_date, include_cancelled=True
         )
     coach_names = await coach_names_for(sessions, use_cases=use_cases, supervisor=supervisor)
+    academy_zone = await academy_zone_for_sessions(
+        sessions, use_cases=use_cases, academy_id=claims.academy_id
+    )
 
     # Fan-out roster fetches concurrently. Prefer the occurrence-scoped
     # roster (expected-absence flags + one-time makeup/trial entries) when
@@ -148,7 +156,7 @@ async def get_today(
             occurrence_id=s.occurrence_id,
             title=s.title,
             location=s.location,
-            timezone=s.timezone,
+            timezone=s.timezone or academy_zone,
             start_at=s.start_at,
             end_at=s.end_at,
             coach_id=getattr(s, "coach_id", None),

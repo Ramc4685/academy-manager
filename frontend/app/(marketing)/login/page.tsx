@@ -24,8 +24,10 @@ import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
 import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 import { brand } from "@/lib/brand";
 
-const HERO_IMAGE =
-  "https://static.prod-images.emergentagent.com/jobs/c735a2b3-2fb1-4fa5-a75c-2007226ca62e/images/1d1cfafe28a9d8df9f22f211189ef097f1bb5d348846857bdee5ba711ec35327.png";
+// Self-hosted: a CSS gradient, not a hotlinked third-party image, so the
+// hero never breaks when the CSP moves from Report-Only to enforced.
+const HERO_GRADIENT =
+  "linear-gradient(135deg, var(--rally-ink, #0f172a) 0%, var(--rally-night, #1e293b) 55%, var(--rally-volt, #facc15) 150%)";
 
 function LoginPageContent() {
   const router = useRouter();
@@ -169,7 +171,7 @@ function LoginPageContent() {
           <div
             aria-hidden="true"
             className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url(${HERO_IMAGE})` }}
+            style={{ backgroundImage: HERO_GRADIENT }}
           />
           <div className="absolute inset-0 bg-slate-900/55" />
 

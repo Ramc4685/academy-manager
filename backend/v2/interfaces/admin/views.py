@@ -1808,6 +1808,9 @@ class AdminAcademyView(BaseModel):
     # Read-only: the calling code a bare national phone number gets in a
     # WhatsApp link, derived from the academy's country (unset -> "1").
     phone_country_code: str = "1"
+    # Read-only here: platform-set at bootstrap. No academy edits its own
+    # sport today. Absent from UpdateAdminAcademyRequest by design.
+    sport: str = "badminton"
 
 
 class UpdateAdminAcademyRequest(BaseModel):

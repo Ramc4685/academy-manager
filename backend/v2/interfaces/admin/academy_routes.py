@@ -25,6 +25,19 @@ from backend.v2.shared.http import require_owner, require_persona
 router = APIRouter(tags=["admin.academy"])
 
 
+async def _academy_frontend(use_cases: AdminUseCases, academy_id: str | None) -> str:
+    """Base URL for a Stripe return link: the academy's own host (row 9).
+
+    ``academy_id`` must already be authorised (claims or verified OAuth
+    state); the request's Host is never consulted. Falls back to the
+    deployment's ``frontend_url`` when unknown or not composed.
+    """
+    lookup = getattr(use_cases, "academy_frontend_base_url", None)
+    if academy_id and lookup is not None:
+        return str(await lookup(academy_id)).rstrip("/")
+    return (get_settings().frontend_url or "").rstrip("/")
+
+
 # --- Academy profile ---
 
 
@@ -89,8 +102,7 @@ async def start_stripe_connect(
             status_code=503,
             detail="Online payouts are not set up yet. Finish payment setup in academy settings.",
         )
-    settings = get_settings()
-    frontend = (settings.frontend_url or "").rstrip("/")
+    frontend = await _academy_frontend(use_cases, claims.academy_id)
     result = await use_cases.start_connect_onboarding_use_case.start(
         academy_id=claims.academy_id,
         refresh_url=f"{frontend}/admin/settings?panel=gateway&stripe=error",
@@ -113,12 +125,17 @@ async def stripe_connect_callback(
             status_code=302,
         )
     try:
-        await use_cases.complete_stripe_connect_use_case.execute(code=code, state=state)
+        academy_id = await use_cases.complete_stripe_connect_use_case.execute(
+            code=code, state=state
+        )
     except ValueError:
         return RedirectResponse(
             url=f"{frontend}/admin/settings?panel=gateway&stripe=error",
             status_code=302,
         )
+    # ``academy_id`` comes from the HMAC-verified ``state``, so the redirect
+    # host is the academy's own, never anything the caller controls.
+    frontend = await _academy_frontend(use_cases, academy_id)
     return RedirectResponse(
         url=f"{frontend}/admin/settings?panel=gateway&stripe=connected",
         status_code=302,

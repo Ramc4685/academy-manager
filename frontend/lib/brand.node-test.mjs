@@ -39,3 +39,16 @@ test("public product copy does not expose implementation versioning", () => {
 
   assert.doesNotMatch(publicValues, forbiddenPattern);
 });
+
+test("product name is CourtMastr everywhere", () => {
+  assert.equal(brand.productName, "CourtMastr");
+  assert.equal(brand.productFullName, "CourtMastr");
+});
+
+test("copyright end year is at least the current year", () => {
+  const notice = copyrightNotice();
+  const yearRange = notice.match(/(\d{4})-(\d{4})/);
+  assert.ok(yearRange, "Copyright notice should include a year range");
+  const [, , endYear] = yearRange;
+  assert.ok(Number(endYear) >= new Date().getFullYear());
+});

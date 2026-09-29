@@ -202,3 +202,10 @@ class InvalidPublicPageSettings(DomainError):
 
     code = "Identity.InvalidPublicPageSettings"
     status_code = 422
+
+
+class InvalidManualPaymentMethods(DomainError):
+    """An offline payment methods update named an unknown method or none."""
+
+    code = "Identity.InvalidManualPaymentMethods"
+    status_code = 422

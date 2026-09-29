@@ -10,10 +10,13 @@ import {
   seedBadmintonPathway,
   type Program,
 } from "@/lib/api/curriculum";
+import { getAdminAcademy } from "@/lib/api/admin";
 import { getActiveAcademyId, type ApiError } from "@/lib/api/client";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { queryKeys } from "@/lib/query/keys";
+import { isBadmintonSport, titleCase } from "@/lib/pathway-sport";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -27,6 +30,14 @@ export default function AdminPathwayPage() {
     queryFn: () => listPrograms(academyId),
     enabled: Boolean(academyId),
   });
+
+  const { data: academy } = useQuery({
+    queryKey: queryKeys.admin.academy(),
+    queryFn: () => getAdminAcademy(),
+    enabled: Boolean(academyId),
+  });
+  const sport = academy?.sport ?? "badminton";
+  const isBadminton = isBadmintonSport(sport);
 
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -109,7 +120,7 @@ export default function AdminPathwayPage() {
                 type="text"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="e.g. Junior Badminton"
+                placeholder={`e.g. Junior ${titleCase(sport)}`}
                 className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
               />
             </div>
@@ -173,22 +184,25 @@ export default function AdminPathwayPage() {
         <Card p={20}>
           <h2 className="text-sm font-semibold">Seed content</h2>
           <p className="mt-1 text-sm text-neutral-500">
-            No programs yet. Seed the academy&apos;s badminton skill pathway to get started, or
-            create a custom program above. Seeding is idempotent — safe to click more than once.
+            {isBadminton
+              ? "No programs yet. Seed the academy's badminton skill pathway to get started, or create a custom program above. Seeding is idempotent — safe to click more than once."
+              : "No programs yet. Create a custom program above to get started."}
           </p>
           {seedMutation.isError && (
             <p className="mt-2 text-xs text-red-600">Failed to seed the badminton pathway.</p>
           )}
-          <div className="mt-3">
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={seedMutation.isPending}
-              onClick={() => setSeedConfirmOpen(true)}
-            >
-              {seedMutation.isPending ? "Seeding..." : "Seed badminton pathway"}
-            </Button>
-          </div>
+          {isBadminton && (
+            <div className="mt-3">
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={seedMutation.isPending}
+                onClick={() => setSeedConfirmOpen(true)}
+              >
+                {seedMutation.isPending ? "Seeding..." : "Seed badminton pathway"}
+              </Button>
+            </div>
+          )}
           <ConfirmActionDialog
             open={seedConfirmOpen}
             onOpenChange={setSeedConfirmOpen}

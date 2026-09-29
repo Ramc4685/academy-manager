@@ -13,6 +13,7 @@ context does not import identity directly.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from html import escape
 from urllib.parse import urlsplit
 
@@ -48,23 +49,26 @@ class SendAddCardReminder:
         links: CardSetupLinkPort,
         sender: InviteEmailPort,
         academies: AcademyNameLookup,
-        return_url: str,
+        return_url_for: Callable[[str], Awaitable[str]],
     ) -> None:
         self._contacts = contacts
         self._links = links
         self._sender = sender
         self._academies = academies
-        self._return_url = return_url
+        # Built per call for the academy being reminded, so the parent lands
+        # on that academy's own host (row 9), not a boot-time platform URL.
+        self._return_url_for = return_url_for
 
     async def execute(self, *, academy_id: str, parent_id: str) -> InviteEmailOutcome:
         contact = await self._contacts.get_parent_contact(parent_id, academy_id=academy_id)
         if contact is None:
             return InviteEmailOutcome(ok=False, failed_reason="parent_not_found")
 
+        return_url = await self._return_url_for(academy_id)
         setup_link = await self._links.create_card_setup_link(
-            parent_id=parent_id, academy_id=academy_id, return_url=self._return_url
+            parent_id=parent_id, academy_id=academy_id, return_url=return_url
         )
-        expected = urlsplit(self._return_url)
+        expected = urlsplit(return_url)
         actual = urlsplit(setup_link)
         if (
             actual.scheme not in {"http", "https"}

@@ -354,11 +354,12 @@ def _make_lesson_card(*, lesson_number: int = 1, title: str = "Card") -> LessonC
     )
 
 
-def _build_real_router_app(*, curriculum: Any) -> FastAPI:
+def _build_real_router_app(*, curriculum: Any, get_academy_use_case: Any = None) -> FastAPI:
     """Mount the real pathway router with a stub AdminUseCases.
 
-    Only ``curriculum`` is wired; the lesson-card route is the only thing
-    under test. ``curriculum=None`` exercises the 503 guard.
+    ``curriculum`` and (when given) ``get_academy_use_case`` are wired; the
+    lesson-card and seed-badminton routes are the only things under test.
+    ``curriculum=None`` exercises the 503 guard.
     """
     app = FastAPI()
     app.include_router(pathway_router, prefix="/api/v2/admin")
@@ -368,8 +369,16 @@ def _build_real_router_app(*, curriculum: Any) -> FastAPI:
         academy_id="test-academy",
         roles=("admin",),
     )
-    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(curriculum=curriculum)
+    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(
+        curriculum=curriculum, get_academy_use_case=get_academy_use_case
+    )
     return app
+
+
+def _academy_use_case(sport: str) -> Any:
+    """A stub ``GetAcademyUseCase`` returning only the ``sport`` field used
+    by the seed-badminton gate."""
+    return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(sport=sport)))
 
 
 def test_list_lesson_cards_returns_summary_shape():
@@ -594,3 +603,54 @@ def test_real_router_create_program_returns_409_when_one_is_active():
 
     assert r.status_code == 409, r.text
     assert r.json()["error"]["code"] == "Curriculum.ActiveProgramExists"
+
+
+# ---------------------------------------------------------------------------
+# POST /programs/{id}/seed-badminton — sport gating (row 13)
+# ---------------------------------------------------------------------------
+
+
+def test_real_router_seed_badminton_allowed_for_badminton_academy():
+    seed = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(program_id="prog-1", name="Badminton"))
+    )
+    app = _build_real_router_app(
+        curriculum=SimpleNamespace(seed_badminton=seed),
+        get_academy_use_case=_academy_use_case("badminton"),
+    )
+
+    r = TestClient(app).post("/api/v2/admin/programs/any-id/seed-badminton")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"program_id": "prog-1", "name": "Badminton"}
+    seed.execute.assert_awaited_once_with(created_by="admin-1")
+
+
+def test_real_router_seed_badminton_allowed_when_sport_field_is_absent():
+    # A doc without the `sport` field (every academy today, BLNO included)
+    # reads as badminton at the use-case layer, so this is unchanged.
+    seed = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(program_id="prog-1", name="Badminton"))
+    )
+    app = _build_real_router_app(
+        curriculum=SimpleNamespace(seed_badminton=seed),
+        get_academy_use_case=_academy_use_case("badminton"),
+    )
+
+    r = TestClient(app).post("/api/v2/admin/programs/any-id/seed-badminton")
+
+    assert r.status_code == 200, r.text
+
+
+def test_real_router_seed_badminton_409s_for_non_badminton_academy():
+    seed = SimpleNamespace(execute=AsyncMock())
+    app = _build_real_router_app(
+        curriculum=SimpleNamespace(seed_badminton=seed),
+        get_academy_use_case=_academy_use_case("tennis"),
+    )
+
+    r = TestClient(app).post("/api/v2/admin/programs/any-id/seed-badminton")
+
+    assert r.status_code == 409, r.text
+    assert "badminton" in r.json()["detail"].lower()
+    seed.execute.assert_not_awaited()

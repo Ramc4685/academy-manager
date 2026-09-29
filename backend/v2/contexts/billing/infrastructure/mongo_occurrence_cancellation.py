@@ -40,12 +40,11 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
     MongoTuitionDiscountRepository,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE
 
 #: Enrollment rows a cancelled date can affect. ``paused`` is here because a
 #: pause that started mid-month leaves a real invoice behind.
 _AFFECTED_STATUSES = ("active", "paused")
-
-_DEFAULT_TIMEZONE = "America/Chicago"
 
 
 class MongoOccurrenceOverrideRepository(TenantScopedRepository):
@@ -244,7 +243,7 @@ class MongoOccurrenceCancellationReader:
 
     async def _academy_timezone(self) -> str:
         doc = await self._db["academies"].find_one({"academy_id": current_academy_id()})
-        return str((doc or {}).get("timezone") or "") or _DEFAULT_TIMEZONE
+        return str((doc or {}).get("timezone") or "") or LEGACY_FALLBACK_TIMEZONE
 
 
 def _coerce_datetime(value: Any) -> datetime | None:

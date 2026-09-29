@@ -7,6 +7,11 @@ from typing import Any, Protocol
 
 from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE, calling_code_for_country
 
+#: Every academy that predates the `sport` field (every academy today,
+#: including BLNO) reads as badminton. No migration: this is a read-time
+#: default, not a stored value, so existing docs are untouched.
+DEFAULT_ACADEMY_SPORT = "badminton"
+
 
 class AcademyRepo(Protocol):
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
@@ -31,6 +36,8 @@ class GetAcademyOutput:
     #: Calling code for bare national phone numbers (WhatsApp links). Read
     #: only, derived from ``country`` at read time; unset -> "1".
     phone_country_code: str = DEFAULT_CALLING_CODE
+    #: Platform-set at bootstrap; read-only in the admin academy view.
+    sport: str = DEFAULT_ACADEMY_SPORT
 
 
 class GetAcademyUseCase:
@@ -57,4 +64,5 @@ class GetAcademyUseCase:
             email_sender_name=doc.get("email_sender_name") or None,
             email_reply_to=doc.get("email_reply_to") or None,
             phone_country_code=calling_code_for_country(doc.get("country")),
+            sport=str(doc.get("sport") or DEFAULT_ACADEMY_SPORT),
         )

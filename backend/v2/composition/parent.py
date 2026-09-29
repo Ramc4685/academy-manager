@@ -291,7 +291,10 @@ from backend.v2.shared.tenancy import (
     current_tenant_origins,
     tenant_scope,
 )
-from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
+from backend.v2.shared.time.academy_timezone import (
+    academy_timezone_lookup,
+    resolve_session_timezone,
+)
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -849,6 +852,7 @@ def compose_parent(
         snapshots=payments_repo,
         occurrences=payments_repo,
         clock=clock,
+        academy_timezone=academy_timezone_lookup(db),
     )
 
     # Enrollment
@@ -951,7 +955,12 @@ def compose_parent(
             # 8:30pm Chicago on Nov 30 had the fee attached to — or a fresh
             # invoice opened for — December.
             session = await sessions_query.get(enrollment.session_id)
-            timezone_name = (session.timezone if session is not None else None) or "America/Chicago"
+            # Zoneless legacy session: the tenant's zone, then the legacy one.
+            timezone_name = (
+                session.timezone if session is not None else None
+            ) or resolve_session_timezone(
+                None, await academy_timezone_lookup(db)(current_academy_id())
+            )
             period = _local_period_label(clock(), timezone_name)
 
             existing_invoice = await billing_ledger_repo.get_open_invoice_for_student(

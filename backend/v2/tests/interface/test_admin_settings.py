@@ -57,8 +57,20 @@ def test_get_academy_contract(admin_client):
         "email_reply_to": None,
         "invoice_prefix": None,
         "phone_country_code": "1",
+        "sport": "badminton",
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
+
+
+def test_get_academy_shows_stored_sport(admin_client):
+    admin_client.use_cases.get_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Ace Tennis", timezone=None, sport="tennis"
+    )
+
+    r = admin_client.get("/api/v2/admin/academy")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sport"] == "tennis"
 
 
 def test_get_academy_shows_the_platform_set_invoice_prefix(admin_client, monkeypatch):
@@ -86,6 +98,19 @@ def test_patch_academy_cannot_set_the_invoice_prefix(admin_client):
 
     assert r.status_code == 200, r.text
     admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with("acad", {})
+
+
+def test_patch_academy_cannot_set_sport(admin_client):
+    # Read-only: set by the platform at bootstrap (row 13).
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None, sport="badminton"
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"sport": "tennis"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with("acad", {})
+    assert r.json()["sport"] == "badminton"
 
 
 def test_patch_academy_contract(admin_client):
@@ -392,3 +417,81 @@ def test_patch_user_role_forbids_self_lockout(admin_client):
 
     assert response.status_code == 400, response.text
     admin_client.use_cases.change_user_role.execute.assert_not_awaited()
+
+
+# --- Row 9: Connect return links land on the academy's own host ---------------
+
+_BLNO_HOST = "https://blno-academy.courtmastr.com"
+
+
+def _per_academy_base_url(seen: list[str]):
+    async def base_url(academy_id: str) -> str:
+        seen.append(academy_id)
+        return _BLNO_HOST if academy_id == "acad_blno_badminton" else "https://x.courtmastr.com"
+
+    return base_url
+
+
+def test_start_stripe_connect_returns_to_the_academy_host(admin_client):
+    seen: list[str] = []
+    admin_client.use_cases.academy_frontend_base_url = _per_academy_base_url(seen)
+    admin_client.use_cases.start_connect_onboarding_use_case = SimpleNamespace(
+        start=AsyncMock(return_value={"onboarding_url": "https://connect.stripe.com/setup/a"})
+    )
+
+    # A spoofed Host header must not steer the return link anywhere.
+    response = admin_client.post(
+        "/api/v2/admin/academy/gateway/stripe/connect-link",
+        headers={"Host": "evil.example.com", "X-Forwarded-Host": "evil.example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    kwargs = admin_client.use_cases.start_connect_onboarding_use_case.start.await_args.kwargs
+    # The claims' academy (fixture "acad"), never a request-supplied one.
+    assert seen == ["acad"]
+    assert kwargs["return_url"] == (
+        "https://x.courtmastr.com/admin/settings?panel=gateway&stripe=connected"
+    )
+    assert (
+        kwargs["refresh_url"]
+        == "https://x.courtmastr.com/admin/settings?panel=gateway&stripe=error"
+    )
+    assert "evil" not in kwargs["return_url"] + kwargs["refresh_url"]
+
+
+def test_stripe_connect_callback_redirects_to_the_verified_academy_host(admin_client):
+    seen: list[str] = []
+    admin_client.use_cases.academy_frontend_base_url = _per_academy_base_url(seen)
+    admin_client.use_cases.complete_stripe_connect_use_case = SimpleNamespace(
+        execute=AsyncMock(return_value="acad_blno_badminton")
+    )
+
+    response = admin_client.get(
+        "/api/v2/admin/academy/gateway/stripe/callback?code=c&state=signed",
+        headers={"Host": "evil.example.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == (
+        f"{_BLNO_HOST}/admin/settings?panel=gateway&stripe=connected"
+    )
+    # The academy comes from the HMAC-verified state, not from the request.
+    assert seen == ["acad_blno_badminton"]
+
+
+def test_stripe_connect_callback_error_stays_on_the_platform_host(admin_client, monkeypatch):
+    seen: list[str] = []
+    admin_client.use_cases.academy_frontend_base_url = _per_academy_base_url(seen)
+    admin_client.use_cases.complete_stripe_connect_use_case = SimpleNamespace(
+        execute=AsyncMock(side_effect=ValueError("bad state"))
+    )
+
+    response = admin_client.get(
+        "/api/v2/admin/academy/gateway/stripe/callback?code=c&state=forged",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"].endswith("/admin/settings?panel=gateway&stripe=error")
+    assert seen == []
