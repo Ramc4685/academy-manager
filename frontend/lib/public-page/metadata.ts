@@ -8,9 +8,30 @@ import type { Metadata } from "next";
 
 import { ageSpan, formatAgeBand, truncate } from "./format";
 import { allClasses, describePublishedPage, isIndexable } from "./page-model";
-import type { PublicAcademyPage, PublicPageResult } from "./types";
+import type { PublicAcademyPage, PublicBrand, PublicPageResult } from "./types";
 
 export const OG_CARD_PATH = "/og-card";
+
+/**
+ * The academy's brand for the current request, or null on the platform host
+ * (or any host the backend has nothing to say about) — the caller falls back
+ * to the platform's own brand. Shared by the root `<title>`/apple-web-app
+ * metadata and the login/register header (row 15).
+ */
+export function publicPageBrand(result: PublicPageResult): PublicBrand | null {
+  switch (result.kind) {
+    case "published":
+      return result.page.academy;
+    case "not_published":
+      return result.page.academy;
+    case "platform":
+    case "unknown_host":
+    case "unavailable":
+    default:
+      return null;
+  }
+}
+
 const TITLE_MAX = 70;
 const DESCRIPTION_MAX = 155;
 

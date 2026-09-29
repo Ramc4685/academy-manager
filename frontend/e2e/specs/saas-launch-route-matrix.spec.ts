@@ -16,10 +16,12 @@ import { stubEmptyBillingSetup, stubFamilyIndex } from "../fixtures/family-index
 import {
   ACADEMY_A,
   fulfillJson,
+  stubCoachAcademy,
   stubCoachMessages,
   stubMe,
   stubMemberships,
   stubParentProfile,
+  stubParentAcademy,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 
@@ -360,6 +362,7 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
 async function stubCoachLaunchBff(page: Page): Promise<void> {
   await stubMe(page, COACH_ME);
   await stubCoachMessages(page);
+  await stubCoachAcademy(page);
   await page.route("**/api/v2/coach/today*", (route) =>
     fulfillJson(route, { date: "2026-05-22", sessions: [] })
   );
@@ -377,6 +380,7 @@ async function stubParentLaunchBff(page: Page): Promise<void> {
     { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "parent" },
   ]);
   await stubParentMessages(page);
+  await stubParentAcademy(page);
   await page.route("**/api/v2/parent/payments", (route) =>
     fulfillJson(route, { payments: [] })
   );

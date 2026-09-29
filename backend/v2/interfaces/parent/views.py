@@ -495,6 +495,7 @@ class ParentAcademyView(BaseModel):
     hours_text: str | None = None
     address: str | None = None
     logo_url: str | None = None
+    brand_color: str | None = None
 
 
 # ---------------------------------------------------------------------------

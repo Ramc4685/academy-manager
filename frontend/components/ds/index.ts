@@ -16,6 +16,7 @@ export { Button } from "./button";
 export type { ButtonVariant, ButtonSize } from "./button";
 export { Card } from "./card";
 export { ShuttleMark } from "./shuttle";
+export { AcademyMark } from "./academy-mark";
 export { Icon } from "./icons";
 export { Sparkline, MiniBars, Ring } from "./charts";
 export { FormField, fieldDescribedBy } from "./form-field";

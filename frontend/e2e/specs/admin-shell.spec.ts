@@ -8,6 +8,7 @@ import {
   rowActionControl,
 } from "../helpers/row-actions";
 import {
+  stubCoachAcademy,
   stubCoachMessages,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
@@ -548,6 +549,7 @@ async function stubAdminBff(
 async function stubCoachBff(page: Page) {
   await stubMe(page, COACH_ME);
   await stubCoachMessages(page);
+  await stubCoachAcademy(page);
   await page.route("**/api/v2/coach/today*", (route) =>
     fulfillJson(route, { date: "2026-05-20", sessions: [] }),
   );

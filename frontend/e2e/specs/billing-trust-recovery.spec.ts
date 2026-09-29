@@ -12,6 +12,7 @@ import {
   stubAcademy,
   stubMe,
   stubMemberships,
+  stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
 } from "../fixtures/saas-stubs";
@@ -31,6 +32,7 @@ test.describe("billing trust and recovery surfaces", () => {
     // The parent layout fetches this on every /parent/* page (issue #380).
     await stubParentProfile(page);
     await stubParentMessages(page);
+    await stubParentAcademy(page);
 
     await page.route("**/api/v2/parent/payments", (route) => {
       if (route.request().method() !== "GET") return route.fallback();

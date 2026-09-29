@@ -16,7 +16,9 @@ import { ShellBackButton } from "@/components/persona/back-button";
 import { ToastProvider } from "@/components/ds/toast";
 import { listParentMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
-import { getParentProfile } from "@/lib/api/parent";
+import { getParentAcademy, getParentProfile } from "@/lib/api/parent";
+import { AcademyMark } from "@/components/ds/academy-mark";
+import { safeHexColor } from "@/lib/public-page/format";
 
 // Session-scoped dismissal (issue #380): the banner returns on the next
 // login rather than being permanently dismissible — nothing here blocks the
@@ -50,6 +52,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     enabled: auth.authorized,
     refetchInterval: 30_000,
   });
+  const { data: academyData } = useQuery({
+    queryKey: queryKeys.parent.academy(),
+    queryFn: getParentAcademy,
+    enabled: auth.authorized,
+  });
+  const academyName = academyData?.display_name?.trim() || "Academy";
   const unreadCount = (messagesData?.messages ?? []).filter((m) => !m.read).length;
 
   if (!auth.checked) {
@@ -85,16 +93,21 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         <div className="flex items-center gap-2">
           <ShellBackButton known={PARENT_TOP_LEVEL_ROUTES} home={PARENT_HOME} variant="dark" />
           <Link href="/parent/dashboard" className="flex items-center gap-2.5">
-            <div
-              className="h-8 w-8 rounded-lg flex items-center justify-center font-bold text-sm shadow-lg"
-              style={{ background: "linear-gradient(135deg, #facc15 0%, #f59e0b 100%)", color: "#0a0f1c" }}
-            >
-              A
-            </div>
+            <AcademyMark
+              name={academyName}
+              logoUrl={academyData?.logo_url}
+              size={32}
+              monogramBg={safeHexColor(academyData?.brand_color, "#facc15")}
+              monogramColor="#0a0f1c"
+              className="shadow-lg"
+            />
             {/* #843 added a fifth header control; at 320px the wordmark is
                 what has to give, not the touch targets. */}
-            <span className="hidden min-[360px]:inline font-semibold text-white text-[15px] tracking-tight">
-              Academy
+            <span
+              className="hidden min-[360px]:inline max-w-[140px] truncate font-semibold text-white text-[15px] tracking-tight"
+              title={academyName}
+            >
+              {academyName}
             </span>
           </Link>
         </div>

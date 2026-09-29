@@ -430,6 +430,16 @@ export const test = base.extend<{
       });
     });
 
+    // The coach shell reads the academy name/logo/colour for its header mark.
+    await page.route("**/api/v2/coach/academy", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ name: "Aces Academy", logo_url: null, brand_color: null }),
+      });
+    });
+
     await page.route("**/api/v2/coach/today*", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return route.fulfill({

@@ -460,6 +460,7 @@ export interface ParentAcademy {
   hours_text: string | null;
   address: string | null;
   logo_url: string | null;
+  brand_color: string | null;
 }
 
 export function getParentAcademy(): Promise<ParentAcademy> {

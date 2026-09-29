@@ -678,3 +678,17 @@ export async function previewCoachBillingMove(
     { method: "GET" },
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Academy mark (row 14): name/logo/brand colour only.
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface CoachAcademy {
+  name: string;
+  logo_url: string | null;
+  brand_color: string | null;
+}
+
+export function getCoachAcademy(): Promise<CoachAcademy> {
+  return apiFetch<CoachAcademy>("/coach/academy", { method: "GET" });
+}

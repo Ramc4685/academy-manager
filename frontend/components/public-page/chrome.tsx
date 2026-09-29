@@ -5,7 +5,7 @@ import { monogram, safeHexColor, safeHttpsUrl } from "@/lib/public-page/format";
 import type { PrimaryAction } from "@/lib/public-page/page-model";
 import type { PublicBrand } from "@/lib/public-page/types";
 
-import { ShuttleIcon } from "./icons";
+import { CourtMastrMark } from "./icons";
 import styles from "./public-page.module.css";
 
 /**
@@ -124,7 +124,7 @@ export function SiteFooter({
           </li>
         </ul>
         <p className={styles.credit} data-testid="courtmastr-credit">
-          <ShuttleIcon />
+          <CourtMastrMark />
           Bookings and payments by CourtMastr
         </p>
       </div>
