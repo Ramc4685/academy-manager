@@ -843,6 +843,25 @@ const EMPTY_FORM: CreateSessionRequest = {
   amount_cents: null,
 };
 
+/**
+ * Issue #148 follow-up: the create-session dialog seeds `capacity` from the
+ * academy's Class defaults on open, but the academy query can still be
+ * loading at that moment, so the seed falls back to EMPTY_FORM.capacity (10).
+ * This mirrors the timezone fix (see CreateSessionDialog) for capacity: once
+ * the academy query resolves for an already-open dialog, adopt its real
+ * default_class_size — unless the admin already edited capacity themselves.
+ */
+export function shouldAdoptAcademyCapacity(params: {
+  open: boolean;
+  wasOpen: boolean;
+  capacityTouched: boolean;
+  defaultClassSize: number | null | undefined;
+}): boolean {
+  return (
+    params.open && params.wasOpen && params.defaultClassSize != null && !params.capacityTouched
+  );
+}
+
 /** `18:00` + 45 minutes -> `18:45`; passes through unparseable input. */
 function addMinutesToTime(time: string, minutes: number): string {
   const [hourStr, minuteStr] = time.split(":");
@@ -882,22 +901,37 @@ function CreateSessionDialog({
   // Issue #148: this used to replace the whole form object whenever the academy
   // timezone resolved, so a slow query wiped whatever the admin had already
   // typed into an open dialog. Seed defaults on open; afterwards patch only the
-  // timezone field, and only while the admin has not touched it.
+  // timezone (and capacity) field, and only while the admin has not touched it.
   const [timezoneTouched, setTimezoneTouched] = useState(false);
   const [endTimeTouched, setEndTimeTouched] = useState(false);
+  const [capacityTouched, setCapacityTouched] = useState(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
       setForm({ ...EMPTY_FORM, timezone: seedTimezone(academyTimezone), capacity: defaultCapacity });
       setTimezoneTouched(false);
       setEndTimeTouched(false);
+      setCapacityTouched(false);
       setError(null);
     } else if (open && academyTimezone && !timezoneTouched) {
       // The academy query resolved after the dialog opened, so the seed was the
       // browser-zone fallback. Adopt the academy's real zone.
       setForm((current) => ({ ...current, timezone: academyTimezone }));
     }
+    if (
+      shouldAdoptAcademyCapacity({
+        open,
+        wasOpen: wasOpen.current,
+        capacityTouched,
+        defaultClassSize: academyQuery.data?.default_class_size,
+      })
+    ) {
+      // Same race as the timezone above: the academy query resolved after the
+      // dialog opened with the hardcoded EMPTY_FORM fallback. Adopt the real
+      // academy default now that it is known.
+      setForm((current) => ({ ...current, capacity: defaultCapacity }));
+    }
     wasOpen.current = open;
-  }, [open, academyTimezone, timezoneTouched, defaultCapacity]);
+  }, [open, academyTimezone, timezoneTouched, defaultCapacity, capacityTouched, academyQuery.data?.default_class_size]);
 
   const coachesQuery = useQuery({
     queryKey: queryKeys.admin.users("coach"),
@@ -1035,9 +1069,10 @@ function CreateSessionDialog({
                   required
                   min={1}
                   value={form.capacity}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, capacity: parseInt(e.target.value, 10) || 1 }))
-                  }
+                  onChange={(e) => {
+                    setCapacityTouched(true);
+                    setForm((f) => ({ ...f, capacity: parseInt(e.target.value, 10) || 1 }));
+                  }}
                   className={inputClass}
                 />
               </Field>
