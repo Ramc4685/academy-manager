@@ -167,6 +167,28 @@ class _FakeDropOutcome:
         return self.current
 
 
+@dataclass
+class _Ach:
+    ach_discount_enabled: bool = False
+    ach_discount_percent: float = 0
+    max_ach_discount_percent: float = 3.0
+
+
+class _FakeAch:
+    def __init__(self, current: _Ach | None = None) -> None:
+        self.current = current or _Ach()
+        self.writes: list[tuple[bool, float]] = []
+
+    async def read(self) -> _Ach:
+        return self.current
+
+    async def write(self, *, enabled: bool, percent: float) -> _Ach:
+        self.writes.append((enabled, percent))
+        # Like the real adapter: the ceiling is never touched by a write.
+        self.current = _Ach(enabled, percent, self.current.max_ach_discount_percent)
+        return self.current
+
+
 class _Reader:
     def __init__(self, fn: Any) -> None:
         self.execute = fn
@@ -188,12 +210,14 @@ def _build(
     fees: _FakeFees,
     policy: _FakePolicy,
     drop: _FakeDropOutcome | None = None,
+    ach: _FakeAch | None = None,
 ) -> BuildBillingRulesView:
     return BuildBillingRulesView(
         schedule=_Reader(schedule.read),
         fees=_Reader(fees.read),
         cancellation=_Reader(policy.read),
         drop_outcome=_Reader((drop or _FakeDropOutcome()).read),
+        ach=_Reader((ach or _FakeAch()).read),
     )
 
 
@@ -203,8 +227,10 @@ def _update(
     policy: _FakePolicy,
     audit: _FakeAudit | None = None,
     drop: _FakeDropOutcome | None = None,
+    ach: _FakeAch | None = None,
 ) -> UpdateBillingRules:
     drop = drop or _FakeDropOutcome()
+    ach = ach or _FakeAch()
     return UpdateBillingRules(
         schedule_reader=_Reader(schedule.read),
         schedule_writer=_Reader(schedule.write),
@@ -214,6 +240,8 @@ def _update(
         cancellation_writer=_Reader(policy.write),
         drop_outcome_reader=_Reader(drop.read),
         drop_outcome_writer=_Reader(drop.write),
+        ach_reader=_Reader(ach.read),
+        ach_writer=_Reader(ach.write),
         audit=audit,
         clock=lambda: datetime(2026, 9, 7, tzinfo=UTC),
     )
@@ -668,3 +696,115 @@ async def test_an_out_of_range_reminder_day_is_refused_naming_the_field() -> Non
     assert exc.value.field == "reminder_days"
     # Nothing was written: validation runs before any store is touched.
     assert schedule.current.reminder_days == (15,)
+
+
+# --- Bank (ACH) discount (Settings overhaul Phase 4 PR 13) --------------
+
+
+@pytest.mark.asyncio
+async def test_ach_row_reads_stored_values_and_ceiling() -> None:
+    ach = _FakeAch(_Ach(True, 2.0, 3.0))
+    view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy(), ach=ach).execute("acad-1")
+    row = view.row("ach_discount")
+    assert row.editable is True
+    assert (row.enabled, row.percent, row.max_percent) == (True, 2.0, 3.0)
+    assert row.detail is not None and "autopay" in row.detail.lower()
+    assert "after any tuition discount" in row.detail
+
+
+@pytest.mark.asyncio
+async def test_ach_write_saves_and_audits_before_and_after() -> None:
+    ach, audit = _FakeAch(), _FakeAudit()
+    result = await _update(
+        _FakeSchedule(), _FakeFees(), _FakePolicy(), audit=audit, ach=ach
+    ).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": True, "percent": 2.5},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert result.changed_fields == ("ach_discount",)
+    assert ach.writes == [(True, 2.5)]
+    entry = audit.entries[0]
+    assert entry.before == {"ach_discount": {"enabled": False, "percent": 0.0}}
+    assert entry.after == {"ach_discount": {"enabled": True, "percent": 2.5}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("percent", [0, -1, 3.01, 50])
+async def test_ach_percent_is_bounded_by_the_ceiling(percent: float) -> None:
+    ach, audit = _FakeAch(), _FakeAudit()
+    with pytest.raises(BillingRulesValidationError) as err:
+        await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), audit=audit, ach=ach).execute(
+            "acad-1",
+            UpdateBillingRulesCommand(
+                ach_discount={"enabled": True, "percent": percent},  # type: ignore[arg-type]
+                actor_id="owner-1",
+            ),
+        )
+    assert err.value.field == "ach_discount_percent"
+    assert ach.writes == [] and audit.entries == []
+
+
+@pytest.mark.asyncio
+async def test_ach_turning_on_at_zero_percent_is_rejected() -> None:
+    with pytest.raises(BillingRulesValidationError):
+        await _update(_FakeSchedule(), _FakeFees(), _FakePolicy()).execute(
+            "acad-1",
+            UpdateBillingRulesCommand(
+                ach_discount={"enabled": True},  # type: ignore[arg-type]
+                actor_id="owner-1",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_ach_ceiling_is_the_stored_max_and_a_write_never_moves_it() -> None:
+    ach = _FakeAch(_Ach(False, 0, 1.5))
+    update = _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), ach=ach)
+    with pytest.raises(BillingRulesValidationError):
+        await update.execute(
+            "acad-1",
+            UpdateBillingRulesCommand(
+                ach_discount={"enabled": True, "percent": 2.0},  # type: ignore[arg-type]
+                actor_id="owner-1",
+            ),
+        )
+    await update.execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": True, "percent": 1.5},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert ach.current.max_ach_discount_percent == 1.5
+
+
+@pytest.mark.asyncio
+async def test_ach_unchanged_is_a_no_op_with_no_audit() -> None:
+    ach, audit = _FakeAch(_Ach(True, 2.0, 3.0)), _FakeAudit()
+    result = await _update(
+        _FakeSchedule(), _FakeFees(), _FakePolicy(), audit=audit, ach=ach
+    ).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": True, "percent": 2.0},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert result.changed_fields == ()
+    assert ach.writes == [] and audit.entries == []
+
+
+@pytest.mark.asyncio
+async def test_ach_turn_off_keeps_the_stored_percent() -> None:
+    ach = _FakeAch(_Ach(True, 2.0, 3.0))
+    await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), ach=ach).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": False},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert ach.writes == [(False, 2.0)]
