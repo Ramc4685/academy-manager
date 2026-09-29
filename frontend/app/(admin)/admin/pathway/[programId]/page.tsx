@@ -23,17 +23,7 @@ import {
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { queryKeys } from "@/lib/query/keys";
-
-/** Row 13: badminton programs default new external refs to the BWF Shuttle
- * Time citation; every other sport defaults to an academy-authored source
- * (the placeholder BWF library isn't relevant to them). */
-export function defaultExternalSourceForSport(isBadminton: boolean): ExternalSource {
-  return isBadminton ? "BWF_SHUTTLE_TIME" : "ACADEMY_CUSTOM";
-}
-
-export function sourceTitlePlaceholder(isBadminton: boolean): string {
-  return isBadminton ? "Source title (e.g. Shuttle Time Level 1)" : "Source title";
-}
+import { defaultExternalSourceForSport, sourceTitlePlaceholder } from "@/lib/pathway-sport";
 
 export default function AdminPathwayDetailPage() {
   const { programId } = useParams<{ programId: string }>();

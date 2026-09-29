@@ -16,19 +16,9 @@ import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { queryKeys } from "@/lib/query/keys";
+import { isBadmintonSport, titleCase } from "@/lib/pathway-sport";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
-
-export function titleCase(value: string): string {
-  return value.length === 0 ? value : value[0].toUpperCase() + value.slice(1);
-}
-
-/** Row 13: the seed-badminton CTA and its placeholders only make sense for
- * a badminton academy. Sport comparison is case-insensitive and defaults to
- * badminton, mirroring the backend's read-time default. */
-export function isBadmintonSport(sport: string | undefined): boolean {
-  return (sport ?? "badminton").toLowerCase() === "badminton";
-}
 
 export default function AdminPathwayPage() {
   const router = useRouter();
