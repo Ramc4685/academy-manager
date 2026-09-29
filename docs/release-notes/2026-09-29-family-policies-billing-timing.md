@@ -1,6 +1,6 @@
 # Family policies: Waivers embed, drop-outcome move, welcome-email default (Settings overhaul Phase 3 PR 10)
 
-PR: #TBD
+PR: #1006
 
 ## What changed
 

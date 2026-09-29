@@ -1,6 +1,6 @@
 # Merge Academy + Branding into one Academy profile tab, add Class defaults (Settings overhaul Phase 3 PR 9)
 
-PR: #TBD
+PR: #1006
 
 ## What changed
 
