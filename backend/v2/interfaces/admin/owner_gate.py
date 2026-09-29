@@ -33,12 +33,17 @@ split from:
   Every other void stays owner-only, which is why this route is conditional
   and therefore not in ``OWNER_ONLY_ROUTE_PATHS``.
 
-* :func:`ensure_owner_for_cancellation_terms` — the action-level rule inside
-  ``PUT /self-service/policy`` (money audit X5, 2026-09-25): the late
-  cancellation fee and notice are the same stored values the owner-only
-  ``PUT /billing/rules`` edits, so changing them from Self-service needs
-  ``owner`` too. The route's other fields stay admin work, which is why it is
-  not in ``OWNER_ONLY_ROUTE_PATHS``.
+* :func:`ensure_owner_for_price_change` and
+  :func:`ensure_owner_for_timezone_change` — the field-level rules inside the
+  mixed forms (Settings overhaul Phase 1 PR 5, "money is owner-only"):
+  ``POST /sessions`` and ``PATCH /sessions/{id}`` (the class monthly fee) and
+  ``PATCH /academy`` (timezone and currency). Called only when the request
+  actually changes one of those values, so an admin resubmitting the whole
+  form with them untouched still saves. The routes' other fields stay admin
+  work, which is why they are not in ``OWNER_ONLY_ROUTE_PATHS``. The late
+  cancellation fee and notice are no longer writable from
+  ``PUT /self-service/policy`` at all; ``PUT /billing/rules`` is their only
+  write path.
 
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
@@ -152,6 +157,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("DELETE", f"{_ADMIN}/academy/gateway/stripe/connect"),
         # session_type_routes.py — per-enrollment price override
         ("POST", f"{_ADMIN}/billing-enrollments/{{enrollment_id}}/override"),
+        # session_type_routes.py — the price list (Settings -> Session types).
+        # GET stays admin; every write sets what families are charged
+        # (Settings overhaul Phase 1 PR 5).
+        ("POST", f"{_ADMIN}/session-types"),
+        ("PATCH", f"{_ADMIN}/session-types/{{session_type_id}}"),
+        ("DELETE", f"{_ADMIN}/session-types/{{session_type_id}}"),
         # sessions_routes.py — ad-hoc enrollment fee
         ("POST", f"{_ADMIN}/enrollments/{{enrollment_id}}/fee"),
         # departure_policy_routes.py — governs delete_enrollment_requires_owner
@@ -280,18 +291,46 @@ def ensure_owner_for_invoice_void(claims: AuthClaims, *, is_unsent_draft: bool) 
         raise HTTPException(status_code=404, detail="Not found")
 
 
-def ensure_owner_for_cancellation_terms(claims: AuthClaims) -> None:
-    """Only an owner may change the late-cancellation fee or notice (money audit X5).
+#: 403 messages for the field-level money rules. The Settings and class forms
+#: show them verbatim, so they are plain sentences.
+PRICE_CHANGE_FORBIDDEN: Final[str] = "Only the academy owner can change prices and fees."
+TIMEZONE_CHANGE_FORBIDDEN: Final[str] = "Only the academy owner can change the timezone."
+CURRENCY_CHANGE_FORBIDDEN: Final[str] = "Only the academy owner can change the currency."
 
-    Called only when the request actually changes one of them, so an admin
-    saving absence settings with the cancellation values untouched is not
-    refused. 403, not 404, like :func:`ensure_can_assign_role`: the caller is
-    already inside an admin route that shows these fields, and the message is
-    what the Settings page needs to show.
+
+def ensure_owner_for_price_change(claims: AuthClaims) -> None:
+    """Only an owner may change what families are charged (Phase 1 PR 5).
+
+    Called only when a request actually changes a price field from its
+    stored value (or, on create, sets one), so a full-form resubmit with the
+    fee untouched is not refused. 403, not 404, like
+    :func:`ensure_can_assign_role`: the caller is inside an admin route whose
+    form shows the field, and the message is what the form needs to show.
     """
 
     if "owner" not in claims.roles:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the academy owner can change the cancellation fee and notice",
-        )
+        raise HTTPException(status_code=403, detail=PRICE_CHANGE_FORBIDDEN)
+
+
+def ensure_owner_for_timezone_change(claims: AuthClaims) -> None:
+    """Only an owner may change the academy timezone (Phase 1 PR 5).
+
+    The timezone decides the local midnight each billing month, due date and
+    late fee is counted from, so it is a money setting. Same 403 contract as
+    :func:`ensure_owner_for_price_change`.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(status_code=403, detail=TIMEZONE_CHANGE_FORBIDDEN)
+
+
+def ensure_owner_for_currency_change(claims: AuthClaims) -> None:
+    """Only an owner may change the academy currency (Phase 1 PR 5).
+
+    Every price is stored in minor units of this currency, so changing it
+    changes what every family is charged. Same 403 contract as
+    :func:`ensure_owner_for_price_change`.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(status_code=403, detail=CURRENCY_CHANGE_FORBIDDEN)

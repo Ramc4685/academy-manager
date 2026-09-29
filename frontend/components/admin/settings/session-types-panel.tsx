@@ -27,6 +27,7 @@ import {
   TableSkeleton,
   Th,
 } from "@/components/ds";
+import { OwnerOnlyHint, useIsOwner } from "@/components/admin/owner-context";
 
 const PERIOD_LABEL: Record<SessionTypeBillingPeriod, string> = {
   monthly: "Monthly",
@@ -128,9 +129,14 @@ function toUpdatePayload(original: FormState, form: FormState): UpdateSessionTyp
  * Archive is a soft delete. `GET /admin/session-types` hides archived rows
  * unless `include_archived=true`, so the toggle below is what makes a
  * soft-deleted type reachable again; Reactivate is `PATCH is_active: true`.
+ *
+ * The catalog sets what families are charged, so every write is owner-only
+ * (Settings overhaul Phase 1 PR 5). An admin without the owner scope sees the
+ * list with an "Owner only" hint in place of the buttons.
  */
 export function SessionTypesPanel() {
   const queryClient = useQueryClient();
+  const isOwner = useIsOwner();
   const [editing, setEditing] = useState<SessionTypeView | "new" | null>(null);
   const [archiving, setArchiving] = useState<SessionTypeView | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -190,14 +196,18 @@ export function SessionTypesPanel() {
             />
             Show archived
           </label>
-          <Button
-            variant="volt"
-            size="sm"
-            onClick={() => setEditing("new")}
-            data-testid="session-type-new"
-          >
-            New session type
-          </Button>
+          {isOwner ? (
+            <Button
+              variant="volt"
+              size="sm"
+              onClick={() => setEditing("new")}
+              data-testid="session-type-new"
+            >
+              New session type
+            </Button>
+          ) : (
+            <OwnerOnlyHint />
+          )}
         </div>
       </div>
 
@@ -224,14 +234,17 @@ export function SessionTypesPanel() {
                 : "Nothing active. Tick \u201cShow archived\u201d to look for one you archived."
             }
             action={
-              <Button variant="volt" size="sm" onClick={() => setEditing("new")}>
-                New session type
-              </Button>
+              isOwner ? (
+                <Button variant="volt" size="sm" onClick={() => setEditing("new")}>
+                  New session type
+                </Button>
+              ) : undefined
             }
           />
         ) : (
           <SessionTypesTable
             rows={rows}
+            canEdit={isOwner}
             onEdit={setEditing}
             onArchive={openArchive}
             onReactivate={(row) => reactivateMutation.mutate(row.session_type_id)}
@@ -293,8 +306,9 @@ export function SessionTypesPanel() {
   );
 }
 
-function SessionTypesTable({
+export function SessionTypesTable({
   rows,
+  canEdit,
   onEdit,
   onArchive,
   onReactivate,
@@ -302,6 +316,8 @@ function SessionTypesTable({
   failedReactivateId,
 }: {
   rows: SessionTypeView[];
+  /** False for an admin without the owner scope: prices are read-only. */
+  canEdit: boolean;
   onEdit: (row: SessionTypeView) => void;
   onArchive: (row: SessionTypeView) => void;
   onReactivate: (row: SessionTypeView) => void;
@@ -360,10 +376,14 @@ function SessionTypesTable({
               </td>
               <td className="px-4 py-3">
                 <div className="flex justify-end gap-2">
-                  <Button variant="secondary" size="sm" onClick={() => onEdit(row)}>
-                    Edit
-                  </Button>
-                  {row.is_active ? (
+                  {!canEdit ? (
+                    <OwnerOnlyHint />
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={() => onEdit(row)}>
+                      Edit
+                    </Button>
+                  )}
+                  {!canEdit ? null : row.is_active ? (
                     <Button variant="danger" size="sm" onClick={() => onArchive(row)}>
                       Archive
                     </Button>

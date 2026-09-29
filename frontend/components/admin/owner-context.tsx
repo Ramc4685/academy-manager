@@ -59,3 +59,21 @@ export function OwnerOnlyHint({ className = "" }: { className?: string }) {
     </span>
   );
 }
+
+/**
+ * Note under a money field an admin can see but not change (Settings overhaul
+ * Phase 1 PR 5): prices, fees and the academy timezone are owner-only. The
+ * BFF refuses a changed value with a 403; this says so before they try.
+ */
+export function OwnerOnlyFieldNote({ id, className = "" }: { id?: string; className?: string }) {
+  return (
+    <span
+      id={id}
+      data-testid="owner-only-field-note"
+      className={`flex items-center gap-2 text-xs font-normal text-rally-muted ${className}`}
+    >
+      <OwnerOnlyHint />
+      <span>Only the academy owner can change this.</span>
+    </span>
+  );
+}

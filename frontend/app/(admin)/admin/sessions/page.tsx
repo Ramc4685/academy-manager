@@ -36,6 +36,7 @@ import {
 // to the error boundary. One implementation now, so the two cannot drift again.
 import { buildEditSessionForm, hasRecurringSchedule } from "./[id]/format";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { OwnerOnlyFieldNote, useIsOwner } from "@/components/admin/owner-context";
 import { queryKeys } from "@/lib/query/keys";
 import {
   formatAcademyTimeRange,
@@ -606,6 +607,9 @@ function EditSessionDialog({
   onOpenChange: (open: boolean) => void;
   onSaved: (session: AdminSessionView) => void;
 }) {
+  // The monthly fee is owner-only (Settings overhaul P1 PR 5); the form still
+  // sends the stored value, which the BFF accepts as unchanged.
+  const isOwner = useIsOwner();
   const [form, setForm] = useState<EditSessionRequest>({});
   const [error, setError] = useState<string | null>(null);
   const open = session !== null;
@@ -752,14 +756,17 @@ function EditSessionDialog({
                 min={0}
                 step="0.01"
                 value={centsToDollarsInput(form.amount_cents)}
+                disabled={!isOwner}
+                data-testid="session-edit-monthly-fee"
                 onChange={(event) =>
                   setForm((f) => ({
                     ...f,
                     amount_cents: dollarsInputToCents(event.target.value),
                   }))
                 }
-                className={inputClass}
+                className={`${inputClass} ${lockedInputClass}`}
               />
+              {!isOwner && <OwnerOnlyFieldNote className="mt-1" />}
             </Field>
             <Field label="Reason">
               <input
@@ -841,6 +848,7 @@ function CreateSessionDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
 }) {
+  const isOwner = useIsOwner();
   const [form, setForm] = useState<CreateSessionRequest>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
 
@@ -893,7 +901,8 @@ function CreateSessionDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    mutation.mutate(form);
+    // A non-owner never sends a fee: the BFF 403s any price from them.
+    mutation.mutate(isOwner ? form : { ...form, amount_cents: null });
   };
 
   return (
@@ -1021,21 +1030,26 @@ function CreateSessionDialog({
                   : "Your academy has no timezone set — this defaulted to your browser's zone. Confirm it before saving."}
               </p>
             </Field>
-            <Field label="Monthly fee" required>
+            {/* Owner-only (Settings overhaul P1 PR 5): an admin creates the
+                class unpriced and the owner sets the fee afterwards. */}
+            <Field label="Monthly fee" required={isOwner}>
               <input
                 type="number"
-                required
+                required={isOwner}
                 min={0}
                 step="0.01"
                 value={centsToDollarsInput(form.amount_cents)}
+                disabled={!isOwner}
+                data-testid="create-session-monthly-fee"
                 onChange={(e) =>
                   setForm((f) => ({
                     ...f,
                     amount_cents: dollarsInputToCents(e.target.value),
                   }))
                 }
-                className={inputClass}
+                className={`${inputClass} ${lockedInputClass}`}
               />
+              {!isOwner && <OwnerOnlyFieldNote className="mt-1" />}
             </Field>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -1106,6 +1120,8 @@ function DaySelect({
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
+const lockedInputClass =
+  "disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted";
 
 function Field({
   label,

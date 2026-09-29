@@ -118,7 +118,7 @@ def test_fresh_academy_shows_every_step_todo(admin_client):
     assert body["total"] == 9
     assert body["complete"] is False
     owner_only = {item["key"] for item in body["items"] if item["owner_only"]}
-    assert owner_only == {"billing_rules", "stripe_connect"}
+    assert owner_only == {"billing_rules", "stripe_connect", "session_types"}
     # Tenant comes from the request claims, never a default academy.
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_with("acad")
     admin_client.use_cases.list_admin_users.execute.assert_awaited_once_with(

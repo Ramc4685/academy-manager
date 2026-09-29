@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getSelfServicePolicy, updateSelfServicePolicy } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
-import { isPolicyDirty, policyPatch, policyToForm, type PolicyForm } from "@/lib/self-service-policy-form";
+import {
+  cancellationTermsSummary,
+  isPolicyDirty,
+  policyPatch,
+  policyToForm,
+  type PolicyForm,
+} from "@/lib/self-service-policy-form";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
@@ -39,8 +46,6 @@ export function SelfServicePanel() {
     onSuccess: (data) => {
       setSavedAt(savedAtNow());
       queryClient.setQueryData(queryKeys.admin.selfServicePolicy(), data);
-      // Billing rules shows the same cancellation fee and notice.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.billingRules() });
     },
   });
 
@@ -90,30 +95,21 @@ export function SelfServicePanel() {
           <div className="mt-8">
             <Overline>Cancellation</Overline>
           </div>
-          <p className="mt-2 text-xs text-rally-muted" data-testid="self-service-cancellation-owner-note">
-            {isOwner
-              ? "The notice and fee are also shown in Billing rules. Changes are recorded in the billing audit log."
-              : "Only the academy owner can change the cancellation notice and fee."}
+          {/* The notice and fee live only in Billing rules (Settings overhaul
+              P1 PR 5): owner-only there, and never written from here. */}
+          <p className="mt-2 text-sm text-rally-ink" data-testid="self-service-cancellation-terms">
+            {cancellationTermsSummary(query.data)}{" "}
+            {isOwner ? (
+              <Link
+                href="/admin/settings?panel=billing-rules"
+                className="font-medium text-rally-cobalt-700 underline underline-offset-2 hover:text-rally-cobalt-800"
+              >
+                Change in Billing rules
+              </Link>
+            ) : (
+              <span className="text-rally-muted">Only the academy owner can change them.</span>
+            )}
           </p>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <NumberField
-              label="Minimum cancellation notice (days)"
-              hint="Cancelling with less notice than this is charged the fee below."
-              value={form.cancellation_minimum_notice_days}
-              error={patch.errors.cancellation_minimum_notice_days}
-              disabled={!isOwner}
-              onChange={(value) => setForm((prev) => ({ ...prev, cancellation_minimum_notice_days: value }))}
-            />
-            <NumberField
-              label="Cancellation fee ($)"
-              hint="Flat charge to the parent when notice is short. Zero never charges."
-              value={form.cancellation_fee_dollars}
-              step="0.01"
-              error={patch.errors.cancellation_fee_dollars}
-              disabled={!isOwner}
-              onChange={(value) => setForm((prev) => ({ ...prev, cancellation_fee_dollars: value }))}
-            />
-          </div>
           <label className="mt-4 grid gap-1.5 text-sm font-medium text-rally-ink">
             Effective timing
             <select

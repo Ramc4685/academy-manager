@@ -8,6 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.owner_gate import (
+    ensure_owner_for_currency_change,
+    ensure_owner_for_timezone_change,
+)
 from backend.v2.interfaces.admin.views import (
     AdminAcademyView,
     AdminFeesView,
@@ -56,10 +60,49 @@ async def update_academy_settings(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminAcademyView:
-    out = await use_cases.update_academy_use_case.execute(
-        claims.academy_id, payload.model_dump(exclude_unset=True)
-    )
+    changes = payload.model_dump(exclude_unset=True)
+    previous_timezone: str | None = None
+    timezone_changes = False
+    if "timezone" in changes or "currency" in changes:
+        # Money is owner-only (Settings overhaul Phase 1 PR 5). Timezone and
+        # currency are refused for a non-owner only when they actually change,
+        # so resubmitting the stored values is not an error.
+        current = await use_cases.get_academy_use_case.execute(claims.academy_id)
+        previous_timezone = current.timezone
+        if "timezone" in changes and _blank_to_none(changes["timezone"]) != _blank_to_none(
+            current.timezone
+        ):
+            timezone_changes = True
+            ensure_owner_for_timezone_change(claims)
+        if "currency" in changes:
+            if _upper(changes["currency"]) != _upper(current.currency):
+                ensure_owner_for_currency_change(claims)
+            else:
+                # Equal ignoring case counts as unchanged, so keep the stored
+                # spelling: an admin must not rewrite "USD" as "usd".
+                changes.pop("currency")
+    out = await use_cases.update_academy_use_case.execute(claims.academy_id, changes)
+    if timezone_changes and use_cases.record_money_setting_change is not None:
+        await use_cases.record_money_setting_change.execute(
+            academy_id=claims.academy_id,
+            action="academy_timezone_changed",
+            actor_id=claims.user_id,
+            before={"timezone": previous_timezone},
+            # What was stored, not the use case's "UTC" display fallback.
+            after={"timezone": _blank_to_none(changes["timezone"])},
+            reason="Settings -> Academy",
+        )
     return AdminAcademyView(**asdict(out), invoice_prefix=await _invoice_prefix(use_cases))
+
+
+def _blank_to_none(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _upper(value: object) -> str | None:
+    text = _blank_to_none(value)
+    return text.upper() if text else None
 
 
 async def _invoice_prefix(use_cases: AdminUseCases) -> str | None:
