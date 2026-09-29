@@ -101,7 +101,15 @@ def test_list_sessions_returns_seeded_session(admin_client):
     assert any(s["session_id"] == "sess-1" for s in body["sessions"])
 
 
-def _mongo_admin_app(db, *, academy_id: str = "academy-b") -> FastAPI:
+def _mongo_admin_app(
+    db,
+    *,
+    academy_id: str = "academy-b",
+    roles: tuple[str, ...] = ("admin", "owner"),
+) -> FastAPI:
+    """Admin app over a mongomock db. ``roles`` defaults to admin+owner, the
+    shape of every admin that predates the owner split (migration 0165); pass
+    ``("admin",)`` for an operations-only admin."""
     app = FastAPI()
 
     @app.middleware("http")
@@ -125,7 +133,7 @@ def _mongo_admin_app(db, *, academy_id: str = "academy-b") -> FastAPI:
         user_id="admin-1",
         email="admin@example.com",
         academy_id=academy_id,
-        roles=("admin",),
+        roles=roles,  # type: ignore[arg-type]
     )
     return app
 

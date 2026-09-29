@@ -66,6 +66,13 @@ BillingAuditAction = Literal[
     # Settings -> Billing rules -> Offline payments: the owner changed which
     # offline methods (cash, check, Zelle...) the payment dialogs offer.
     "payment_methods_changed",
+    # Settings overhaul Phase 1 PR 5 (money is owner-only): the owner changed
+    # one class's monthly fee. Every family on that class is charged the new
+    # amount from the next invoice, so the trail shows who changed it.
+    "session_fee_changed",
+    # Same PR: the owner changed the academy timezone, which moves the local
+    # midnight every billing month and due date is counted from.
+    "academy_timezone_changed",
 ]
 
 

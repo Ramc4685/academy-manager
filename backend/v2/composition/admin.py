@@ -164,6 +164,9 @@ from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.money_setting_audit import (
+    RecordMoneySettingChange,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -1100,6 +1103,7 @@ def compose_admin(
         settings=billing_settings_repo,
         audit=billing_audit_log,
     )
+    record_money_setting_change = RecordMoneySettingChange(audit=billing_audit_log)
 
     async def _describe_payout_occurrences(
         occurrence_ids: list[str],
@@ -4163,6 +4167,7 @@ def compose_admin(
         record_manual_payment=record_manual_payment,
         issue_invoice_refund=issue_invoice_refund,
         list_billing_audit=list_billing_audit,
+        record_money_setting_change=record_money_setting_change,
         create_student_invoice=create_student_invoice,
         bill_enrollment_period=bill_enrollment_period,
         list_billing_products=list_billing_products,
