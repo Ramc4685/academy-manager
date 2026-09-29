@@ -145,6 +145,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # academy_routes.py — fees and the Stripe gateway (reads stay admin;
         # the Stripe callback carries no auth dependency at all)
         ("PATCH", f"{_ADMIN}/academy/fees"),
+        # payment_methods_routes.py — which offline methods the payment
+        # dialogs offer (Settings -> Billing rules -> Offline payments)
+        ("PUT", f"{_ADMIN}/academy/payment-methods"),
         ("POST", f"{_ADMIN}/academy/gateway/stripe/connect-link"),
         ("DELETE", f"{_ADMIN}/academy/gateway/stripe/connect"),
         # session_type_routes.py — per-enrollment price override
