@@ -12,8 +12,13 @@ from backend.v2.shared.tenancy import TenantScopedRepository
 class MongoAcademyMediaRepository(TenantScopedRepository):
     collection_name = "academy_media"
 
-    async def record(self, doc: dict[str, Any]) -> None:
-        await self._insert_one({"_id": new_ulid(), **doc})
+    async def record(self, doc: dict[str, Any]) -> str:
+        media_id = new_ulid()
+        await self._insert_one({"_id": media_id, **doc})
+        return media_id
+
+    async def update(self, media_id: str, fields: dict[str, Any]) -> None:
+        await self.collection.update_one(self._scoped({"_id": media_id}), {"$set": fields})
 
     async def count_since(self, since: datetime) -> int:
         return int(

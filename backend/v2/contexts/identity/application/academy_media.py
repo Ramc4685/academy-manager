@@ -10,7 +10,11 @@ Rules:
   from auth claims by the route), never from the request body.
 * Objects are never deleted or overwritten: each upload gets a fresh uuid
   path, so an email sent last month keeps pointing at last month's logo.
-* One audit row per stored object in ``academy_media``.
+* One audit row per ATTEMPT in ``academy_media``, written before any work so
+  rejected uploads count toward the hourly cap and a stored object always has
+  a row (status ``pending`` -> ``stored`` / ``rejected`` / ``failed``).
+* Pillow work runs in a worker thread behind a small semaphore, so it never
+  blocks the event loop and concurrent uploads are bounded.
 * The use case does NOT write ``academies.logo_url``. The route returns the
   URL and the Settings form saves it through ``PATCH /admin/academy``, the one
   writer of that field.
@@ -18,6 +22,7 @@ Rules:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Callable
@@ -32,6 +37,8 @@ log = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 #: Uploads per academy per hour before the endpoint answers 429.
 MAX_UPLOADS_PER_HOUR = 20
+#: Images decoded at once per process (bounds CPU and peak memory).
+MAX_CONCURRENT_PROCESSING = 2
 
 
 class LogoRejected(ValueError):
@@ -72,7 +79,8 @@ class MediaObjectStore(Protocol):
 
 
 class AcademyMediaRepo(Protocol):
-    async def record(self, doc: dict[str, Any]) -> None: ...
+    async def record(self, doc: dict[str, Any]) -> str: ...
+    async def update(self, media_id: str, fields: dict[str, Any]) -> None: ...
     async def count_since(self, since: datetime) -> int: ...
 
 
@@ -94,31 +102,62 @@ class UploadAcademyLogo:
         self._repo = media_repo
         self._process = process_image
         self._now = now or (lambda: datetime.now(UTC))
+        self._slots = asyncio.Semaphore(MAX_CONCURRENT_PROCESSING)
 
     async def execute(self, *, academy_id: str, uploaded_by: str, raw: bytes) -> UploadedLogo:
         if len(raw) > MAX_UPLOAD_BYTES:
             raise LogoTooLarge("That image is over 2 MB. Choose a smaller PNG or JPG.")
         now = self._now()
-        if await self._repo.count_since(now - timedelta(hours=1)) >= MAX_UPLOADS_PER_HOUR:
-            raise LogoRateLimited("Too many uploads. Try again in a little while.")
-        processed = self._process(raw)
-        object_path = f"academies/{academy_id}/logo/{uuid4().hex}.png"
-        url = await self._store.put_public(
-            path=object_path, data=processed.data, content_type=processed.content_type
-        )
-        await self._repo.record(
+        # Insert first, then count: the row counts itself, so parallel bursts
+        # see each other and rejected files are throttled too.
+        media_id = await self._repo.record(
             {
                 "kind": "logo",
-                "object_path": object_path,
-                "logo_url": url,
+                "status": "pending",
                 "uploaded_by": uploaded_by,
-                "size_bytes": len(processed.data),
                 "original_size_bytes": len(raw),
-                "sha256": hashlib.sha256(processed.data).hexdigest(),
-                "content_type": processed.content_type,
-                "width": processed.width,
-                "height": processed.height,
                 "created_at": now,
             }
         )
+        if await self._repo.count_since(now - timedelta(hours=1)) > MAX_UPLOADS_PER_HOUR:
+            await self._repo.update(media_id, {"status": "rate_limited"})
+            raise LogoRateLimited("Too many uploads. Try again in a little while.")
+        try:
+            async with self._slots:
+                processed = await asyncio.to_thread(self._process, raw)
+        except LogoRejected:
+            await self._repo.update(media_id, {"status": "rejected"})
+            raise
+        except Exception:
+            await self._repo.update(media_id, {"status": "failed"})
+            raise
+        object_path = f"academies/{academy_id}/logo/{uuid4().hex}.png"
+        try:
+            url = await self._store.put_public(
+                path=object_path, data=processed.data, content_type=processed.content_type
+            )
+        except MediaStorageUnavailable:
+            await self._repo.update(media_id, {"status": "failed"})
+            raise
+        try:
+            await self._repo.update(
+                media_id,
+                {
+                    "status": "stored",
+                    "object_path": object_path,
+                    "logo_url": url,
+                    "size_bytes": len(processed.data),
+                    "sha256": hashlib.sha256(processed.data).hexdigest(),
+                    "content_type": processed.content_type,
+                    "width": processed.width,
+                    "height": processed.height,
+                },
+            )
+        except Exception:
+            # The object exists but its row is still "pending": log the path so
+            # it can be reconciled by hand.
+            log.error(
+                "academy_media %s stored %s but finalising the row failed", media_id, object_path
+            )
+            raise
         return UploadedLogo(logo_url=url)

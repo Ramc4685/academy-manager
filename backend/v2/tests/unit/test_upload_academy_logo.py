@@ -58,6 +58,7 @@ async def test_stores_png_under_the_academys_path_and_returns_a_token_url() -> N
     assert "academies%2Facad_x%2Flogo%2F" in out.logo_url
     assert f"alt=media&token={obj['token']}" in out.logo_url
     (row,) = repo.rows
+    assert row["status"] == "stored"
     assert row["object_path"] == path
     assert row["uploaded_by"] == "u1"
     assert row["sha256"] == hashlib.sha256(obj["data"]).hexdigest()  # type: ignore[arg-type]
@@ -87,23 +88,54 @@ async def test_rejected_image_stores_nothing() -> None:
     uc, store, repo = _make()
     with pytest.raises(LogoRejected):
         await uc.execute(academy_id="a", uploaded_by="u", raw=b"GIF89a....")
-    assert not store.objects and not repo.rows
+    assert not store.objects
+    # Rejected attempts are recorded, so they count toward the hourly cap.
+    assert [r["status"] for r in repo.rows] == ["rejected"]
 
 
 @pytest.mark.asyncio
 async def test_rate_limit() -> None:
-    uc, store, _ = _make(repo=FakeMediaRepo(existing_recent=MAX_UPLOADS_PER_HOUR))
+    uc, store, repo = _make(repo=FakeMediaRepo(existing_recent=MAX_UPLOADS_PER_HOUR))
     with pytest.raises(LogoRateLimited):
         await uc.execute(academy_id="a", uploaded_by="u", raw=_png())
     assert not store.objects
+    assert [r["status"] for r in repo.rows] == ["rate_limited"]
 
 
 @pytest.mark.asyncio
-async def test_storage_failure_writes_no_audit_row() -> None:
+async def test_repeated_garbage_uploads_hit_the_cap() -> None:
+    uc, _, _ = _make()
+    for _ in range(MAX_UPLOADS_PER_HOUR):
+        with pytest.raises(LogoRejected):
+            await uc.execute(academy_id="a", uploaded_by="u", raw=b"nope")
+    with pytest.raises(LogoRateLimited):
+        await uc.execute(academy_id="a", uploaded_by="u", raw=b"nope")
+
+
+@pytest.mark.asyncio
+async def test_processing_runs_off_the_event_loop_thread() -> None:
+    import threading
+
+    seen: list[int] = []
+
+    def proc(raw: bytes):
+        seen.append(threading.get_ident())
+        return process_logo_image(raw)
+
+    uc = UploadAcademyLogo(
+        store=FakeMediaStore(), media_repo=FakeMediaRepo(), process_image=proc, now=lambda: NOW
+    )
+    await uc.execute(academy_id="a", uploaded_by="u", raw=_png())
+    assert seen and seen[0] != threading.get_ident()
+
+
+@pytest.mark.asyncio
+async def test_storage_failure_marks_the_attempt_failed() -> None:
     uc, _, repo = _make(store=FakeMediaStore(fail=True))
     with pytest.raises(MediaStorageUnavailable):
         await uc.execute(academy_id="a", uploaded_by="u", raw=_png())
-    assert not repo.rows
+    assert [r["status"] for r in repo.rows] == ["failed"]
+    assert "object_path" not in repo.rows[0]
 
 
 @pytest.mark.asyncio

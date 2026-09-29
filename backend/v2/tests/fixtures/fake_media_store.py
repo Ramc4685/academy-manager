@@ -36,8 +36,12 @@ class FakeMediaRepo:
         self.rows: list[dict[str, object]] = []
         self.existing_recent = existing_recent
 
-    async def record(self, doc: dict[str, object]) -> None:
-        self.rows.append(doc)
+    async def record(self, doc: dict[str, object]) -> str:
+        self.rows.append(dict(doc))
+        return str(len(self.rows) - 1)
+
+    async def update(self, media_id: str, fields: dict[str, object]) -> None:
+        self.rows[int(media_id)].update(fields)
 
     async def count_since(self, since) -> int:
         return self.existing_recent + len(self.rows)

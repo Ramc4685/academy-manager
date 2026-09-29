@@ -41,3 +41,16 @@ async def test_rows_are_stamped_and_counted_per_academy(real_db) -> None:
         assert await repo.count_since(NOW - timedelta(hours=1)) == 1
     stored = await real_db["academy_media"].find_one({"academy_id": "acad-media-b"})
     assert stored["kind"] == "logo" and stored["_id"]
+
+
+@pytest.mark.asyncio
+async def test_update_is_tenant_scoped(real_db) -> None:
+    repo = MongoAcademyMediaRepository(real_db)
+    with tenant_scope("acad-media-c"):
+        media_id = await repo.record({"kind": "logo", "status": "pending", "created_at": NOW})
+    with tenant_scope("acad-media-d"):
+        await repo.update(media_id, {"status": "hijacked"})
+    with tenant_scope("acad-media-c"):
+        await repo.update(media_id, {"status": "stored"})
+    stored = await real_db["academy_media"].find_one({"_id": media_id})
+    assert stored["status"] == "stored"

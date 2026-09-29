@@ -137,6 +137,6 @@ def test_decompression_bomb_is_rejected_from_the_header() -> None:
 
 
 def test_pixel_cap_boundary() -> None:
-    process_logo_image(_png(size=(4096, 1)))
+    process_logo_image(_png(size=(2048, 1)))
     with pytest.raises(LogoRejected):
-        process_logo_image(_png(size=(4097, 1)))
+        process_logo_image(_png(size=(2049, 1)))

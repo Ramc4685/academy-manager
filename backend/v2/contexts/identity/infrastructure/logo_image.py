@@ -15,7 +15,7 @@ from backend.v2.contexts.identity.application.academy_media import LogoRejected,
 
 #: Largest accepted source width/height. Checked from the header, before any
 #: pixel is decoded, so a small file declaring a huge canvas is refused cheaply.
-MAX_SOURCE_DIMENSION = 4096
+MAX_SOURCE_DIMENSION = 2048
 #: Longest side of the stored logo.
 MAX_OUTPUT_DIMENSION = 512
 
@@ -48,13 +48,17 @@ def _process(raw: bytes) -> ProcessedImage:
             raise LogoRejected(_BAD_IMAGE)
         if width > MAX_SOURCE_DIMENSION or height > MAX_SOURCE_DIMENSION:
             raise LogoRejected(_TOO_LARGE)
+        if opened.format == "JPEG":
+            # Let the decoder downscale while reading (the output is 512 px).
+            opened.draft("RGB", (MAX_OUTPUT_DIMENSION * 2, MAX_OUTPUT_DIMENSION * 2))
         opened.load()
         oriented = ImageOps.exif_transpose(opened)
         has_alpha = oriented.mode in ("RGBA", "LA", "PA") or "transparency" in oriented.info
         image = oriented.convert("RGBA" if has_alpha else "RGB")
     image.thumbnail((MAX_OUTPUT_DIMENSION, MAX_OUTPUT_DIMENSION), Image.Resampling.LANCZOS)
-    # Rebuild from raw pixels so no metadata can ride along.
-    clean = Image.frombytes(image.mode, image.size, image.tobytes())
+    # Drop every metadata channel (EXIF, ICC, text chunks); PNG save writes
+    # only what is in ``info``/``pnginfo``, and both are empty.
+    image.info.clear()
     out = io.BytesIO()
-    clean.save(out, format="PNG", optimize=True)
-    return ProcessedImage(data=out.getvalue(), width=clean.width, height=clean.height)
+    image.save(out, format="PNG", optimize=True)
+    return ProcessedImage(data=out.getvalue(), width=image.width, height=image.height)
