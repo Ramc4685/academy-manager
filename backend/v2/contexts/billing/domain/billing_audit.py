@@ -63,6 +63,9 @@ BillingAuditAction = Literal[
     # possible before the academy's first numbered invoice; the trail shows
     # who chose the prefix parents see on every invoice.
     "invoice_prefix_changed",
+    # Settings -> Billing rules -> Offline payments: the owner changed which
+    # offline methods (cash, check, Zelle...) the payment dialogs offer.
+    "payment_methods_changed",
 ]
 
 

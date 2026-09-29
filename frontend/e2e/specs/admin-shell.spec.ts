@@ -504,11 +504,16 @@ async function stubAdminBff(
   await page.route("**/api/v2/admin/reports/coach-utilization*", (route) =>
     fulfillJson(route, { coaches: [], periods: [], total_payout_minor: 0 }),
   );
+  await page.route(/\/api\/v2\/admin\/academy\/payment-methods(?:\?.*)?$/, (route) =>
+    fulfillJson(route, {
+      manual_methods: ["cash", "check", "zelle", "venmo", "bank_transfer", "other"],
+    }),
+  );
   await page.route(/\/api\/v2\/admin\/academy\/gateway(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
       stripe_connected: false,
       stripe_account_id_masked: null,
-      manual_methods: ["cash", "check"],
+      manual_methods: ["cash", "check", "zelle", "venmo", "bank_transfer", "other"],
     }),
   );
   await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>

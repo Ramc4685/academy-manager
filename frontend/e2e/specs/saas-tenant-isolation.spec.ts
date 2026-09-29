@@ -114,11 +114,16 @@ test.describe("SaaS v2 — login + tenant resolution", () => {
         daily_digest_to_admin: false,
       })
     );
+    await page.route(/\/api\/v2\/admin\/academy\/payment-methods(?:\?.*)?$/, (route) =>
+      fulfillJson(route, {
+        manual_methods: ["cash", "check", "zelle", "venmo", "bank_transfer", "other"],
+      }),
+    );
     await page.route(/\/api\/v2\/admin\/academy\/gateway(?:\?.*)?$/, (route) =>
       fulfillJson(route, {
         stripe_connected: false,
         stripe_account_id_masked: null,
-        manual_methods: ["cash", "check"],
+        manual_methods: ["cash", "check", "zelle", "venmo", "bank_transfer", "other"],
       })
     );
     // Academy resource is what we use to assert tenant identity post-switch.

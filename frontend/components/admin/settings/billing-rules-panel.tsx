@@ -21,6 +21,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { OfflinePaymentsCard } from "@/components/admin/settings/offline-payments-card";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 
 /**
@@ -139,6 +140,8 @@ export function BillingRulesPanel() {
           )}
         </div>
       )}
+      {/* Row 22: its own card and Save, so it never rides on the rules diff. */}
+      <OfflinePaymentsCard />
     </section>
   );
 }
