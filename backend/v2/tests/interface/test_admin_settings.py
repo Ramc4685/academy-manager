@@ -113,6 +113,44 @@ def test_patch_academy_cannot_set_sport(admin_client):
     assert r.json()["sport"] == "badminton"
 
 
+def test_patch_academy_accepts_usd_currency(admin_client):
+    # Settings overhaul Phase 1 PR 3: currency is locked to USD. Sending the
+    # locked value explicitly is a no-op, not an error.
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None, currency="USD"
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"currency": "USD"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"currency": "USD"}
+    )
+
+
+@pytest.mark.parametrize("currency", ["CAD", "eur", "gbp", "usd "])
+def test_patch_academy_rejects_non_usd_currency(admin_client, currency):
+    r = admin_client.patch("/api/v2/admin/academy", json={"currency": currency})
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_patch_academy_omitted_currency_is_a_no_op(admin_client):
+    # BLNO (and every other academy) must behave exactly as today when the
+    # currency field is simply not sent.
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"display_name": "Court 7"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"display_name": "Court 7"}
+    )
+
+
 def test_patch_academy_contract(admin_client):
     admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
         academy_id="acad",
