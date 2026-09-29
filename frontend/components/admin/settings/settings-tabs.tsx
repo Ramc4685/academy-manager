@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Route } from "next";
 import type { UrlObject } from "url";
 
 import { OverflowCue } from "@/components/ds/overflow-cue";
@@ -56,7 +57,7 @@ export const RETIRED_SETTINGS_PANELS: Readonly<Record<string, SettingsPanelKey>>
  * panel when they cannot reach it.
  */
 export const RETIRED_SETTINGS_EXTERNAL_REDIRECTS: Readonly<
-  Record<string, (isOwner: boolean) => string>
+  Record<string, (isOwner: boolean) => Route>
 > = {
   data: (isOwner) => (isOwner ? "/admin/reports" : "/admin/settings?panel=academy"),
   roles: () => "/admin/users",
