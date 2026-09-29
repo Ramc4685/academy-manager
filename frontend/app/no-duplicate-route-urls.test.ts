@@ -40,9 +40,28 @@ function isInterceptingMarker(segment: string): boolean {
   return /^\(\.{1,3}\)$/.test(segment) || segment.startsWith("(..)(");
 }
 
+function isCatchAll(segment: string): boolean {
+  return /^\[\.\.\..+\]$/.test(segment);
+}
+
+function isOptionalCatchAll(segment: string): boolean {
+  return /^\[\[\.\.\..+\]\]$/.test(segment);
+}
+
+function isDynamic(segment: string): boolean {
+  return segment.startsWith("[") && segment.endsWith("]");
+}
+
+// Normalize dynamic segments to a fixed placeholder, ignoring the param
+// name, so two differently-named dynamic segments at the same position
+// (e.g. `[id]` vs `[coachId]`) are treated as the collision they are at
+// request time, matching what Next's own router does.
 function urlSegment(segment: string): string | null {
   if (isRouteGroup(segment) || isInterceptingMarker(segment)) return null;
   if (isParallelSlot(segment)) return null;
+  if (isOptionalCatchAll(segment)) return "[[...catchAll]]";
+  if (isCatchAll(segment)) return "[...catchAll]";
+  if (isDynamic(segment)) return "[param]";
   return segment;
 }
 
