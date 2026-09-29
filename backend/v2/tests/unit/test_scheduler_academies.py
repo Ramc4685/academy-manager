@@ -134,8 +134,11 @@ def test_every_scheduled_job_records_a_heartbeat_after_its_body() -> None:
     helper = source.split("async def _run_leased_job(", 1)[1].split("async def ", 1)[0]
 
     body_call = helper.index("await body()")
-    heartbeat = helper.index("await record_job_run(db, name, {}, meaningful=False)")
+    heartbeat = helper.index("await record_job_run(")
     assert body_call < heartbeat
+    # Settings Phase 4: the academy-clock jobs mark their heartbeat as the new
+    # code's, so it never reads as the old fixed-hour cron having run today.
+    assert "local_clock=name in LOCAL_DAILY_JOBS" in helper
     # Heartbeat-only: it must never clobber the invoice generator's totals.
     assert "meaningful=False" in helper
 

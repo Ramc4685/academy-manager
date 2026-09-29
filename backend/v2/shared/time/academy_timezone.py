@@ -86,6 +86,42 @@ async def resolve_reporting_timezone(reader: AcademyTimezoneReader, academy_id: 
     return name
 
 
+def academy_clock_timezone(academy_tz: str | None) -> str:
+    """The wall clock an academy's scheduled jobs and digests run on.
+
+    The academy's own zone when it is a real IANA name, else
+    ``LEGACY_FALLBACK_TIMEZONE`` (never UTC): before Settings Phase 4 every
+    scheduled job ran on the scheduler zone, which is BLNO's zone in
+    production, so an academy with no zone keeps exactly those times.
+    """
+    name = str(academy_tz or "").strip()
+    if name:
+        try:
+            ZoneInfo(name)
+        except Exception:
+            log.warning(
+                "unknown academy timezone %r, scheduling on %s", name, LEGACY_FALLBACK_TIMEZONE
+            )
+        else:
+            return name
+    return LEGACY_FALLBACK_TIMEZONE
+
+
+async def resolve_academy_clock_timezone(reader: AcademyTimezoneReader, academy_id: str) -> str:
+    """``academy_clock_timezone`` for an academy id, never raising."""
+    try:
+        name = await reader(academy_id)
+    except Exception:
+        log.warning(
+            "academy timezone lookup failed for %r, scheduling on %s",
+            academy_id,
+            LEGACY_FALLBACK_TIMEZONE,
+            exc_info=True,
+        )
+        return LEGACY_FALLBACK_TIMEZONE
+    return academy_clock_timezone(name)
+
+
 def resolve_session_timezone(session_tz: str | None, academy_tz: str | None) -> str:
     """The wall clock a session runs on: session zone -> academy zone -> legacy.
 

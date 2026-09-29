@@ -419,6 +419,9 @@ class AdminUseCases:
     record_manual_payment: object | None = None
     issue_invoice_refund: object | None = None
     list_billing_audit: object | None = None
+    # Reads ``academies.timezone`` for the coach-digest test send's default
+    # date (Settings Phase 4); wired in main.py. None -> legacy fallback zone.
+    get_academy_timezone: Callable[[str], Awaitable[str | None]] | None = None
     # Owner changes to a class fee or the academy timezone (Settings overhaul
     # Phase 1 PR 5), appended to the same billing audit log as Billing rules.
     record_money_setting_change: RecordMoneySettingChange | None = None

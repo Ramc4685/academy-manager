@@ -529,9 +529,11 @@ last contact and Cold chip. The auto follow-up is L3c, below.
 
 ## Trial passed, no registration (People CRM L3c, migration 0201)
 
-A daily scheduled job, `create_trial_follow_ups` (04:50 scheduler time,
-leased, heartbeat in `ops_job_runs`, stale after 26h), runs
-`CreateTrialPassedFollowUps` once per academy inside its `tenant_scope`.
+A daily scheduled job, `create_trial_follow_ups` (04:50 on each academy's
+own clock, hourly tick with a once-per-local-day marker in
+`scheduler_run_markers`, leased, heartbeat in `ops_job_runs`, stale after
+3h), runs `CreateTrialPassedFollowUps` once per academy inside its
+`tenant_scope`.
 For every trial marked **Came** (`status: completed`, `outcome: came`, no
 `linked_application_id`) whose assigned, not-cancelled class started between
 60 and 7 days ago, it adds one family follow-up:

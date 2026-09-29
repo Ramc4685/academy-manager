@@ -157,6 +157,7 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.config.settings import resolve_sender_address
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
+from backend.v2.shared.time.academy_timezone import academy_clock_timezone
 
 log = logging.getLogger(__name__)
 
@@ -187,8 +188,8 @@ def resolve_digest_schedule(
     to the env default, preserving the original behaviour for any deployment
     that has not yet saved per-academy values.
 
-    Note: ``hour`` is interpreted in the *scheduler* timezone, not the academy's
-    local timezone — interpreting it per-academy is explicit future work.
+    ``hour`` is the academy's LOCAL hour (``academies.timezone``, else
+    ``LEGACY_FALLBACK_TIMEZONE``); see ``digest_due_date``.
     """
     enabled = env_enabled if academy_enabled is None else academy_enabled
     hour = env_hour if academy_hour is None else academy_hour
@@ -225,6 +226,23 @@ def digest_window_open(schedule: ResolvedDigestSchedule, current_hour: int) -> b
     closes it.
     """
     return schedule.enabled and current_hour >= schedule.hour
+
+
+def digest_due_date(
+    schedule: ResolvedDigestSchedule, now: datetime, academy_zone: str
+) -> date | None:
+    """The academy-local date to send this tick's digest for, or None.
+
+    Settings Phase 4: the digest hour and ``digest_date`` are both read on the
+    academy's own clock (``academy_zone``, from ``academy_clock_timezone``),
+    not the scheduler's. ``digest_date`` is what the claim rows and the CRM
+    Messages thread key on, so it must be the academy-local calendar date.
+    For an academy on the scheduler's zone (BLNO) nothing moves.
+    """
+    local_now = now.astimezone(ZoneInfo(academy_zone))
+    if not digest_window_open(schedule, local_now.hour):
+        return None
+    return local_now.date()
 
 
 #: The unique claim indexes from migrations 0125 and 0148, by collection.
@@ -487,10 +505,10 @@ def compose_get_digest_delivery_log(db: AsyncIOMotorDatabase[Any]) -> GetDigestD
 
 
 def _day_bounds_utc(on_date: date, tz_name: str) -> tuple[datetime, datetime]:
-    """UTC bounds for the *scheduler-local* calendar day.
+    """UTC bounds for the *academy-local* calendar day.
 
-    ``on_date`` is the local date the digest is being built for (per the hourly
-    scheduler in ``main.py``, which ticks in ``settings.scheduler_tz``). Session
+    ``on_date`` is the academy-local date the digest is being built for (see
+    ``digest_due_date``), so ``tz_name`` is the academy's clock zone. Session
     occurrences are stored as aware UTC, so an evening local session can fall on
     the *next* UTC calendar day — bounding by naive UTC midnight would drop it.
     """
@@ -732,8 +750,12 @@ class _ParentDigestProvider:
         cached = self._occurrences_by_session_cache.get(cache_key)
         if cached is not None:
             return cached
-        scheduler_tz = getattr(get_settings(), "scheduler_tz", None) or "UTC"
-        start, end = _day_bounds_utc(on_date, scheduler_tz)
+        # The day is the academy's own day: ``on_date`` came from
+        # ``digest_due_date`` on this academy's clock (Settings Phase 4).
+        academy_doc, _program_id, _program_name = await self._academy_and_program_for_run()
+        start, end = _day_bounds_utc(
+            on_date, academy_clock_timezone((academy_doc or {}).get("timezone"))
+        )
         try:
             occurrences = await self._occurrences.list_between(start_at=start, end_at=end)
         except Exception:

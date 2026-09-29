@@ -117,6 +117,9 @@ TENANT_OWNED_COLLECTIONS = {
     "academy_connected_accounts",
     # Stripe disputes per academy (migration 0205, direct charges slice 6)
     "payment_disputes",
+    # Once-per-academy-local-day scheduler claims (migration 0210, Settings
+    # Phase 4); every read and write filters on academy_id.
+    "scheduler_run_markers",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

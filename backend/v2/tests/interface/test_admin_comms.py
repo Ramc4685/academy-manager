@@ -13,7 +13,6 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
 )
 from backend.v2.interfaces.admin import comms_routes
 from backend.v2.shared.comms import Message
-from backend.v2.shared.config.settings import get_settings
 
 
 def test_broadcast_creates_announcement(admin_client):
@@ -269,26 +268,53 @@ def test_digest_test_send_to_named_coach(admin_client):
     assert fake.calls[0].academy_id == "acad"
 
 
-def test_digest_test_send_uses_scheduler_timezone_date(admin_client, monkeypatch):
+def _fix_now(monkeypatch):
     class _FixedDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
             value = datetime(2026, 6, 14, 4, 30, tzinfo=UTC)
             return value if tz is None else value.astimezone(tz)
 
-    fake = _FakeTestSend()
-    admin_client.use_cases.send_coach_digest_test = fake
-    monkeypatch.setenv("SCHEDULER_TZ", "America/Chicago")
-    get_settings.cache_clear()
     monkeypatch.setattr(comms_routes, "datetime", _FixedDateTime)
 
-    try:
-        r = admin_client.post("/api/v2/admin/comms/digests/test-send", json={"coach_id": "coach-1"})
-    finally:
-        get_settings.cache_clear()
+
+def test_digest_test_send_uses_the_academy_local_date(admin_client, monkeypatch):
+    """Settings Phase 4: the scheduled digest keys digest_date on the academy's
+    own clock, so the test send defaults to the academy-local date too."""
+    fake = _FakeTestSend()
+    admin_client.use_cases.send_coach_digest_test = fake
+    seen: list[str] = []
+
+    async def academy_zone(academy_id: str) -> str | None:
+        seen.append(academy_id)
+        return "Asia/Kolkata"
+
+    admin_client.use_cases.get_academy_timezone = academy_zone
+    _fix_now(monkeypatch)
+
+    r = admin_client.post("/api/v2/admin/comms/digests/test-send", json={"coach_id": "coach-1"})
 
     assert r.status_code == 200, r.text
-    assert fake.calls[0].on_date.isoformat() == "2026-06-13"
+    assert seen == ["acad"]
+    assert fake.calls[0].on_date.isoformat() == "2026-06-14"  # 10:00 IST
+
+
+def test_digest_test_send_without_an_academy_zone_uses_the_legacy_clock(admin_client, monkeypatch):
+    """No academies.timezone: LEGACY_FALLBACK_TIMEZONE (BLNO's zone), the same
+    date the old SCHEDULER_TZ=America/Chicago default gave."""
+    fake = _FakeTestSend()
+    admin_client.use_cases.send_coach_digest_test = fake
+
+    async def academy_zone(_academy_id: str) -> str | None:
+        return None
+
+    admin_client.use_cases.get_academy_timezone = academy_zone
+    _fix_now(monkeypatch)
+
+    r = admin_client.post("/api/v2/admin/comms/digests/test-send", json={"coach_id": "coach-1"})
+
+    assert r.status_code == 200, r.text
+    assert fake.calls[0].on_date.isoformat() == "2026-06-13"  # 23:30 CDT
 
 
 def test_digest_test_send_accepts_explicit_test_date(admin_client):
