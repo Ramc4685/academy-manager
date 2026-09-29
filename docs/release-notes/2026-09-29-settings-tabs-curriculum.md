@@ -1,6 +1,6 @@
 # Settings tabs renamed, Curriculum tab, Progress sidebar (Settings overhaul Phase 3 PR 11)
 
-PR: #TBD
+PR: #1008
 
 ## What changed
 
