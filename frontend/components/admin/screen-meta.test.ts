@@ -237,3 +237,12 @@ describe("metaForPath", () => {
     expect(metaForPath("/admin/sessions/sess_1").breadcrumbs).toEqual(["Admin", "Sessions", "Detail"]);
   });
 });
+
+describe("Progress sidebar item (Settings overhaul Phase 3 PR 11)", () => {
+  it("renames Pathway to Progress and points at the progress overview", () => {
+    const item = ADMIN_NAV.flatMap((group) => group.items).find((entry) => entry.id === "progress");
+    expect(item).toMatchObject({ label: "Progress", href: "/admin/pathway/progress" });
+    expect(item?.match("/admin/pathway/progress")).toBe(true);
+    expect(metaForPath("/admin/pathway/progress").title).toBe("Progress");
+  });
+});

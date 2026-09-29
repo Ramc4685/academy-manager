@@ -230,3 +230,24 @@ def test_bootstrap_placeholder_waiver_is_not_done():
 
 def test_unavailable_source_is_unknown():
     assert _derive(classes=(False, None))["classes"] == "unknown"
+
+
+def test_checklist_links_land_on_live_settings_tabs():
+    """Settings overhaul Phase 3 PR 11: no step links to a retired ?panel= key."""
+    view = build_setup_checklist(
+        academy=(True, None),
+        fees=(True, None),
+        gateway=(True, None),
+        session_types=(True, []),
+        classes=(True, []),
+        users=(True, []),
+        waivers=(True, None),
+        public_page=(True, None),
+    )
+    hrefs = {item.key: item.href for item in view.items}
+    assert hrefs["stripe_connect"] == "/admin/settings?panel=integrations"
+    assert hrefs["branding"] == "/admin/settings?panel=academy"
+    retired = {"gateway", "notify", "branding", "self-service", "fees", "data", "roles"}
+    for href in hrefs.values():
+        if "panel=" in href:
+            assert href.split("panel=")[1].split("&")[0] not in retired

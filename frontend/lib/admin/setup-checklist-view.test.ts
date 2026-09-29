@@ -44,7 +44,7 @@ describe("shouldShowSetupChecklist", () => {
 describe("setupChecklistRows", () => {
   const data = checklist([
     item({ key: "academy_profile", status: "done" }),
-    item({ key: "stripe_connect", owner_only: true, href: "/admin/settings?panel=gateway" }),
+    item({ key: "stripe_connect", owner_only: true, href: "/admin/settings?panel=integrations" }),
     item({ key: "waiver", status: "unknown", href: "/admin/waivers" }),
   ]);
 
@@ -61,7 +61,7 @@ describe("setupChecklistRows", () => {
     expect(rows.find((row) => row.key === "stripe_connect")?.link).toBeNull();
     expect(rows.find((row) => row.key === "waiver")?.link).toBe("/admin/waivers");
     expect(setupChecklistRows(data, true).find((row) => row.key === "stripe_connect")?.link).toBe(
-      "/admin/settings?panel=gateway",
+      "/admin/settings?panel=integrations",
     );
   });
 

@@ -72,7 +72,7 @@ async function stub(page: Page): Promise<unknown[]> {
 test.describe("admin notify win-back switch", () => {
   test("defaults on and saves only the switch when turned off", async ({ page }) => {
     const patches = await stub(page);
-    await page.goto("/admin/settings?panel=notify");
+    await page.goto("/admin/settings?panel=notifications");
 
     const toggle = page.getByTestId("notify-win-back-enabled");
     await expect(toggle).toBeChecked();

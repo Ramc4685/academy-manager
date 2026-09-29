@@ -10,20 +10,22 @@ import { OverflowCue } from "@/components/ds/overflow-cue";
 export type SettingsPanelKey =
   | "academy"
   | "billing-rules"
-  | "gateway"
-  | "notify"
+  | "integrations"
+  | "notifications"
   | "family-policies"
   | "session-types"
-  | "public-page";
+  | "public-page"
+  | "curriculum";
 
 export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "academy", label: "Academy profile" },
   { key: "billing-rules", label: "Billing rules" },
-  { key: "gateway", label: "Gateway" },
-  { key: "notify", label: "Notify" },
+  { key: "integrations", label: "Integrations" },
+  { key: "notifications", label: "Notifications" },
   { key: "family-policies", label: "Family policies" },
   { key: "session-types", label: "Session types" },
   { key: "public-page", label: "Public page" },
+  { key: "curriculum", label: "Curriculum" },
 ];
 
 /**
@@ -32,7 +34,7 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
  */
 export const OWNER_ONLY_SETTINGS_PANELS: ReadonlySet<SettingsPanelKey> = new Set<SettingsPanelKey>([
   "billing-rules",
-  "gateway",
+  "integrations",
 ]);
 
 /**
@@ -48,6 +50,12 @@ export const RETIRED_SETTINGS_PANELS: Readonly<Record<string, SettingsPanelKey>>
   // policies; `?panel=self-service` keeps working for old bookmarks.
   "self-service": "family-policies",
   branding: "academy",
+  // Phase 3 PR 11: Gateway became Integrations and Notify became
+  // Notifications. Stripe's return links still say `?panel=gateway&stripe=...`;
+  // the page keeps the other query params when it maps the key, so the
+  // connected/error banner still shows.
+  gateway: "integrations",
+  notify: "notifications",
 };
 
 /**
