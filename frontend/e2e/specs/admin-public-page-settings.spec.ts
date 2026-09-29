@@ -199,8 +199,8 @@ test.describe("admin settings → public page", () => {
     await expect(page.getByTestId("public-page-view-link")).toBeVisible();
     await expect(page.getByTestId("public-page-privacy-url")).toHaveCount(0);
     const pointer = page.getByTestId("public-page-privacy-moved");
-    await expect(pointer).toContainText("Privacy notice is now in Academy profile");
-    await expect(pointer.getByRole("link", { name: "Academy profile" })).toHaveAttribute(
+    await expect(pointer).toContainText("The privacy notice now lives with the terms and refund links.");
+    await expect(pointer.getByRole("link", { name: "Open Academy profile", exact: true })).toHaveAttribute(
       "href",
       "/admin/settings?panel=academy",
     );

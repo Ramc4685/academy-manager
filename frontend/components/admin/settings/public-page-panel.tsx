@@ -208,11 +208,10 @@ function PageSettingsCard() {
           </select>
         </label>
         <p className="text-sm text-rally-muted" data-testid="public-page-privacy-moved">
-          Privacy notice is now in{" "}
+          The privacy notice now lives with the terms and refund links.{" "}
           <Link href="/admin/settings?panel=academy" className="font-medium text-rally-cobalt underline">
-            Academy profile
+            Open Academy profile
           </Link>
-          , with the terms and refund links.
         </p>
       </div>
 
