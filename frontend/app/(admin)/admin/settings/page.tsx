@@ -1,22 +1,21 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { UrlObject } from "url";
 
 import { AcademyPanel } from "@/components/admin/settings/academy-panel";
 import { BrandingPanel } from "@/components/admin/settings/branding-panel";
-import { DataPanel } from "@/components/admin/settings/data-panel";
 import { BillingRulesPanel } from "@/components/admin/settings/billing-rules-panel";
 import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
-import { RolesPanel } from "@/components/admin/settings/roles-panel";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
 import { DeparturePolicyPanel } from "@/components/admin/settings/departure-policy-panel";
 import { SessionTypesPanel } from "@/components/admin/settings/session-types-panel";
 import { PublicPagePanel } from "@/components/admin/settings/public-page-panel";
 import {
   OWNER_ONLY_SETTINGS_PANELS,
+  RETIRED_SETTINGS_EXTERNAL_REDIRECTS,
   RETIRED_SETTINGS_PANELS,
   SETTINGS_TABS,
   SettingsTabs,
@@ -37,8 +36,11 @@ function coercePanel(value: string | null): SettingsPanelKey {
 
 export default function AdminSettingsPage() {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const active = coercePanel(searchParams.get("panel"));
+  const rawPanel = searchParams.get("panel");
+  const externalRedirect = rawPanel ? RETIRED_SETTINGS_EXTERNAL_REDIRECTS[rawPanel] : undefined;
+  const active = coercePanel(rawPanel);
   const isOwner = useIsOwner();
   // Billing rules and Gateway are owner-only: the tabs disappear for admins
   // without the scope, and a deep link to one shows the owner-only panel.
@@ -51,12 +53,22 @@ export default function AdminSettingsPage() {
   const params = useMemo(() => new URLSearchParams(paramsString), [paramsString]);
 
   useEffect(() => {
+    // ?panel=data / ?panel=roles moved to a whole other page (Settings
+    // overhaul Lane D, PR 7): a real navigation, not an in-page panel swap.
+    if (externalRedirect) {
+      router.replace(externalRedirect(isOwner));
+      return;
+    }
     if (!searchParams.get("panel") || active !== searchParams.get("panel")) {
       const next = new URLSearchParams(params);
       next.set("panel", active);
       window.history.replaceState(null, "", `${pathname}?${next.toString()}`);
     }
-  }, [active, params, pathname, searchParams]);
+  }, [active, externalRedirect, isOwner, params, pathname, router, searchParams]);
+
+  if (externalRedirect) {
+    return null;
+  }
 
   function hrefForPanel(panel: SettingsPanelKey): UrlObject {
     const next = new URLSearchParams(params);
@@ -78,9 +90,7 @@ export default function AdminSettingsPage() {
         {active === "billing-rules" && isOwner && <BillingRulesPanel />}
         {active === "gateway" && isOwner && <GatewayPanel />}
         {active === "notify" && <NotifyPanel />}
-        {active === "roles" && <RolesPanel />}
         {active === "branding" && <BrandingPanel />}
-        {active === "data" && <DataPanel />}
         {active === "self-service" && (
           <div className="space-y-6">
             <SelfServicePanel />

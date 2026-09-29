@@ -11,9 +11,7 @@ export type SettingsPanelKey =
   | "billing-rules"
   | "gateway"
   | "notify"
-  | "roles"
   | "branding"
-  | "data"
   | "self-service"
   | "session-types"
   | "public-page";
@@ -23,9 +21,7 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "billing-rules", label: "Billing rules" },
   { key: "gateway", label: "Gateway" },
   { key: "notify", label: "Notify" },
-  { key: "roles", label: "Roles" },
   { key: "branding", label: "Branding" },
-  { key: "data", label: "Data" },
   { key: "self-service", label: "Self-service" },
   { key: "session-types", label: "Session types" },
   { key: "public-page", label: "Public page" },
@@ -41,11 +37,29 @@ export const OWNER_ONLY_SETTINGS_PANELS: ReadonlySet<SettingsPanelKey> = new Set
 ]);
 
 /**
- * Retired panel keys that still resolve, so an old bookmark lands somewhere
- * sensible: `?panel=fees` renders Billing rules (spec SS5).
+ * Retired panel keys that still resolve to another *panel within Settings*,
+ * so an old bookmark lands somewhere sensible: `?panel=fees` renders
+ * Billing rules (spec SS5).
  */
 export const RETIRED_SETTINGS_PANELS: Readonly<Record<string, SettingsPanelKey>> = {
   fees: "billing-rules",
+};
+
+/**
+ * Retired panel keys whose successor lives on a *different page* (Settings
+ * overhaul Lane D, PR 7): `?panel=data` and `?panel=roles` no longer render
+ * inside Settings at all — the Data tab's exports duplicated the Reports
+ * page, and the Roles tab duplicated the Staff page's role editor.
+ *
+ * `data`'s target is owner-only (Month close / Reports), so it takes the
+ * current viewer's owner status and falls back to the default Settings
+ * panel when they cannot reach it.
+ */
+export const RETIRED_SETTINGS_EXTERNAL_REDIRECTS: Readonly<
+  Record<string, (isOwner: boolean) => string>
+> = {
+  data: (isOwner) => (isOwner ? "/admin/reports" : "/admin/settings?panel=academy"),
+  roles: () => "/admin/users",
 };
 
 interface SettingsTabsProps {

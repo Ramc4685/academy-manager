@@ -19,9 +19,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     MarkPaymentPaidCommand,
     UndoPaymentPaidCommand,
 )
-from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
-    SetInvoiceScheduleCommand,
-)
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpenseCommand,
     EditExpenseCommand,
@@ -124,12 +121,6 @@ class InvoiceScheduleResponse(BaseModel):
     invoice_due_days: int
 
 
-class SetInvoiceScheduleRequest(BaseModel):
-    billing_day: int = Field(ge=1, le=28)
-    invoice_due_days: int = Field(ge=0, le=60)
-    reason: str | None = None
-
-
 @router.get(
     "/billing/settings/invoice-schedule",
     response_model=InvoiceScheduleResponse,
@@ -146,30 +137,12 @@ async def get_invoice_schedule(
         invoice_due_days=result.invoice_due_days,
     )
 
-
-@router.put(
-    "/billing/settings/invoice-schedule",
-    response_model=InvoiceScheduleResponse,
-    summary="Set the automated monthly-invoicing schedule (audited)",
-)
-async def set_invoice_schedule(
-    body: SetInvoiceScheduleRequest,
-    claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> InvoiceScheduleResponse:
-    use_case = _required_callable(use_cases.set_invoice_schedule, "set_invoice_schedule")
-    result = await use_case.execute(  # type: ignore[attr-defined]
-        SetInvoiceScheduleCommand(
-            billing_day=body.billing_day,
-            invoice_due_days=body.invoice_due_days,
-            actor_id=claims.user_id,
-            reason=body.reason,
-        )
-    )
-    return InvoiceScheduleResponse(
-        billing_day=result.billing_day,
-        invoice_due_days=result.invoice_due_days,
-    )
+# `PUT /billing/settings/invoice-schedule` (the write side of this legacy
+# route) was retired in the Settings overhaul (Lane D, PR 7): nothing calls
+# it any more — the Billing rules panel writes through
+# `POST /admin/billing/rules` instead (`billing_rules_routes.py`), which
+# reuses the same `SetInvoiceScheduleCommand` use case underneath. The GET
+# above stays; `BillingTab.tsx` still reads it.
 
 
 @router.get("/billing/invoices", response_model=InvoicesResponse, response_model_exclude_none=True)

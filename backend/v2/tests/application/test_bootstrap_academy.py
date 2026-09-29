@@ -22,11 +22,7 @@ class FakeBootstrapStore:
         self.academies: dict[str, dict[str, Any]] = {}
         self.users: dict[str, dict[str, Any]] = {}
         self.memberships: dict[tuple[str, str], dict[str, Any]] = {}
-        self.settings: dict[str, dict[str, Any]] = {}
-        self.billing_policies: dict[str, dict[str, Any]] = {}
         self.waivers: dict[str, dict[str, Any]] = {}
-        self.roles: dict[str, list[dict[str, Any]]] = {}
-        self.feature_flags: dict[str, dict[str, Any]] = {}
         self.legacy_writes: list[dict[str, Any]] = []
 
     async def find_academy_by_slug(self, slug: str) -> dict[str, Any] | None:
@@ -55,27 +51,9 @@ class FakeBootstrapStore:
         self.memberships.setdefault(key, dict(membership))
         return dict(self.memberships[key])
 
-    async def ensure_academy_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        self.settings.setdefault(settings["academy_id"], dict(settings))
-        return dict(self.settings[settings["academy_id"]])
-
-    async def ensure_billing_policy(self, policy: dict[str, Any]) -> dict[str, Any]:
-        self.billing_policies.setdefault(policy["academy_id"], dict(policy))
-        return dict(self.billing_policies[policy["academy_id"]])
-
     async def ensure_waiver_template(self, waiver: dict[str, Any]) -> dict[str, Any]:
         self.waivers.setdefault(waiver["academy_id"], dict(waiver))
         return dict(self.waivers[waiver["academy_id"]])
-
-    async def ensure_default_roles(
-        self, academy_id: str, roles: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        self.roles.setdefault(academy_id, [dict(role) for role in roles])
-        return [dict(role) for role in self.roles[academy_id]]
-
-    async def ensure_feature_flags(self, flags: dict[str, Any]) -> dict[str, Any]:
-        self.feature_flags.setdefault(flags["academy_id"], dict(flags))
-        return dict(self.feature_flags[flags["academy_id"]])
 
 
 def _command(**overrides: object) -> BootstrapAcademyCommand:
@@ -128,20 +106,25 @@ async def test_bootstrap_creates_tenant_owner_membership_and_defaults() -> None:
     assert membership["roles"] == ["admin"]
     assert membership["status"] == "active"
 
-    assert store.settings[result.academy_id]["timezone"] == "America/Chicago"
-    assert store.billing_policies[result.academy_id]["currency"] == "usd"
     waiver = store.waivers[result.academy_id]
     assert waiver["version"] == "1"
     assert waiver["status"] == "active"
     assert waiver["assigned_to_registration"] is True
     assert waiver["body"]
-    assert [role["role"] for role in store.roles[result.academy_id]] == [
-        "admin",
-        "coach",
-        "parent",
-    ]
-    assert store.feature_flags[result.academy_id]["saas_v2_enabled"] is True
     assert store.legacy_writes == []
+
+
+def test_bootstrap_no_longer_writes_the_four_unread_collections() -> None:
+    """Settings overhaul Lane D: nothing under `backend/v2` reads
+    `academy_settings`, `billing_policies`, `academy_roles` or
+    `academy_feature_flags`, so bootstrap must not write them either. The
+    store protocol no longer even exposes the methods that used to.
+    """
+    store = FakeBootstrapStore()
+    assert not hasattr(store, "ensure_academy_settings")
+    assert not hasattr(store, "ensure_billing_policy")
+    assert not hasattr(store, "ensure_default_roles")
+    assert not hasattr(store, "ensure_feature_flags")
 
 
 @pytest.mark.asyncio
