@@ -44,10 +44,15 @@ export function PlusIcon() {
   );
 }
 
-export function ShuttleIcon() {
+/**
+ * Row 35: the CourtMastr footer credit's mark. Deliberately sport-neutral —
+ * not a shuttlecock or any one sport's equipment — a generic court/lane
+ * glyph that reads the same across every academy's sport.
+ */
+export function CourtMastrMark() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 22a4 4 0 0 1-4-4l-3-13 4 5 3-8 3 8 4-5-3 13a4 4 0 0 1-4 4z" />
+      <path d="M3 4h18v2H3zM3 18h18v2H3zM3 4h2v16H3zM19 4h2v16h-2zM11 8h2v8h-2z" />
     </svg>
   );
 }
