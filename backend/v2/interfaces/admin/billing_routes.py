@@ -137,6 +137,7 @@ async def get_invoice_schedule(
         invoice_due_days=result.invoice_due_days,
     )
 
+
 # `PUT /billing/settings/invoice-schedule` (the write side of this legacy
 # route) was retired in the Settings overhaul (Lane D, PR 7): nothing calls
 # it any more — the Billing rules panel writes through

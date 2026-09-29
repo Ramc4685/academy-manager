@@ -192,7 +192,6 @@ async def disconnect_stripe(
     await use_cases.disconnect_stripe_use_case.execute(claims.academy_id)
 
 
-
 # --- Notifications ---
 
 

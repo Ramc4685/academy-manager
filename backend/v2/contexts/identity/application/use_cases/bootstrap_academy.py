@@ -274,5 +274,3 @@ def _default_waiver(
         "created_at": now,
         "updated_at": now,
     }
-
-
