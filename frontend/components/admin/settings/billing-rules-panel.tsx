@@ -60,6 +60,13 @@ export function BillingRulesPanel() {
       // The cancellation fee and notice are shared with the Self-service tab;
       // drop its cached copy so it never shows (or re-saves) the old values.
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServicePolicy() });
+      // drop_default_outcome is also echoed by the Holds panel's own save
+      // (DeparturePolicyPanel). Without dropping its cache too, that panel
+      // keeps sending the pre-change value for up to the 5-minute staleTime
+      // and gets spuriously 422'd by the backend's stale-value check.
+      if (diff.changed.includes("drop_default_outcome")) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.admin.departurePolicy() });
+      }
       setForm(toForm(data));
       setLateFeeAcknowledged(false);
       setSaved(true);
