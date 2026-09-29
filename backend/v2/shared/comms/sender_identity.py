@@ -7,8 +7,10 @@ verification is an owner-side DNS task. What an academy controls is:
 * ``email_sender_name`` — the display name in ``From: "<name>" <SENDER_EMAIL>``.
   Falls back to the academy's ``display_name`` (then ``name``); with neither,
   the From header stays the bare address, exactly as before.
-* ``email_reply_to`` — where replies go. Absent ⇒ ``None`` and each call site
-  keeps its previous reply-to behaviour (no migration, no backfill).
+* ``email_reply_to`` — where replies go. Absent ⇒ the academy's
+  ``support_email`` (Settings overhaul Phase 4 PR 13), and with neither set
+  ``None``, so each call site keeps its previous reply-to behaviour (no
+  migration, no backfill). An explicit reply-to always wins.
 
 Only the display name ever reaches the send port (``sender_name``); the
 adapter composes the header with its own configured address via
@@ -84,6 +86,15 @@ def validate_reply_to(value: str | None) -> str | None:
         raise InvalidSenderValue("Reply-to must be a valid email address.") from exc
 
 
+def validate_support_email(value: str | None) -> str | None:
+    """Normalise ``support_email`` for storage. Blank ⇒ ``None``."""
+    try:
+        return validate_reply_to(value)
+    except InvalidSenderValue as exc:
+        message = str(exc).replace("Reply-to", "Support email")
+        raise InvalidSenderValue(message) from exc
+
+
 def _safe(validator: Any, value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -116,7 +127,9 @@ def resolve_sender(academy_doc: dict[str, Any] | None) -> SenderIdentity:
         or _safe(validate_sender_name, academy_doc.get("display_name"))
         or _safe(validate_sender_name, academy_doc.get("name"))
     )
-    reply_to = _safe(validate_reply_to, academy_doc.get("email_reply_to"))
+    reply_to = _safe(validate_reply_to, academy_doc.get("email_reply_to")) or _safe(
+        validate_support_email, academy_doc.get("support_email")
+    )
     return SenderIdentity(sender_name=name, reply_to=reply_to)
 
 

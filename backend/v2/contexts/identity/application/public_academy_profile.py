@@ -16,8 +16,9 @@ status fields, and it never creates a record (an anonymous GET must not
 * **Logo.** Only an http(s) URL, re-checked on read so a hand-edited
   ``javascript:`` value never reaches an ``src``.
 * **Venue.** The academy's ``address`` and ``hours_text`` ("Find us").
-* **Support email.** ``contact_email`` only, re-validated as a plausible
-  email address. No phone number is ever exposed (owner decision: public
+* **Support email.** ``support_email`` when the academy set one, else
+  ``contact_email`` (today's value, so an academy with no support email is
+  unchanged), re-validated as a plausible email address. No phone number is ever exposed (owner decision: public
   page shows a support email only).
 """
 
@@ -27,6 +28,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from backend.v2.contexts.identity.domain.legal_links import https_url_or_none
 from backend.v2.contexts.identity.domain.public_page import (
     PUBLIC_PAGE_FIELD,
     PublicPageSettings,
@@ -63,6 +65,9 @@ class PublicAcademyProfile:
     timezone: str | None
     currency: str
     settings: PublicPageSettings
+    #: Footer legal links (https only, re-checked on read); None when unset.
+    terms_url: str | None = None
+    refund_policy_url: str | None = None
 
 
 class GetPublicAcademyProfile:
@@ -84,10 +89,13 @@ class GetPublicAcademyProfile:
             brand_on_color=on_color,
             address=_text(doc.get("address")),
             hours_text=_text(doc.get("hours_text")),
-            support_email=_email_or_none(doc.get("contact_email")),
+            support_email=_email_or_none(doc.get("support_email"))
+            or _email_or_none(doc.get("contact_email")),
             timezone=_text(doc.get("timezone")),
             currency=(_text(doc.get("currency")) or "USD").upper()[:3],
             settings=PublicPageSettings.from_stored(doc.get(PUBLIC_PAGE_FIELD)),
+            terms_url=https_url_or_none(doc.get("terms_url")),
+            refund_policy_url=https_url_or_none(doc.get("refund_policy_url")),
         )
 
 
