@@ -1,6 +1,6 @@
 # Support email, legal links and the Bank (ACH) discount switch
 
-PR: #TBD
+PR: #1012
 
 ## What changed
 
