@@ -92,19 +92,16 @@ def test_platform_bootstrap_route_creates_membership_and_settings_records(
         "academy",
         "owner_user",
         "owner_membership",
-        "academy_settings",
-        "billing_policy",
         "waiver_template",
-        "roles",
-        "feature_flags",
     ]
 
     owner = store.users["owner@example.com"]
     assert store.memberships[(body["academy_id"], owner["user_id"])]["roles"] == ["admin"]
-    assert body["academy_id"] in store.settings
-    assert body["academy_id"] in store.billing_policies
     assert body["academy_id"] in store.waivers
-    assert body["academy_id"] in store.feature_flags
+    # Settings overhaul Phase 2: the four setup-only collections nothing read
+    # (academy_settings, billing_policies, academy_roles, academy_feature_flags)
+    # are no longer written.
+    # (the fake store no longer even has places to put them)
 
 
 def test_platform_bootstrap_requires_timezone(platform_client: TestClient) -> None:
