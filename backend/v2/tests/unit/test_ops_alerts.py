@@ -760,7 +760,7 @@ def test_a_stale_job_alone_raises_the_attention_flag() -> None:
     assert subject == "Ops digest 2026-08-27 — attention needed"
     assert "Scheduled jobs NOT ticking (1)" in body
     assert "<strong>generate_monthly_invoices</strong>" in body
-    assert "expected within 26h" in body
+    assert "expected within 3h" in body
     assert "2026-08-26T04:00:00+00:00" in body
     assert "(27h ago)" in body
     assert "Nothing new needs attention" not in body

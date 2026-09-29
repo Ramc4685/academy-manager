@@ -95,32 +95,33 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "process_dunning_retries": timedelta(hours=3),
     # Issue #774: hourly tick, so three missed ticks is a real stall.
     "send_past_due_reminders": timedelta(hours=3),
-    "generate_monthly_invoices": timedelta(hours=26),
+    # Settings Phase 4: the per-academy daily jobs (main.LOCAL_DAILY_JOBS)
+    # now tick hourly and run once per academy-local day, and every tick
+    # writes the heartbeat, so they share the hourly jobs' 3h window.
+    "generate_monthly_invoices": timedelta(hours=3),
     "send_coach_daily_digests": timedelta(hours=3),
     "send_parent_daily_digests": timedelta(hours=3),
-    "process_scheduled_resume_actions": timedelta(hours=26),
+    "process_scheduled_resume_actions": timedelta(hours=3),
     "process_scheduled_cancellation_actions": timedelta(hours=3),
-    "expire_makeup_requests": timedelta(hours=26),
+    "expire_makeup_requests": timedelta(hours=3),
     # Issue #828: hourly waitlist-offer sweep. Three missed ticks is a real
     # stall, and a stalled sweep means held seats nobody can claim.
     "sweep_expired_waitlist_offers": timedelta(hours=3),
     "send_ops_digest": timedelta(hours=26),
-    # Issue #697: daily hold sweeps (departures design contract §3.9/§4.3).
-    # 26h, not 24h, for the same reason as the other daily jobs above — a
-    # single missed tick must not immediately read as stale.
-    "expire_due_holds": timedelta(hours=26),
-    "send_hold_reminders": timedelta(hours=26),
+    # Issue #697: daily hold sweeps (departures design contract §3.9/§4.3),
+    # hourly ticks since Settings Phase 4.
+    "expire_due_holds": timedelta(hours=3),
+    "send_hold_reminders": timedelta(hours=3),
     # Crash-recovery sweep (contract §3.7); runs every 15 minutes, so a
     # window comfortably above a few missed ticks catches a genuinely
     # stopped scheduler without paging on routine jitter.
     "process_stalled_hold_reclaims": timedelta(hours=1),
     # Issue #778: daily win-back sweep (30/60/90-day milestones).
-    "send_win_back_notices": timedelta(hours=26),
+    "send_win_back_notices": timedelta(hours=3),
     # Roadmap L3c: daily "Trial passed, no registration" follow-ups.
-    "create_trial_follow_ups": timedelta(hours=26),
-    # Issue #776: the owner's daily brief. Same 26h slack as every other daily
-    # cron — one missed tick must not read as a stopped scheduler.
-    "send_owner_daily_brief": timedelta(hours=26),
+    "create_trial_follow_ups": timedelta(hours=3),
+    # Issue #776: the owner's daily brief (hourly ticks, once per local day).
+    "send_owner_daily_brief": timedelta(hours=3),
 }
 
 
