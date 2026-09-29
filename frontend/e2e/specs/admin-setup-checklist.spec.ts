@@ -32,7 +32,12 @@ function checklist(statuses: Partial<Record<string, Status>> = {}) {
     step("session_types", "Session types", statuses.session_types ?? "done", "/admin/settings?panel=session-types"),
     step("classes", "First classes", statuses.classes ?? "todo", "/admin/sessions"),
     step("staff", "Invite your team", statuses.staff ?? "done", "/admin/users"),
-    step("waiver", "Waiver", statuses.waiver ?? "unknown", "/admin/waivers"),
+    step(
+      "waiver",
+      "Waiver",
+      statuses.waiver ?? "unknown",
+      "/admin/settings?panel=family-policies",
+    ),
     step("public_page", "Public class page", statuses.public_page ?? "done", "/admin/settings?panel=public-page"),
   ];
   const done = items.filter((row) => row.status === "done").length;
@@ -96,8 +101,12 @@ test.describe("admin setup checklist", () => {
       "/admin/settings?panel=gateway",
     );
 
+    // Settings overhaul Phase 3 PR 9: Branding merged into Academy profile,
+    // so `?panel=branding` (still the checklist step's stored href) redirects
+    // to `?panel=academy` and lands on the merged panel.
     await page.getByTestId("setup-step-branding").getByRole("link").click();
-    await expect(page).toHaveURL(/\/admin\/settings\?panel=branding/);
+    await expect(page).toHaveURL(/\/admin\/settings\?panel=academy/);
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
     expect(calls.every((method) => method === "GET")).toBe(true);
     expect(errors, errors.join("\n")).toEqual([]);
   });

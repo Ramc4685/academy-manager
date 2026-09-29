@@ -53,6 +53,7 @@ import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Icon } from "@/components/ds/icons";
 import { Overline } from "@/components/ds/typography";
+import { shouldAdoptAcademyCapacity } from "./capacity-seed";
 
 const AdminCalendarView = dynamic(() => import("@/components/admin/AdminCalendarView"), {
   ssr: false,
@@ -827,17 +828,33 @@ function TableSkeleton() {
 // Create session dialog (Rally-styled)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Settings overhaul Phase 3 PR 9: the BLNO-specific weekday/time default
+// (Wed 18:00) is gone in favour of empty — every academy chooses its own
+// schedule now, not just BLNO's. Capacity and duration come from the
+// academy's Class defaults (Academy profile tab), seeded on open below.
 const EMPTY_FORM: CreateSessionRequest = {
   coach_id: "",
   title: "",
   location: "",
-  days_of_week: ["Wed"],
-  start_time: "18:00",
-  end_time: "18:45",
+  days_of_week: [],
+  start_time: "",
+  end_time: "",
   timezone: null,
   capacity: 10,
   amount_cents: null,
 };
+
+/** `18:00` + 45 minutes -> `18:45`; passes through unparseable input. */
+function addMinutesToTime(time: string, minutes: number): string {
+  const [hourStr, minuteStr] = time.split(":");
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
+  const total = (hour * 60 + minute + minutes + 24 * 60) % (24 * 60);
+  const nextHour = Math.floor(total / 60);
+  const nextMinute = total % 60;
+  return `${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`;
+}
 
 function CreateSessionDialog({
   open,
@@ -859,25 +876,44 @@ function CreateSessionDialog({
   });
 
   const academyTimezone = academyQuery.data?.timezone;
+  const defaultCapacity = academyQuery.data?.default_class_size ?? EMPTY_FORM.capacity;
+  const defaultClassLengthMinutes = academyQuery.data?.default_class_length_minutes ?? 45;
   const wasOpen = useRef(false);
 
   // Issue #148: this used to replace the whole form object whenever the academy
   // timezone resolved, so a slow query wiped whatever the admin had already
   // typed into an open dialog. Seed defaults on open; afterwards patch only the
-  // timezone field, and only while the admin has not touched it.
+  // timezone (and capacity) field, and only while the admin has not touched it.
   const [timezoneTouched, setTimezoneTouched] = useState(false);
+  const [endTimeTouched, setEndTimeTouched] = useState(false);
+  const [capacityTouched, setCapacityTouched] = useState(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
-      setForm({ ...EMPTY_FORM, timezone: seedTimezone(academyTimezone) });
+      setForm({ ...EMPTY_FORM, timezone: seedTimezone(academyTimezone), capacity: defaultCapacity });
       setTimezoneTouched(false);
+      setEndTimeTouched(false);
+      setCapacityTouched(false);
       setError(null);
     } else if (open && academyTimezone && !timezoneTouched) {
       // The academy query resolved after the dialog opened, so the seed was the
       // browser-zone fallback. Adopt the academy's real zone.
       setForm((current) => ({ ...current, timezone: academyTimezone }));
     }
+    if (
+      shouldAdoptAcademyCapacity({
+        open,
+        wasOpen: wasOpen.current,
+        capacityTouched,
+        defaultClassSize: academyQuery.data?.default_class_size,
+      })
+    ) {
+      // Same race as the timezone above: the academy query resolved after the
+      // dialog opened with the hardcoded EMPTY_FORM fallback. Adopt the real
+      // academy default now that it is known.
+      setForm((current) => ({ ...current, capacity: defaultCapacity }));
+    }
     wasOpen.current = open;
-  }, [open, academyTimezone, timezoneTouched]);
+  }, [open, academyTimezone, timezoneTouched, defaultCapacity, capacityTouched, academyQuery.data?.default_class_size]);
 
   const coachesQuery = useQuery({
     queryKey: queryKeys.admin.users("coach"),
@@ -970,7 +1006,7 @@ function CreateSessionDialog({
             <div className="grid grid-cols-2 gap-3">
               <Field label="Day of week" required>
                 <DaySelect
-                  value={form.days_of_week?.[0] ?? "Wed"}
+                  value={form.days_of_week?.[0] ?? ""}
                   onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
                 />
               </Field>
@@ -979,7 +1015,19 @@ function CreateSessionDialog({
                   type="time"
                   required
                   value={form.start_time ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, start_time: e.target.value }))}
+                  onChange={(e) => {
+                    const start_time = e.target.value;
+                    setForm((f) => ({
+                      ...f,
+                      start_time,
+                      // Class defaults (Settings overhaul Phase 3 PR 9): the
+                      // end time follows the academy's default class length
+                      // until the admin edits it directly.
+                      end_time: endTimeTouched
+                        ? f.end_time
+                        : addMinutesToTime(start_time, defaultClassLengthMinutes),
+                    }));
+                  }}
                   className={inputClass}
                 />
               </Field>
@@ -990,7 +1038,10 @@ function CreateSessionDialog({
                   type="time"
                   required
                   value={form.end_time ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, end_time: e.target.value }))}
+                  onChange={(e) => {
+                    setEndTimeTouched(true);
+                    setForm((f) => ({ ...f, end_time: e.target.value }));
+                  }}
                   className={inputClass}
                 />
               </Field>
@@ -1000,9 +1051,10 @@ function CreateSessionDialog({
                   required
                   min={1}
                   value={form.capacity}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, capacity: parseInt(e.target.value, 10) || 1 }))
-                  }
+                  onChange={(e) => {
+                    setCapacityTouched(true);
+                    setForm((f) => ({ ...f, capacity: parseInt(e.target.value, 10) || 1 }));
+                  }}
                   className={inputClass}
                 />
               </Field>
@@ -1109,6 +1161,13 @@ function DaySelect({
 }) {
   return (
     <select required value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}>
+      {/* No BLNO-specific default any more (Settings overhaul Phase 3 PR 9):
+          an unset day shows as unset, not silently "Wed". */}
+      {!value && (
+        <option value="" disabled>
+          Select a day…
+        </option>
+      )}
       {DAYS_OF_WEEK.map((day) => (
         <option key={day.value} value={day.value}>
           {day.label}

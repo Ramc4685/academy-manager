@@ -14,6 +14,11 @@
  * Settings overhaul Phase 1 PR 5: the cancellation fee and notice are edited
  * only in Billing rules (owner-only). This form no longer holds or sends
  * them; the BFF refuses a changed value from Self-service.
+ *
+ * Settings overhaul Phase 3 PR 10: "When a cancellation takes effect"
+ * (cancellation_effective_timing) moved to Billing rules the same way, and
+ * the panel it lives on was renamed Family policies. This form no longer
+ * holds or sends it either.
  */
 
 export type CancellationTiming = "immediate" | "end_of_period";
@@ -30,23 +35,31 @@ export interface SelfServicePolicy {
   can_request_pause: boolean;
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
+  //: Academy-level fallback for a class's welcome-email "Absences and
+  //: make-ups" text; used only when the class leaves its own field empty.
+  welcome_email_absence_policy_default: string;
 }
 
 export type PolicyForm = {
   absence_notice_min_hours: string;
   makeup_expiry_days: string;
   makeup_requires_notice: boolean;
-  cancellation_effective_timing: CancellationTiming;
   can_report_absence: boolean;
   can_request_makeup: boolean;
   can_request_pause: boolean;
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
+  welcome_email_absence_policy_default: string;
 };
 
-/** What Self-service may write: never the Billing rules cancellation terms. */
+/** What Family policies may write: never the Billing rules cancellation terms. */
 export type PolicyPatch = Partial<
-  Omit<SelfServicePolicy, "cancellation_minimum_notice_days" | "cancellation_fee_cents">
+  Omit<
+    SelfServicePolicy,
+    | "cancellation_minimum_notice_days"
+    | "cancellation_fee_cents"
+    | "cancellation_effective_timing"
+  >
 >;
 
 /** Whole-number fields and the smallest value each accepts. */
@@ -60,12 +73,12 @@ export function policyToForm(data: SelfServicePolicy | null | undefined): Policy
     absence_notice_min_hours: data?.absence_notice_min_hours?.toString() ?? "",
     makeup_expiry_days: data?.makeup_expiry_days?.toString() ?? "",
     makeup_requires_notice: data?.makeup_requires_notice ?? false,
-    cancellation_effective_timing: data?.cancellation_effective_timing ?? "immediate",
     can_report_absence: data?.can_report_absence ?? true,
     can_request_makeup: data?.can_request_makeup ?? true,
     can_request_pause: data?.can_request_pause ?? true,
     can_request_cancel: data?.can_request_cancel ?? true,
     can_claim_waitlist_offer: data?.can_claim_waitlist_offer ?? true,
+    welcome_email_absence_policy_default: data?.welcome_email_absence_policy_default ?? "",
   };
 }
 
@@ -108,9 +121,6 @@ export function policyPatch(
   if (form.makeup_requires_notice !== stored?.makeup_requires_notice) {
     payload.makeup_requires_notice = form.makeup_requires_notice;
   }
-  if (form.cancellation_effective_timing !== stored?.cancellation_effective_timing) {
-    payload.cancellation_effective_timing = form.cancellation_effective_timing;
-  }
   for (const key of [
     "can_report_absence",
     "can_request_makeup",
@@ -122,12 +132,26 @@ export function policyPatch(
       payload[key] = form[key];
     }
   }
+  if (
+    form.welcome_email_absence_policy_default !==
+    (stored?.welcome_email_absence_policy_default ?? "")
+  ) {
+    payload.welcome_email_absence_policy_default = form.welcome_email_absence_policy_default;
+  }
   return { payload, errors };
 }
 
-/** One line for the Self-service panel: the terms Billing rules sets. */
+/** One line for the Family policies panel: the terms Billing rules sets. */
 export function cancellationTermsSummary(
-  data: Pick<SelfServicePolicy, "cancellation_minimum_notice_days" | "cancellation_fee_cents"> | null | undefined,
+  data:
+    | Pick<
+        SelfServicePolicy,
+        | "cancellation_minimum_notice_days"
+        | "cancellation_fee_cents"
+        | "cancellation_effective_timing"
+      >
+    | null
+    | undefined,
 ): string {
   if (!data) return "Set in Billing rules.";
   const days = data.cancellation_minimum_notice_days;
@@ -136,5 +160,9 @@ export function cancellationTermsSummary(
     data.cancellation_fee_cents > 0
       ? `$${(data.cancellation_fee_cents / 100).toFixed(2)} fee when notice is short`
       : "no fee";
-  return `${notice}, ${fee}. Set in Billing rules.`;
+  const timing =
+    data.cancellation_effective_timing === "immediate"
+      ? "takes effect immediately"
+      : "takes effect at period end";
+  return `${notice}, ${fee}, ${timing}. Set in Billing rules.`;
 }

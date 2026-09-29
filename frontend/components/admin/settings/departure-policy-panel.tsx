@@ -121,24 +121,11 @@ export function DeparturePolicyPanel() {
               </select>
             </label>
           </div>
-          <label className="mt-4 grid gap-1.5 text-sm font-medium text-rally-ink">
-            Default Drop outcome
-            <select
-              disabled={disabled}
-              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500 disabled:opacity-60"
-              value={form.drop_default_outcome}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  drop_default_outcome: e.target.value as DropDefaultOutcome,
-                }))
-              }
-            >
-              <option value="no_credit_mid_month">No credit, mid-month (default)</option>
-              <option value="credit_mid_month">Prorated credit, mid-month</option>
-              <option value="no_credit_end_of_period">No credit, end of period</option>
-            </select>
-          </label>
+          {/* Default drop outcome moved to Billing rules' "Leaving and
+              pausing" card (Settings overhaul Phase 3 PR 10), same pattern
+              #1002 used for the cancellation fee/notice. `form` still tracks
+              it (untouched) so a save here echoes the stored value back
+              instead of omitting it. */}
           <label className="mt-4 flex items-center gap-2 text-sm font-medium text-rally-ink">
             <input
               type="checkbox"

@@ -55,6 +55,12 @@ def test_get_academy_contract(admin_client):
         "invoice_prefix": None,
         "phone_country_code": "1",
         "sport": "badminton",
+        "default_class_size": 10,
+        "default_class_length_minutes": 45,
+        "default_venue_address": None,
+        "default_parking_note": None,
+        "default_what_to_bring": None,
+        "default_arrival_minutes_before": None,
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
 
@@ -165,6 +171,58 @@ def test_patch_academy_contract(admin_client):
     assert r.json()["brand_color"] == "#facc15"
     admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
         "acad", {"display_name": "Court 7", "brand_color": "#facc15"}
+    )
+
+
+@pytest.mark.parametrize("brand_color", ["not-a-color", "2563eb", "#12", "#1234567"])
+def test_patch_academy_rejects_non_hex_brand_color(admin_client, brand_color):
+    r = admin_client.patch("/api/v2/admin/academy", json={"brand_color": brand_color})
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_patch_academy_class_defaults_contract(admin_client):
+    """Settings overhaul Phase 3 PR 9: Class defaults are admin-editable,
+    not owner-gated, and pass straight through to the use case."""
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone=None,
+        default_class_size=8,
+        default_class_length_minutes=60,
+        default_venue_address="12 Court Lane",
+        default_parking_note="Free lot behind",
+        default_what_to_bring="Racquet and water",
+        default_arrival_minutes_before=15,
+    )
+
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={
+            "default_class_size": 8,
+            "default_class_length_minutes": 60,
+            "default_venue_address": "12 Court Lane",
+            "default_parking_note": "Free lot behind",
+            "default_what_to_bring": "Racquet and water",
+            "default_arrival_minutes_before": 15,
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["default_class_size"] == 8
+    assert r.json()["default_class_length_minutes"] == 60
+    assert r.json()["default_venue_address"] == "12 Court Lane"
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad",
+        {
+            "default_class_size": 8,
+            "default_class_length_minutes": 60,
+            "default_venue_address": "12 Court Lane",
+            "default_parking_note": "Free lot behind",
+            "default_what_to_bring": "Racquet and water",
+            "default_arrival_minutes_before": 15,
+        },
     )
 
 

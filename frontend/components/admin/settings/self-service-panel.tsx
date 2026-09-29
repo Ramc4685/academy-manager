@@ -19,6 +19,7 @@ import { Overline } from "@/components/ds/typography";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
+import { WaiversManagement } from "@/components/admin/waivers/waivers-management";
 
 export function SelfServicePanel() {
   const queryClient = useQueryClient();
@@ -58,128 +59,164 @@ export function SelfServicePanel() {
       ) : query.isLoading ? (
         <div className="h-48 animate-pulse rounded-xl bg-neutral-100 dark:bg-neutral-800" />
       ) : (
-        <Card p={24} className="max-w-3xl">
-          <Overline>Absences &amp; makeups</Overline>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <NumberField
-              label="Minimum absence notice (hours)"
-              hint="A notice filed at least this long before the class starts counts as on time."
-              value={form.absence_notice_min_hours}
-              error={patch.errors.absence_notice_min_hours}
-              onChange={(value) => setForm((prev) => ({ ...prev, absence_notice_min_hours: value }))}
-            />
-            <NumberField
-              label="Makeup expiry (days)"
-              hint="A makeup must be requested within this many days of the missed class."
-              min="1"
-              value={form.makeup_expiry_days}
-              error={patch.errors.makeup_expiry_days}
-              onChange={(value) => setForm((prev) => ({ ...prev, makeup_expiry_days: value }))}
-            />
-          </div>
-          <label className="mt-4 flex items-start gap-2 text-sm font-medium text-rally-ink">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={form.makeup_requires_notice}
-              onChange={(e) => setForm((prev) => ({ ...prev, makeup_requires_notice: e.target.checked }))}
-            />
-            <span>
-              Makeup requests require an on-time absence notice
-              <span className="mt-1 block text-xs font-normal text-rally-muted">
-                On: a late or missing notice earns no makeup credit.
+        <>
+          <Card p={24} className="max-w-3xl" data-testid="family-policies-absences-card">
+            <Overline>Absences &amp; makeups</Overline>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <NumberField
+                label="Minimum absence notice (hours)"
+                hint="A notice filed at least this long before the class starts counts as on time."
+                value={form.absence_notice_min_hours}
+                error={patch.errors.absence_notice_min_hours}
+                onChange={(value) =>
+                  setForm((prev) => ({ ...prev, absence_notice_min_hours: value }))
+                }
+              />
+              <NumberField
+                label="Makeup expiry (days)"
+                hint="A makeup must be requested within this many days of the missed class."
+                min="1"
+                value={form.makeup_expiry_days}
+                error={patch.errors.makeup_expiry_days}
+                onChange={(value) => setForm((prev) => ({ ...prev, makeup_expiry_days: value }))}
+              />
+            </div>
+            <label className="mt-4 flex items-start gap-2 text-sm font-medium text-rally-ink">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={form.makeup_requires_notice}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, makeup_requires_notice: e.target.checked }))
+                }
+              />
+              <span>
+                Makeup requests require an on-time absence notice
+                <span className="mt-1 block text-xs font-normal text-rally-muted">
+                  On: a late or missing notice earns no makeup credit.
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
 
-          <div className="mt-8">
-            <Overline>Cancellation</Overline>
+            <label className="mt-6 grid gap-1.5 text-sm font-medium text-rally-ink">
+              Welcome email absence &amp; makeup policy (default)
+              <textarea
+                value={form.welcome_email_absence_policy_default}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    welcome_email_absence_policy_default: e.target.value,
+                  }))
+                }
+                rows={3}
+                placeholder="e.g. Report absences at least 2 hours before class in the parent app."
+                className="min-h-[80px] rounded-md border border-rally-line bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                data-testid="welcome-email-absence-policy-default"
+              />
+              <span className="text-xs font-normal text-rally-muted">
+                Shown in a class&apos;s welcome email only when that class has not set its own
+                absence &amp; makeup text. A class&apos;s own text always wins.
+              </span>
+            </label>
+
+            <div className="mt-8">
+              <Overline>Cancellation</Overline>
+            </div>
+            {/* The notice and fee live only in Billing rules (Settings overhaul
+                P1 PR 5): owner-only there, and never written from here. */}
+            <p className="mt-2 text-sm text-rally-ink" data-testid="self-service-cancellation-terms">
+              {cancellationTermsSummary(query.data)}{" "}
+              {isOwner ? (
+                <Link
+                  href="/admin/settings?panel=billing-rules"
+                  className="font-medium text-rally-cobalt-700 underline underline-offset-2 hover:text-rally-cobalt-800"
+                >
+                  Change in Billing rules
+                </Link>
+              ) : (
+                <span className="text-rally-muted">Only the academy owner can change them.</span>
+              )}
+            </p>
+
+            {/* One shared form/mutation across this card and "What parents
+                can do in the app" below — either Save button writes every
+                changed field from both, in one PUT. */}
+            <Footer
+              dirty={dirty && !hasErrors}
+              pending={mutation.isPending}
+              savedAt={savedAt}
+              error={mutation.isError ? mutation.error : null}
+              onSave={() => mutation.mutate()}
+            />
+          </Card>
+
+          <Card p={24} className="max-w-3xl" data-testid="family-policies-parent-actions-card">
+            <Overline>What parents can do in the app</Overline>
+            <p className="mt-2 text-xs text-rally-muted">
+              Off hides the action for parents; a parent who tries anyway gets a clear message to
+              contact the academy directly. Free trial requests are governed by the Public page{" "}
+              <a href="?panel=public-page" className="underline">
+                &quot;Accept free trial requests&quot;
+              </a>{" "}
+              toggle, not a switch here.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <SwitchField
+                label="Report an absence"
+                checked={form.can_report_absence}
+                onChange={(checked) => setForm((prev) => ({ ...prev, can_report_absence: checked }))}
+              />
+              <SwitchField
+                label="Request a makeup"
+                checked={form.can_request_makeup}
+                onChange={(checked) => setForm((prev) => ({ ...prev, can_request_makeup: checked }))}
+              />
+              <SwitchField
+                label="Request a pause / hold"
+                checked={form.can_request_pause}
+                onChange={(checked) => setForm((prev) => ({ ...prev, can_request_pause: checked }))}
+              />
+              <SwitchField
+                label="Request to cancel / withdraw"
+                checked={form.can_request_cancel}
+                onChange={(checked) => setForm((prev) => ({ ...prev, can_request_cancel: checked }))}
+              />
+              <SwitchField
+                label="Claim a waitlist seat offer"
+                checked={form.can_claim_waitlist_offer}
+                onChange={(checked) =>
+                  setForm((prev) => ({ ...prev, can_claim_waitlist_offer: checked }))
+                }
+              />
+            </div>
+
+            <Footer
+              dirty={dirty && !hasErrors}
+              pending={mutation.isPending}
+              savedAt={savedAt}
+              error={mutation.isError ? mutation.error : null}
+              onSave={() => mutation.mutate()}
+            />
+          </Card>
+
+          <div data-testid="family-policies-registration-waivers-card" className="space-y-4">
+            <Overline>Registration &amp; waivers</Overline>
+            <WaiversManagement />
           </div>
-          {/* The notice and fee live only in Billing rules (Settings overhaul
-              P1 PR 5): owner-only there, and never written from here. */}
-          <p className="mt-2 text-sm text-rally-ink" data-testid="self-service-cancellation-terms">
-            {cancellationTermsSummary(query.data)}{" "}
-            {isOwner ? (
+
+          <Card p={20} className="max-w-3xl" data-testid="family-policies-billing-link-card">
+            <p className="text-sm text-rally-ink">
+              Cancellation fee &amp; notice — now in{" "}
               <Link
                 href="/admin/settings?panel=billing-rules"
                 className="font-medium text-rally-cobalt-700 underline underline-offset-2 hover:text-rally-cobalt-800"
               >
-                Change in Billing rules
+                Billing rules
               </Link>
-            ) : (
-              <span className="text-rally-muted">Only the academy owner can change them.</span>
-            )}
-          </p>
-          <label className="mt-4 grid gap-1.5 text-sm font-medium text-rally-ink">
-            Effective timing
-            <select
-              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500"
-              value={form.cancellation_effective_timing}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  cancellation_effective_timing: e.target.value as "immediate" | "end_of_period",
-                }))
-              }
-            >
-              <option value="immediate">Immediate</option>
-              <option value="end_of_period">End of billing period</option>
-            </select>
-            <span className="text-xs font-normal text-rally-muted">
-              Immediate stops the seat and the billing now; end of period keeps both until the
-              current billing period closes.
-            </span>
-          </label>
-
-          <div className="mt-8">
-            <Overline>What parents can do in the app</Overline>
-          </div>
-          <p className="mt-2 text-xs text-rally-muted">
-            Off hides the action for parents; a parent who tries anyway gets a clear message to
-            contact the academy directly. Free trial requests are governed by the Public page{" "}
-            <a href="?panel=public-page" className="underline">
-              &quot;Accept free trial requests&quot;
-            </a>{" "}
-            toggle, not a switch here.
-          </p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <SwitchField
-              label="Report an absence"
-              checked={form.can_report_absence}
-              onChange={(checked) => setForm((prev) => ({ ...prev, can_report_absence: checked }))}
-            />
-            <SwitchField
-              label="Request a makeup"
-              checked={form.can_request_makeup}
-              onChange={(checked) => setForm((prev) => ({ ...prev, can_request_makeup: checked }))}
-            />
-            <SwitchField
-              label="Request a pause / hold"
-              checked={form.can_request_pause}
-              onChange={(checked) => setForm((prev) => ({ ...prev, can_request_pause: checked }))}
-            />
-            <SwitchField
-              label="Request to cancel / withdraw"
-              checked={form.can_request_cancel}
-              onChange={(checked) => setForm((prev) => ({ ...prev, can_request_cancel: checked }))}
-            />
-            <SwitchField
-              label="Claim a waitlist seat offer"
-              checked={form.can_claim_waitlist_offer}
-              onChange={(checked) =>
-                setForm((prev) => ({ ...prev, can_claim_waitlist_offer: checked }))
-              }
-            />
-          </div>
-
-          <Footer
-            dirty={dirty && !hasErrors}
-            pending={mutation.isPending}
-            savedAt={savedAt}
-            error={mutation.isError ? mutation.error : null}
-            onSave={() => mutation.mutate()}
-          />
-        </Card>
+              .
+            </p>
+          </Card>
+        </>
       )}
     </section>
   );

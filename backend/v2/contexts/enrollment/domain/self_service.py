@@ -232,6 +232,15 @@ class ParentSelfServicePolicy(BaseModel):
     #: in the invoice email when non-empty. Rendered escaped, whitespace
     #: preserved. Lives next to the offline-payments setting (PR #993).
     payment_instructions: str = Field(default="", max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH)
+    #: Academy-level fallback for the "Absences and make-ups" block in a
+    #: class's welcome email (Settings overhaul Phase 3 PR 10). The welcome
+    #: email is per-class (``Session.absence_policy``); this default is used
+    #: only when that class field is empty, so a class value always wins.
+    #: Default "" preserves today's behaviour — nothing changes for BLNO or
+    #: any academy until an owner or admin fills this in.
+    welcome_email_absence_policy_default: str = Field(
+        default="", max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH
+    )
 
     @staticmethod
     def default(academy_id: str) -> ParentSelfServicePolicy:

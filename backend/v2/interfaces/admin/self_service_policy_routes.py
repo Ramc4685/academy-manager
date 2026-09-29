@@ -38,6 +38,7 @@ class _PolicyLike(Protocol):
     can_request_cancel: bool
     can_claim_waitlist_offer: bool
     payment_instructions: str
+    welcome_email_absence_policy_default: str
 
 
 class SelfServicePolicyView(BaseModel):
@@ -53,6 +54,7 @@ class SelfServicePolicyView(BaseModel):
     can_request_cancel: bool
     can_claim_waitlist_offer: bool
     payment_instructions: str
+    welcome_email_absence_policy_default: str
 
     @staticmethod
     def from_domain(policy: _PolicyLike) -> SelfServicePolicyView:
@@ -69,6 +71,7 @@ class SelfServicePolicyView(BaseModel):
             can_request_cancel=policy.can_request_cancel,
             can_claim_waitlist_offer=policy.can_claim_waitlist_offer,
             payment_instructions=policy.payment_instructions,
+            welcome_email_absence_policy_default=policy.welcome_email_absence_policy_default,
         )
 
 
@@ -96,16 +99,19 @@ class UpdateSelfServicePolicyRequest(BaseModel):
     can_request_cancel: bool | None = None
     can_claim_waitlist_offer: bool | None = None
     payment_instructions: str | None = Field(default=None, max_length=1000)
+    welcome_email_absence_policy_default: str | None = Field(default=None, max_length=1000)
 
 
-#: The two fields Billing rules owns. Self-service shows neither any more.
+#: The three fields Billing rules owns. Self-service (now Family policies)
+#: shows none of them any more.
 CANCELLATION_TERMS: Final[tuple[str, ...]] = (
     "cancellation_minimum_notice_days",
     "cancellation_fee_cents",
+    "cancellation_effective_timing",
 )
 
 CANCELLATION_TERMS_MOVED: Final[str] = (
-    "The cancellation fee and notice are set in Settings -> Billing rules."
+    "The cancellation fee, notice and timing are set in Settings -> Billing rules."
 )
 
 

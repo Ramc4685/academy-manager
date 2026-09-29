@@ -223,7 +223,7 @@ def build_setup_checklist(
             label="Waiver",
             detail="Replace the starter waiver with your own; families sign it at registration.",
             status=_status(waivers_ok, _waiver_done(waiver_report)),
-            href="/admin/waivers",
+            href="/admin/settings?panel=family-policies",
         ),
         SetupChecklistItemView(
             key="public_page",

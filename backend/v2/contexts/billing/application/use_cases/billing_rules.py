@@ -65,10 +65,32 @@ REMINDER_DAYS_KEY: Final[str] = "reminder_days"
 REMINDER_DAY_BOUNDS: Final[tuple[int, int]] = (1, 60)
 MAX_REMINDER_DAYS: Final[int] = 4
 
+#: ``cancellation_effective_timing`` is an enum, not a bounded number, so it
+#: carries its own choices instead of a row in ``BILLING_RULE_BOUNDS``.
+#: Settings overhaul Phase 3 PR 10: moved here from Self-service (now Family
+#: policies), same pattern #1002 used for the cancellation fee.
+CANCELLATION_TIMING_KEY: Final[str] = "cancellation_effective_timing"
+CANCELLATION_TIMING_CHOICES: Final[tuple[str, ...]] = ("immediate", "end_of_period")
+
+#: ``drop_default_outcome`` is also an enum row. Settings overhaul Phase 3
+#: PR 10: moved here from the Holds card (``EnrollmentDeparturePolicy`` in the
+#: enrollment context), same pattern used for the cancellation timing above.
+DROP_DEFAULT_OUTCOME_KEY: Final[str] = "drop_default_outcome"
+DROP_DEFAULT_OUTCOME_CHOICES: Final[tuple[str, ...]] = (
+    "no_credit_mid_month",
+    "credit_mid_month",
+    "no_credit_end_of_period",
+)
+
 #: Every editable rule, numeric ones first. ``test_billing_rules`` pins this
 #: tuple to both the view's editable rows and the write command's fields, so a
 #: rule can never be editable on the page and unwritable in the command.
-EDITABLE_RULE_KEYS: Final[tuple[str, ...]] = (*BILLING_RULE_BOUNDS, REMINDER_DAYS_KEY)
+EDITABLE_RULE_KEYS: Final[tuple[str, ...]] = (
+    *BILLING_RULE_BOUNDS,
+    REMINDER_DAYS_KEY,
+    CANCELLATION_TIMING_KEY,
+    DROP_DEFAULT_OUTCOME_KEY,
+)
 
 
 # --- Ports -------------------------------------------------------------
@@ -116,6 +138,7 @@ class AcademyFeesWriter(Protocol):
 class CancellationPolicyLike(Protocol):
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
+    cancellation_effective_timing: str
 
 
 class CancellationPolicyReader(Protocol):
@@ -137,7 +160,30 @@ class CancellationPolicyWriter(Protocol):
         *,
         cancellation_minimum_notice_days: int | None = None,
         cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> CancellationPolicyLike: ...
+
+
+class DropDefaultOutcomeLike(Protocol):
+    drop_default_outcome: str
+
+
+class DropDefaultOutcomeReader(Protocol):
+    async def execute(self) -> DropDefaultOutcomeLike: ...
+
+
+class DropDefaultOutcomeWriter(Protocol):
+    """Narrow port over ``UpdateEnrollmentDeparturePolicy``.
+
+    ``EnrollmentDeparturePolicy`` has four fields; the Holds card owns three
+    of them (``composition/billing_rules.py`` wires the adapter that sends
+    only ``drop_default_outcome``, ``None`` for the rest, which the use case
+    leaves untouched — see its docstring).
+    """
+
+    async def execute(
+        self, *, drop_default_outcome: str | None = None
+    ) -> DropDefaultOutcomeLike: ...
 
 
 # --- View --------------------------------------------------------------
@@ -156,6 +202,10 @@ class BillingRuleRow(BaseModel):
     unit: RuleUnit | None = None
     min_value: int | None = None
     max_value: int | None = None
+    #: ``cancellation_effective_timing`` only: the stored enum value and its
+    #: allowed choices.
+    choice: str | None = None
+    choices: tuple[str, ...] | None = None
     #: Fixed rows only: the stated value, rendered as muted text.
     display: str | None = None
     #: One line saying where the behaviour comes from.
@@ -267,15 +317,18 @@ class BuildBillingRulesView:
         schedule: InvoiceScheduleReader,
         fees: AcademyFeesReader,
         cancellation: CancellationPolicyReader,
+        drop_outcome: DropDefaultOutcomeReader,
     ) -> None:
         self._schedule = schedule
         self._fees = fees
         self._cancellation = cancellation
+        self._drop_outcome = drop_outcome
 
     async def execute(self, academy_id: str) -> BillingRulesView:
         schedule = await self._schedule.execute()
         fees = await self._fees.execute(academy_id)
         policy = await self._cancellation.execute()
+        departure = await self._drop_outcome.execute()
         return BillingRulesView(
             groups=(
                 BillingRuleGroup(
@@ -364,6 +417,24 @@ class BuildBillingRulesView:
                             "Late-cancellation fee",
                             policy.cancellation_fee_cents,
                             "cents",
+                        ),
+                        BillingRuleRow(
+                            key=CANCELLATION_TIMING_KEY,
+                            label="When a cancellation takes effect",
+                            editable=True,
+                            choice=policy.cancellation_effective_timing,
+                            choices=CANCELLATION_TIMING_CHOICES,
+                        ),
+                        BillingRuleRow(
+                            key=DROP_DEFAULT_OUTCOME_KEY,
+                            label="Default when staff drop a student",
+                            editable=True,
+                            choice=departure.drop_default_outcome,
+                            choices=DROP_DEFAULT_OUTCOME_CHOICES,
+                            detail=(
+                                "Used when staff drop a student without picking an outcome "
+                                "for that drop."
+                            ),
                         ),
                     ),
                 ),
@@ -481,6 +552,12 @@ class UpdateBillingRulesCommand(BaseModel):
     #: Issue #774. ``None`` means "leave alone"; ``[]`` means "turn reminders
     #: off", which is a real change and must not be confused with the former.
     reminder_days: list[int] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from Self-service.
+    cancellation_effective_timing: Literal["immediate", "end_of_period"] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from the Holds card.
+    drop_default_outcome: (
+        Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
+    ) = None
     actor_id: str
     reason: str | None = None
 
@@ -529,6 +606,8 @@ class UpdateBillingRules:
         fees_writer: AcademyFeesWriter,
         cancellation_reader: CancellationPolicyReader,
         cancellation_writer: CancellationPolicyWriter,
+        drop_outcome_reader: DropDefaultOutcomeReader,
+        drop_outcome_writer: DropDefaultOutcomeWriter,
         audit: BillingAuditAppender | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -538,6 +617,8 @@ class UpdateBillingRules:
         self._fees_writer = fees_writer
         self._cancellation_reader = cancellation_reader
         self._cancellation_writer = cancellation_writer
+        self._drop_outcome_reader = drop_outcome_reader
+        self._drop_outcome_writer = drop_outcome_writer
         self._audit = audit
         self._now = clock
 
@@ -552,12 +633,15 @@ class UpdateBillingRules:
                     field, f"{field} must be between {low} and {high}"
                 )
         reminder_days = _validate_reminder_days(cmd.reminder_days)
-        if not requested and reminder_days is None:
+        timing = cmd.cancellation_effective_timing
+        drop_outcome = cmd.drop_default_outcome
+        if not requested and reminder_days is None and timing is None and drop_outcome is None:
             return BillingRulesWriteResult(changed_fields=())
 
         schedule = await self._schedule_reader.execute()
         fees = await self._fees_reader.execute(academy_id)
         policy = await self._cancellation_reader.execute()
+        departure = await self._drop_outcome_reader.execute()
         before: dict[str, Any] = {
             "billing_day": schedule.billing_day,
             "invoice_due_days": schedule.invoice_due_days,
@@ -566,12 +650,18 @@ class UpdateBillingRules:
             "cancellation_minimum_notice_days": policy.cancellation_minimum_notice_days,
             "cancellation_fee_cents": policy.cancellation_fee_cents,
             REMINDER_DAYS_KEY: _reminder_days(schedule),
+            CANCELLATION_TIMING_KEY: policy.cancellation_effective_timing,
+            DROP_DEFAULT_OUTCOME_KEY: departure.drop_default_outcome,
         }
         changed: dict[str, Any] = {
             field: value for field, value in requested.items() if before[field] != value
         }
         if reminder_days is not None and before[REMINDER_DAYS_KEY] != reminder_days:
             changed[REMINDER_DAYS_KEY] = reminder_days
+        if timing is not None and before[CANCELLATION_TIMING_KEY] != timing:
+            changed[CANCELLATION_TIMING_KEY] = timing
+        if drop_outcome is not None and before[DROP_DEFAULT_OUTCOME_KEY] != drop_outcome:
+            changed[DROP_DEFAULT_OUTCOME_KEY] = drop_outcome
         if not changed:
             return BillingRulesWriteResult(changed_fields=())
 
@@ -646,16 +736,27 @@ class UpdateBillingRules:
 
         policy_fields = [
             f
-            for f in ("cancellation_minimum_notice_days", "cancellation_fee_cents")
+            for f in (
+                "cancellation_minimum_notice_days",
+                "cancellation_fee_cents",
+                CANCELLATION_TIMING_KEY,
+            )
             if f in changed
         ]
         if policy_fields:
-            # Only the changed field(s); `None` leaves the other as stored.
+            # Only the changed field(s); `None` leaves the others as stored.
             await self._cancellation_writer.execute(
                 cancellation_minimum_notice_days=changed.get("cancellation_minimum_notice_days"),
                 cancellation_fee_cents=changed.get("cancellation_fee_cents"),
+                cancellation_effective_timing=changed.get(CANCELLATION_TIMING_KEY),
             )
             applied.extend(policy_fields)
+
+        if DROP_DEFAULT_OUTCOME_KEY in changed:
+            await self._drop_outcome_writer.execute(
+                drop_default_outcome=changed[DROP_DEFAULT_OUTCOME_KEY]
+            )
+            applied.append(DROP_DEFAULT_OUTCOME_KEY)
 
     async def _append_audit(
         self,

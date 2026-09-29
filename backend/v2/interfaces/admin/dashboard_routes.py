@@ -296,7 +296,7 @@ async def dashboard_attention(
                     f"{waiver_report.summary.outdated_count} outdated."
                 ),
                 severity="medium",
-                href="/admin/waivers",
+                href="/admin/settings?panel=family-policies",
                 count=waiver_count,
             )
         )

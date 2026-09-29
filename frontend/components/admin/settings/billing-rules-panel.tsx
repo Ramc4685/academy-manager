@@ -7,6 +7,7 @@ import { getBillingRules, updateBillingRules } from "@/lib/api/admin";
 import {
   canSave,
   diffForm,
+  isChoiceRow,
   isListRow,
   saveSummary,
   toForm,
@@ -59,6 +60,13 @@ export function BillingRulesPanel() {
       // The cancellation fee and notice are shared with the Self-service tab;
       // drop its cached copy so it never shows (or re-saves) the old values.
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServicePolicy() });
+      // drop_default_outcome is also echoed by the Holds panel's own save
+      // (DeparturePolicyPanel). Without dropping its cache too, that panel
+      // keeps sending the pre-change value for up to the 5-minute staleTime
+      // and gets spuriously 422'd by the backend's stale-value check.
+      if (diff.changed.includes("drop_default_outcome")) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.admin.departurePolicy() });
+      }
       setForm(toForm(data));
       setLateFeeAcknowledged(false);
       setSaved(true);
@@ -200,6 +208,32 @@ function EditableRule({
   // rather than a number spinner, and an empty box is a real value meaning
   // "send no reminders" — the off switch the owner asked for.
   const list = isListRow(row);
+  const choice = isChoiceRow(row);
+  if (choice) {
+    return (
+      <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+        {row.label}
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-10 rounded-lg border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500"
+          data-testid={`billing-rules-input-${row.key}`}
+        >
+          {(row.choices ?? []).map((option) => (
+            <option key={option} value={option}>
+              {choiceLabel(option)}
+            </option>
+          ))}
+        </select>
+        {error && (
+          <span className="text-xs text-red-700" role="alert" data-testid={`billing-rules-error-${row.key}`}>
+            {error}
+          </span>
+        )}
+        {!error && row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
+      </label>
+    );
+  }
   return (
     <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
       {row.unit === "cents" ? `${row.label} ($)` : row.label}
@@ -237,6 +271,19 @@ function FixedRule({ row }: { row: BillingRuleRow }) {
       {row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
     </div>
   );
+}
+
+/** Choice-row option → its label, across every choice-typed row. */
+const CHOICE_LABELS: Record<string, string> = {
+  immediate: "Immediate",
+  end_of_period: "End of billing period",
+  no_credit_mid_month: "No credit, mid-month (default)",
+  credit_mid_month: "Prorated credit, mid-month",
+  no_credit_end_of_period: "No credit, end of period",
+};
+
+function choiceLabel(option: string): string {
+  return CHOICE_LABELS[option] ?? option;
 }
 
 /** min/max arrive in the row's stored unit; a cents input shows dollars. */

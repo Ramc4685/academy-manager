@@ -75,6 +75,50 @@ async def test_get_academy_returns_stored_sport_when_present():
 
 
 @pytest.mark.asyncio
+async def test_get_academy_class_defaults_fill_at_read_time_when_absent():
+    """BLNO and every pre-existing academy: no `default_class_size` /
+    `default_class_length_minutes` stored -> read as 10 / 45 today, with no
+    migration (Settings overhaul Phase 3 PR 9)."""
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-1",
+        "display_name": "Court 7",
+        "timezone": "America/New_York",
+    }
+    use_case = GetAcademyUseCase(academy_repo=repo)
+    output = await use_case.execute("acad-1")
+    assert output.default_class_size == 10
+    assert output.default_class_length_minutes == 45
+    assert output.default_venue_address is None
+    assert output.default_parking_note is None
+    assert output.default_what_to_bring is None
+    assert output.default_arrival_minutes_before is None
+
+
+@pytest.mark.asyncio
+async def test_get_academy_class_defaults_use_stored_values_when_present():
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "_id": "acad-1",
+        "display_name": "Court 7",
+        "default_class_size": 8,
+        "default_class_length_minutes": 60,
+        "default_venue_address": "12 Court Lane",
+        "default_parking_note": "Free lot behind",
+        "default_what_to_bring": "Racquet and water",
+        "default_arrival_minutes_before": 15,
+    }
+    use_case = GetAcademyUseCase(academy_repo=repo)
+    output = await use_case.execute("acad-1")
+    assert output.default_class_size == 8
+    assert output.default_class_length_minutes == 60
+    assert output.default_venue_address == "12 Court Lane"
+    assert output.default_parking_note == "Free lot behind"
+    assert output.default_what_to_bring == "Racquet and water"
+    assert output.default_arrival_minutes_before == 15
+
+
+@pytest.mark.asyncio
 async def test_update_academy_partial_set():
     repo = AsyncMock()
     repo.update_by_id.return_value = {

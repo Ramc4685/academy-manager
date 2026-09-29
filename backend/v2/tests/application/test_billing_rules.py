@@ -51,6 +51,7 @@ class _Fees:
 class _Policy:
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
+    cancellation_effective_timing: str = "end_of_period"
 
 
 class _FakeSchedule:
@@ -101,9 +102,11 @@ class _FakeFees:
 
 
 class _FakePolicy:
-    def __init__(self, notice_days: int = 14, fee_cents: int = 0) -> None:
-        self.current = _Policy(notice_days, fee_cents)
-        self.writes: list[tuple[int | None, int | None]] = []
+    def __init__(
+        self, notice_days: int = 14, fee_cents: int = 0, timing: str = "end_of_period"
+    ) -> None:
+        self.current = _Policy(notice_days, fee_cents, timing)
+        self.writes: list[tuple[int | None, int | None, str | None]] = []
         self.fail = False
 
     async def read(self) -> _Policy:
@@ -114,11 +117,18 @@ class _FakePolicy:
         *,
         cancellation_minimum_notice_days: int | None = None,
         cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> _Policy:
         """Partial, like the real adapter: ``None`` leaves the stored value."""
         if self.fail:
             raise RuntimeError("policy store down")
-        self.writes.append((cancellation_minimum_notice_days, cancellation_fee_cents))
+        self.writes.append(
+            (
+                cancellation_minimum_notice_days,
+                cancellation_fee_cents,
+                cancellation_effective_timing,
+            )
+        )
         self.current = _Policy(
             self.current.cancellation_minimum_notice_days
             if cancellation_minimum_notice_days is None
@@ -126,7 +136,34 @@ class _FakePolicy:
             self.current.cancellation_fee_cents
             if cancellation_fee_cents is None
             else cancellation_fee_cents,
+            self.current.cancellation_effective_timing
+            if cancellation_effective_timing is None
+            else cancellation_effective_timing,
         )
+        return self.current
+
+
+@dataclass
+class _Departure:
+    drop_default_outcome: str = "no_credit_mid_month"
+
+
+class _FakeDropOutcome:
+    def __init__(self, drop_default_outcome: str = "no_credit_mid_month") -> None:
+        self.current = _Departure(drop_default_outcome)
+        self.writes: list[str | None] = []
+        self.fail = False
+
+    async def read(self) -> _Departure:
+        return self.current
+
+    async def write(self, *, drop_default_outcome: str | None = None) -> _Departure:
+        """Partial, like the real adapter: ``None`` leaves the stored value."""
+        if self.fail:
+            raise RuntimeError("departure policy store down")
+        self.writes.append(drop_default_outcome)
+        if drop_default_outcome is not None:
+            self.current = _Departure(drop_default_outcome)
         return self.current
 
 
@@ -146,11 +183,17 @@ class _FakeAudit:
         self.entries.append(entry)
 
 
-def _build(schedule: _FakeSchedule, fees: _FakeFees, policy: _FakePolicy) -> BuildBillingRulesView:
+def _build(
+    schedule: _FakeSchedule,
+    fees: _FakeFees,
+    policy: _FakePolicy,
+    drop: _FakeDropOutcome | None = None,
+) -> BuildBillingRulesView:
     return BuildBillingRulesView(
         schedule=_Reader(schedule.read),
         fees=_Reader(fees.read),
         cancellation=_Reader(policy.read),
+        drop_outcome=_Reader((drop or _FakeDropOutcome()).read),
     )
 
 
@@ -159,7 +202,9 @@ def _update(
     fees: _FakeFees,
     policy: _FakePolicy,
     audit: _FakeAudit | None = None,
+    drop: _FakeDropOutcome | None = None,
 ) -> UpdateBillingRules:
+    drop = drop or _FakeDropOutcome()
     return UpdateBillingRules(
         schedule_reader=_Reader(schedule.read),
         schedule_writer=_Reader(schedule.write),
@@ -167,6 +212,8 @@ def _update(
         fees_writer=_Reader(fees.write),
         cancellation_reader=_Reader(policy.read),
         cancellation_writer=_Reader(policy.write),
+        drop_outcome_reader=_Reader(drop.read),
+        drop_outcome_writer=_Reader(drop.write),
         audit=audit,
         clock=lambda: datetime(2026, 9, 7, tzinfo=UTC),
     )
@@ -327,8 +374,67 @@ async def test_policy_write_sends_only_the_changed_field() -> None:
         "acad-1",
         UpdateBillingRulesCommand(cancellation_fee_cents=900, actor_id="user-1"),
     )
-    assert policy.writes == [(None, 900)]
+    assert policy.writes == [(None, 900, None)]
     assert policy.current == _Policy(14, 900)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_timing_row_carries_the_stored_choice_and_options() -> None:
+    view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy(timing="immediate")).execute(
+        "acad-1"
+    )
+    row = view.row("cancellation_effective_timing")
+    assert row.editable is True
+    assert row.choice == "immediate"
+    assert row.choices == ("immediate", "end_of_period")
+
+
+@pytest.mark.asyncio
+async def test_cancellation_timing_write_lands_and_is_audited() -> None:
+    policy = _FakePolicy(14, 500, timing="end_of_period")
+    audit = _FakeAudit()
+    result = await _update(_FakeSchedule(), _FakeFees(), policy, audit).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(cancellation_effective_timing="immediate", actor_id="user-1"),
+    )
+    assert result.changed_fields == ("cancellation_effective_timing",)
+    assert policy.current.cancellation_effective_timing == "immediate"
+    assert audit.entries[0].after == {"cancellation_effective_timing": "immediate"}
+
+
+@pytest.mark.asyncio
+async def test_drop_default_outcome_row_carries_the_stored_choice_and_options() -> None:
+    drop = _FakeDropOutcome("credit_mid_month")
+    view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy(), drop).execute("acad-1")
+    row = view.row("drop_default_outcome")
+    assert row.editable is True
+    assert row.choice == "credit_mid_month"
+    assert row.choices == ("no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period")
+
+
+@pytest.mark.asyncio
+async def test_drop_default_outcome_write_lands_and_is_audited() -> None:
+    drop = _FakeDropOutcome("no_credit_mid_month")
+    audit = _FakeAudit()
+    result = await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), audit, drop).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(drop_default_outcome="credit_mid_month", actor_id="user-1"),
+    )
+    assert result.changed_fields == ("drop_default_outcome",)
+    assert drop.current.drop_default_outcome == "credit_mid_month"
+    assert drop.writes == ["credit_mid_month"]
+    assert audit.entries[0].after == {"drop_default_outcome": "credit_mid_month"}
+
+
+@pytest.mark.asyncio
+async def test_drop_default_outcome_unchanged_writes_nothing() -> None:
+    drop = _FakeDropOutcome("no_credit_mid_month")
+    result = await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), None, drop).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(drop_default_outcome="no_credit_mid_month", actor_id="user-1"),
+    )
+    assert result.changed_fields == ()
+    assert drop.writes == []
 
 
 @pytest.mark.asyncio

@@ -27,14 +27,16 @@ test("only the fields the admin changed are sent (money audit X5)", () => {
   assert.deepEqual(errors, {});
 });
 
-test("the cancellation fee and notice are never sent from Self-service (PR 5)", () => {
+test("the cancellation fee, notice and timing are never sent from Self-service (PR 5, PR 10)", () => {
   // Billing rules is their one write path; the BFF refuses a changed value here.
   const form = policyToForm(STORED);
   assert.equal("cancellation_fee_dollars" in form, false);
   assert.equal("cancellation_minimum_notice_days" in form, false);
+  assert.equal("cancellation_effective_timing" in form, false);
   const { payload } = policyPatch(STORED, { ...form, absence_notice_min_hours: "4" });
   assert.equal("cancellation_fee_cents" in payload, false);
   assert.equal("cancellation_minimum_notice_days" in payload, false);
+  assert.equal("cancellation_effective_timing" in payload, false);
   assert.deepEqual(policyPatch(STORED, form).payload, {});
 });
 
@@ -66,6 +68,20 @@ test("the panel points at Billing rules instead of editing the cancellation term
   assert.match(panel, /panel=billing-rules/);
   assert.doesNotMatch(panel, /Cancellation fee \(\$\)/);
   assert.doesNotMatch(panel, /Minimum cancellation notice/);
+  // PR 10: "Effective timing" select moved to Billing rules too.
+  assert.doesNotMatch(panel, /Effective timing/);
+});
+
+test("cancellationTermsSummary states the timing Billing rules set", async () => {
+  const { cancellationTermsSummary } = await import("./self-service-policy-form.ts");
+  assert.match(
+    cancellationTermsSummary(STORED),
+    /takes effect at period end\. Set in Billing rules\.$/,
+  );
+  assert.match(
+    cancellationTermsSummary({ ...STORED, cancellation_effective_timing: "immediate" }),
+    /takes effect immediately\. Set in Billing rules\.$/,
+  );
 });
 
 test("an out-of-bounds value already stored does not lock the other fields", () => {
@@ -100,4 +116,42 @@ test("the settings card names all five switches and links to the trials toggle",
   assert.match(panel, /can_request_cancel/);
   assert.match(panel, /can_claim_waitlist_offer/);
   assert.match(panel, /Accept free trial requests/);
+});
+
+// --- Welcome-email absence policy default (Settings overhaul Phase 3 PR 10) ---
+
+test("the welcome-email default round-trips through the form and defaults to empty", () => {
+  assert.equal(policyToForm(null).welcome_email_absence_policy_default, "");
+  assert.equal(
+    policyToForm(STORED).welcome_email_absence_policy_default,
+    "",
+  );
+  assert.equal(
+    policyToForm({ ...STORED, welcome_email_absence_policy_default: "Call the front desk." })
+      .welcome_email_absence_policy_default,
+    "Call the front desk.",
+  );
+});
+
+test("editing the welcome-email default sends only that field", () => {
+  const form = {
+    ...policyToForm(STORED),
+    welcome_email_absence_policy_default: "Report absences in the parent app.",
+  };
+  const { payload, errors } = policyPatch(STORED, form);
+  assert.deepEqual(errors, {});
+  assert.deepEqual(payload, {
+    welcome_email_absence_policy_default: "Report absences in the parent app.",
+  });
+});
+
+test("leaving the welcome-email default alone is not a change", () => {
+  const stored = { ...STORED, welcome_email_absence_policy_default: "Existing text." };
+  const form = policyToForm(stored);
+  assert.deepEqual(policyPatch(stored, form).payload, {});
+});
+
+test("the Absences card has the welcome-email default field", () => {
+  assert.match(panel, /welcome_email_absence_policy_default/);
+  assert.match(panel, /Welcome email absence &amp; makeup policy \(default\)/);
 });

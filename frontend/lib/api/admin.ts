@@ -1547,6 +1547,17 @@ export interface AdminAcademyView {
    * academy created before this field defaults to "badminton".
    */
   sport?: string;
+  /**
+   * Class defaults (Settings overhaul Phase 3 PR 9). Admin-editable and
+   * filled at read time: an academy that never set these reads 10 / 45 /
+   * null, exactly what the create-class form already defaulted to.
+   */
+  default_class_size: number;
+  default_class_length_minutes: number;
+  default_venue_address: string | null;
+  default_parking_note: string | null;
+  default_what_to_bring: string | null;
+  default_arrival_minutes_before: number | null;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{
@@ -1561,6 +1572,12 @@ export type UpdateAdminAcademyRequest = Partial<{
   currency: string | null;
   email_sender_name: string | null;
   email_reply_to: string | null;
+  default_class_size: number | null;
+  default_class_length_minutes: number | null;
+  default_venue_address: string | null;
+  default_parking_note: string | null;
+  default_what_to_bring: string | null;
+  default_arrival_minutes_before: number | null;
 }>;
 
 export interface AdminNotificationsView {
@@ -3307,6 +3324,10 @@ export interface SelfServicePolicyView {
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
   payment_instructions: string;
+  //: Academy-level fallback for a class's welcome-email "Absences and
+  //: make-ups" text (Settings overhaul Phase 3 PR 10). Used only when the
+  //: class leaves its own field empty.
+  welcome_email_absence_policy_default: string;
 }
 
 /**

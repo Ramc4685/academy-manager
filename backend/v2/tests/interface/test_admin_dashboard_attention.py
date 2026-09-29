@@ -53,7 +53,7 @@ def test_admin_dashboard_attention_aggregates_real_signals(admin_client):
     body = r.json()
     assert [(item["kind"], item["href"], item["count"]) for item in body["items"]] == [
         ("pause_requests", "/admin/inbox?tab=pauses", 1),
-        ("waivers", "/admin/waivers", 3),
+        ("waivers", "/admin/settings?panel=family-policies", 3),
     ]
 
 

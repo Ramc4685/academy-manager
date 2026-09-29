@@ -8,6 +8,7 @@ import {
   diffForm,
   editableRows,
   inputToValue,
+  isChoiceRow,
   rowToInput,
   saveSummary,
   toForm,
@@ -41,6 +42,22 @@ function editable(key, value, unit, min, max, label = key) {
     max_value: max,
     display: null,
     detail: null,
+  };
+}
+
+function choice(key, value, choices, label = key) {
+  return {
+    key,
+    label,
+    editable: true,
+    value: null,
+    unit: null,
+    min_value: null,
+    max_value: null,
+    display: null,
+    detail: null,
+    choice: value,
+    choices,
   };
 }
 
@@ -295,4 +312,115 @@ test("turning a fee on needs an explicit acknowledgement before Save is enabled"
   assert.match(panel, /billing-rules-late-fee-warning/);
   assert.match(panel, /turnsLateFeeOn\(/);
   assert.match(panel, /lateFeeAcknowledged/);
+});
+
+test("cancellation_effective_timing is a choice row, not a number", () => {
+  const row = choice("cancellation_effective_timing", "end_of_period", [
+    "immediate",
+    "end_of_period",
+  ]);
+  assert.equal(isChoiceRow(row), true);
+  assert.equal(isChoiceRow(editable("billing_day", 1, "day_of_month", 1, 28)), false);
+  assert.equal(rowToInput(row), "end_of_period");
+});
+
+function viewWithTiming(storedTiming) {
+  const base = view();
+  return {
+    groups: [
+      ...base.groups,
+      {
+        key: "leaving_and_pausing",
+        title: "Leaving and pausing",
+        note: null,
+        rows: [
+          choice(
+            "cancellation_effective_timing",
+            storedTiming,
+            ["immediate", "end_of_period"],
+            "When a cancellation takes effect",
+          ),
+        ],
+      },
+    ],
+  };
+}
+
+test("changing the choice row diffs a plain string, not a number", () => {
+  const stored = viewWithTiming("end_of_period");
+  const form = { ...toForm(stored), cancellation_effective_timing: "immediate" };
+  const diff = diffForm(stored, form, MONEY);
+  assert.deepEqual(diff.changed, ["cancellation_effective_timing"]);
+  assert.deepEqual(diff.payload, { cancellation_effective_timing: "immediate" });
+  assert.deepEqual(diff.errors, {});
+});
+
+test("leaving the choice row alone is not a change", () => {
+  const stored = viewWithTiming("immediate");
+  const diff = diffForm(stored, toForm(stored), MONEY);
+  assert.equal(diff.changed.includes("cancellation_effective_timing"), false);
+  assert.equal("cancellation_effective_timing" in diff.payload, false);
+});
+
+test("the panel renders a select, with labels, for a choice row", () => {
+  assert.match(panel, /isChoiceRow/);
+  assert.match(panel, /<select/);
+  assert.match(panel, /End of billing period/);
+});
+
+// --- drop_default_outcome (Settings overhaul Phase 3 PR 10, moved from the
+// Holds card) is also a choice row, on the same generic isChoiceRow path. ---
+
+test("drop_default_outcome is a choice row, not a number", () => {
+  const row = choice("drop_default_outcome", "no_credit_mid_month", [
+    "no_credit_mid_month",
+    "credit_mid_month",
+    "no_credit_end_of_period",
+  ]);
+  assert.equal(isChoiceRow(row), true);
+  assert.equal(rowToInput(row), "no_credit_mid_month");
+});
+
+function viewWithDropOutcome(storedOutcome) {
+  const base = view();
+  return {
+    groups: [
+      ...base.groups,
+      {
+        key: "leaving_and_pausing",
+        title: "Leaving and pausing",
+        note: null,
+        rows: [
+          choice(
+            "drop_default_outcome",
+            storedOutcome,
+            ["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"],
+            "Default when staff drop a student",
+          ),
+        ],
+      },
+    ],
+  };
+}
+
+test("changing drop_default_outcome diffs a plain string", () => {
+  const stored = viewWithDropOutcome("no_credit_mid_month");
+  const form = { ...toForm(stored), drop_default_outcome: "credit_mid_month" };
+  const diff = diffForm(stored, form, MONEY);
+  assert.deepEqual(diff.changed, ["drop_default_outcome"]);
+  assert.deepEqual(diff.payload, { drop_default_outcome: "credit_mid_month" });
+  assert.deepEqual(diff.errors, {});
+});
+
+test("leaving drop_default_outcome alone is not a change", () => {
+  const stored = viewWithDropOutcome("credit_mid_month");
+  const diff = diffForm(stored, toForm(stored), MONEY);
+  assert.equal(diff.changed.includes("drop_default_outcome"), false);
+  assert.equal("drop_default_outcome" in diff.payload, false);
+});
+
+test("the panel has labels for every drop_default_outcome choice", () => {
+  assert.match(panel, /No credit, mid-month \(default\)/);
+  assert.match(panel, /Prorated credit, mid-month/);
+  assert.match(panel, /No credit, end of period/);
 });

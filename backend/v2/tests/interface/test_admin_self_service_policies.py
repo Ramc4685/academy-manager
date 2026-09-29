@@ -39,6 +39,7 @@ def test_get_self_service_policy_returns_defaults(admin_client):
         "can_request_cancel": True,
         "can_claim_waitlist_offer": True,
         "payment_instructions": "",
+        "welcome_email_absence_policy_default": "",
     }
 
 
@@ -105,7 +106,11 @@ def _wire(client: TestClient) -> _PolicyStore:
 @pytest.mark.parametrize("client_fixture", ["admin_client", "admin_only_client"])
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("cancellation_fee_cents", 5_000), ("cancellation_minimum_notice_days", 3)],
+    [
+        ("cancellation_fee_cents", 5_000),
+        ("cancellation_minimum_notice_days", 3),
+        ("cancellation_effective_timing", "immediate"),
+    ],
 )
 def test_self_service_no_longer_changes_the_cancellation_terms(
     request: pytest.FixtureRequest, client_fixture: str, field: str, value: int
@@ -123,6 +128,7 @@ def test_self_service_no_longer_changes_the_cancellation_terms(
     assert store.field_writes == []
     assert store.policy.cancellation_fee_cents == 1_000
     assert store.policy.cancellation_minimum_notice_days == 7
+    assert store.policy.cancellation_effective_timing == "end_of_period"
 
 
 @pytest.mark.parametrize("client_fixture", ["admin_client", "admin_only_client"])
@@ -150,6 +156,7 @@ def test_a_full_resubmit_with_the_cancellation_terms_unchanged_still_saves(
     assert response.json()["cancellation_fee_cents"] == 1_000
     assert all("cancellation_fee_cents" not in w for w in store.field_writes)
     assert all("cancellation_minimum_notice_days" not in w for w in store.field_writes)
+    assert all("cancellation_effective_timing" not in w for w in store.field_writes)
 
 
 def test_put_can_turn_a_switch_off_without_touching_cancellation_terms(admin_only_client):

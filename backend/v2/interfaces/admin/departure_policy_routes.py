@@ -9,7 +9,7 @@ either half is missing.
 
 from __future__ import annotations
 
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -73,10 +73,22 @@ class EnrollmentDeparturePolicyView(BaseModel):
 class UpdateEnrollmentDeparturePolicyRequest(BaseModel):
     max_hold_days: int = Field(ge=1, le=365)
     hold_reclaim_policy: Literal["longest_held", "never"]
-    drop_default_outcome: Literal[
-        "no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"
-    ]
+    #: Accepted only so an old client that still sends it keeps working — see
+    #: ``DROP_DEFAULT_OUTCOME_MOVED`` below. Optional because the Holds card
+    #: no longer shows this field at all.
+    drop_default_outcome: (
+        Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
+    ) = None
     delete_enrollment_requires_owner: bool
+
+
+#: Settings overhaul Phase 3 PR 10: moved to Billing rules' "Leaving and
+#: pausing" card, owner-only and audited through UpdateBillingRules, same
+#: pattern PR #1002 used for the cancellation fee/notice. The Holds card
+#: (this route) never writes it any more.
+DROP_DEFAULT_OUTCOME_MOVED: Final[str] = (
+    "The default drop outcome is set in Settings -> Billing rules."
+)
 
 
 @router.get("/enrollment/departure-policy", response_model=EnrollmentDeparturePolicyView)
@@ -94,7 +106,20 @@ async def update_departure_policy(
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> EnrollmentDeparturePolicyView:
+    current = await _get_policy(use_cases).execute()
+    if (
+        body.drop_default_outcome is not None
+        and body.drop_default_outcome != current.drop_default_outcome
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={"field": "drop_default_outcome", "message": DROP_DEFAULT_OUTCOME_MOVED},
+        )
     policy = await _update_policy(use_cases).execute(
-        UpdateEnrollmentDeparturePolicyCommand(**body.model_dump())
+        UpdateEnrollmentDeparturePolicyCommand(
+            max_hold_days=body.max_hold_days,
+            hold_reclaim_policy=body.hold_reclaim_policy,
+            delete_enrollment_requires_owner=body.delete_enrollment_requires_owner,
+        )
     )
     return EnrollmentDeparturePolicyView.from_domain(policy)

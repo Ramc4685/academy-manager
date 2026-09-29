@@ -126,11 +126,16 @@ describe("ADMIN_NAV shape", () => {
     }
   });
 
-  it("gives Waivers its own glyph rather than sharing Inbox's", () => {
+  it("gives Students, Users and... distinct glyphs", () => {
     const iconFor = (href: string) => items.find((item) => item.href === href)?.icon;
-    expect(iconFor("/admin/waivers")).toBe("attend");
-    expect(iconFor("/admin/waivers")).not.toBe(iconFor("/admin/inbox"));
     expect(iconFor("/admin/users")).toBe("badge");
+  });
+
+  it("no longer lists Waivers in the nav — it moved into Settings -> Family policies", () => {
+    // Settings overhaul Phase 3 PR 10: /admin/waivers redirects there now;
+    // the standalone nav item would be a dead end pointing at a redirect.
+    const hrefsList = hrefs(ADMIN_NAV);
+    expect(hrefsList).not.toContain("/admin/waivers");
   });
 
   it("places the people lists together and Inbox under Dashboard", () => {
@@ -141,7 +146,7 @@ describe("ADMIN_NAV shape", () => {
     expect(groupOf("/admin/families")).toBe("PEOPLE");
     expect(groupOf("/admin/users")).toBe("PEOPLE");
     expect(groupOf("/admin/messages")).toBe("REACH");
-    expect(groupOf("/admin/waivers")).toBe("ACADEMY");
+    expect(groupOf("/admin/settings")).toBe("ACADEMY");
   });
 
   it("still shows all six groups to a non-owner", () => {

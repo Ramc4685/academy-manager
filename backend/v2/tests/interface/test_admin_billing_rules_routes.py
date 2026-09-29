@@ -45,6 +45,12 @@ class _Fees:
 class _Policy:
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
+    cancellation_effective_timing: str = "end_of_period"
+
+
+@dataclass
+class _Departure:
+    drop_default_outcome: str = "no_credit_mid_month"
 
 
 class _Stores:
@@ -52,6 +58,7 @@ class _Stores:
         self.schedule = _Schedule(1, 7)
         self.fees = _Fees(0, 0)
         self.policy = _Policy(14, 0)
+        self.departure = _Departure()
         self.audit: list[Any] = []
 
     async def read_schedule(self) -> _Schedule:
@@ -79,6 +86,7 @@ class _Stores:
         *,
         cancellation_minimum_notice_days: int | None = None,
         cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> _Policy:
         self.policy = _Policy(
             self.policy.cancellation_minimum_notice_days
@@ -87,8 +95,22 @@ class _Stores:
             self.policy.cancellation_fee_cents
             if cancellation_fee_cents is None
             else cancellation_fee_cents,
+            self.policy.cancellation_effective_timing
+            if cancellation_effective_timing is None
+            else cancellation_effective_timing,
         )
         return self.policy
+
+    async def read_departure(self) -> _Departure:
+        return self.departure
+
+    async def write_departure(self, *, drop_default_outcome: str | None = None) -> _Departure:
+        self.departure = _Departure(
+            self.departure.drop_default_outcome
+            if drop_default_outcome is None
+            else drop_default_outcome
+        )
+        return self.departure
 
     async def append(self, entry: Any) -> None:
         self.audit.append(entry)
@@ -111,6 +133,7 @@ def _rules(stores: _Stores) -> _Rules:
             schedule=_Adapter(stores.read_schedule),
             fees=_Adapter(stores.read_fees),
             cancellation=_Adapter(stores.read_policy),
+            drop_outcome=_Adapter(stores.read_departure),
         ),
         write=UpdateBillingRules(
             schedule_reader=_Adapter(stores.read_schedule),
@@ -119,6 +142,8 @@ def _rules(stores: _Stores) -> _Rules:
             fees_writer=_Adapter(stores.write_fees),
             cancellation_reader=_Adapter(stores.read_policy),
             cancellation_writer=_Adapter(stores.write_policy),
+            drop_outcome_reader=_Adapter(stores.read_departure),
+            drop_outcome_writer=_Adapter(stores.write_departure),
             audit=stores,
         ),
     )
@@ -175,6 +200,22 @@ def test_get_returns_the_four_boxes_for_an_admin() -> None:
         "max_value": 28,
         "display": None,
         "detail": None,
+        "choice": None,
+        "choices": None,
+    }
+    assert _row(payload, "cancellation_effective_timing") == {
+        "key": "cancellation_effective_timing",
+        "label": "When a cancellation takes effect",
+        "editable": True,
+        "value": None,
+        "values": None,
+        "unit": None,
+        "min_value": None,
+        "max_value": None,
+        "display": None,
+        "detail": None,
+        "choice": "end_of_period",
+        "choices": ["immediate", "end_of_period"],
     }
     assert _row(payload, "retry_schedule")["editable"] is False
 
@@ -252,3 +293,35 @@ def test_put_rejects_a_bad_field_before_saving_a_good_one() -> None:
 
     assert response.status_code == 422, response.text
     assert stores.schedule == _Schedule(1, 7)
+
+
+def test_get_includes_drop_default_outcome_row() -> None:
+    stores = _Stores()
+    response = _client("admin", stores).get(ROUTE)
+
+    assert response.status_code == 200, response.text
+    row = _row(response.json(), "drop_default_outcome")
+    assert row["editable"] is True
+    assert row["choice"] == "no_credit_mid_month"
+    assert row["choices"] == ["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"]
+
+
+def test_put_saves_drop_default_outcome_and_audits_it() -> None:
+    stores = _Stores()
+    response = _client("owner", stores).put(
+        ROUTE, json={"drop_default_outcome": "credit_mid_month"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert stores.departure.drop_default_outcome == "credit_mid_month"
+    assert stores.audit[-1].after == {"drop_default_outcome": "credit_mid_month"}
+
+
+def test_put_drop_default_outcome_is_owner_only() -> None:
+    stores = _Stores()
+    response = _client("admin", stores).put(
+        ROUTE, json={"drop_default_outcome": "credit_mid_month"}
+    )
+
+    assert response.status_code == 404
+    assert stores.departure == _Departure()

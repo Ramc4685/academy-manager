@@ -84,6 +84,35 @@ def test_each_pack_field_appears_only_when_populated(
     assert expected in with_field
 
 
+# --- academy-level absence-policy default (Settings overhaul Phase 3 PR 10) -
+
+
+def test_academy_default_fills_in_when_the_class_left_absence_policy_empty() -> None:
+    _, body = _render(
+        _session(), academy_absence_policy_default="Report absences in the parent app."
+    )
+    assert "Absences and make-ups" in body
+    assert "Report absences in the parent app." in body
+
+
+def test_class_absence_policy_always_wins_over_the_academy_default() -> None:
+    _, body = _render(
+        _session(absence_policy="Class-specific text."),
+        academy_absence_policy_default="Academy-wide default text.",
+    )
+    assert "Class-specific text." in body
+    assert "Academy-wide default text." not in body
+
+
+def test_no_class_text_and_no_academy_default_renders_no_absences_block() -> None:
+    """BLNO and every academy with nothing configured keeps today's
+    behaviour: no block at all, not an empty one."""
+    _, body = _render(_session(), academy_absence_policy_default=None)
+    assert "Absences and make-ups" not in body
+    _, body_blank = _render(_session(), academy_absence_policy_default="")
+    assert "Absences and make-ups" not in body_blank
+
+
 def test_group_link_renders_a_button_and_the_verbatim_etiquette_line() -> None:
     """The etiquette sentence is the only thing in this email that limits a
     forwarded invite link's blast radius. It is required verbatim."""
@@ -253,6 +282,50 @@ async def test_send_uses_the_transactional_category() -> None:
     assert "Coach Kishore" in sender.calls[0]["body"]
 
 
+class _Policy:
+    def __init__(self, welcome_email_absence_policy_default: str = "") -> None:
+        self.welcome_email_absence_policy_default = welcome_email_absence_policy_default
+
+
+class _PolicyReader:
+    def __init__(self, policy: _Policy | None = None, *, fail: bool = False) -> None:
+        self._policy = policy or _Policy()
+        self._fail = fail
+
+    async def execute(self) -> _Policy:
+        if self._fail:
+            raise RuntimeError("policy store down")
+        return self._policy
+
+
+@pytest.mark.asyncio
+async def test_send_uses_the_academy_absence_policy_default() -> None:
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender)
+    adapter._self_service_policy = _PolicyReader(  # type: ignore[attr-defined]
+        _Policy("Report absences in the parent app.")
+    )
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    assert "Report absences in the parent app." in sender.calls[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_send_survives_a_policy_store_failure() -> None:
+    """A policy-store hiccup must not block sending the welcome email at all
+    — it just means the academy-level fallback text is left out."""
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender)
+    adapter._self_service_policy = _PolicyReader(fail=True)  # type: ignore[attr-defined]
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    assert len(sender.calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_send_is_skipped_without_a_recipient_address() -> None:
     sender = _RecordingSender()
@@ -370,3 +443,109 @@ async def test_welcome_without_sender_settings_uses_the_academy_name() -> None:
         )
     assert sender.calls[0]["sender_name"] == "BLNO Badminton"
     assert sender.calls[0]["reply_to"] is None
+
+
+# --- Class defaults fallback (Settings overhaul Phase 3 PR 9) --------------
+#
+# A class that leaves venue/parking/what-to-bring/arrival empty falls back to
+# the academy's Class defaults card; a class that sets its own value always
+# wins. Verified at the `render_welcome_email` level (fallback params) and
+# at the adapter level (the academy doc is the source of those params).
+
+
+def test_render_uses_academy_default_when_class_field_is_empty() -> None:
+    _, body = _render(
+        _session(),
+        academy_venue_address="12 Court Lane",
+        academy_parking_note="Free lot behind",
+        academy_what_to_bring="Racquet and water",
+        academy_arrival_minutes_before=15,
+    )
+    assert "12 Court Lane" in body
+    assert "Free lot behind" in body
+    assert "Racquet and water" in body
+    assert "Please arrive 15 minutes before" in body
+
+
+def test_render_prefers_class_value_over_academy_default() -> None:
+    _, body = _render(
+        _session(
+            venue_address="Class-specific court",
+            parking_notes="Class-specific lot",
+            what_to_bring="Class-specific gear",
+            arrival_minutes_before=5,
+        ),
+        academy_venue_address="Academy default court",
+        academy_parking_note="Academy default lot",
+        academy_what_to_bring="Academy default gear",
+        academy_arrival_minutes_before=20,
+    )
+    assert "Class-specific court" in body
+    assert "Academy default court" not in body
+    assert "Class-specific lot" in body
+    assert "Academy default lot" not in body
+    assert "Class-specific gear" in body
+    assert "Academy default gear" not in body
+    assert "Please arrive 5 minutes before" in body
+
+
+def test_render_omits_section_when_both_class_and_academy_are_empty() -> None:
+    _, body = _render(
+        _session(),
+        academy_venue_address=None,
+        academy_parking_note=None,
+        academy_what_to_bring=None,
+        academy_arrival_minutes_before=None,
+    )
+    for heading in ("Parking", "What to bring"):
+        assert heading not in body
+    assert "minutes before" not in body
+
+
+class _AcademiesWithClassDefaults(_Academies):
+    async def find_by_id(self, academy_id: str) -> dict:
+        doc = await super().find_by_id(academy_id)
+        doc["default_venue_address"] = "12 Court Lane"
+        doc["default_parking_note"] = "Free lot behind"
+        doc["default_what_to_bring"] = "Racquet and water"
+        doc["default_arrival_minutes_before"] = 15
+        return doc
+
+
+@pytest.mark.asyncio
+async def test_adapter_applies_academy_class_defaults_when_class_is_bare() -> None:
+    """BLNO-like: a class with no venue/parking/what-to-bring/arrival of its
+    own picks up the academy's Class defaults at send time."""
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender, academies=_AcademiesWithClassDefaults())
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    body = sender.calls[0]["body"]
+    assert "12 Court Lane" in body
+    assert "Free lot behind" in body
+    assert "Racquet and water" in body
+    assert "Please arrive 15 minutes before" in body
+
+
+@pytest.mark.asyncio
+async def test_adapter_class_values_win_over_academy_class_defaults() -> None:
+    """A class that already has its own values (every existing BLNO class)
+    must render unchanged even once the academy has Class defaults set."""
+    sender = _RecordingSender()
+    session = _session(
+        venue_address="Existing class court",
+        parking_notes="Existing class lot",
+        what_to_bring="Existing class gear",
+        arrival_minutes_before=5,
+    )
+    adapter, _ = _adapter(sender, session, academies=_AcademiesWithClassDefaults())
+    with tenant_scope("acad"):
+        await adapter.send_welcome(
+            session_id="sess-1", student_name="Ada", parent_user_id="parent-1"
+        )
+    body = sender.calls[0]["body"]
+    assert "Existing class court" in body
+    assert "12 Court Lane" not in body
+    assert "Please arrive 5 minutes before" in body

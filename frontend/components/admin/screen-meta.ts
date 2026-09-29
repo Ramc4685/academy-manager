@@ -101,8 +101,9 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
     group: "ACADEMY",
     items: [
-      // Waivers shared Inbox's `check` glyph; `attend` is the signed sheet.
-      { id: "waivers", href: "/admin/waivers", label: "Waivers", icon: "attend", match: startsWith("/admin/waivers") },
+      // Waivers moved into Settings -> Family policies (Settings overhaul
+      // Phase 3 PR 10): the standalone nav item is gone, /admin/waivers
+      // redirects there, and its sub-routes still work from the embed.
       { id: "settings", href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
       { id: "audit-logs", href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs"), ownerOnly: true },
     ],

@@ -16,7 +16,7 @@ only the invoice-schedule GET still serves its other callers.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -43,6 +43,9 @@ class BillingRuleRowView(BaseModel):
     max_value: int | None = None
     display: str | None = None
     detail: str | None = None
+    #: ``cancellation_effective_timing`` only.
+    choice: str | None = None
+    choices: list[str] | None = None
 
 
 class BillingRuleGroupView(BaseModel):
@@ -73,6 +76,12 @@ class UpdateBillingRulesRequest(BaseModel):
     #: Issue #774. ``None`` leaves the stored offsets alone; ``[]`` turns
     #: past-due reminders off.
     reminder_days: list[int] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from Self-service.
+    cancellation_effective_timing: Literal["immediate", "end_of_period"] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from the Holds card.
+    drop_default_outcome: (
+        Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
+    ) = None
     reason: str | None = None
 
 
