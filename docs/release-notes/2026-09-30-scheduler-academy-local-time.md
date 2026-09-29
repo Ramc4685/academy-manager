@@ -1,6 +1,6 @@
 # Scheduled jobs and digests run on each academy's local clock (Settings overhaul Phase 4 PR 12)
 
-PR: #TBD
+PR: #1011
 
 ## What changed
 
