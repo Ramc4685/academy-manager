@@ -16,6 +16,7 @@ export const queryKeys = {
       ["coach", "skill-board", sessionId, programId ?? "default"] as const,
     schedule: () => ["coach", "schedule"] as const,
     profile: () => ["coach", "profile"] as const,
+    academy: () => ["coach", "academy"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
     sessionAnnouncements: (sessionId: string) =>
       ["coach", "session", sessionId, "announcements"] as const,

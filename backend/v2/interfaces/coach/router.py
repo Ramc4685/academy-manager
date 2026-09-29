@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from .academy_routes import router as academy_router
 from .announcement_routes import router as announcement_router
 from .attendance_routes import router as attendance_router
 from .dashboard_routes import router as dashboard_router
@@ -26,6 +27,7 @@ from .trial_outcome_routes import router as trial_outcome_router
 
 router = APIRouter(prefix="/coach")
 router.include_router(today_router)
+router.include_router(academy_router)
 router.include_router(teaching_plan_router)
 router.include_router(sessions_router)
 router.include_router(profile_router)

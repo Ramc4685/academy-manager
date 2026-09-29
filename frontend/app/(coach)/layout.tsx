@@ -19,8 +19,10 @@ import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ShellBackButton } from "@/components/persona/back-button";
+import { getCoachAcademy } from "@/lib/api/coach";
 import { listCoachMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
+import { AcademyMark } from "@/components/ds/academy-mark";
 
 const COACH_TOP_LEVEL_ROUTES = [
   "/coach/today",
@@ -54,6 +56,12 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
     refetchInterval: 30_000,
   });
   const unreadCount = (messagesData?.messages ?? []).filter((m) => !m.read).length;
+  const { data: academyData } = useQuery({
+    queryKey: queryKeys.coach.academy(),
+    queryFn: getCoachAcademy,
+    enabled: auth.authorized,
+  });
+  const academyName = academyData?.name?.trim() || "Academy";
   // #841: marks that failed and are waiting in the tray. The entry only
   // appears when there is something to resolve — an always-on "Needs review"
   // link reads as a standing chore on a shell this small.
@@ -104,14 +112,15 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         <div className="flex min-w-0 items-center gap-2">
           <ShellBackButton known={COACH_TOP_LEVEL_ROUTES} home={COACH_HOME} variant="dark" />
           <Link href={COACH_HOME} className="flex min-w-0 items-center gap-2">
-            <div
-              className="h-7 w-7 shrink-0 rounded-md flex items-center justify-center font-bold text-xs"
-              style={{ background: "#facc15", color: "#0a0f1c" }}
-            >
-              C
-            </div>
+            <AcademyMark
+              name={academyName}
+              logoUrl={academyData?.logo_url}
+              size={28}
+              monogramBg={academyData?.brand_color || "#facc15"}
+              monogramColor="#0a0f1c"
+            />
             <span className="truncate font-semibold text-white text-[15px] tracking-tight">
-              Academy
+              {academyName}
             </span>
           </Link>
         </div>

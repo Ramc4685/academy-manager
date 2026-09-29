@@ -17,7 +17,7 @@ import { useIsDesktop } from "@/lib/use-is-desktop";
 import { Avatar } from "@/components/ds/avatar";
 import { Icon } from "@/components/ds/icons";
 import { ToastProvider } from "@/components/ds/toast";
-import { ShuttleMark } from "@/components/ds/shuttle";
+import { AcademyMark } from "@/components/ds/academy-mark";
 import {
   ADMIN_NAV,
   adminTopLevelRoutes,
@@ -103,6 +103,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const adminName = auth.user?.email ?? "Admin";
   const adminRole = auth.isOwner ? "Owner" : auth.user?.roles.includes("admin") ? "Admin" : "Staff";
   const academyName = displayAcademyName(academyQuery.data?.display_name);
+  const academyLogoUrl = academyQuery.data?.logo_url ?? null;
+  const academyBrandColor = academyQuery.data?.brand_color ?? null;
   // Owner-only destinations are dropped from the nav for admins without the
   // scope, and landing on one directly shows the owner-only panel instead of a
   // page whose every request would 404.
@@ -138,6 +140,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             adminName={adminName}
             adminRole={adminRole}
             academyName={academyName}
+            academyLogoUrl={academyLogoUrl}
+            academyBrandColor={academyBrandColor}
           />
         ) : (
           drawerOpen && (
@@ -147,6 +151,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               adminName={adminName}
               adminRole={adminRole}
               academyName={academyName}
+              academyLogoUrl={academyLogoUrl}
+              academyBrandColor={academyBrandColor}
               onClose={() => setDrawerOpen(false)}
             />
           )
@@ -210,12 +216,16 @@ function DesktopSidebar({
   adminName,
   adminRole,
   academyName,
+  academyLogoUrl,
+  academyBrandColor,
 }: {
   nav: ReadonlyArray<AdminNavGroup>;
   pathname: string;
   adminName: string;
   adminRole: string;
   academyName: string;
+  academyLogoUrl: string | null;
+  academyBrandColor: string | null;
 }) {
   return (
     <aside
@@ -227,7 +237,7 @@ function DesktopSidebar({
       }}
       aria-label="Admin navigation"
     >
-      <SidebarBrand academyName={academyName} />
+      <SidebarBrand academyName={academyName} logoUrl={academyLogoUrl} brandColor={academyBrandColor} />
       <nav className="flex-1 min-h-0 overflow-y-auto py-2">
         {nav.map((group) => (
           <NavGroup key={group.group} group={group.group} items={group.items} pathname={pathname} />
@@ -238,23 +248,30 @@ function DesktopSidebar({
   );
 }
 
-function SidebarBrand({ academyName, bordered = true }: { academyName: string; bordered?: boolean }) {
+function SidebarBrand({
+  academyName,
+  logoUrl,
+  brandColor,
+  bordered = true,
+}: {
+  academyName: string;
+  logoUrl?: string | null;
+  brandColor?: string | null;
+  bordered?: boolean;
+}) {
   return (
     <div
       className={bordered ? "px-5 py-5 border-b" : "px-5 py-4"}
       style={bordered ? { borderColor: "var(--rally-night-line)" } : undefined}
     >
       <div className="flex items-center gap-2.5">
-        <div
-          className="relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-md"
-          style={{ background: "var(--rally-ink)", border: "1px solid var(--rally-night-line)" }}
-        >
-          <span
-            className="absolute left-0 right-0"
-            style={{ top: "50%", height: 2, background: "var(--rally-volt)", transform: "translateY(-50%)" }}
-          />
-          <ShuttleMark size={18} />
-        </div>
+        <AcademyMark
+          name={academyName}
+          logoUrl={logoUrl}
+          size={32}
+          monogramBg={brandColor || "var(--rally-volt)"}
+          monogramColor="var(--rally-ink)"
+        />
         <div className="leading-tight min-w-0">
           <div className="font-display font-bold text-[15px] text-white tracking-[-0.01em] truncate max-w-[160px]" title={academyName}>
             {academyName}
@@ -411,6 +428,8 @@ function MobileDrawer({
   adminName,
   adminRole,
   academyName,
+  academyLogoUrl,
+  academyBrandColor,
   onClose,
 }: {
   nav: ReadonlyArray<AdminNavGroup>;
@@ -418,6 +437,8 @@ function MobileDrawer({
   adminName: string;
   adminRole: string;
   academyName: string;
+  academyLogoUrl: string | null;
+  academyBrandColor: string | null;
   onClose: () => void;
 }) {
   return (
@@ -434,7 +455,7 @@ function MobileDrawer({
         data-testid="admin-mobile-drawer"
       >
         <div className="flex items-center justify-between pr-3 border-b shrink-0" style={{ borderColor: "var(--rally-night-line)" }}>
-          <SidebarBrand academyName={academyName} bordered={false} />
+          <SidebarBrand academyName={academyName} logoUrl={academyLogoUrl} brandColor={academyBrandColor} bordered={false} />
           <button
             aria-label="Close menu"
             onClick={onClose}

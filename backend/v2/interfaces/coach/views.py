@@ -398,3 +398,14 @@ class CoachMessagesResponse(BaseModel):
 
 class CoachMarkMessageReadResponse(BaseModel):
     status: Literal["ok"] = "ok"
+
+
+class CoachAcademyView(BaseModel):
+    """Row 14: the coach shell's academy mark. Deliberately minimal — a coach
+    never sees the rest of the academy profile, so this is not
+    ``ParentAcademyView``/``AdminAcademyView`` with fields dropped, it is its
+    own narrow DTO."""
+
+    name: str
+    logo_url: str | None = None
+    brand_color: str | None = None

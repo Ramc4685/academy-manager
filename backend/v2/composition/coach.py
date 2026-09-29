@@ -201,6 +201,10 @@ class CoachComposition:
     # calendar date instead of UTC (#510). Optional for hand-built test
     # compositions; real composition always sets it.
     get_academy_timezone: object = None
+    # Row 14: Callable(*, academy_id: str) -> Awaitable[dict] — {name,
+    # logo_url, brand_color} for GET /coach/academy. Optional default keeps
+    # hand-built test compositions working.
+    get_academy_info: object = None
     # Issue #774: Callable[[Sequence[str], date], Awaitable[dict[str, int]]] —
     # overdue balance in cents per student, so the roster row can carry ONE
     # "PAYMENT DUE $X" chip. The owner's decision was that this is the only
@@ -322,6 +326,27 @@ def _overdue_cents_by_student(db: Any) -> Any:
                 continue
             totals[student_id] = totals.get(student_id, 0) + int(doc.get("balance_due_cents") or 0)
         return totals
+
+    return resolve
+
+
+def _coach_academy_info(db: Any) -> Any:
+    """Row 14: {name, logo_url, brand_color} for GET /coach/academy.
+
+    Deliberately its own tiny read, scoped to the request academy id the
+    caller passes in (never a boot-time tenant) — a coach never gets the rest
+    of the academy profile parent/admin already expose.
+    """
+
+    async def resolve(*, academy_id: str) -> dict[str, Any]:
+        doc = await db["academies"].find_one({"academy_id": academy_id})
+        if not doc:
+            return {"name": "Academy", "logo_url": None, "brand_color": None}
+        return {
+            "name": str(doc.get("display_name") or "Academy"),
+            "logo_url": doc.get("logo_url"),
+            "brand_color": doc.get("brand_color"),
+        }
 
     return resolve
 
@@ -636,5 +661,6 @@ def compose_coach(
             sessions=sessions_repo,
         ),
         get_academy_timezone=academy_timezone_lookup(db),
+        get_academy_info=_coach_academy_info(db),
         overdue_cents_by_student=_overdue_cents_by_student(db),
     )

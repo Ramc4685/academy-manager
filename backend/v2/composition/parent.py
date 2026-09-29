@@ -2495,6 +2495,7 @@ def compose_parent(
                 "hours_text": None,
                 "address": None,
                 "logo_url": None,
+                "brand_color": None,
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
@@ -2504,6 +2505,7 @@ def compose_parent(
             "hours_text": doc.get("hours_text"),
             "address": doc.get("address"),
             "logo_url": doc.get("logo_url"),
+            "brand_color": doc.get("brand_color"),
         }
 
     async def get_child_schedule(
