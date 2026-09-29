@@ -48,7 +48,9 @@ class UpdateSelfServicePolicyCommand(BaseModel):
     can_request_pause: bool | None = None
     can_request_cancel: bool | None = None
     can_claim_waitlist_offer: bool | None = None
-    payment_instructions: str | None = Field(default=None, max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH)
+    payment_instructions: str | None = Field(
+        default=None, max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH
+    )
 
     def fields(self) -> dict[str, Any]:
         return self.model_dump(exclude_none=True)

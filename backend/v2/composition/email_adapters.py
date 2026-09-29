@@ -315,10 +315,7 @@ class InvoiceEmailAdapter:
         if not text:
             return ""
         # Escaped, whitespace preserved (spec item 5).
-        return (
-            f"<p style='color: {_BRAND_MUTED}; white-space: pre-wrap;'>"
-            f"{html.escape(text)}</p>"
-        )
+        return f"<p style='color: {_BRAND_MUTED}; white-space: pre-wrap;'>{html.escape(text)}</p>"
 
     async def _naming_for(self, invoice_id: str) -> InvoiceNaming:
         if self._naming is None:

@@ -913,6 +913,7 @@ def compose_parent(
         occurrence_roster=occurrence_roster_repo,
         policies=self_service_policies_repo,
     )
+
     class _TrialsOpenGate:
         """Reads the academy's Public page "Accept free trial requests"
         toggle at request time (Settings overhaul Phase 1 Lane C: parent

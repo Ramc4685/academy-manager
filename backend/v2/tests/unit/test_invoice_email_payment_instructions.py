@@ -87,7 +87,7 @@ async def test_payment_instructions_are_escaped() -> None:
     sender = _FakeSender()
     with tenant_scope("acad"):
         await _adapter(
-            sender, payment_instructions="<script>alert(1)</script> & \"quoted\""
+            sender, payment_instructions='<script>alert(1)</script> & "quoted"'
         ).send_invoice_email(
             parent_id="parent-1",
             invoice_id="inv-1",
