@@ -45,6 +45,7 @@ class _Fees:
 class _Policy:
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
+    cancellation_effective_timing: str = "end_of_period"
 
 
 class _Stores:
@@ -79,6 +80,7 @@ class _Stores:
         *,
         cancellation_minimum_notice_days: int | None = None,
         cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> _Policy:
         self.policy = _Policy(
             self.policy.cancellation_minimum_notice_days
@@ -87,6 +89,9 @@ class _Stores:
             self.policy.cancellation_fee_cents
             if cancellation_fee_cents is None
             else cancellation_fee_cents,
+            self.policy.cancellation_effective_timing
+            if cancellation_effective_timing is None
+            else cancellation_effective_timing,
         )
         return self.policy
 
@@ -175,6 +180,22 @@ def test_get_returns_the_four_boxes_for_an_admin() -> None:
         "max_value": 28,
         "display": None,
         "detail": None,
+        "choice": None,
+        "choices": None,
+    }
+    assert _row(payload, "cancellation_effective_timing") == {
+        "key": "cancellation_effective_timing",
+        "label": "When a cancellation takes effect",
+        "editable": True,
+        "value": None,
+        "values": None,
+        "unit": None,
+        "min_value": None,
+        "max_value": None,
+        "display": None,
+        "detail": None,
+        "choice": "end_of_period",
+        "choices": ["immediate", "end_of_period"],
     }
     assert _row(payload, "retry_schedule")["editable"] is False
 

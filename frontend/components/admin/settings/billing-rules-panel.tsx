@@ -7,6 +7,7 @@ import { getBillingRules, updateBillingRules } from "@/lib/api/admin";
 import {
   canSave,
   diffForm,
+  isChoiceRow,
   isListRow,
   saveSummary,
   toForm,
@@ -200,6 +201,32 @@ function EditableRule({
   // rather than a number spinner, and an empty box is a real value meaning
   // "send no reminders" — the off switch the owner asked for.
   const list = isListRow(row);
+  const choice = isChoiceRow(row);
+  if (choice) {
+    return (
+      <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+        {row.label}
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-10 rounded-lg border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500"
+          data-testid={`billing-rules-input-${row.key}`}
+        >
+          {(row.choices ?? []).map((option) => (
+            <option key={option} value={option}>
+              {choiceLabel(option)}
+            </option>
+          ))}
+        </select>
+        {error && (
+          <span className="text-xs text-red-700" role="alert" data-testid={`billing-rules-error-${row.key}`}>
+            {error}
+          </span>
+        )}
+        {!error && row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
+      </label>
+    );
+  }
   return (
     <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
       {row.unit === "cents" ? `${row.label} ($)` : row.label}
@@ -237,6 +264,16 @@ function FixedRule({ row }: { row: BillingRuleRow }) {
       {row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
     </div>
   );
+}
+
+/** Choice-row option → its label. Only `cancellation_effective_timing` today. */
+const CHOICE_LABELS: Record<string, string> = {
+  immediate: "Immediate",
+  end_of_period: "End of billing period",
+};
+
+function choiceLabel(option: string): string {
+  return CHOICE_LABELS[option] ?? option;
 }
 
 /** min/max arrive in the row's stored unit; a cents input shows dollars. */

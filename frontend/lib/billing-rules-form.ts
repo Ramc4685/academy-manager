@@ -40,6 +40,9 @@ export interface BillingRuleRow {
   max_value: number | null;
   display: string | null;
   detail: string | null;
+  /** `cancellation_effective_timing` only: the stored choice and its options. */
+  choice?: string | null;
+  choices?: string[] | null;
 }
 
 export interface BillingRuleGroup {
@@ -66,9 +69,15 @@ export function isListRow(row: BillingRuleRow): boolean {
   return Array.isArray(row.values);
 }
 
+/** True for `cancellation_effective_timing`: a `<select>`, not a number box. */
+export function isChoiceRow(row: BillingRuleRow): boolean {
+  return Array.isArray(row.choices);
+}
+
 /** Stored value → the string the input shows. Cents rows show dollars. */
 export function rowToInput(row: BillingRuleRow): string {
   if (isListRow(row)) return (row.values ?? []).join(", ");
+  if (isChoiceRow(row)) return row.choice ?? "";
   if (row.value === null || row.value === undefined) return "";
   return row.unit === "cents" ? (row.value / 100).toFixed(2) : String(row.value);
 }
@@ -177,6 +186,15 @@ export function diffForm(
         changedLabels.push(row.label);
         payload[row.key] = days;
       }
+      continue;
+    }
+    if (isChoiceRow(row)) {
+      // Untouched or blank is never an edit; the select always shows a
+      // stored value so "blank" only happens before the view has loaded.
+      if (raw.trim() === "" || raw === (row.choice ?? "")) continue;
+      changed.push(row.key);
+      changedLabels.push(row.label);
+      payload[row.key] = raw;
       continue;
     }
     if (raw.trim() === "") continue;

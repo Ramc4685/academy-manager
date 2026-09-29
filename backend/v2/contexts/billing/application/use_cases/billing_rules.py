@@ -65,10 +65,21 @@ REMINDER_DAYS_KEY: Final[str] = "reminder_days"
 REMINDER_DAY_BOUNDS: Final[tuple[int, int]] = (1, 60)
 MAX_REMINDER_DAYS: Final[int] = 4
 
+#: ``cancellation_effective_timing`` is an enum, not a bounded number, so it
+#: carries its own choices instead of a row in ``BILLING_RULE_BOUNDS``.
+#: Settings overhaul Phase 3 PR 10: moved here from Self-service (now Family
+#: policies), same pattern #1002 used for the cancellation fee.
+CANCELLATION_TIMING_KEY: Final[str] = "cancellation_effective_timing"
+CANCELLATION_TIMING_CHOICES: Final[tuple[str, ...]] = ("immediate", "end_of_period")
+
 #: Every editable rule, numeric ones first. ``test_billing_rules`` pins this
 #: tuple to both the view's editable rows and the write command's fields, so a
 #: rule can never be editable on the page and unwritable in the command.
-EDITABLE_RULE_KEYS: Final[tuple[str, ...]] = (*BILLING_RULE_BOUNDS, REMINDER_DAYS_KEY)
+EDITABLE_RULE_KEYS: Final[tuple[str, ...]] = (
+    *BILLING_RULE_BOUNDS,
+    REMINDER_DAYS_KEY,
+    CANCELLATION_TIMING_KEY,
+)
 
 
 # --- Ports -------------------------------------------------------------
@@ -116,6 +127,7 @@ class AcademyFeesWriter(Protocol):
 class CancellationPolicyLike(Protocol):
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
+    cancellation_effective_timing: str
 
 
 class CancellationPolicyReader(Protocol):
@@ -137,6 +149,7 @@ class CancellationPolicyWriter(Protocol):
         *,
         cancellation_minimum_notice_days: int | None = None,
         cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> CancellationPolicyLike: ...
 
 
@@ -156,6 +169,10 @@ class BillingRuleRow(BaseModel):
     unit: RuleUnit | None = None
     min_value: int | None = None
     max_value: int | None = None
+    #: ``cancellation_effective_timing`` only: the stored enum value and its
+    #: allowed choices.
+    choice: str | None = None
+    choices: tuple[str, ...] | None = None
     #: Fixed rows only: the stated value, rendered as muted text.
     display: str | None = None
     #: One line saying where the behaviour comes from.
@@ -365,6 +382,13 @@ class BuildBillingRulesView:
                             policy.cancellation_fee_cents,
                             "cents",
                         ),
+                        BillingRuleRow(
+                            key=CANCELLATION_TIMING_KEY,
+                            label="When a cancellation takes effect",
+                            editable=True,
+                            choice=policy.cancellation_effective_timing,
+                            choices=CANCELLATION_TIMING_CHOICES,
+                        ),
                     ),
                 ),
                 BillingRuleGroup(
@@ -481,6 +505,8 @@ class UpdateBillingRulesCommand(BaseModel):
     #: Issue #774. ``None`` means "leave alone"; ``[]`` means "turn reminders
     #: off", which is a real change and must not be confused with the former.
     reminder_days: list[int] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from Self-service.
+    cancellation_effective_timing: Literal["immediate", "end_of_period"] | None = None
     actor_id: str
     reason: str | None = None
 
@@ -552,7 +578,8 @@ class UpdateBillingRules:
                     field, f"{field} must be between {low} and {high}"
                 )
         reminder_days = _validate_reminder_days(cmd.reminder_days)
-        if not requested and reminder_days is None:
+        timing = cmd.cancellation_effective_timing
+        if not requested and reminder_days is None and timing is None:
             return BillingRulesWriteResult(changed_fields=())
 
         schedule = await self._schedule_reader.execute()
@@ -566,12 +593,15 @@ class UpdateBillingRules:
             "cancellation_minimum_notice_days": policy.cancellation_minimum_notice_days,
             "cancellation_fee_cents": policy.cancellation_fee_cents,
             REMINDER_DAYS_KEY: _reminder_days(schedule),
+            CANCELLATION_TIMING_KEY: policy.cancellation_effective_timing,
         }
         changed: dict[str, Any] = {
             field: value for field, value in requested.items() if before[field] != value
         }
         if reminder_days is not None and before[REMINDER_DAYS_KEY] != reminder_days:
             changed[REMINDER_DAYS_KEY] = reminder_days
+        if timing is not None and before[CANCELLATION_TIMING_KEY] != timing:
+            changed[CANCELLATION_TIMING_KEY] = timing
         if not changed:
             return BillingRulesWriteResult(changed_fields=())
 
@@ -646,14 +676,19 @@ class UpdateBillingRules:
 
         policy_fields = [
             f
-            for f in ("cancellation_minimum_notice_days", "cancellation_fee_cents")
+            for f in (
+                "cancellation_minimum_notice_days",
+                "cancellation_fee_cents",
+                CANCELLATION_TIMING_KEY,
+            )
             if f in changed
         ]
         if policy_fields:
-            # Only the changed field(s); `None` leaves the other as stored.
+            # Only the changed field(s); `None` leaves the others as stored.
             await self._cancellation_writer.execute(
                 cancellation_minimum_notice_days=changed.get("cancellation_minimum_notice_days"),
                 cancellation_fee_cents=changed.get("cancellation_fee_cents"),
+                cancellation_effective_timing=changed.get(CANCELLATION_TIMING_KEY),
             )
             applied.extend(policy_fields)
 

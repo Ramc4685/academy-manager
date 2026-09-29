@@ -91,7 +91,7 @@ export default function AdminSettingsPage() {
         {active === "gateway" && isOwner && <GatewayPanel />}
         {active === "notify" && <NotifyPanel />}
         {active === "branding" && <BrandingPanel />}
-        {active === "self-service" && (
+        {active === "family-policies" && (
           <div className="space-y-6">
             <SelfServicePanel />
             <DeparturePolicyPanel />

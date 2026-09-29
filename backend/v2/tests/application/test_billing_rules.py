@@ -51,6 +51,7 @@ class _Fees:
 class _Policy:
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
+    cancellation_effective_timing: str = "end_of_period"
 
 
 class _FakeSchedule:
@@ -101,9 +102,11 @@ class _FakeFees:
 
 
 class _FakePolicy:
-    def __init__(self, notice_days: int = 14, fee_cents: int = 0) -> None:
-        self.current = _Policy(notice_days, fee_cents)
-        self.writes: list[tuple[int | None, int | None]] = []
+    def __init__(
+        self, notice_days: int = 14, fee_cents: int = 0, timing: str = "end_of_period"
+    ) -> None:
+        self.current = _Policy(notice_days, fee_cents, timing)
+        self.writes: list[tuple[int | None, int | None, str | None]] = []
         self.fail = False
 
     async def read(self) -> _Policy:
@@ -114,11 +117,18 @@ class _FakePolicy:
         *,
         cancellation_minimum_notice_days: int | None = None,
         cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> _Policy:
         """Partial, like the real adapter: ``None`` leaves the stored value."""
         if self.fail:
             raise RuntimeError("policy store down")
-        self.writes.append((cancellation_minimum_notice_days, cancellation_fee_cents))
+        self.writes.append(
+            (
+                cancellation_minimum_notice_days,
+                cancellation_fee_cents,
+                cancellation_effective_timing,
+            )
+        )
         self.current = _Policy(
             self.current.cancellation_minimum_notice_days
             if cancellation_minimum_notice_days is None
@@ -126,6 +136,9 @@ class _FakePolicy:
             self.current.cancellation_fee_cents
             if cancellation_fee_cents is None
             else cancellation_fee_cents,
+            self.current.cancellation_effective_timing
+            if cancellation_effective_timing is None
+            else cancellation_effective_timing,
         )
         return self.current
 
@@ -327,8 +340,32 @@ async def test_policy_write_sends_only_the_changed_field() -> None:
         "acad-1",
         UpdateBillingRulesCommand(cancellation_fee_cents=900, actor_id="user-1"),
     )
-    assert policy.writes == [(None, 900)]
+    assert policy.writes == [(None, 900, None)]
     assert policy.current == _Policy(14, 900)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_timing_row_carries_the_stored_choice_and_options() -> None:
+    view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy(timing="immediate")).execute(
+        "acad-1"
+    )
+    row = view.row("cancellation_effective_timing")
+    assert row.editable is True
+    assert row.choice == "immediate"
+    assert row.choices == ("immediate", "end_of_period")
+
+
+@pytest.mark.asyncio
+async def test_cancellation_timing_write_lands_and_is_audited() -> None:
+    policy = _FakePolicy(14, 500, timing="end_of_period")
+    audit = _FakeAudit()
+    result = await _update(_FakeSchedule(), _FakeFees(), policy, audit).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(cancellation_effective_timing="immediate", actor_id="user-1"),
+    )
+    assert result.changed_fields == ("cancellation_effective_timing",)
+    assert policy.current.cancellation_effective_timing == "immediate"
+    assert audit.entries[0].after == {"cancellation_effective_timing": "immediate"}
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ export type SettingsPanelKey =
   | "gateway"
   | "notify"
   | "branding"
-  | "self-service"
+  | "family-policies"
   | "session-types"
   | "public-page";
 
@@ -23,7 +23,7 @@ export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
   { key: "gateway", label: "Gateway" },
   { key: "notify", label: "Notify" },
   { key: "branding", label: "Branding" },
-  { key: "self-service", label: "Self-service" },
+  { key: "family-policies", label: "Family policies" },
   { key: "session-types", label: "Session types" },
   { key: "public-page", label: "Public page" },
 ];
@@ -44,6 +44,9 @@ export const OWNER_ONLY_SETTINGS_PANELS: ReadonlySet<SettingsPanelKey> = new Set
  */
 export const RETIRED_SETTINGS_PANELS: Readonly<Record<string, SettingsPanelKey>> = {
   fees: "billing-rules",
+  // Settings overhaul Phase 3 PR 10: Self-service was renamed Family
+  // policies; `?panel=self-service` keeps working for old bookmarks.
+  "self-service": "family-policies",
 };
 
 /**

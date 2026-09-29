@@ -98,14 +98,16 @@ class UpdateSelfServicePolicyRequest(BaseModel):
     payment_instructions: str | None = Field(default=None, max_length=1000)
 
 
-#: The two fields Billing rules owns. Self-service shows neither any more.
+#: The three fields Billing rules owns. Self-service (now Family policies)
+#: shows none of them any more.
 CANCELLATION_TERMS: Final[tuple[str, ...]] = (
     "cancellation_minimum_notice_days",
     "cancellation_fee_cents",
+    "cancellation_effective_timing",
 )
 
 CANCELLATION_TERMS_MOVED: Final[str] = (
-    "The cancellation fee and notice are set in Settings -> Billing rules."
+    "The cancellation fee, notice and timing are set in Settings -> Billing rules."
 )
 
 

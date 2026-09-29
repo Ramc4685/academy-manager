@@ -61,11 +61,13 @@ class _CancellationPolicyAdapter:
         *,
         cancellation_minimum_notice_days: int | None = None,
         cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> CancellationPolicyLike:
         updated = await self._writer.execute(
             UpdateSelfServicePolicyCommand(
                 cancellation_minimum_notice_days=cancellation_minimum_notice_days,
                 cancellation_fee_cents=cancellation_fee_cents,
+                cancellation_effective_timing=cancellation_effective_timing,
             )
         )
         return cast(CancellationPolicyLike, updated)

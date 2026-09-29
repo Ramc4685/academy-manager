@@ -8,6 +8,7 @@ import {
   diffForm,
   editableRows,
   inputToValue,
+  isChoiceRow,
   rowToInput,
   saveSummary,
   toForm,
@@ -41,6 +42,22 @@ function editable(key, value, unit, min, max, label = key) {
     max_value: max,
     display: null,
     detail: null,
+  };
+}
+
+function choice(key, value, choices, label = key) {
+  return {
+    key,
+    label,
+    editable: true,
+    value: null,
+    unit: null,
+    min_value: null,
+    max_value: null,
+    display: null,
+    detail: null,
+    choice: value,
+    choices,
   };
 }
 
@@ -295,4 +312,58 @@ test("turning a fee on needs an explicit acknowledgement before Save is enabled"
   assert.match(panel, /billing-rules-late-fee-warning/);
   assert.match(panel, /turnsLateFeeOn\(/);
   assert.match(panel, /lateFeeAcknowledged/);
+});
+
+test("cancellation_effective_timing is a choice row, not a number", () => {
+  const row = choice("cancellation_effective_timing", "end_of_period", [
+    "immediate",
+    "end_of_period",
+  ]);
+  assert.equal(isChoiceRow(row), true);
+  assert.equal(isChoiceRow(editable("billing_day", 1, "day_of_month", 1, 28)), false);
+  assert.equal(rowToInput(row), "end_of_period");
+});
+
+function viewWithTiming(storedTiming) {
+  const base = view();
+  return {
+    groups: [
+      ...base.groups,
+      {
+        key: "leaving_and_pausing",
+        title: "Leaving and pausing",
+        note: null,
+        rows: [
+          choice(
+            "cancellation_effective_timing",
+            storedTiming,
+            ["immediate", "end_of_period"],
+            "When a cancellation takes effect",
+          ),
+        ],
+      },
+    ],
+  };
+}
+
+test("changing the choice row diffs a plain string, not a number", () => {
+  const stored = viewWithTiming("end_of_period");
+  const form = { ...toForm(stored), cancellation_effective_timing: "immediate" };
+  const diff = diffForm(stored, form, MONEY);
+  assert.deepEqual(diff.changed, ["cancellation_effective_timing"]);
+  assert.deepEqual(diff.payload, { cancellation_effective_timing: "immediate" });
+  assert.deepEqual(diff.errors, {});
+});
+
+test("leaving the choice row alone is not a change", () => {
+  const stored = viewWithTiming("immediate");
+  const diff = diffForm(stored, toForm(stored), MONEY);
+  assert.equal(diff.changed.includes("cancellation_effective_timing"), false);
+  assert.equal("cancellation_effective_timing" in diff.payload, false);
+});
+
+test("the panel renders a select, with labels, for a choice row", () => {
+  assert.match(panel, /isChoiceRow/);
+  assert.match(panel, /<select/);
+  assert.match(panel, /End of billing period/);
 });

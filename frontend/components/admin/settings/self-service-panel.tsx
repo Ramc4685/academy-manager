@@ -110,27 +110,6 @@ export function SelfServicePanel() {
               <span className="text-rally-muted">Only the academy owner can change them.</span>
             )}
           </p>
-          <label className="mt-4 grid gap-1.5 text-sm font-medium text-rally-ink">
-            Effective timing
-            <select
-              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500"
-              value={form.cancellation_effective_timing}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  cancellation_effective_timing: e.target.value as "immediate" | "end_of_period",
-                }))
-              }
-            >
-              <option value="immediate">Immediate</option>
-              <option value="end_of_period">End of billing period</option>
-            </select>
-            <span className="text-xs font-normal text-rally-muted">
-              Immediate stops the seat and the billing now; end of period keeps both until the
-              current billing period closes.
-            </span>
-          </label>
-
           <div className="mt-8">
             <Overline>What parents can do in the app</Overline>
           </div>
