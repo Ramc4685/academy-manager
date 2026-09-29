@@ -184,7 +184,9 @@ export async function stubParentAcademy(page: Page): Promise<void> {
         can_request_pause: true,
         can_request_cancel: true,
         can_claim_waitlist_offer: true,
+        can_request_trial: true,
       },
+      payment_instructions: null,
     });
   });
 }

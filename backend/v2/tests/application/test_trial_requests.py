@@ -28,6 +28,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     DuplicateTrialRequest,
     OccurrenceFull,
     OccurrenceRosterEntry,
+    ParentActionDisabled,
     TrialRequest,
     TrialRequestNotFound,
     TrialRequestNotPending,
@@ -255,6 +256,71 @@ async def test_submit_trial_request_existing_student_happy_path() -> None:
     assert result.student_id == "student-1"
     assert result.requested_session_id == "session-1"
     assert trials.added == [result]
+
+
+class _FakeTrialsOpen:
+    def __init__(self, *, open_: bool) -> None:
+        self._open = open_
+
+    async def trials_open(self) -> bool:
+        return self._open
+
+
+@pytest.mark.asyncio
+async def test_submit_trial_request_allowed_when_trials_open() -> None:
+    trials = _FakeTrials()
+    use_case = SubmitTrialRequest(
+        students=_FakeStudents(),
+        sessions=_FakeSessions(),
+        trials=trials,
+        trials_open=_FakeTrialsOpen(open_=True),
+        clock=_now,
+    )
+
+    result = await use_case.execute(
+        SubmitTrialRequestCommand(
+            parent_user_id="parent-1",
+            student_ref="existing_student",
+            student_id="student-1",
+            requested_session_id="session-1",
+            preferred_start="2026-07-15",
+            preferred_end="2026-07-22",
+        )
+    )
+
+    assert result.status == "pending"
+    assert trials.added == [result]
+
+
+@pytest.mark.asyncio
+async def test_submit_trial_request_403_when_trials_closed() -> None:
+    """Settings overhaul Phase 1 Lane C: parent trial requests reuse the
+    Public page "Accept free trial requests" toggle rather than a duplicate
+    switch — off means the same stable 403 as the other self-service gates."""
+    trials = _FakeTrials()
+    use_case = SubmitTrialRequest(
+        students=_FakeStudents(),
+        sessions=_FakeSessions(),
+        trials=trials,
+        trials_open=_FakeTrialsOpen(open_=False),
+        clock=_now,
+    )
+
+    with pytest.raises(ParentActionDisabled) as exc_info:
+        await use_case.execute(
+            SubmitTrialRequestCommand(
+                parent_user_id="parent-1",
+                student_ref="existing_student",
+                student_id="student-1",
+                requested_session_id="session-1",
+                preferred_start="2026-07-15",
+                preferred_end="2026-07-22",
+            )
+        )
+
+    assert exc_info.value.code == "parent_action_disabled"
+    assert exc_info.value.status_code == 403
+    assert trials.added == []
 
 
 @pytest.mark.asyncio

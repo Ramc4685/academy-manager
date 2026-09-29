@@ -3318,6 +3318,15 @@ export interface SelfServicePolicyView {
   cancellation_minimum_notice_days: number;
   cancellation_fee_cents: number;
   cancellation_effective_timing: "immediate" | "end_of_period";
+  // "What parents can do in the app" (Settings overhaul Phase 1 Lane C).
+  // Free trial requests reuse the Public page "Accept free trial requests"
+  // toggle instead of a duplicate switch here.
+  can_report_absence: boolean;
+  can_request_makeup: boolean;
+  can_request_pause: boolean;
+  can_request_cancel: boolean;
+  can_claim_waitlist_offer: boolean;
+  payment_instructions: string;
 }
 
 /**

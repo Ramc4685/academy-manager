@@ -54,6 +54,10 @@ export function WaitlistOffers({ highlightId }: { highlightId: string | null }) 
     .map((s) => s.entry);
   const entries = sortWaitlistEntries([...live, ...remembered]);
   const timezone = academyQuery.data?.timezone ?? null;
+  // Settings overhaul Phase 1 Lane C: the academy has switched off claiming
+  // waitlist offers in the app — hide the confirm/decline actions, not just
+  // disable them. Undefined (still loading) defaults true.
+  const canClaim = academyQuery.data?.self_service?.can_claim_waitlist_offer ?? true;
   const highlightMissing =
     Boolean(highlightId) &&
     waitlistQuery.isSuccess &&
@@ -91,6 +95,7 @@ export function WaitlistOffers({ highlightId }: { highlightId: string | null }) 
           timezone={timezone}
           highlighted={entry.waitlist_id === highlightId}
           outcome={settled[entry.waitlist_id]?.outcome ?? null}
+          canClaim={canClaim}
           onSettled={(outcome) =>
             setSettled((prev) => ({ ...prev, [entry.waitlist_id]: { entry, outcome } }))
           }
@@ -109,6 +114,7 @@ function WaitlistEntryCard({
   timezone,
   highlighted,
   outcome,
+  canClaim,
   onSettled,
 }: {
   entry: ParentWaitlistEntry;
@@ -116,6 +122,7 @@ function WaitlistEntryCard({
   timezone: string | null;
   highlighted: boolean;
   outcome: Outcome | null;
+  canClaim: boolean;
   onSettled: (outcome: Outcome) => void;
 }) {
   const queryClient = useQueryClient();
@@ -199,25 +206,31 @@ function WaitlistEntryCard({
             >
               {formatCountdown(remaining)}
             </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="md"
-                onClick={() => confirmMutation.mutate()}
-                disabled={pending}
-                data-testid="waitlist-offer-confirm"
-              >
-                {confirmMutation.isPending ? "Confirming…" : "Confirm seat"}
-              </Button>
-              <Button
-                size="md"
-                variant="secondary"
-                onClick={() => setDeclineOpen(true)}
-                disabled={pending}
-                data-testid="waitlist-offer-decline"
-              >
-                Decline
-              </Button>
-            </div>
+            {canClaim ? (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="md"
+                  onClick={() => confirmMutation.mutate()}
+                  disabled={pending}
+                  data-testid="waitlist-offer-confirm"
+                >
+                  {confirmMutation.isPending ? "Confirming…" : "Confirm seat"}
+                </Button>
+                <Button
+                  size="md"
+                  variant="secondary"
+                  onClick={() => setDeclineOpen(true)}
+                  disabled={pending}
+                  data-testid="waitlist-offer-decline"
+                >
+                  Decline
+                </Button>
+              </div>
+            ) : (
+              <p data-testid="waitlist-offer-claim-disabled" className="text-sm text-rally-muted">
+                Your academy handles this directly. Please contact them.
+              </p>
+            )}
           </div>
         ) : entry.status === "offered" || entry.status === "expired" ? (
           <p data-testid="waitlist-offer-expired" className="mt-3 text-sm text-rally-muted">

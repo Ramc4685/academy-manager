@@ -38,7 +38,7 @@ import {
 
 type RequestTab = "absences" | "makeups" | "trials";
 
-const TABS: { id: RequestTab; label: string }[] = [
+const ALL_TABS: { id: RequestTab; label: string }[] = [
   { id: "absences", label: "Absences" },
   { id: "makeups", label: "Makeups" },
   { id: "trials", label: "Trials" },
@@ -46,6 +46,21 @@ const TABS: { id: RequestTab; label: string }[] = [
 
 export default function ParentRequestsPage() {
   const [tab, setTab] = useState<RequestTab>("absences");
+  const academyQuery = useQuery({
+    queryKey: queryKeys.parent.academy(),
+    queryFn: getParentAcademy,
+  });
+  // Settings overhaul Phase 1 Lane C: hide (not just disable) an action the
+  // academy has switched off. Undefined switches (query still loading)
+  // default true, matching the server's own default.
+  const selfService = academyQuery.data?.self_service;
+  const TABS = ALL_TABS.filter((t) => {
+    if (t.id === "absences") return selfService?.can_report_absence ?? true;
+    if (t.id === "makeups") return selfService?.can_request_makeup ?? true;
+    if (t.id === "trials") return selfService?.can_request_trial ?? true;
+    return true;
+  });
+  const activeTab = TABS.some((t) => t.id === tab) ? tab : (TABS[0]?.id ?? "absences");
 
   return (
     <section data-testid="parent-requests" className="space-y-4">
@@ -61,28 +76,30 @@ export default function ParentRequestsPage() {
 
       {/* #843: the inactive tab label was rally-muted (#64748b) on the
           rally-line track (#e2e8f0) — 3.86:1, under AA. slate-600 clears it. */}
-      <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
-            className={`min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150 ${
-              tab === t.id
-                ? "bg-white text-rally-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
-                : "bg-transparent text-status-slate-600"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {TABS.length > 1 && (
+        <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150 ${
+                activeTab === t.id
+                  ? "bg-white text-rally-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                  : "bg-transparent text-status-slate-600"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {tab === "absences" && <AbsencesPanel />}
-      {tab === "makeups" && <MakeupsPanel />}
-      {tab === "trials" && <TrialsPanel />}
+      {activeTab === "absences" && <AbsencesPanel />}
+      {activeTab === "makeups" && <MakeupsPanel />}
+      {activeTab === "trials" && <TrialsPanel />}
     </section>
   );
 }

@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getAdminPaymentMethods, updateAdminPaymentMethods } from "@/lib/api/admin";
+import {
+  getAdminPaymentMethods,
+  getSelfServicePolicy,
+  updateAdminPaymentMethods,
+  updateSelfServicePolicy,
+} from "@/lib/api/admin";
 import {
   MANUAL_PAYMENT_METHODS,
   manualMethodOptions,
@@ -27,11 +32,37 @@ export function orderedSelection(selected: ReadonlySet<string>): ManualPaymentMe
  * Chooses which offline methods the Record payment dialogs list. The first
  * ticked method is the dialogs' default. Recording is never blocked by it.
  */
+const PAYMENT_INSTRUCTIONS_MAX_LENGTH = 1000;
+
 export function OfflinePaymentsCard() {
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: queryKeys.admin.paymentMethods(),
     queryFn: getAdminPaymentMethods,
+  });
+  // Settings overhaul Phase 1 Lane C item 5: owner-edited plain text for
+  // manual payers, saved next to the offline payment methods it lives beside
+  // on the self-service policy record.
+  const instructionsQuery = useQuery({
+    queryKey: queryKeys.admin.selfServicePolicy(),
+    queryFn: getSelfServicePolicy,
+  });
+  const [instructions, setInstructions] = useState("");
+  const [instructionsSaved, setInstructionsSaved] = useState(false);
+  useEffect(() => {
+    if (instructionsQuery.data) setInstructions(instructionsQuery.data.payment_instructions ?? "");
+  }, [instructionsQuery.data]);
+  const instructionsDirty =
+    Boolean(instructionsQuery.data) &&
+    instructions !== (instructionsQuery.data?.payment_instructions ?? "");
+  const instructionsTooLong = instructions.length > PAYMENT_INSTRUCTIONS_MAX_LENGTH;
+  useReportSettingsDirty("payment-instructions", instructionsDirty);
+  const instructionsMutation = useMutation({
+    mutationFn: () => updateSelfServicePolicy({ payment_instructions: instructions }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.admin.selfServicePolicy(), data);
+      setInstructionsSaved(true);
+    },
   });
   const loaded = useMemo(
     () => manualMethodOptions(query.data?.manual_methods).map((option) => option.value),
@@ -123,6 +154,56 @@ export function OfflinePaymentsCard() {
                 {mutation.error instanceof Error
                   ? mutation.error.message
                   : "Could not save the offline payment methods."}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-8">
+            <Overline>Payment instructions</Overline>
+          </div>
+          <p className="mt-2 text-sm text-rally-muted">
+            Shown to parents on their invoice/pay screen and in the invoice email, for families
+            paying outside Stripe. Leave blank to show nothing.
+          </p>
+          <label className="mt-3 block">
+            <span className="sr-only">Payment instructions</span>
+            <textarea
+              className="min-h-[96px] w-full rounded-md border border-rally-line bg-white p-3 text-sm outline-none focus:border-blue-500"
+              value={instructions}
+              maxLength={PAYMENT_INSTRUCTIONS_MAX_LENGTH + 200}
+              onChange={(e) => {
+                setInstructionsSaved(false);
+                setInstructions(e.target.value);
+              }}
+              placeholder="e.g. Pay by Venmo @academy-name, then email a screenshot to office@academy.com."
+              data-testid="payment-instructions-textarea"
+            />
+          </label>
+          <p
+            className={`mt-1 text-xs ${instructionsTooLong ? "text-red-700" : "text-rally-muted"}`}
+            role={instructionsTooLong ? "alert" : undefined}
+          >
+            {instructions.length}/{PAYMENT_INSTRUCTIONS_MAX_LENGTH}
+            {instructionsTooLong ? " — too long." : ""}
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button
+              variant={instructionsDirty && !instructionsTooLong ? "volt" : "secondary"}
+              size="sm"
+              disabled={!instructionsDirty || instructionsTooLong || instructionsMutation.isPending}
+              onClick={() => instructionsMutation.mutate()}
+              data-testid="payment-instructions-save"
+            >
+              {instructionsMutation.isPending ? "Saving…" : "Save payment instructions"}
+            </Button>
+            {instructionsSaved && !instructionsMutation.isPending && !instructionsDirty && (
+              <span className="text-sm text-rally-muted">Saved.</span>
+            )}
+            {instructionsMutation.isError && (
+              <span className="text-sm text-red-700" role="alert">
+                {instructionsMutation.error instanceof Error
+                  ? instructionsMutation.error.message
+                  : "Could not save the payment instructions."}
               </span>
             )}
           </div>

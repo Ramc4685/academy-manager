@@ -489,14 +489,16 @@ class ParentAvailableSessionsResponse(BaseModel):
 
 class ParentSelfServiceSwitchesView(BaseModel):
     """What parents can do in the app (Settings overhaul Phase 1 Lane C).
-    All default True = today's behaviour. Free trial requests are governed
-    separately by the Public page "Accept free trial requests" toggle."""
+    All default True = today's behaviour. ``can_request_trial`` reflects the
+    Public page "Accept free trial requests" toggle rather than a duplicate
+    switch on the self-service policy."""
 
     can_report_absence: bool = True
     can_request_makeup: bool = True
     can_request_pause: bool = True
     can_request_cancel: bool = True
     can_claim_waitlist_offer: bool = True
+    can_request_trial: bool = True
 
 
 class ParentAcademyView(BaseModel):
@@ -511,6 +513,9 @@ class ParentAcademyView(BaseModel):
     self_service: ParentSelfServiceSwitchesView = Field(
         default_factory=ParentSelfServiceSwitchesView
     )
+    #: Owner-edited plain text for manual payers (Settings overhaul Phase 1
+    #: Lane C item 5). None/empty = nothing shown.
+    payment_instructions: str | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -458,6 +458,9 @@ export interface ParentSelfServiceSwitches {
   can_request_pause: boolean;
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
+  // Reflects the Public page "Accept free trial requests" toggle, not a
+  // duplicate switch — see backend/v2/interfaces/parent/views.py.
+  can_request_trial: boolean;
 }
 
 export const DEFAULT_PARENT_SELF_SERVICE_SWITCHES: ParentSelfServiceSwitches = {
@@ -466,6 +469,7 @@ export const DEFAULT_PARENT_SELF_SERVICE_SWITCHES: ParentSelfServiceSwitches = {
   can_request_pause: true,
   can_request_cancel: true,
   can_claim_waitlist_offer: true,
+  can_request_trial: true,
 };
 
 export interface ParentAcademy {
@@ -478,6 +482,8 @@ export interface ParentAcademy {
   logo_url: string | null;
   brand_color: string | null;
   self_service?: ParentSelfServiceSwitches;
+  // Owner-edited plain text for manual payers; null/empty = nothing shown.
+  payment_instructions?: string | null;
 }
 
 export function getParentAcademy(): Promise<ParentAcademy> {

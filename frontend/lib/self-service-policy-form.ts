@@ -21,6 +21,11 @@ export interface SelfServicePolicy {
   cancellation_minimum_notice_days: number;
   cancellation_fee_cents: number;
   cancellation_effective_timing: CancellationTiming;
+  can_report_absence: boolean;
+  can_request_makeup: boolean;
+  can_request_pause: boolean;
+  can_request_cancel: boolean;
+  can_claim_waitlist_offer: boolean;
 }
 
 export type PolicyForm = {
@@ -30,6 +35,11 @@ export type PolicyForm = {
   cancellation_minimum_notice_days: string;
   cancellation_fee_dollars: string;
   cancellation_effective_timing: CancellationTiming;
+  can_report_absence: boolean;
+  can_request_makeup: boolean;
+  can_request_pause: boolean;
+  can_request_cancel: boolean;
+  can_claim_waitlist_offer: boolean;
 };
 
 export type PolicyPatch = Partial<SelfServicePolicy>;
@@ -52,6 +62,11 @@ export function policyToForm(data: SelfServicePolicy | null | undefined): Policy
         ? ""
         : (data.cancellation_fee_cents / 100).toFixed(2),
     cancellation_effective_timing: data?.cancellation_effective_timing ?? "immediate",
+    can_report_absence: data?.can_report_absence ?? true,
+    can_request_makeup: data?.can_request_makeup ?? true,
+    can_request_pause: data?.can_request_pause ?? true,
+    can_request_cancel: data?.can_request_cancel ?? true,
+    can_claim_waitlist_offer: data?.can_claim_waitlist_offer ?? true,
   };
 }
 
@@ -109,6 +124,17 @@ export function policyPatch(
   }
   if (form.cancellation_effective_timing !== stored?.cancellation_effective_timing) {
     payload.cancellation_effective_timing = form.cancellation_effective_timing;
+  }
+  for (const key of [
+    "can_report_absence",
+    "can_request_makeup",
+    "can_request_pause",
+    "can_request_cancel",
+    "can_claim_waitlist_offer",
+  ] as const) {
+    if (form[key] !== (stored?.[key] ?? true)) {
+      payload[key] = form[key];
+    }
   }
   return { payload, errors };
 }
