@@ -74,8 +74,13 @@ async def update_academy_settings(
         ):
             timezone_changes = True
             ensure_owner_for_timezone_change(claims)
-        if "currency" in changes and _upper(changes["currency"]) != _upper(current.currency):
-            ensure_owner_for_currency_change(claims)
+        if "currency" in changes:
+            if _upper(changes["currency"]) != _upper(current.currency):
+                ensure_owner_for_currency_change(claims)
+            else:
+                # Equal ignoring case counts as unchanged, so keep the stored
+                # spelling: an admin must not rewrite "USD" as "usd".
+                changes.pop("currency")
     out = await use_cases.update_academy_use_case.execute(claims.academy_id, changes)
     if timezone_changes and use_cases.record_money_setting_change is not None:
         await use_cases.record_money_setting_change.execute(
@@ -83,7 +88,8 @@ async def update_academy_settings(
             action="academy_timezone_changed",
             actor_id=claims.user_id,
             before={"timezone": previous_timezone},
-            after={"timezone": out.timezone},
+            # What was stored, not the use case's "UTC" display fallback.
+            after={"timezone": _blank_to_none(changes["timezone"])},
             reason="Settings -> Academy",
         )
     return AdminAcademyView(**asdict(out), invoice_prefix=await _invoice_prefix(use_cases))

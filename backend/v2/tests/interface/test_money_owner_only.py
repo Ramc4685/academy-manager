@@ -315,6 +315,12 @@ def test_an_admin_resubmitting_the_stored_timezone_and_currency_saves(
 
     assert response.status_code == 200, response.text
     admin_only_client.use_cases.update_academy_use_case.execute.assert_awaited_once()  # type: ignore[attr-defined]
+    # "usd" equals the stored "USD" ignoring case, so it is not written at all:
+    # the stored spelling stays as the owner set it.
+    [call] = admin_only_client.use_cases.update_academy_use_case.execute.await_args_list  # type: ignore[attr-defined]
+    written = call.args[1]
+    assert "currency" not in written
+    assert written["display_name"] == "Court 8"
 
 
 def test_an_admin_can_still_edit_the_other_academy_fields(admin_only_client: TestClient) -> None:
@@ -346,3 +352,16 @@ def test_an_owner_currency_change_saves(admin_client: TestClient) -> None:
 
     assert response.status_code == 200, response.text
     assert spy.calls == []
+
+
+def test_an_owner_clearing_the_timezone_audits_it_as_unset(admin_client: TestClient) -> None:
+    # The update use case shows an unset timezone as "UTC"; the audit must
+    # record what was stored (nothing), not that display fallback.
+    spy = _stored_academy(admin_client, timezone="UTC")
+
+    response = admin_client.patch(f"{_ADMIN}/academy", json={"timezone": ""})
+
+    assert response.status_code == 200, response.text
+    [call] = spy.calls
+    assert call["before"] == {"timezone": "America/Chicago"}
+    assert call["after"] == {"timezone": None}
