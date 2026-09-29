@@ -1,6 +1,16 @@
 """Resend-backed email send port.
 
-Uses the `resend` SDK (already in venv). For sending, composition only
+Talks to the Resend HTTP API directly (httpx), reusing the `resend` SDK only
+for its base URL, version string and exception types. The SDK itself is not
+called: it authenticates every request with the MODULE-GLOBAL
+``resend.api_key``, so two ports holding different keys (one per academy, once
+academies bring their own Resend account) would silently send with whichever
+key was assigned last — a cross-tenant leak. Each port here owns its key and
+never reads or writes ``resend.api_key``. The request it builds — URL, headers,
+JSON body — and the exceptions it raises on an error response are the same ones
+the SDK produced, so callers and the credential probe see no difference.
+
+For sending, composition only
 instantiates this when APP_ENV=production (or staging) AND
 email_delivery_enabled=True — every send path goes through
 ``composition.digests._build_email_sender``, and all other environments get
@@ -29,11 +39,21 @@ land on ``interfaces/email_webhook_routes.py`` and feed the
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 
+import httpx
 import resend
-from resend.exceptions import InvalidApiKeyError, MissingApiKeyError, ResendError
+from resend.exceptions import (
+    InvalidApiKeyError,
+    MissingApiKeyError,
+    NoContentError,
+    ResendError,
+    raise_for_code_and_type,
+)
+from resend.version import get_version
 
 from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
@@ -55,6 +75,16 @@ _RESTRICTED_KEY_ERROR_TYPE = "restricted_api_key"
 # startup by seconds instead of holding it open.
 VALIDATION_TIMEOUT_SECONDS = 10.0
 
+# Per-request HTTP timeout. Matches the SDK's own default clients
+# (``resend.http_client_requests.RequestsClient`` and
+# ``resend.http_client_httpx.HTTPXClient`` both default to ``timeout=30``).
+REQUEST_TIMEOUT_SECONDS = 30.0
+
+# Test seam: when a port is built without an explicit ``transport`` (e.g. by
+# composition), requests go through this transport if one is set. Production
+# never sets it. It carries no credential — the key is always the port's own.
+default_transport: httpx.AsyncBaseTransport | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class CredentialCheck:
@@ -73,9 +103,103 @@ class CredentialCheck:
 
 
 class ResendEmailSendPort(EmailSendPort):
-    def __init__(self, api_key: str, from_address: str) -> None:
+    def __init__(
+        self,
+        api_key: str | None,
+        from_address: str,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        # The key lives on the instance only. Never assign ``resend.api_key``:
+        # that global is shared by every port in the process.
+        self._api_key = api_key or ""
         self._from_address = from_address
-        resend.api_key = api_key
+        self._transport = transport
+
+    def _headers(self) -> dict[str, str]:
+        # Byte-for-byte the headers ``resend.request.Request`` sends, except the
+        # bearer token is this port's key rather than the module global.
+        return {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+            "User-Agent": f"resend-python:{get_version()}",
+        }
+
+    async def _request(self, method: str, path: str, payload: dict[str, Any]) -> Any:
+        """One authenticated call, with the SDK's response/error semantics.
+
+        Mirrors ``resend.request.Request.perform_with_content``: a transport
+        failure becomes ``ResendError(code=500, error_type="HttpClientError")``;
+        a non-JSON or undecodable body and any 4xx/5xx go through
+        ``raise_for_code_and_type`` so ``MissingApiKeyError`` /
+        ``InvalidApiKeyError`` / ``restricted_api_key`` surface exactly as
+        before.
+        """
+        if not self._api_key:
+            # The SDK would send ``Bearer None`` and get this back from the API;
+            # fail the same way without spending a request.
+            raise MissingApiKeyError(
+                message="Missing API key in the authorization header.",
+                error_type="missing_api_key",
+                code=401,
+            )
+        url = f"{resend.api_url}{path}"
+        body = {str(k): v for k, v in payload.items()}
+        try:
+            async with httpx.AsyncClient(
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                transport=self._transport or default_transport,
+            ) as client:
+                resp = await client.request(method, url, headers=self._headers(), json=body)
+        except Exception as exc:  # safety net, as in the SDK
+            raise ResendError(
+                code=500,
+                message=f"Request failed: {exc}",
+                error_type="HttpClientError",
+                suggested_action="Request failed, please try again.",
+            ) from exc
+
+        resp_headers = dict(resp.headers)
+        status = resp.status_code
+        fallback_code = status if status >= 400 else 500
+        content_type = resp.headers.get("content-type", "")
+        if "application/json" not in content_type:
+            raise_for_code_and_type(
+                code=fallback_code,
+                message=f"Expected JSON response but got: {content_type}",
+                error_type="application_error",
+                headers=resp_headers,
+            )
+        try:
+            data = json.loads(resp.content)
+        except json.JSONDecodeError:
+            raise_for_code_and_type(
+                code=fallback_code,
+                message="Failed to decode JSON response",
+                error_type="application_error",
+                headers=resp_headers,
+            )
+
+        body_status = data.get("statusCode") if isinstance(data, dict) else None
+        error_code = status if status >= 400 else body_status
+        if error_code not in (None, 200):
+            raise_for_code_and_type(
+                code=error_code or 500,
+                message=(
+                    data.get("message", "Unknown error")
+                    if isinstance(data, dict)
+                    else "Unknown error"
+                ),
+                error_type=(
+                    data.get("name", "InternalServerError")
+                    if isinstance(data, dict)
+                    else "InternalServerError"
+                ),
+                headers=resp_headers,
+            )
+        if data is None:
+            raise NoContentError()
+        return data
 
     async def validate_credentials(self) -> CredentialCheck:
         """Probe the configured API key with a cheap authenticated read.
@@ -87,7 +211,11 @@ class ResendEmailSendPort(EmailSendPort):
         leaves the answer undetermined rather than crying wolf.
         """
         try:
-            await asyncio.wait_for(resend.Domains.list_async(), timeout=VALIDATION_TIMEOUT_SECONDS)
+            # ``resend.Domains.list_async`` sent GET /domains with an empty JSON
+            # body; keep the request identical.
+            await asyncio.wait_for(
+                self._request("get", "/domains", {}), timeout=VALIDATION_TIMEOUT_SECONDS
+            )
         except (MissingApiKeyError, InvalidApiKeyError) as exc:
             return CredentialCheck(ok=False, detail=f"{type(exc).__name__}: {exc}")
         except ResendError as exc:
@@ -139,7 +267,7 @@ class ResendEmailSendPort(EmailSendPort):
                 params["bcc"] = bcc
             if reply_to:
                 params["reply_to"] = reply_to
-            response = await asyncio.to_thread(resend.Emails.send, params)
+            response = await self._request("post", "/emails", dict(params))
             msg_id = response.get("id") if isinstance(response, dict) else str(response)
             return SendOutcome(ok=True, provider_message_id=msg_id, failed_reason=None)
         except (MissingApiKeyError, InvalidApiKeyError) as exc:

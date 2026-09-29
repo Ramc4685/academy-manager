@@ -358,6 +358,13 @@ class Settings(BaseSettings):
                 seen.add(origin)
         return unique
 
+    def resolved_sender_email(self) -> str | None:
+        """The platform From address for outbound email, or ``None``.
+
+        See :func:`resolve_sender_address` — the one place this is decided.
+        """
+        return resolve_sender_address(self.sender_email, self.frontend_url)
+
     def _validate_production_settings(self) -> None:
         if self.env != "prod":
             return
@@ -375,6 +382,10 @@ class Settings(BaseSettings):
             missing.append("stripe_webhook_secret")
         if "*" in self.cors_allowed_origins():
             missing.append("cors_origins_without_wildcard")
+        if self.email_delivery_enabled and not self.resolved_sender_email():
+            # With delivery on and no address, mail would go out From an
+            # address that is not ours (or not at all). Refuse to boot instead.
+            missing.append("sender_email_or_frontend_url")
 
         if missing:
             missing_text = ", ".join(missing)
@@ -431,6 +442,27 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise ValueError("saas_mode in production requires " + ", ".join(missing))
+
+
+def resolve_sender_address(sender_email: str | None, frontend_url: str | None) -> str | None:
+    """Platform From address: ``sender_email``, else ``noreply@<frontend host>``.
+
+    Returns ``None`` when neither resolves; callers decide whether that is
+    fatal (prod settings validation, the real Resend sender) or harmless (the
+    dev/test stub). The host derivation is kept exactly as it was in
+    ``composition.digests._build_email_sender`` so production's resolved
+    address does not move (``FRONTEND_URL=https://academy.courtmastr.com`` ->
+    ``noreply@academy.courtmastr.com``).
+
+    A plain function (not only a ``Settings`` method) because composition is
+    also handed settings-shaped objects in tests.
+    """
+    if sender_email:
+        return sender_email
+    if not frontend_url:
+        return None
+    host = frontend_url.replace("https://", "").replace("http://", "").split("/")[0]
+    return f"noreply@{host}" if host else None
 
 
 def _explicit_env_value(*names: str) -> str | None:

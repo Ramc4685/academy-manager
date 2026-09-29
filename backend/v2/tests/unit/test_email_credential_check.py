@@ -10,64 +10,75 @@ or DNS blipping during a deploy, must not be reported as "the key is dead", or
 the alert stops being worth reading. So the probe has three outcomes, and these
 tests pin all three.
 
-No network: ``resend.Domains.list_async`` is monkeypatched throughout, and the
-key is a literal placeholder.
+No network: the Resend HTTP API is an ``httpx.MockTransport`` throughout, and
+the key is a literal placeholder. The responses are the ones Resend returns
+(``{"statusCode", "name", "message"}``), so these tests also pin that the
+adapter maps them onto the same SDK exceptions as before.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
+import httpx
 import pytest
-import resend
-from resend.exceptions import InvalidApiKeyError, MissingApiKeyError, ResendError
 
 from backend.v2.contexts.communications.infrastructure import resend_send_port
 from backend.v2.contexts.communications.infrastructure.resend_send_port import (
     ResendEmailSendPort,
 )
 
-
-def _port() -> ResendEmailSendPort:
-    return ResendEmailSendPort(api_key="re_test_key", from_address="noreply@example.test")
+Handler = Callable[[httpx.Request], Any]
 
 
-def _patch_probe(monkeypatch: pytest.MonkeyPatch, outcome: Any) -> None:
-    """Make the domains probe return, or raise, ``outcome``."""
+def _port(handler: Handler) -> ResendEmailSendPort:
+    return ResendEmailSendPort(
+        api_key="re_test_key",
+        from_address="noreply@example.test",
+        transport=httpx.MockTransport(handler),
+    )
 
-    async def _fake_list(*args: Any, **kwargs: Any) -> Any:
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
 
-    monkeypatch.setattr(resend.Domains, "list_async", _fake_list)
+def _error(status: int, name: str, message: str) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"statusCode": status, "name": name, "message": message})
+
+    return handler
 
 
 @pytest.mark.asyncio
-async def test_a_working_key_validates(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_probe(monkeypatch, {"data": []})
+async def test_a_working_key_validates() -> None:
+    requests: list[httpx.Request] = []
 
-    check = await _port().validate_credentials()
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"object": "list", "data": []})
+
+    check = await _port(handler).validate_credentials()
 
     assert check.ok is True
     assert not check.is_definitely_broken
+    # The probe is the same read the SDK's ``Domains.list_async`` issued.
+    [req] = requests
+    assert req.method == "GET"
+    assert str(req.url) == "https://api.resend.com/domains"
+    assert req.headers["Authorization"] == "Bearer re_test_key"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "exc",
+    "handler",
     [
-        InvalidApiKeyError(message="API key is invalid", error_type="invalid_api_key", code="403"),
-        MissingApiKeyError(message="missing", error_type="missing_api_key", code="401"),
+        _error(403, "invalid_api_key", "API key is invalid"),
+        _error(401, "missing_api_key", "Missing API key in the authorization header"),
+        _error(401, "unauthorized", "not authorized"),
+        _error(403, "forbidden", "forbidden"),
     ],
 )
-async def test_a_rejected_key_is_definitely_broken(
-    monkeypatch: pytest.MonkeyPatch, exc: BaseException
-) -> None:
-    _patch_probe(monkeypatch, exc)
-
-    check = await _port().validate_credentials()
+async def test_a_rejected_key_is_definitely_broken(handler: Handler) -> None:
+    check = await _port(handler).validate_credentials()
 
     assert check.ok is False
     assert check.is_definitely_broken
@@ -75,52 +86,39 @@ async def test_a_rejected_key_is_definitely_broken(
 
 
 @pytest.mark.asyncio
-async def test_a_send_scoped_key_is_valid_not_broken(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_send_scoped_key_is_valid_not_broken() -> None:
     """A sending-only key cannot list domains. It authenticated, which is the
     whole question — reporting it as dead would page someone every deploy."""
-    _patch_probe(
-        monkeypatch,
-        ResendError(
-            code="401",
-            error_type="restricted_api_key",
-            message="This API key is restricted to only send emails",
-            suggested_action="use a full access key",
-        ),
-    )
-
-    check = await _port().validate_credentials()
+    check = await _port(
+        _error(401, "restricted_api_key", "This API key is restricted to only send emails")
+    ).validate_credentials()
 
     assert check.ok is True
     assert "restricted" in check.detail
 
 
 @pytest.mark.asyncio
-async def test_a_provider_outage_is_undetermined_not_broken(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_probe(
-        monkeypatch,
-        ResendError(
-            code="500",
-            error_type="application_error",
-            message="something went wrong",
-            suggested_action="retry",
-        ),
-    )
-
-    check = await _port().validate_credentials()
+@pytest.mark.parametrize(
+    "handler",
+    [
+        _error(500, "application_error", "something went wrong"),
+        _error(502, "bad_gateway", "upstream"),
+        lambda request: httpx.Response(503, text="<html>down</html>"),
+    ],
+)
+async def test_a_provider_outage_is_undetermined_not_broken(handler: Handler) -> None:
+    check = await _port(handler).validate_credentials()
 
     assert check.ok is None
     assert not check.is_definitely_broken
 
 
 @pytest.mark.asyncio
-async def test_a_transport_error_is_undetermined_not_broken(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_probe(monkeypatch, ConnectionError("dns went away"))
+async def test_a_transport_error_is_undetermined_not_broken() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("dns went away", request=request)
 
-    check = await _port().validate_credentials()
+    check = await _port(handler).validate_credentials()
 
     assert check.ok is None
     assert not check.is_definitely_broken
@@ -130,13 +128,13 @@ async def test_a_transport_error_is_undetermined_not_broken(
 async def test_a_hanging_provider_times_out_as_undetermined(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _hang(*args: Any, **kwargs: Any) -> Any:
+    async def _hang(request: httpx.Request) -> httpx.Response:
         await asyncio.sleep(60)
+        return httpx.Response(200, json={})
 
-    monkeypatch.setattr(resend.Domains, "list_async", _hang)
     monkeypatch.setattr(resend_send_port, "VALIDATION_TIMEOUT_SECONDS", 0.01)
 
-    check = await _port().validate_credentials()
+    check = await _port(_hang).validate_credentials()
 
     assert check.ok is None
     assert "timed out" in check.detail
