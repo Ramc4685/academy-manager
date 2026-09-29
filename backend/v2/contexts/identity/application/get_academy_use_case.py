@@ -66,7 +66,7 @@ class GetAcademyOutput:
     default_arrival_minutes_before: int | None = None
 
 
-def legal_and_support_fields(doc: dict[str, Any]) -> dict[str, str | None]:
+def legal_and_support_fields(doc: dict[str, Any]) -> dict[str, Any]:
     """The Phase 4 PR 13 academy fields, read-time only (nothing backfilled)."""
     support = doc.get("support_email")
     return {
