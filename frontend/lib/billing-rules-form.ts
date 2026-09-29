@@ -168,6 +168,12 @@ function diffAchRow(
   const parsed = rawPercent === "" ? null : achPercentFromInput(rawPercent);
 
   const enabledChanged = enabled !== storedEnabled;
+  // Blanking the box while the discount is on would silently keep the old
+  // percent; flag it instead.
+  if (enabled && rawPercent === "" && (storedPercent > 0 || enabledChanged)) {
+    out.errors[row.key] = achBoundsMessage(row);
+    return;
+  }
   const percentEdited = rawPercent !== "" && !(parsed !== null && parsed === storedPercent);
   if (!enabledChanged && !percentEdited) return;
 

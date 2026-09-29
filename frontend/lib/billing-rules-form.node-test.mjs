@@ -502,3 +502,17 @@ test("ach helper text says autopay only", () => {
   assert.match(panel, /AchDiscountRule/);
   assert.match(panel, /row\.detail/);
 });
+
+test("ach blanking the percent while the discount stays on is an error", () => {
+  const view = achView(achRow(true, 2));
+  const diff = diffForm(view, { [ACH_ENABLED_FIELD]: "true", [ACH_PERCENT_FIELD]: "" }, MONEY);
+  assert.ok(diff.errors.ach_discount);
+  assert.equal(canSave(diff), false);
+});
+
+test("ach blank percent with the discount off is not an error", () => {
+  const view = achView(achRow(true, 2));
+  const diff = diffForm(view, { [ACH_ENABLED_FIELD]: "false", [ACH_PERCENT_FIELD]: "" }, MONEY);
+  assert.deepEqual(diff.errors, {});
+  assert.deepEqual(diff.payload, { ach_discount: { enabled: false } });
+});
