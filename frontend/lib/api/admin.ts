@@ -3785,6 +3785,21 @@ export function updateAdminAcademy(
   });
 }
 
+export interface AdminAcademyMediaView {
+  logo_url: string;
+}
+
+/**
+ * Upload a logo (PNG or JPEG, up to 2 MB). Returns the stored image's URL;
+ * the caller saves it with `updateAdminAcademy({ logo_url })` like any other
+ * field (single writer).
+ */
+export function uploadAdminAcademyLogo(file: File): Promise<AdminAcademyMediaView> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch<AdminAcademyMediaView>("/admin/academy/media", { method: "POST", body });
+}
+
 export function getAdminNotifications(): Promise<AdminNotificationsView> {
   return apiFetch<AdminNotificationsView>("/admin/academy/notifications", { method: "GET" });
 }

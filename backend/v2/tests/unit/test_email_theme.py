@@ -31,6 +31,20 @@ def test_shell_uses_logo_when_present() -> None:
     assert 'alt="Acme"' in out
 
 
+def test_shell_renders_a_firebase_token_logo_url_intact() -> None:
+    # The uploaded-logo URL has an encoded path and a query string; the
+    # attribute is HTML-escaped (&amp;), which every email client decodes.
+    url = (
+        "https://firebasestorage.googleapis.com/v0/b/b/o/academies%2Fa%2Flogo%2Fx.png"
+        "?alt=media&token=abc-123"
+    )
+    out = t.shell(brand=t.EmailBrand(academy_name="Acme", logo_url=url), inner_html="")
+    assert (
+        'src="https://firebasestorage.googleapis.com/v0/b/b/o/academies%2Fa%2Flogo%2Fx.png'
+        '?alt=media&amp;token=abc-123"' in out
+    )
+
+
 def test_button_variants() -> None:
     primary = t.button("Pay <now>", "https://x.test/?a=1&b=2")
     assert "Pay &lt;now&gt;" in primary

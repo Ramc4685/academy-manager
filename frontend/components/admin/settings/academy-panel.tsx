@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getAdminAcademy,
   updateAdminAcademy,
+  uploadAdminAcademyLogo,
   type AdminAcademyView,
   type UpdateAdminAcademyRequest,
 } from "@/lib/api/admin";
@@ -15,6 +16,7 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { OwnerOnlyFieldNote, useIsOwner } from "@/components/admin/owner-context";
+import { LogoUpload } from "@/components/admin/settings/logo-upload";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 import {
@@ -191,9 +193,11 @@ export function AcademyPanel() {
         <Overline>Brand</Overline>
         <div className="mt-5 grid gap-4 md:grid-cols-[1fr_180px]">
           <div className="space-y-4">
+            <LogoUpload upload={uploadAdminAcademyLogo} onUploaded={(url) => set("logo_url", url)} />
             <Field
-              label="Logo URL"
+              label="Or paste a logo link"
               placeholder="https://..."
+              hint="Must start with https://"
               value={form.logo_url}
               onChange={(v) => set("logo_url", v)}
             />
