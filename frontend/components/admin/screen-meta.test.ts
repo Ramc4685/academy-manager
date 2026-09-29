@@ -23,6 +23,7 @@ describe("navForRoles", () => {
     expect(visible).not.toContain("/admin/payouts");
     expect(visible).not.toContain("/admin/reports");
     expect(visible).not.toContain("/admin/audit-logs");
+    expect(visible).not.toContain("/admin/pricing");
     // Operations items survive.
     expect(visible).toContain("/admin/payments");
     expect(visible).toContain("/admin/expenses");
@@ -75,8 +76,17 @@ describe("navForRoles", () => {
       "/admin/audit-logs",
       "/admin/billing-health",
       "/admin/payouts",
+      "/admin/pricing",
       "/admin/reports",
     ]);
+  });
+
+  it("puts Pricing in MONEY right after Payments (Settings overhaul PR 11b)", () => {
+    const money = ADMIN_NAV.find((group) => group.group === "MONEY");
+    const ids = money?.items.map((item) => item.id) ?? [];
+    expect(ids.slice(0, 2)).toEqual(["payments", "pricing"]);
+    expect(isOwnerOnlyRoute("/admin/pricing")).toBe(true);
+    expect(metaForPath("/admin/pricing").breadcrumbs).toEqual(["Admin", "Money", "Pricing"]);
   });
 });
 
@@ -115,6 +125,7 @@ describe("ADMIN_NAV shape", () => {
       "/admin/payouts": "coach-payouts",
       "/admin/billing-health": "billing-health",
       "/admin/audit-logs": "audit-logs",
+      "/admin/pricing": "pricing",
     });
   });
 

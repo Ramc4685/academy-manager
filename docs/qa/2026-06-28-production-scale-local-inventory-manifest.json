@@ -897,6 +897,67 @@
       ]
     },
     {
+      "route": "/admin/pricing",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pricing/page.tsx",
+      "workflows": [
+        "Add plan",
+        "Edit plan",
+        "Archive plan",
+        "Link class to plan",
+        "Link matching classes",
+        "Review saved overrides"
+      ],
+      "controls": {
+        "buttons": [
+          "New plan",
+          "Edit",
+          "Archive",
+          "Reactivate",
+          "Save",
+          "Cancel",
+          "Link matching classes"
+        ],
+        "inputs": [
+          "Name",
+          "Description",
+          "Price ($)",
+          "Plan type",
+          "Overage rate ($)",
+          "Show archived",
+          "Plan for class"
+        ],
+        "modals": [
+          "Plan form",
+          "Archive confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "owner only",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Link changes a charged amount",
+        "Plain admin reaches owner-only pricing",
+        "Linked plan price disagrees with class fee"
+      ],
+      "acceptance": [
+        "A plain admin sees the owner-only panel and no Pricing nav item; every /admin/pricing API call is 403",
+        "Linking a class never changes the amount on its next invoice",
+        "Workflow evidence: \"Add plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Edit plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Archive plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Link class to plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Link matching classes\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review saved overrides\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Link changes a charged amount\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Plain admin reaches owner-only pricing\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Linked plan price disagrees with class fee\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/payouts",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/payouts/page.tsx",

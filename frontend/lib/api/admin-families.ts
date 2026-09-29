@@ -80,6 +80,12 @@ export interface FamilyEnrollment {
   schedule: string | null;
   status: string;
   monthly_price_cents: number | null;
+  /**
+   * What the class is billed per month, read the way the monthly invoice
+   * reads it (Settings overhaul PR 11b). Display only; optional so older
+   * payloads still type-check.
+   */
+  class_fee_cents?: number | null;
   override_price_cents: number | null;
   autopay_status: string | null;
   recurring_discount: Record<string, unknown> | null;

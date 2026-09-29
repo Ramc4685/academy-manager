@@ -8,7 +8,7 @@ import { cancellationTermsSummary } from "@/lib/self-service-policy-form";
 import type { SessionTypeView } from "@/lib/api/v2/session-types";
 
 import { TimezoneSelect } from "./academy-panel";
-import { SessionTypesTable } from "./session-types-panel";
+import { PlansTable } from "@/components/admin/pricing/plans-card";
 
 // Settings overhaul Phase 1 PR 5: money is owner-only. An admin without the
 // owner scope sees prices, fees and the timezone disabled with an "Owner
@@ -49,7 +49,7 @@ describe("Academy timezone (currency is a read-only USD field)", () => {
   });
 });
 
-describe("Session types (price list)", () => {
+describe("Plans (price list, Pricing page)", () => {
   const row: SessionTypeView = {
     session_type_id: "type-1",
     name: "Elite",
@@ -71,7 +71,7 @@ describe("Session types (price list)", () => {
   };
 
   it("shows prices read-only with an Owner only hint for an admin", () => {
-    const html = renderToStaticMarkup(<SessionTypesTable {...props} canEdit={false} />);
+    const html = renderToStaticMarkup(<PlansTable {...props} canEdit={false} />);
     expect(html).toContain("$200.00");
     expect(html).toContain("owner-only-hint");
     expect(html).not.toContain(">Edit<");
@@ -79,7 +79,7 @@ describe("Session types (price list)", () => {
   });
 
   it("keeps Edit and Archive for the owner", () => {
-    const html = renderToStaticMarkup(<SessionTypesTable {...props} canEdit />);
+    const html = renderToStaticMarkup(<PlansTable {...props} canEdit />);
     expect(html).toContain(">Edit<");
     expect(html).toContain(">Archive<");
     expect(html).not.toContain("owner-only-hint");

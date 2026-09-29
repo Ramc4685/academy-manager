@@ -29,7 +29,7 @@ function checklist(statuses: Partial<Record<string, Status>> = {}) {
     step("branding", "Branding", statuses.branding ?? "todo", "/admin/settings?panel=branding"),
     step("billing_rules", "Billing rules", statuses.billing_rules ?? "done", "/admin/settings?panel=billing-rules", true),
     step("stripe_connect", "Card payments", statuses.stripe_connect ?? "todo", "/admin/settings?panel=gateway", true),
-    step("session_types", "Session types", statuses.session_types ?? "done", "/admin/settings?panel=session-types"),
+    step("session_types", "Pricing plans", statuses.session_types ?? "done", "/admin/pricing"),
     step("classes", "First classes", statuses.classes ?? "todo", "/admin/sessions"),
     step("staff", "Invite your team", statuses.staff ?? "done", "/admin/users"),
     step(

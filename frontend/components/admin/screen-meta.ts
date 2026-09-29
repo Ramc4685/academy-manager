@@ -92,6 +92,8 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       // Ordered by how often the job is done: work the money list, close the
       // month, then the plumbing and the outgoings.
       { id: "payments", href: "/admin/payments", label: "Payments", icon: "pay", match: startsWith("/admin/payments") },
+      // Settings overhaul PR 11b: the price list moved out of Settings.
+      { id: "pricing", href: "/admin/pricing", label: "Pricing", icon: "list", match: startsWith("/admin/pricing"), ownerOnly: true },
       { id: "month-close", href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
       { id: "billing-health", href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       { id: "expenses", href: "/admin/expenses", label: "Expenses", icon: "card", match: startsWith("/admin/expenses") },
@@ -145,6 +147,8 @@ export const OWNER_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
   // Stripe plumbing is governance, the same tier as Reports and Payouts
   // (billing-health trim spec §2).
   "/admin/billing-health",
+  // The price list and class-to-plan links (Settings overhaul PR 11b).
+  "/admin/pricing",
   "/admin/payouts",
   "/admin/reports",
   "/admin/audit-logs",
@@ -199,6 +203,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   // fall through to the generic fallback title.
   "/admin/registrations/[applicationId]": { title: "Registration", subtitle: "Review and decide", breadcrumbs: ["Admin", "Inbox", "Registration"] },
   "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
+  "/admin/pricing": { title: "Pricing", subtitle: "Plans and where each class's price comes from", breadcrumbs: ["Admin", "Money", "Pricing"] },
   "/admin/billing-health": { title: "Billing Health", subtitle: "Connect readiness, webhooks, reconciliation", breadcrumbs: ["Admin", "Money", "Billing Health"] },
   "/admin/families": { title: "Families", subtitle: "Each family: children, balance, card, autopay", breadcrumbs: ["Admin", "People", "Families"] },
   "/admin/families/[parentId]": { title: "Family", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "People", "Families", "Family"] },
