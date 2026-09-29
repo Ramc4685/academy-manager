@@ -1,6 +1,6 @@
 # Billing identity: currency locked to USD, invoice prefix in platform tenant page, timezone required at bootstrap
 
-PR: #TBD
+PR: #1001
 
 ## What changed
 
