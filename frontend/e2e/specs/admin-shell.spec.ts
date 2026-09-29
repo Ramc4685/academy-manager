@@ -1042,6 +1042,75 @@ test.describe("Rally admin shell", () => {
       ).toEqual([]);
     });
 
+    test("admin without the owner scope sees a read-only note on a coach's pay rate, not an error (Settings overhaul Phase 2 PR 8)", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "coach-e2e",
+          email: "coach@example.com",
+          display_name: "Coach E2E",
+          role: "coach",
+          status: "active",
+          phone: null,
+          roles: ["coach"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+      // Pay rates are owner-only (owner_gate.py): if the admin UI ever calls
+      // this route for a plain admin it 404s, so failing the test on any hit
+      // pins the fix at the network layer, not just the rendered text.
+      await page.route("**/api/v2/admin/coaches/coach-e2e/pay-rates", (route) =>
+        route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
+      );
+
+      await page.goto("/admin/users/coach-e2e");
+      const panel = page.getByTestId("admin-coach-pay-rate-owner-managed");
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText("Only the academy owner can view or change coach pay rates");
+      await expect(page.getByTestId("admin-coach-pay-rate")).toHaveCount(0);
+      await expect(page.getByTestId("coach-pay-rate-save")).toHaveCount(0);
+      expect(
+        errors,
+        `App console errors on admin coach pay-rate read-only view: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("owner still sees and can set the coach pay rate on the Staff page (unchanged)", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page);
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "coach-e2e",
+          email: "coach@example.com",
+          display_name: "Coach E2E",
+          role: "coach",
+          status: "active",
+          phone: null,
+          roles: ["coach"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+      await page.route("**/api/v2/admin/coaches/coach-e2e/pay-rates", (route) =>
+        fulfillJson(route, { rates: [], diagnostics: { coach_id: "coach-e2e", has_blocking_issues: false, issues: [] } }),
+      );
+
+      await page.goto("/admin/users/coach-e2e");
+      await expect(page.getByTestId("admin-coach-pay-rate")).toBeVisible();
+      await expect(page.getByTestId("admin-coach-pay-rate-owner-managed")).toHaveCount(0);
+      await expect(page.getByTestId("coach-pay-rate-save")).toBeVisible();
+      expect(
+        errors,
+        `App console errors on owner coach pay-rate view: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
     test("admin without the owner scope sees no staff tier checkboxes on the Staff page", async ({
       page,
     }) => {
