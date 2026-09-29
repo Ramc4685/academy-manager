@@ -15,9 +15,11 @@ Normalisation:
   ``@``; anything else is ignored rather than looked up.
 * phone: digits only. Stored rows keep the digits as typed, so
   ``+1 (555) 010-2030`` is stored ``15550102030`` and ``555-010-2030`` is
-  ``5550102030``. For a North American number (10 digits, or 11 starting
-  with the country code 1, the academy's country today) both spellings are
-  looked up, one equality lookup each. Fewer than 7 digits is not a phone.
+  ``5550102030``. For a number in the academy's own country (10 national
+  digits, or the academy's calling code followed by 10 digits) both
+  spellings are looked up, one equality lookup each. The calling code comes
+  from ``academies.country`` (``shared/comms/phone_country.py``; ``"1"`` when
+  unset, every academy today). Fewer than 7 digits is not a phone.
 * name: ``full_name_key`` equality (accents and case folded). Exact, never
   a prefix, so "Sam" does not match "Samantha".
 """
@@ -35,10 +37,10 @@ from backend.v2.shared.names import full_name_key
 MAX_DUPLICATE_MATCHES: Final = 5
 MIN_PHONE_DIGITS: Final = 7
 MAX_PHONE_DIGITS: Final = 15
-#: The North American country code: the only country the academy runs in
-#: today, so the only one whose E.164 prefix is folded.
-_NANP_COUNTRY_CODE: Final = "1"
-_NANP_NATIONAL_DIGITS: Final = 10
+#: The calling code folded when the caller does not name the academy's own:
+#: North America, the only country academies run in today.
+DEFAULT_COUNTRY_CODE: Final = "1"
+_NATIONAL_DIGITS: Final = 10
 
 DuplicateKind = Literal["family", "family_contact", "user", "inquiry"]
 MatchedOn = Literal["email", "phone", "name"]
@@ -51,6 +53,8 @@ class DuplicateProbe:
     email: str | None = None
     phone_variants: tuple[str, ...] = ()
     name_key: str | None = None
+    #: The asking academy's calling code; stored rows are folded with it too.
+    country_code: str = DEFAULT_COUNTRY_CODE
 
     @property
     def is_empty(self) -> bool:
@@ -79,15 +83,22 @@ def probe_email(value: str | None) -> str | None:
     return email if local and domain else None
 
 
-def probe_phone_variants(value: str | None) -> tuple[str, ...]:
-    """Every stored spelling of this phone number, most likely first."""
+def probe_phone_variants(
+    value: str | None, *, country_code: str = DEFAULT_COUNTRY_CODE
+) -> tuple[str, ...]:
+    """Every stored spelling of this phone number, most likely first.
+
+    ``country_code`` is the academy's calling code: a national number gets
+    that prefix as its second spelling, and a number already carrying it gets
+    its national form. Any other number keeps its own single spelling.
+    """
     digits = phone_digits(value)
     if not MIN_PHONE_DIGITS <= len(digits) <= MAX_PHONE_DIGITS:
         return ()
-    if len(digits) == _NANP_NATIONAL_DIGITS:
-        return (digits, _NANP_COUNTRY_CODE + digits)
-    if len(digits) == _NANP_NATIONAL_DIGITS + 1 and digits.startswith(_NANP_COUNTRY_CODE):
-        return (digits[1:], digits)
+    if len(digits) == _NATIONAL_DIGITS:
+        return (digits, country_code + digits)
+    if len(digits) == len(country_code) + _NATIONAL_DIGITS and digits.startswith(country_code):
+        return (digits[len(country_code) :], digits)
     return (digits,)
 
 
@@ -97,12 +108,17 @@ def probe_name(value: str | None) -> str | None:
 
 
 def build_probe(
-    *, email: str | None = None, phone: str | None = None, name: str | None = None
+    *,
+    email: str | None = None,
+    phone: str | None = None,
+    name: str | None = None,
+    country_code: str = DEFAULT_COUNTRY_CODE,
 ) -> DuplicateProbe:
     return DuplicateProbe(
         email=probe_email(email),
-        phone_variants=probe_phone_variants(phone),
+        phone_variants=probe_phone_variants(phone, country_code=country_code),
         name_key=probe_name(name),
+        country_code=country_code,
     )
 
 
@@ -110,7 +126,8 @@ def phone_matches(stored: str | None, probe: DuplicateProbe) -> bool:
     """True when a stored phone, in any punctuation, is one of the probe's spellings."""
     if not probe.phone_variants:
         return False
-    return bool(set(probe_phone_variants(stored)) & set(probe.phone_variants))
+    stored_variants = probe_phone_variants(stored, country_code=probe.country_code)
+    return bool(set(stored_variants) & set(probe.phone_variants))
 
 
 def family_record_matches(record: FamilyRecord, probe: DuplicateProbe) -> tuple[MatchedOn, ...]:

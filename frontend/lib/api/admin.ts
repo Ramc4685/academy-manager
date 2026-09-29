@@ -1538,6 +1538,11 @@ export interface AdminAcademyView {
    */
   invoice_prefix?: string | null;
   /**
+   * Read-only calling code for bare national phone numbers in WhatsApp links,
+   * derived from the academy's country ("1" when unset, every academy today).
+   */
+  phone_country_code?: string;
+  /**
    * Read-only: set per academy by the platform at bootstrap. Absent on an
    * academy created before this field defaults to "badminton".
    */

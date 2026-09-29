@@ -13,6 +13,7 @@ import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { queryKeys } from "@/lib/query/keys";
 import { TenantProvider } from "@/lib/tenant/tenant-context";
 import { useIsDesktop } from "@/lib/use-is-desktop";
+import { PhoneCountryProvider } from "@/lib/phone-country";
 
 import { Avatar } from "@/components/ds/avatar";
 import { Icon } from "@/components/ds/icons";
@@ -165,7 +166,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           />
           <main className="flex-1 p-4 md:p-6 overflow-y-auto">
             <AccessDeniedNotice />
-            {ownerOnlyHere ? <OwnerOnlyPanel /> : children}
+            {/* Row 11: WhatsApp links use the academy's phone calling code. */}
+            <PhoneCountryProvider countryCode={academyQuery.data?.phone_country_code}>
+              {ownerOnlyHere ? <OwnerOnlyPanel /> : children}
+            </PhoneCountryProvider>
           </main>
         </div>
       </div>

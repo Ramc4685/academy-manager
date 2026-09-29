@@ -84,8 +84,10 @@ export function smsHref(phone?: string | null): string | undefined {
 export function handoffHref(
   channel: HandoffChannel,
   contact: { phone?: string | null; email?: string | null },
+  /** The academy's phone calling code (row 11); defaults to "1". */
+  countryCode?: string,
 ): string | undefined {
-  if (channel === "whatsapp") return whatsappHref(contact.phone);
+  if (channel === "whatsapp") return whatsappHref(contact.phone, countryCode);
   if (channel === "sms") return smsHref(contact.phone);
   return mailtoHref(contact.email);
 }

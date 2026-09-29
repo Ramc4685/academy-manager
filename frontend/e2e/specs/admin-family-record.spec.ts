@@ -449,9 +449,10 @@ test.describe("Family record (People CRM §4)", () => {
     await expect(failed).toContainText("Not delivered: mailbox full");
 
     // Handoffs open the staff member's own app; the app never sends SMS or WhatsApp.
+    // Row 11: a bare US number gets the +1 calling code (it was a dead link).
     await expect(page.getByTestId("family-handoff-whatsapp")).toHaveAttribute(
       "href",
-      "https://wa.me/5550100001",
+      "https://wa.me/15550100001",
     );
     await expect(page.getByTestId("family-handoff-sms")).toHaveAttribute("href", "sms:5550100001");
     await expect(page.getByTestId("family-handoff-email")).toHaveAttribute(
