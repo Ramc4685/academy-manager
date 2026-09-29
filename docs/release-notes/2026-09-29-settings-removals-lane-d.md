@@ -1,6 +1,6 @@
 # Remove what's broken or duplicated in Settings (Settings overhaul Phase 2 PR 7)
 
-PR: #TBD
+PR: #1004
 
 ## What changed
 
