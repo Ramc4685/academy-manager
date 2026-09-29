@@ -158,12 +158,22 @@ def render_welcome_email(
     student_name: str,
     coach_name: str | None = None,
     academy_timezone: str | None = None,
+    academy_venue_address: str | None = None,
+    academy_parking_note: str | None = None,
+    academy_what_to_bring: str | None = None,
+    academy_arrival_minutes_before: int | None = None,
 ) -> tuple[str, str]:
     """Return ``(subject, html_body)``.
 
     Every block below is emitted only when its field is populated: an academy
     that has configured nothing still gets a correct, short welcome rather
     than a message full of empty headings.
+
+    Venue address, parking, what-to-bring and arrival time each fall back to
+    the academy's Class defaults (Settings overhaul Phase 3 PR 9) when the
+    class itself leaves the field empty. A class value, when set, always
+    wins — this is a fallback, not an override — so BLNO's existing classes
+    (which already carry their own values) render exactly as before.
     """
     safe_session_title = html.escape(session.title)
     safe_student = html.escape(student_name)
@@ -184,9 +194,10 @@ def render_welcome_email(
         )
     )
 
+    venue_address = session.venue_address or academy_venue_address
     where_lines = [html.escape(session.location)] if session.location else []
-    if session.venue_address:
-        where_lines.append(_multiline(session.venue_address))
+    if venue_address:
+        where_lines.append(_multiline(venue_address))
     if where_lines:
         parts.append(_block("Where", _para("<br />".join(where_lines))))
     if session.whatsapp_group_link:
@@ -203,20 +214,24 @@ def render_welcome_email(
             )
         )
 
-    if session.parking_notes:
-        parts.append(_block("Parking", _para(_multiline(session.parking_notes))))
-    if session.arrival_minutes_before is not None:
+    parking_note = session.parking_notes or academy_parking_note
+    if parking_note:
+        parts.append(_block("Parking", _para(_multiline(parking_note))))
+    arrival_minutes_before = (
+        session.arrival_minutes_before
+        if session.arrival_minutes_before is not None
+        else academy_arrival_minutes_before
+    )
+    if arrival_minutes_before is not None:
         parts.append(
             _block(
                 "Arrival",
-                _para(
-                    f"Please arrive {session.arrival_minutes_before} minutes before "
-                    f"the class starts."
-                ),
+                _para(f"Please arrive {arrival_minutes_before} minutes before the class starts."),
             )
         )
-    if session.what_to_bring:
-        parts.append(_block("What to bring", _para(_multiline(session.what_to_bring))))
+    what_to_bring = session.what_to_bring or academy_what_to_bring
+    if what_to_bring:
+        parts.append(_block("What to bring", _para(_multiline(what_to_bring))))
 
     coach_lines = []
     if coach_name:
@@ -309,6 +324,14 @@ class EnrollmentWelcomeEmailAdapter:
             student_name=student_name,
             coach_name=coach_name,
             academy_timezone=academy_timezone,
+            academy_venue_address=str(academy_doc.get("default_venue_address") or "") or None,
+            academy_parking_note=str(academy_doc.get("default_parking_note") or "") or None,
+            academy_what_to_bring=str(academy_doc.get("default_what_to_bring") or "") or None,
+            academy_arrival_minutes_before=(
+                int(academy_doc["default_arrival_minutes_before"])
+                if academy_doc.get("default_arrival_minutes_before") is not None
+                else None
+            ),
         )
         identity = resolve_sender(academy_doc)
         outcome = await self._sender.send(

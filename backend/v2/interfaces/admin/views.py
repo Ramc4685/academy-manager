@@ -18,6 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle impor
 )
 from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
+from backend.v2.shared.comms.colour import _HEX as _HEX_COLOR_RE
 from backend.v2.shared.comms.sender_identity import validate_reply_to, validate_sender_name
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
@@ -1811,6 +1812,15 @@ class AdminAcademyView(BaseModel):
     # Read-only here: platform-set at bootstrap. No academy edits its own
     # sport today. Absent from UpdateAdminAcademyRequest by design.
     sport: str = "badminton"
+    # Class defaults (Settings overhaul Phase 3 PR 9). Admin-editable, filled
+    # at read time: an academy doc with none of these stored reads as 10 /
+    # 45 / empty, so BLNO sees exactly today's create-class defaults.
+    default_class_size: int = 10
+    default_class_length_minutes: int = 45
+    default_venue_address: str | None = None
+    default_parking_note: str | None = None
+    default_what_to_bring: str | None = None
+    default_arrival_minutes_before: int | None = None
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -1830,6 +1840,15 @@ class UpdateAdminAcademyRequest(BaseModel):
     #: address itself is platform-owned and cannot be set here (L9a).
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+    # Class defaults (Settings overhaul Phase 3 PR 9). Admin-editable (not
+    # owner-gated: these change what a class starts from, not what it
+    # charges or where money lands).
+    default_class_size: int | None = Field(default=None, ge=1, le=200)
+    default_class_length_minutes: int | None = Field(default=None, ge=1, le=600)
+    default_venue_address: str | None = Field(default=None, max_length=500)
+    default_parking_note: str | None = Field(default=None, max_length=500)
+    default_what_to_bring: str | None = Field(default=None, max_length=500)
+    default_arrival_minutes_before: int | None = Field(default=None, ge=0, le=180)
 
     @field_validator("currency")
     @classmethod
@@ -1837,6 +1856,17 @@ class UpdateAdminAcademyRequest(BaseModel):
         if value is not None and value.upper() != "USD":
             raise ValueError("Currency is locked to USD.")
         return value
+
+    @field_validator("brand_color")
+    @classmethod
+    def _check_brand_color(cls, value: str | None) -> str | None:
+        # Blank clears the override; Class defaults' "Brand" card validates
+        # as hex before this ever reaches Settings overhaul (Phase 3 PR 9).
+        if value is None or not value.strip():
+            return value
+        if not _HEX_COLOR_RE.match(value.strip()):
+            raise ValueError("Brand colour must be a hex value like #2563EB.")
+        return value.strip()
 
     @field_validator("email_sender_name")
     @classmethod

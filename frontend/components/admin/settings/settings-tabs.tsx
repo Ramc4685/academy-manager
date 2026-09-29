@@ -12,17 +12,15 @@ export type SettingsPanelKey =
   | "billing-rules"
   | "gateway"
   | "notify"
-  | "branding"
   | "self-service"
   | "session-types"
   | "public-page";
 
 export const SETTINGS_TABS: Array<{ key: SettingsPanelKey; label: string }> = [
-  { key: "academy", label: "Academy" },
+  { key: "academy", label: "Academy profile" },
   { key: "billing-rules", label: "Billing rules" },
   { key: "gateway", label: "Gateway" },
   { key: "notify", label: "Notify" },
-  { key: "branding", label: "Branding" },
   { key: "self-service", label: "Self-service" },
   { key: "session-types", label: "Session types" },
   { key: "public-page", label: "Public page" },
@@ -40,10 +38,13 @@ export const OWNER_ONLY_SETTINGS_PANELS: ReadonlySet<SettingsPanelKey> = new Set
 /**
  * Retired panel keys that still resolve to another *panel within Settings*,
  * so an old bookmark lands somewhere sensible: `?panel=fees` renders
- * Billing rules (spec SS5).
+ * Billing rules (spec SS5). `?panel=branding` renders Academy profile
+ * (Settings overhaul Phase 3 PR 9: Academy and Branding merged into one
+ * tab, key stays "academy").
  */
 export const RETIRED_SETTINGS_PANELS: Readonly<Record<string, SettingsPanelKey>> = {
   fees: "billing-rules",
+  branding: "academy",
 };
 
 /**
