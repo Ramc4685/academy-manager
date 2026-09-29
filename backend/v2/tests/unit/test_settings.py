@@ -500,3 +500,21 @@ def test_prod_saas_multi_academy_with_host_trust_settings_boots(monkeypatch) -> 
 
     assert settings.tenancy_mode == "multi_academy"
     assert settings.saas_mode is True
+
+
+def test_prod_single_academy_saas_mode_boots_without_host_trust_settings(monkeypatch) -> None:
+    """Today's prod: single_academy with V2_SAAS_MODE set and neither host-trust
+    setting. The middleware pins every request to the primary academy, so the
+    host cannot pick a tenant; the release command must still boot."""
+    _prod_multi_academy_env(
+        monkeypatch,
+        V2_SAAS_MODE="true",
+        APP_TENANCY_MODE="single_academy",
+        PRIMARY_ACADEMY_ID="acad_blno_badminton",
+        ENABLE_PLATFORM_ROUTES="false",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.tenancy_mode == "single_academy"
+    assert settings.saas_mode is True
