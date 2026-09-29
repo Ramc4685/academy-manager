@@ -18,6 +18,7 @@ import { Avatar } from "@/components/ds/avatar";
 import { Icon } from "@/components/ds/icons";
 import { ToastProvider } from "@/components/ds/toast";
 import { AcademyMark } from "@/components/ds/academy-mark";
+import { safeHexColor } from "@/lib/public-page/format";
 import {
   ADMIN_NAV,
   adminTopLevelRoutes,
@@ -269,7 +270,7 @@ function SidebarBrand({
           name={academyName}
           logoUrl={logoUrl}
           size={32}
-          monogramBg={brandColor || "var(--rally-volt)"}
+          monogramBg={safeHexColor(brandColor, "var(--rally-volt)")}
           monogramColor="var(--rally-ink)"
         />
         <div className="leading-tight min-w-0">

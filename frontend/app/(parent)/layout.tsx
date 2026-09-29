@@ -18,6 +18,7 @@ import { listParentMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
 import { getParentAcademy, getParentProfile } from "@/lib/api/parent";
 import { AcademyMark } from "@/components/ds/academy-mark";
+import { safeHexColor } from "@/lib/public-page/format";
 
 // Session-scoped dismissal (issue #380): the banner returns on the next
 // login rather than being permanently dismissible — nothing here blocks the
@@ -96,7 +97,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
               name={academyName}
               logoUrl={academyData?.logo_url}
               size={32}
-              monogramBg={academyData?.brand_color || "#facc15"}
+              monogramBg={safeHexColor(academyData?.brand_color, "#facc15")}
               monogramColor="#0a0f1c"
               className="shadow-lg"
             />

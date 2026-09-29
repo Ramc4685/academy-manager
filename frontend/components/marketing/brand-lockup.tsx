@@ -1,5 +1,6 @@
 import { AcademyMark } from "@/components/ds/academy-mark";
 import { brand } from "@/lib/brand";
+import { safeHexColor } from "@/lib/public-page/format";
 
 /**
  * Row 15: the login/register hero and mobile header. On an academy host it
@@ -31,7 +32,7 @@ export function BrandLockup({
         name={title}
         logoUrl={isAcademyHost ? logoUrl : null}
         size={40}
-        monogramBg={(isAcademyHost && brandColor) || "#facc15"}
+        monogramBg={isAcademyHost ? safeHexColor(brandColor, "#facc15") : "#facc15"}
         monogramColor="#0f172a"
         className="rounded-lg"
       />

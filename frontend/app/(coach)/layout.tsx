@@ -20,6 +20,7 @@ import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ShellBackButton } from "@/components/persona/back-button";
 import { getCoachAcademy } from "@/lib/api/coach";
+import { safeHexColor } from "@/lib/public-page/format";
 import { listCoachMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
 import { AcademyMark } from "@/components/ds/academy-mark";
@@ -116,7 +117,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
               name={academyName}
               logoUrl={academyData?.logo_url}
               size={28}
-              monogramBg={academyData?.brand_color || "#facc15"}
+              monogramBg={safeHexColor(academyData?.brand_color, "#facc15")}
               monogramColor="#0a0f1c"
             />
             <span className="truncate font-semibold text-white text-[15px] tracking-tight">
