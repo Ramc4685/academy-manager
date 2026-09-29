@@ -16,6 +16,7 @@ import { stubEmptyBillingSetup, stubFamilyIndex } from "../fixtures/family-index
 import {
   ACADEMY_A,
   fulfillJson,
+  stubCoachAcademy,
   stubCoachMessages,
   stubMe,
   stubMemberships,
@@ -361,6 +362,7 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
 async function stubCoachLaunchBff(page: Page): Promise<void> {
   await stubMe(page, COACH_ME);
   await stubCoachMessages(page);
+  await stubCoachAcademy(page);
   await page.route("**/api/v2/coach/today*", (route) =>
     fulfillJson(route, { date: "2026-05-22", sessions: [] })
   );

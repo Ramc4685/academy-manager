@@ -19,6 +19,7 @@ import type { Page, Route } from "@playwright/test";
 
 import { test, expect } from "../fixtures/mock-api";
 import {
+  stubCoachAcademy,
   stubCoachMessages,
   stubParentAcademy,
   stubParentMessages,
@@ -308,6 +309,7 @@ test.describe("axe: coach today", () => {
   test("has no serious or critical WCAG A/AA violations", async ({ page, mock }) => {
     void mock; // the mock-api fixture stubs the whole coach surface
     await stubCoachMessages(page);
+    await stubCoachAcademy(page);
     await page.goto("/coach/today");
     await expect(page.getByTestId("coach-today")).toBeVisible();
     await expect(page.getByTestId("session-s-today-1")).toBeVisible();
