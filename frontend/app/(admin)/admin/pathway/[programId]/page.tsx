@@ -23,6 +23,7 @@ import {
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { queryKeys } from "@/lib/query/keys";
+import { defaultExternalSourceForSport, sourceTitlePlaceholder } from "@/lib/pathway-sport";
 
 export default function AdminPathwayDetailPage() {
   const { programId } = useParams<{ programId: string }>();
@@ -126,6 +127,7 @@ export default function AdminPathwayDetailPage() {
             <LevelAccordion
               key={pathwayLevel.level.level_id}
               pathwayLevel={pathwayLevel}
+              isBadminton={data.program.sport.toLowerCase() === "badminton"}
               onSkillAdded={() =>
                 void queryClient.invalidateQueries({ queryKey: ["admin", "pathway", programId] })
               }
@@ -212,9 +214,11 @@ function LessonCardsPanel({ programId }: { programId: string }) {
 
 function LevelAccordion({
   pathwayLevel,
+  isBadminton,
   onSkillAdded,
 }: {
   pathwayLevel: PathwayLevel;
+  isBadminton: boolean;
   onSkillAdded: () => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -293,6 +297,7 @@ function LevelAccordion({
               key={skill.skill_id}
               skill={skill}
               externalRefs={external_refs}
+              isBadminton={isBadminton}
               onRefAdded={onSkillAdded}
             />
           ))}
@@ -379,14 +384,16 @@ const EXTERNAL_SOURCES: ExternalSource[] = [
 function SkillRow({
   skill,
   externalRefs,
+  isBadminton,
   onRefAdded,
 }: {
   skill: Skill;
   externalRefs: ExternalLessonReference[];
+  isBadminton: boolean;
   onRefAdded: () => void;
 }) {
   const [showAddRef, setShowAddRef] = useState(false);
-  const [source, setSource] = useState<ExternalSource>("BWF_SHUTTLE_TIME");
+  const [source, setSource] = useState<ExternalSource>(defaultExternalSourceForSport(isBadminton));
   const [sourceTitle, setSourceTitle] = useState("");
   const [moduleName, setModuleName] = useState("");
   const [lessonRange, setLessonRange] = useState("");
@@ -483,7 +490,7 @@ function SkillRow({
               type="text"
               value={sourceTitle}
               onChange={(e) => setSourceTitle(e.target.value)}
-              placeholder="Source title (e.g. Shuttle Time Level 1)"
+              placeholder={sourceTitlePlaceholder(isBadminton)}
               className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
             />
             <input

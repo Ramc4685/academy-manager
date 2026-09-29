@@ -1537,6 +1537,11 @@ export interface AdminAcademyView {
    * numbered invoice. Null = not set yet (no invoice numbers are issued).
    */
   invoice_prefix?: string | null;
+  /**
+   * Read-only: set per academy by the platform at bootstrap. Absent on an
+   * academy created before this field defaults to "badminton".
+   */
+  sport?: string;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{

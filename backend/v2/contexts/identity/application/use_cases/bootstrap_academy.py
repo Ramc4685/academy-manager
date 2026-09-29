@@ -94,8 +94,11 @@ class BootstrapAcademyCommand(BaseModel):
     # makes every downstream 'resolve the timezone from the tenant' lookup
     # faithfully return the wrong answer.
     timezone: str = Field(min_length=1)
+    # Platform-set, not tenant-editable. Every academy bootstrapped so far
+    # (including BLNO) is badminton, so the default is today's behaviour.
+    sport: str = Field(default="badminton", min_length=1)
 
-    @field_validator("display_name", "owner_display_name", "timezone")
+    @field_validator("display_name", "owner_display_name", "timezone", "sport")
     @classmethod
     def _strip_required_text(cls, value: str) -> str:
         return value.strip()
@@ -175,6 +178,7 @@ class BootstrapAcademy:
             "primary_domain": command.primary_domain,
             "display_name": command.display_name,
             "timezone": command.timezone,
+            "sport": command.sport,
             "status": "active",
             "owner_email": str(command.owner_email),
             "created_at": now,

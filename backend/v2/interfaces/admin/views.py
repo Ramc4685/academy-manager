@@ -1805,6 +1805,9 @@ class AdminAcademyView(BaseModel):
     # at creation, locked after the first numbered invoice). Settings overhaul
     # Phase 1 PR 2. Deliberately absent from UpdateAdminAcademyRequest.
     invoice_prefix: str | None = None
+    # Read-only here: platform-set at bootstrap. No academy edits its own
+    # sport today. Absent from UpdateAdminAcademyRequest by design.
+    sport: str = "badminton"
 
 
 class UpdateAdminAcademyRequest(BaseModel):
