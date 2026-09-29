@@ -303,6 +303,11 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
 #: per academy-local day, and a failed day is reported, not retried.
 LOCAL_DAILY_JOB_MAX_ATTEMPTS: dict[str, int] = {"send_owner_daily_brief": 1}
 
+#: Local daily jobs whose OLD cron ticked every hour (doing its work at one
+#: hour), so an old heartbeat proves "old code was alive", not "it ran":
+#: the cutover seed only trusts one at or after the local target.
+LEGACY_HOURLY_LOCAL_JOBS: frozenset[str] = frozenset({"send_past_due_reminders"})
+
 
 async def run_local_daily_job(
     db: Any,
@@ -326,6 +331,7 @@ async def run_local_daily_job(
         academy_ids=academy_ids,
         zone_for=zone_for,
         now=now,
+        legacy_hourly_jobs=LEGACY_HOURLY_LOCAL_JOBS,
     )
     return await run_daily_at_local_time(
         db=db,
@@ -1936,6 +1942,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             ),
             zone_for=_academy_clock,
             now=datetime.now(UTC),
+            legacy_hourly_jobs=LEGACY_HOURLY_LOCAL_JOBS,
         )
     except Exception:
         log.warning("scheduler_run_marker_seed_failed", exc_info=True)

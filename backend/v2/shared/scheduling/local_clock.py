@@ -39,7 +39,7 @@ One academy's failure is logged and reported and never stops the others.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Collection, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -259,6 +259,7 @@ async def seed_markers_from_legacy_heartbeats(
     zone_for: Callable[[str], Awaitable[str]],
     now: datetime,
     heartbeats_collection: str = "ops_job_runs",
+    legacy_hourly_jobs: Collection[str] = frozenset(),
 ) -> int:
     """Mark today as done where the OLD fixed-hour cron already ran today.
 
@@ -279,6 +280,14 @@ async def seed_markers_from_legacy_heartbeats(
     written by the old cron, and when it falls on the academy's local today at
     or after the target, the old cron already covered today. An existing
     marker is never changed. Best effort; returns markers seeded.
+
+    The old code ran each fixed-hour job ONCE a day for every academy at the
+    scheduler-zone instant, which for an academy on another zone can fall
+    before its new local target (Los Angeles: 07:30 CDT is 05:30 PDT). So for
+    those jobs any legacy heartbeat on the academy's local today means today
+    is covered. Only ``legacy_hourly_jobs`` (the old past-due sweep ticked
+    every hour and did its work at one hour) also require the heartbeat to be
+    at or after the target.
     """
     seeded = 0
     instant = _as_aware_utc(now)
@@ -295,7 +304,9 @@ async def seed_markers_from_legacy_heartbeats(
                 zone = ZoneInfo(await zone_for(academy_id))
                 local_now = instant.astimezone(zone)
                 local_tick = _as_aware_utc(last_tick).astimezone(zone)
-                if local_tick.date() != local_now.date() or not at.reached_by(local_tick):
+                if local_tick.date() != local_now.date():
+                    continue
+                if job in legacy_hourly_jobs and not at.reached_by(local_tick):
                     continue
                 local_date = local_now.date()
                 result = await db[MARKERS_COLLECTION].update_one(

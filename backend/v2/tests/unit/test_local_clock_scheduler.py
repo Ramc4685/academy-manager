@@ -32,6 +32,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from backend.v2 import main as main_module
 from backend.v2.main import (
+    LEGACY_HOURLY_LOCAL_JOBS,
     LOCAL_DAILY_JOB_MAX_ATTEMPTS,
     LOCAL_DAILY_JOBS,
     SCHEDULED_JOB_MONITORS,
@@ -532,6 +533,55 @@ async def test_first_boot_before_todays_old_run_still_runs_today() -> None:
 
     assert seeded == 0
     assert await db[MARKERS_COLLECTION].count_documents({}) == 0
+
+
+async def test_cutover_old_chicago_run_covers_an_academy_on_another_clock() -> None:
+    """The old cron briefed every academy at 07:30 Chicago, which is 05:30 in
+    Los Angeles: before LA's new 07:30 target, but still LA's today. It must
+    count as covered, or LA gets a second owner brief on deploy day."""
+    db = _db()
+    chicago = ZoneInfo(BLNO_ZONE)
+    await db["ops_job_runs"].insert_one(
+        {
+            "_id": "send_owner_daily_brief",
+            "last_tick_at": datetime(2026, 9, 29, 7, 30, 4, tzinfo=chicago),
+        }
+    )
+
+    seeded = await seed_markers_from_legacy_heartbeats(
+        db,
+        schedules={"send_owner_daily_brief": LOCAL_DAILY_JOBS["send_owner_daily_brief"]},
+        academy_ids=["la"],
+        zone_for=_zone_for,
+        now=datetime(2026, 9, 29, 9, 0, tzinfo=chicago),
+        legacy_hourly_jobs=LEGACY_HOURLY_LOCAL_JOBS,
+    )
+
+    assert seeded == 1
+
+
+async def test_cutover_old_hourly_past_due_tick_before_target_is_not_a_run() -> None:
+    """The old past-due sweep ticked hourly, so a heartbeat before the local
+    target only shows the old code was alive; today still runs."""
+    db = _db()
+    chicago = ZoneInfo(BLNO_ZONE)
+    await db["ops_job_runs"].insert_one(
+        {
+            "_id": "send_past_due_reminders",
+            "last_tick_at": datetime(2026, 9, 29, 8, 20, tzinfo=chicago),
+        }
+    )
+
+    seeded = await seed_markers_from_legacy_heartbeats(
+        db,
+        schedules={"send_past_due_reminders": LOCAL_DAILY_JOBS["send_past_due_reminders"]},
+        academy_ids=["acad_blno_badminton"],
+        zone_for=_zone_for,
+        now=datetime(2026, 9, 29, 8, 50, tzinfo=chicago),
+        legacy_hourly_jobs=LEGACY_HOURLY_LOCAL_JOBS,
+    )
+
+    assert seeded == 0
 
 
 async def test_seeding_ignores_this_codes_own_heartbeats() -> None:
