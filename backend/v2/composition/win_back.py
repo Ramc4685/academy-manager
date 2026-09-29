@@ -133,6 +133,35 @@ class WinBackNotificationAdapter:
             logger.exception("win_back_send_failed", extra={"student_id": student_id})
 
 
+class AcademyWinBackSwitch:
+    """``WinBackSwitch`` over the academy document (hardcoded-values row 10).
+
+    ``notifications.win_back_enabled`` is read with a default of on: an
+    academy that never saved the setting (BLNO today) keeps the outreach it
+    always had. Only an explicit ``False`` turns it off. The read is for the
+    one academy the job is running, never another tenant's document.
+    """
+
+    def __init__(self, academies: Any) -> None:
+        self._academies = academies
+
+    async def is_enabled(self, academy_id: str) -> bool:
+        try:
+            doc = await self._academies.find_by_id(academy_id)
+        except Exception:
+            # Skip this tick rather than mail families an owner may have
+            # opted out; the next daily tick retries and a due milestone
+            # stays due until the next one supersedes it.
+            logger.warning(
+                "win_back_switch_lookup_failed", extra={"academy_id": academy_id}, exc_info=True
+            )
+            return False
+        notifications = (doc or {}).get("notifications") if isinstance(doc, dict) else None
+        if not isinstance(notifications, dict):
+            return True
+        return notifications.get("win_back_enabled", True) is not False
+
+
 @dataclass
 class WinBackComposition:
     send_win_back_notices: SendWinBackNotices
@@ -161,11 +190,12 @@ def compose_win_back(db: Any, settings: Any) -> WinBackComposition:
     )
 
     students = MongoStudentRepository(db)
+    academies = MongoAcademyRepository(db)
     notifier = WinBackNotificationAdapter(
         audiences=MongoAudienceResolver(db=db),
         students=students,
         sender=_build_email_sender(settings, db),
-        academies=MongoAcademyRepository(db),
+        academies=academies,
     )
     use_case = SendWinBackNotices(
         enrollment_events=MongoEnrollmentEventRepository(db),
@@ -174,5 +204,6 @@ def compose_win_back(db: Any, settings: Any) -> WinBackComposition:
         send_repo=MongoWinBackSendRepository(db),
         balance_lookup=MongoFamilyBalanceLookup(db),
         notifier=notifier,
+        switch=AcademyWinBackSwitch(academies),
     )
     return WinBackComposition(send_win_back_notices=use_case)
