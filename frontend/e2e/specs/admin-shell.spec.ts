@@ -2117,7 +2117,14 @@ test.describe("Rally admin shell", () => {
     await expect(page).toHaveURL(/\/admin\/pricing$/);
     const plans = page.getByTestId("pricing-plans");
     await expect(plans).toBeVisible();
-    await expect(page.getByTestId("admin-nav-pricing")).toBeVisible();
+    // Sidebar on desktop, drawer on phones.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-pricing")).toBeVisible();
+    const drawer = page.getByTestId("admin-mobile-drawer");
+    if (await drawer.isVisible()) {
+      await drawer.getByRole("button", { name: "Close menu" }).click();
+      await expect(drawer).toBeHidden();
+    }
     await expect(plans.getByTestId("session-type-row")).toHaveCount(1);
     // price_cents 12000 must render as dollars, not raw cents.
     await expect(plans.getByText("$120.00")).toBeVisible();
