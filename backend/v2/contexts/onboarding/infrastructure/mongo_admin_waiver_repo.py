@@ -73,7 +73,11 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             )
 
         return AdminWaiverData(
-            active_waiver=live_waivers[0] if live_waivers else None,
+            # No live template (draft or retired only): the newest template of
+            # any status, as before several live waivers existed.
+            active_waiver=(
+                live_waivers[0] if live_waivers else (waiver_docs[0] if waiver_docs else None)
+            ),
             students=student_rows,
             acceptances_by_student=acceptances,
             live_waivers=live_waivers,

@@ -49,8 +49,15 @@ class FakeRepo:
     async def publish_draft(self, **_kwargs: object) -> AdminWaiverTemplateRecord:
         raise NotImplementedError
 
-    async def assign_to_registration(self, **_kwargs: object) -> AdminWaiverTemplateRecord:
-        raise NotImplementedError
+    async def assign_to_registration(
+        self, *, waiver_template_id: str, assigned_at: datetime
+    ) -> AdminWaiverTemplateRecord:
+        # Mirrors the Mongo repo: the deprecated route goes through set_assignment.
+        return await self.set_assignment(
+            waiver_template_id=waiver_template_id,
+            assignment=WaiverAssignment(required=True, scope="all"),
+            assigned_at=assigned_at,
+        )
 
     async def set_assignment(
         self, *, waiver_template_id: str, assignment: WaiverAssignment, assigned_at: datetime
@@ -241,6 +248,25 @@ def test_assign_to_a_program_then_to_all_families(admin_client) -> None:
     assert everyone.status_code == 200, everyone.text
     assert everyone.json()["program_ids"] == []
     assert everyone.json()["assigned_to_registration"] is True
+
+
+def test_deprecated_assign_registration_still_works_and_widens_a_program_scope(
+    admin_client,
+) -> None:
+    scoped = admin_client.put(
+        "/api/v2/admin/waivers/templates/wt-live/assignment",
+        json={"required": True, "scope": "programs", "program_ids": ["prog-juniors"]},
+    )
+    assert scoped.json()["scope"] == "programs"
+
+    old_client = admin_client.post("/api/v2/admin/waivers/templates/wt-live/assign-registration")
+
+    assert old_client.status_code == 200, old_client.text
+    body = old_client.json()
+    assert body["required"] is True
+    assert body["scope"] == "all"
+    assert body["program_ids"] == []
+    assert body["assigned_to_registration"] is True
 
 
 @pytest.mark.parametrize(

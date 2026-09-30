@@ -212,6 +212,20 @@ class ListAdminWaivers:
         if not live:
             summary, rows = self._classify(data, None, data.students)
             return AdminWaiverReport(summary=summary, rows=rows)
+        if not any(doc.required for doc in live):
+            # Nothing is flagged required (an academy that never flagged its
+            # template, or only a draft exists): keep the single-waiver view
+            # this report always had, the newest template against every
+            # student and any acceptance they hold.
+            primary_doc = live[0]
+            summary, rows = self._classify(data, primary_doc, data.students, any_acceptance=True)
+            return AdminWaiverReport(
+                summary=summary,
+                active_waiver=primary_doc,
+                rows=rows,
+                lineages=[AdminWaiverLineageReport(waiver=primary_doc, summary=summary, rows=rows)],
+                live_waivers=live,
+            )
 
         # All-family waivers first, so the primary one is the waiver a
         # single-waiver academy has always shown.
@@ -241,6 +255,8 @@ class ListAdminWaivers:
         data: AdminWaiverData,
         waiver: AdminWaiverDocument | None,
         students: list[AdminWaiverStudent],
+        *,
+        any_acceptance: bool = False,
     ) -> tuple[AdminWaiverSummary, list[AdminWaiverStudentRow]]:
         rows: list[AdminWaiverStudentRow] = []
         signed_count = 0
@@ -249,7 +265,9 @@ class ListAdminWaivers:
         outdated_count = 0
 
         for student in students:
-            acceptance = self._acceptance_for(data, student.student_id, waiver)
+            acceptance = self._acceptance_for(
+                data, student.student_id, None if any_acceptance else waiver
+            )
             if acceptance is None:
                 status: WaiverStatus = "pending"
                 pending_count += 1

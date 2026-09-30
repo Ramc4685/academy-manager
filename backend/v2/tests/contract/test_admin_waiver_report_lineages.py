@@ -169,3 +169,60 @@ async def test_other_tenant_waivers_and_signatures_do_not_leak(db, acad) -> None
     assert [lineage.waiver.lineage_key for lineage in report.lineages] == ["mine"]
     assert report.summary.current_count == 0
     assert report.summary.pending_count == 3
+
+
+@pytest.mark.asyncio
+async def test_active_template_never_flagged_required_still_counts_every_student(db, acad) -> None:
+    """A BLNO-shaped academy whose template carries no required flag."""
+    await _seed_students(db, acad)
+    await db["waiver_templates"].insert_one(_template(acad, "wt-plain"))
+    await db["waiver_signatures"].insert_one(
+        _signature(acad, "ws-a", "st-a", "wt-plain", "h-wt-plain")
+    )
+
+    report = await ListAdminWaivers(MongoAdminWaiverRepository(db)).execute()
+
+    assert report.summary.total_students == 3
+    assert report.summary.current_count == 1
+    assert report.summary.pending_count == 2
+    assert report.active_waiver is not None and report.active_waiver.waiver_id == "wt-plain"
+
+
+@pytest.mark.asyncio
+async def test_draft_only_academy_keeps_its_newest_template_as_active_waiver(db, acad) -> None:
+    await _seed_students(db, acad)
+    await db["waiver_templates"].insert_one(
+        _template(acad, "wt-draft", status="draft", version=None)
+    )
+
+    data = await MongoAdminWaiverRepository(db).load_admin_waiver_data()
+    report = await ListAdminWaivers(MongoAdminWaiverRepository(db)).execute()
+
+    assert data.live_waivers == []
+    assert data.active_waiver is not None and data.active_waiver.waiver_id == "wt-draft"
+    assert report.summary.total_students == 3
+    assert report.summary.pending_count == 3
+
+
+@pytest.mark.asyncio
+async def test_a_different_lineage_is_a_different_waiver_not_an_outdated_signature(
+    db, acad
+) -> None:
+    """New versions inherit their lineage; a fresh lineage key is a new waiver.
+
+    Signing "Old" never reads as signing (or being outdated on) "New".
+    """
+    await _seed_students(db, acad)
+    await db["waiver_templates"].insert_many(
+        [
+            _template(acad, "wt-old", lineage_key="old", status="superseded", required=True),
+            _template(acad, "wt-new", lineage_key="new", required=True),
+        ]
+    )
+    await db["waiver_signatures"].insert_one(_signature(acad, "ws-a", "st-a", "wt-old", "h-wt-old"))
+
+    report = await ListAdminWaivers(MongoAdminWaiverRepository(db)).execute()
+
+    assert [lineage.waiver.lineage_key for lineage in report.lineages] == ["new"]
+    assert report.summary.pending_count == 3
+    assert report.summary.outdated_count == 0

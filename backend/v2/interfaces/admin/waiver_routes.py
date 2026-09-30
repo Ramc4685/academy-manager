@@ -154,8 +154,9 @@ async def assign_admin_waiver_template_to_registration(
 
     The one-registration-waiver switch from before several live waivers. Kept
     so a client loaded before the deploy keeps working; no shipped UI calls it.
-    It marks this waiver as the registration waiver (all families) and clears
-    the flag on the others, which the new Assign control does not do.
+    It makes this waiver required for all families. That OVERWRITES any
+    program scope the waiver had (a program-scoped waiver becomes an
+    all-family one); other waivers keep their own assignment.
     """
     manager = _template_manager(use_cases)
     try:

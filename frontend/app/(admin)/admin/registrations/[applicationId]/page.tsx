@@ -304,10 +304,10 @@ function RegistrationSummary({ registration }: { registration: AdminRegistration
             <div className="mt-2">
               <Chip
                 variant={registration.waiver_satisfied ? "approved" : "pending"}
-                label={registration.waiver_required ? (registration.waiver_satisfied ? "SIGNED" : "NEEDED") : "NOT REQUIRED"}
+                label={registration.waiver_required ? (registration.waiver_satisfied ? "SIGNED" : "UNSIGNED") : "NOT REQUIRED"}
               />
             </div>
-            {(registration.unsigned_waivers?.length ?? 0) > 1 && (
+            {(registration.unsigned_waivers?.length ?? 0) > 0 && (
               <p className="mt-2 text-[12px] text-rally-subtle">
                 Still to sign: {registration.unsigned_waivers?.map((w) => w.title).join(", ")}
               </p>
