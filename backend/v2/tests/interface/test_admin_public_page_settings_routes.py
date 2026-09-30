@@ -32,6 +32,12 @@ DEFAULTS = {
     "price_period_default": "month",
     "trials_open": True,
     "privacy_notice_url": None,
+    "hero_photo_url": None,
+    "about_text": "",
+    "highlights": [],
+    "gallery": [],
+    "coach_profiles": [],
+    "faqs": [],
     "public_url": None,
 }
 
@@ -195,3 +201,124 @@ def test_view_page_address_is_a_host_or_site_root_url_or_nothing(
     asyncio.run(db["academies"].update_one({"academy_id": ACADEMY}, {"$set": stored}))
     with _client(db) as client:
         assert client.get(URL).json()["public_url"] == expected
+
+
+# --- landing-page content (content lane) -----------------------------------
+
+
+def _seed_staff(db: Any) -> None:
+    async def go() -> None:
+        await db["users"].insert_many(
+            [
+                {"user_id": "coach-1", "display_name": "Alex Morgan"},
+                {"user_id": "coach-away", "display_name": "Other Academy Coach"},
+                {"user_id": "parent-1", "display_name": "A Parent"},
+                {"user_id": "coach-gone", "display_name": "Left Coach"},
+            ]
+        )
+        await db["academy_memberships"].insert_many(
+            [
+                {
+                    "academy_id": ACADEMY,
+                    "user_id": "coach-1",
+                    "roles": ["coach"],
+                    "status": "active",
+                },
+                {"academy_id": OTHER, "user_id": "coach-away", "roles": ["coach"]},
+                {"academy_id": ACADEMY, "user_id": "parent-1", "roles": ["parent"]},
+                {
+                    "academy_id": ACADEMY,
+                    "user_id": "coach-gone",
+                    "roles": ["coach"],
+                    "status": "removed",
+                },
+            ]
+        )
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("roles", [("admin",), ("owner", "admin")])
+def test_owner_and_plain_admin_can_save_page_content(db: Any, roles: tuple[str, ...]) -> None:
+    _seed_staff(db)
+    with _client(db, roles=roles) as client:
+        res = client.patch(
+            URL,
+            json={
+                "hero_photo_url": "https://cdn.example.test/hero.jpg",
+                "about_text": "Est. 2019",
+                "highlights": ["Small groups"],
+                "faqs": [{"question": "Cost?", "answer": "See classes."}],
+                "gallery": [
+                    {
+                        "url": "https://cdn.example.test/g1.jpg",
+                        "caption": "Sat",
+                        "consent_confirmed": True,
+                    }
+                ],
+                "coach_profiles": [{"coach_id": "coach-1", "bio": "L2 BWF"}],
+            },
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["about_text"] == "Est. 2019"
+        # Admin view shows consent as a flag, never who confirmed or when.
+        assert body["gallery"] == [
+            {"url": "https://cdn.example.test/g1.jpg", "caption": "Sat", "consent_confirmed": True}
+        ]
+        assert body["coach_profiles"] == [
+            {"coach_id": "coach-1", "photo_url": None, "bio": "L2 BWF", "shown": True}
+        ]
+    stored = _stored(db, ACADEMY)
+    assert stored is not None
+    assert stored["gallery"][0]["consent_confirmed_by"] == "u-admin"
+    assert stored["gallery"][0]["consent_confirmed_at"] is not None
+
+
+def test_gallery_item_without_consent_is_422(db: Any) -> None:
+    with _client(db) as client:
+        for item in (
+            {"url": "https://cdn.example.test/g.jpg"},
+            {"url": "https://cdn.example.test/g.jpg", "consent_confirmed": False},
+        ):
+            res = client.patch(URL, json={"gallery": [item]})
+            assert res.status_code == 422, res.text
+    assert _stored(db, ACADEMY) is None
+
+
+def test_gallery_rejects_client_supplied_consent_stamps(db: Any) -> None:
+    with _client(db) as client:
+        res = client.patch(
+            URL,
+            json={
+                "gallery": [
+                    {
+                        "url": "https://cdn.example.test/g.jpg",
+                        "consent_confirmed": True,
+                        "consent_confirmed_by": "someone-else",
+                    }
+                ]
+            },
+        )
+    assert res.status_code == 422
+
+
+def test_coach_profile_for_a_non_coach_or_another_academys_coach_is_422(db: Any) -> None:
+    _seed_staff(db)
+    with _client(db) as client:
+        for coach_id in ("parent-1", "coach-away", "coach-gone", "nobody"):
+            res = client.patch(URL, json={"coach_profiles": [{"coach_id": coach_id, "bio": "x"}]})
+            assert res.status_code == 422, (coach_id, res.text)
+    assert _stored(db, ACADEMY) is None
+
+
+def test_content_limits_are_422(db: Any) -> None:
+    with _client(db) as client:
+        for body in (
+            {"about_text": "x" * 1201},
+            {"highlights": ["a"] * 7},
+            {"faqs": [{"question": "q", "answer": "a"}] * 13},
+            {"hero_photo_url": "javascript:alert(1)"},
+            {"coach_profiles": [{"coach_id": "coach-1", "bio": "b" * 281}]},
+        ):
+            assert client.patch(URL, json=body).status_code == 422, body

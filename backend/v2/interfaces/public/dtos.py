@@ -101,6 +101,28 @@ class PublicPageFlagsDto(BaseModel):
     refund_policy_url: str | None = None
 
 
+class PublicGalleryPhotoDto(BaseModel):
+    """A gallery photo: the address and caption only. The consent record and
+    who confirmed it stay server-side."""
+
+    url: str
+    caption: str = ""
+
+
+class PublicCoachDto(BaseModel):
+    """A coach the academy chose to show, with the photo and short bio the
+    academy wrote. Name comes from the membership-gated coach name lookup."""
+
+    name: str
+    photo_url: str | None = None
+    bio: str = ""
+
+
+class PublicFaqDto(BaseModel):
+    question: str
+    answer: str
+
+
 class PublicAcademyPageDto(BaseModel):
     state: Literal["published"] = "published"
     academy: PublicAcademyDto
@@ -108,6 +130,16 @@ class PublicAcademyPageDto(BaseModel):
     programs: list[PublicProgramDto]
     #: Published classes that belong to no (active) program.
     ungrouped_classes: list[PublicClassDto]
+    #: Landing-page content the academy wrote. Every default is today's page.
+    hero_photo_url: str | None = None
+    about_text: str = ""
+    highlights: list[str] = []
+    gallery: list[PublicGalleryPhotoDto] = []
+    #: Coaches shown with a photo/bio. Coaches with no profile appear only as
+    #: the per-class ``coach_name`` (today's behaviour).
+    coaches: list[PublicCoachDto] = []
+    #: Empty = the page shows its standard questions.
+    faqs: list[PublicFaqDto] = []
 
 
 class PublicAcademyNotPublishedDto(BaseModel):

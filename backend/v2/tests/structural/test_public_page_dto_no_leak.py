@@ -23,6 +23,7 @@ import pkgutil
 import re
 import types
 import typing
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -32,7 +33,13 @@ from pydantic import BaseModel
 
 import backend.v2.interfaces.public as public_pkg
 from backend.v2.interfaces.public.dtos import PUBLIC_REQUEST_MODELS, PUBLIC_RESPONSE_MODELS
-from backend.v2.tests.fixtures.public_page import RIVERSIDE_HOST, SECRETS, build_app, seed
+from backend.v2.tests.fixtures.public_page import (
+    ACADEMY,
+    RIVERSIDE_HOST,
+    SECRETS,
+    build_app,
+    seed,
+)
 
 #: Substrings no public field name may contain.
 BANNED_FIELD_FRAGMENTS = (
@@ -57,6 +64,11 @@ BANNED_FIELD_FRAGMENTS = (
     "policy",
     "status_reason",
     "plan",
+    # Gallery consent record and uploader (content lane): never public.
+    "consent",
+    "confirmed",
+    "uploaded",
+    "uploader",
 )
 #: The deliberately allowed public identifiers (opaque digests) and the one
 #: intentionally public contact field: a support email only, never a phone
@@ -109,6 +121,15 @@ def test_walk_actually_reaches_nested_class_fields() -> None:
     paths = _all_public_field_paths()
     assert "PublicAcademyPageDto.programs.classes.seats.band" in paths
     assert "PublicAcademyPageDto.academy.venue.address" in paths
+    assert "PublicAcademyPageDto.gallery.url" in paths
+    assert "PublicAcademyPageDto.coaches.photo_url" in paths
+
+
+def test_gallery_dto_is_url_and_caption_only() -> None:
+    from backend.v2.interfaces.public.dtos import PublicCoachDto, PublicGalleryPhotoDto
+
+    assert set(PublicGalleryPhotoDto.model_fields) == {"url", "caption"}
+    assert set(PublicCoachDto.model_fields) == {"name", "photo_url", "bio"}
 
 
 def test_no_public_dto_field_names_private_data() -> None:
@@ -181,6 +202,80 @@ def test_seeded_private_values_never_reach_the_response() -> None:
     for cls in [c for p in body["programs"] for c in p["classes"]] + body["ungrouped_classes"]:
         assert set(cls["seats"]) == {"band", "seats_left"}
         assert cls["seats"]["seats_left"] is None or cls["seats"]["seats_left"] <= 3
+
+
+def test_gallery_consent_record_and_coach_id_never_reach_the_response() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-page-content-leak"]
+    asyncio.run(seed(db))
+    uploader = "u-secret-uploader-77"
+    asyncio.run(
+        db["academies"].update_one(
+            {"academy_id": ACADEMY},
+            {
+                "$set": {
+                    "public_page.hero_photo_url": "https://cdn.example.test/hero.jpg",
+                    "public_page.about_text": "Est. 2019.",
+                    "public_page.highlights": ["Small groups"],
+                    "public_page.gallery": [
+                        {
+                            "url": "https://cdn.example.test/g1.jpg",
+                            "caption": "Saturday juniors",
+                            "consent_confirmed": True,
+                            "consent_confirmed_by": uploader,
+                            "consent_confirmed_at": datetime(2026, 9, 30, tzinfo=UTC),
+                        }
+                    ],
+                    "public_page.coach_profiles": [
+                        {
+                            "coach_id": SECRETS["coach_id"],
+                            "photo_url": "https://cdn.example.test/coach.jpg",
+                            "bio": "Level 2 BWF.",
+                            "shown": True,
+                        },
+                        {"coach_id": "coach-hidden", "bio": "Not shown.", "shown": False},
+                    ],
+                    "public_page.faqs": [{"question": "Cost?", "answer": "See classes."}],
+                }
+            },
+        )
+    )
+    response = TestClient(build_app(db)).get(
+        "/api/v2/public/academy", headers={"host": RIVERSIDE_HOST}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hero_photo_url"] == "https://cdn.example.test/hero.jpg"
+    assert body["about_text"] == "Est. 2019."
+    assert body["highlights"] == ["Small groups"]
+    assert body["gallery"] == [
+        {"url": "https://cdn.example.test/g1.jpg", "caption": "Saturday juniors"}
+    ]
+    assert body["coaches"] == [
+        {
+            "name": "Alex Morgan",
+            "photo_url": "https://cdn.example.test/coach.jpg",
+            "bio": "Level 2 BWF.",
+        }
+    ]
+    assert body["faqs"] == [{"question": "Cost?", "answer": "See classes."}]
+    raw = response.text
+    for private in (uploader, "consent", "coach-hidden", "Not shown", SECRETS["coach_id"]):
+        assert private not in raw, f"content lane leaked {private!r}"
+
+
+def test_an_academy_with_no_content_reads_todays_page() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-page-content-default"]
+    asyncio.run(seed(db))
+    body = (
+        TestClient(build_app(db))
+        .get("/api/v2/public/academy", headers={"host": RIVERSIDE_HOST})
+        .json()
+    )
+    assert body["hero_photo_url"] is None and body["about_text"] == ""
+    assert body["highlights"] == [] and body["gallery"] == []
+    assert body["coaches"] == [] and body["faqs"] == []
 
 
 # --- Lane B4: the anonymous trial form (the only public write) ---------------

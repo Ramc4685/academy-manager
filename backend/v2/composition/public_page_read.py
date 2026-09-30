@@ -13,6 +13,7 @@ from typing import Any
 
 from backend.v2.composition.admin_session_staff import attach_session_staff_names
 from backend.v2.contexts.enrollment.application.use_cases.public_catalog import (
+    CoachNameDirectory,
     ListPublicCatalog,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_program_repo import (
@@ -33,6 +34,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 class PublicPageRead:
     get_academy_profile: GetPublicAcademyProfile
     list_catalog: ListPublicCatalog
+    coach_names: CoachNameDirectory
 
 
 class _MemberCoachNames:
@@ -50,11 +52,13 @@ class _MemberCoachNames:
 
 
 def compose_public_page_read(db: Any) -> PublicPageRead:
+    coach_names = _MemberCoachNames(db)
     return PublicPageRead(
         get_academy_profile=GetPublicAcademyProfile(MongoAcademyRepository(db)),
         list_catalog=ListPublicCatalog(
             programs=MongoProgramRepository(db),
             sessions=MongoSessionRepository(db),
-            coach_names=_MemberCoachNames(db),
+            coach_names=coach_names,
         ),
+        coach_names=coach_names,
     )

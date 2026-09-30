@@ -535,6 +535,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_user_governance_audit imp
     MongoUserGovernanceAudit,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.contexts.identity.infrastructure.photo_image import process_photo_image
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     ManageAdminWaiverTemplates,
 )
@@ -1871,6 +1872,7 @@ def compose_admin(
             store=FirebaseStorageMediaStore(settings.media_storage_bucket),
             media_repo=MongoAcademyMediaRepository(db),
             process_image=process_logo_image,
+            process_photo=process_photo_image,
         )
         if settings.media_storage_bucket
         else None
