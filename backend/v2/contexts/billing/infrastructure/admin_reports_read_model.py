@@ -43,6 +43,9 @@ from backend.v2.contexts.billing.application.admin_money import (
     round_money_minor,
 )
 from backend.v2.contexts.billing.infrastructure.cash_received import cash_received_in_period
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    MongoProjectedClassFees,
+)
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
@@ -1023,7 +1026,9 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
     return get_reports_dashboard
 
 
-def make_projected_income_report(db: AsyncIOMotorDatabase[Any]) -> object:
+def make_projected_income_report(
+    db: AsyncIOMotorDatabase[Any], *, class_fees: MongoProjectedClassFees | None = None
+) -> object:
     """Returns an async callable projecting next-month expected tuition.
 
     Projection = active session enrollments x the session's monthly fee
@@ -1031,8 +1036,14 @@ def make_projected_income_report(db: AsyncIOMotorDatabase[Any]) -> object:
     the enrollment is on autopay (``student_billing_enrollments`` with
     ``autopay_enrollment_status == "active"``). Cash actually collected is
     reported by the dashboard; this is the forward-looking counterpart.
+
+    For a month after the academy's current billing month the monthly fee is
+    the one that month will be charged (a scheduled plan price change
+    applied); the current and past months read the stored fee.
     """
     from backend.v2.shared.tenancy import current_academy_id
+
+    projected_fees = class_fees or MongoProjectedClassFees(db)
 
     async def get_projected_income(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
@@ -1097,6 +1108,14 @@ def make_projected_income_report(db: AsyncIOMotorDatabase[Any]) -> object:
                     int(override) if override is not None else None
                 )
 
+        fee_by_session = await projected_fees.fees_for_period(
+            {
+                session_id: int(session.get("amount_cents") or 0)
+                for session_id, session in sessions_by_id.items()
+            },
+            period,
+        )
+
         total_cents = 0
         autopay_cents = 0
         manual_cents = 0
@@ -1107,7 +1126,7 @@ def make_projected_income_report(db: AsyncIOMotorDatabase[Any]) -> object:
             session = sessions_by_id.get(row["session_id"])
             if session is None:
                 continue
-            monthly_fee = int(session.get("amount_cents") or 0)
+            monthly_fee = fee_by_session.get(row["session_id"], 0)
             override = override_by_enrollment.get(row["enrollment_id"])
             expected = override if override is not None else monthly_fee
             if expected <= 0:
@@ -1663,9 +1682,18 @@ def make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
     return financial_report_csv
 
 
-def make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
-    """Returns an async callable for monthly session-level economics."""
+def make_session_economics_report(
+    db: AsyncIOMotorDatabase[Any], *, class_fees: MongoProjectedClassFees | None = None
+) -> object:
+    """Returns an async callable for monthly session-level economics.
+
+    Expected revenue for a month after the academy's current billing month
+    uses the fee that month will be charged (a scheduled plan price change
+    applied); the current and past months read the stored fee.
+    """
     from backend.v2.shared.tenancy import current_academy_id
+
+    projected_fees = class_fees or MongoProjectedClassFees(db)
 
     async def get_session_economics(period: str) -> dict[str, Any]:
         academy_id = current_academy_id()
@@ -1728,12 +1756,18 @@ def make_session_economics_report(db: AsyncIOMotorDatabase[Any]) -> object:
                 if enrollment_id:
                     enrollment_to_session[enrollment_id] = session_id
 
+        fee_by_session = await projected_fees.fees_for_period(
+            {
+                session_id: int(sessions_by_id.get(session_id, {}).get("amount_cents") or 0)
+                for session_id in session_ids
+            },
+            period,
+        )
         expected_by_session: dict[str, int] = {}
         per_occurrence_by_session: dict[str, int] = {}
         monthly_fee_by_session: dict[str, int] = {}
         for session_id in session_ids:
-            session = sessions_by_id.get(session_id, {})
-            monthly_fee = int(session.get("amount_cents") or 0)
+            monthly_fee = fee_by_session.get(session_id, 0)
             enrollment_count = active_enrollments_by_session.get(session_id, 0)
             occurrence_count = occurrences_by_session.get(session_id, 0)
             monthly_fee_by_session[session_id] = monthly_fee

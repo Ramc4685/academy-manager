@@ -9,9 +9,10 @@ the read side of the payout flow: they turn raw ``session_occurrences``,
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -31,9 +32,33 @@ from backend.v2.shared.occurrences import (
 )
 
 
+class ProjectedClassFees(Protocol):
+    """Class fee per billing month for a projection (billing owns the answer).
+
+    A month after the academy's current billing month reads the fee that
+    month will be charged (a scheduled plan price change applied); the
+    current and past months read the stored fee passed in.
+    """
+
+    async def fees_for_periods(
+        self,
+        stored_fee_by_session: Mapping[str, int],
+        periods: Iterable[str],
+        *,
+        academy_id: str | None = None,
+    ) -> dict[tuple[str, str], int]: ...
+
+
 class MongoPayableOccurrenceQuery:
-    def __init__(self, db: AsyncIOMotorDatabase[Any]) -> None:
+    def __init__(
+        self,
+        db: AsyncIOMotorDatabase[Any],
+        *,
+        class_fees: ProjectedClassFees | None = None,
+    ) -> None:
         self._db = db
+        # Unset (tests, old wiring): every month reads the stored fee.
+        self._class_fees = class_fees
 
     async def list_in_period(
         self,
@@ -141,6 +166,20 @@ class MongoPayableOccurrenceQuery:
         if not price_by_session:
             return {}
 
+        # A future month's occurrence is paid on the fee that month will be
+        # charged, so a scheduled plan price change moves the projection;
+        # the current and past months keep the stored fee.
+        fee_by_session_month: dict[tuple[str, str], int] = {}
+        if self._class_fees is not None:
+            months = {
+                self._billing_month_bounds(doc["start_at"])[0].strftime("%Y-%m")
+                for doc in occurrence_docs
+                if occurrence_session_id(doc) in price_by_session
+            }
+            fee_by_session_month = await self._class_fees.fees_for_periods(
+                price_by_session, months, academy_id=academy_id
+            )
+
         # Count the session's payable, non-cancelled occurrences in each
         # occurrence's billing month — from the collection, NOT from the
         # window-scoped ``occurrence_docs`` (#504).
@@ -186,8 +225,11 @@ class MongoPayableOccurrenceQuery:
             month_count = month_counts.get((session_id, month_start), 0)
             if month_count <= 0:
                 continue
+            fee = fee_by_session_month.get(
+                (session_id, month_start.strftime("%Y-%m")), price_by_session[session_id]
+            )
             revenue_by_occurrence[str(doc["occurrence_id"])] = round_money_minor(
-                Decimal(price_by_session[session_id])
+                Decimal(fee)
                 * Decimal(enrolled_by_session.get(session_id, 0))
                 / Decimal(month_count)
             )

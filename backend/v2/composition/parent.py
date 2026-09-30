@@ -91,6 +91,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable, QuoteExpired
+from backend.v2.contexts.billing.domain.plan_price_change import next_period
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
 )
@@ -124,6 +125,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoClassFeeResolver,
+    class_fee_cents_for_period,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
@@ -2446,7 +2448,21 @@ def compose_parent(
         session_doc = await db["sessions"].find_one(
             {"academy_id": academy_id, "session_id": session.session_id}
         )
-        amount_cents = _session_amount_cents(session_doc or {})
+        # The fee the first autopay charge will collect: the next monthly
+        # invoice, i.e. the billing month after the current one on the
+        # session's own clock (the month the checkout quote calls "Starting
+        # next month"). Read through the same month-aware fee every charge path
+        # uses, so a scheduled plan price change is reflected here too.
+        timezone_name = session.timezone or resolve_session_timezone(
+            None, await academy_timezone_lookup(db)(academy_id)
+        )
+        autopay_period = next_period(_local_period_label(clock(), timezone_name))
+        amount_cents = await class_fee_cents_for_period(db, session_doc or {}, autopay_period)
+        if amount_cents <= 0:
+            # An unpriced class reads $0, exactly as checkout reads it (a $0
+            # quote skips payment): there is no monthly charge to automate.
+            # Same 409 as a non-active enrollment.
+            raise ValueError("this class has no monthly fee, so there is nothing to put on autopay")
         result = await start_subscription_checkout.execute(
             StartSubscriptionCheckoutCommand(
                 parent_id=parent_id,
@@ -3112,16 +3128,6 @@ def _require_academy_id(academy_id: str | None) -> str:
     if not academy_id:
         raise ValueError("academy_id is required for parent composition")
     return academy_id
-
-
-def _session_amount_cents(doc: dict[str, object]) -> int:
-    if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])
-    if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])
-    if doc.get("monthly_price") is not None:
-        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
-    return 2500
 
 
 # Invoice statuses where nothing more is owed and a failed attempt against the
