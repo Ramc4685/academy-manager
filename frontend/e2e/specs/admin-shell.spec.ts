@@ -427,6 +427,10 @@ async function stubAdminBff(
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, PRICING_E2E);
   });
+  // The class editor reads scheduled plan price changes (PR 26).
+  await page.route("**/api/v2/admin/pricing/scheduled-class-fees", (route) =>
+    fulfillJson(route, []),
+  );
   await page.route("**/api/v2/admin/session-types*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     // Mirrors the backend: archived rows only when include_archived is set.
@@ -2156,6 +2160,90 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `App console errors on the pricing page: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("change a plan price previews the classes and applies from a future month", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const scheduled: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/pricing/price-changes/preview*", (route) => {
+      const url = new URL(route.request().url());
+      return fulfillJson(route, {
+        plan_id: "st-e2e",
+        plan_name: "Monthly Unlimited",
+        old_cents: 12000,
+        new_cents: Number(url.searchParams.get("new_price_cents")),
+        effective_period: url.searchParams.get("effective_period") ?? "2026-11",
+        earliest_period: "2026-11",
+        classes: [
+          {
+            session_id: "sess-linked",
+            title: "Juniors Tue/Thu",
+            students: 14,
+            old_cents: 12000,
+            new_cents: 13000,
+          },
+        ],
+        not_affected: [
+          {
+            session_id: "sess-custom",
+            title: "Competitive squad",
+            charged_cents: 12000,
+            students: 6,
+          },
+        ],
+        total_classes: 1,
+        total_students: 14,
+        old_monthly_cents: 168000,
+        new_monthly_cents: 182000,
+      });
+    });
+    await page.route("**/api/v2/admin/pricing/price-changes", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      scheduled.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        change_id: "ppc-e2e",
+        plan_id: "st-e2e",
+        plan_name: "Monthly Unlimited",
+        old_cents: 12000,
+        new_cents: 13000,
+        effective_period: "2026-12",
+        session_ids: ["sess-linked"],
+        status: "scheduled",
+        created_by: "admin-e2e",
+        created_at: "2026-09-29T00:00:00Z",
+      });
+    });
+
+    await page.goto("/admin/pricing");
+    const card = page.getByTestId("pricing-change-price");
+    await expect(card).toBeVisible();
+    await card.getByTestId("pricing-price-change-plan").selectOption("st-e2e");
+    await card.getByTestId("pricing-price-change-price").fill("130");
+    await expect(card.getByTestId("pricing-price-change-summary")).toContainText(
+      "1 class, 14 students affected, from the November invoice",
+    );
+    await expect(card.getByTestId("pricing-price-change-not-affected")).toContainText(
+      "Competitive squad",
+    );
+    await card.getByTestId("pricing-price-change-month").selectOption("2026-12");
+    await expect(card.getByTestId("pricing-price-change-apply")).toHaveText(
+      "Apply from December",
+    );
+    await card.getByTestId("pricing-price-change-apply").click();
+
+    await expect.poll(() => scheduled.length).toBe(1);
+    expect(scheduled[0]).toEqual({
+      plan_id: "st-e2e",
+      new_price_cents: 13000,
+      effective_period: "2026-12",
+    });
+    expect(
+      errors,
+      `App console errors on change a plan price: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 

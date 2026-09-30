@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Button, Card, EmptyState, Overline, Th } from "@/components/ds";
 import {
+  formatBillingMonth,
   linkMatchingClasses,
   setClassPlan,
   type PricingClass,
@@ -165,6 +166,15 @@ export function ClassPricesCard({
                       data-testid="pricing-class-charged"
                     >
                       {cls.fee_set ? formatCents(cls.charged_cents) : "No fee set"}
+                      {cls.scheduled_cents != null && cls.scheduled_from && (
+                        <p
+                          className="font-sans text-xs text-status-amber-800"
+                          data-testid="pricing-class-scheduled"
+                        >
+                          Scheduled: {formatCents(cls.scheduled_cents)} from{" "}
+                          {formatBillingMonth(cls.scheduled_from, { year: true })}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums">
                       {cls.students}

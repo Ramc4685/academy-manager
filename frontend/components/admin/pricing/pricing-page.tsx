@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { Card, TableSkeleton } from "@/components/ds";
+import { ChangePlanPriceCard } from "@/components/admin/pricing/change-plan-price-card";
 import { ClassPricesCard } from "@/components/admin/pricing/class-prices-card";
 import { PlansCard } from "@/components/admin/pricing/plans-card";
 import { SavedOverridesCard } from "@/components/admin/pricing/saved-overrides-card";
@@ -12,7 +13,8 @@ import { queryKeys } from "@/lib/query/keys";
 
 /**
  * Pricing under Money (Settings overhaul Phase 3 PR 11b): the plan list,
- * where each class's price comes from, and saved overrides to review.
+ * where each class's price comes from, changing a plan price from a future
+ * month (PR 26), and saved overrides to review.
  * Owner only: the shell swaps the page for the owner-only panel for anyone
  * else (`OWNER_ONLY_ROUTE_PREFIXES`), and the BFF 403s them too.
  */
@@ -31,10 +33,18 @@ export function PricingPage() {
   const linkedCounts = Object.fromEntries(
     (overview?.plans ?? []).map((plan) => [plan.plan_id, plan.linked_classes]),
   );
+  const scheduledPrices = Object.fromEntries(
+    (overview?.plans ?? [])
+      .filter((plan) => plan.scheduled_cents != null && plan.scheduled_from)
+      .map((plan) => [
+        plan.plan_id,
+        { cents: plan.scheduled_cents as number, from: plan.scheduled_from as string },
+      ]),
+  );
 
   return (
     <section data-testid="admin-pricing" className="space-y-6">
-      <PlansCard linkedCounts={linkedCounts} />
+      <PlansCard linkedCounts={linkedCounts} scheduledPrices={scheduledPrices} />
       {query.isPending ? (
         <Card>
           <TableSkeleton rows={4} cols={4} />
@@ -52,6 +62,7 @@ export function PricingPage() {
             plans={overview.plans}
             autoLinkable={overview.auto_linkable}
           />
+          <ChangePlanPriceCard plans={overview.plans} />
           <SavedOverridesCard overrides={overview.saved_overrides} />
         </>
       )}

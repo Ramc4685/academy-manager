@@ -1,0 +1,25 @@
+# Change a plan price from a future month (Settings overhaul Phase 6 PR 26)
+
+PR: #TBD
+
+## What changed
+
+- **"Change a plan price · Preview first"** card on the owner-only Pricing page (`/admin/pricing`). The owner picks a plan, a new monthly price and an "Apply from" month. The preview lists the classes linked to the plan (effective links only), how many students each one bills (the monthly invoice run's own rule: `active` enrollments with a billing type it invoices; paused ones are not counted), totals per month old and new, and "from the <Month> invoice. Invoices already sent never change." Classes on a custom price at the plan's price are listed as not affected. "Apply from <Month>" records the change.
+- **Only future months.** The earliest month is next month, or the month after the latest month that already has monthly invoices (a recorded monthly run for the academy, or an invoice or invoice key for any linked class). The server re-validates on apply: the current month, a past month or an invoiced month is a 422.
+- **One pending change per plan**, enforced by a partial unique index (migration 0212) so two concurrent applies cannot both land (409). A scheduled change can be cancelled from the card until its month starts (409 after).
+- **How the new price reaches bills.** Every charge path now reads a class's fee *for a billing month* through one function (`class_fee_cents_for_period`): monthly invoice and "Bill this month" (`resolve_monthly_charge`, which also covers first-month proration), checkout quote, move proration and cancellation credits. For a class in the change's snapshot whose stored fee is still the old price, a month on or after the effective month reads the new price; an earlier month reads the old one. With no change on record (BLNO today) it returns the stored fee exactly as before.
+- **Links do not go stale.** Once the month starts, the daily monthly-invoice job (03:00 academy time, before generation) moves each linked class fee and the plan price to the new price together, compare-and-set against the old price. A class fee the owner edited by hand is left alone (the hand-set fee wins, before and after). Charges do not depend on this step: the answer for a given class and month is the same before and after it.
+- **"Scheduled: $X from <Month>"** shows on the plan row, on each affected class under "Where each class's price comes from", and under Monthly fee in the class editor (Sessions > class > Edit), until the change takes effect.
+- **Audited** in `billing_audit_log`: `plan_price_change_scheduled`, `plan_price_change_cancelled` (owner) and `plan_price_change_applied` (scheduler, actor `system:plan-price-change`).
+- **API:** `GET /api/v2/admin/pricing/price-changes/preview`, `POST /api/v2/admin/pricing/price-changes`, `DELETE /api/v2/admin/pricing/price-changes/{change_id}`: owner only, a plain admin gets 403. `GET /api/v2/admin/pricing/scheduled-class-fees` is readable by any admin (the class editor note).
+
+## Deploy notes
+
+- Migration `0212_plan_price_changes` (new collection `plan_price_changes`, three indexes led by `academy_id`, the pending one partial on `pending_plan_id $gt ""`). Idempotent, touches no existing data. Run it before or with the deploy; without it everything works except the database-level guard against two concurrent applies (an application-level check still refuses a second pending change).
+- BLNO's bills do not change: no change is on record, so every charge path reads the stored class fee exactly as before (pinned by a real-mongod test on a BLNO-shaped academy). Nothing is written until the owner applies a change.
+
+## Risk / rollback
+
+- Risk: every charge path makes one extra indexed lookup per class read (`plan_price_changes` by academy and class). Empty for BLNO.
+- A direct edit of a plan price in the Plans list while a change is pending is still allowed; the scheduled change then leaves the plan price alone at the effective month (compare-and-set) and those class links show as Custom, as any direct plan price edit does today.
+- Rollback: revert this PR. If a change has been applied, the class fees and plan price keep the new value (they are ordinary stored fees). If a change is only scheduled, revert means it never takes effect; cancel it first to keep the audit trail tidy. The collection can stay.
