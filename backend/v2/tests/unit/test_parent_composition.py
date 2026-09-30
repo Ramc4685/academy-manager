@@ -63,7 +63,8 @@ class _FakeCollection:
         self.docs = docs or []
         self.updates: list[dict[str, Any]] = []
 
-    async def find_one(self, query: dict[str, Any], **_: Any) -> dict[str, Any] | None:
+    async def find_one(self, query: dict[str, Any], *_: Any, **__: Any) -> dict[str, Any] | None:
+        # Like Motor, a projection may be passed positionally (it is ignored).
         for doc in self.docs:
             if _matches(doc, query):
                 return doc
