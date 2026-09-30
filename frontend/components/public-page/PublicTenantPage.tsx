@@ -6,6 +6,7 @@ import {
   formatAgeBand,
   mapsSearchUrl,
   monogram,
+  safeContentImageUrl,
   safeHttpsUrl,
   weeklyClassCount,
 } from "@/lib/public-page/format";
@@ -64,7 +65,7 @@ export function PublicTenantPage({
   const about = page.about_text?.trim() ?? "";
   const highlights = (page.highlights ?? []).map((h) => h.trim()).filter(Boolean);
   const gallery = (page.gallery ?? []).flatMap((photo) => {
-    const url = safeHttpsUrl(photo.url);
+    const url = safeContentImageUrl(photo.url);
     return url ? [{ url, caption: photo.caption?.trim() ?? "" }] : [];
   });
   const hasAbout = about !== "" || highlights.length > 0;
@@ -285,8 +286,8 @@ export function PublicTenantPage({
                 <h2 id="gallery-heading">Gallery</h2>
               </div>
               <ul className={styles.gallery}>
-                {gallery.map((photo) => (
-                  <li key={photo.url}>
+                {gallery.map((photo, i) => (
+                  <li key={`${i}-${photo.url}`}>
                     <figure>
                       <div className={styles.galleryFrame}>
                         <img src={photo.url} alt={photo.caption} loading="lazy" decoding="async" />
@@ -307,11 +308,11 @@ export function PublicTenantPage({
                 <h2 id="coaches-heading">Coaches</h2>
               </div>
               <ul className={styles.coaches} data-testid="public-coaches">
-                {coaches.map((coach) => {
+                {coaches.map((coach, i) => {
                   const initials = monogram(coach.name.replace(/^coach\s+/i, ""));
                   if (!coach.bio && !coach.photoUrl) {
                     return (
-                      <li key={coach.name}>
+                      <li key={`${i}-${coach.name}`}>
                         <span className={styles.avatar} aria-hidden="true">
                           {initials}
                         </span>
@@ -320,7 +321,7 @@ export function PublicTenantPage({
                     );
                   }
                   return (
-                    <li key={coach.name} className={styles.coachCard} data-testid="public-coach-card">
+                    <li key={`${i}-${coach.name}`} className={styles.coachCard} data-testid="public-coach-card">
                       {coach.photoUrl ? (
                         <img
                           className={styles.coachPhoto}

@@ -72,6 +72,9 @@ export function PublicPagePanel() {
 function PageSettingsCard() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<PublicPageForm>(() => toPublicPageForm(null));
+  // Raw text while the threshold field is being edited, so clearing it to type a
+  // new number does not snap to 0; the form keeps the last valid number.
+  const [thresholdDraft, setThresholdDraft] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [location, setLocation] = useState<{ origin: string; host: string } | null>(null);
   const query = useQuery({
@@ -191,14 +194,15 @@ function PageSettingsCard() {
             max={20}
             step={1}
             data-testid="public-page-seats-threshold"
-            value={form.seats_left_threshold}
+            value={thresholdDraft ?? form.seats_left_threshold}
             disabled={!form.show_availability}
-            onChange={(event) =>
-              setForm((prev) => ({
-                ...prev,
-                seats_left_threshold: parseSeatsThreshold(event.target.value),
-              }))
-            }
+            onChange={(event) => {
+              const raw = event.target.value;
+              setThresholdDraft(raw);
+              if (raw.trim() === "") return;
+              setForm((prev) => ({ ...prev, seats_left_threshold: parseSeatsThreshold(raw) }));
+            }}
+            onBlur={() => setThresholdDraft(null)}
             className="min-h-11 w-20 rounded-md border border-rally-line bg-white px-2 py-1 text-right text-sm text-rally-ink disabled:opacity-50"
           />
         </label>

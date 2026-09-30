@@ -46,7 +46,7 @@ export interface PublicPageForm {
 
 export const SEATS_THRESHOLD_MAX = 20;
 
-/** A whole number 0 to 20 from what was typed; blank or junk reads as 0 ("hidden"). */
+/** A whole number 0 to 20 from what was typed; junk reads as 0; the field keeps its last number while blank. */
 export function parseSeatsThreshold(raw: string): number {
   const n = Math.round(Number(raw));
   if (!Number.isFinite(n)) return 0;

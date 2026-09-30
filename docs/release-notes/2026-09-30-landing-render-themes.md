@@ -19,3 +19,5 @@ No migration. BLNO renders exactly as before until an owner or admin changes the
 ## Risk / rollback
 
 Low. The only behaviour change for existing data is none: defaults equal today's look and the `FEW_SEATS_THRESHOLD` of 3 (pinned by a test). Roll back by reverting the PR; stored `theme` and `seats_left_threshold` keys are then ignored by the old code (`extra="ignore"`).
+
+Follow-up notes: hero, gallery and coach photos render only from Firebase Storage (the page CSP `img-src` allows nothing else); other hosts are dropped. The public page is cached for 60 seconds, so a theme or seat threshold change can take up to a minute to appear.

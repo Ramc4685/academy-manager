@@ -4,7 +4,7 @@
  * tested without a server.
  */
 
-import { formatPricePeriod, formatSeatBand, safeHttpsUrl } from "./format";
+import { formatPricePeriod, formatSeatBand, safeContentImageUrl } from "./format";
 import type {
   PublicAcademyNotPublished,
   PublicAcademyPage,
@@ -168,7 +168,7 @@ export function coachCards(page: PublicAcademyPage, classCoachNames: string[]): 
     const name = profile.name?.trim();
     if (!name || seen.has(name.toLowerCase())) continue;
     seen.add(name.toLowerCase());
-    cards.push({ name, photoUrl: safeHttpsUrl(profile.photo_url), bio: profile.bio?.trim() || null });
+    cards.push({ name, photoUrl: safeContentImageUrl(profile.photo_url), bio: profile.bio?.trim() || null });
   }
   for (const raw of classCoachNames) {
     const name = raw.trim();

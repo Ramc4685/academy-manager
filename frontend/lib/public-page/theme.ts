@@ -15,7 +15,7 @@
  * WCAG AA 4.5:1.
  */
 
-import { safeHexColor, safeHttpsUrl } from "./format";
+import { safeContentImageUrl, safeHexColor, safeHttpsUrl } from "./format";
 
 export type PublicPageTheme = "floodlit" | "daylight" | "showcase";
 
@@ -197,7 +197,7 @@ function floodlitVars(input: PageThemeInput): Record<string, string> {
 export function buildPageTheme(input: PageThemeInput): PageTheme {
   const requested = parseTheme(input.theme);
   const logo = safeHttpsUrl(input.logoUrl);
-  const photo = requested === "showcase" ? safeHttpsUrl(input.heroPhotoUrl) : null;
+  const photo = requested === "showcase" ? safeContentImageUrl(input.heroPhotoUrl) : null;
   const theme: PublicPageTheme = requested === "showcase" && !photo ? "floodlit" : requested;
 
   if (theme === "floodlit") {
@@ -270,7 +270,7 @@ export function themePreview(theme: PublicPageTheme, brandColor: string | null):
     brandFill: pair.fill,
     brandOn: pair.on,
     // Only to pick Showcase's colours; the picker draws a stand-in picture.
-    heroPhotoUrl: theme === "showcase" ? "https://preview.invalid/hero.jpg" : null,
+    heroPhotoUrl: theme === "showcase" ? "https://firebasestorage.googleapis.com/preview/hero.jpg" : null,
   });
   const light = built.theme === "daylight";
   return {

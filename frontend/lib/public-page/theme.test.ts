@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   AA_TEXT,
+  SHOWCASE_SCRIM_ALPHA,
   buildPageTheme,
   contrastRatio,
   ensureContrast,
@@ -83,7 +87,7 @@ describe("buildPageTheme", () => {
 
   it("Floodlit ignores the hero photo", () => {
     expect(
-      buildPageTheme({ ...base, theme: "floodlit", heroPhotoUrl: "https://x.test/a.jpg" }).heroPhoto,
+      buildPageTheme({ ...base, theme: "floodlit", heroPhotoUrl: "https://firebasestorage.googleapis.com/v0/b/x/o/a.jpg" }).heroPhoto,
     ).toBeNull();
   });
 
@@ -129,10 +133,10 @@ describe("buildPageTheme", () => {
     const theme = buildPageTheme({
       ...base,
       theme: "showcase",
-      heroPhotoUrl: "https://cdn.example.test/hero.jpg",
+      heroPhotoUrl: "https://firebasestorage.googleapis.com/v0/b/x/o/hero.jpg",
     });
     expect(theme.theme).toBe("showcase");
-    expect(theme.heroPhoto).toBe("https://cdn.example.test/hero.jpg");
+    expect(theme.heroPhoto).toBe("https://firebasestorage.googleapis.com/v0/b/x/o/hero.jpg");
     const worst = scrimmedWhite();
     expect(contrastRatio("#ffffff", worst)).toBeGreaterThanOrEqual(AA_TEXT);
     expect(contrastRatio(theme.vars["--on-night-2"], worst)).toBeGreaterThanOrEqual(AA_TEXT);
@@ -175,5 +179,17 @@ describe("themePreview", () => {
     expect(themePreview("daylight", PALE).band).toBe("#f1f5f9");
     expect(themePreview("showcase", PALE).photo).toBe(true);
     expect(themePreview("floodlit", PALE).photo).toBe(false);
+  });
+});
+
+describe("showcase scrim", () => {
+  it("the CSS scrim alpha matches SHOWCASE_SCRIM_ALPHA", () => {
+    const css = readFileSync(
+      join(process.cwd(), "components/public-page/public-page.module.css"),
+      "utf8",
+    );
+    const block = /\.heroScrim\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
+    const alpha = /rgba\(\s*10,\s*15,\s*28,\s*([0-9.]+)\s*\)/.exec(block)?.[1];
+    expect(Number(alpha)).toBe(SHOWCASE_SCRIM_ALPHA);
   });
 });

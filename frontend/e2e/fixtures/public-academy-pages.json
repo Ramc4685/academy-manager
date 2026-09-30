@@ -606,18 +606,18 @@
     ],
     "gallery": [
       {
-        "url": "https://cdn.lakeside.example.test/g1.jpg",
+        "url": "https://firebasestorage.googleapis.com/v0/b/lakeside/o/g1.jpg",
         "caption": "Juniors warming up"
       },
       {
-        "url": "https://cdn.lakeside.example.test/g2.jpg",
+        "url": "https://firebasestorage.googleapis.com/v0/b/lakeside/o/g2.jpg",
         "caption": "Saturday match day"
       }
     ],
     "coaches": [
       {
         "name": "Coach Priya Nair",
-        "photo_url": "https://cdn.lakeside.example.test/priya.jpg",
+        "photo_url": "https://firebasestorage.googleapis.com/v0/b/lakeside/o/priya.jpg",
         "bio": "Former state champion who loves teaching footwork."
       }
     ],

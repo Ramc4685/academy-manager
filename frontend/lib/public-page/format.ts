@@ -270,6 +270,18 @@ export function safeHttpsUrl(value: string | null | undefined): string | null {
   }
 }
 
+/**
+ * An https URL on the Firebase Storage origin, the only image host the page CSP
+ * (`img-src` in next.config.ts) allows. Content photos (hero, gallery, coach)
+ * are uploaded there; anything else would render blank, so it is dropped.
+ */
+export const CONTENT_IMAGE_HOST = "firebasestorage.googleapis.com";
+export function safeContentImageUrl(value: string | null | undefined): string | null {
+  const safe = safeHttpsUrl(value);
+  if (!safe) return null;
+  return new URL(safe).hostname === CONTENT_IMAGE_HOST ? safe : null;
+}
+
 /** Plain "Open in maps" search link; no embedded map, no API key. */
 export function mapsSearchUrl(address: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;

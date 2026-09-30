@@ -12,7 +12,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from backend.v2.contexts.identity.application.public_page_settings import (
+    DEFAULT_SEATS_LEFT_THRESHOLD,
+    PublicPageTheme,
+)
 
 
 class PublicAgeBandDto(BaseModel):
@@ -97,10 +102,10 @@ class PublicPageFlagsDto(BaseModel):
     price_period_default: str
     privacy_notice_url: str | None = None
     #: "floodlit" | "daylight" | "showcase": the academy's chosen look.
-    theme: str = "floodlit"
+    theme: PublicPageTheme = "floodlit"
     #: The class rows already apply it (a "few" band carries the number only
     #: at or below it); sent so the page and its tests can read the setting.
-    seats_left_threshold: int = 3
+    seats_left_threshold: int = Field(default=DEFAULT_SEATS_LEFT_THRESHOLD, ge=0, le=20)
     #: Footer legal links; null when the academy has not set them.
     terms_url: str | None = None
     refund_policy_url: str | None = None

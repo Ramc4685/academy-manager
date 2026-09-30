@@ -14,6 +14,7 @@ import {
   mapsSearchUrl,
   monogram,
   safeHexColor,
+  safeContentImageUrl,
   safeHttpsUrl,
   truncate,
   weeklyClassCount,
@@ -175,6 +176,15 @@ describe("text and safety guards", () => {
     expect(safeHexColor("#0f766e", "#000")).toBe("#0f766e");
     expect(safeHexColor("red;background:url(x)", "#0f172a")).toBe("#0f172a");
     expect(safeHexColor(null, "#fff")).toBe("#fff");
+  });
+
+  it("accepts content images only from Firebase Storage over https", () => {
+    const ok = "https://firebasestorage.googleapis.com/v0/b/x/o/a.jpg";
+    expect(safeContentImageUrl(ok)).toBe(ok);
+    expect(safeContentImageUrl("https://cdn.example/a.jpg")).toBeNull();
+    expect(safeContentImageUrl("http://firebasestorage.googleapis.com/a.jpg")).toBeNull();
+    expect(safeContentImageUrl("https://firebasestorage.googleapis.com.evil.test/a.jpg")).toBeNull();
+    expect(safeContentImageUrl(null)).toBeNull();
   });
 
   it("accepts only https URLs", () => {

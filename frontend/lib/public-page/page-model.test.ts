@@ -121,13 +121,13 @@ describe("academy content (Settings Phase 6)", () => {
     const page = {
       ...published,
       coaches: [
-        { name: "Coach Sam Okafor", photo_url: "https://cdn.example.test/s.jpg", bio: "Loves drills." },
+        { name: "Coach Sam Okafor", photo_url: "https://firebasestorage.googleapis.com/v0/b/x/o/s.jpg", bio: "Loves drills." },
         { name: "coach alex rivera", photo_url: "http://insecure.test/a.jpg", bio: "" },
       ],
     };
     const cards = coachCards(page, describePublishedPage(page).coaches);
     expect(cards).toEqual([
-      { name: "Coach Sam Okafor", photoUrl: "https://cdn.example.test/s.jpg", bio: "Loves drills." },
+      { name: "Coach Sam Okafor", photoUrl: "https://firebasestorage.googleapis.com/v0/b/x/o/s.jpg", bio: "Loves drills." },
       { name: "coach alex rivera", photoUrl: null, bio: null },
     ]);
   });

@@ -74,11 +74,11 @@ describe("PublicTenantPage on Showcase", () => {
   it("draws the hero photo and skips the court drawing", () => {
     const html = render({
       ...riverside,
-      hero_photo_url: "https://cdn.example.test/hero.jpg",
+      hero_photo_url: "https://firebasestorage.googleapis.com/v0/b/x/o/hero.jpg",
       page: { ...riverside.page, theme: "showcase" },
     });
     expect(html).toContain('data-theme="showcase"');
-    expect(html).toContain('src="https://cdn.example.test/hero.jpg"');
+    expect(html).toContain('src="https://firebasestorage.googleapis.com/v0/b/x/o/hero.jpg"');
     expect(html).not.toMatch(/class="_court_/);
   });
 

@@ -46,14 +46,12 @@ from backend.v2.contexts.enrollment.application.use_cases.programs import (
     UpdateProgram,
 )
 from backend.v2.contexts.identity.application.public_page_settings import (
+    MAX_SEATS_LEFT_THRESHOLD,
     GetPublicPageAddress,
     GetPublicPageSettings,
     PublicPageSettings,
-    UpdatePublicPageSettings,
-)
-from backend.v2.contexts.identity.domain.public_page import (
-    MAX_SEATS_LEFT_THRESHOLD,
     PublicPageTheme,
+    UpdatePublicPageSettings,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona

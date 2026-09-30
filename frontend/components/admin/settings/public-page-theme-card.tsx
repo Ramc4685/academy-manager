@@ -39,7 +39,7 @@ export function PublicPageThemeCard({
       <legend className="text-sm font-semibold text-rally-ink">Theme</legend>
       <p className="mt-1 text-sm text-rally-muted">
         Every theme uses your logo and brand colour from Academy profile, adjusted so text is
-        always readable.
+        always readable. Changes can take up to a minute to show on the live page.
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         {PUBLIC_PAGE_THEMES.map((theme) => {
