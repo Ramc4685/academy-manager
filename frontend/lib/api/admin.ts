@@ -1209,15 +1209,56 @@ export interface AdminWaiverTemplateManagementView {
   assigned_to_registration: boolean;
   assigned_at: string | null;
   updated_at: string;
+  /** One key per waiver, shared by all its versions. */
+  lineage_key?: string | null;
+  /** Who must sign it: not required, all families, or the listed programs. */
+  required?: boolean;
+  scope?: AdminWaiverScope;
+  program_ids?: string[];
+}
+
+export type AdminWaiverScope = "all" | "programs";
+
+export interface AdminWaiverProgram {
+  program_id: string;
+  name: string;
 }
 
 export interface AdminWaiverTemplateManagementList {
   templates: AdminWaiverTemplateManagementView[];
+  /** The academy's programs, for the Assign control and the "Required for" label. */
+  programs?: AdminWaiverProgram[];
 }
 
 export interface AdminWaiverTemplateCreateRequest {
   title: string;
   body: string;
+  /** Draft a new version of this waiver instead of a new waiver. */
+  based_on_waiver_template_id?: string | null;
+}
+
+export interface AdminWaiverAssignRequest {
+  required: boolean;
+  scope: AdminWaiverScope;
+  program_ids: string[];
+}
+
+export type AdminStudentWaiverState = "signed" | "older_version" | "unsigned";
+
+export interface AdminStudentWaiverRow {
+  waiver_template_id: string;
+  lineage_key: string;
+  title: string;
+  version: string | null;
+  status: AdminStudentWaiverState;
+  signed_version: string | null;
+  signed_at: string | null;
+  signature_id: string | null;
+}
+
+export interface AdminStudentWaiverStatus {
+  student_id: string;
+  waivers: AdminStudentWaiverRow[];
 }
 
 export interface AdminWaiverTemplateDetail {
@@ -1254,6 +1295,12 @@ export interface AdminWaiverSignatureDetail {
   gap_note: string;
 }
 
+export interface AdminUnsignedWaiver {
+  waiver_template_id: string;
+  title: string;
+  version: string | null;
+}
+
 export interface AdminRegistrationRow {
   application_id: string;
   status: string;
@@ -1265,6 +1312,8 @@ export interface AdminRegistrationRow {
   session_title: string | null;
   waiver_required: boolean;
   waiver_satisfied: boolean;
+  /** Required waivers not yet signed: a warning for staff, never a block. */
+  unsigned_waivers?: AdminUnsignedWaiver[];
   zero_quote_period: string | null;
   /** Issue #776: when the waitlist/decline email actually reached the family. */
   family_notified_at: string | null;
@@ -3194,6 +3243,23 @@ export function assignAdminWaiverTemplateToRegistration(
   return apiFetch<AdminWaiverTemplateManagementView>(
     `/admin/waivers/templates/${encodeURIComponent(waiverTemplateId)}/assign-registration`,
     { method: "POST" },
+  );
+}
+
+export function assignAdminWaiverTemplate(
+  waiverTemplateId: string,
+  payload: AdminWaiverAssignRequest,
+): Promise<AdminWaiverTemplateManagementView> {
+  return apiFetch<AdminWaiverTemplateManagementView>(
+    `/admin/waivers/templates/${encodeURIComponent(waiverTemplateId)}/assignment`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function getAdminStudentWaivers(studentId: string): Promise<AdminStudentWaiverStatus> {
+  return apiFetch<AdminStudentWaiverStatus>(
+    `/admin/waivers/students/${encodeURIComponent(studentId)}`,
+    { method: "GET" },
   );
 }
 

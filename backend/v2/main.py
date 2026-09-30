@@ -69,6 +69,7 @@ from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
     compose_sweep_expired_waitlist_offers,
 )
+from backend.v2.composition.waiver_assignment import compose_admin_student_waivers
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsCommand,
@@ -880,6 +881,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_family_record = compose_admin_family_record(db)
     # Public tenant page programs + publish switches (Lane B1).
     app.state.admin_public_page = compose_admin_public_page(db)
+    # Per-waiver status on the admin student page (Settings Phase 6).
+    app.state.admin_student_waivers = compose_admin_student_waivers(db)
     # Anonymous public tenant page read (Lane B2), GET /api/v2/public/academy.
     app.state.public_page = compose_public_page_read(db)
     # Anonymous public trial request (Lane B4), POST /api/v2/public/trial-requests.

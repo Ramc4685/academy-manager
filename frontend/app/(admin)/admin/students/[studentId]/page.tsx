@@ -22,7 +22,7 @@ import {
   Wallet,
 } from "lucide-react";
 
-import { listAdminUsers } from "@/lib/api/admin";
+import { getAdminStudentWaivers, listAdminUsers } from "@/lib/api/admin";
 import { getAdminStudent, type AdminStudentDetail } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
 import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
@@ -51,6 +51,7 @@ import { DetailList } from "./DetailList";
 import { FamilyBillingLink } from "./FamilyBillingLink";
 import { formatCurrencyCents, formatDate, formatDateTime, formatDateUtc } from "./format";
 import { SessionsPanel } from "./SessionsPanel";
+import { StudentWaiversPanel, StudentWaiverWarning } from "./StudentWaivers";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
 import { ChangeParentPanel, StudentEditForm } from "./StudentEditForm";
 
@@ -90,6 +91,14 @@ export default function AdminStudentDetailPage() {
   const studentQuery = useQuery({
     queryKey: queryKeys.admin.studentDetail(studentId),
     queryFn: () => getAdminStudent(studentId),
+    enabled: Boolean(studentId),
+    retry: false,
+  });
+  // One row per waiver that applies through the student's classes. Failing to
+  // load it never hides the page: it is a warning surface, not a gate.
+  const waiversQuery = useQuery({
+    queryKey: queryKeys.admin.studentWaivers(studentId),
+    queryFn: () => getAdminStudentWaivers(studentId),
     enabled: Boolean(studentId),
     retry: false,
   });
@@ -185,6 +194,7 @@ export default function AdminStudentDetailPage() {
         />
       )}
       <StudentSummaryStrip student={student} />
+      <StudentWaiverWarning rows={waiversQuery.data?.waivers ?? []} />
       <StudentTabs activeTab={activeTab} onChange={selectTab} />
 
       {activeTab === "overview" && (
@@ -280,6 +290,11 @@ export default function AdminStudentDetailPage() {
                 <Overline>Family & compliance</Overline>
               </div>
               <ComplianceSummary student={student} />
+              <StudentWaiversPanel
+                rows={waiversQuery.data?.waivers ?? []}
+                loading={waiversQuery.isPending}
+                error={waiversQuery.isError}
+              />
               <StudentEditForm
                 mode="family"
                 student={student}

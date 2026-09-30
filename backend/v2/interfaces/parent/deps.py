@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Request
 
@@ -95,6 +96,9 @@ class ParentUseCases:
     preview_self_cancel: PreviewSelfCancel | None = None
     self_cancel_enrollment: SelfCancelEnrollment | None = None
     get_registration_waiver: object = None  # callable -> Waiver | None
+    get_registration_waivers: Callable[[str | None], Awaitable[tuple[list[Any], bool]]] | None = (
+        None
+    )
     start_invoice_payment_for_parent: object | None = None  # callable
     start_balance_payment_for_parent: object | None = None  # callable
     # Optional so existing ParentUseCases constructions (and tests) that predate

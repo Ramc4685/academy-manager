@@ -127,6 +127,7 @@ export const queryKeys = {
     messages: () => ["admin", "messages"] as const,
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,
+    studentWaivers: (studentId: string) => ["admin", "waivers", "student", studentId] as const,
     attention: () => ["admin", "dashboard", "attention"] as const,
     setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,

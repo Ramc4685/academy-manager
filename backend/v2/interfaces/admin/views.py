@@ -1589,6 +1589,19 @@ class AdminWaiverTemplateCreateRequest(BaseModel):
     title: str
     body: str | None = None
     content: str | None = None
+    # Draft a new version of this waiver instead of a new waiver.
+    based_on_waiver_template_id: str | None = None
+
+
+class AdminWaiverAssignRequest(BaseModel):
+    required: bool
+    scope: Literal["all", "programs"] = "all"
+    program_ids: list[str] = []
+
+
+class AdminWaiverProgramView(BaseModel):
+    program_id: str
+    name: str
 
 
 class AdminWaiverTemplateManagementView(BaseModel):
@@ -1603,10 +1616,34 @@ class AdminWaiverTemplateManagementView(BaseModel):
     assigned_to_registration: bool = False
     assigned_at: datetime | None = None
     updated_at: datetime
+    # One key per waiver, shared by all its versions.
+    lineage_key: str | None = None
+    # Who must sign: not required, all families, or the listed programs.
+    required: bool = False
+    scope: Literal["all", "programs"] = "all"
+    program_ids: list[str] = []
 
 
 class AdminWaiverTemplateManagementList(BaseModel):
     templates: list[AdminWaiverTemplateManagementView] = []
+    # The academy's programs, for the Assign control and "Required for" labels.
+    programs: list[AdminWaiverProgramView] = []
+
+
+class AdminStudentWaiverRowView(BaseModel):
+    waiver_template_id: str
+    lineage_key: str
+    title: str
+    version: str | None = None
+    status: Literal["signed", "older_version", "unsigned"]
+    signed_version: str | None = None
+    signed_at: datetime | None = None
+    signature_id: str | None = None
+
+
+class AdminStudentWaiverStatusView(BaseModel):
+    student_id: str
+    waivers: list[AdminStudentWaiverRowView] = []
 
 
 class AdminWaiverTemplateDetailView(BaseModel):
@@ -1624,6 +1661,12 @@ class AdminWaiverTemplateDetailView(BaseModel):
     gap_note: str
 
 
+class AdminUnsignedWaiverView(BaseModel):
+    waiver_template_id: str
+    title: str
+    version: str | None = None
+
+
 class AdminRegistrationRowView(BaseModel):
     application_id: str
     status: str
@@ -1635,6 +1678,8 @@ class AdminRegistrationRowView(BaseModel):
     session_title: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
+    # Required waivers not yet signed: a warning to staff, never a block.
+    unsigned_waivers: list[AdminUnsignedWaiverView] = []
     zero_quote_period: str | None = None
     # Issue #776: when the waitlist/decline email actually reached the family.
     family_notified_at: datetime | None = None

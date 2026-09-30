@@ -12,6 +12,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
     AdminWaiverTemplateRecord,
 )
 from backend.v2.contexts.onboarding.domain.models import WaiverSignature
+from backend.v2.contexts.onboarding.domain.waiver_assignment import LEGACY_LINEAGE_KEY
 from backend.v2.shared.ids import new_ulid
 
 ParentWaiverStatus = Literal["signed", "pending", "outdated", "not_required"]
@@ -40,6 +41,16 @@ class ParentWaiverSignature(BaseModel):
     # ``parent_user_id`` is unknown but which we know were inherited.
     outdated_for_parent: bool = False
     signed_at: datetime | None = None
+    # Which waiver (across versions) the signature is for; ``None`` reads as the
+    # legacy lineage, and so does a signature whose template has no key.
+    lineage_key: str | None = None
+    waiver_signature_id: str | None = None
+    # The version of the template the signature pins to (for staff views).
+    signed_version: str | None = None
+
+    @property
+    def lineage(self) -> str:
+        return self.lineage_key or LEGACY_LINEAGE_KEY
 
 
 class ParentWaiverStudentStatus(BaseModel):
@@ -52,26 +63,95 @@ class ParentWaiverStudentStatus(BaseModel):
     waiver_version: str | None = None
 
 
-class ParentWaiverRequirement(BaseModel):
+class ParentWaiverItem(BaseModel):
+    """One waiver and the children who must sign it."""
+
     model_config = {"frozen": True}
 
-    required: bool
-    waiver_template_id: str | None = None
+    waiver_template_id: str
     title: str | None = None
     version: str | None = None
     body: str | None = None
     students: list[ParentWaiverStudentStatus]
 
 
+class ParentWaiverRequirement(BaseModel):
+    model_config = {"frozen": True}
+
+    required: bool
+    # The first waiver, flat: a single-waiver academy (every academy today)
+    # reads exactly as it always has.
+    waiver_template_id: str | None = None
+    title: str | None = None
+    version: str | None = None
+    body: str | None = None
+    students: list[ParentWaiverStudentStatus]
+    waivers: list[ParentWaiverItem] = []
+
+
 class ParentWaiverRepository(Protocol):
-    async def get_required_template(self) -> AdminWaiverTemplateRecord | None: ...
+    async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]: ...
     async def list_active_students_for_parent(
         self, parent_id: str
     ) -> list[ParentWaiverStudent]: ...
-    async def latest_signatures_for_students(
+    async def program_ids_for_students(self, student_ids: list[str]) -> dict[str, set[str]]: ...
+    async def signatures_for_students(
         self, student_ids: list[str]
-    ) -> dict[str, ParentWaiverSignature]: ...
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        """Latest signature per (student id, lineage key)."""
+        ...
+
     async def save_signature(self, signature: WaiverSignature) -> None: ...
+
+
+class _RequiredSet(BaseModel):
+    """The live waivers that apply to this parent's children, and to whom."""
+
+    model_config = {"frozen": True}
+
+    students: list[ParentWaiverStudent]
+    # (template, students it applies to), in display order.
+    waivers: list[tuple[AdminWaiverTemplateRecord, list[ParentWaiverStudent]]]
+
+
+async def _required_set(waivers: ParentWaiverRepository, parent_id: str) -> _RequiredSet:
+    templates = await waivers.list_required_templates()
+    students = await waivers.list_active_students_for_parent(parent_id)
+    if not templates:
+        return _RequiredSet(students=students, waivers=[])
+    if not students:
+        # No live-enrolled child: the page still shows the waiver everyone
+        # signs (as it did with one registration waiver), with nobody to sign.
+        everyone = [t for t in templates if t.assignment.for_all_families]
+        return _RequiredSet(students=students, waivers=[(t, []) for t in everyone])
+    programs = await waivers.program_ids_for_students([s.student_id for s in students])
+    applicable: list[tuple[AdminWaiverTemplateRecord, list[ParentWaiverStudent]]] = []
+    for template in templates:
+        covered = [
+            student
+            for student in students
+            if template.assignment.applies_to(programs.get(student.student_id, set()))
+        ]
+        if covered:
+            applicable.append((template, covered))
+    # All-family waivers first: the primary one is the same waiver a
+    # single-waiver academy has always shown.
+    applicable.sort(key=lambda pair: 0 if pair[0].assignment.for_all_families else 1)
+    return _RequiredSet(students=students, waivers=applicable)
+
+
+def _not_required(students: list[ParentWaiverStudent]) -> ParentWaiverRequirement:
+    return ParentWaiverRequirement(
+        required=False,
+        students=[
+            ParentWaiverStudentStatus(
+                student_id=student.student_id,
+                student_name=student.student_name,
+                status="not_required",
+            )
+            for student in students
+        ],
+    )
 
 
 class GetParentWaiverRequirement:
@@ -79,24 +159,13 @@ class GetParentWaiverRequirement:
         self._waivers = waivers
 
     async def execute(self, *, parent_id: str) -> ParentWaiverRequirement:
-        template = await self._waivers.get_required_template()
-        students = await self._waivers.list_active_students_for_parent(parent_id)
-        if template is None:
-            return ParentWaiverRequirement(
-                required=False,
-                students=[
-                    ParentWaiverStudentStatus(
-                        student_id=student.student_id,
-                        student_name=student.student_name,
-                        status="not_required",
-                    )
-                    for student in students
-                ],
-            )
-        signatures = await self._waivers.latest_signatures_for_students(
-            [student.student_id for student in students]
+        required = await _required_set(self._waivers, parent_id)
+        if not required.waivers:
+            return _not_required(required.students)
+        signatures = await self._waivers.signatures_for_students(
+            [student.student_id for student in required.students]
         )
-        return _requirement_view(template, students, signatures, parent_id=parent_id)
+        return _requirement_view(required, signatures, parent_id=parent_id)
 
 
 class AcceptParentWaiver:
@@ -122,74 +191,75 @@ class AcceptParentWaiver:
         ip_address: str | None,
         user_agent: str | None,
     ) -> ParentWaiverRequirement:
-        template = await self._waivers.get_required_template()
-        students = await self._waivers.list_active_students_for_parent(parent_id)
-        if template is None:
-            return ParentWaiverRequirement(
-                required=False,
-                students=[
-                    ParentWaiverStudentStatus(
-                        student_id=student.student_id,
-                        student_name=student.student_name,
-                        status="not_required",
-                    )
-                    for student in students
-                ],
-            )
+        required = await _required_set(self._waivers, parent_id)
+        if not required.waivers:
+            return _not_required(required.students)
 
-        signatures = await self._waivers.latest_signatures_for_students(
-            [student.student_id for student in students]
+        signatures = await self._waivers.signatures_for_students(
+            [student.student_id for student in required.students]
         )
         now = self._clock()
         # Request-time tenant via the injected provider — never a boot-time value.
         academy_id = self._academy_id()
-        for student in students:
-            existing = signatures.get(student.student_id)
-            if existing and _is_current(existing, template) and _signed_by(existing, parent_id):
-                continue
-            signature = WaiverSignature(
-                waiver_signature_id=self._id_factory(),
-                academy_id=academy_id,
-                waiver_template_id=template.waiver_template_id,
-                student_id=student.student_id,
-                parent_user_id=parent_id,
-                signed_at=now,
-                signer_name=signer_name or signer_email,
-                signer_email=signer_email,
-                content_hash=template.content_hash or "",
-                ip_address=ip_address,
-                user_agent=user_agent,
-            )
-            await self._waivers.save_signature(signature)
+        for template, covered in required.waivers:
+            for student in covered:
+                existing = signatures.get((student.student_id, template.lineage))
+                if existing and _is_current(existing, template) and _signed_by(existing, parent_id):
+                    continue
+                signature = WaiverSignature(
+                    waiver_signature_id=self._id_factory(),
+                    academy_id=academy_id,
+                    waiver_template_id=template.waiver_template_id,
+                    student_id=student.student_id,
+                    parent_user_id=parent_id,
+                    signed_at=now,
+                    signer_name=signer_name or signer_email,
+                    signer_email=signer_email,
+                    content_hash=template.content_hash or "",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+                await self._waivers.save_signature(signature)
 
-        signatures = await self._waivers.latest_signatures_for_students(
-            [student.student_id for student in students]
+        signatures = await self._waivers.signatures_for_students(
+            [student.student_id for student in required.students]
         )
-        return _requirement_view(template, students, signatures, parent_id=parent_id)
+        return _requirement_view(required, signatures, parent_id=parent_id)
 
 
 def _requirement_view(
-    template: AdminWaiverTemplateRecord,
-    students: list[ParentWaiverStudent],
-    signatures: dict[str, ParentWaiverSignature],
+    required: _RequiredSet,
+    signatures: dict[tuple[str, str], ParentWaiverSignature],
     *,
     parent_id: str,
 ) -> ParentWaiverRequirement:
+    items = [
+        ParentWaiverItem(
+            waiver_template_id=template.waiver_template_id,
+            title=template.title,
+            version=template.version,
+            body=template.body,
+            students=[
+                _student_status(
+                    student,
+                    template,
+                    signatures.get((student.student_id, template.lineage)),
+                    parent_id=parent_id,
+                )
+                for student in covered
+            ],
+        )
+        for template, covered in required.waivers
+    ]
+    first = items[0]
     return ParentWaiverRequirement(
         required=True,
-        waiver_template_id=template.waiver_template_id,
-        title=template.title,
-        version=template.version,
-        body=template.body,
-        students=[
-            _student_status(
-                student,
-                template,
-                signatures.get(student.student_id),
-                parent_id=parent_id,
-            )
-            for student in students
-        ],
+        waiver_template_id=first.waiver_template_id,
+        title=first.title,
+        version=first.version,
+        body=first.body,
+        students=first.students,
+        waivers=items,
     )
 
 
@@ -231,6 +301,18 @@ def _signed_by(signature: ParentWaiverSignature, parent_id: str) -> bool:
     if signature.parent_user_id is None:
         return True
     return signature.parent_user_id == parent_id
+
+
+def signature_is_current(
+    signature: ParentWaiverSignature,
+    template: AdminWaiverTemplateRecord,
+) -> bool:
+    """Whether an older-or-equal signature still counts for this live version.
+
+    Same content hash counts; without hashes the same template id or version
+    does. A signature for an older version with different wording does not.
+    """
+    return _is_current(signature, template)
 
 
 def _is_current(

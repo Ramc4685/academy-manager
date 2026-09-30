@@ -33,6 +33,7 @@ TEMPLATE = AdminWaiverTemplateRecord(
     version="2026.1",
     content_hash="hash-2026",
     assigned_to_registration=True,
+    required=True,
     updated_at=NOW,
 )
 
@@ -42,8 +43,16 @@ class FakeParentWaiverRepo:
         self._signatures = dict(signatures)
         self.saved: list[WaiverSignature] = []
 
-    async def get_required_template(self) -> AdminWaiverTemplateRecord | None:
-        return TEMPLATE
+    async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]:
+        return [TEMPLATE]
+
+    async def program_ids_for_students(self, student_ids: list[str]) -> dict[str, set[str]]:
+        return {}
+
+    async def signatures_for_students(
+        self, student_ids: list[str]
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        return {(k, "legacy"): v for k, v in self._signatures.items() if k in student_ids}
 
     async def list_active_students_for_parent(self, parent_id: str) -> list[ParentWaiverStudent]:
         return [ParentWaiverStudent(student_id="st-1", student_name="Alice Chen")]
