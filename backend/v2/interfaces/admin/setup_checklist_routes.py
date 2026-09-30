@@ -119,12 +119,21 @@ def _is_staff(user: Any) -> bool:
 
 
 def _waiver_done(report: Any) -> bool:
-    """An active waiver that is not still the bootstrap placeholder."""
-    active = _field(report, "active_waiver")
-    if active is None:
-        return False
-    body = _field(active, "body")
-    return not (isinstance(body, str) and body.strip() == DEFAULT_WAIVER_BODY)
+    """At least one live waiver that is not still the bootstrap placeholder.
+
+    Any lineage counts, required or not: an academy with only a program-scoped
+    waiver has still written its own. A report that predates ``live_waivers``
+    is read through its single ``active_waiver``.
+    """
+    live = _field(report, "live_waivers")
+    if not live:
+        active = _field(report, "active_waiver")
+        live = [] if active is None else [active]
+    for waiver in live:
+        body = _field(waiver, "body")
+        if not (isinstance(body, str) and body.strip() == DEFAULT_WAIVER_BODY):
+            return True
+    return False
 
 
 def build_setup_checklist(

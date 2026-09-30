@@ -1580,10 +1580,27 @@ class AdminWaiverStudentView(BaseModel):
     share_status: str = "unavailable"
 
 
+class AdminWaiverLineageView(BaseModel):
+    """One live waiver: its own counts and the students it applies to."""
+
+    lineage_key: str
+    waiver: AdminWaiverDocumentView
+    # Who must sign it (an unassigned live waiver applies to nobody).
+    required: bool = False
+    scope: Literal["all", "programs"] = "all"
+    program_ids: list[str] = []
+    summary: AdminWaiverSummaryView
+    waivers: list[AdminWaiverStudentView] = []
+
+
 class AdminWaiverList(BaseModel):
+    # ``summary``, ``current_waiver`` and ``waivers`` are the primary waiver's
+    # (the first of ``lineages``), so a single-waiver academy reads as before.
     summary: AdminWaiverSummaryView
     current_waiver: AdminWaiverDocumentView | None = None
     waivers: list[AdminWaiverStudentView] = []
+    # One entry per live waiver; only students it applies to are counted.
+    lineages: list[AdminWaiverLineageView] = []
 
 
 class AdminWaiverTemplateCreateRequest(BaseModel):
