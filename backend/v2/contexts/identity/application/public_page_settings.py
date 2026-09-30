@@ -10,6 +10,7 @@ another. Consumers: the admin settings panel (B5) and the public read (B2).
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -27,6 +28,8 @@ from backend.v2.contexts.identity.domain.public_page import (
     PublicPageSettings,
     PublicPageTheme,
 )
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_SEATS_LEFT_THRESHOLD",
@@ -106,21 +109,45 @@ class GetPublicPageAddress:
         return None
 
 
-def _is_store_object(url: str, base: str | None, academy_id: str, purpose: str) -> bool:
-    """True only for ``base`` + ``academies/<academy_id>/<purpose>/<one file>``.
+def _store_object_path(url: str, base: str | None, academy_id: str, purpose: str) -> str | None:
+    """The object path for ``base`` + ``academies/<academy_id>/<purpose>/<one file>``, else None.
 
     The prefix is compared on the raw string (scheme, host and bucket must
     match exactly); the remainder, minus query and fragment, is decoded once
     and must be exactly three fixed segments plus one plain file name.
     """
     if not base or not base.startswith("https://") or not url.startswith(base):
-        return False
+        return None
     rest = url[len(base) :].split("#", 1)[0].split("?", 1)[0]
-    parts = unquote(rest).split("/")
+    decoded = unquote(rest)
+    parts = decoded.split("/")
     if len(parts) != 4 or parts[:3] != ["academies", academy_id, purpose]:
-        return False
+        return None
     name = parts[3]
-    return bool(name) and name not in {".", ".."} and not re.search(r"[\\%\x00-\x1f]", name)
+    if name and name not in {".", ".."} and not re.search(r"[\\%\x00-\x1f]", name):
+        return decoded
+    return None
+
+
+def _is_store_object(url: str, base: str | None, academy_id: str, purpose: str) -> bool:
+    return _store_object_path(url, base, academy_id, purpose) is not None
+
+
+def _photo_urls(settings: PublicPageSettings) -> dict[str, str]:
+    """Every photo URL the settings reference, mapped to its upload purpose."""
+    urls: dict[str, str] = {}
+    if settings.hero_photo_url:
+        urls[settings.hero_photo_url] = "hero"
+    for photo in settings.gallery:
+        urls[photo.url] = "gallery"
+    for profile in settings.coach_profiles:
+        if profile.photo_url:
+            urls[profile.photo_url] = "coach"
+    return urls
+
+
+class PublicPhotoDeleter(Protocol):
+    async def delete_public(self, *, path: str) -> None: ...
 
 
 class CoachRoster(Protocol):
@@ -137,6 +164,7 @@ class UpdatePublicPageSettings:
         coach_roster: CoachRoster | None = None,
         *,
         upload_url_base: str | None = None,
+        media_store: PublicPhotoDeleter | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = academy_repo
@@ -144,7 +172,31 @@ class UpdatePublicPageSettings:
         # The media store's public URL prefix (``https://host/.../``). None
         # means uploads are not set up, so no new photo URL can be genuine.
         self._upload_url_base = upload_url_base
+        self._media_store = media_store
         self._now = now or (lambda: datetime.now(UTC))
+
+    async def _delete_orphaned_photos(
+        self, academy_id: str, before: PublicPageSettings, after: PublicPageSettings
+    ) -> None:
+        """Best effort, after the save committed: delete uploads no longer referenced.
+
+        Only objects that pass the same anchored provenance check as a save
+        (this academy, that purpose, the store's base) are ever deleted; a
+        failure is logged and never fails the save.
+        """
+        if self._media_store is None:
+            return
+        still_used = _photo_urls(after)
+        for url, purpose in _photo_urls(before).items():
+            if url in still_used:
+                continue
+            path = _store_object_path(url, self._upload_url_base, academy_id, purpose)
+            if path is None:
+                continue
+            try:
+                await self._media_store.delete_public(path=path)
+            except Exception:
+                log.warning("could not delete unused %s photo %s", purpose, path, exc_info=True)
 
     async def execute(
         self,
@@ -187,7 +239,9 @@ class UpdatePublicPageSettings:
             stored = await self._repo.update_by_id(academy_id, patch)
         if stored is None:
             raise LookupError(f"academy {academy_id} not found")
-        return PublicPageSettings.from_stored(stored.get(PUBLIC_PAGE_FIELD))
+        result = PublicPageSettings.from_stored(stored.get(PUBLIC_PAGE_FIELD))
+        await self._delete_orphaned_photos(academy_id, current, result)
+        return result
 
     @staticmethod
     def _check_photo_urls(

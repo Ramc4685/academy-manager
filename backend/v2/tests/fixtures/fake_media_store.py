@@ -30,6 +30,11 @@ class FakeMediaStore:
         self.objects[path] = {"data": data, "content_type": content_type, "token": token}
         return firebase_download_url(self.bucket, path, token)
 
+    async def delete_public(self, *, path: str) -> None:
+        if self.fail:
+            raise MediaStorageUnavailable("boom")
+        self.objects.pop(path, None)
+
 
 class FakeMediaRepo:
     def __init__(self, existing_recent: int = 0) -> None:
