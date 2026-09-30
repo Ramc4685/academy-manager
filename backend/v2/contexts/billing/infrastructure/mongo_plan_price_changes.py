@@ -9,6 +9,11 @@
   (``stored_class_fee_cents``, exactly the monthly run's read) with the
   academy's recorded changes for that class applied. No change on record
   means the stored fee, unchanged.
+* :class:`MongoProjectedClassFees`: the fee a report (projected income,
+  session economics, percent-of-revenue payroll) uses for a month. A FUTURE
+  month reads the fee with scheduled changes applied; a PAST month reads the
+  fee it was billed at (an applied change's flip undone); the current month
+  reads the stored fee, as before.
 * :class:`MongoPriceChangeFlipWriter`: the only writer of class fees and plan
   prices here, used by the scheduler once a change's month has started. Both
   writes are compare-and-set against the old price, so a fee the owner edited
@@ -28,7 +33,7 @@ charge.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -506,3 +511,96 @@ class MongoAcademyBillingMonth:
     async def current_period(self) -> str:
         zone = await resolve_academy_clock_timezone(self._reader, current_academy_id())
         return self._now().astimezone(ZoneInfo(zone)).strftime("%Y-%m")
+
+
+class MongoProjectedClassFees:
+    """Class fees for reports: month-aware for every month but the current one.
+
+    A projection multiplies a class fee by a head count for some month. For a
+    month after the academy's current billing month (on the academy's clock,
+    the monthly run's) the fee is the one that month will be charged: the
+    caller's stored fee with any scheduled plan price change applied
+    (:func:`class_fee_for_period`). For a month BEFORE the current one it is
+    the fee that month was billed at: once the daily job has flipped a class
+    at month M, the stored fee is the new one, and the flip is undone for
+    months before M, so a closed month's payroll or report does not move.
+
+    The current month keeps the caller's stored fee (the spec'd behaviour).
+    Between the start of a change's month M and the daily flip job running
+    (up to a day), the charge paths already bill the new fee while the stored
+    fee, and so this read, is still the old one.
+
+    The caller passes its own stored fee per class, so a report keeps reading
+    the fields it read before; with no plan price change on record (BLNO
+    today) every answer is exactly that stored fee.
+
+    Tenant: ``academy_id`` when given (a payroll run names it), else the
+    academy in scope.
+    """
+
+    def __init__(self, db: Any, *, clock: Callable[[], datetime] = _wall_clock) -> None:
+        self._db = db
+        self._now = clock
+        self._timezones = academy_timezone_lookup(db)
+
+    async def current_period(self, academy_id: str | None = None) -> str:
+        tenant = academy_id or current_academy_id()
+        zone = await resolve_academy_clock_timezone(self._timezones, tenant)
+        return self._now().astimezone(ZoneInfo(zone)).strftime("%Y-%m")
+
+    async def fees_for_periods(
+        self,
+        stored_fee_by_session: Mapping[str, int],
+        periods: Iterable[str],
+        *,
+        academy_id: str | None = None,
+    ) -> dict[tuple[str, str], int]:
+        """``(session_id, period) -> fee`` for every class and month given."""
+        wanted = sorted(set(periods))
+        result = {
+            (session_id, period): int(fee)
+            for session_id, fee in stored_fee_by_session.items()
+            for period in wanted
+        }
+        if not result:
+            return result
+        tenant = academy_id or current_academy_id()
+        current = await self.current_period(tenant)
+        # Every month but the current one: future months pick up scheduled
+        # changes, past months undo applied flips (what was billed).
+        adjusted = [period for period in wanted if period != current]
+        if not adjusted:
+            return result
+        cursor = self._db[PLAN_PRICE_CHANGES_COLLECTION].find(
+            {
+                "academy_id": tenant,
+                "session_ids": {"$in": sorted(stored_fee_by_session)},
+                "status": {"$in": _LIVE_STATUSES},
+            }
+        )
+        changes = [_to_change(doc) async for doc in cursor]
+        if not changes:
+            return result
+        for session_id, fee in stored_fee_by_session.items():
+            mine = [c for c in changes if session_id in c.session_ids]
+            if not mine:
+                continue
+            for period in adjusted:
+                result[(session_id, period)] = class_fee_for_period(
+                    session_id=session_id,
+                    stored_fee_cents=int(fee),
+                    period=period,
+                    changes=mine,
+                )
+        return result
+
+    async def fees_for_period(
+        self,
+        stored_fee_by_session: Mapping[str, int],
+        period: str,
+        *,
+        academy_id: str | None = None,
+    ) -> dict[str, int]:
+        """``session_id -> fee`` for one month."""
+        fees = await self.fees_for_periods(stored_fee_by_session, [period], academy_id=academy_id)
+        return {session_id: fees[(session_id, period)] for session_id in stored_fee_by_session}

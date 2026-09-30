@@ -99,6 +99,19 @@ class BillingPortalNotReady(DomainError):
     status_code = 409
 
 
+class AutopayClassUnpriced(DomainError):
+    """A parent asked to start autopay for a class with no monthly fee.
+
+    The class reads $0 for the billing month, exactly as checkout reads it (a
+    $0 quote skips payment), so there is no monthly charge to automate. 409
+    like the other "not in a payable state" refusals; the ``code`` lets the
+    parent portal explain it instead of showing a generic failure.
+    """
+
+    code = "Billing.AutopayClassUnpriced"
+    status_code = 409
+
+
 class ConnectOnboardingFailed(DomainError):
     code = "Billing.ConnectOnboardingFailed"
     status_code = 502

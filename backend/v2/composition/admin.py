@@ -247,6 +247,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoClassFeeResolver,
+    MongoProjectedClassFees,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
     MongoProductRepository,
@@ -1076,7 +1077,7 @@ def compose_admin(
     payout_periods_repo = MongoPayoutPeriodRepository(db)
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
-            occurrences=MongoPayableOccurrenceQuery(db),
+            occurrences=MongoPayableOccurrenceQuery(db, class_fees=MongoProjectedClassFees(db)),
             rates=MongoCoachRateLookup(db),
         )
     )

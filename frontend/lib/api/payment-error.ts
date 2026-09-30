@@ -44,6 +44,10 @@ const CODE_MESSAGES: Record<string, string> = {
   // from the generic 409 because retrying immediately will not help.
   "Billing.InvoicePayLinkUnavailable":
     "We couldn't start this payment right now. Please try again later, or contact the academy.",
+  // The class has no monthly fee set, so there is no monthly charge to put
+  // on autopay. Retrying will not help; the academy has to price the class.
+  "Billing.AutopayClassUnpriced":
+    "This class doesn't have a monthly fee set yet, so autopay can't be started. Please contact the academy.",
 };
 
 /**
