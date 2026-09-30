@@ -147,6 +147,23 @@ describe("buildClassEditPayload", () => {
     expect(payload).not.toHaveProperty("amount_cents");
   });
 
+  it("sends an unpriced class's null fee back unchanged, so the percent-pay guard still runs", () => {
+    // Review finding: the backend only checks "percent-paid coach needs a
+    // price" when a null fee is sent. A coach change on an unpriced class
+    // must still carry it, for owners and admins alike.
+    const stored = session({ amount_cents: null });
+    for (const isOwner of [true, false]) {
+      const payload = buildClassEditPayload({
+        session: stored,
+        values: { ...classFormFromSession(stored), coach_id: "coach-percent", reason: "x" },
+        isOwner,
+      });
+      expect(payload).toHaveProperty("amount_cents", null);
+      expect(payload).not.toHaveProperty("reason");
+      expect(payload.coach_id).toBe("coach-percent");
+    }
+  });
+
   it("sends a one-off class's date back unchanged", () => {
     const stored = session({ days_of_week: [], start_time: null, end_time: null });
     const payload = buildClassEditPayload({

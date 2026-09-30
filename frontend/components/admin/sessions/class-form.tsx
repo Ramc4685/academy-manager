@@ -54,7 +54,6 @@ import {
   EMPTY_WELCOME_EMAIL,
   academyDefaultPlaceholder,
   addMinutesToTime,
-  buildClassEditPayload,
   centsToDollars,
   classFormFromSession,
   dollarsToCents,
@@ -62,7 +61,6 @@ import {
   formatFee,
   initialPriceChoice,
   pickablePlans,
-  planLinkToWrite,
   planOptionLabel,
   priceChanges,
   welcomeEmailPayload,
@@ -70,6 +68,7 @@ import {
   type WelcomeEmailValues,
 } from "./class-form-logic";
 import { shouldAdoptAcademyCapacity } from "./capacity-seed";
+import { saveClassCreate, saveClassEdit } from "./class-form-save";
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
@@ -514,6 +513,10 @@ export function EditClassDialog({
   const isOwner = useIsOwner();
   const queryClient = useQueryClient();
   const [values, setValues] = useState<ClassFormValues | null>(null);
+  // The class as last saved by this dialog when it stays open after a
+  // partial save (fee written, plan link failed). Until the parent passes a
+  // fresh `session`, it is the baseline "what is stored" for the next save.
+  const [savedBaseline, setSavedBaseline] = useState<AdminSessionView | null>(null);
   const [touchedChoice, setTouchedChoice] = useState<string | null>(null);
   const [customFee, setCustomFee] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -528,18 +531,32 @@ export function EditClassDialog({
     retry: false,
   });
 
+  // Seed on open (or when a different class is opened), not on every refetch
+  // of the same class, so a background refetch never wipes the admin's edits
+  // or a partial-save error.
+  const seededFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!open || !session) return;
+    if (!open || !session) {
+      seededFor.current = null;
+      return;
+    }
+    if (seededFor.current === session.session_id) return;
+    seededFor.current = session.session_id;
     setValues(classFormFromSession(session));
+    setSavedBaseline(null);
     setTouchedChoice(null);
     setCustomFee(centsToDollars(session.amount_cents));
     setError(null);
   }, [open, session]);
+  const stored =
+    savedBaseline && session && savedBaseline.session_id === session.session_id
+      ? savedBaseline
+      : session;
 
   const plans = pickablePlans(pricingQuery.data?.plans);
   const plansLoading = isOwner && pricingQuery.isLoading;
-  const classRow = session
-    ? pricingQuery.data?.classes.find((row) => row.session_id === session.session_id)
+  const classRow = stored
+    ? pricingQuery.data?.classes.find((row) => row.session_id === stored.session_id)
     : undefined;
   // Until the overview is read, the link is unknown: start at Custom and
   // write no link change (the picker is disabled meanwhile).
@@ -547,7 +564,7 @@ export function EditClassDialog({
     ? initialPriceChoice(classRow, pricingQuery.data.plans)
     : CUSTOM_PRICE;
   const choice = touchedChoice ?? initialChoice;
-  const currentCents = session?.amount_cents ?? null;
+  const currentCents = stored?.amount_cents ?? null;
   const nextCents = isOwner
     ? feeForChoice(choice, plans, dollarsToCents(customFee))
     : currentCents;
@@ -558,30 +575,34 @@ export function EditClassDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      if (!session || !values) throw new Error("No class selected.");
-      const payload = buildClassEditPayload({
-        session,
-        values: { ...values, amount_cents: nextCents },
-        isOwner,
-      });
-      const saved = await updateAdminSession(session.session_id, payload);
+      if (!stored || !values) throw new Error("No class selected.");
       // Fee first, then the link: the link endpoint refuses a plan whose
       // price is not the class fee (409).
-      const link = isOwner && pricingQuery.data ? planLinkToWrite(initialChoice, choice) : undefined;
-      if (link !== undefined) {
-        try {
-          await setClassPlan(saved.session_id, link);
-        } catch (err) {
-          invalidatePricing(queryClient);
-          throw new Error(
-            `The class was saved, but the price plan was not updated: ${errorMessage(err, "try again.")}`,
-          );
-        }
-      }
-      if (link !== undefined || payload.amount_cents !== undefined) invalidatePricing(queryClient);
-      return saved;
+      return saveClassEdit(
+        {
+          session: stored,
+          values: { ...values, amount_cents: nextCents },
+          isOwner,
+          pricingLoaded: Boolean(pricingQuery.data),
+          initialChoice,
+          choice,
+        },
+        { updateSession: updateAdminSession, setClassPlan },
+      );
     },
-    onSuccess: (saved) => {
+    onSuccess: ({ saved, pricingTouched, linkError }) => {
+      if (pricingTouched) invalidatePricing(queryClient);
+      if (linkError) {
+        // The class (and its fee) saved but the link did not: stay open on
+        // the saved class so the next save compares against what is stored.
+        setSavedBaseline(saved);
+        setError(linkError);
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.sessionDetail(saved.session_id),
+        });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+        return;
+      }
       setError(null);
       onSaved(saved);
     },
@@ -784,24 +805,15 @@ export function CreateClassDialog({
         amount_cents: fee,
         ...welcomeEmailPayload(welcome),
       };
-      const created = await createAdminSession(payload);
-      let warning: string | undefined;
-      const link = isOwner ? planLinkToWrite(CUSTOM_PRICE, choice) : undefined;
-      if (link) {
-        try {
-          await setClassPlan(created.session_id, link);
-        } catch (err) {
-          // The class exists; retrying Create would duplicate it. Say so.
-          warning = `The class was created, but it was not linked to the plan: ${errorMessage(
-            err,
-            "link it on Pricing.",
-          )}`;
-        }
-        invalidatePricing(queryClient);
-      }
-      return { created, warning };
+      // The class exists once created; a link failure comes back as a
+      // warning (retrying Create would duplicate the class).
+      return saveClassCreate(
+        { payload, isOwner, choice, customChoice: CUSTOM_PRICE },
+        { createSession: createAdminSession, setClassPlan },
+      );
     },
-    onSuccess: ({ created, warning }) => {
+    onSuccess: ({ created, warning, pricingTouched }) => {
+      if (pricingTouched) invalidatePricing(queryClient);
       setError(null);
       onCreated(created, warning);
     },

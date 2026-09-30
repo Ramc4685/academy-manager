@@ -83,7 +83,9 @@ async function stubClassFormReads(page: Page) {
   });
   await page.route("**/api/v2/admin/self-service/policy", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
-    return fulfillJson(route, { welcome_email_absence_policy_default: "" });
+    return fulfillJson(route, {
+      welcome_email_absence_policy_default: "Tell us 24 hours ahead for a make-up.",
+    });
   });
 }
 
@@ -263,6 +265,13 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await expect(dialog.getByTestId("create-session-monthly-fee")).toHaveCount(0);
 
     await dialog.getByRole("button", { name: "Welcome email (optional)" }).click();
+    // The academy's absence default shows as a placeholder, not a value.
+    const absence = dialog.getByLabel("Absence & make-up policy");
+    await expect(absence).toHaveAttribute(
+      "placeholder",
+      "Uses academy default: Tell us 24 hours ahead for a make-up.",
+    );
+    await expect(absence).toHaveValue("");
     await dialog.getByLabel("WhatsApp group link").fill("https://chat.whatsapp.com/AbCd1234");
     await dialog.getByRole("button", { name: "Create" }).click();
 

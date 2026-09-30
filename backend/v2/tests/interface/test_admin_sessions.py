@@ -815,6 +815,73 @@ async def test_admin_session_edit_blocks_clearing_price_for_percent_paid_coach(
 
 
 @pytest.mark.asyncio
+async def test_admin_session_edit_unpriced_class_blocks_switch_to_percent_paid_coach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The class form sends an unpriced class's unchanged null fee back on
+    every edit. An operations-only admin is not owner-gated (the fee did not
+    change), but a switch to a percent-of-revenue coach is still refused."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-unpriced-percent-switch"]
+    await db.sessions.insert_one(
+        {
+            "academy_id": "academy-b",
+            "session_id": "session-unpriced",
+            "title": "Unpriced",
+            "location": "Court 1",
+            "coach_id": "coach-flat",
+            "capacity": 15,
+            "amount_cents": None,
+            "status": "scheduled",
+            "days_of_week": ["Wed"],
+            "start_time": "18:00",
+            "end_time": "18:45",
+            "timezone": "America/Chicago",
+            "start_at": datetime(2026, 6, 3, 23, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 3, 23, 45, tzinfo=UTC),
+        }
+    )
+    await db.coach_rates.insert_one(
+        {
+            "academy_id": "academy-b",
+            "rate_id": "rate-percent",
+            "coach_id": "coach-percent",
+            "billing_unit": "percent_of_revenue",
+            "amount_minor": 0,
+            "percent_bps": 6000,
+            "currency": "USD",
+            "effective_from": datetime(2026, 1, 1, tzinfo=UTC),
+            "effective_until": None,
+            "status": "active",
+        }
+    )
+
+    with TestClient(_mongo_admin_app(db, roles=("admin",))) as client:
+        blocked = client.patch(
+            "/api/v2/admin/sessions/session-unpriced",
+            json={"coach_id": "coach-percent", "amount_cents": None},
+        )
+        allowed = client.patch(
+            "/api/v2/admin/sessions/session-unpriced",
+            json={"title": "Unpriced B", "amount_cents": None},
+        )
+
+    assert blocked.status_code == 400, blocked.text
+    assert "Percent-of-revenue coach pay requires a session price" in blocked.json()["detail"]
+    # Unchanged null fee from a non-owner: not a price change, so it saves.
+    assert allowed.status_code == 200, allowed.text
+    stored = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": "session-unpriced"}
+    )
+    assert stored is not None
+    assert stored["coach_id"] == "coach-flat"
+    assert stored["title"] == "Unpriced B"
+    assert stored["amount_cents"] is None
+    assert await db.billing_audit_log.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
 async def test_edit_recurring_session_rejects_duplicate_series(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

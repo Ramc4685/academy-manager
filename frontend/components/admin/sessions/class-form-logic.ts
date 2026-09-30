@@ -10,8 +10,9 @@
  * - The class fee (`amount_cents`) stays the one number billing reads. A plan
  *   pick only fills that fee with the plan's current price, then links the
  *   class through the Pricing page's existing endpoint.
- * - An edit that does not change the price sends no `amount_cents` at all, so
- *   it can never write a fee or a `session_fee_changed` audit row.
+ * - An edit that does not change the price sends no `amount_cents` (or, for an
+ *   unpriced class, its unchanged null so the percent-pay guard still runs),
+ *   so it can never write a fee or a `session_fee_changed` audit row.
  * - An edit never sends the welcome-email (communication pack) fields: the
  *   PATCH is `exclude_unset`, so leaving them out keeps the stored values.
  */
@@ -132,7 +133,8 @@ function isRecurring(session: AdminSessionView): boolean {
  * The PATCH body for an edit.
  *
  * Never carries a communication-pack field (the Welcome email tab owns those)
- * and carries `amount_cents` + `reason` only when an owner changes the price.
+ * and carries `amount_cents` + `reason` only when an owner changes the price
+ * (plus the unchanged null fee of an unpriced class, for the percent-pay guard).
  */
 export function buildClassEditPayload(params: {
   session: AdminSessionView;
@@ -163,6 +165,12 @@ export function buildClassEditPayload(params: {
     payload.amount_cents = values.amount_cents;
     const reason = values.reason.trim();
     if (reason) payload.reason = reason;
+  } else if (session.amount_cents == null) {
+    // An unpriced class sends its (unchanged) null fee back, as the old edit
+    // dialogs did: the backend's percent-pay guard only runs when a null fee
+    // is sent, so a switch to a percent-of-revenue coach is still refused.
+    // Unchanged, it is not a price change: no owner gate, no audit row.
+    payload.amount_cents = null;
   }
   return payload;
 }
