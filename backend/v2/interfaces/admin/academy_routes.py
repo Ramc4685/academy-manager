@@ -9,11 +9,12 @@ from fastapi.responses import RedirectResponse
 from starlette.datastructures import UploadFile
 
 from backend.v2.contexts.identity.application.academy_media import (
-    MAX_UPLOAD_BYTES,
+    MAX_PHOTO_UPLOAD_BYTES,
     LogoRateLimited,
     LogoRejected,
     LogoTooLarge,
     MediaStorageUnavailable,
+    too_large_message,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import (
@@ -102,8 +103,13 @@ async def update_academy_settings(
     return AdminAcademyView(**asdict(out), invoice_prefix=await _invoice_prefix(use_cases))
 
 
-#: Room for multipart boundaries and headers around a file of MAX_UPLOAD_BYTES.
+#: Room for multipart boundaries and headers around the largest file.
 _MULTIPART_OVERHEAD_BYTES = 64 * 1024
+#: The body is bounded before it is parsed, so before the ``purpose`` field
+#: can be read: the streaming cap is the largest per-purpose limit (photos).
+#: The use case then applies the purpose's own limit (a logo stays 2 MB).
+_MAX_BODY_BYTES = MAX_PHOTO_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES
+_CONSENT_TRUE = frozenset({"true", "1", "on", "yes"})
 
 
 @router.post(
@@ -117,7 +123,15 @@ _MULTIPART_OVERHEAD_BYTES = 64 * 1024
                     "schema": {
                         "type": "object",
                         "required": ["file"],
-                        "properties": {"file": {"type": "string", "format": "binary"}},
+                        "properties": {
+                            "file": {"type": "string", "format": "binary"},
+                            "purpose": {
+                                "type": "string",
+                                "enum": ["logo", "hero", "gallery", "coach"],
+                                "default": "logo",
+                            },
+                            "consent": {"type": "boolean", "default": False},
+                        },
                     }
                 }
             },
@@ -129,7 +143,13 @@ async def upload_academy_media(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminAcademyMediaView:
-    """Upload the academy logo (PNG or JPEG, up to 2 MB); returns its URL.
+    """Upload an academy image (PNG or JPEG); returns its URL.
+
+    Optional multipart ``purpose``: ``logo`` (default; up to 2 MB, 512 px),
+    or a landing-page photo, ``hero`` / ``gallery`` (up to 5 MB, 2400 px long
+    edge) or ``coach`` (up to 5 MB, 800 px). A ``gallery`` upload needs
+    ``consent=true`` (parents or guardians of anyone shown agreed) or it is a
+    422. Owner and admins may upload.
 
     The academy is the caller's resolved tenant, never a request field. The
     URL is saved by the caller through ``PATCH /academy``. ``Content-Length``
@@ -146,16 +166,16 @@ async def upload_academy_media(
     declared = request.headers.get("content-length")
     if declared is None or not declared.isdigit():
         raise HTTPException(status_code=411, detail="Upload could not be read. Try again.")
-    if int(declared) > MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES:
+    if int(declared) > _MAX_BODY_BYTES:
         raise HTTPException(
             status_code=413,
-            detail="That image is over 2 MB. Choose a smaller PNG or JPG.",
+            detail=too_large_message(MAX_PHOTO_UPLOAD_BYTES),
         )
     if "transfer-encoding" in request.headers:
         # Content-Length alone bounds nothing once chunked framing is also
         # sent (h11 passes both through), so refuse it outright.
         raise HTTPException(status_code=411, detail="Upload could not be read. Try again.")
-    limit = MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES
+    limit = _MAX_BODY_BYTES
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
@@ -163,7 +183,7 @@ async def upload_academy_media(
             # Counted on the wire, whatever the headers claim.
             raise HTTPException(
                 status_code=413,
-                detail="That image is over 2 MB. Choose a smaller PNG or JPG.",
+                detail=too_large_message(MAX_PHOTO_UPLOAD_BYTES),
             )
     sent = False
 
@@ -182,12 +202,20 @@ async def upload_academy_media(
         upload = form.get("file")
         if not isinstance(upload, UploadFile):
             raise HTTPException(status_code=422, detail="Choose an image file to upload.")
-        raw = await upload.read(MAX_UPLOAD_BYTES + 1)
+        raw = await upload.read(MAX_PHOTO_UPLOAD_BYTES + 1)
+        purpose_field = form.get("purpose")
+        purpose = purpose_field.strip().lower() if isinstance(purpose_field, str) else "logo"
+        consent_field = form.get("consent")
+        consent = isinstance(consent_field, str) and consent_field.strip().lower() in _CONSENT_TRUE
     finally:
         await form.close()
     try:
         result = await uploader.execute(
-            academy_id=claims.academy_id, uploaded_by=claims.user_id, raw=raw
+            academy_id=claims.academy_id,
+            uploaded_by=claims.user_id,
+            raw=raw,
+            purpose=purpose or "logo",
+            consent=consent,
         )
     except LogoTooLarge as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from None
@@ -200,7 +228,11 @@ async def upload_academy_media(
             status_code=502,
             detail="We could not save the image. Try again in a moment.",
         ) from None
-    return AdminAcademyMediaView(logo_url=result.logo_url)
+    return AdminAcademyMediaView(
+        logo_url=result.url if result.purpose == "logo" else None,
+        url=result.url,
+        purpose=result.purpose,
+    )
 
 
 def _blank_to_none(value: object) -> str | None:

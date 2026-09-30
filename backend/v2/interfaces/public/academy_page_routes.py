@@ -33,6 +33,7 @@ from backend.v2.contexts.enrollment.application.use_cases.public_catalog import 
 from backend.v2.contexts.identity.application.public_academy_profile import (
     PublicAcademyProfile,
 )
+from backend.v2.contexts.identity.application.public_page_settings import CoachProfile
 from backend.v2.interfaces.public.dtos import (
     PublicAcademyDto,
     PublicAcademyNotPublishedDto,
@@ -40,6 +41,9 @@ from backend.v2.interfaces.public.dtos import (
     PublicAgeBandDto,
     PublicBrandDto,
     PublicClassDto,
+    PublicCoachDto,
+    PublicFaqDto,
+    PublicGalleryPhotoDto,
     PublicPageFlagsDto,
     PublicPriceDto,
     PublicProgramDto,
@@ -87,7 +91,28 @@ async def get_public_academy_page(request: Request, response: Response) -> Any:
             show_availability=settings.show_availability,
             few_seats_threshold=settings.seats_left_threshold,
         )
-    return _page(profile, catalog)
+        shown = [p for p in settings.coach_profiles if p.shown]
+        names = (
+            await public_page.profile_coach_names.display_names(
+                str(academy_id), [p.coach_id for p in shown]
+            )
+            if shown
+            else {}
+        )
+    return _page(profile, catalog, _coaches(shown, names))
+
+
+def _coaches(shown: list[CoachProfile], names: dict[str, str]) -> list[PublicCoachDto]:
+    """Shown profiles whose coach is still an active coach of this academy;
+    one that is not (left, deactivated, lost the coach role) is quietly left
+    out. A shown profile is the owner's explicit choice to list that person,
+    so it uses the full name and overrides the per-class ``coach_display``
+    (which only governs the class cards)."""
+    return [
+        PublicCoachDto(name=names[p.coach_id], photo_url=p.photo_url, bio=p.bio)
+        for p in shown
+        if names.get(p.coach_id)
+    ]
 
 
 def _brand(profile: PublicAcademyProfile) -> PublicBrandDto:
@@ -100,7 +125,9 @@ def _brand(profile: PublicAcademyProfile) -> PublicBrandDto:
     )
 
 
-def _page(profile: PublicAcademyProfile, catalog: PublicCatalog) -> PublicAcademyPageDto:
+def _page(
+    profile: PublicAcademyProfile, catalog: PublicCatalog, coaches: list[PublicCoachDto]
+) -> PublicAcademyPageDto:
     settings = profile.settings
     return PublicAcademyPageDto(
         academy=PublicAcademyDto(
@@ -133,6 +160,12 @@ def _page(profile: PublicAcademyProfile, catalog: PublicCatalog) -> PublicAcadem
             for program in catalog.programs
         ],
         ungrouped_classes=[_class(view) for view in catalog.ungrouped_classes],
+        hero_photo_url=settings.hero_photo_url,
+        about_text=settings.about_text,
+        highlights=list(settings.highlights),
+        gallery=[PublicGalleryPhotoDto(url=g.url, caption=g.caption) for g in settings.gallery],
+        coaches=coaches,
+        faqs=[PublicFaqDto(question=f.question, answer=f.answer) for f in settings.faqs],
     )
 
 

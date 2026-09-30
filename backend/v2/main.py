@@ -142,6 +142,9 @@ from backend.v2.contexts.identity.domain.models import (
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
+from backend.v2.contexts.identity.infrastructure.firebase_storage_media_store import (
+    firebase_url_base,
+)
 from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import (
     FirebaseTokenVerifier,
 )
@@ -880,7 +883,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_family_index = compose_admin_family_index(db)
     app.state.admin_family_record = compose_admin_family_record(db)
     # Public tenant page programs + publish switches (Lane B1).
-    app.state.admin_public_page = compose_admin_public_page(db)
+    app.state.admin_public_page = compose_admin_public_page(
+        db,
+        media_url_base=(
+            firebase_url_base(settings.media_storage_bucket)
+            if settings.media_storage_bucket
+            else None
+        ),
+    )
     # Per-waiver status on the admin student page (Settings Phase 6).
     app.state.admin_student_waivers = compose_admin_student_waivers(db)
     # Anonymous public tenant page read (Lane B2), GET /api/v2/public/academy.

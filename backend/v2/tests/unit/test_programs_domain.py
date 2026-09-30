@@ -86,6 +86,12 @@ def test_public_page_defaults_when_nothing_is_stored() -> None:
         "price_period_default": "month",
         "trials_open": True,
         "privacy_notice_url": None,
+        "hero_photo_url": None,
+        "about_text": "",
+        "highlights": [],
+        "gallery": [],
+        "coach_profiles": [],
+        "faqs": [],
         "theme": "floodlit",
         "seats_left_threshold": 3,
     }
