@@ -1,6 +1,6 @@
 # Unblock the production run: urllib3 2.8.0 and a class-first e2e race
 
-PR: #TBD
+PR: #1025
 
 ## What changed
 - Backend: `urllib3` bumped from 2.7.0 to 2.8.0 for CVE-2026-97687, CVE-2026-97688 and CVE-2026-97689. The dependency audit was failing the production run.
