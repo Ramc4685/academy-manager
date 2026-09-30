@@ -32,6 +32,8 @@ def ensure_utc(value: datetime) -> datetime:
     * ``enrollment/infrastructure/mongo_enrollment_writer.py``
       (``cancelled_at``, ``pending_cancellation_*``, ``hold_*_at``;
       ``mongo_hold_repo.py`` delegates to it)
+    * ``enrollment/infrastructure/mongo_enrollment_event_repo.py``
+      (``effective_at``, ``occurred_at``; the win-back job's TypeError)
 
     Any new repository that reads a BSON datetime into a domain model must
     do the same.

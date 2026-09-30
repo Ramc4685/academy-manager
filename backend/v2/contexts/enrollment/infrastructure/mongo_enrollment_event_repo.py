@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.shared.time.mongo import ensure_utc
 
 
 class MongoEnrollmentEventRepository(TenantScopedRepository):
@@ -14,6 +15,9 @@ class MongoEnrollmentEventRepository(TenantScopedRepository):
 
     @staticmethod
     def _to_domain(doc: dict[str, Any]) -> EnrollmentLifecycleEvent:
+        # BSON datetimes come back naive (no ``tz_aware``); the win-back job
+        # subtracts ``effective_at`` from an aware ``now`` (prod TypeError
+        # 2026-09-30, same class as #706), so normalise at the read boundary.
         return EnrollmentLifecycleEvent(
             event_id=str(doc["event_id"]),
             academy_id=str(doc["academy_id"]),
@@ -27,8 +31,8 @@ class MongoEnrollmentEventRepository(TenantScopedRepository):
             actor_id=doc.get("actor_id"),
             reason=doc.get("reason"),
             reason_code=doc.get("reason_code"),
-            effective_at=doc["effective_at"],
-            occurred_at=doc["occurred_at"],
+            effective_at=ensure_utc(doc["effective_at"]),
+            occurred_at=ensure_utc(doc["occurred_at"]),
             billing_policy=doc.get("billing_policy"),
             billing_result=doc.get("billing_result"),
             credit_id=doc.get("credit_id"),
