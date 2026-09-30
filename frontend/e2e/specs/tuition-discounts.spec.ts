@@ -311,6 +311,10 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
       delete_enrollment_requires_owner: true,
     });
   });
+  await page.route("**/api/v2/admin/waivers/students/*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { student_id: "student", waivers: [] });
+  });
   await page.route("**/api/v2/admin/students/student-discounts", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, student);

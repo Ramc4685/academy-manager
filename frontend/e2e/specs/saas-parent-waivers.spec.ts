@@ -83,6 +83,82 @@ test.describe("SaaS v2 — parent registration", () => {
   });
 });
 
+test.describe("SaaS v2 — several waivers to sign", () => {
+  test("parent waivers page lists every waiver for the children and one button signs them", async ({
+    page,
+  }) => {
+    const guard = installTenantGuard(page);
+    const errors = collectConsoleErrors(page);
+    await stubMe(page, {
+      user_id: "user-parent-w6",
+      email: "parent@example.com",
+      academy_id: ACADEMY_A,
+      roles: ["parent"],
+    });
+    await stubParentProfile(page, { user_id: "user-parent-w6" });
+    await stubParentMessages(page);
+    await stubParentAcademy(page);
+
+    const students = (photo: "pending" | "signed") => ({
+      liability: [
+        { student_id: "st-1", student_name: "Asha Rao", status: photo, signed_at: null, waiver_version: null },
+        { student_id: "st-2", student_name: "Dev Rao", status: photo, signed_at: null, waiver_version: null },
+      ],
+      photo: [
+        { student_id: "st-1", student_name: "Asha Rao", status: photo, signed_at: null, waiver_version: null },
+      ],
+    });
+    const payload = (state: "pending" | "signed") => ({
+      required: true,
+      waiver_template_id: "wt-liability",
+      title: "Liability waiver",
+      version: "3",
+      body: "Liability text",
+      students: students(state).liability,
+      waivers: [
+        {
+          waiver_template_id: "wt-liability",
+          title: "Liability waiver",
+          version: "3",
+          body: "Liability text",
+          students: students(state).liability,
+        },
+        {
+          waiver_template_id: "wt-photo",
+          title: "Photo consent",
+          version: "1",
+          body: "Photo consent text",
+          students: students(state).photo,
+        },
+      ],
+    });
+    let accepted = false;
+    await page.route("**/api/v2/parent/waivers/current", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, payload(accepted ? "signed" : "pending"));
+    });
+    await page.route("**/api/v2/parent/waivers/accept", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      accepted = true;
+      return fulfillJson(route, payload("signed"));
+    });
+
+    await page.goto("/parent/waivers");
+
+    await expect(page.getByRole("heading", { name: "Required waivers" })).toBeVisible();
+    await expect(page.getByTestId("parent-waiver-wt-liability")).toContainText("Liability text");
+    await expect(page.getByTestId("parent-waiver-wt-liability")).toContainText("Dev Rao");
+    // The photo waiver applies only to the child in that program.
+    await expect(page.getByTestId("parent-waiver-wt-photo")).toContainText("Photo consent text");
+    await expect(page.getByTestId("parent-waiver-wt-photo")).not.toContainText("Dev Rao");
+    await page.getByRole("button", { name: "Accept waivers for Asha Rao and Dev Rao" }).click();
+    await expect(page.getByText("Current waivers are signed for all active children.")).toBeVisible();
+
+    guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+});
+
 test.describe("SaaS v2 — waiver template versioning", () => {
   test("admin waiver row surfaces the correct template version for a signed parent waiver", async ({
     page,

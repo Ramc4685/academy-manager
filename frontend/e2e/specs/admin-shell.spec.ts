@@ -1847,6 +1847,10 @@ test.describe("Rally admin shell", () => {
     // dropped by a tab switch (the tabs are buttons, not links) or any link.
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
+    await page.route("**/api/v2/admin/waivers/students/*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { student_id: "student", waivers: [] });
+    });
     await page.route("**/api/v2/admin/students/student-guard-e2e", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {

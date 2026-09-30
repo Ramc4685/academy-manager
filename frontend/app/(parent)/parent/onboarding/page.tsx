@@ -45,6 +45,12 @@ import {
 
 type Step = "parent" | "child" | "waiver" | "session" | "review";
 const ORDER: Step[] = ["parent", "child", "waiver", "session", "review"];
+/**
+ * When the academy assigns a waiver to a program, the right set of waivers is
+ * only known once the family has chosen a class, so the class comes first.
+ * With one waiver for everyone (the usual case) the order above is unchanged.
+ */
+const CLASS_FIRST_ORDER: Step[] = ["parent", "child", "session", "waiver", "review"];
 
 /**
  * Server-side completeness guard (issue #380): checkout refuses an
@@ -164,9 +170,11 @@ export default function OnboardingStepperPage() {
     }
   }
 
+  const order = app.waiver_class_first ? CLASS_FIRST_ORDER : ORDER;
+
   function advance() {
-    const i = ORDER.indexOf(step);
-    if (i < ORDER.length - 1) setStep(ORDER[i + 1]);
+    const i = order.indexOf(step);
+    if (i < order.length - 1) setStep(order[i + 1]);
   }
 
   async function goToCheckout() {
@@ -193,7 +201,7 @@ export default function OnboardingStepperPage() {
           : [];
       if (missing.length > 0) {
         const help = missing.map((f) => MISSING_FIELD_HELP[f]);
-        const target = ORDER.find((s) => help.some((h) => h.step === s));
+        const target = order.find((s) => help.some((h) => h.step === s));
         setError(`Before paying, we still need ${listPhrase(help.map((h) => h.label))}.`);
         if (target) setStep(target);
       } else if (err.code === "Billing.QuoteExpired") {
@@ -219,7 +227,7 @@ export default function OnboardingStepperPage() {
   return (
     <section data-testid="parent-onboarding">
       <OnboardingStyles />
-      <Progress step={step} onStepClick={setStep} />
+      <Progress step={step} order={order} onStepClick={setStep} />
 
       {error && (
         <div
@@ -258,6 +266,9 @@ export default function OnboardingStepperPage() {
         {step === "waiver" && (
           <WaiverStep
             accepted={app.waiver_accepted}
+            // Only a class-first academy asks for the waivers of the chosen
+            // class; otherwise the request is exactly what it always was.
+            sessionId={app.waiver_class_first ? app.selected_session_id : null}
             saving={saving}
             onAccept={async () => {
               if (await save({ accept_waiver: true })) advance();
@@ -308,11 +319,19 @@ function listPhrase(items: string[]): string {
  */
 const PENDING_STEP_COLOR = "#475569";
 
-function Progress({ step, onStepClick }: { step: Step; onStepClick: (s: Step) => void }) {
-  const i = ORDER.indexOf(step);
+function Progress({
+  step,
+  order,
+  onStepClick,
+}: {
+  step: Step;
+  order: Step[];
+  onStepClick: (s: Step) => void;
+}) {
+  const i = order.indexOf(step);
   return (
     <ol className="mb-6 flex items-center justify-between text-xs" data-testid="onboarding-progress">
-      {ORDER.map((s, idx) => {
+      {order.map((s, idx) => {
         const done = idx < i;
         const active = idx === i;
         return (
@@ -627,16 +646,20 @@ function ChildStep({
 
 function WaiverStep({
   accepted,
+  sessionId,
   onAccept,
   saving,
 }: {
   accepted: boolean;
+  sessionId: string | null;
   onAccept: () => void;
   saving: boolean;
 }) {
   const waiverQuery = useQuery<RegistrationWaiver>({
-    queryKey: ["parent", "registration-waiver"],
-    queryFn: getRegistrationWaiver,
+    queryKey: sessionId
+      ? ["parent", "registration-waiver", sessionId]
+      : ["parent", "registration-waiver"],
+    queryFn: () => getRegistrationWaiver(sessionId),
     staleTime: 300_000,
   });
 
@@ -679,20 +702,46 @@ function WaiverStep({
     );
   }
 
+  // Several waivers apply to this class: show each one, one button accepts all.
+  const several = (waiver.waivers?.length ?? 0) > 1;
+
   return (
     <div className="space-y-4">
-      <StepHeading>Waiver</StepHeading>
-      {waiver.version && (
-        <p className="text-xs" style={{ color: "var(--rally-muted)" }}>Version {waiver.version}</p>
+      <StepHeading>{several ? "Waivers" : "Waiver"}</StepHeading>
+      {several ? (
+        <div className="space-y-4" data-testid="onboarding-waivers">
+          {(waiver.waivers ?? []).map((item) => (
+            <div key={item.waiver_template_id} className="space-y-2">
+              <p className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+                {item.title ?? "Waiver"}
+                <span className="ml-2 text-xs font-normal" style={{ color: "var(--rally-muted)" }}>
+                  Version {item.version}
+                </span>
+              </p>
+              <div
+                className="max-h-60 overflow-y-auto rounded-2xl border p-3 text-sm"
+                style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
+              >
+                <p className="whitespace-pre-wrap">{item.body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          {waiver.version && (
+            <p className="text-xs" style={{ color: "var(--rally-muted)" }}>Version {waiver.version}</p>
+          )}
+          <div
+            className="max-h-60 overflow-y-auto rounded-2xl border p-3 text-sm"
+            style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
+          >
+            <p className="whitespace-pre-wrap">{waiver.body}</p>
+          </div>
+        </>
       )}
-      <div
-        className="max-h-60 overflow-y-auto rounded-2xl border p-3 text-sm"
-        style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
-      >
-        <p className="whitespace-pre-wrap">{waiver.body}</p>
-      </div>
       <Button onClick={onAccept} disabled={saving} variant="primary" full>
-        {accepted ? "Continue →" : "I Accept"}
+        {accepted ? "Continue →" : several ? "I accept all" : "I Accept"}
       </Button>
     </div>
   );
