@@ -54,7 +54,7 @@ test.describe("published page", () => {
     await expect(page.getByTestId("public-class-row")).toHaveCount(4);
 
     const seats = page.getByTestId("public-class-seats");
-    await expect(seats).toHaveText(["Open", "2 spots left", "Full, join waitlist", "Open"]);
+    await expect(seats).toHaveText(["Open", "Only 2 seats left", "Full, join waitlist", "Open"]);
     await expect(page.getByTestId("public-class-price").first()).toHaveText("$120 per month");
 
     const fullRow = page
@@ -179,7 +179,7 @@ test.describe("a second academy on its own host (tenancy)", () => {
     await expect(page.getByText("What happens at a free trial?")).toHaveCount(0);
 
     // Threshold 5: four seats left reads as a few-seats chip.
-    await expect(page.getByTestId("public-class-seats").first()).toHaveText("4 spots left");
+    await expect(page.getByTestId("public-class-seats").first()).toHaveText("Only 4 seats left");
 
     // Support email only, and it is this academy's.
     await expect(page.getByTestId("academy-support-email")).toHaveText(

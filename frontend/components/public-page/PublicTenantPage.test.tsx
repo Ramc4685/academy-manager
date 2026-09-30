@@ -32,7 +32,7 @@ describe("PublicTenantPage without content (today's page)", () => {
   });
 
   it("keeps today's seat chips", () => {
-    expect(html).toContain("2 spots left");
+    expect(html).toContain("Only 2 seats left");
     expect(html).toContain("Full, join waitlist");
   });
 
@@ -61,7 +61,7 @@ describe("PublicTenantPage with content on Daylight", () => {
   });
 
   it("applies the academy's seat threshold of 5", () => {
-    expect(html).toContain("4 spots left");
+    expect(html).toContain("Only 4 seats left");
   });
 
   it("uses only this academy's support email", () => {
@@ -91,6 +91,6 @@ describe("PublicTenantPage on Showcase", () => {
 
   it("threshold 0 hides the few-seats chip", () => {
     const html = render({ ...riverside, page: { ...riverside.page, seats_left_threshold: 0 } });
-    expect(html).not.toContain("spots left");
+    expect(html).not.toContain("seats left");
   });
 });

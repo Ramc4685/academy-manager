@@ -77,14 +77,14 @@ describe("seat band", () => {
   });
 
   it("shows the small number inside the few band", () => {
-    expect(formatSeatBand({ band: "few", seats_left: 3 })?.text).toBe("3 spots left");
-    expect(formatSeatBand({ band: "few", seats_left: 1 })?.text).toBe("1 spot left");
+    expect(formatSeatBand({ band: "few", seats_left: 3 })?.text).toBe("Only 3 seats left");
+    expect(formatSeatBand({ band: "few", seats_left: 1 })?.text).toBe("Only 1 seat left");
     expect(formatSeatBand({ band: "few", seats_left: 2 })?.tone).toBe("few");
   });
 
   it("does not invent a number when few arrives without one", () => {
-    expect(formatSeatBand({ band: "few", seats_left: null })?.text).toBe("A few spots left");
-    expect(formatSeatBand({ band: "few", seats_left: 0 })?.text).toBe("A few spots left");
+    expect(formatSeatBand({ band: "few", seats_left: null })?.text).toBe("A few seats left");
+    expect(formatSeatBand({ band: "few", seats_left: 0 })?.text).toBe("A few seats left");
   });
 
   it("shows a full class as exactly 'Full, join waitlist'", () => {
@@ -203,12 +203,12 @@ describe("text and safety guards", () => {
 
 describe("seat band with the academy's threshold", () => {
   it("keeps today's chip at the default threshold of 3", () => {
-    expect(formatSeatBand({ band: "few", seats_left: 2 })?.text).toBe("2 spots left");
-    expect(formatSeatBand({ band: "few", seats_left: 2 }, 3)?.text).toBe("2 spots left");
+    expect(formatSeatBand({ band: "few", seats_left: 2 })?.text).toBe("Only 2 seats left");
+    expect(formatSeatBand({ band: "few", seats_left: 2 }, 3)?.text).toBe("Only 2 seats left");
   });
 
   it("shows the number up to a wider threshold the server allowed", () => {
-    expect(formatSeatBand({ band: "few", seats_left: 5 }, 8)?.text).toBe("5 spots left");
+    expect(formatSeatBand({ band: "few", seats_left: 5 }, 8)?.text).toBe("Only 5 seats left");
   });
 
   it("does not show a number above the threshold", () => {
