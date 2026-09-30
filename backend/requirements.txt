@@ -102,7 +102,7 @@ typing_extensions==4.16.0
 tzdata==2026.4
 tzlocal==5.4.4
 uritemplate==4.2.0
-urllib3==2.7.0
+urllib3==2.8.0
 uvicorn==0.53.0
 watchfiles==1.2.0
 websockets==17.1
