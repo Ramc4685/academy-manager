@@ -180,7 +180,9 @@ export async function apiFetch<T>(
     }
   }
   headers.set("Accept", "application/json");
-  if (init.body && !headers.has("Content-Type")) {
+  // A FormData body needs the browser to set the multipart boundary itself.
+  const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
+  if (init.body && !isFormData && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   if (!headers.has("X-Academy-Id")) {

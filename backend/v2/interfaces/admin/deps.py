@@ -153,6 +153,7 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
     RecomputePayoutPeriod,
     ReopenPayoutPeriod,
 )
+from backend.v2.contexts.identity.application.academy_media import UploadAcademyLogo
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
@@ -425,6 +426,9 @@ class AdminUseCases:
     # Owner changes to a class fee or the academy timezone (Settings overhaul
     # Phase 1 PR 5), appended to the same billing audit log as Billing rules.
     record_money_setting_change: RecordMoneySettingChange | None = None
+    # Logo upload (Settings overhaul Phase 4). None when no media bucket is
+    # configured: POST /academy/media then answers 503.
+    upload_academy_logo: UploadAcademyLogo | None = None
     create_student_invoice: object | None = None
     bill_enrollment_period: object | None = None
     list_billing_products: object | None = None

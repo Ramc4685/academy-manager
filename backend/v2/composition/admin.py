@@ -469,6 +469,7 @@ from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
 from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
     MongoPayoutPeriodRepository,
 )
+from backend.v2.contexts.identity.application.academy_media import UploadAcademyLogo
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
@@ -517,6 +518,13 @@ from backend.v2.contexts.identity.domain.errors import (
 )
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
+)
+from backend.v2.contexts.identity.infrastructure.firebase_storage_media_store import (
+    FirebaseStorageMediaStore,
+)
+from backend.v2.contexts.identity.infrastructure.logo_image import process_logo_image
+from backend.v2.contexts.identity.infrastructure.mongo_academy_media_repo import (
+    MongoAcademyMediaRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
 from backend.v2.contexts.identity.infrastructure.mongo_audit_actors import MongoAuditActorDirectory
@@ -1858,6 +1866,15 @@ def compose_admin(
 
     get_academy_use_case = GetAcademyUseCase(academy_repo)
     update_academy_use_case = UpdateAcademyUseCase(academy_repo)
+    upload_academy_logo = (
+        UploadAcademyLogo(
+            store=FirebaseStorageMediaStore(settings.media_storage_bucket),
+            media_repo=MongoAcademyMediaRepository(db),
+            process_image=process_logo_image,
+        )
+        if settings.media_storage_bucket
+        else None
+    )
     get_academy_fees_use_case = GetAcademyFeesUseCase(academy_repo)
     update_academy_fees_use_case = UpdateAcademyFeesUseCase(academy_repo)
     get_academy_notifications_use_case = GetAcademyNotificationsUseCase(
@@ -4174,6 +4191,7 @@ def compose_admin(
         issue_invoice_refund=issue_invoice_refund,
         list_billing_audit=list_billing_audit,
         record_money_setting_change=record_money_setting_change,
+        upload_academy_logo=upload_academy_logo,
         create_student_invoice=create_student_invoice,
         bill_enrollment_period=bill_enrollment_period,
         list_billing_products=list_billing_products,

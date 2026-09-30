@@ -4,15 +4,24 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from starlette.datastructures import UploadFile
 
+from backend.v2.contexts.identity.application.academy_media import (
+    MAX_UPLOAD_BYTES,
+    LogoRateLimited,
+    LogoRejected,
+    LogoTooLarge,
+    MediaStorageUnavailable,
+)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import (
     ensure_owner_for_currency_change,
     ensure_owner_for_timezone_change,
 )
 from backend.v2.interfaces.admin.views import (
+    AdminAcademyMediaView,
     AdminAcademyView,
     AdminGatewayConnectLinkView,
     AdminGatewayView,
@@ -91,6 +100,107 @@ async def update_academy_settings(
             reason="Settings -> Academy",
         )
     return AdminAcademyView(**asdict(out), invoice_prefix=await _invoice_prefix(use_cases))
+
+
+#: Room for multipart boundaries and headers around a file of MAX_UPLOAD_BYTES.
+_MULTIPART_OVERHEAD_BYTES = 64 * 1024
+
+
+@router.post(
+    "/academy/media",
+    response_model=AdminAcademyMediaView,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {"file": {"type": "string", "format": "binary"}},
+                    }
+                }
+            },
+        }
+    },
+)
+async def upload_academy_media(
+    request: Request,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminAcademyMediaView:
+    """Upload the academy logo (PNG or JPEG, up to 2 MB); returns its URL.
+
+    The academy is the caller's resolved tenant, never a request field. The
+    URL is saved by the caller through ``PATCH /academy``. ``Content-Length``
+    is a cheap early refusal; the body is also counted as it streams in and
+    cut off past the limit before any parsing, and chunked framing is refused,
+    so no header combination lets an unbounded body reach the parser.
+    """
+    uploader = use_cases.upload_academy_logo
+    if uploader is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Logo upload is not set up yet. Paste a link to your logo instead.",
+        )
+    declared = request.headers.get("content-length")
+    if declared is None or not declared.isdigit():
+        raise HTTPException(status_code=411, detail="Upload could not be read. Try again.")
+    if int(declared) > MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="That image is over 2 MB. Choose a smaller PNG or JPG.",
+        )
+    if "transfer-encoding" in request.headers:
+        # Content-Length alone bounds nothing once chunked framing is also
+        # sent (h11 passes both through), so refuse it outright.
+        raise HTTPException(status_code=411, detail="Upload could not be read. Try again.")
+    limit = MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            # Counted on the wire, whatever the headers claim.
+            raise HTTPException(
+                status_code=413,
+                detail="That image is over 2 MB. Choose a smaller PNG or JPG.",
+            )
+    sent = False
+
+    async def replay() -> dict[str, object]:
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+    try:
+        form = await Request(request.scope, replay).form(max_files=1, max_fields=4)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Choose an image file to upload.") from None
+    try:
+        upload = form.get("file")
+        if not isinstance(upload, UploadFile):
+            raise HTTPException(status_code=422, detail="Choose an image file to upload.")
+        raw = await upload.read(MAX_UPLOAD_BYTES + 1)
+    finally:
+        await form.close()
+    try:
+        result = await uploader.execute(
+            academy_id=claims.academy_id, uploaded_by=claims.user_id, raw=raw
+        )
+    except LogoTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from None
+    except LogoRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except LogoRateLimited as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from None
+    except MediaStorageUnavailable:
+        raise HTTPException(
+            status_code=502,
+            detail="We could not save the image. Try again in a moment.",
+        ) from None
+    return AdminAcademyMediaView(logo_url=result.logo_url)
 
 
 def _blank_to_none(value: object) -> str | None:

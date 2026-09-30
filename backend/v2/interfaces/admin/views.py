@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
@@ -1888,6 +1889,14 @@ class AdminAcademyView(BaseModel):
     default_arrival_minutes_before: int | None = None
 
 
+class AdminAcademyMediaView(BaseModel):
+    """Result of ``POST /admin/academy/media``: the stored logo's public URL.
+
+    The caller saves it through ``PATCH /admin/academy`` (single writer)."""
+
+    logo_url: str
+
+
 class UpdateAdminAcademyRequest(BaseModel):
     display_name: str | None = None
     timezone: str | None = None
@@ -1926,6 +1935,20 @@ class UpdateAdminAcademyRequest(BaseModel):
         if value is not None and value.upper() != "USD":
             raise ValueError("Currency is locked to USD.")
         return value
+
+    @field_validator("logo_url")
+    @classmethod
+    def _check_logo_url(cls, value: str | None) -> str | None:
+        # Blank clears the logo. Anything else must be an absolute https URL:
+        # emails only render https images, and a plain-http image would be
+        # blocked as mixed content on the parent app and public page.
+        if value is None or not value.strip():
+            return value
+        text = value.strip()
+        parsed = urlsplit(text)
+        if parsed.scheme != "https" or not parsed.netloc or len(text) > 2048:
+            raise ValueError("Logo link must start with https://")
+        return text
 
     @field_validator("brand_color")
     @classmethod

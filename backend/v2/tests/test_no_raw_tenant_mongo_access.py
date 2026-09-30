@@ -111,6 +111,8 @@ TENANT_OWNED_COLLECTIONS = {
     "invoice_contact_email_sends",
     # CSV family and student import batches (migration 0199, roadmap L8a)
     "import_batches",
+    # Uploaded academy media audit rows (logo upload, Settings overhaul P4)
+    "academy_media",
     # Stripe Connect account per academy (migration 0139). Owner lookups by
     # stripe_account_id cross academies ONLY through the documented directory
     # in APPROVED_CROSS_TENANT_EXCEPTIONS.

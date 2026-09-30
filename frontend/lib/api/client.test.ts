@@ -162,3 +162,28 @@ describe("apiFetch Sentry capture (#707)", () => {
     expect(context.tags["api.status"]).toBe(502);
   });
 });
+
+describe("apiFetch FormData bodies", () => {
+  it("leaves Content-Type to the browser so the multipart boundary is set", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { logo_url: "https://x" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const body = new FormData();
+    body.append("file", new File(["x"], "a.png", { type: "image/png" }));
+
+    await apiFetch("/admin/academy/media", { method: "POST", body });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(init.headers).has("Content-Type")).toBe(false);
+    expect(init.body).toBe(body);
+    vi.unstubAllGlobals();
+  });
+
+  it("still sends JSON bodies as application/json", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    await apiFetch("/admin/academy", { method: "PATCH", body: "{}" });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    vi.unstubAllGlobals();
+  });
+});
