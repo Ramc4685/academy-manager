@@ -1,6 +1,6 @@
 # Landing page content: hero photo, about text, gallery, coach profiles and FAQs
 
-PR: #TBD
+PR: #1020
 
 ## What changed
 
