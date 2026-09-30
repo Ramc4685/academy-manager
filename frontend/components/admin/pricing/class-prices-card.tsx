@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { Button, Card, EmptyState, Overline, Th } from "@/components/ds";
 import {
+  formatBillingMonth,
   linkMatchingClasses,
   setClassPlan,
   type PricingClass,
@@ -13,6 +14,13 @@ import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
 const CUSTOM = "";
+
+/** The server's reason when it gives one (e.g. a class already charged at a scheduled price). */
+function saveError(error: unknown): string {
+  return error instanceof Error && error.message && error.message !== "Request failed"
+    ? error.message
+    : "Could not save. Try again.";
+}
 
 const STALE_MESSAGE: Record<NonNullable<PricingClass["stale_reason"]>, string> = {
   archived: "Its plan was archived, so it shows as Custom.",
@@ -156,7 +164,7 @@ export function ClassPricesCard({
                       )}
                       {failedId === cls.session_id && (
                         <p role="alert" className="mt-1 text-xs text-status-red-800">
-                          Could not save. Try again.
+                          {saveError(linkMutation.error)}
                         </p>
                       )}
                     </td>
@@ -165,6 +173,15 @@ export function ClassPricesCard({
                       data-testid="pricing-class-charged"
                     >
                       {cls.fee_set ? formatCents(cls.charged_cents) : "No fee set"}
+                      {cls.scheduled_cents != null && cls.scheduled_from && (
+                        <p
+                          className="font-sans text-xs text-status-amber-800"
+                          data-testid="pricing-class-scheduled"
+                        >
+                          Scheduled: {formatCents(cls.scheduled_cents)} from{" "}
+                          {formatBillingMonth(cls.scheduled_from, { year: true })}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums">
                       {cls.students}

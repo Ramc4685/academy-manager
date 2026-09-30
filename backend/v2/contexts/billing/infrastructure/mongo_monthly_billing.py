@@ -30,6 +30,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     LedgerInvoice,
 )
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
+from backend.v2.contexts.billing.domain.plan_price_change import stored_class_fee_cents
 from backend.v2.contexts.billing.domain.proration import (
     BILLABLE_CLASSES_PER_MONTH,
     MOVE_SOURCE_TYPE,
@@ -54,6 +55,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo impor
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    class_fee_cents_for_period,
+)
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import current_academy_id
@@ -76,6 +80,13 @@ if TYPE_CHECKING:
 # forever. Once an operator has judged one and recorded why, the generator
 # leaves it alone instead of re-reporting it.
 MONTHLY_KEY_STATUS_REPAIR_FAILED = "repair_failed"
+
+#: Enrollment statuses the monthly run reads. ``paused`` rows are read only to
+#: be skipped (#651), so ``active`` is the one status that is invoiced.
+MONTHLY_RUN_ENROLLMENT_STATUSES: tuple[str, ...] = ("active", "paused")
+MONTHLY_INVOICED_ENROLLMENT_STATUS = "active"
+#: ``billing_type`` values the monthly run invoices (missing reads "standard").
+MONTHLY_INVOICED_BILLING_TYPES: frozenset[str] = frozenset({"", "standard", "monthly", "manual"})
 MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
 
 
@@ -1051,7 +1062,7 @@ class MongoMonthlyBillingGenerator:
         cursor = self._db["enrollments"].find(
             {
                 "academy_id": academy_id,
-                "status": {"$in": ["active", "paused"]},
+                "status": {"$in": list(MONTHLY_RUN_ENROLLMENT_STATUSES)},
             },
             sort=[("created_at", 1), ("enrollment_id", 1)],
         )
@@ -1126,7 +1137,7 @@ class MongoMonthlyBillingGenerator:
                 )
                 continue
             billing_type = str(enrollment.get("billing_type") or "standard").lower()
-            if billing_type not in {"", "standard", "monthly", "manual"}:
+            if billing_type not in MONTHLY_INVOICED_BILLING_TYPES:
                 skipped_no_charge += 1
                 continue
             existing = await self._repo._find_one(
@@ -1312,14 +1323,12 @@ def session_amount_cents(doc: dict[str, object]) -> int:
     ``monthly_price_cents`` or ``monthly_price`` and would price at zero,
     crediting nobody for a date the family is still billed for in full
     (see the #609 warning in ``mongo_session_repo``).
+
+    This is the STORED fee. A charge for a billing month reads
+    ``class_fee_cents_for_period`` instead, which also applies a plan price
+    change the owner scheduled for that month (Settings overhaul PR 26).
     """
-    if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])
-    if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])
-    if doc.get("monthly_price") is not None:
-        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
-    return 0
+    return stored_class_fee_cents(doc)
 
 
 def _local_period_label(instant: datetime, timezone_name: str) -> str:
@@ -1604,7 +1613,10 @@ async def resolve_monthly_charge(
     withdrawal and cancellation credits are measured against. Resolving a period
     STAMPS that snapshot, so call it only for a charge you are about to write.
     """
-    amount_cents = session_amount_cents(session_doc)
+    # The class fee FOR THIS MONTH: the stored fee, unless the owner scheduled
+    # a plan price change that covers this class and month (PR 26). With no
+    # change on record this is exactly ``session_amount_cents(session_doc)``.
+    amount_cents = await class_fee_cents_for_period(repo._db, session_doc, period)
     billing_start = _coerce_datetime(
         enrollment.get("billing_start_at")
         or enrollment.get("enrolled_at")

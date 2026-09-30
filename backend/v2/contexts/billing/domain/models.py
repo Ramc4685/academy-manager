@@ -116,6 +116,12 @@ class CreditLedgerEntry(BaseModel):
     source_type: str | None = None
     source_id: str | None = None
     calculation_snapshot_id: str | None = None
+    #: The class and billing month (``YYYY-MM``) a credit was priced for, when
+    #: it was priced from that month's class fee (a class-cancellation credit).
+    #: A scheduled plan price change reads these so it is never cancelled, or
+    #: a class moved on or off it, after a month was credited at its price.
+    session_id: str | None = None
+    billing_period: str | None = None
     approved_by: str | None = None
     approved_at: datetime | None = None
     expires_at: datetime | None = None

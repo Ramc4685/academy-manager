@@ -20,6 +20,8 @@ import {
 } from "@/lib/api/admin";
 import { roleLabel } from "@/lib/admin/role-label";
 import { queryKeys } from "@/lib/query/keys";
+import { formatBillingMonth, listScheduledClassFees } from "@/lib/api/v2/pricing";
+import { formatCents } from "@/lib/money";
 
 import { Button } from "@/components/ds/button";
 import { OwnerOnlyFieldNote, useIsOwner } from "@/components/admin/owner-context";
@@ -936,6 +938,18 @@ export function SessionEditDialog({
     enabled: open,
   });
   const coaches = coachesQuery.data?.users ?? [];
+  // "Scheduled: $X from <Month>" under the fee (Settings overhaul PR 26):
+  // a plan price change the owner scheduled for this class. Readable by any
+  // admin; a failed read just hides the note.
+  const scheduledFeesQuery = useQuery({
+    queryKey: queryKeys.admin.scheduledClassFees(),
+    queryFn: listScheduledClassFees,
+    enabled: open,
+    retry: false,
+  });
+  const scheduledFee = session
+    ? (scheduledFeesQuery.data ?? []).find((row) => row.session_id === session.session_id)
+    : undefined;
   useEffect(() => {
     if (!session || !open) return;
     setForm(buildEditSessionForm(session));
@@ -1099,6 +1113,13 @@ export function SessionEditDialog({
             }
             className={`${inputClass} disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted`}
           />
+          {scheduledFee && (
+            <p className="text-xs text-status-amber-800" data-testid="session-edit-scheduled-fee">
+              Scheduled: {formatCents(scheduledFee.new_cents)} from{" "}
+              {formatBillingMonth(scheduledFee.effective_period, { year: true })} (plan price
+              change on Pricing).
+            </p>
+          )}
           {isOwner ? (
             <p className="text-xs text-amber-700">
               Percent-paid coaches require a session price for payroll. Leave

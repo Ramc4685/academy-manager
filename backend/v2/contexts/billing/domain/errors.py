@@ -239,3 +239,59 @@ class StripeAccountMismatch(DomainError):
 
     code = "Billing.StripeAccountMismatch"
     status_code = 409
+
+
+class PriceChangeMonthNotAllowed(DomainError):
+    """Plan price change: the "apply from" month is not a future month free of invoices."""
+
+    code = "Billing.PriceChangeMonthNotAllowed"
+    status_code = 422
+
+
+class PriceChangeInvalid(DomainError):
+    """Plan price change: the plan is archived or the new price equals the current one."""
+
+    code = "Billing.PriceChangeInvalid"
+    status_code = 422
+
+
+class PriceChangePending(DomainError):
+    """Plan price change: the plan already has a scheduled change (one at a time)."""
+
+    code = "Billing.PriceChangePending"
+    status_code = 409
+
+
+class PriceChangeNotFound(DomainError):
+    code = "Billing.PriceChangeNotFound"
+    status_code = 404
+
+
+class PriceChangeNotCancellable(DomainError):
+    """Plan price change: it has taken effect (or was cancelled) and can no longer be cancelled."""
+
+    code = "Billing.PriceChangeNotCancellable"
+    status_code = 409
+
+
+class PriceChangeAlreadyCharged(DomainError):
+    """Plan price change: a month on or after the change is already charged or quoted.
+
+    Refused so every charge for that month keeps one price: cancelling the
+    change, or moving a class off (or onto) the plan, would leave those
+    charges at a price the month no longer has.
+    """
+
+    code = "Billing.PriceChangeAlreadyCharged"
+    status_code = 409
+
+
+class PriceChangeInFlight(DomainError):
+    """Plan price change: the owner is editing a change that covers this class right now.
+
+    Raised to a registration quote that overlapped the edit, so it never
+    stores a price the edit is about to make wrong. Retry in a moment.
+    """
+
+    code = "Billing.PriceChangeInFlight"
+    status_code = 409

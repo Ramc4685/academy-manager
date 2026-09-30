@@ -15,13 +15,21 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.billing.application.use_cases.plan_price_changes import (
+    PlanPriceChangePreview,
+    PlanPriceChangeView,
+    ScheduledClassFee,
+)
 from backend.v2.contexts.billing.application.use_cases.pricing_page import (
     LinkMatchingClassesResult,
     PricingClassRow,
     PricingOverview,
     PricingPlanRow,
 )
-from backend.v2.contexts.billing.domain.errors import PlanPriceMismatch
+from backend.v2.contexts.billing.domain.errors import (
+    PlanPriceMismatch,
+    PriceChangeMonthNotAllowed,
+)
 from backend.v2.contexts.billing.domain.session_type import SessionType
 from backend.v2.interfaces.admin.owner_gate import OWNER_ONLY_ROUTE_PATHS, PRICING_FORBIDDEN
 from backend.v2.interfaces.admin.router import router as admin_router
@@ -35,6 +43,17 @@ ROUTES: tuple[tuple[str, str, dict[str, Any] | None], ...] = (
     ("GET", "/pricing", None),
     ("PUT", "/pricing/classes/sess-1/plan", {"plan_id": "group"}),
     ("POST", "/pricing/link-matching-classes", None),
+    (
+        "GET",
+        "/pricing/price-changes/preview?plan_id=group&new_price_cents=13000",
+        None,
+    ),
+    (
+        "POST",
+        "/pricing/price-changes",
+        {"plan_id": "group", "new_price_cents": 13_000, "effective_period": "2026-11"},
+    ),
+    ("DELETE", "/pricing/price-changes/ppc-1", None),
 )
 
 
@@ -81,6 +100,53 @@ class _Fake:
         self.calls.append((academy_id, actor_id))
         return LinkMatchingClassesResult(linked=2, no_match=1, several_matches=0, already_decided=3)
 
+    async def preview(self, *, plan_id: str, new_price_cents: int, effective_period=None):
+        self.calls.append(("preview", plan_id, new_price_cents, effective_period))
+        if effective_period == "2026-09":
+            raise PriceChangeMonthNotAllowed("Pick a later month.", earliest="2026-11")
+        return PlanPriceChangePreview(
+            plan_id=plan_id,
+            plan_name="Group class",
+            old_cents=12_000,
+            new_cents=new_price_cents,
+            effective_period=effective_period or "2026-11",
+            earliest_period="2026-11",
+            classes=[],
+            not_affected=[],
+            total_classes=0,
+            total_students=0,
+            old_monthly_cents=0,
+            new_monthly_cents=0,
+        )
+
+    async def schedule(self, cmd) -> PlanPriceChangeView:
+        self.calls.append(cmd)
+        return PlanPriceChangeView(
+            change_id="ppc-1",
+            plan_id=cmd.plan_id,
+            plan_name="Group class",
+            old_cents=12_000,
+            new_cents=cmd.new_price_cents,
+            effective_period=cmd.effective_period,
+            session_ids=["sess-1"],
+            status="scheduled",
+            created_by=cmd.actor_id,
+        )
+
+    async def cancel(self, *, academy_id: str, change_id: str, actor_id: str) -> None:
+        self.calls.append(("cancel", academy_id, change_id, actor_id))
+
+    async def scheduled_fees(self) -> list[ScheduledClassFee]:
+        return [
+            ScheduledClassFee(
+                session_id="sess-1",
+                change_id="ppc-1",
+                plan_id="group",
+                new_cents=13_000,
+                effective_period="2026-11",
+            )
+        ]
+
 
 def _client(roles: tuple[str, ...]) -> tuple[TestClient, _Fake]:
     fake = _Fake()
@@ -98,12 +164,17 @@ def _client(roles: tuple[str, ...]) -> tuple[TestClient, _Fake]:
         overview=SimpleNamespace(execute=fake.overview),
         set_link=SimpleNamespace(execute=fake.set_link),
         link_matching=SimpleNamespace(execute=fake.link_matching),
+        preview_price_change=SimpleNamespace(execute=fake.preview),
+        schedule_price_change=SimpleNamespace(execute=fake.schedule),
+        cancel_price_change=SimpleNamespace(execute=fake.cancel),
+        scheduled_class_fees=SimpleNamespace(execute=fake.scheduled_fees),
     )
     return TestClient(app), fake
 
 
 def _template(path: str) -> str:
-    return f"{_ADMIN}{path.replace('sess-1', '{session_id}')}"
+    path = path.split("?")[0].replace("sess-1", "{session_id}").replace("ppc-1", "{change_id}")
+    return f"{_ADMIN}{path}"
 
 
 @pytest.mark.parametrize(("method", "path", "_body"), ROUTES)
@@ -143,6 +214,9 @@ def test_owner_reads_the_overview() -> None:
         "is_active": True,
         "linked_classes": 1,
         "updated_at": "2026-09-29T00:00:00Z",
+        "scheduled_change_id": None,
+        "scheduled_cents": None,
+        "scheduled_from": None,
     }
     assert body["classes"][0]["charged_cents"] == 12_000
     assert body["saved_overrides"] == []
@@ -199,3 +273,70 @@ def test_plan_type_other_than_monthly_is_rejected_on_the_price_list() -> None:
         json={"name": "Drop-in", "price_cents": 3_000, "plan_type": "per_session"},
     )
     assert response.status_code == 422, response.text
+
+
+# ------------------------------------------------ change a plan price (PR 26)
+
+
+def test_owner_previews_a_price_change() -> None:
+    client, fake = _client(("owner",))
+    response = client.get(
+        f"{_ADMIN}/pricing/price-changes/preview",
+        params={"plan_id": "group", "new_price_cents": 13_000, "effective_period": "2026-12"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["effective_period"] == "2026-12"
+    assert fake.calls == [("preview", "group", 13_000, "2026-12")]
+
+
+def test_past_month_is_422_from_the_use_case() -> None:
+    client, _ = _client(("owner",))
+    response = client.get(
+        f"{_ADMIN}/pricing/price-changes/preview",
+        params={"plan_id": "group", "new_price_cents": 13_000, "effective_period": "2026-09"},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_malformed_month_is_422_before_the_use_case() -> None:
+    client, fake = _client(("owner",))
+    response = client.post(
+        f"{_ADMIN}/pricing/price-changes",
+        json={"plan_id": "group", "new_price_cents": 13_000, "effective_period": "Nov"},
+    )
+    assert response.status_code == 422, response.text
+    assert fake.calls == []
+
+
+def test_owner_schedules_with_claims_tenant_and_actor() -> None:
+    client, fake = _client(("owner",))
+    response = client.post(
+        f"{_ADMIN}/pricing/price-changes",
+        json={"plan_id": "group", "new_price_cents": 13_000, "effective_period": "2026-11"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["change_id"] == "ppc-1"
+    cmd = fake.calls[0]
+    assert (cmd.academy_id, cmd.actor_id, cmd.effective_period) == ("acad", "u-1", "2026-11")
+
+
+def test_owner_cancels_a_scheduled_change() -> None:
+    client, fake = _client(("owner",))
+    response = client.delete(f"{_ADMIN}/pricing/price-changes/ppc-1")
+    assert response.status_code == 204, response.text
+    assert fake.calls == [("cancel", "acad", "ppc-1", "u-1")]
+
+
+@pytest.mark.parametrize("roles", [("admin",), ("admin", "owner")])
+def test_scheduled_class_fees_are_readable_by_any_admin(roles) -> None:
+    client, _ = _client(roles)
+    response = client.get(f"{_ADMIN}/pricing/scheduled-class-fees")
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["new_cents"] == 13_000
+    assert ("GET", f"{_ADMIN}/pricing/scheduled-class-fees") not in OWNER_ONLY_ROUTE_PATHS
+
+
+def test_scheduled_class_fees_are_404_for_a_parent() -> None:
+    client, _ = _client(("parent",))
+    response = client.get(f"{_ADMIN}/pricing/scheduled-class-fees")
+    assert response.status_code == 404, response.text

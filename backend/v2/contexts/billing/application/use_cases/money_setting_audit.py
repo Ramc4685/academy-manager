@@ -33,6 +33,9 @@ MoneySettingAction = Literal[
     "academy_timezone_changed",
     "class_plan_link_changed",
     "class_plan_links_matched",
+    "plan_price_change_scheduled",
+    "plan_price_change_cancelled",
+    "plan_price_change_applied",
 ]
 
 

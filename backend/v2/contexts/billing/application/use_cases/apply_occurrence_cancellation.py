@@ -44,12 +44,24 @@ Idempotent per ``(occurrence_id, enrollment_id)``: the credit carries
 ``source_type="occurrence_cancellation"`` and ``source_id=
 "<occurrence>:<enrollment>"``, unique per academy (migration 0168). The
 override write is an upsert. Re-running returns the credits already issued.
+
+Scheduled plan price changes (Settings Phase 6 PR 26): a credit for a month
+not invoiced yet is sized from that month's class fee, which a scheduled
+change may set. Every credit records the class and month it was priced for
+(``session_id``/``billing_period``), which is what stops the owner cancelling
+the change, or moving the class on or off it, once that month is credited at
+its price. The credit reads the change fence the way a registration quote
+does: before pricing and again after writing. A different fence means an
+owner edit overlapped the pricing, so every credit this run sized from the
+class fee is re-sized to the fee now in force (compare-and-set, only while
+nothing has drawn on it).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -65,6 +77,7 @@ from backend.v2.contexts.billing.domain.credits import (
     class_cancellation_credit_cents,
     class_cancellation_source_id,
 )
+from backend.v2.contexts.billing.domain.errors import PriceChangeInFlight
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import (
@@ -125,7 +138,11 @@ class PeriodChargeBasis:
 
 
 class OccurrenceCancellationReader(Protocol):
-    async def session_pricing(self, session_id: str) -> SessionPricing | None: ...
+    async def session_pricing(
+        self, session_id: str, *, period: str | None = None
+    ) -> SessionPricing | None:
+        """The class's pricing; ``monthly_price_cents`` is the fee for ``period`` when given."""
+        ...
 
     async def occurrences_for_period(
         self, *, session_id: str, period: str
@@ -139,7 +156,9 @@ class OccurrenceCancellationReader(Protocol):
         """What was priced for this family for this period, if anything."""
         ...
 
-    async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]: ...
+    async def enrollments_for_session(
+        self, session_id: str, *, period: str | None = None
+    ) -> list[BillableEnrollment]: ...
 
 
 class OccurrenceOverrideWriter(Protocol):
@@ -172,6 +191,36 @@ class CancellationCreditLedger(Protocol):
     async def find_by_source(
         self, *, source_type: str, source_id: str
     ) -> CreditLedgerEntry | None: ...
+
+    async def resize_unapplied(
+        self, credit_id: str, *, from_cents: int, to_cents: int, now: datetime
+    ) -> bool:
+        """Re-size a credit nothing has drawn on; ``False`` when it moved on."""
+        ...
+
+
+class CancellationPriceFence(Protocol):
+    async def price_fence(self, session_id: str) -> Hashable:
+        """The scheduled price changes covering the class, as they stand.
+
+        Raises ``PriceChangeInFlight`` while an owner edit holds one of them.
+        """
+        ...
+
+
+#: Fence reads before giving up on an owner edit that is still open. Edits
+#: take milliseconds; one that outlives this was abandoned mid-request.
+_FENCE_ATTEMPTS = 5
+
+
+@dataclass(frozen=True)
+class _FeeSizedCredit:
+    """A credit this run sized from the month's class fee (no invoice, no snapshot)."""
+
+    credit_id: str
+    enrollment_id: str
+    billed_classes: int
+    amount_cents: int
 
 
 class ApplyOccurrenceCancellationCommand(BaseModel):
@@ -227,12 +276,16 @@ class ApplyOccurrenceCancellation:
         invoices: CancellationInvoiceLedger,
         credits: CancellationCreditLedger,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        price_fence: CancellationPriceFence | None = None,
+        fence_retry_delay: float = 0.2,
     ) -> None:
         self._reader = reader
         self._overrides = overrides
         self._invoices = invoices
         self._credits = credits
         self._now = clock
+        self._fence = price_fence
+        self._fence_retry_delay = fence_retry_delay
 
     async def execute(
         self, cmd: ApplyOccurrenceCancellationCommand
@@ -250,6 +303,12 @@ class ApplyOccurrenceCancellation:
                 override_written=False,
             )
         period = period_of(cmd.start_at, pricing.timezone)
+        # Read the change fence BEFORE the month's fee (see the module notes).
+        fence = await self._settled_fence(cmd.session_id)
+        # Price the class for the cancelled date's month, so a credit agrees
+        # with that month's invoice when a plan price change is scheduled
+        # (PR 26). Unchanged with no change on record.
+        pricing = await self._reader.session_pricing(cmd.session_id, period=period) or pricing
         occurrences = await self._reader.occurrences_for_period(
             session_id=cmd.session_id, period=period
         )
@@ -284,24 +343,104 @@ class ApplyOccurrenceCancellation:
         )
 
         decisions: list[OccurrenceCreditDecision] = []
-        for enrollment in await self._reader.enrollments_for_session(cmd.session_id):
-            decisions.append(
-                await self._decide(
-                    enrollment=enrollment,
-                    pricing=pricing,
-                    period=period,
-                    priced=priced,
-                    target=target,
-                    cmd=cmd,
-                    now=now,
-                )
+        fee_sized: list[_FeeSizedCredit] = []
+        for enrollment in await self._reader.enrollments_for_session(cmd.session_id, period=period):
+            decision, sized = await self._decide(
+                enrollment=enrollment,
+                pricing=pricing,
+                period=period,
+                priced=priced,
+                target=target,
+                cmd=cmd,
+                now=now,
             )
+            decisions.append(decision)
+            if sized is not None:
+                fee_sized.append(sized)
+        if fee_sized and self._fence is not None:
+            settled = await self._settled_fence(cmd.session_id)
+            if fence is None or settled is None or settled != fence:
+                decisions = await self._resize_to_current_fee(
+                    cmd=cmd, period=period, decisions=decisions, fee_sized=fee_sized, now=now
+                )
         return ApplyOccurrenceCancellationResult(
             period=period,
             billing_occurrence_id=target.occurrence_id,
             override_written=True,
             decisions=tuple(decisions),
         )
+
+    async def _settled_fence(self, session_id: str) -> Hashable | None:
+        """The change fence once no owner edit holds it; ``None`` if one never let go."""
+        if self._fence is None:
+            return None
+        for attempt in range(_FENCE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(self._fence_retry_delay)
+            try:
+                return await self._fence.price_fence(session_id)
+            except PriceChangeInFlight:
+                continue
+        log.warning(
+            "apply_occurrence_cancellation_price_fence_unsettled",
+            extra={"session_id": session_id},
+        )
+        return None
+
+    async def _resize_to_current_fee(
+        self,
+        *,
+        cmd: ApplyOccurrenceCancellationCommand,
+        period: str,
+        decisions: list[OccurrenceCreditDecision],
+        fee_sized: list[_FeeSizedCredit],
+        now: datetime,
+    ) -> list[OccurrenceCreditDecision]:
+        """An owner edit overlapped the pricing: size fee-based credits on today's fee.
+
+        The edit either saw these credits (and was refused, so the fee did
+        not move and nothing changes here) or finished before they were
+        written (so the month's fee is the one read now).
+        """
+        pricing = await self._reader.session_pricing(cmd.session_id, period=period)
+        if pricing is None:
+            return decisions
+        discounts = {
+            e.enrollment_id: e.monthly_discount_cents
+            for e in await self._reader.enrollments_for_session(cmd.session_id, period=period)
+        }
+        resized: dict[str, int] = {}
+        for credit in fee_sized:
+            charge = max(pricing.monthly_price_cents - discounts.get(credit.enrollment_id, 0), 0)
+            amount = max(
+                class_cancellation_credit_cents(
+                    period_charge_cents=charge, billable_classes=credit.billed_classes
+                ),
+                0,
+            )
+            if amount == credit.amount_cents:
+                continue
+            if await self._credits.resize_unapplied(
+                credit.credit_id, from_cents=credit.amount_cents, to_cents=amount, now=now
+            ):
+                resized[credit.credit_id] = amount
+            else:
+                log.error(
+                    "apply_occurrence_cancellation_credit_resize_refused",
+                    extra={
+                        "credit_id": credit.credit_id,
+                        "enrollment_id": credit.enrollment_id,
+                        "period": period,
+                        "amount_cents": credit.amount_cents,
+                        "fee_amount_cents": amount,
+                    },
+                )
+        return [
+            OccurrenceCreditDecision(d.enrollment_id, d.credit_id, resized[d.credit_id], d.outcome)
+            if d.credit_id in resized
+            else d
+            for d in decisions
+        ]
 
     async def _tuition_cents(self, invoice: LedgerInvoice) -> int:
         """The period's TUITION on ``invoice``, net of its tuition discount.
@@ -336,7 +475,38 @@ class ApplyOccurrenceCancellation:
         target: ClassOccurrence,
         cmd: ApplyOccurrenceCancellationCommand,
         now: datetime,
-    ) -> OccurrenceCreditDecision:
+    ) -> tuple[OccurrenceCreditDecision, _FeeSizedCredit | None]:
+        """The family's decision, and the credit when it was sized from the class fee."""
+        decision, fee_based, billed = await self._decide_one(
+            enrollment=enrollment,
+            pricing=pricing,
+            period=period,
+            priced=priced,
+            target=target,
+            cmd=cmd,
+            now=now,
+        )
+        if fee_based and decision.outcome == "credited" and decision.credit_id:
+            return decision, _FeeSizedCredit(
+                credit_id=decision.credit_id,
+                enrollment_id=decision.enrollment_id,
+                billed_classes=billed,
+                amount_cents=decision.amount_cents,
+            )
+        return decision, None
+
+    async def _decide_one(
+        self,
+        *,
+        enrollment: BillableEnrollment,
+        pricing: SessionPricing,
+        period: str,
+        priced: list[ClassOccurrence],
+        target: ClassOccurrence,
+        cmd: ApplyOccurrenceCancellationCommand,
+        now: datetime,
+    ) -> tuple[OccurrenceCreditDecision, bool, int]:
+        """``(decision, sized from the class fee, classes the charge bought)``."""
         source_id = class_cancellation_source_id(
             occurrence_id=cmd.occurrence_id, enrollment_id=enrollment.enrollment_id
         )
@@ -344,24 +514,28 @@ class ApplyOccurrenceCancellation:
             source_type=CLASS_CANCELLATION_SOURCE_TYPE, source_id=source_id
         )
         if existing is not None:
-            return OccurrenceCreditDecision(
-                enrollment.enrollment_id,
-                existing.credit_id,
-                existing.amount_cents,
-                "already_credited",
+            return (
+                OccurrenceCreditDecision(
+                    enrollment.enrollment_id,
+                    existing.credit_id,
+                    existing.amount_cents,
+                    "already_credited",
+                ),
+                False,
+                0,
             )
         if enrollment.status not in {"active", "paused"}:
-            return _skip(enrollment, "enrollment_not_active")
+            return _skip(enrollment, "enrollment_not_active"), False, 0
 
         billing_start = enrollment.billing_start_at
         if billing_start is not None and target.start_at < billing_start:
-            return _skip(enrollment, "before_billing_start")
+            return _skip(enrollment, "before_billing_start"), False, 0
 
         invoice = await self._invoices.get_invoice_for_enrollment_period(
             enrollment.enrollment_id, period
         )
         if invoice is not None and invoice.status == "void":
-            return _skip(enrollment, "invoice_void")
+            return _skip(enrollment, "invoice_void"), False, 0
 
         basis = await self._reader.period_charge_basis(
             enrollment_id=enrollment.enrollment_id,
@@ -370,6 +544,7 @@ class ApplyOccurrenceCancellation:
             period=period,
         )
 
+        fee_based = False
         if invoice is not None:
             charge = await self._tuition_cents(invoice)
         elif basis is not None and basis.calculation_type == "FIRST_MONTH_PRORATION":
@@ -383,14 +558,15 @@ class ApplyOccurrenceCancellation:
             charge = max(basis.final_amount_cents, 0)
         else:
             if enrollment.status == "paused":
-                return _skip(enrollment, "paused_not_invoiced")
+                return _skip(enrollment, "paused_not_invoiced"), False, 0
             if billing_start is not None and period_of(billing_start, pricing.timezone) == period:
                 # Nothing priced yet. Rule 1 handles this family: their
                 # first-month proration reads the overlay and excludes the
                 # date from the numerator (while keeping it in the
                 # denominator, so the month does not get more expensive).
-                return _skip(enrollment, "first_month_proration_excludes_date")
+                return _skip(enrollment, "first_month_proration_excludes_date"), False, 0
             charge = max(pricing.monthly_price_cents - enrollment.monthly_discount_cents, 0)
+            fee_based = True
 
         billed_classes, billed_ids = _billed_classes(
             basis=basis, priced=priced, billing_start=billing_start
@@ -411,17 +587,17 @@ class ApplyOccurrenceCancellation:
                 and occurrence.status == CANCELLED_AFTER_PRICING_STATUS
             )
             if already_cancelled < free_extras:
-                return _skip(enrollment, "covered_by_free_classes")
+                return _skip(enrollment, "covered_by_free_classes"), False, 0
         if billed_ids is not None and target.occurrence_id not in billed_ids:
             # The charge never covered this date (it fell before the family's
             # enrollment, or inside the same-day cutoff). Crediting it would
             # hand back money that was never taken.
-            return _skip(enrollment, "date_not_billed")
+            return _skip(enrollment, "date_not_billed"), False, 0
         amount = class_cancellation_credit_cents(
             period_charge_cents=charge, billable_classes=billed_classes
         )
         if amount <= 0:
-            return _skip(enrollment, "zero_amount")
+            return _skip(enrollment, "zero_amount"), False, 0
 
         local_day = target.start_at.astimezone(ZoneInfo(pricing.timezone)).date().isoformat()
         entry = CreditLedgerEntry(
@@ -437,6 +613,8 @@ class ApplyOccurrenceCancellation:
             reason=_reason(local_day=local_day, note=cmd.reason, invoice=invoice),
             source_type=CLASS_CANCELLATION_SOURCE_TYPE,
             source_id=source_id,
+            session_id=cmd.session_id,
+            billing_period=period,
             approved_by=cmd.actor_id,
             approved_at=now,
             created_at=now,
@@ -447,14 +625,20 @@ class ApplyOccurrenceCancellation:
             again = await self._credits.find_by_source(
                 source_type=CLASS_CANCELLATION_SOURCE_TYPE, source_id=source_id
             )
-            return OccurrenceCreditDecision(
-                enrollment.enrollment_id,
-                again.credit_id if again else None,
-                again.amount_cents if again else 0,
-                "already_credited",
+            return (
+                OccurrenceCreditDecision(
+                    enrollment.enrollment_id,
+                    again.credit_id if again else None,
+                    again.amount_cents if again else 0,
+                    "already_credited",
+                ),
+                False,
+                0,
             )
-        return OccurrenceCreditDecision(
-            enrollment.enrollment_id, entry.credit_id, amount, "credited"
+        return (
+            OccurrenceCreditDecision(enrollment.enrollment_id, entry.credit_id, amount, "credited"),
+            fee_based,
+            billed_classes,
         )
 
 

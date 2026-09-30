@@ -131,6 +131,9 @@ def _ids(academy: str) -> dict[str, str]:
         "contact_id": f"{academy}-crm-contact-1",
         # Family Messages logged contacts (L4c) are unseeded too.
         "log_id": f"{academy}-contact-log-1",
+        # Scheduled plan price changes (PR 26) are unseeded: cancelling B's
+        # id from A must still find nothing.
+        "change_id": f"{academy}-price-change-1",
     }
 
 
