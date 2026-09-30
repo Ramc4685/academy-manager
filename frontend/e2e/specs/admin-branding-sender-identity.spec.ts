@@ -111,4 +111,48 @@ test.describe("admin settings → branding → outbound email", () => {
     await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(patches).toEqual([]);
   });
+
+  test("saves the support email and legal links, and the reply-to helper follows the support email", async ({
+    page,
+  }) => {
+    const patches = await stub(page);
+    await page.goto("/admin/settings?panel=academy");
+    const panel = page.getByTestId("admin-settings-academy");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("Defaults to the support email once you set one.")).toBeVisible();
+
+    await panel.locator("#academy-support-email").fill("help@alpha.example");
+    await expect(panel.getByText("use the support email (help@alpha.example)")).toBeVisible();
+    await panel.locator("#academy-terms-url").fill("https://alpha.example/terms");
+    await panel.locator("#academy-refund-url").fill("https://alpha.example/refunds");
+    await panel.locator("#academy-privacy-url").fill("https://alpha.example/privacy");
+
+    await panel.getByRole("button", { name: "Save changes" }).click();
+    await expect(panel.getByText(/Saved at/)).toBeVisible();
+    expect(patches).toEqual([
+      {
+        support_email: "help@alpha.example",
+        terms_url: "https://alpha.example/terms",
+        refund_policy_url: "https://alpha.example/refunds",
+        privacy_notice_url: "https://alpha.example/privacy",
+      },
+    ]);
+  });
+
+  test("a non-https terms link blocks Save with an inline error", async ({ page }) => {
+    const patches = await stub(page);
+    await page.goto("/admin/settings?panel=academy");
+    const panel = page.getByTestId("admin-settings-academy");
+    const terms = panel.locator("#academy-terms-url");
+    await expect(panel.getByTestId("academy-legal-links")).toBeVisible();
+
+    await terms.fill("http://alpha.example/terms");
+    await expect(panel.getByText("Only https:// links are allowed.")).toBeVisible();
+    await expect(terms).toHaveAttribute("aria-invalid", "true");
+    await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
+
+    await terms.fill("javascript:alert(1)");
+    await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(patches).toEqual([]);
+  });
 });

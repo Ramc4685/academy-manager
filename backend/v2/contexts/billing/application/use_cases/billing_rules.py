@@ -82,6 +82,17 @@ DROP_DEFAULT_OUTCOME_CHOICES: Final[tuple[str, ...]] = (
     "no_credit_end_of_period",
 )
 
+#: ``ach_discount`` is a compound row (on/off plus a percent), so it carries
+#: its own key instead of a row in ``BILLING_RULE_BOUNDS``. Settings overhaul
+#: Phase 4 PR 13. It edits ``billing_settings.ach_discount_enabled`` and
+#: ``ach_discount_percent``; the ceiling ``max_ach_discount_percent`` is read
+#: from the same document and is never writable from here.
+ACH_DISCOUNT_KEY: Final[str] = "ach_discount"
+ACH_DISCOUNT_HELPER: Final[str] = (
+    "Autopay only. Applies to autopay bank payments, taken after any tuition discount. "
+    "Checkout does not apply it."
+)
+
 #: Every editable rule, numeric ones first. ``test_billing_rules`` pins this
 #: tuple to both the view's editable rows and the write command's fields, so a
 #: rule can never be editable on the page and unwritable in the command.
@@ -90,6 +101,7 @@ EDITABLE_RULE_KEYS: Final[tuple[str, ...]] = (
     REMINDER_DAYS_KEY,
     CANCELLATION_TIMING_KEY,
     DROP_DEFAULT_OUTCOME_KEY,
+    ACH_DISCOUNT_KEY,
 )
 
 
@@ -186,6 +198,32 @@ class DropDefaultOutcomeWriter(Protocol):
     ) -> DropDefaultOutcomeLike: ...
 
 
+class AchDiscountLike(Protocol):
+    @property
+    def ach_discount_enabled(self) -> bool: ...
+
+    @property
+    def ach_discount_percent(self) -> float: ...
+
+    @property
+    def max_ach_discount_percent(self) -> float: ...
+
+
+class AchDiscountReader(Protocol):
+    async def execute(self) -> AchDiscountLike: ...
+
+
+class AchDiscountWriter(Protocol):
+    """Narrow port over the billing-settings store.
+
+    Writes ONLY the two academy-editable ACH fields. The ceiling
+    (``max_ach_discount_percent``) is not a parameter here and the settings
+    repository never persists it from a tenant write.
+    """
+
+    async def execute(self, *, enabled: bool, percent: float) -> AchDiscountLike: ...
+
+
 # --- View --------------------------------------------------------------
 
 
@@ -206,6 +244,10 @@ class BillingRuleRow(BaseModel):
     #: allowed choices.
     choice: str | None = None
     choices: tuple[str, ...] | None = None
+    #: ``ach_discount`` only: on/off, the stored percent and its ceiling.
+    enabled: bool | None = None
+    percent: float | None = None
+    max_percent: float | None = None
     #: Fixed rows only: the stated value, rendered as muted text.
     display: str | None = None
     #: One line saying where the behaviour comes from.
@@ -318,17 +360,20 @@ class BuildBillingRulesView:
         fees: AcademyFeesReader,
         cancellation: CancellationPolicyReader,
         drop_outcome: DropDefaultOutcomeReader,
+        ach: AchDiscountReader,
     ) -> None:
         self._schedule = schedule
         self._fees = fees
         self._cancellation = cancellation
         self._drop_outcome = drop_outcome
+        self._ach = ach
 
     async def execute(self, academy_id: str) -> BillingRulesView:
         schedule = await self._schedule.execute()
         fees = await self._fees.execute(academy_id)
         policy = await self._cancellation.execute()
         departure = await self._drop_outcome.execute()
+        ach = await self._ach.execute()
         return BillingRulesView(
             groups=(
                 BillingRuleGroup(
@@ -376,6 +421,15 @@ class BuildBillingRulesView:
                     rows=(
                         _editable("grace_days", "Grace days after due", fees.grace_days, "days"),
                         _editable("late_fee_cents", "Late fee", fees.late_fee_cents, "cents"),
+                        BillingRuleRow(
+                            key=ACH_DISCOUNT_KEY,
+                            label="Bank (ACH) discount",
+                            editable=True,
+                            enabled=bool(ach.ach_discount_enabled),
+                            percent=float(ach.ach_discount_percent),
+                            max_percent=float(ach.max_ach_discount_percent),
+                            detail=ACH_DISCOUNT_HELPER,
+                        ),
                     ),
                 ),
                 BillingRuleGroup(
@@ -515,6 +569,39 @@ def _validate_reminder_days(raw: list[int] | None) -> tuple[int, ...] | None:
     return days
 
 
+def _validate_ach_discount(
+    change: AchDiscountChange | None, current: dict[str, Any], ceiling: float
+) -> dict[str, Any] | None:
+    """The full ACH state after ``change``, or raise naming the field.
+
+    ``0 < percent <= ceiling`` whenever a percent is sent or the discount is
+    on. The ceiling is the stored ``max_ach_discount_percent`` (code default
+    when unset); a tenant can never move it. Percent is kept to two decimals.
+    """
+    if change is None:
+        return None
+    enabled = current["enabled"] if change.enabled is None else change.enabled
+    percent = current["percent"]
+    if change.percent is not None:
+        raw = change.percent
+        if isinstance(raw, bool) or raw != raw or raw in (float("inf"), float("-inf")):
+            raise BillingRulesValidationError(
+                "ach_discount_percent", "ach_discount_percent must be a number"
+            )
+        percent = round(float(raw), 2)
+        if percent <= 0 or percent > ceiling:
+            raise BillingRulesValidationError(
+                "ach_discount_percent",
+                f"ach_discount_percent must be more than 0 and at most {ceiling:g}",
+            )
+    if enabled and (percent <= 0 or percent > ceiling):
+        raise BillingRulesValidationError(
+            "ach_discount_percent",
+            f"ach_discount_percent must be more than 0 and at most {ceiling:g} to turn it on",
+        )
+    return {"enabled": bool(enabled), "percent": float(percent)}
+
+
 class BillingRulesValidationError(ValueError):
     """A rule value is outside its bound. Carries the offending field."""
 
@@ -535,6 +622,13 @@ class BillingRulesPartialWriteError(RuntimeError):
         super().__init__(f"billing rules partially applied: {', '.join(applied_fields) or 'none'}")
         self.applied_fields = applied_fields
         self.__cause__ = cause
+
+
+class AchDiscountChange(BaseModel):
+    model_config = {"frozen": True}
+
+    enabled: bool | None = None
+    percent: float | None = None
 
 
 class UpdateBillingRulesCommand(BaseModel):
@@ -558,6 +652,9 @@ class UpdateBillingRulesCommand(BaseModel):
     drop_default_outcome: (
         Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
     ) = None
+    #: Settings overhaul Phase 4 PR 13. Present = write; either half may be
+    #: omitted to keep its stored value.
+    ach_discount: AchDiscountChange | None = None
     actor_id: str
     reason: str | None = None
 
@@ -608,6 +705,8 @@ class UpdateBillingRules:
         cancellation_writer: CancellationPolicyWriter,
         drop_outcome_reader: DropDefaultOutcomeReader,
         drop_outcome_writer: DropDefaultOutcomeWriter,
+        ach_reader: AchDiscountReader,
+        ach_writer: AchDiscountWriter,
         audit: BillingAuditAppender | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -619,6 +718,8 @@ class UpdateBillingRules:
         self._cancellation_writer = cancellation_writer
         self._drop_outcome_reader = drop_outcome_reader
         self._drop_outcome_writer = drop_outcome_writer
+        self._ach_reader = ach_reader
+        self._ach_writer = ach_writer
         self._audit = audit
         self._now = clock
 
@@ -635,13 +736,30 @@ class UpdateBillingRules:
         reminder_days = _validate_reminder_days(cmd.reminder_days)
         timing = cmd.cancellation_effective_timing
         drop_outcome = cmd.drop_default_outcome
-        if not requested and reminder_days is None and timing is None and drop_outcome is None:
+        ach_change = cmd.ach_discount
+        if ach_change is not None and ach_change.enabled is None and ach_change.percent is None:
+            ach_change = None
+        if (
+            not requested
+            and reminder_days is None
+            and timing is None
+            and drop_outcome is None
+            and ach_change is None
+        ):
             return BillingRulesWriteResult(changed_fields=())
 
         schedule = await self._schedule_reader.execute()
         fees = await self._fees_reader.execute(academy_id)
         policy = await self._cancellation_reader.execute()
         departure = await self._drop_outcome_reader.execute()
+        ach_now = await self._ach_reader.execute()
+        before_ach = {
+            "enabled": bool(ach_now.ach_discount_enabled),
+            "percent": float(ach_now.ach_discount_percent),
+        }
+        ach_after = _validate_ach_discount(
+            ach_change, before_ach, float(ach_now.max_ach_discount_percent)
+        )
         before: dict[str, Any] = {
             "billing_day": schedule.billing_day,
             "invoice_due_days": schedule.invoice_due_days,
@@ -652,6 +770,7 @@ class UpdateBillingRules:
             REMINDER_DAYS_KEY: _reminder_days(schedule),
             CANCELLATION_TIMING_KEY: policy.cancellation_effective_timing,
             DROP_DEFAULT_OUTCOME_KEY: departure.drop_default_outcome,
+            ACH_DISCOUNT_KEY: before_ach,
         }
         changed: dict[str, Any] = {
             field: value for field, value in requested.items() if before[field] != value
@@ -662,6 +781,8 @@ class UpdateBillingRules:
             changed[CANCELLATION_TIMING_KEY] = timing
         if drop_outcome is not None and before[DROP_DEFAULT_OUTCOME_KEY] != drop_outcome:
             changed[DROP_DEFAULT_OUTCOME_KEY] = drop_outcome
+        if ach_after is not None and ach_after != before_ach:
+            changed[ACH_DISCOUNT_KEY] = ach_after
         if not changed:
             return BillingRulesWriteResult(changed_fields=())
 
@@ -758,13 +879,18 @@ class UpdateBillingRules:
             )
             applied.append(DROP_DEFAULT_OUTCOME_KEY)
 
+        if ACH_DISCOUNT_KEY in changed:
+            ach = changed[ACH_DISCOUNT_KEY]
+            await self._ach_writer.execute(enabled=ach["enabled"], percent=ach["percent"])
+            applied.append(ACH_DISCOUNT_KEY)
+
     async def _append_audit(
         self,
         cmd: UpdateBillingRulesCommand,
         academy_id: str,
         before: dict[str, Any],
         applied: tuple[str, ...],
-        changed: dict[str, int],
+        changed: dict[str, Any],
     ) -> None:
         if self._audit is None or not applied:
             return

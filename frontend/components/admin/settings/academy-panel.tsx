@@ -11,6 +11,7 @@ import {
   type UpdateAdminAcademyRequest,
 } from "@/lib/api/admin";
 import { TIMEZONE_OPTIONS, TIMEZONE_VALUES } from "@/lib/format/timezone-options";
+import { privacyUrlError } from "@/lib/public-page/admin-settings";
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -31,7 +32,7 @@ import {
  * Merges the old Academy and Branding panels into one tab (key stays
  * "academy"; `?panel=branding` maps here via `RETIRED_SETTINGS_PANELS`).
  * Card order follows the settings plan: Identity, Contact & location,
- * Brand, Class defaults (new).
+ * Brand, Class defaults (new), Legal links (Phase 4 PR 13).
  */
 interface AcademyForm {
   // Identity
@@ -42,6 +43,8 @@ interface AcademyForm {
   contact_phone: string;
   hours_text: string;
   address: string;
+  // Support email for parents (Phase 4 PR 13)
+  support_email: string;
   // Brand
   logo_url: string;
   brand_color: string;
@@ -54,6 +57,11 @@ interface AcademyForm {
   default_parking_note: string;
   default_what_to_bring: string;
   default_arrival_minutes_before: string;
+  // Legal links (Phase 4 PR 13). `privacy_notice_url` is the Public page
+  // setting's own stored value, edited here.
+  terms_url: string;
+  refund_policy_url: string;
+  privacy_notice_url: string;
 }
 
 function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
@@ -67,6 +75,7 @@ function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
     contact_phone: data?.contact_phone ?? "",
     hours_text: data?.hours_text ?? "",
     address: data?.address ?? "",
+    support_email: data?.support_email ?? "",
     logo_url: data?.logo_url ?? "",
     brand_color: data?.brand_color ?? "",
     email_sender_name: data?.email_sender_name ?? "",
@@ -77,6 +86,9 @@ function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
     default_parking_note: data?.default_parking_note ?? "",
     default_what_to_bring: data?.default_what_to_bring ?? "",
     default_arrival_minutes_before: data?.default_arrival_minutes_before?.toString() ?? "",
+    terms_url: data?.terms_url ?? "",
+    refund_policy_url: data?.refund_policy_url ?? "",
+    privacy_notice_url: data?.privacy_notice_url ?? "",
   };
 }
 
@@ -87,6 +99,7 @@ const TEXT_FIELDS = [
   "contact_phone",
   "hours_text",
   "address",
+  "support_email",
   "logo_url",
   "brand_color",
   "email_sender_name",
@@ -94,6 +107,9 @@ const TEXT_FIELDS = [
   "default_venue_address",
   "default_parking_note",
   "default_what_to_bring",
+  "terms_url",
+  "refund_policy_url",
+  "privacy_notice_url",
 ] as const satisfies ReadonlyArray<keyof AcademyForm>;
 
 const INT_FIELDS = [
@@ -101,6 +117,38 @@ const INT_FIELDS = [
   "default_class_length_minutes",
   "default_arrival_minutes_before",
 ] as const satisfies ReadonlyArray<keyof AcademyForm>;
+
+/** Terms and refund links are https only (the server enforces the same). */
+export function httpsLinkError(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return "Enter a full web address starting with https://";
+  }
+  if (parsed.protocol !== "https:") return "Only https:// links are allowed.";
+  if (!parsed.hostname) return "Enter a full web address starting with https://";
+  return null;
+}
+
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** Blank is fine (it clears the address); anything else must look like an email. */
+export function supportEmailError(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return EMAIL_PATTERN.test(trimmed) ? null : "Enter a valid email address.";
+}
+
+/** Helper text under Reply-to: it falls back to the support email. */
+export function replyToHint(supportEmail: string): string {
+  const support = supportEmail.trim();
+  return support
+    ? `Replies to academy email go here. Leave blank to use the support email (${support}).`
+    : "Replies to academy email go here. Defaults to the support email once you set one.";
+}
 
 function changedPayload(original: AcademyForm, form: AcademyForm): UpdateAdminAcademyRequest {
   const payload: UpdateAdminAcademyRequest = {};
@@ -140,7 +188,17 @@ export function AcademyPanel() {
   const dirty = Object.keys(payload).length > 0;
   const nameError = senderNameError(form.email_sender_name);
   const colorError = brandColorError(form.brand_color);
-  const hasError = nameError !== null || colorError !== null;
+  const supportError = supportEmailError(form.support_email);
+  const termsError = httpsLinkError(form.terms_url);
+  const refundError = httpsLinkError(form.refund_policy_url);
+  const privacyError = privacyUrlError(form.privacy_notice_url);
+  const hasError =
+    nameError !== null ||
+    colorError !== null ||
+    supportError !== null ||
+    termsError !== null ||
+    refundError !== null ||
+    privacyError !== null;
   const senderPreview =
     form.email_sender_name.trim() || query.data?.display_name || "Your academy";
   const academyName = query.data?.display_name || "Your academy";
@@ -182,6 +240,16 @@ export function AcademyPanel() {
             type="email"
             value={form.contact_email}
             onChange={(v) => set("contact_email", v)}
+          />
+          <Field
+            id="academy-support-email"
+            label="Support email for parents"
+            type="email"
+            placeholder="help@example.com"
+            value={form.support_email}
+            error={supportError}
+            hint="Parents see this on your public page. Replies to academy email come here when no reply-to is set. Optional."
+            onChange={(v) => set("support_email", v)}
           />
           <Field label="Contact phone" value={form.contact_phone} onChange={(v) => set("contact_phone", v)} />
           <Field label="Hours" value={form.hours_text} onChange={(v) => set("hours_text", v)} />
@@ -258,7 +326,7 @@ export function AcademyPanel() {
               type="email"
               placeholder="frontdesk@example.com"
               value={form.email_reply_to}
-              hint="Replies to academy email go here. Leave blank to keep the current behaviour."
+              hint={replyToHint(form.support_email)}
               onChange={(v) => set("email_reply_to", v)}
             />
           </div>
@@ -305,6 +373,43 @@ export function AcademyPanel() {
             type="number"
             value={form.default_arrival_minutes_before}
             onChange={(v) => set("default_arrival_minutes_before", v)}
+          />
+        </div>
+      </Card>
+
+      <Card p={24} className="max-w-4xl" data-testid="academy-legal-links">
+        <Overline>Legal links</Overline>
+        <p className="mt-2 text-sm leading-6 text-rally-muted">
+          Shown in the footer of your public page. A link you leave blank is not shown.
+        </p>
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <Field
+            id="academy-terms-url"
+            label="Terms of service"
+            type="url"
+            placeholder="https://"
+            value={form.terms_url}
+            error={termsError}
+            onChange={(v) => set("terms_url", v)}
+          />
+          <Field
+            id="academy-refund-url"
+            label="Refund policy"
+            type="url"
+            placeholder="https://"
+            value={form.refund_policy_url}
+            error={refundError}
+            onChange={(v) => set("refund_policy_url", v)}
+          />
+          <Field
+            id="academy-privacy-url"
+            label="Privacy notice"
+            type="url"
+            placeholder="https://"
+            value={form.privacy_notice_url}
+            error={privacyError}
+            hint="Also shown next to the trial form. Moved here from Public page."
+            onChange={(v) => set("privacy_notice_url", v)}
           />
         </div>
       </Card>

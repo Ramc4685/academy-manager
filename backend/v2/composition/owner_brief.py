@@ -98,8 +98,9 @@ async def send_owner_daily_briefs(
 ) -> OwnerBriefRunSummary:
     """Collect, address and send one brief per academy.
 
-    ``now`` must be in the scheduler timezone: the subject's date label is
-    taken from it verbatim.
+    ``now`` must be on the academy's own clock (the scheduler passes each
+    academy's local now, Settings Phase 4): the subject's date label is taken
+    from it verbatim.
     """
     academies = sent = send_failed = skipped = failed = 0
     for academy_id in academy_ids:

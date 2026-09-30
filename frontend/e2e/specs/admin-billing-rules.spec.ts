@@ -69,14 +69,20 @@ function stubBillingRules(
   opts: { error?: { status: number; body: unknown }; initial?: Record<string, number> } = {},
 ) {
   const seen: { put: unknown } = { put: null };
+  let ach = { enabled: false, percent: 0 };
   void page.route("**/api/v2/admin/billing/rules", (route) => {
     const request = route.request();
-    if (request.method() === "GET") return fulfillJson(route, billingRulesFixture(opts.initial));
+    if (request.method() === "GET") {
+      return fulfillJson(route, billingRulesFixture(opts.initial, ach));
+    }
     if (request.method() === "PUT") {
       seen.put = request.postDataJSON();
       if (opts.error) return fulfillJson(route, opts.error.body, opts.error.status);
-      const body = request.postDataJSON() as Record<string, number>;
-      return fulfillJson(route, billingRulesFixture(body));
+      const { ach_discount, ...numbers } = request.postDataJSON() as Record<string, unknown> & {
+        ach_discount?: { enabled?: boolean; percent?: number };
+      };
+      if (ach_discount) ach = { ...ach, ...ach_discount };
+      return fulfillJson(route, billingRulesFixture(numbers as Record<string, number>, ach));
     }
     return route.fallback();
   });
@@ -152,6 +158,33 @@ test.describe("admin settings → billing rules", () => {
 
     await expect.poll(() => seen.put).toEqual({ late_fee_cents: 1750 });
     await expect(page.getByTestId("billing-rules-saved")).toBeVisible();
+  });
+
+  test("the Bank (ACH) discount saves on/off and percent as one audited change", async ({ page }) => {
+    await stubShell(page, OWNER_ME);
+    const seen = stubBillingRules(page);
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    const ach = page.getByTestId("billing-rules-ach");
+    await expect(ach).toContainText("Bank (ACH) discount");
+    await expect(ach).toContainText("Autopay only");
+    await expect(ach).toContainText("taken after any tuition discount");
+    await expect(page.getByTestId("billing-rules-input-ach_discount-enabled")).not.toBeChecked();
+
+    // Over the platform ceiling: inline error, Save stays off.
+    await page.getByTestId("billing-rules-input-ach_discount-enabled").check();
+    await page.getByTestId("billing-rules-input-ach_discount-percent").fill("5");
+    await expect(page.getByTestId("billing-rules-error-ach_discount")).toBeVisible();
+    await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
+
+    await page.getByTestId("billing-rules-input-ach_discount-percent").fill("2.5");
+    await expect(page.getByTestId("billing-rules-save")).toContainText("Save Bank (ACH) discount");
+    await page.getByTestId("billing-rules-save").click();
+    await expect
+      .poll(() => seen.put)
+      .toEqual({ ach_discount: { enabled: true, percent: 2.5 } });
+    await expect(page.getByTestId("billing-rules-saved")).toBeVisible();
+    await expect(page.getByTestId("billing-rules-input-ach_discount-enabled")).toBeChecked();
   });
 
   test("turning a late fee on needs an acknowledgement of what it charges", async ({ page }) => {

@@ -576,21 +576,27 @@ def test_invoice_job_records_a_heartbeat_only_when_nothing_was_generated() -> No
     tick that emailed or failed to email must also store its counts, or a
     month-long email outage would be invisible on the 29 days that generated
     nothing. A tick that did neither still writes a heartbeat only.
+
+    Settings Phase 4: the counts are summed per ops-digest cycle
+    (``accumulate_job_run``) because academies now generate on separate hourly
+    ticks; the gate in front of that write is unchanged.
     """
     from backend.v2.main import _lifespan
 
     body = inspect.getsource(_lifespan).split("_generate_monthly_invoices_body", 2)[2]
-    call = body.split("record_job_run(", 1)[1].split("        )", 1)[0]
+    body = body.split("async def _send_ops_digest", 1)[0]
+    gate, write = body.split("if not (", 1)[1].split("accumulate_job_run(", 1)
 
-    assert 'totals["academy_count"]' in call
-    assert 'totals["invoices_emailed"]' in call
-    assert 'totals["invoice_emails_failed"]' in call
-    # Still gated: an idle tick must not overwrite the last real run's counts.
-    assert "meaningful=bool(" in call
-    assert "meaningful=True" not in call
+    assert 'totals["academy_count"]' in gate
+    assert 'totals["invoices_emailed"]' in gate
+    assert 'totals["invoice_emails_failed"]' in gate
+    # Still gated: an idle tick returns before writing any counts.
+    assert gate.split("):", 1)[1].strip().startswith("return")
+    assert "record_job_run(" not in body
+    assert "cycle=ops_digest_cycle(" in write
     # The stored record must use #440's `created_count` naming so the email and
     # the structured log line agree.
-    assert 'record["created_count"] = totals["created"]' in body
+    assert 'counts["created_count"] = totals["created"]' in body
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +766,7 @@ def test_a_stale_job_alone_raises_the_attention_flag() -> None:
     assert subject == "Ops digest 2026-08-27 — attention needed"
     assert "Scheduled jobs NOT ticking (1)" in body
     assert "<strong>generate_monthly_invoices</strong>" in body
-    assert "expected within 26h" in body
+    assert "expected within 3h" in body
     assert "2026-08-26T04:00:00+00:00" in body
     assert "(27h ago)" in body
     assert "Nothing new needs attention" not in body

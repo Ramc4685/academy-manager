@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from backend.v2.contexts.billing.application.use_cases.billing_rules import (
+    AchDiscountLike,
     BuildBillingRulesView,
     CancellationPolicyLike,
     DropDefaultOutcomeLike,
@@ -26,6 +27,9 @@ from backend.v2.contexts.billing.application.use_cases.billing_rules import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
     MongoBillingAuditLogRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
     UpdateEnrollmentDeparturePolicyCommand,
@@ -99,6 +103,35 @@ class _DropDefaultOutcomeAdapter:
         return cast(DropDefaultOutcomeLike, updated)
 
 
+class _AchDiscountAdapter:
+    """Read and write the ACH discount on ``billing_settings``.
+
+    Read-modify-write through the settings repository, which never persists
+    ``max_ach_discount_percent`` (the platform-owned ceiling), so this write
+    cannot raise it. Only ``ach_discount_enabled`` and ``ach_discount_percent``
+    are changed.
+    """
+
+    def __init__(self, settings: MongoBillingSettingsRepository) -> None:
+        self._settings = settings
+
+    async def read(self) -> AchDiscountLike:
+        return await self._settings.get()
+
+    async def write(self, *, enabled: bool, percent: float) -> AchDiscountLike:
+        current = await self._settings.get()
+        updated = current.model_copy(
+            update={"ach_discount_enabled": enabled, "ach_discount_percent": percent}
+        )
+        await self._settings.upsert(updated)
+        return updated
+
+
+class _Call:
+    def __init__(self, fn: Any) -> None:
+        self.execute = fn
+
+
 def _required(value: Any, name: str) -> Any:
     if value is None:
         raise RuntimeError(f"billing rules needs {name} wired on AdminUseCases")
@@ -122,12 +155,14 @@ def compose_admin_billing_rules(db: Any, admin: AdminUseCases) -> AdminBillingRu
         reader=drop_outcome_reader,
         writer=_required(admin.update_departure_policy, "update_departure_policy"),
     )
+    ach = _AchDiscountAdapter(MongoBillingSettingsRepository(db))
     return AdminBillingRules(
         read=BuildBillingRulesView(
             schedule=schedule_reader,
             fees=admin.get_academy_fees_use_case,
             cancellation=policy_reader,
             drop_outcome=drop_outcome_reader,
+            ach=_Call(ach.read),
         ),
         write=UpdateBillingRules(
             schedule_reader=schedule_reader,
@@ -138,6 +173,8 @@ def compose_admin_billing_rules(db: Any, admin: AdminUseCases) -> AdminBillingRu
             cancellation_writer=policy_writer,
             drop_outcome_reader=drop_outcome_reader,
             drop_outcome_writer=drop_outcome_writer,
+            ach_reader=_Call(ach.read),
+            ach_writer=_Call(ach.write),
             audit=MongoBillingAuditLogRepository(db),
         ),
     )

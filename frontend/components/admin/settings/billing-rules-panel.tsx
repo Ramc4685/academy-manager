@@ -5,8 +5,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getBillingRules, updateBillingRules } from "@/lib/api/admin";
 import {
+  ACH_ENABLED_FIELD,
+  ACH_KEY,
+  ACH_PERCENT_FIELD,
   canSave,
   diffForm,
+  isAchRow,
   isChoiceRow,
   isListRow,
   saveSummary,
@@ -176,7 +180,16 @@ function RuleGroupCard({
       )}
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {group.rows.map((row) =>
-          row.editable ? (
+          row.editable && isAchRow(row) ? (
+            <AchDiscountRule
+              key={row.key}
+              row={row}
+              enabled={(form[ACH_ENABLED_FIELD] ?? "false") === "true"}
+              percent={form[ACH_PERCENT_FIELD] ?? ""}
+              error={errors[ACH_KEY] ?? errors[ACH_PERCENT_FIELD]}
+              onChange={onChange}
+            />
+          ) : row.editable ? (
             <EditableRule
               key={row.key}
               row={row}
@@ -259,6 +272,72 @@ function EditableRule({
       )}
       {!error && row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
     </label>
+  );
+}
+
+/**
+ * Bank (ACH) discount (Settings overhaul Phase 4 PR 13): a switch and a
+ * percent. The percent box stays visible when the switch is off so the
+ * stored value is not lost; the ceiling comes from the platform, not here.
+ */
+function AchDiscountRule({
+  row,
+  enabled,
+  percent,
+  error,
+  onChange,
+}: {
+  row: BillingRuleRow;
+  enabled: boolean;
+  percent: string;
+  error?: string;
+  onChange: (key: string, value: string) => void;
+}) {
+  return (
+    <div className="grid gap-1.5 text-sm font-medium text-rally-ink sm:col-span-2" data-testid="billing-rules-ach">
+      <span id="billing-rules-ach-label">{row.label}</span>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 font-normal">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => onChange(ACH_ENABLED_FIELD, event.target.checked ? "true" : "false")}
+            aria-labelledby="billing-rules-ach-label"
+            data-testid="billing-rules-input-ach_discount-enabled"
+          />
+          <span>{enabled ? "On" : "Off"}</span>
+        </label>
+        <label className="flex items-center gap-2 font-normal">
+          <span>Percent</span>
+          <input
+            type="number"
+            min={0}
+            max={row.max_percent ?? undefined}
+            step="0.01"
+            inputMode="decimal"
+            value={percent}
+            onChange={(event) => onChange(ACH_PERCENT_FIELD, event.target.value)}
+            aria-invalid={error ? true : undefined}
+            className={`h-10 w-28 rounded-lg border bg-white px-3 font-mono text-sm tabular-nums outline-none focus:border-blue-500 ${
+              error ? "border-red-500" : "border-rally-line"
+            }`}
+            data-testid="billing-rules-input-ach_discount-percent"
+          />
+          <span>%</span>
+        </label>
+      </div>
+      {error && (
+        <span className="text-xs text-red-700" role="alert" data-testid="billing-rules-error-ach_discount">
+          {error}
+        </span>
+      )}
+      {!error && (
+        <span className="text-xs font-normal text-rally-muted">
+          {row.detail}
+          {row.max_percent ? ` Up to ${row.max_percent}%.` : ""}
+        </span>
+      )}
+    </div>
   );
 }
 

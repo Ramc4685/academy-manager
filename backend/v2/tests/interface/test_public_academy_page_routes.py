@@ -62,6 +62,8 @@ def test_published_page_lists_only_published_listable_classes() -> None:
         "show_availability": True,
         "price_period_default": "month",
         "privacy_notice_url": None,
+        "terms_url": None,
+        "refund_policy_url": None,
     }
 
     [juniors] = body["programs"]
@@ -195,3 +197,51 @@ def test_single_academy_mode_foreign_tenant_is_404_without_its_id() -> None:
     response = _get(app)
     assert response.status_code == 404
     assert "acad-lakeside" not in response.text
+
+
+def test_footer_uses_support_email_and_legal_links_when_set() -> None:
+    db = _db()
+    asyncio.run(
+        db["academies"].update_one(
+            {"academy_id": ACADEMY},
+            {
+                "$set": {
+                    "support_email": "help@riverside.example.test",
+                    "terms_url": "https://riverside.example.test/terms",
+                    "refund_policy_url": "https://riverside.example.test/refunds",
+                    "public_page.privacy_notice_url": "https://riverside.example.test/privacy",
+                }
+            },
+        )
+    )
+    body = _get(build_app(db)).json()
+    assert body["academy"]["support_email"] == "help@riverside.example.test"
+    assert body["page"]["terms_url"] == "https://riverside.example.test/terms"
+    assert body["page"]["refund_policy_url"] == "https://riverside.example.test/refunds"
+    assert body["page"]["privacy_notice_url"] == "https://riverside.example.test/privacy"
+
+
+def test_footer_falls_back_to_the_contact_email_when_no_support_email() -> None:
+    """BLNO has no support_email: its footer must not change."""
+    body = _get(build_app(_db())).json()
+    assert body["academy"]["support_email"] == SECRETS["contact_email"]
+    assert body["page"]["terms_url"] is None
+    assert body["page"]["refund_policy_url"] is None
+
+
+def test_footer_never_renders_a_hostile_stored_legal_link() -> None:
+    db = _db()
+    asyncio.run(
+        db["academies"].update_one(
+            {"academy_id": ACADEMY},
+            {
+                "$set": {
+                    "terms_url": "javascript:alert(1)",
+                    "refund_policy_url": "http://riverside.example.test/refunds",
+                }
+            },
+        )
+    )
+    page = _get(build_app(db)).json()["page"]
+    assert page["terms_url"] is None
+    assert page["refund_policy_url"] is None

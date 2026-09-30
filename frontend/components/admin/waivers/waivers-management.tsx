@@ -167,7 +167,7 @@ function TemplateManagementPanel({
   };
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[0.78fr_1.22fr]">
+    <div className="grid gap-4">
       <Card p={20}>
         <Overline>Create draft</Overline>
         <div className="mt-4 space-y-3">
@@ -212,7 +212,7 @@ function TemplateManagementPanel({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[780px] text-sm">
+            <table className="w-full min-w-[600px] text-sm">
               <thead>
                 <tr className="border-b border-neutral-200 bg-neutral-50 text-left">
                   <th className="px-5 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Template</th>
@@ -283,7 +283,7 @@ function TemplateManagementPanel({
 
 function SummaryCards({ summary }: { summary: AdminWaiverSummary }) {
   return (
-    <div className="grid gap-4 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
       <Card p={20} accent="#10b981">
         <Overline>Signed current</Overline>
         <BigNum size={32}>{summary.signed_current}</BigNum>
@@ -312,7 +312,7 @@ function SummaryCards({ summary }: { summary: AdminWaiverSummary }) {
 
 function SummarySkeleton() {
   return (
-    <div className="grid gap-4 md:grid-cols-4" aria-label="Loading waiver summary">
+    <div className="grid grid-cols-2 gap-4 md:grid-cols-4" aria-label="Loading waiver summary">
       {["signed", "pending", "expiring", "outdated"].map((key) => (
         <Card key={key} p={20}>
           <div className="h-3 w-24 rounded bg-neutral-100" />

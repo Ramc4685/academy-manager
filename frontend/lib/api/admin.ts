@@ -1532,6 +1532,20 @@ export interface AdminAcademyView {
   /** Where replies to academy email go. Null = unchanged per-email default. */
   email_reply_to?: string | null;
   /**
+   * Settings overhaul Phase 4 PR 13. Support email for parents: the default
+   * reply-to (when no reply-to is set) and the public page footer contact.
+   * Null = not set.
+   */
+  support_email?: string | null;
+  /** https links shown in the public page footer. Null = not set. */
+  terms_url?: string | null;
+  refund_policy_url?: string | null;
+  /**
+   * The SAME stored value as the Public page setting
+   * (`public_page.privacy_notice_url`); Academy profile edits it here.
+   */
+  privacy_notice_url?: string | null;
+  /**
    * Invoice-number prefix ("BLNO" -> BLNO-2026-09-0042). Read-only for the
    * academy: CourtMastr sets it per academy and it locks after the first
    * numbered invoice. Null = not set yet (no invoice numbers are issued).
@@ -1572,6 +1586,10 @@ export type UpdateAdminAcademyRequest = Partial<{
   currency: string | null;
   email_sender_name: string | null;
   email_reply_to: string | null;
+  support_email: string | null;
+  terms_url: string | null;
+  refund_policy_url: string | null;
+  privacy_notice_url: string | null;
   default_class_size: number | null;
   default_class_length_minutes: number | null;
   default_venue_address: string | null;

@@ -52,6 +52,10 @@ def test_get_academy_contract(admin_client):
         "currency": "USD",
         "email_sender_name": None,
         "email_reply_to": None,
+        "support_email": None,
+        "terms_url": None,
+        "refund_policy_url": None,
+        "privacy_notice_url": None,
         "invoice_prefix": None,
         "phone_country_code": "1",
         "sport": "badminton",
@@ -605,3 +609,83 @@ def test_stripe_connect_callback_error_stays_on_the_platform_host(admin_client, 
     assert response.status_code == 302
     assert response.headers["location"].endswith("/admin/settings?panel=gateway&stripe=error")
     assert seen == []
+
+
+def test_patch_academy_support_email_and_legal_links_are_normalised(admin_client):
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone="UTC",
+        support_email="help@example.com",
+        terms_url="https://example.com/terms",
+        refund_policy_url="https://example.com/refunds",
+        privacy_notice_url="https://example.com/privacy",
+    )
+
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={
+            "support_email": " help@example.com ",
+            "terms_url": " https://example.com/terms ",
+            "refund_policy_url": "https://example.com/refunds",
+            "privacy_notice_url": "https://example.com/privacy",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["support_email"] == "help@example.com"
+    assert body["privacy_notice_url"] == "https://example.com/privacy"
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad",
+        {
+            "support_email": "help@example.com",
+            "terms_url": "https://example.com/terms",
+            "refund_policy_url": "https://example.com/refunds",
+            "privacy_notice_url": "https://example.com/privacy",
+        },
+    )
+
+    admin_client.use_cases.update_academy_use_case.execute.reset_mock()
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={
+            "support_email": "",
+            "terms_url": "  ",
+            "refund_policy_url": "",
+            "privacy_notice_url": "",
+        },
+    )
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad",
+        {
+            "support_email": None,
+            "terms_url": None,
+            "refund_policy_url": None,
+            "privacy_notice_url": None,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"support_email": "not-an-email"},
+        {"support_email": "help@example.com\r\nBcc: attacker@example.com"},
+        {"terms_url": "javascript:alert(1)"},
+        {"terms_url": "http://example.com/terms"},
+        {"terms_url": "example.com/terms"},
+        {"terms_url": "data:text/html,hi"},
+        {"terms_url": "https://exa mple.com/x"},
+        {"refund_policy_url": "http://example.com/refunds"},
+        {"refund_policy_url": "ftp://example.com/refunds"},
+        {"privacy_notice_url": "javascript:alert(1)"},
+        {"privacy_notice_url": "not a url"},
+    ],
+)
+def test_patch_academy_rejects_bad_support_email_and_legal_links(admin_client, body):
+    r = admin_client.patch("/api/v2/admin/academy", json=body)
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()

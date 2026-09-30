@@ -199,7 +199,7 @@ export function SelfServicePanel() {
             />
           </Card>
 
-          <div data-testid="family-policies-registration-waivers-card" className="space-y-4">
+          <div data-testid="family-policies-registration-waivers-card" className="max-w-3xl space-y-4">
             <Overline>Registration &amp; waivers</Overline>
             <WaiversManagement />
           </div>

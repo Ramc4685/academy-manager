@@ -18,7 +18,6 @@ describe("toPublicPageForm", () => {
       show_availability: true,
       price_period_default: "month",
       trials_open: true,
-      privacy_notice_url: "",
     });
   });
 });
@@ -43,17 +42,18 @@ describe("publicPagePayload", () => {
     ).toEqual({ show_price: false, price_period_default: "term" });
   });
 
-  it("trims the privacy link and sends a cleared link as null", () => {
-    const withLink = { ...original, privacy_notice_url: "https://riverside.example/privacy" };
-    expect(
-      publicPagePayload(original, { ...original, privacy_notice_url: "  https://a.example/p " })
-    ).toEqual({ privacy_notice_url: "https://a.example/p" });
-    expect(publicPagePayload(withLink, { ...withLink, privacy_notice_url: "  " })).toEqual({
-      privacy_notice_url: null,
+  it("never carries the privacy link: it lives in Academy profile now", () => {
+    const form = toPublicPageForm({
+      published: true,
+      show_price: true,
+      show_availability: true,
+      price_period_default: "month",
+      trials_open: true,
+      privacy_notice_url: "https://riverside.example/privacy",
+      public_url: null,
     });
-    expect(
-      publicPagePayload(withLink, { ...withLink, privacy_notice_url: " https://riverside.example/privacy" })
-    ).toEqual({});
+    expect(form).not.toHaveProperty("privacy_notice_url");
+    expect(publicPagePayload(form, { ...form, published: false })).toEqual({ published: false });
   });
 });
 

@@ -13,7 +13,13 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 #: ``set_invoice_number_prefix``. Excluding the prefix also stops the tenant
 #: write from persisting a default into every academy's document, which is how
 #: "BLNO" used to spread (roadmap X32).
-_PLATFORM_ONLY_FIELDS = {"application_fee_bps", "invoice_number_prefix"}
+_PLATFORM_ONLY_FIELDS = {
+    "application_fee_bps",
+    "invoice_number_prefix",
+    # The ceiling on the ACH discount a tenant may set (Settings overhaul
+    # Phase 4 PR 13). A tenant write must never persist or raise it.
+    "max_ach_discount_percent",
+}
 
 #: Fields computed on read and never written by the app. The platform-charge
 #: flag comes from the house-academy setting (see ``house_academy``); writing
@@ -44,7 +50,8 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
         ``allow_platform_charge_fallback`` is never written: it is derived on
         read from the house-academy setting.
 
-        ``application_fee_bps`` and ``invoice_number_prefix`` are deliberately
+        ``application_fee_bps``, ``invoice_number_prefix`` and
+        ``max_ach_discount_percent`` are deliberately
         NOT written here: they are set only by the platform, through
         :meth:`set_application_fee_bps` and :meth:`set_invoice_number_prefix`.
         Every academy-side settings write is read-modify-write through this

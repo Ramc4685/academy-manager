@@ -4,12 +4,19 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+# Re-exported so the admin views validate legal links through the
+# application layer (interfaces never import a context domain directly).
+from backend.v2.contexts.identity.domain.legal_links import (
+    validate_https_url as validate_https_url,
+)
+from backend.v2.contexts.identity.domain.public_page import PUBLIC_PAGE_FIELD
 from backend.v2.shared.comms.phone_country import calling_code_for_country
 
 from .get_academy_use_case import (
     DEFAULT_CLASS_LENGTH_MINUTES,
     DEFAULT_CLASS_SIZE,
     GetAcademyOutput,
+    legal_and_support_fields,
 )
 
 
@@ -25,6 +32,14 @@ class UpdateAcademyUseCase:
         self._repo = academy_repo
 
     async def execute(self, academy_id: str, fields: dict[str, Any]) -> GetAcademyOutput:
+        fields = dict(fields)
+        if "privacy_notice_url" in fields:
+            # The privacy link has ONE stored copy, the public page setting
+            # the CRM consent stamp and the trial form read. Academy profile
+            # writes that same key; there is no ``academies.privacy_notice_url``.
+            fields[f"{PUBLIC_PAGE_FIELD}.privacy_notice_url"] = (
+                fields.pop("privacy_notice_url") or None
+            )
         if not fields:
             # No changes — ensure doc exists and return current state.
             doc = await self._repo.upsert_defaults(academy_id)
@@ -45,6 +60,7 @@ class UpdateAcademyUseCase:
             currency=str(doc.get("currency") or "USD"),
             email_sender_name=doc.get("email_sender_name") or None,
             email_reply_to=doc.get("email_reply_to") or None,
+            **legal_and_support_fields(doc),
             phone_country_code=calling_code_for_country(doc.get("country")),
             default_class_size=(
                 int(doc["default_class_size"])

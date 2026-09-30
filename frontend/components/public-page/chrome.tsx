@@ -92,13 +92,21 @@ export function SiteHeader({
 /** Fixed footer with the non-removable CourtMastr credit (brief section 9). */
 export function SiteFooter({
   privacyUrl,
+  termsUrl,
+  refundUrl,
   supportEmail,
 }: {
   privacyUrl?: string | null;
+  /** The academy's own terms link; the platform's /terms page when unset. */
+  termsUrl?: string | null;
+  /** The academy's refund policy link; no link is shown when unset. */
+  refundUrl?: string | null;
   /** The academy's support email only (owner decision: no phone here). */
   supportEmail?: string | null;
 }) {
   const privacy = safeHttpsUrl(privacyUrl) ?? "/privacy";
+  const terms = safeHttpsUrl(termsUrl);
+  const refund = safeHttpsUrl(refundUrl);
   return (
     <footer className={`${styles.footer} ${styles.night}`}>
       <div className={`${styles.wrap} ${styles.footerInner}`}>
@@ -120,8 +128,21 @@ export function SiteFooter({
             <a href={privacy}>Privacy</a>
           </li>
           <li>
-            <Link href="/terms">Terms</Link>
+            {terms ? (
+              <a href={terms} data-testid="academy-terms-link">
+                Terms
+              </a>
+            ) : (
+              <Link href="/terms">Terms</Link>
+            )}
           </li>
+          {refund ? (
+            <li>
+              <a href={refund} data-testid="academy-refund-link">
+                Refund policy
+              </a>
+            </li>
+          ) : null}
         </ul>
         <p className={styles.credit} data-testid="courtmastr-credit">
           <CourtMastrMark />

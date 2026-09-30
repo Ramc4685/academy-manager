@@ -96,6 +96,9 @@ class PublicPageFlagsDto(BaseModel):
     show_availability: bool
     price_period_default: str
     privacy_notice_url: str | None = None
+    #: Footer legal links; null when the academy has not set them.
+    terms_url: str | None = None
+    refund_policy_url: str | None = None
 
 
 class PublicAcademyPageDto(BaseModel):
