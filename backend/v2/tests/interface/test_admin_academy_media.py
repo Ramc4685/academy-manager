@@ -8,6 +8,7 @@ from PIL import Image
 
 from backend.v2.contexts.identity.application.academy_media import UploadAcademyLogo
 from backend.v2.contexts.identity.infrastructure.logo_image import process_logo_image
+from backend.v2.contexts.identity.infrastructure.photo_image import process_photo_image
 from backend.v2.tests.fixtures.fake_media_store import FakeMediaRepo, FakeMediaStore
 
 URL = "/api/v2/admin/academy/media"
@@ -23,7 +24,10 @@ def _wire(client, **store_kwargs):
     store = FakeMediaStore(**store_kwargs)
     repo = FakeMediaRepo()
     client.use_cases.upload_academy_logo = UploadAcademyLogo(
-        store=store, media_repo=repo, process_image=process_logo_image
+        store=store,
+        media_repo=repo,
+        process_image=process_logo_image,
+        process_photo=process_photo_image,
     )
     return store, repo
 
@@ -146,7 +150,7 @@ def test_body_is_cut_off_on_the_wire_past_the_limit(admin_client):
     store, _ = _wire(admin_client)
 
     def chunks():
-        for _ in range(40):
+        for _ in range(100):  # 6.4 MB, past the 5 MB photo cap
             yield b"\x00" * (64 * 1024)
 
     r = admin_client.post(
@@ -156,3 +160,83 @@ def test_body_is_cut_off_on_the_wire_past_the_limit(admin_client):
     )
     assert r.status_code in (411, 413)
     assert not store.objects
+
+
+# --- landing-page photo purposes -------------------------------------------
+
+
+def _jpeg(size=(1600, 900)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", size, (200, 30, 30)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_default_purpose_is_logo_and_response_keeps_logo_url(admin_client):
+    _wire(admin_client)
+    body = _post(admin_client, _png()).json()
+    assert body["purpose"] == "logo"
+    assert body["logo_url"] == body["url"]
+
+
+def test_hero_photo_upload_stores_a_jpeg_under_the_hero_path(admin_client):
+    store, repo = _wire(admin_client)
+
+    r = _post(admin_client, _jpeg(), name="court.jpg", ctype="image/jpeg", purpose="hero")
+
+    assert r.status_code == 200, r.text
+    (path,) = store.objects
+    assert path.startswith("academies/acad/hero/") and path.endswith(".jpg")
+    assert r.json()["url"].startswith("https://firebasestorage.googleapis.com/")
+    assert r.json()["logo_url"] is None and r.json()["purpose"] == "hero"
+    assert repo.rows[0]["kind"] == "hero"
+
+
+def test_plain_admin_can_upload_photos(admin_only_client):
+    _wire(admin_only_client)
+    for purpose, extra in (("hero", {}), ("coach", {}), ("gallery", {"consent": "true"})):
+        r = _post(
+            admin_only_client, _jpeg(), name="a.jpg", ctype="image/jpeg", purpose=purpose, **extra
+        )
+        assert r.status_code == 200, (purpose, r.text)
+
+
+def test_gallery_without_consent_is_422_with_a_clear_message(admin_client):
+    store, repo = _wire(admin_client)
+    for form in ({"purpose": "gallery"}, {"purpose": "gallery", "consent": "false"}):
+        r = _post(admin_client, _jpeg(), name="a.jpg", ctype="image/jpeg", **form)
+        assert r.status_code == 422
+        assert "parents or guardians" in r.json()["detail"]
+    assert not store.objects and not repo.rows
+
+
+def test_unknown_purpose_is_422(admin_client):
+    store, _ = _wire(admin_client)
+    assert _post(admin_client, _png(), purpose="banner").status_code == 422
+    assert not store.objects
+
+
+def test_photo_can_be_up_to_5_mb_and_logo_stays_2_mb(admin_client):
+    store, _ = _wire(admin_client)
+    over_logo = b"\x00" * (2 * 1024 * 1024 + 1)
+
+    r = _post(admin_client, over_logo)
+    assert r.status_code == 413 and "2 MB" in r.json()["detail"]
+    # Same size as a hero is not a size problem (it is junk bytes: 422).
+    assert _post(admin_client, over_logo, purpose="hero").status_code == 422
+    r = _post(admin_client, b"\x00" * (5 * 1024 * 1024 + 1), purpose="hero")
+    assert r.status_code == 413 and "5 MB" in r.json()["detail"]
+    assert not store.objects
+
+
+def test_photo_academy_and_path_come_from_claims(admin_client):
+    store, _ = _wire(admin_client)
+    _post(
+        admin_client,
+        _jpeg(),
+        name="a.jpg",
+        ctype="image/jpeg",
+        purpose="coach",
+        academy_id="acad_other",
+    )
+    (path,) = store.objects
+    assert path.startswith("academies/acad/coach/") and "acad_other" not in path

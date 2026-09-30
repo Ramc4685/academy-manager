@@ -3875,8 +3875,14 @@ export function updateAdminAcademy(
   });
 }
 
+export type AdminMediaPurpose = "logo" | "hero" | "gallery" | "coach";
+
 export interface AdminAcademyMediaView {
-  logo_url: string;
+  /** Set for a logo only. */
+  logo_url: string | null;
+  /** The stored image's public URL, for every purpose. */
+  url: string;
+  purpose: AdminMediaPurpose;
 }
 
 /**
@@ -3884,9 +3890,32 @@ export interface AdminAcademyMediaView {
  * the caller saves it with `updateAdminAcademy({ logo_url })` like any other
  * field (single writer).
  */
-export function uploadAdminAcademyLogo(file: File): Promise<AdminAcademyMediaView> {
+export function uploadAdminAcademyLogo(
+  file: File,
+): Promise<AdminAcademyMediaView & { logo_url: string }> {
   const body = new FormData();
   body.append("file", file);
+  return apiFetch<AdminAcademyMediaView & { logo_url: string }>("/admin/academy/media", {
+    method: "POST",
+    body,
+  });
+}
+
+/**
+ * Upload a landing-page photo (PNG or JPEG, up to 5 MB): `hero`, `gallery`
+ * or `coach`. A gallery photo may show children, so it is refused unless
+ * `consent` is true (parents or guardians agreed). The caller saves the URL
+ * with `updateAdminPublicPageSettings` (single writer).
+ */
+export function uploadAdminAcademyPhoto(
+  file: File,
+  purpose: Exclude<AdminMediaPurpose, "logo">,
+  options: { consent?: boolean } = {},
+): Promise<AdminAcademyMediaView> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("purpose", purpose);
+  if (options.consent) body.append("consent", "true");
   return apiFetch<AdminAcademyMediaView>("/admin/academy/media", { method: "POST", body });
 }
 
@@ -4123,6 +4152,26 @@ export function overrideAdminBillingEnrollmentPrice(
 export type PublicPricePeriod = "month" | "class" | "term";
 export type PublicCoachDisplay = "full_name" | "first_name" | "hidden";
 
+/** A gallery photo. Who confirmed consent, and when, stays on the server. */
+export interface AdminGalleryPhoto {
+  url: string;
+  caption: string;
+  /** Must be true: parents or guardians of anyone shown agreed. */
+  consent_confirmed: boolean;
+}
+
+export interface AdminCoachProfile {
+  coach_id: string;
+  photo_url: string | null;
+  bio: string;
+  shown: boolean;
+}
+
+export interface AdminFaq {
+  question: string;
+  answer: string;
+}
+
 export interface AdminPublicPageSettingsView {
   published: boolean;
   show_price: boolean;
@@ -4130,6 +4179,15 @@ export interface AdminPublicPageSettingsView {
   price_period_default: PublicPricePeriod;
   trials_open: boolean;
   privacy_notice_url: string | null;
+  // Landing-page content (Settings overhaul Phase 6). Optional so older
+  // fixtures compile; the server always sends them.
+  hero_photo_url?: string | null;
+  about_text?: string;
+  highlights?: string[];
+  gallery?: AdminGalleryPhoto[];
+  coach_profiles?: AdminCoachProfile[];
+  /** Empty = the public page uses its standard questions. */
+  faqs?: AdminFaq[];
   /** Look of the public page; "floodlit" is the original. */
   theme: "floodlit" | "daylight" | "showcase";
   /** "N spots left" shows at or below this many seats (0 hides it, max 20). */

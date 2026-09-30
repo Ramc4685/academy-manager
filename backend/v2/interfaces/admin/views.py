@@ -1910,11 +1910,15 @@ class AdminAcademyView(BaseModel):
 
 
 class AdminAcademyMediaView(BaseModel):
-    """Result of ``POST /admin/academy/media``: the stored logo's public URL.
+    """Result of ``POST /admin/academy/media``: the stored image's public URL.
 
-    The caller saves it through ``PATCH /admin/academy`` (single writer)."""
+    A logo is saved by the caller through ``PATCH /admin/academy``; a hero,
+    gallery or coach photo through ``PATCH /admin/academy/public-page``
+    (single writers). ``url`` is always set; ``logo_url`` only for a logo."""
 
-    logo_url: str
+    logo_url: str | None = None
+    url: str
+    purpose: str = "logo"
 
 
 class UpdateAdminAcademyRequest(BaseModel):
