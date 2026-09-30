@@ -1,6 +1,6 @@
 # Public landing page themes, content render and seats threshold (Settings Phase 6, PR 21-22)
 
-PR: #TBD
+PR: #1018
 
 ## What changed
 
