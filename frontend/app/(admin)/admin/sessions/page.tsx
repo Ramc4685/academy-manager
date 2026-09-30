@@ -13,30 +13,18 @@
 import dynamic from "next/dynamic";
 import type { Route } from "next";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import * as Dialog from "@radix-ui/react-dialog";
 
 import {
   listAdminSessions,
-  listAdminUsers,
-  createAdminSession,
-  updateAdminSession,
   deleteAdminSession,
-  getAdminAcademy,
   type AdminSessionList,
-  type AdminUserView,
   type AdminSessionView,
-  type CreateSessionRequest,
-  type EditSessionRequest,
 } from "@/lib/api/admin";
-// #503-class hardening: `hasRecurringSchedule` (and the `buildEditSessionForm`
-// that depends on it) used to be copy-pasted here verbatim. The copy lacked the
-// optional-chaining guard, so a payload without `days_of_week` crashed this page
-// to the error boundary. One implementation now, so the two cannot drift again.
-import { buildEditSessionForm, hasRecurringSchedule } from "./[id]/format";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
-import { OwnerOnlyFieldNote, useIsOwner } from "@/components/admin/owner-context";
+// One class form for Create, list Edit and class-page Edit (class-page PR A).
+import { CreateClassDialog, EditClassDialog } from "@/components/admin/sessions/class-form";
 import { queryKeys } from "@/lib/query/keys";
 import {
   formatAcademyTimeRange,
@@ -52,8 +40,6 @@ import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Icon } from "@/components/ds/icons";
-import { Overline } from "@/components/ds/typography";
-import { shouldAdoptAcademyCapacity } from "./capacity-seed";
 
 const AdminCalendarView = dynamic(() => import("@/components/admin/AdminCalendarView"), {
   ssr: false,
@@ -63,31 +49,6 @@ const AdminCalendarView = dynamic(() => import("@/components/admin/AdminCalendar
 function formatTimeRange(start: string, end: string, timezone: string | null): string {
   return formatAcademyTimeRange(start, end, timezone);
 }
-
-/**
- * Seed for the create-session form's timezone.
- *
- * This used to be the literal "UTC". A 6:00 PM Chicago class saved with
- * timezone "UTC" is stored as 18:00Z and then read back — by the parent
- * catalog, by monthly billing, and by payroll — as 1:00 PM Chicago: the class
- * silently moves five hours. Never guess UTC; prefer the academy's own zone,
- * and fall back to the admin's browser zone (they are almost always sitting in
- * the academy's city) rather than to a zone nobody chose. The value is shown
- * in a labelled, editable field so whatever we resolved is visible and
- * correctable before it is written.
- */
-function seedTimezone(academyTimezone: string | null | undefined): string {
-  return resolveAcademyTimeZone(academyTimezone).timeZone;
-}
-const DAYS_OF_WEEK = [
-  { value: "Mon", label: "Monday" },
-  { value: "Tue", label: "Tuesday" },
-  { value: "Wed", label: "Wednesday" },
-  { value: "Thu", label: "Thursday" },
-  { value: "Fri", label: "Friday" },
-  { value: "Sat", label: "Saturday" },
-  { value: "Sun", label: "Sunday" },
-] as const;
 
 function formatClock(time: string | null | undefined): string {
   if (!time) return "";
@@ -113,26 +74,6 @@ function formatCurrencyCents(cents: number | null | undefined): string {
     currency: "USD",
     maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
   }).format(cents / 100);
-}
-
-function centsToDollarsInput(cents: number | null | undefined): string {
-  if (cents == null) return "";
-  return cents % 100 === 0 ? String(cents / 100) : (cents / 100).toFixed(2);
-}
-
-function dollarsInputToCents(value: string): number | null {
-  if (value.trim() === "") return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return Math.round(parsed * 100);
-}
-
-function sessionDateLabel(session: AdminSessionView): string {
-  return new Date(session.start_at).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 /**
@@ -172,6 +113,8 @@ export default function AdminSessionsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editSession, setEditSession] = useState<AdminSessionView | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // Set when a class was created but its price plan link failed.
+  const [createWarning, setCreateWarning] = useState<string | null>(null);
   // #838: cancelling a session is irreversible and mails every family, so the
   // row button now opens a dialog that names it and counts who is affected.
   const [cancelTarget, setCancelTarget] = useState<AdminSessionView | null>(null);
@@ -258,6 +201,17 @@ export default function AdminSessionsPage() {
         </Card>
       )}
 
+      {createWarning && (
+        <Card p={16} style={{ borderColor: "#fde68a", background: "#fffbeb" }}>
+          <div role="status" data-testid="admin-sessions-create-warning" className="flex items-center justify-between gap-3">
+            <p className="text-sm text-amber-900">{createWarning}</p>
+            <Button variant="secondary" size="sm" onClick={() => setCreateWarning(null)}>
+              Dismiss
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {view === "calendar" ? (
         <Card p={16}>
           <AdminCalendarView sessions={sessions} />
@@ -309,15 +263,17 @@ export default function AdminSessionsPage() {
         />
       )}
 
-      <CreateSessionDialog
+      <CreateClassDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreated={() => {
+        onCreated={(_created, warning) => {
           setCreateOpen(false);
+          setCreateWarning(warning ?? null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
-      <EditSessionDialog
+      <EditClassDialog
+        open={editSession !== null}
         session={editSession}
         onOpenChange={(open) => {
           if (!open) setEditSession(null);
@@ -599,201 +555,6 @@ function SessionPhoneList({
   );
 }
 
-function EditSessionDialog({
-  session,
-  onOpenChange,
-  onSaved,
-}: {
-  session: AdminSessionView | null;
-  onOpenChange: (open: boolean) => void;
-  onSaved: (session: AdminSessionView) => void;
-}) {
-  // The monthly fee is owner-only (Settings overhaul P1 PR 5); the form still
-  // sends the stored value, which the BFF accepts as unchanged.
-  const isOwner = useIsOwner();
-  const [form, setForm] = useState<EditSessionRequest>({});
-  const [error, setError] = useState<string | null>(null);
-  const open = session !== null;
-  const coachesQuery = useQuery({
-    queryKey: queryKeys.admin.users("coach"),
-    queryFn: () => listAdminUsers("coach"),
-    enabled: open,
-  });
-  const coaches = coachesQuery.data?.users ?? [];
-
-  const mutation = useMutation({
-    mutationFn: (payload: EditSessionRequest) => updateAdminSession(session!.session_id, payload),
-    onSuccess: (savedSession) => {
-      setError(null);
-      onSaved(savedSession);
-    },
-    onError: (err: Error) => setError(err.message ?? "Failed to update session."),
-  });
-
-  useEffect(() => {
-    if (!session) return;
-    setForm(buildEditSessionForm(session));
-  }, [session]);
-
-  const recurring = session ? hasRecurringSchedule(session) : false;
-  const selectedDays = form.days_of_week ?? [];
-
-  return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) {
-          setForm({});
-          setError(null);
-        }
-        onOpenChange(nextOpen);
-      }}
-    >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none">
-          <Overline>Session</Overline>
-          <Dialog.Title className="mt-1 font-display text-xl font-semibold tracking-[-0.01em]">
-            Edit session
-          </Dialog.Title>
-          <Dialog.Description className="mb-4 mt-1 text-sm text-rally-muted">
-            Update recurring schedule, capacity, and coach assignment.
-          </Dialog.Description>
-          {error && (
-            <p role="alert" className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </p>
-          )}
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              mutation.mutate(form);
-            }}
-          >
-            <Field label="Coach">
-              {coaches.length > 0 ? (
-                <CoachSelect
-                  coaches={coaches}
-                  value={form.coach_id ?? ""}
-                  onChange={(coachId) => setForm((f) => ({ ...f, coach_id: coachId }))}
-                />
-              ) : (
-                <input
-                  type="text"
-                  value={form.coach_id ?? ""}
-                  onChange={(event) => setForm((f) => ({ ...f, coach_id: event.target.value }))}
-                  className={inputClass}
-                  placeholder={coachesQuery.isLoading ? "Loading coaches…" : "Coach reference"}
-                />
-              )}
-            </Field>
-            <Field label="Name">
-              <input
-                type="text"
-                value={form.title ?? ""}
-                onChange={(event) => setForm((f) => ({ ...f, title: event.target.value }))}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Location">
-              <input
-                type="text"
-                value={form.location ?? ""}
-                onChange={(event) => setForm((f) => ({ ...f, location: event.target.value }))}
-                className={inputClass}
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label={recurring ? "Day of week" : "Date"}>
-                {recurring ? (
-                  selectedDays.length <= 1 ? (
-                    <DaySelect
-                      value={selectedDays[0] ?? "Wed"}
-                      onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
-                    />
-                  ) : (
-                    <input value={selectedDays.join(", ")} readOnly className={inputClass} />
-                  )
-                ) : (
-                  <input value={session ? sessionDateLabel(session) : ""} readOnly className={inputClass} />
-                )}
-              </Field>
-              <Field label="Start time">
-                <input
-                  type="time"
-                  value={form.start_time ?? ""}
-                  onChange={(event) => setForm((f) => ({ ...f, start_time: event.target.value }))}
-                  className={inputClass}
-                  disabled={!recurring}
-                />
-              </Field>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="End time">
-                <input
-                  type="time"
-                  value={form.end_time ?? ""}
-                  onChange={(event) => setForm((f) => ({ ...f, end_time: event.target.value }))}
-                  className={inputClass}
-                  disabled={!recurring}
-                />
-              </Field>
-              <Field label="Capacity">
-                <input
-                  type="number"
-                  min={1}
-                  value={form.capacity ?? 1}
-                  onChange={(event) =>
-                    setForm((f) => ({ ...f, capacity: parseInt(event.target.value, 10) || 1 }))
-                  }
-                  className={inputClass}
-                />
-              </Field>
-            </div>
-            <Field label="Monthly fee">
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={centsToDollarsInput(form.amount_cents)}
-                disabled={!isOwner}
-                data-testid="session-edit-monthly-fee"
-                onChange={(event) =>
-                  setForm((f) => ({
-                    ...f,
-                    amount_cents: dollarsInputToCents(event.target.value),
-                  }))
-                }
-                className={`${inputClass} ${lockedInputClass}`}
-              />
-              {!isOwner && <OwnerOnlyFieldNote className="mt-1" />}
-            </Field>
-            <Field label="Reason">
-              <input
-                value={form.reason ?? ""}
-                onChange={(event) => setForm((f) => ({ ...f, reason: event.target.value }))}
-                className={inputClass}
-                placeholder="Optional"
-              />
-            </Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <Dialog.Close asChild>
-                <Button variant="secondary" size="sm" type="button">
-                  Cancel
-                </Button>
-              </Dialog.Close>
-              <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
 function Th({
   children,
   align = "left",
@@ -821,383 +582,5 @@ function TableSkeleton() {
         <div key={i} className="h-14 animate-pulse rounded-xl bg-rally-line/40" />
       ))}
     </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Create session dialog (Rally-styled)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Settings overhaul Phase 3 PR 9: the BLNO-specific weekday/time default
-// (Wed 18:00) is gone in favour of empty — every academy chooses its own
-// schedule now, not just BLNO's. Capacity and duration come from the
-// academy's Class defaults (Academy profile tab), seeded on open below.
-const EMPTY_FORM: CreateSessionRequest = {
-  coach_id: "",
-  title: "",
-  location: "",
-  days_of_week: [],
-  start_time: "",
-  end_time: "",
-  timezone: null,
-  capacity: 10,
-  amount_cents: null,
-};
-
-/** `18:00` + 45 minutes -> `18:45`; passes through unparseable input. */
-function addMinutesToTime(time: string, minutes: number): string {
-  const [hourStr, minuteStr] = time.split(":");
-  const hour = Number(hourStr);
-  const minute = Number(minuteStr);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
-  const total = (hour * 60 + minute + minutes + 24 * 60) % (24 * 60);
-  const nextHour = Math.floor(total / 60);
-  const nextMinute = total % 60;
-  return `${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`;
-}
-
-function CreateSessionDialog({
-  open,
-  onOpenChange,
-  onCreated,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  onCreated: () => void;
-}) {
-  const isOwner = useIsOwner();
-  const [form, setForm] = useState<CreateSessionRequest>(EMPTY_FORM);
-  const [error, setError] = useState<string | null>(null);
-
-  const academyQuery = useQuery({
-    queryKey: queryKeys.admin.academy(),
-    queryFn: getAdminAcademy,
-    staleTime: 10 * 60 * 1000,
-  });
-
-  const academyTimezone = academyQuery.data?.timezone;
-  const defaultCapacity = academyQuery.data?.default_class_size ?? EMPTY_FORM.capacity;
-  const defaultClassLengthMinutes = academyQuery.data?.default_class_length_minutes ?? 45;
-  const wasOpen = useRef(false);
-
-  // Issue #148: this used to replace the whole form object whenever the academy
-  // timezone resolved, so a slow query wiped whatever the admin had already
-  // typed into an open dialog. Seed defaults on open; afterwards patch only the
-  // timezone (and capacity) field, and only while the admin has not touched it.
-  const [timezoneTouched, setTimezoneTouched] = useState(false);
-  const [endTimeTouched, setEndTimeTouched] = useState(false);
-  const [capacityTouched, setCapacityTouched] = useState(false);
-  useEffect(() => {
-    if (open && !wasOpen.current) {
-      setForm({ ...EMPTY_FORM, timezone: seedTimezone(academyTimezone), capacity: defaultCapacity });
-      setTimezoneTouched(false);
-      setEndTimeTouched(false);
-      setCapacityTouched(false);
-      setError(null);
-    } else if (open && academyTimezone && !timezoneTouched) {
-      // The academy query resolved after the dialog opened, so the seed was the
-      // browser-zone fallback. Adopt the academy's real zone.
-      setForm((current) => ({ ...current, timezone: academyTimezone }));
-    }
-    if (
-      shouldAdoptAcademyCapacity({
-        open,
-        wasOpen: wasOpen.current,
-        capacityTouched,
-        defaultClassSize: academyQuery.data?.default_class_size,
-      })
-    ) {
-      // Same race as the timezone above: the academy query resolved after the
-      // dialog opened with the hardcoded EMPTY_FORM fallback. Adopt the real
-      // academy default now that it is known.
-      setForm((current) => ({ ...current, capacity: defaultCapacity }));
-    }
-    wasOpen.current = open;
-  }, [open, academyTimezone, timezoneTouched, defaultCapacity, capacityTouched, academyQuery.data?.default_class_size]);
-
-  const coachesQuery = useQuery({
-    queryKey: queryKeys.admin.users("coach"),
-    queryFn: () => listAdminUsers("coach"),
-    enabled: open,
-  });
-  const coaches = coachesQuery.data?.users ?? [];
-
-  const mutation = useMutation({
-    mutationFn: (payload: CreateSessionRequest) => createAdminSession(payload),
-    onSuccess: () => {
-      setForm(EMPTY_FORM);
-      setError(null);
-      onCreated();
-    },
-    onError: (err: Error) => {
-      setError(err.message ?? "Failed to create session.");
-    },
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    // A non-owner never sends a fee: the BFF 403s any price from them.
-    mutation.mutate(isOwner ? form : { ...form, amount_cents: null });
-  };
-
-  return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-rally-ink/40" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl focus:outline-none"
-          aria-describedby="create-session-desc"
-        >
-          <Overline>New session</Overline>
-          <Dialog.Title className="font-display text-xl font-semibold tracking-[-0.01em] mt-1">
-            Create session
-          </Dialog.Title>
-          <Dialog.Description id="create-session-desc" className="text-sm text-rally-muted mb-4 mt-1">
-            Create a weekly recurring session.
-          </Dialog.Description>
-
-          {error && (
-            <p
-              role="alert"
-              className="mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"
-            >
-              {error}
-            </p>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <Field label="Coach" required>
-              {coaches.length > 0 ? (
-                <CoachSelect
-                  coaches={coaches}
-                  value={form.coach_id}
-                  onChange={(coachId) => setForm((f) => ({ ...f, coach_id: coachId }))}
-                />
-              ) : (
-                <input
-                  type="text"
-                  required
-                  value={form.coach_id}
-                  onChange={(e) => setForm((f) => ({ ...f, coach_id: e.target.value }))}
-                  className={inputClass}
-                  placeholder={coachesQuery.isLoading ? "Loading coaches…" : "Coach reference"}
-                />
-              )}
-            </Field>
-            <Field label="Name" required>
-              <input
-                type="text"
-                required
-                value={form.title}
-                onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Location" required>
-              <input
-                type="text"
-                required
-                value={form.location}
-                onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
-                className={inputClass}
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Day of week" required>
-                <DaySelect
-                  value={form.days_of_week?.[0] ?? ""}
-                  onChange={(day) => setForm((f) => ({ ...f, days_of_week: [day] }))}
-                />
-              </Field>
-              <Field label="Start time" required>
-                <input
-                  type="time"
-                  required
-                  value={form.start_time ?? ""}
-                  onChange={(e) => {
-                    const start_time = e.target.value;
-                    setForm((f) => ({
-                      ...f,
-                      start_time,
-                      // Class defaults (Settings overhaul Phase 3 PR 9): the
-                      // end time follows the academy's default class length
-                      // until the admin edits it directly.
-                      end_time: endTimeTouched
-                        ? f.end_time
-                        : addMinutesToTime(start_time, defaultClassLengthMinutes),
-                    }));
-                  }}
-                  className={inputClass}
-                />
-              </Field>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="End time" required>
-                <input
-                  type="time"
-                  required
-                  value={form.end_time ?? ""}
-                  onChange={(e) => {
-                    setEndTimeTouched(true);
-                    setForm((f) => ({ ...f, end_time: e.target.value }));
-                  }}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="Capacity" required>
-                <input
-                  type="number"
-                  required
-                  min={1}
-                  value={form.capacity}
-                  onChange={(e) => {
-                    setCapacityTouched(true);
-                    setForm((f) => ({ ...f, capacity: parseInt(e.target.value, 10) || 1 }));
-                  }}
-                  className={inputClass}
-                />
-              </Field>
-            </div>
-            {/* Visible and editable: the start/end times above are wall-clock
-                times in THIS zone, and the zone is what billing and payroll
-                re-derive every occurrence from. A hidden default here moves a
-                real class by hours. */}
-            <Field label="Timezone" required>
-              <input
-                type="text"
-                required
-                value={form.timezone ?? ""}
-                onChange={(e) => {
-                  setTimezoneTouched(true);
-                  setForm((f) => ({ ...f, timezone: e.target.value }));
-                }}
-                className={inputClass}
-                aria-describedby="create-session-tz-hint"
-                data-testid="create-session-timezone"
-              />
-              <p id="create-session-tz-hint" className="mt-1 text-xs text-rally-muted">
-                {academyTimezone
-                  ? "From your academy settings."
-                  : "Your academy has no timezone set — this defaulted to your browser's zone. Confirm it before saving."}
-              </p>
-            </Field>
-            {/* Owner-only (Settings overhaul P1 PR 5): an admin creates the
-                class unpriced and the owner sets the fee afterwards. */}
-            <Field label="Monthly fee" required={isOwner}>
-              <input
-                type="number"
-                required={isOwner}
-                min={0}
-                step="0.01"
-                value={centsToDollarsInput(form.amount_cents)}
-                disabled={!isOwner}
-                data-testid="create-session-monthly-fee"
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    amount_cents: dollarsInputToCents(e.target.value),
-                  }))
-                }
-                className={`${inputClass} ${lockedInputClass}`}
-              />
-              {!isOwner && <OwnerOnlyFieldNote className="mt-1" />}
-            </Field>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Dialog.Close asChild>
-                <Button variant="secondary" size="sm" type="button">
-                  Cancel
-                </Button>
-              </Dialog.Close>
-              <Button
-                variant="primary"
-                size="sm"
-                type="submit"
-                disabled={mutation.isPending}
-              >
-                {mutation.isPending ? "Creating…" : "Create"}
-              </Button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function CoachSelect({
-  coaches,
-  value,
-  onChange,
-}: {
-  coaches: AdminUserView[];
-  value: string;
-  onChange: (coachId: string) => void;
-}) {
-  return (
-    <select
-      required
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={inputClass}
-    >
-      <option value="">Select coach</option>
-      {coaches.map((coach) => (
-        <option key={coach.user_id} value={coach.user_id}>
-          {coach.display_name} ({coach.email})
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function DaySelect({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (day: string) => void;
-}) {
-  return (
-    <select required value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}>
-      {/* No BLNO-specific default any more (Settings overhaul Phase 3 PR 9):
-          an unset day shows as unset, not silently "Wed". */}
-      {!value && (
-        <option value="" disabled>
-          Select a day…
-        </option>
-      )}
-      {DAYS_OF_WEEK.map((day) => (
-        <option key={day.value} value={day.value}>
-          {day.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-const inputClass =
-  "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
-const lockedInputClass =
-  "disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted";
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-        {label}
-        {required && <span aria-hidden="true" className="ml-1 text-red-500">*</span>}
-      </span>
-      {children}
-    </label>
   );
 }

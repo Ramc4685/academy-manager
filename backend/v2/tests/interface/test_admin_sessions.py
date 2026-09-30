@@ -2864,6 +2864,45 @@ async def test_communication_pack_survives_the_round_trip_to_the_get_route(
 
 
 @pytest.mark.asyncio
+async def test_class_form_edit_without_pack_fields_leaves_the_pack_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Class-page PR A: the Edit dialog no longer carries the welcome-email
+    (communication pack) fields. It PATCHes the whole schedule/seats form with
+    the pack keys left out, and the stored pack must survive untouched."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-pack-class-form-edit"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        created = await _create_pack_session(db, client, amount_cents=6000, **_PACK_PAYLOAD)
+        session_id = created["session_id"]
+        # The exact shape the shared class form sends: no pack keys, and no
+        # fee because the price did not change.
+        edited = client.patch(
+            f"/api/v2/admin/sessions/{session_id}",
+            json={
+                "coach_id": "coach-pack",
+                "title": "Pack Session B",
+                "location": "Court 2",
+                "capacity": 18,
+                "timezone": "America/Chicago",
+                "days_of_week": ["Thu"],
+                "start_time": "18:00",
+                "end_time": "18:45",
+            },
+        )
+        assert edited.status_code == 200, edited.text
+        reloaded = client.get(f"/api/v2/admin/sessions/{session_id}").json()
+
+    assert reloaded["title"] == "Pack Session B"
+    assert reloaded["capacity"] == 18
+    assert reloaded["amount_cents"] == 6000
+    for field, value in _PACK_PAYLOAD.items():
+        assert reloaded[field] == value, f"{field} changed by an edit that did not send it"
+
+
+@pytest.mark.asyncio
 async def test_communication_pack_survives_the_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
