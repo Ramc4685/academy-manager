@@ -1,6 +1,6 @@
 # Class page: Roster first, Welcome email tab, coach contact default
 
-PR: #TBD
+PR: #1026
 
 ## What changed
 
