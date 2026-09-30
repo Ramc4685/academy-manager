@@ -35,6 +35,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_occurrence_cancellation im
     MongoOccurrenceCancellationReader,
     MongoOccurrenceOverrideRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    MongoClassFeeResolver,
+)
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
 )
@@ -103,6 +106,9 @@ def compose_apply_occurrence_cancellation(db: Any) -> ApplyOccurrenceCancellatio
         overrides=MongoOccurrenceOverrideRepository(db),
         invoices=MongoBillingLedgerRepository(db),
         credits=MongoCreditLedgerRepository(db),
+        # A credit priced from a month's class fee reads the plan price change
+        # fence the way a registration quote does (Settings Phase 6 PR 26).
+        price_fence=MongoClassFeeResolver(db),
     )
 
 

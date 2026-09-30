@@ -245,6 +245,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    MongoClassFeeResolver,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
     MongoProductRepository,
 )
@@ -3676,6 +3679,7 @@ def compose_admin(
         snapshots=payments_repo,
         occurrences=payments_repo,
         academy_timezone=academy_timezone_lookup(db),
+        class_fees=MongoClassFeeResolver(db),
     )
 
     async def quote_enrollment(

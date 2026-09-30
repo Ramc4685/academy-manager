@@ -87,6 +87,17 @@ describe("ClassPricesCard", () => {
     expect(html).not.toContain("price changed");
   });
 
+  it("shows a fee a scheduled plan price change will move", () => {
+    const html = render(
+      <ClassPricesCard
+        classes={[cls({ scheduled_cents: 13_000, scheduled_from: "2026-11" })]}
+        plans={plans}
+        autoLinkable={0}
+      />,
+    );
+    expect(html).toContain("Scheduled: $130.00 from November 2026");
+  });
+
   it("counts the classes Link matching classes would link", () => {
     const html = render(<ClassPricesCard classes={[cls({})]} plans={plans} autoLinkable={2} />);
     expect(html).toContain("2 classes have exactly one plan at the same price");

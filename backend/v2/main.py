@@ -1395,6 +1395,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         periods: list[str] = []
 
         async def _for_academy(academy_id: str, local_now: datetime) -> None:
+            # Settings overhaul PR 26: once a scheduled plan price change's
+            # month has started, move the linked class fees and the plan price
+            # together (links stay current, the class editor shows the fee
+            # charged). Charges do not depend on it (every charge path already
+            # reads the month's price), so a failure is logged and never
+            # blocks generation.
+            try:
+                await app.state.admin_pricing.apply_due_price_changes.execute(
+                    academy_id=academy_id, period=local_now.strftime("%Y-%m")
+                )
+            except Exception:
+                log.exception("plan_price_changes_apply_failed academy=%s", academy_id)
             academy_totals = await _run_monthly_invoice_generation(
                 db=db,
                 academy_ids=[academy_id],

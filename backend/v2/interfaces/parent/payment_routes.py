@@ -42,8 +42,13 @@ def _quote_response(snapshot) -> EnrollmentQuoteResponse:
     total = snapshot.total_eligible_classes
     remaining = snapshot.billable_remaining_classes
     billable = billable_classes_charged(snapshot)
+    # The next monthly invoice's fee: a scheduled plan price change may move
+    # it (PR 26). Absent (a stored quote, old wiring) means the same fee.
+    next_monthly = getattr(snapshot, "next_monthly_price_cents", None)
+    if next_monthly is None:
+        next_monthly = monthly
     # USD is locked; ungrouped ("$1500.00") is the string parents already see.
-    next_price = format_money(monthly, "USD", group_thousands=False)
+    next_price = format_money(next_monthly, "USD", group_thousands=False)
     return EnrollmentQuoteResponse(
         snapshot_id=snapshot.snapshot_id or "",
         quote_expires_at=snapshot.expires_at,
@@ -54,7 +59,7 @@ def _quote_response(snapshot) -> EnrollmentQuoteResponse:
         billable_remaining_classes_this_month=remaining,
         formula=first_month_quote_formula(snapshot),
         message=first_month_charge_description(billable, billable_classes_denominator(snapshot)),
-        next_billing_amount_cents=monthly,
+        next_billing_amount_cents=next_monthly,
         next_billing_message=f"Starting next month, tuition is {next_price}/month.",
     )
 

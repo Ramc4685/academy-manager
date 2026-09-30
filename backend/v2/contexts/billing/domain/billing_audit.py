@@ -80,6 +80,13 @@ BillingAuditAction = Literal[
     # Same page: the owner ran "Link matching classes", which linked every
     # undecided class to the one plan at its exact fee. One entry per run.
     "class_plan_links_matched",
+    # Pricing page, change a plan price (Settings overhaul PR 26): the owner
+    # scheduled a new plan price from a future month, cancelled one before it
+    # started, or the scheduler moved the linked class fees and the plan price
+    # once the month began.
+    "plan_price_change_scheduled",
+    "plan_price_change_cancelled",
+    "plan_price_change_applied",
 ]
 
 
