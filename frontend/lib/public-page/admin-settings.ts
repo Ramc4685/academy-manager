@@ -15,7 +15,9 @@ import type {
   PublicPricePeriod,
   UpdateAdminPublicPageSettingsRequest,
 } from "@/lib/api/admin";
+import { DEFAULT_SEATS_LEFT_THRESHOLD } from "@/lib/public-page/format";
 import { isPlatformProductHost } from "@/lib/public-page/host";
+import { parseTheme, type PublicPageTheme } from "@/lib/public-page/theme";
 
 export const PRICE_PERIOD_LABEL: Record<PublicPricePeriod, string> = {
   month: "Per month",
@@ -35,9 +37,20 @@ export interface PublicPageForm {
   show_availability: boolean;
   price_period_default: PublicPricePeriod;
   trials_open: boolean;
+  theme: PublicPageTheme;
+  seats_left_threshold: number;
   // The privacy notice link is NOT part of this form any more: it moved to
   // Academy profile > Legal links (Settings overhaul Phase 4 PR 13). It is
   // still stored at `public_page.privacy_notice_url`; a Save here never sends it.
+}
+
+export const SEATS_THRESHOLD_MAX = 20;
+
+/** A whole number 0 to 20 from what was typed; junk reads as 0; the field keeps its last number while blank. */
+export function parseSeatsThreshold(raw: string): number {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(SEATS_THRESHOLD_MAX, Math.max(0, n));
 }
 
 /** Form state from the server view; the domain defaults when nothing loaded yet. */
@@ -50,6 +63,8 @@ export function toPublicPageForm(
     show_availability: view?.show_availability ?? true,
     price_period_default: view?.price_period_default ?? "month",
     trials_open: view?.trials_open ?? true,
+    theme: parseTheme(view?.theme),
+    seats_left_threshold: view?.seats_left_threshold ?? DEFAULT_SEATS_LEFT_THRESHOLD,
   };
 }
 
@@ -68,6 +83,10 @@ export function publicPagePayload(
     payload.price_period_default = form.price_period_default;
   }
   if (form.trials_open !== original.trials_open) payload.trials_open = form.trials_open;
+  if (form.theme !== original.theme) payload.theme = form.theme;
+  if (form.seats_left_threshold !== original.seats_left_threshold) {
+    payload.seats_left_threshold = form.seats_left_threshold;
+  }
   return payload;
 }
 

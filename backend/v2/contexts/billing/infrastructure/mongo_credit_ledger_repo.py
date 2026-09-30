@@ -32,6 +32,8 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             source_type=doc.get("source_type"),
             source_id=doc.get("source_id"),
             calculation_snapshot_id=doc.get("calculation_snapshot_id"),
+            session_id=doc.get("session_id"),
+            billing_period=doc.get("billing_period"),
             approved_by=doc.get("approved_by"),
             approved_at=doc.get("approved_at"),
             expires_at=doc.get("expires_at"),
@@ -61,6 +63,32 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
         except DuplicateKeyError:
             return False
         return True
+
+    async def resize_unapplied(
+        self, credit_id: str, *, from_cents: int, to_cents: int, now: datetime
+    ) -> bool:
+        """Re-size a credit nothing has drawn on yet, compare-and-set on its amount.
+
+        ``False`` when the credit was applied (even partly), voided or re-sized
+        since it was read: money already moved on the old amount is never
+        rewritten here.
+        """
+        result = await self._update_one(
+            {
+                "credit_id": credit_id,
+                "status": "APPROVED",
+                "amount_cents": from_cents,
+                "remaining_amount_cents": from_cents,
+            },
+            {
+                "$set": {
+                    "amount_cents": to_cents,
+                    "remaining_amount_cents": to_cents,
+                    "updated_at": now,
+                }
+            },
+        )
+        return bool(result.modified_count == 1)
 
     async def find_by_source(self, *, source_type: str, source_id: str) -> CreditLedgerEntry | None:
         doc = await self._find_one({"source_type": source_type, "source_id": source_id})

@@ -60,12 +60,17 @@ def seats_left(capacity: int, occupied: int) -> int:
     return max(int(capacity) - max(int(occupied), 0), 0)
 
 
-def seat_band(capacity: int, occupied: int) -> tuple[SeatBand, int | None]:
-    """``(band, seats_left_to_show)``; the number only inside the ``few`` band."""
+def seat_band(
+    capacity: int, occupied: int, few_threshold: int = FEW_SEATS_THRESHOLD
+) -> tuple[SeatBand, int | None]:
+    """``(band, seats_left_to_show)``; the number only inside the ``few`` band.
+
+    ``few_threshold`` is the academy's own setting (0 never reports ``few``).
+    """
     left = seats_left(capacity, occupied)
     if left <= 0:
         return "waitlist", None
-    if left <= FEW_SEATS_THRESHOLD:
+    if left <= few_threshold:
         return "few", left
     return "open", None
 

@@ -38,6 +38,8 @@ DEFAULTS = {
     "gallery": [],
     "coach_profiles": [],
     "faqs": [],
+    "theme": "floodlit",
+    "seats_left_threshold": 3,
     "public_url": None,
 }
 
@@ -146,6 +148,12 @@ def test_patch_changes_only_the_keys_sent(db: Any) -> None:
         {"privacy_notice_url": "data:text/html,hi"},
         {"academy_id": OTHER},
         {"theme": "dark"},
+        {"theme": None},
+        {"seats_left_threshold": -1},
+        {"seats_left_threshold": 21},
+        {"seats_left_threshold": "5"},
+        {"seats_left_threshold": True},
+        {"seats_left_threshold": None},
         {"public_url": "https://evil.example/"},
     ],
 )
@@ -343,3 +351,15 @@ def test_forged_photo_links_are_422_over_http(db: Any) -> None:
             res = client.patch(URL, json={"hero_photo_url": url})
             assert res.status_code == 422, (url, res.text)
     assert _stored(db, ACADEMY) is None
+
+
+def test_theme_and_seat_threshold_save_and_read_back(db: Any) -> None:
+    with _client(db) as client:
+        res = client.patch(URL, json={"theme": "showcase", "seats_left_threshold": 0})
+        assert res.status_code == 200, res.text
+        assert res.json()["theme"] == "showcase"
+        assert res.json()["seats_left_threshold"] == 0
+        assert client.get(URL).json() == res.json()
+    # Only the two keys sent were stored; 0 is stored, not treated as unset.
+    stored = _stored(db, ACADEMY)
+    assert stored == {"theme": "showcase", "seats_left_threshold": 0}

@@ -14,6 +14,7 @@ import {
   mapsSearchUrl,
   monogram,
   safeHexColor,
+  safeContentImageUrl,
   safeHttpsUrl,
   truncate,
   weeklyClassCount,
@@ -177,6 +178,15 @@ describe("text and safety guards", () => {
     expect(safeHexColor(null, "#fff")).toBe("#fff");
   });
 
+  it("accepts content images only from Firebase Storage over https", () => {
+    const ok = "https://firebasestorage.googleapis.com/v0/b/x/o/a.jpg";
+    expect(safeContentImageUrl(ok)).toBe(ok);
+    expect(safeContentImageUrl("https://cdn.example/a.jpg")).toBeNull();
+    expect(safeContentImageUrl("http://firebasestorage.googleapis.com/a.jpg")).toBeNull();
+    expect(safeContentImageUrl("https://firebasestorage.googleapis.com.evil.test/a.jpg")).toBeNull();
+    expect(safeContentImageUrl(null)).toBeNull();
+  });
+
   it("accepts only https URLs", () => {
     expect(safeHttpsUrl("https://cdn.example/logo.png")).toBe("https://cdn.example/logo.png");
     expect(safeHttpsUrl("http://cdn.example/logo.png")).toBeNull();
@@ -188,5 +198,29 @@ describe("text and safety guards", () => {
     expect(mapsSearchUrl("214 Millbrook Road, Riverside")).toBe(
       "https://www.google.com/maps/search/?api=1&query=214%20Millbrook%20Road%2C%20Riverside",
     );
+  });
+});
+
+describe("seat band with the academy's threshold", () => {
+  it("keeps today's chip at the default threshold of 3", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 2 })?.text).toBe("2 spots left");
+    expect(formatSeatBand({ band: "few", seats_left: 2 }, 3)?.text).toBe("2 spots left");
+  });
+
+  it("shows the number up to a wider threshold the server allowed", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 5 }, 8)?.text).toBe("5 spots left");
+  });
+
+  it("does not show a number above the threshold", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 5 }, 3)).toEqual({
+      text: "Open",
+      tone: "ok",
+      full: false,
+    });
+  });
+
+  it("0 disables the few-seats chip but never hides a full class", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 1 }, 0)?.text).toBe("Open");
+    expect(formatSeatBand({ band: "waitlist", seats_left: null }, 0)?.full).toBe(true);
   });
 });

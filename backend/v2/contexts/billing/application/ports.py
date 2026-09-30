@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Hashable, Mapping, Sequence
 from datetime import date, datetime
 from typing import Any, Literal, Protocol, TypeVar
 
@@ -823,6 +823,30 @@ class SnapshotWriter(Protocol):
 # ---------------------------------------------------------------------------
 # Ports for session-type-driven billing
 # ---------------------------------------------------------------------------
+
+
+class ClassFeeForPeriod(Protocol):
+    """A class's monthly fee for one billing month (Settings overhaul PR 26).
+
+    The stored class fee, with any plan price change the owner scheduled for
+    that month applied. Every charge path reads the fee through this so they
+    agree on the price for a given month.
+    """
+
+    async def fee_cents_for_period(self, session_doc: Mapping[str, Any], period: str) -> int: ...
+
+    async def price_fence(self, session_id: str) -> Hashable:
+        """What the owner's plan price change edits have done to this class so far.
+
+        Raises ``PriceChangeInFlight`` while an edit holds a change covering
+        the class. Equal before and after a quote is stored means no edit
+        overlapped it.
+        """
+        ...
+
+    async def withdraw_quote(self, snapshot_id: str) -> None:
+        """Retire an OPEN quote that overlapped an edit; it can never be paid."""
+        ...
 
 
 class SessionTypeRepository(Protocol):

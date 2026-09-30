@@ -149,6 +149,9 @@ export const queryKeys = {
     sessionTypes: () => ["admin", "session-types"] as const,
     // Pricing page (Settings overhaul PR 11b): plans + class links + overrides.
     pricing: () => ["admin", "pricing"] as const,
+    pricingPriceChangePreview: (planId: string, newPriceCents: number, month: string | null) =>
+      ["admin", "pricing", "price-change-preview", planId, newPriceCents, month] as const,
+    scheduledClassFees: () => ["admin", "pricing-scheduled-class-fees"] as const,
     sessionTypesList: (includeArchived: boolean) =>
       ["admin", "session-types", { includeArchived }] as const,
     lessonCards: (programId: string) =>

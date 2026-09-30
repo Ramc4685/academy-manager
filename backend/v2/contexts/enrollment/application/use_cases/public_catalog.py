@@ -40,6 +40,7 @@ from backend.v2.contexts.enrollment.domain.programs import (
     Program,
 )
 from backend.v2.contexts.enrollment.domain.public_catalog import (
+    FEW_SEATS_THRESHOLD,
     SeatBand,
     coach_public_name,
     public_class_id,
@@ -161,6 +162,7 @@ class ListPublicCatalog:
         price_period_default: PricePeriod = DEFAULT_PRICE_PERIOD,
         show_price: bool = True,
         show_availability: bool = True,
+        few_seats_threshold: int = FEW_SEATS_THRESHOLD,
     ) -> PublicCatalog:
         rows = [
             row
@@ -188,6 +190,7 @@ class ListPublicCatalog:
                 price_period_default=price_period_default,
                 show_price=show_price,
                 show_availability=show_availability,
+                few_seats_threshold=few_seats_threshold,
             )
             entry = (_class_sort_key(row), view)
             if program is None:
@@ -244,6 +247,7 @@ def _class_view(
     price_period_default: PricePeriod,
     show_price: bool,
     show_availability: bool,
+    few_seats_threshold: int,
 ) -> PublicClassView:
     profile = row.profile
     price: PublicPrice | None = None
@@ -254,7 +258,7 @@ def _class_view(
         )
     seats: PublicSeats | None = None
     if show_availability:
-        band, left = seat_band(row.capacity, row.occupied_seats)
+        band, left = seat_band(row.capacity, row.occupied_seats, few_seats_threshold)
         seats = PublicSeats(band=band, seats_left=left)
     return PublicClassView(
         public_id=public_class_id(academy_id, profile.session_id),

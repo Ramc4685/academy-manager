@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AdminClassPublicProfileView, AdminProgramView } from "@/lib/api/admin";
 import {
   listableClasses,
+  parseSeatsThreshold,
   privacyUrlError,
   programOptions,
   publicPagePayload,
@@ -18,7 +19,52 @@ describe("toPublicPageForm", () => {
       show_availability: true,
       price_period_default: "month",
       trials_open: true,
+      theme: "floodlit",
+      seats_left_threshold: 3,
     });
+  });
+
+  it("reads the saved theme and threshold, and repairs an unknown theme", () => {
+    const view = {
+      published: true,
+      show_price: true,
+      show_availability: true,
+      price_period_default: "month" as const,
+      trials_open: true,
+      privacy_notice_url: null,
+      theme: "daylight" as const,
+      seats_left_threshold: 0,
+      public_url: null,
+    };
+    expect(toPublicPageForm(view)).toMatchObject({ theme: "daylight", seats_left_threshold: 0 });
+    expect(toPublicPageForm({ ...view, theme: "neon" as never }).theme).toBe("floodlit");
+  });
+});
+
+describe("theme and seat threshold payload", () => {
+  const original = toPublicPageForm(null);
+
+  it("sends only the theme when only the theme changed", () => {
+    expect(publicPagePayload(original, { ...original, theme: "showcase" })).toEqual({
+      theme: "showcase",
+    });
+  });
+
+  it("sends a threshold of 0: zero is a value, not 'unchanged'", () => {
+    expect(publicPagePayload(original, { ...original, seats_left_threshold: 0 })).toEqual({
+      seats_left_threshold: 0,
+    });
+  });
+});
+
+describe("parseSeatsThreshold", () => {
+  it("clamps to 0 to 20 and treats blank or junk as 0", () => {
+    expect(parseSeatsThreshold("5")).toBe(5);
+    expect(parseSeatsThreshold("99")).toBe(20);
+    expect(parseSeatsThreshold("-4")).toBe(0);
+    expect(parseSeatsThreshold("")).toBe(0);
+    expect(parseSeatsThreshold("abc")).toBe(0);
+    expect(parseSeatsThreshold("2.6")).toBe(3);
   });
 });
 
@@ -49,6 +95,8 @@ describe("publicPagePayload", () => {
       show_availability: true,
       price_period_default: "month",
       trials_open: true,
+      theme: "floodlit",
+      seats_left_threshold: 3,
       privacy_notice_url: "https://riverside.example/privacy",
       public_url: null,
     });

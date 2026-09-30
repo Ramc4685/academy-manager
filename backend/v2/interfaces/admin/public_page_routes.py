@@ -48,9 +48,11 @@ from backend.v2.contexts.enrollment.application.use_cases.programs import (
     UpdateProgram,
 )
 from backend.v2.contexts.identity.application.public_page_settings import (
+    MAX_SEATS_LEFT_THRESHOLD,
     GetPublicPageAddress,
     GetPublicPageSettings,
     PublicPageSettings,
+    PublicPageTheme,
     UpdatePublicPageSettings,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -260,6 +262,8 @@ class PublicPageSettingsView(BaseModel):
     coach_profiles: list[CoachProfileBody] = []
     #: Empty = the public page uses its standard questions.
     faqs: list[FaqBody] = []
+    theme: PublicPageTheme
+    seats_left_threshold: int
     #: ``https://<host>/`` of the academy's own domain for the "View page"
     #: link; ``null`` when the academy has no domain on record. Read-only.
     public_url: str | None = None
@@ -285,6 +289,10 @@ class UpdatePublicPageSettingsRequest(BaseModel):
     gallery: list[GalleryPhotoBody] | None = Field(default=None, max_length=12)
     coach_profiles: list[CoachProfileBody] | None = Field(default=None, max_length=50)
     faqs: list[FaqBody] | None = Field(default=None, max_length=12)
+    theme: PublicPageTheme | None = None
+    seats_left_threshold: int | None = Field(
+        default=None, ge=0, le=MAX_SEATS_LEFT_THRESHOLD, strict=True
+    )
 
 
 def _settings_view(settings: PublicPageSettings, public_url: str | None) -> PublicPageSettingsView:

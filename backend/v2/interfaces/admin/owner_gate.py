@@ -180,6 +180,11 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("GET", f"{_ADMIN}/pricing"),
         ("PUT", f"{_ADMIN}/pricing/classes/{{session_id}}/plan"),
         ("POST", f"{_ADMIN}/pricing/link-matching-classes"),
+        # Change a plan price (Settings overhaul PR 26). The admin-readable
+        # GET /pricing/scheduled-class-fees is deliberately NOT here.
+        ("GET", f"{_ADMIN}/pricing/price-changes/preview"),
+        ("POST", f"{_ADMIN}/pricing/price-changes"),
+        ("DELETE", f"{_ADMIN}/pricing/price-changes/{{change_id}}"),
         # departures_routes.py — the leaving report is a financial report,
         # same tier as every other route under /reports/* (issue #698).
         ("GET", f"{_ADMIN}/reports/leaving"),

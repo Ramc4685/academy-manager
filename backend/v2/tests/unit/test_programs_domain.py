@@ -92,6 +92,8 @@ def test_public_page_defaults_when_nothing_is_stored() -> None:
         "gallery": [],
         "coach_profiles": [],
         "faqs": [],
+        "theme": "floodlit",
+        "seats_left_threshold": 3,
     }
     assert PublicPageSettings.from_stored(None).model_dump() == expected
     assert PublicPageSettings.from_stored({}).model_dump() == expected

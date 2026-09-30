@@ -12,7 +12,7 @@ import {
   type SessionTypeView,
   type UpdateSessionTypeRequest,
 } from "@/lib/api/v2/session-types";
-import { PLAN_TYPE_LABEL } from "@/lib/api/v2/pricing";
+import { PLAN_TYPE_LABEL, formatBillingMonth } from "@/lib/api/v2/pricing";
 import { queryKeys } from "@/lib/query/keys";
 import {
   Button,
@@ -126,7 +126,16 @@ function toUpdatePayload(original: FormState, form: FormState): UpdateSessionTyp
  * is not what a class is charged: every class keeps its own monthly fee, so
  * editing a plan never changes a bill.
  */
-export function PlansCard({ linkedCounts }: { linkedCounts?: Record<string, number> }) {
+/** A plan's scheduled price change, keyed by plan id (Settings overhaul PR 26). */
+export type ScheduledPrices = Record<string, { cents: number; from: string }>;
+
+export function PlansCard({
+  linkedCounts,
+  scheduledPrices,
+}: {
+  linkedCounts?: Record<string, number>;
+  scheduledPrices?: ScheduledPrices;
+}) {
   const queryClient = useQueryClient();
   const isOwner = useIsOwner();
   const [editing, setEditing] = useState<SessionTypeView | "new" | null>(null);
@@ -242,6 +251,7 @@ export function PlansCard({ linkedCounts }: { linkedCounts?: Record<string, numb
           <PlansTable
             rows={rows}
             linkedCounts={linkedCounts}
+            scheduledPrices={scheduledPrices}
             canEdit={isOwner}
             onEdit={setEditing}
             onArchive={openArchive}
@@ -307,6 +317,7 @@ export function PlansCard({ linkedCounts }: { linkedCounts?: Record<string, numb
 export function PlansTable({
   rows,
   linkedCounts,
+  scheduledPrices,
   canEdit,
   onEdit,
   onArchive,
@@ -317,6 +328,8 @@ export function PlansTable({
   rows: SessionTypeView[];
   /** Classes linked to each plan, from the Pricing overview. */
   linkedCounts?: Record<string, number>;
+  /** Scheduled price changes, from the Pricing overview. */
+  scheduledPrices?: ScheduledPrices;
   /** False for an admin without the owner scope: prices are read-only. */
   canEdit: boolean;
   onEdit: (row: SessionTypeView) => void;
@@ -373,6 +386,17 @@ export function PlansTable({
               <td className="px-4 py-3 font-mono tabular-nums">
                 {formatMoney(row.price_cents)}
                 <span className="font-sans text-xs text-rally-subtle"> / month</span>
+                {scheduledPrices?.[row.session_type_id] && (
+                  <p
+                    className="font-sans text-xs text-status-amber-800"
+                    data-testid="plan-scheduled-price"
+                  >
+                    Scheduled: {formatMoney(scheduledPrices[row.session_type_id].cents)} from{" "}
+                    {formatBillingMonth(scheduledPrices[row.session_type_id].from, {
+                      year: true,
+                    })}
+                  </p>
+                )}
               </td>
               <td className="px-4 py-3" data-testid="plan-type">
                 {PLAN_TYPE_LABEL[row.plan_type ?? "monthly"]}

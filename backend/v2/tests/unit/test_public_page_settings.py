@@ -42,6 +42,8 @@ async def test_an_academy_with_no_public_page_key_reads_the_defaults() -> None:
         "gallery": [],
         "coach_profiles": [],
         "faqs": [],
+        "theme": "floodlit",
+        "seats_left_threshold": 3,
     }
 
 
@@ -382,3 +384,35 @@ async def test_gallery_write_without_an_actor_is_refused() -> None:
     _db, repo = await _repo()
     with pytest.raises(ValueError, match="actor_id"):
         await _update(repo, _Roster()).execute(ACADEMY, {"gallery": [_photo()]})
+
+
+def test_default_seat_threshold_matches_the_catalog_band() -> None:
+    from backend.v2.contexts.enrollment.domain.public_catalog import FEW_SEATS_THRESHOLD
+    from backend.v2.contexts.identity.domain.public_page import (
+        DEFAULT_SEATS_LEFT_THRESHOLD,
+        PublicPageSettings,
+    )
+
+    assert DEFAULT_SEATS_LEFT_THRESHOLD == FEW_SEATS_THRESHOLD
+    assert PublicPageSettings().seats_left_threshold == FEW_SEATS_THRESHOLD
+
+
+def test_a_bad_stored_theme_or_threshold_falls_back_to_the_default() -> None:
+    from backend.v2.contexts.identity.domain.public_page import PublicPageSettings
+
+    settings = PublicPageSettings.from_stored(
+        {"theme": "neon", "seats_left_threshold": 99, "published": True}
+    )
+    assert settings.theme == "floodlit"
+    assert settings.seats_left_threshold == 3
+    assert settings.published is True
+
+
+def test_seat_band_honours_the_academy_threshold() -> None:
+    from backend.v2.contexts.enrollment.domain.public_catalog import seat_band
+
+    assert seat_band(10, 8) == ("few", 2)  # default 3: today
+    assert seat_band(10, 6) == ("open", None)
+    assert seat_band(10, 6, 5) == ("few", 4)
+    assert seat_band(10, 8, 0) == ("open", None)  # 0 hides "only N left"
+    assert seat_band(10, 10, 0) == ("waitlist", None)  # full is never hidden

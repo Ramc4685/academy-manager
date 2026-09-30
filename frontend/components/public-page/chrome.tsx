@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { monogram, safeHexColor, safeHttpsUrl } from "@/lib/public-page/format";
 import type { PrimaryAction } from "@/lib/public-page/page-model";
+import type { PageTheme } from "@/lib/public-page/theme";
 import type { PublicBrand } from "@/lib/public-page/types";
 
 import { CourtMastrMark } from "./icons";
@@ -24,13 +25,22 @@ export function PageFrame({
   brand,
   children,
   testId,
+  theme,
 }: {
   brand: Pick<PublicBrand, "brand_fill" | "brand_on_color">;
   children: ReactNode;
   testId: string;
+  /** The academy's chosen look; absent is Floodlit, exactly as before. */
+  theme?: PageTheme;
 }) {
+  const style = theme ? (theme.vars as CSSProperties) : brandStyle(brand);
   return (
-    <div className={styles.page} style={brandStyle(brand)} data-testid={testId}>
+    <div
+      className={styles.page}
+      style={style}
+      data-testid={testId}
+      data-theme={theme?.theme ?? "floodlit"}
+    >
       <a className={styles.skip} href="#main">
         Skip to content
       </a>

@@ -6,15 +6,19 @@ import {
   formatAgeBand,
   mapsSearchUrl,
   monogram,
+  safeContentImageUrl,
+  safeHttpsUrl,
   weeklyClassCount,
 } from "@/lib/public-page/format";
 import {
   CLASSES_ANCHOR,
   allClasses,
   classGroups,
+  coachCards,
   describePublishedPage,
   faqEntries,
 } from "@/lib/public-page/page-model";
+import { buildPageTheme } from "@/lib/public-page/theme";
 import { serializeJsonLd } from "@/lib/public-page/structured-data";
 import { trialClassOptions } from "@/lib/public-page/trial-request";
 import type { PublicAcademyPage } from "@/lib/public-page/types";
@@ -49,6 +53,22 @@ export function PublicTenantPage({
   const classes = allClasses(page);
   const groups = classGroups(page);
   const faq = faqEntries(page);
+  const theme = buildPageTheme({
+    theme: page.page.theme,
+    brandColor: academy.brand_color,
+    brandFill: academy.brand_fill,
+    brandOn: academy.brand_on_color,
+    logoUrl: academy.logo_url,
+    heroPhotoUrl: page.hero_photo_url,
+  });
+  const coaches = coachCards(page, view.coaches);
+  const about = page.about_text?.trim() ?? "";
+  const highlights = (page.highlights ?? []).map((h) => h.trim()).filter(Boolean);
+  const gallery = (page.gallery ?? []).flatMap((photo) => {
+    const url = safeContentImageUrl(photo.url);
+    return url ? [{ url, caption: photo.caption?.trim() ?? "" }] : [];
+  });
+  const hasAbout = about !== "" || highlights.length > 0;
   const span = formatAgeBand(
     ageSpan([...page.programs.map((p) => p.age_band), ...classes.map((c) => c.age_band)]),
   );
@@ -58,7 +78,9 @@ export function PublicTenantPage({
   const hasVisit = Boolean(address || hours);
 
   const nav: NavItem[] = [{ href: CLASSES_ANCHOR, label: "Classes" }];
-  if (view.coaches.length > 0) nav.push({ href: "#coaches", label: "Coaches" });
+  if (hasAbout) nav.unshift({ href: "#about", label: "About" });
+  if (gallery.length > 0) nav.push({ href: "#gallery", label: "Gallery" });
+  if (coaches.length > 0) nav.push({ href: "#coaches", label: "Coaches" });
   nav.push({ href: "#faq", label: "FAQ" });
   if (hasVisit) nav.push({ href: "#visit", label: "Find us" });
 
@@ -77,14 +99,27 @@ export function PublicTenantPage({
   if (view.trialsOpen && view.hasClasses) facts.push("First class free");
 
   return (
-    <PageFrame brand={academy} testId="public-academy-page">
+    <PageFrame brand={academy} testId="public-academy-page" theme={theme}>
       <script
         type="application/ld+json"
         // JSON-LD is data, not script; serializeJsonLd escapes <, > and &.
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
       <SiteHeader brand={academy} nav={nav} action={view.primary} />
-      <div className={`${styles.hero} ${styles.night}`}>
+      <div className={`${styles.hero} ${styles.night}${theme.heroPhoto ? ` ${styles.heroPhoto}` : ""}`}>
+        {theme.heroPhoto ? (
+          <>
+            <img
+              className={styles.heroImage}
+              src={theme.heroPhoto}
+              alt=""
+              fetchPriority="high"
+              decoding="async"
+              data-testid="public-hero-photo"
+            />
+            <div className={styles.heroScrim} aria-hidden="true" />
+          </>
+        ) : null}
         <div className={`${styles.wrap} ${styles.heroInner}`}>
           <h1 className={styles.heroTitle}>{headline}</h1>
           <p className={styles.lede}>{lede}</p>
@@ -116,11 +151,32 @@ export function PublicTenantPage({
             </ul>
           ) : null}
         </div>
-        <CourtDrawing />
+        {theme.heroPhoto ? null : <CourtDrawing />}
       </div>
       <div className={styles.lane} />
 
       <main id="main" tabIndex={-1}>
+        {hasAbout ? (
+          <section className={styles.section} id="about" aria-labelledby="about-heading" data-testid="public-about">
+            <div className={styles.wrap}>
+              <div className={styles.secHead}>
+                <h2 id="about-heading">About us</h2>
+              </div>
+              {about ? <p className={styles.about}>{about}</p> : null}
+              {highlights.length > 0 ? (
+                <ul className={styles.highlights} data-testid="public-highlights">
+                  {highlights.map((item) => (
+                    <li key={item}>
+                      <CheckIcon />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
         <section className={styles.section} id="classes" aria-labelledby="classes-heading">
           <div className={styles.wrap}>
             <div className={styles.secHead}>
@@ -164,6 +220,7 @@ export function PublicTenantPage({
                             cls={cls}
                             currency={academy.currency}
                             trialsOpen={view.trialsOpen}
+                            seatsThreshold={page.page.seats_left_threshold}
                           />
                         ))}
                       </ul>
@@ -222,21 +279,71 @@ export function PublicTenantPage({
           </div>
         </section>
 
-        {view.coaches.length > 0 ? (
+        {gallery.length > 0 ? (
+          <section className={styles.section} id="gallery" aria-labelledby="gallery-heading" data-testid="public-gallery">
+            <div className={styles.wrap}>
+              <div className={styles.secHead}>
+                <h2 id="gallery-heading">Gallery</h2>
+              </div>
+              <ul className={styles.gallery}>
+                {gallery.map((photo, i) => (
+                  <li key={`${i}-${photo.url}`}>
+                    <figure>
+                      <div className={styles.galleryFrame}>
+                        <img src={photo.url} alt={photo.caption} loading="lazy" decoding="async" />
+                      </div>
+                      {photo.caption ? <figcaption>{photo.caption}</figcaption> : null}
+                    </figure>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        ) : null}
+
+        {coaches.length > 0 ? (
           <section className={styles.section} id="coaches" aria-labelledby="coaches-heading">
             <div className={styles.wrap}>
               <div className={styles.secHead}>
                 <h2 id="coaches-heading">Coaches</h2>
               </div>
               <ul className={styles.coaches} data-testid="public-coaches">
-                {view.coaches.map((name) => (
-                  <li key={name}>
-                    <span className={styles.avatar} aria-hidden="true">
-                      {monogram(name.replace(/^coach\s+/i, ""))}
-                    </span>
-                    {name}
-                  </li>
-                ))}
+                {coaches.map((coach, i) => {
+                  const initials = monogram(coach.name.replace(/^coach\s+/i, ""));
+                  if (!coach.bio && !coach.photoUrl) {
+                    return (
+                      <li key={`${i}-${coach.name}`}>
+                        <span className={styles.avatar} aria-hidden="true">
+                          {initials}
+                        </span>
+                        {coach.name}
+                      </li>
+                    );
+                  }
+                  return (
+                    <li key={`${i}-${coach.name}`} className={styles.coachCard} data-testid="public-coach-card">
+                      {coach.photoUrl ? (
+                        <img
+                          className={styles.coachPhoto}
+                          src={coach.photoUrl}
+                          alt=""
+                          width={64}
+                          height={64}
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      ) : (
+                        <span className={styles.avatar} aria-hidden="true">
+                          {initials}
+                        </span>
+                      )}
+                      <div>
+                        <b>{coach.name}</b>
+                        {coach.bio ? <p>{coach.bio}</p> : null}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           </section>

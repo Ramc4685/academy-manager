@@ -392,3 +392,11 @@ def test_trial_request_responses_never_echo_submitted_private_values() -> None:
         raw = response.text
         for value in (secret_email, secret_phone, "Casey", *SECRETS.values()):
             assert value not in raw, f"trial response echoed {value!r}"
+
+
+def test_render_settings_reach_the_public_page_as_two_plain_fields() -> None:
+    paths = _all_public_field_paths()
+    assert "PublicAcademyPageDto.page.theme" in paths
+    assert "PublicAcademyPageDto.page.seats_left_threshold" in paths
+    # Contact on the page is the support email only (owner decision 10).
+    assert not [p for p in paths if "phone" in p.lower()]

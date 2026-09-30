@@ -4182,6 +4182,10 @@ export interface AdminPublicPageSettingsView {
   coach_profiles?: AdminCoachProfile[];
   /** Empty = the public page uses its standard questions. */
   faqs?: AdminFaq[];
+  /** Look of the public page; "floodlit" is the original. */
+  theme: "floodlit" | "daylight" | "showcase";
+  /** "N spots left" shows at or below this many seats (0 hides it, max 20). */
+  seats_left_threshold: number;
   /** `https://<host>/` of the academy's own domain; null when none is on record. Read-only. */
   public_url: string | null;
 }
