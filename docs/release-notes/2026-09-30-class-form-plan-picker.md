@@ -14,12 +14,11 @@ PR: #TBD
 
 ## Deploy notes
 
-- **Merge-order dependency: merge and deploy together with lane B (the class page Welcome email tab), never before it.** Until lane B lands, the class page's "Edit communication pack" button opens this Edit dialog, which no longer has pack fields, so an admin cannot change an existing class's WhatsApp link, venue, parking, arrival or absence text. Stored values and the welcome email itself are unaffected.
+- Ships in the same PR as the class page Welcome email tab (`2026-09-30-class-page-welcome-email.md`), which is where the pack is now edited.
 - Frontend only. No migration, no backend route change (the create route already passed the pack fields through). Backend tests added only.
 - BLNO: classes, fees, invoices and welcome emails are unchanged. The owner sees each class's current plan link in the picker; saving without touching the price writes no fee.
 
 ## Risk / rollback
 
 - Medium-low, money-adjacent: the price field changed shape. Guarded by unit tests that a save without a price change sends no fee, that a non-owner never sends one, and that a plan pick sends the plan's price.
-- If this ships without lane B, pack editing for existing classes is lost (see Deploy notes).
 - Rollback: revert the PR. No data shape changed.
