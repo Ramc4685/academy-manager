@@ -331,6 +331,9 @@ test.describe("admin session detail — class dates window and roster tabs (#711
         });
       });
 
+      // The admin shell already loaded (and cached) the academy before these
+      // stubs existed, so load the page again to read the stubbed defaults.
+      await page.reload();
       await page.getByRole("button", { name: "Welcome email", exact: true }).click();
       const venue = page.getByTestId("welcome-row-venue_address");
       await expect(venue).toContainText("123 Court St");

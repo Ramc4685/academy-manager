@@ -170,7 +170,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.getByLabel("End time").fill("18:00");
     await page.getByLabel("Capacity").fill("12");
     await page.getByLabel("Monthly fee").fill("85");
-    await page.getByRole("button", { name: "Create" }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
 
     await expect.poll(() => createPayload).toEqual({
       coach_id: "coach-e2e",

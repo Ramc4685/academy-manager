@@ -344,10 +344,12 @@ function PriceField({
             onChange={(event) => onCustomFeeChange(event.target.value)}
             className={`${inputClass} ${lockedInputClass}`}
           />
-          <p className="mt-1 text-xs text-rally-muted">
-            Percent-paid coaches need a price for payroll. Enter 0 for a free class.
-          </p>
         </Field>
+      )}
+      {custom && (
+        <p className="-mt-2 text-xs text-rally-muted">
+          Percent-paid coaches need a price for payroll. Enter 0 for a free class.
+        </p>
       )}
       {scheduledNote}
       {showReason && (
