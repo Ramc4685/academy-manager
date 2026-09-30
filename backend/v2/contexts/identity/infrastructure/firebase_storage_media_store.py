@@ -23,11 +23,13 @@ log = logging.getLogger(__name__)
 _CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 
+def firebase_url_base(bucket: str) -> str:
+    """The prefix every download URL of ``bucket`` starts with."""
+    return f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/"
+
+
 def firebase_download_url(bucket: str, path: str, token: str) -> str:
-    return (
-        f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/"
-        f"{quote(path, safe='')}?alt=media&token={token}"
-    )
+    return f"{firebase_url_base(bucket)}{quote(path, safe='')}?alt=media&token={token}"
 
 
 class FirebaseStorageMediaStore:

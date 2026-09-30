@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.v2.composition.admin_session_staff import attach_session_staff_names
+from backend.v2.composition.public_page_admin import MongoCoachRoster
 from backend.v2.contexts.enrollment.application.use_cases.public_catalog import (
+    CoachNameDirectory,
     ListPublicCatalog,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_program_repo import (
@@ -33,6 +35,8 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 class PublicPageRead:
     get_academy_profile: GetPublicAcademyProfile
     list_catalog: ListPublicCatalog
+    coach_names: CoachNameDirectory
+    profile_coach_names: ProfileCoachNames
 
 
 class _MemberCoachNames:
@@ -49,12 +53,33 @@ class _MemberCoachNames:
         return {row["coach_id"]: row["coach_name"] for row in rows if row.get("coach_name")}
 
 
+class ProfileCoachNames:
+    """Names for the public coach profiles: only coaches who are *currently*
+    an active coach or assistant coach of this academy resolve. The plain name
+    lookup only needs a membership row, so a coach who left (membership set
+    inactive, or the coach role removed) would otherwise stay published."""
+
+    def __init__(self, db: Any, names: CoachNameDirectory) -> None:
+        self._roster = MongoCoachRoster(db)
+        self._names = names
+
+    async def display_names(self, academy_id: str, coach_ids: list[str]) -> dict[str, str]:
+        active = await self._roster.coach_ids(academy_id, coach_ids)
+        if not active:
+            return {}
+        names = await self._names.display_names(sorted(active))
+        return {cid: name for cid, name in names.items() if cid in active}
+
+
 def compose_public_page_read(db: Any) -> PublicPageRead:
+    coach_names = _MemberCoachNames(db)
     return PublicPageRead(
         get_academy_profile=GetPublicAcademyProfile(MongoAcademyRepository(db)),
         list_catalog=ListPublicCatalog(
             programs=MongoProgramRepository(db),
             sessions=MongoSessionRepository(db),
-            coach_names=_MemberCoachNames(db),
+            coach_names=coach_names,
         ),
+        coach_names=coach_names,
+        profile_coach_names=ProfileCoachNames(db, coach_names),
     )

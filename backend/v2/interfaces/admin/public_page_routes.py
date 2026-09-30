@@ -11,7 +11,9 @@
 * ``GET  /admin/academy/public-page``: the academy's page settings,
   defaults merged in (Lane B5)
 * ``PATCH /admin/academy/public-page``: partial update; only sent keys
-  change (Lane B5)
+  change (Lane B5). Also carries the landing-page content: hero photo,
+  about text, highlights, gallery (consent stamped server-side), coach
+  profiles (coaches of this academy only) and FAQs.
 
 All ``require_persona("admin")``: none moves money. Tenant from the request's
 tenant scope, never from the body; another academy's program or class is a
@@ -209,6 +211,41 @@ def _profile_view(profile: ClassPublicProfile) -> ClassPublicProfileView:
     )
 
 
+class GalleryPhotoBody(BaseModel):
+    """A gallery photo as the admin sends it. ``consent_confirmed`` must be
+    true; who confirmed and when are stamped by the server, never sent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2048)
+    caption: str = Field(default="", max_length=120)
+    consent_confirmed: StrictBool = False
+
+
+class GalleryPhotoView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    caption: str
+    consent_confirmed: bool
+
+
+class CoachProfileBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    coach_id: str = Field(min_length=1, max_length=64)
+    photo_url: str | None = Field(default=None, max_length=2048)
+    bio: str = Field(default="", max_length=280)
+    shown: StrictBool = True
+
+
+class FaqBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=160)
+    answer: str = Field(min_length=1, max_length=800)
+
+
 class PublicPageSettingsView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -218,6 +255,13 @@ class PublicPageSettingsView(BaseModel):
     price_period_default: PricePeriod
     trials_open: bool
     privacy_notice_url: str | None = None
+    hero_photo_url: str | None = None
+    about_text: str = ""
+    highlights: list[str] = []
+    gallery: list[GalleryPhotoView] = []
+    coach_profiles: list[CoachProfileBody] = []
+    #: Empty = the public page uses its standard questions.
+    faqs: list[FaqBody] = []
     theme: PublicPageTheme
     seats_left_threshold: int
     #: ``https://<host>/`` of the academy's own domain for the "View page"
@@ -237,6 +281,14 @@ class UpdatePublicPageSettingsRequest(BaseModel):
     price_period_default: PricePeriod | None = None
     trials_open: StrictBool | None = None
     privacy_notice_url: str | None = Field(default=None, max_length=2048)
+    #: ``null`` removes the hero photo. Photos come from
+    #: ``POST /admin/academy/media`` (``purpose`` hero, gallery or coach).
+    hero_photo_url: str | None = Field(default=None, max_length=2048)
+    about_text: str | None = Field(default=None, max_length=1200)
+    highlights: list[str] | None = Field(default=None, max_length=6)
+    gallery: list[GalleryPhotoBody] | None = Field(default=None, max_length=12)
+    coach_profiles: list[CoachProfileBody] | None = Field(default=None, max_length=50)
+    faqs: list[FaqBody] | None = Field(default=None, max_length=12)
     theme: PublicPageTheme | None = None
     seats_left_threshold: int | None = Field(
         default=None, ge=0, le=MAX_SEATS_LEFT_THRESHOLD, strict=True
@@ -244,7 +296,12 @@ class UpdatePublicPageSettingsRequest(BaseModel):
 
 
 def _settings_view(settings: PublicPageSettings, public_url: str | None) -> PublicPageSettingsView:
-    return PublicPageSettingsView(**settings.model_dump(), public_url=public_url)
+    data = settings.model_dump()
+    data["gallery"] = [
+        {"url": g["url"], "caption": g["caption"], "consent_confirmed": True}
+        for g in data["gallery"]
+    ]
+    return PublicPageSettingsView(**data, public_url=public_url)
 
 
 def _changes(body: BaseModel) -> dict[str, Any]:
@@ -348,6 +405,8 @@ async def update_public_page_settings(
 ) -> PublicPageSettingsView:
     # ``null`` only clears the privacy link: a switch or the price period sent
     # as null fails the use case's own validation (422), never "reset".
-    settings = await services.update_public_page_settings.execute(claims.academy_id, _changes(body))
+    settings = await services.update_public_page_settings.execute(
+        claims.academy_id, _changes(body), actor_id=claims.user_id
+    )
     address = await services.get_public_page_address.execute(claims.academy_id)
     return _settings_view(settings, address)
