@@ -57,6 +57,7 @@ interface AcademyForm {
   default_parking_note: string;
   default_what_to_bring: string;
   default_arrival_minutes_before: string;
+  default_coach_contact_policy: string;
   // Legal links (Phase 4 PR 13). `privacy_notice_url` is the Public page
   // setting's own stored value, edited here.
   terms_url: string;
@@ -64,7 +65,7 @@ interface AcademyForm {
   privacy_notice_url: string;
 }
 
-function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
+export function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
   return {
     display_name: data?.display_name ?? "",
     // NOT "UTC": the backend now returns null for an academy that has never
@@ -86,6 +87,7 @@ function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
     default_parking_note: data?.default_parking_note ?? "",
     default_what_to_bring: data?.default_what_to_bring ?? "",
     default_arrival_minutes_before: data?.default_arrival_minutes_before?.toString() ?? "",
+    default_coach_contact_policy: data?.default_coach_contact_policy ?? "",
     terms_url: data?.terms_url ?? "",
     refund_policy_url: data?.refund_policy_url ?? "",
     privacy_notice_url: data?.privacy_notice_url ?? "",
@@ -107,6 +109,7 @@ const TEXT_FIELDS = [
   "default_venue_address",
   "default_parking_note",
   "default_what_to_bring",
+  "default_coach_contact_policy",
   "terms_url",
   "refund_policy_url",
   "privacy_notice_url",
@@ -150,7 +153,7 @@ export function replyToHint(supportEmail: string): string {
     : "Replies to academy email go here. Defaults to the support email once you set one.";
 }
 
-function changedPayload(original: AcademyForm, form: AcademyForm): UpdateAdminAcademyRequest {
+export function changedPayload(original: AcademyForm, form: AcademyForm): UpdateAdminAcademyRequest {
   const payload: UpdateAdminAcademyRequest = {};
   TEXT_FIELDS.forEach((key) => {
     if (form[key] !== original[key]) {
@@ -373,6 +376,12 @@ export function AcademyPanel() {
             type="number"
             value={form.default_arrival_minutes_before}
             onChange={(v) => set("default_arrival_minutes_before", v)}
+          />
+          <Field
+            label="Coach contact"
+            value={form.default_coach_contact_policy}
+            hint="For example: Message on WhatsApp only."
+            onChange={(v) => set("default_coach_contact_policy", v)}
           />
         </div>
       </Card>

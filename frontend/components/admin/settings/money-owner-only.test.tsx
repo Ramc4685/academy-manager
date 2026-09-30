@@ -87,19 +87,23 @@ describe("Plans (price list, Pricing page)", () => {
 });
 
 describe("Class monthly fee", () => {
-  it("is disabled for a non-owner in the list page edit and create dialogs", () => {
+  // Class-page PR A: Create, list Edit and class-page Edit share one form;
+  // its rendered owner/non-owner states are pinned in
+  // components/admin/sessions/class-form.test.tsx.
+  it("every class dialog is the shared, owner-gated class form", () => {
     const page = source("app/(admin)/admin/sessions/page.tsx");
-    expect(page.match(/disabled=\{!isOwner\}/g)?.length).toBe(2);
-    expect(page).toContain("<OwnerOnlyFieldNote");
-    // A non-owner never sends a fee on create: the BFF would 403 it.
-    expect(page).toMatch(/isOwner \? form : \{ \.\.\.form, amount_cents: null \}/);
+    expect(page).toContain("<CreateClassDialog");
+    expect(page).toContain("<EditClassDialog");
+    const detail = source("app/(admin)/admin/sessions/[id]/SessionEditing.tsx");
+    expect(detail).toMatch(/SessionEditDialog = EditClassDialog/);
   });
 
-  it("is disabled for a non-owner in the session detail edit dialog", () => {
-    const detail = source("app/(admin)/admin/sessions/[id]/SessionEditing.tsx");
-    expect(detail).toMatch(/useIsOwner\(\)/);
-    expect(detail).toMatch(/disabled=\{!isOwner\}/);
-    expect(detail).toContain("<OwnerOnlyFieldNote");
+  it("is read-only for a non-owner, and a non-owner never sends a fee", () => {
+    const form = source("components/admin/sessions/class-form.tsx");
+    expect(form).toMatch(/useIsOwner\(\)/);
+    expect(form).toContain("<OwnerOnlyFieldNote");
+    // Create: the BFF would 403 any fee from a non-owner.
+    expect(form).toMatch(/const fee = isOwner\s*\?[\s\S]*?: null;/);
   });
 });
 

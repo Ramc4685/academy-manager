@@ -112,10 +112,11 @@ async function createSession(page: Page, title: string) {
   await dialog.getByLabel("Name").fill(title);
   await dialog.getByLabel("Location").fill("E2E Court");
   await dialog.getByLabel("Capacity").fill("4");
-  // The fee is owner-only (Settings overhaul P1 PR 5): an admin without the
-  // owner scope sees it disabled and creates the class unpriced.
+  // The price is owner-only (Settings overhaul P1 PR 5): an admin without the
+  // owner scope sees it read-only and creates the class unpriced. An owner
+  // starts on "Custom price", which shows the monthly fee box.
   const fee = dialog.getByLabel("Monthly fee");
-  if (await fee.isEnabled()) await fee.fill("10");
+  if ((await fee.count()) > 0) await fee.fill("10");
 
   await dialog.getByRole("button", { name: "Create" }).click();
   await expect(dialog).toHaveCount(0, { timeout: 30_000 });

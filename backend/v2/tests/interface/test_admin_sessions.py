@@ -815,6 +815,73 @@ async def test_admin_session_edit_blocks_clearing_price_for_percent_paid_coach(
 
 
 @pytest.mark.asyncio
+async def test_admin_session_edit_unpriced_class_blocks_switch_to_percent_paid_coach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The class form sends an unpriced class's unchanged null fee back on
+    every edit. An operations-only admin is not owner-gated (the fee did not
+    change), but a switch to a percent-of-revenue coach is still refused."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-unpriced-percent-switch"]
+    await db.sessions.insert_one(
+        {
+            "academy_id": "academy-b",
+            "session_id": "session-unpriced",
+            "title": "Unpriced",
+            "location": "Court 1",
+            "coach_id": "coach-flat",
+            "capacity": 15,
+            "amount_cents": None,
+            "status": "scheduled",
+            "days_of_week": ["Wed"],
+            "start_time": "18:00",
+            "end_time": "18:45",
+            "timezone": "America/Chicago",
+            "start_at": datetime(2026, 6, 3, 23, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 3, 23, 45, tzinfo=UTC),
+        }
+    )
+    await db.coach_rates.insert_one(
+        {
+            "academy_id": "academy-b",
+            "rate_id": "rate-percent",
+            "coach_id": "coach-percent",
+            "billing_unit": "percent_of_revenue",
+            "amount_minor": 0,
+            "percent_bps": 6000,
+            "currency": "USD",
+            "effective_from": datetime(2026, 1, 1, tzinfo=UTC),
+            "effective_until": None,
+            "status": "active",
+        }
+    )
+
+    with TestClient(_mongo_admin_app(db, roles=("admin",))) as client:
+        blocked = client.patch(
+            "/api/v2/admin/sessions/session-unpriced",
+            json={"coach_id": "coach-percent", "amount_cents": None},
+        )
+        allowed = client.patch(
+            "/api/v2/admin/sessions/session-unpriced",
+            json={"title": "Unpriced B", "amount_cents": None},
+        )
+
+    assert blocked.status_code == 400, blocked.text
+    assert "Percent-of-revenue coach pay requires a session price" in blocked.json()["detail"]
+    # Unchanged null fee from a non-owner: not a price change, so it saves.
+    assert allowed.status_code == 200, allowed.text
+    stored = await db.sessions.find_one(
+        {"academy_id": "academy-b", "session_id": "session-unpriced"}
+    )
+    assert stored is not None
+    assert stored["coach_id"] == "coach-flat"
+    assert stored["title"] == "Unpriced B"
+    assert stored["amount_cents"] is None
+    assert await db.billing_audit_log.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
 async def test_edit_recurring_session_rejects_duplicate_series(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2864,6 +2931,45 @@ async def test_communication_pack_survives_the_round_trip_to_the_get_route(
 
 
 @pytest.mark.asyncio
+async def test_class_form_edit_without_pack_fields_leaves_the_pack_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Class-page PR A: the Edit dialog no longer carries the welcome-email
+    (communication pack) fields. It PATCHes the whole schedule/seats form with
+    the pack keys left out, and the stored pack must survive untouched."""
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-session-pack-class-form-edit"]
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        created = await _create_pack_session(db, client, amount_cents=6000, **_PACK_PAYLOAD)
+        session_id = created["session_id"]
+        # The exact shape the shared class form sends: no pack keys, and no
+        # fee because the price did not change.
+        edited = client.patch(
+            f"/api/v2/admin/sessions/{session_id}",
+            json={
+                "coach_id": "coach-pack",
+                "title": "Pack Session B",
+                "location": "Court 2",
+                "capacity": 18,
+                "timezone": "America/Chicago",
+                "days_of_week": ["Thu"],
+                "start_time": "18:00",
+                "end_time": "18:45",
+            },
+        )
+        assert edited.status_code == 200, edited.text
+        reloaded = client.get(f"/api/v2/admin/sessions/{session_id}").json()
+
+    assert reloaded["title"] == "Pack Session B"
+    assert reloaded["capacity"] == 18
+    assert reloaded["amount_cents"] == 6000
+    for field, value in _PACK_PAYLOAD.items():
+        assert reloaded[field] == value, f"{field} changed by an edit that did not send it"
+
+
+@pytest.mark.asyncio
 async def test_communication_pack_survives_the_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3102,3 +3208,94 @@ async def test_admin_sessions_enrolled_count_includes_held_seats(
     )
     # capacity 1, one held seat -> no open spots; the paused row holds nothing.
     assert row["enrolled_count"] == 1
+
+
+_PACK_SESSION = {
+    "academy_id": "academy-b",
+    "session_id": "sess-pack",
+    "title": "Pack Class",
+    "location": "Court 3",
+    "coach_id": "coach-1",
+    "capacity": 10,
+    "status": "scheduled",
+    "days_of_week": ["Wed"],
+    "start_time": "17:45",
+    "end_time": "18:30",
+    "timezone": "America/Chicago",
+    "start_at": datetime(2026, 5, 6, 22, 45, tzinfo=UTC),
+    "end_at": datetime(2026, 5, 6, 23, 30, tzinfo=UTC),
+    "venue_address": "Class venue 1",
+    "parking_notes": "Class parking",
+}
+
+
+@pytest.mark.asyncio
+async def test_welcome_email_preview_renders_the_real_email_without_writing() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["welcome-preview"]
+    await db.sessions.insert_one(dict(_PACK_SESSION))
+    await db.academies.insert_one(
+        {
+            "academy_id": "academy-b",
+            "display_name": "Preview Club",
+            "default_what_to_bring": "Water",
+        }
+    )
+    before = {"sessions": await db.sessions.count_documents({})}
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        response = client.get("/api/v2/admin/sessions/sess-pack/welcome-email-preview")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["subject"] == "Welcome to Pack Class"
+    assert "Class venue 1" in body["html"]
+    assert "Class parking" in body["html"]
+    assert "Water" in body["html"]
+    assert "Sample Student" in body["html"]
+    assert await db.sessions.count_documents({}) == before["sessions"]
+    assert (
+        await db.outbox.count_documents({}) == 0
+        if "outbox" in await db.list_collection_names()
+        else True
+    )
+
+
+@pytest.mark.asyncio
+async def test_welcome_email_preview_is_tenant_scoped() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["welcome-preview-tenant"]
+    await db.sessions.insert_one({**_PACK_SESSION, "academy_id": "academy-a"})
+
+    with TestClient(_mongo_admin_app(db, academy_id="academy-b")) as client:
+        response = client.get("/api/v2/admin/sessions/sess-pack/welcome-email-preview")
+
+    assert response.status_code == 404
+
+
+def test_welcome_email_preview_refuses_a_non_admin(coach_on_admin_client) -> None:
+    r = coach_on_admin_client.get("/api/v2/admin/sessions/sess-1/welcome-email-preview")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_partial_patch_of_pack_fields_leaves_schedule_and_other_fields_alone() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["welcome-pack-patch"]
+    await db.sessions.insert_one(dict(_PACK_SESSION))
+
+    with TestClient(_mongo_admin_app(db)) as client:
+        response = client.patch(
+            "/api/v2/admin/sessions/sess-pack",
+            json={"parking_notes": None, "what_to_bring": "Racquet"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["parking_notes"] is None
+    assert body["what_to_bring"] == "Racquet"
+    # Untouched by a pack-only body.
+    assert body["venue_address"] == "Class venue 1"
+    assert body["days_of_week"] == ["Wed"]
+    assert body["start_time"] == "17:45"
+    assert body["title"] == "Pack Class"

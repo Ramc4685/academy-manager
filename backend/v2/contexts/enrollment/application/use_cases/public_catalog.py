@@ -163,6 +163,7 @@ class ListPublicCatalog:
         show_price: bool = True,
         show_availability: bool = True,
         few_seats_threshold: int = FEW_SEATS_THRESHOLD,
+        default_venue_address: str | None = None,
     ) -> PublicCatalog:
         rows = [
             row
@@ -191,6 +192,7 @@ class ListPublicCatalog:
                 show_price=show_price,
                 show_availability=show_availability,
                 few_seats_threshold=few_seats_threshold,
+                default_venue_address=default_venue_address,
             )
             entry = (_class_sort_key(row), view)
             if program is None:
@@ -248,6 +250,7 @@ def _class_view(
     show_price: bool,
     show_availability: bool,
     few_seats_threshold: int,
+    default_venue_address: str | None = None,
 ) -> PublicClassView:
     profile = row.profile
     price: PublicPrice | None = None
@@ -272,7 +275,7 @@ def _class_view(
         timezone=row.timezone,
         starts_on=row.starts_on,
         location=row.location,
-        venue_address=row.venue_address,
+        venue_address=row.venue_address or default_venue_address,
         coach_name=coach_public_name(coach_name, profile.coach_display),
         price=price,
         seats=seats,

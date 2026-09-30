@@ -314,6 +314,8 @@ class AdminUseCases:
     change_admin_student_parent: ChangeAdminStudentParent | None = None
     get_admin_session: object | None = None  # async (session_id: str) -> dict | None
     maintain_session_occurrences: object | None = None  # async (session) -> None
+    # Read-only welcome email render: async (session_id) -> (subject, html) | None
+    preview_welcome_email: object | None = None
     # Assistant coaches editor (composition/admin_session_staff.py).
     set_session_assistants: object | None = None  # SetSessionAssistants
     add_session_replacement: object | None = None  # async (...) -> dict | None

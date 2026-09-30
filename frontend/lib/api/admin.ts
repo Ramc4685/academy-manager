@@ -1639,6 +1639,8 @@ export interface AdminAcademyView {
   default_parking_note: string | null;
   default_what_to_bring: string | null;
   default_arrival_minutes_before: number | null;
+  /** Fallback for a class's welcome-email "Coach contact" line. */
+  default_coach_contact_policy: string | null;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{
@@ -1663,6 +1665,7 @@ export type UpdateAdminAcademyRequest = Partial<{
   default_parking_note: string | null;
   default_what_to_bring: string | null;
   default_arrival_minutes_before: number | null;
+  default_coach_contact_policy: string | null;
 }>;
 
 export interface AdminNotificationsView {
@@ -1862,6 +1865,19 @@ export function updateAdminSession(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export interface WelcomeEmailPreview {
+  subject: string;
+  html: string;
+}
+
+/** The real enrollment welcome email for this class, rendered but never sent. */
+export function getSessionWelcomeEmailPreview(sessionId: string): Promise<WelcomeEmailPreview> {
+  return apiFetch<WelcomeEmailPreview>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/welcome-email-preview`,
+    { method: "GET" },
+  );
 }
 
 export interface SetSessionAssistantsRequest {

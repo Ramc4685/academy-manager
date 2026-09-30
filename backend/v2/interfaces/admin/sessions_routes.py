@@ -78,6 +78,7 @@ from backend.v2.interfaces.admin.views import (
     UpdateOccurrenceReplacementRequest,
     UpdateSessionOccurrenceCoachRequest,
     VoidStudentAttendanceRequest,
+    WelcomeEmailPreviewView,
     WithdrawEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -234,6 +235,25 @@ async def edit_session(
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.get(
+    "/sessions/{session_id}/welcome-email-preview",
+    response_model=WelcomeEmailPreviewView,
+    summary="Render the enrollment welcome email for a class (never sent)",
+)
+async def preview_welcome_email(
+    session_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> WelcomeEmailPreviewView:
+    if use_cases.preview_welcome_email is None:
+        raise HTTPException(status_code=503, detail="Welcome email preview is not configured")
+    rendered = await use_cases.preview_welcome_email(session_id)  # type: ignore[operator]
+    if rendered is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    subject, html = rendered
+    return WelcomeEmailPreviewView(subject=subject, html=html)
 
 
 @router.put(

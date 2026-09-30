@@ -7,8 +7,10 @@ import type { AdminAcademyView } from "@/lib/api/admin";
 
 import {
   AcademyPanel,
+  changedPayload,
   httpsLinkError,
   invoicePrefixHint,
+  normalize,
   replyToHint,
   supportEmailError,
 } from "./academy-panel";
@@ -144,4 +146,22 @@ describe("supportEmailError", () => {
   it.each(["help", "help@", "a b@c.co"])("rejects %j", (value) =>
     expect(supportEmailError(value)).not.toBeNull(),
   );
+});
+
+describe("AcademyPanel coach contact default", () => {
+  const base = normalize({ default_coach_contact_policy: "Text the coach" } as AdminAcademyView);
+
+  it("sends the trimmed value when edited", () => {
+    const form = { ...base, default_coach_contact_policy: "  Message on WhatsApp  " };
+    expect(changedPayload(base, form)).toEqual({ default_coach_contact_policy: "Message on WhatsApp" });
+  });
+
+  it("sends an explicit null when cleared", () => {
+    const form = { ...base, default_coach_contact_policy: "" };
+    expect(changedPayload(base, form)).toEqual({ default_coach_contact_policy: null });
+  });
+
+  it("sends nothing when unchanged", () => {
+    expect(changedPayload(base, { ...base })).toEqual({});
+  });
 });

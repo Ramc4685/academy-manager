@@ -549,3 +549,56 @@ async def test_adapter_class_values_win_over_academy_class_defaults() -> None:
     assert "Existing class court" in body
     assert "12 Court Lane" not in body
     assert "Please arrive 5 minutes before" in body
+
+
+# --- academy default for coach contact + admin preview ----------------------
+
+
+def test_class_coach_contact_policy_wins_over_the_academy_default() -> None:
+    _, body = _render(
+        _session(coach_contact_policy="Class says WhatsApp only"),
+        academy_coach_contact_policy="Academy says email the office",
+    )
+    assert "Class says WhatsApp only" in body
+    assert "Academy says email the office" not in body
+
+
+def test_academy_coach_contact_default_is_used_when_the_class_is_blank() -> None:
+    _, body = _render(_session(), academy_coach_contact_policy="Academy says email the office")
+    assert "Academy says email the office" in body
+
+
+def test_no_coach_contact_anywhere_renders_no_contact_line() -> None:
+    _, body = _render(_session(), academy_coach_contact_policy=None)
+    assert "Your coach" not in body
+
+
+class _AcademiesWithCoachContact(_Academies):
+    async def find_by_id(self, academy_id: str) -> dict:
+        doc = await super().find_by_id(academy_id)
+        doc["default_coach_contact_policy"] = "Message the office"
+        return doc
+
+
+@pytest.mark.asyncio
+async def test_preview_renders_the_real_email_and_sends_nothing() -> None:
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender, academies=_AcademiesWithCoachContact())
+    with tenant_scope("acad"):
+        rendered = await adapter.preview("sess-1")
+    assert rendered is not None
+    subject, body = rendered
+    assert subject == "Welcome to Beginner Badminton"
+    assert "Sample Student is enrolled in Beginner Badminton" in body
+    assert "Message the office" in body
+    assert sender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_preview_of_a_missing_session_is_none() -> None:
+    sender = _RecordingSender()
+    adapter, _ = _adapter(sender)
+    adapter._sessions = _Sessions(None)  # type: ignore[assignment]
+    with tenant_scope("acad"):
+        assert await adapter.preview("nope") is None
+    assert sender.calls == []

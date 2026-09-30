@@ -68,6 +68,10 @@ _DAY_LABELS = {
 }
 
 
+#: Shown in the admin "Preview email" dialog; never a real family's name.
+_PREVIEW_STUDENT_NAME = "Sample Student"
+
+
 class SessionLookup(Protocol):
     async def get(self, session_id: str) -> Session | None: ...
 
@@ -171,6 +175,7 @@ def render_welcome_email(
     academy_parking_note: str | None = None,
     academy_what_to_bring: str | None = None,
     academy_arrival_minutes_before: int | None = None,
+    academy_coach_contact_policy: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(subject, html_body)``.
 
@@ -178,7 +183,8 @@ def render_welcome_email(
     that has configured nothing still gets a correct, short welcome rather
     than a message full of empty headings.
 
-    Venue address, parking, what-to-bring and arrival time each fall back to
+    Venue address, parking, what-to-bring, arrival time and coach contact
+    each fall back to
     the academy's Class defaults (Settings overhaul Phase 3 PR 9) when the
     class itself leaves the field empty. A class value, when set, always
     wins — this is a fallback, not an override — so BLNO's existing classes
@@ -245,8 +251,9 @@ def render_welcome_email(
     coach_lines = []
     if coach_name:
         coach_lines.append(f"Your coach is {html.escape(coach_name)}.")
-    if session.coach_contact_policy:
-        coach_lines.append(_multiline(session.coach_contact_policy))
+    coach_contact_policy = session.coach_contact_policy or academy_coach_contact_policy
+    if coach_contact_policy:
+        coach_lines.append(_multiline(coach_contact_policy))
     if coach_lines:
         parts.append(_block("Your coach", _para("<br />".join(coach_lines))))
 
@@ -329,31 +336,7 @@ class EnrollmentWelcomeEmailAdapter:
             return
         display_name = (parent.display_name if parent else None) or None
 
-        academy_id = current_academy_id()
-        academy_doc = await self._academies.find_by_id(academy_id) or {}
-        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
-            "Your academy"
-        )
-        academy_timezone = str(academy_doc.get("timezone") or "") or None
-        coach_name = await self._coach_name(session.coach_id)
-        absence_default = await self._absence_policy_default()
-
-        subject, body = render_welcome_email(
-            session=session,
-            academy_name=academy_name,
-            student_name=student_name,
-            coach_name=coach_name,
-            academy_timezone=academy_timezone,
-            academy_absence_policy_default=absence_default,
-            academy_venue_address=str(academy_doc.get("default_venue_address") or "") or None,
-            academy_parking_note=str(academy_doc.get("default_parking_note") or "") or None,
-            academy_what_to_bring=str(academy_doc.get("default_what_to_bring") or "") or None,
-            academy_arrival_minutes_before=(
-                int(academy_doc["default_arrival_minutes_before"])
-                if academy_doc.get("default_arrival_minutes_before") is not None
-                else None
-            ),
-        )
+        subject, body, academy_doc = await self._compose(session, student_name)
         identity = resolve_sender(academy_doc)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
@@ -381,6 +364,52 @@ class EnrollmentWelcomeEmailAdapter:
                     "reason": outcome.failed_reason,
                 },
             )
+
+    async def preview(self, session_id: str) -> tuple[str, str] | None:
+        """The real welcome email for a class, with a sample student name.
+
+        Read-only: it resolves no recipient, calls no sender and writes
+        nothing. ``None`` when the class does not exist in this academy (the
+        session repo is tenant-scoped).
+        """
+        session = await self._sessions.get(session_id)
+        if session is None:
+            return None
+        subject, body, _academy_doc = await self._compose(session, _PREVIEW_STUDENT_NAME)
+        return subject, body
+
+    async def _compose(
+        self, session: Session, student_name: str
+    ) -> tuple[str, str, dict[str, Any]]:
+        academy_id = current_academy_id()
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
+            "Your academy"
+        )
+        academy_timezone = str(academy_doc.get("timezone") or "") or None
+        coach_name = await self._coach_name(session.coach_id)
+        absence_default = await self._absence_policy_default()
+
+        subject, body = render_welcome_email(
+            session=session,
+            academy_name=academy_name,
+            student_name=student_name,
+            coach_name=coach_name,
+            academy_timezone=academy_timezone,
+            academy_absence_policy_default=absence_default,
+            academy_venue_address=str(academy_doc.get("default_venue_address") or "") or None,
+            academy_parking_note=str(academy_doc.get("default_parking_note") or "") or None,
+            academy_what_to_bring=str(academy_doc.get("default_what_to_bring") or "") or None,
+            academy_arrival_minutes_before=(
+                int(academy_doc["default_arrival_minutes_before"])
+                if academy_doc.get("default_arrival_minutes_before") is not None
+                else None
+            ),
+            academy_coach_contact_policy=(
+                str(academy_doc.get("default_coach_contact_policy") or "") or None
+            ),
+        )
+        return subject, body, academy_doc
 
     async def _resolve_parent(self, parent_user_id: str) -> ResolvedRecipient | None:
         """The parent, only if they belong to the academy running this request."""

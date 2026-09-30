@@ -588,6 +588,13 @@ class EditSessionRequest(CommunicationPackFields):
     reason: str | None = None
 
 
+class WelcomeEmailPreviewView(BaseModel):
+    """``GET /admin/sessions/{id}/welcome-email-preview``: the real email, unsent."""
+
+    subject: str
+    html: str
+
+
 class SetSessionAssistantsRequest(BaseModel):
     """Body of ``PUT /admin/sessions/{id}/assistants`` (dedicated editor)."""
 
@@ -1910,6 +1917,7 @@ class AdminAcademyView(BaseModel):
     default_parking_note: str | None = None
     default_what_to_bring: str | None = None
     default_arrival_minutes_before: int | None = None
+    default_coach_contact_policy: str | None = None
 
 
 class AdminAcademyMediaView(BaseModel):
@@ -1955,6 +1963,7 @@ class UpdateAdminAcademyRequest(BaseModel):
     default_parking_note: str | None = Field(default=None, max_length=500)
     default_what_to_bring: str | None = Field(default=None, max_length=500)
     default_arrival_minutes_before: int | None = Field(default=None, ge=0, le=180)
+    default_coach_contact_policy: str | None = Field(default=None, max_length=500)
 
     @field_validator("currency")
     @classmethod

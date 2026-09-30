@@ -8,7 +8,7 @@
  * cancel session.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -35,8 +35,6 @@ import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { PathwayPlacementUndoWindow } from "@/lib/admin/pathway-placement-undo";
 import { queryKeys } from "@/lib/query/keys";
-import { useIsPhone } from "@/lib/use-is-phone";
-import { usePersistedOpen } from "@/lib/use-persisted-open";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -50,12 +48,7 @@ import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/e
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
 import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
-import {
-  formatArrivalMinutes,
-  formatCurrencyCents,
-  hasCommunicationPack,
-  sessionTimeRange,
-} from "./format";
+import { formatCurrencyCents, sessionTimeRange } from "./format";
 import { RosterMetrics, RosterTable, partitionRoster, seatsHeldCount } from "./RosterPanel";
 import {
   CancelOccurrenceDialog,
@@ -66,11 +59,14 @@ import {
   SessionEditDialog,
 } from "./SessionEditing";
 import { WaitlistTable } from "./WaitlistTable";
+import { WelcomeEmailTab } from "./WelcomeEmailTab";
 
 const DETAIL_TABS = [
   { id: "roster", label: "Roster" },
+  { id: "dates", label: "Class dates" },
   { id: "waitlist", label: "Waitlist" },
   { id: "teaching-plan", label: "Teaching plan" },
+  { id: "welcome", label: "Welcome email" },
 ] as const;
 type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 
@@ -103,67 +99,6 @@ function windowedOccurrences(
   ];
 }
 
-/**
- * One of the three context cards that frame the roster — coaching staff, class
- * dates, communication pack (#859).
- *
- * Collapsible because a phone screen is 5,100px of page and the roster is what
- * the admin came for; open by default on every screen because an admin who
- * came for a class date should not have to find it behind a disclosure, and
- * because a section that starts closed is a section the existing specs — and
- * real readers — would have to learn to open.
- *
- * Collapsing unmounts the body rather than hiding it with CSS, the same choice
- * `use-is-phone.ts` documents for the phone/table split: a hidden twin would
- * leave a second node per row in the DOM for every locator to trip over.
- */
-function SessionSectionCard({
-  index,
-  title,
-  testId,
-  action,
-  open,
-  onToggle,
-  children,
-}: {
-  index: string;
-  title: string;
-  testId: string;
-  action?: ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  const bodyId = `${testId}-body`;
-  return (
-    <Card p={20} className="min-w-0">
-      <LaneHeader
-        index={index}
-        title={title}
-        action={
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {action}
-            <Button
-              variant="secondary"
-              size="sm"
-              data-testid={`${testId}-toggle`}
-              aria-expanded={open}
-              aria-controls={open ? bodyId : undefined}
-              // Three toggles on one page: "Hide" alone would name all three
-              // the same thing for a screen reader and for a role locator.
-              aria-label={`${open ? "Hide" : "Show"} ${title}`}
-              onClick={onToggle}
-            >
-              {open ? "Hide" : "Show"}
-            </Button>
-          </div>
-        }
-      />
-      {open && <div id={bodyId}>{children}</div>}
-    </Card>
-  );
-}
-
 function cancelErrorMessage(err: unknown): string {
   const reason = err instanceof Error ? err.message.trim() : "";
   return reason ? `Could not cancel session: ${reason}` : CANCEL_FAILED_FALLBACK;
@@ -193,14 +128,9 @@ export default function AdminSessionDetailPage() {
     null,
   );
   const [assistantsOpen, setAssistantsOpen] = useState(false);
-  // #859: the three context cards. Open on first paint everywhere — see
-  // `SessionSectionCard`. Remembered per device, not per session: an admin
-  // who keeps one closed wants that everywhere they open a session detail
-  // page, so the keys below are fixed strings, not sessionId-scoped.
-  const [staffOpen, setStaffOpen] = usePersistedOpen("admin.session-detail.staffOpen");
-  const [datesOpen, setDatesOpen] = usePersistedOpen("admin.session-detail.datesOpen");
-  const [commsOpen, setCommsOpen] = usePersistedOpen("admin.session-detail.commsOpen");
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
+  // The Welcome email tab keeps unsaved edits, so once opened it stays mounted (hidden) on other tabs.
+  const [welcomeOpened, setWelcomeOpened] = useState(false);
   const [rosterView, setRosterView] = useState<RosterView>("active");
   const [showAllDates, setShowAllDates] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -208,11 +138,6 @@ export default function AdminSessionDetailPage() {
   // now ask a second time and say who is affected.
   const [cancelSessionOpen, setCancelSessionOpen] = useState(false);
   const [waitlistRemoveTarget, setWaitlistRemoveTarget] = useState<AdminWaitlistEntry | null>(null);
-
-  // #859: below `md:` the roster is hoisted above the three context cards.
-  // `false` until the client store is read (see `use-is-phone.ts`), so the
-  // first paint is the desktop order and nothing flips for a desktop reader.
-  const isPhone = useIsPhone();
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessionDetail(sessionId),
@@ -435,110 +360,6 @@ export default function AdminSessionDetailPage() {
     setPendingPlacement(null);
   }
 
-  /**
-   * Coaching staff, class dates and the communication pack (#859). One value
-   * rendered in one of two places — above the tab strip on a desktop, after
-   * the roster on a phone — so the DOM order and the tab order always match
-   * what is on screen, which a CSS-only reorder could not promise.
-   */
-  const contextCards = (
-    <>
-      {/* Coaching staff: the lead coach plus per-session assistant coaches */}
-      <SessionSectionCard
-        index="01"
-        title="Coaching staff"
-        testId="session-staff"
-        open={staffOpen}
-        onToggle={() => setStaffOpen((current) => !current)}
-        action={
-          session && (
-            <Button
-              variant="secondary"
-              size="sm"
-              data-testid="edit-assistants"
-              onClick={() => setAssistantsOpen(true)}
-            >
-              Edit assistants
-            </Button>
-          )
-        }
-      >
-        {session ? <CoachingStaffCard session={session} /> : <TableSkeleton />}
-      </SessionSectionCard>
-
-      {/* Class dates (#671) — one table. It already carries the replacement
-          column, the replacement action and the cancel action, so a separate
-          "Replacement coaches" card would list every replaced date twice with
-          two identical buttons (ambiguous for the admin and for locators). */}
-      <SessionSectionCard
-        index="02"
-        title="Class dates"
-        testId="session-dates"
-        open={datesOpen}
-        onToggle={() => setDatesOpen((current) => !current)}
-        action={
-          <Button
-            variant="primary"
-            size="sm"
-            icon={Icon.plus(14, "currentColor")}
-            onClick={() => setReplacementOpen(true)}
-          >
-            Add replacement
-          </Button>
-        }
-      >
-        {occurrencesQuery.isLoading ? (
-          <TableSkeleton />
-        ) : (
-          <>
-            <ReplacementCoachTable
-              occurrences={visibleOccurrences}
-              userNameById={userNameById}
-              timezone={session?.timezone ?? null}
-              onEdit={setOccurrenceTarget}
-              onCancel={setCancelTarget}
-              onViewAttendance={setAttendanceTarget}
-              showStatus
-              emptyLabel="No dates scheduled yet."
-            />
-            {canWindowDates && (
-              <div className="pt-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  data-testid="class-dates-show-all"
-                  aria-expanded={showAllDates}
-                  onClick={() => setShowAllDates((current) => !current)}
-                >
-                  {showAllDates ? "Show fewer" : `Show all ${occurrences.length} dates`}
-                </Button>
-              </div>
-            )}
-          </>
-        )}
-      </SessionSectionCard>
-
-      {/* Communication pack (#613) */}
-      <SessionSectionCard
-        index="03"
-        title="Communication pack"
-        testId="session-comms"
-        open={commsOpen}
-        onToggle={() => setCommsOpen((current) => !current)}
-        action={
-          // Distinct accessible name from the header's "Edit session": both
-          // open the same dialog, but two identically-named buttons on one
-          // page are ambiguous for screen readers and for role locators (#630).
-          <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
-            Edit communication pack
-          </Button>
-        }
-      >
-        {session ? <CommunicationPackCard session={session} /> : <TableSkeleton />}
-      </SessionSectionCard>
-    </>
-  );
-
   return (
     <section data-testid="admin-session-detail" className="space-y-6">
       {/* Header */}
@@ -605,14 +426,20 @@ export default function AdminSessionDetailPage() {
         </Card>
       )}
 
-      {!isPhone && contextCards}
+      {session && (
+        <CoachingStaffStrip session={session} onEditAssistants={() => setAssistantsOpen(true)} />
+      )}
 
       <div className="flex flex-wrap gap-2 border-b border-rally-line">
         {DETAIL_TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
-            onClick={() => setActiveTab(tab.id)}
+            data-testid={`session-tab-${tab.id}`}
+            onClick={() => {
+              setActiveTab(tab.id);
+              if (tab.id === "welcome") setWelcomeOpened(true);
+            }}
             className={`min-h-10 border-b-2 px-3 text-sm font-semibold ${
               activeTab === tab.id
                 ? "border-rally-cobalt-600 text-rally-ink"
@@ -627,7 +454,7 @@ export default function AdminSessionDetailPage() {
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="04"
+            index="01"
             title="Roster"
             action={
               session && (
@@ -733,15 +560,66 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "roster" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="05" title="Announcements" />
+          <LaneHeader index="02" title="Announcements" />
           <AnnouncementsPanel persona="admin" sessionId={sessionId} />
+        </Card>
+      )}
+
+      {activeTab === "dates" && (
+        // Class dates (#671) — one table. It already carries the replacement
+        // column, the replacement action and the cancel action, so a separate
+        // "Replacement coaches" card would list every replaced date twice.
+        <Card p={20} className="min-w-0" data-testid="session-dates">
+          <LaneHeader
+            index="01"
+            title="Class dates"
+            action={
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Icon.plus(14, "currentColor")}
+                onClick={() => setReplacementOpen(true)}
+              >
+                Add replacement
+              </Button>
+            }
+          />
+          {occurrencesQuery.isLoading ? (
+            <TableSkeleton />
+          ) : (
+            <>
+              <ReplacementCoachTable
+                occurrences={visibleOccurrences}
+                userNameById={userNameById}
+                timezone={session?.timezone ?? null}
+                onEdit={setOccurrenceTarget}
+                onCancel={setCancelTarget}
+                onViewAttendance={setAttendanceTarget}
+                showStatus
+                emptyLabel="No dates scheduled yet."
+              />
+              {canWindowDates && (
+                <div className="pt-3">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    data-testid="class-dates-show-all"
+                    aria-expanded={showAllDates}
+                    onClick={() => setShowAllDates((current) => !current)}
+                  >
+                    {showAllDates ? "Show fewer" : `Show all ${occurrences.length} dates`}
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
         </Card>
       )}
 
       {activeTab === "waitlist" && (
         <Card p={20} className="min-w-0">
           <LaneHeader
-            index="06"
+            index="01"
             title="Waitlist"
             action={
               <Button
@@ -773,7 +651,7 @@ export default function AdminSessionDetailPage() {
 
       {activeTab === "teaching-plan" && (
         <Card p={20} className="min-w-0">
-          <LaneHeader index="07" title="Teaching plan" />
+          <LaneHeader index="01" title="Teaching plan" />
           <AdminTeachingPlan
             sessionId={sessionId}
             programId={rosterProgramId || null}
@@ -782,7 +660,17 @@ export default function AdminSessionDetailPage() {
         </Card>
       )}
 
-      {isPhone && contextCards}
+      {welcomeOpened && (
+        <div hidden={activeTab !== "welcome"}>
+          {session ? (
+            <WelcomeEmailTab key={session.session_id} session={session} />
+          ) : (
+            <Card p={20}>
+              <TableSkeleton />
+            </Card>
+          )}
+        </div>
+      )}
 
       <ConfirmActionDialog
         open={cancelSessionOpen}
@@ -1018,89 +906,58 @@ export default function AdminSessionDetailPage() {
 }
 
 /**
- * Who runs this session: the lead coach and the assistant coaches listed on
- * it. Assistants see the session in their coach app (attendance, skills,
- * notes) and are never on payroll, so they are shown as staff, not as a
- * replacement or a pay line. Older cached rows predate the field, hence the
- * `?? []` guards.
+ * Who runs this session, on one line under the header: the lead coach and the
+ * assistant coaches listed on it. Assistants see the session in their coach
+ * app (attendance, skills, notes) and are never on payroll, so they are shown
+ * as staff, not as a replacement or a pay line. Older cached rows predate the
+ * field, hence the `?? []` guards.
  */
-function CoachingStaffCard({ session }: { session: AdminSessionView }) {
+function CoachingStaffStrip({
+  session,
+  onEditAssistants,
+}: {
+  session: AdminSessionView;
+  onEditAssistants: () => void;
+}) {
   const ids = session.assistant_coach_ids ?? [];
   const names = session.assistant_coach_names ?? [];
   return (
-    <dl className="grid gap-3 sm:grid-cols-[200px_minmax(0,1fr)]">
-      <dt className="text-sm font-medium text-rally-muted">Lead coach</dt>
-      <dd className="text-sm text-rally-ink" data-testid="session-lead-coach">
-        {session.coach_name ?? session.coach_id}
-      </dd>
-      <dt className="text-sm font-medium text-rally-muted">Assistants</dt>
-      <dd className="flex flex-wrap items-center gap-2" data-testid="session-assistants">
-        {ids.length === 0 ? (
-          <span className="text-sm text-rally-subtle">No assistant coaches.</span>
-        ) : (
-          ids.map((assistantId, index) => (
-            <span
-              key={assistantId}
-              data-testid={`session-assistant-${assistantId}`}
-              className="inline-flex items-center rounded-full border border-rally-line bg-rally-paper px-2.5 py-0.5 text-xs font-medium text-rally-ink"
-            >
-              {names[index] ?? assistantId}
-            </span>
-          ))
-        )}
-      </dd>
-    </dl>
-  );
-}
-
-/**
- * Read-only view of the per-session communication pack (#613).
- *
- * Only populated rows render — an empty definition list row would read as
- * "configured but blank", which is exactly the thing the welcome email must
- * never do either.
- */
-function CommunicationPackCard({ session }: { session: AdminSessionView }) {
-  if (!hasCommunicationPack(session)) {
-    return (
-      <p className="text-sm text-rally-subtle" data-testid="communication-pack-empty">
-        No communication pack configured. Add venue, arrival and group details from Edit
-        communication pack.
-      </p>
-    );
-  }
-
-  const rows: Array<[string, string]> = [
-    ["Venue address", session.venue_address ?? ""],
-    ["Parking", session.parking_notes ?? ""],
-    ["What to bring", session.what_to_bring ?? ""],
-    ["Arrival", formatArrivalMinutes(session.arrival_minutes_before)],
-    ["Coach contact", session.coach_contact_policy ?? ""],
-    ["Absences & make-ups", session.absence_policy ?? ""],
-  ].filter(([, value]) => value.trim() !== "") as Array<[string, string]>;
-
-  return (
-    <div className="space-y-4" data-testid="communication-pack">
-      {session.whatsapp_group_link ? (
-        <a
-          href={session.whatsapp_group_link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex min-h-10 items-center rounded-md bg-rally-cobalt-600 px-4 text-sm font-semibold text-white hover:bg-rally-cobalt-700"
-        >
-          Open WhatsApp group
-        </a>
-      ) : null}
-      {rows.length > 0 ? (
-        <dl className="grid gap-3 sm:grid-cols-[200px_minmax(0,1fr)]">
-          {rows.map(([label, value]) => (
-            <Fragment key={label}>
-              <dt className="text-sm font-medium text-rally-muted">{label}</dt>
-              <dd className="whitespace-pre-line text-sm text-rally-ink">{value}</dd>
-            </Fragment>
-          ))}
-        </dl>
-      ) : null}
+    <div
+      data-testid="session-staff"
+      className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-rally-line bg-white px-4 py-2.5 text-sm"
+    >
+      <span className="flex items-center gap-2">
+        <span className="font-medium text-rally-muted">Lead coach</span>
+        <span className="text-rally-ink" data-testid="session-lead-coach">
+          {session.coach_name ?? session.coach_id}
+        </span>
+      </span>
+      <span className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-rally-muted">Assistants</span>
+        <span className="flex flex-wrap items-center gap-2" data-testid="session-assistants">
+          {ids.length === 0 ? (
+            <span className="text-rally-subtle">None</span>
+          ) : (
+            ids.map((assistantId, index) => (
+              <span
+                key={assistantId}
+                data-testid={`session-assistant-${assistantId}`}
+                className="inline-flex items-center rounded-full border border-rally-line bg-rally-paper px-2.5 py-0.5 text-xs font-medium text-rally-ink"
+              >
+                {names[index] ?? assistantId}
+              </span>
+            ))
+          )}
+        </span>
+      </span>
+      <Button
+        variant="secondary"
+        size="sm"
+        data-testid="edit-assistants"
+        onClick={onEditAssistants}
+      >
+        Edit assistants
+      </Button>
     </div>
   );
 }

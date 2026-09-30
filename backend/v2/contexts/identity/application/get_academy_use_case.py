@@ -69,6 +69,7 @@ class GetAcademyOutput:
     default_parking_note: str | None = None
     default_what_to_bring: str | None = None
     default_arrival_minutes_before: int | None = None
+    default_coach_contact_policy: str | None = None
 
 
 def legal_and_support_fields(doc: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +127,7 @@ class GetAcademyUseCase:
             default_venue_address=doc.get("default_venue_address") or None,
             default_parking_note=doc.get("default_parking_note") or None,
             default_what_to_bring=doc.get("default_what_to_bring") or None,
+            default_coach_contact_policy=doc.get("default_coach_contact_policy") or None,
             default_arrival_minutes_before=(
                 int(doc["default_arrival_minutes_before"])
                 if doc.get("default_arrival_minutes_before") is not None

@@ -43,16 +43,6 @@ import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/
 
 import { dateInputValueFromOffset, formatCents, formatShortDateTime, inputClass, todayDateInput } from "./format";
 
-const DAYS_OF_WEEK = [
-  { value: "Mon", label: "Monday" },
-  { value: "Tue", label: "Tuesday" },
-  { value: "Wed", label: "Wednesday" },
-  { value: "Thu", label: "Thursday" },
-  { value: "Fri", label: "Friday" },
-  { value: "Sat", label: "Saturday" },
-  { value: "Sun", label: "Sunday" },
-] as const;
-
 export function AddToRosterDialog({
   open,
   onOpenChange,
@@ -905,24 +895,6 @@ export function CoachSelect({
       {coaches.map((coach) => (
         <option key={coach.user_id} value={coach.user_id}>
           {coach.display_name} ({coach.email})
-        </option>
-      ))}
-    </select>
-  );
-}
-
-export function DaySelect({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (day: string) => void;
-}) {
-  return (
-    <select required value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}>
-      {DAYS_OF_WEEK.map((day) => (
-        <option key={day.value} value={day.value}>
-          {day.label}
         </option>
       ))}
     </select>

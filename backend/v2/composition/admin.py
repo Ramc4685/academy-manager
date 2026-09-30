@@ -4265,6 +4265,7 @@ def compose_admin(
         list_admin_sessions=list_admin_sessions,
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,
+        preview_welcome_email=notifiers.welcome.preview,
         set_session_assistants=compose_set_session_assistants(
             sessions=sessions_w,
             occurrences=occurrences_r,

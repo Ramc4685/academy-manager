@@ -55,6 +55,40 @@ async function stubAdminShell(page: Page) {
   });
 }
 
+// Class-page PR A: the price is a plan picker fed by the owner-only Pricing
+// overview, and Create has an optional welcome-email step whose absence
+// placeholder comes from the family policies.
+const PRICING_OVERVIEW = {
+  plans: [
+    {
+      plan_id: "plan-group",
+      name: "Group class",
+      description: null,
+      price_cents: 6000,
+      plan_type: "monthly",
+      is_active: true,
+      linked_classes: 0,
+      updated_at: "2026-09-01T00:00:00Z",
+    },
+  ],
+  classes: [],
+  saved_overrides: [],
+  auto_linkable: 0,
+};
+
+async function stubClassFormReads(page: Page) {
+  await page.route("**/api/v2/admin/pricing", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, PRICING_OVERVIEW);
+  });
+  await page.route("**/api/v2/admin/self-service/policy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      welcome_email_absence_policy_default: "Tell us 24 hours ahead for a make-up.",
+    });
+  });
+}
+
 function formatDateInput(value: Date): string {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
@@ -76,6 +110,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     page,
   }) => {
     await stubAdminShell(page);
+    await stubClassFormReads(page);
     let createPayload: unknown = null;
 
     await page.route("**/api/v2/admin/sessions*", (route) => {
@@ -135,7 +170,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.getByLabel("End time").fill("18:00");
     await page.getByLabel("Capacity").fill("12");
     await page.getByLabel("Monthly fee").fill("85");
-    await page.getByRole("button", { name: "Create" }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
 
     await expect.poll(() => createPayload).toEqual({
       coach_id: "coach-e2e",
@@ -148,6 +183,115 @@ test.describe("admin session creation and billing-rules settings UI", () => {
       capacity: 12,
       amount_cents: 8500,
     });
+  });
+
+  test("create session with a pricing plan links the class and sends only typed welcome-email fields", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await stubClassFormReads(page);
+    let createPayload: Record<string, unknown> | null = null;
+    let linkPayload: unknown = null;
+
+    await page.route("**/api/v2/admin/sessions*", (route) => {
+      const request = route.request();
+      if (request.method() === "GET") return fulfillJson(route, { sessions: [] });
+      if (request.method() === "POST") {
+        createPayload = request.postDataJSON() as Record<string, unknown>;
+        return fulfillJson(route, {
+          session_id: "session-plan-e2e",
+          coach_id: "coach-e2e",
+          title: "Group badminton",
+          location: "BLNO Court 1",
+          start_at: "2026-05-29T17:00:00Z",
+          end_at: "2026-05-29T18:00:00Z",
+          days_of_week: ["Fri"],
+          start_time: "17:00",
+          end_time: "18:00",
+          timezone: "America/Chicago",
+          capacity: 12,
+          amount_cents: 6000,
+          status: "scheduled",
+          enrolled_count: 0,
+          waitlist_count: 0,
+        });
+      }
+      return route.fallback();
+    });
+    await page.route("**/api/v2/admin/pricing/classes/*/plan", (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      linkPayload = route.request().postDataJSON();
+      return fulfillJson(route, {
+        session_id: "session-plan-e2e",
+        title: "Group badminton",
+        charged_cents: 6000,
+        fee_set: true,
+        students: 0,
+        plan_id: "plan-group",
+        matching_plan_ids: ["plan-group"],
+        stale_link: false,
+      });
+    });
+    await page.route("**/api/v2/admin/users?role=coach", (route) =>
+      fulfillJson(route, {
+        users: [
+          {
+            user_id: "coach-e2e",
+            email: "coach@example.com",
+            display_name: "Coach E2E",
+            role: "coach",
+            status: "active",
+          },
+        ],
+      }),
+    );
+
+    await page.goto("/admin/sessions");
+    await page.getByTestId("admin-sessions-create").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "Create session" })).toBeVisible();
+
+    await expect(dialog.getByLabel("Coach").locator("option[value='coach-e2e']")).toBeAttached();
+    await dialog.getByLabel("Coach").selectOption("coach-e2e");
+    await dialog.getByLabel("Name").fill("Group badminton");
+    await dialog.getByLabel("Location").fill("BLNO Court 1");
+    await dialog.getByLabel("Day of week").selectOption("Fri");
+    await dialog.getByLabel("Start time").fill("17:00");
+    await dialog.getByLabel("End time").fill("18:00");
+    await dialog.getByLabel("Capacity").fill("12");
+    await expect(dialog.getByTestId("class-form-price").locator("option[value='plan-group']")).toBeAttached();
+    await dialog.getByTestId("class-form-price").selectOption("plan-group");
+    // A plan sets the fee, so there is no fee box to type in.
+    await expect(dialog.getByTestId("create-session-monthly-fee")).toHaveCount(0);
+
+    await dialog.getByRole("button", { name: "Welcome email (optional)" }).click();
+    // The academy's absence default shows as a placeholder, not a value.
+    const absence = dialog.getByLabel("Absence & make-up policy");
+    await expect(absence).toHaveAttribute(
+      "placeholder",
+      "Uses academy default: Tell us 24 hours ahead for a make-up.",
+    );
+    await expect(absence).toHaveValue("");
+    await dialog.getByLabel("WhatsApp group link").fill("https://chat.whatsapp.com/AbCd1234");
+    await dialog.getByRole("button", { name: "Create" }).click();
+
+    await expect.poll(() => createPayload).not.toBeNull();
+    expect(createPayload).toMatchObject({
+      amount_cents: 6000,
+      whatsapp_group_link: "https://chat.whatsapp.com/AbCd1234",
+    });
+    // Blank welcome-email boxes are left out so the class uses the academy default.
+    for (const key of [
+      "venue_address",
+      "parking_notes",
+      "what_to_bring",
+      "arrival_minutes_before",
+      "coach_contact_policy",
+      "absence_policy",
+    ]) {
+      expect(createPayload).not.toHaveProperty(key);
+    }
+    await expect.poll(() => linkPayload).toEqual({ plan_id: "plan-group" });
   });
 
   // #917: the old sidebar entry pointed at /admin/waitlist, which has never
@@ -374,6 +518,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.goto("/admin/sessions/series-wed");
 
     // #671 merged "Replacement coaches" into the single "Class dates" card.
+    await page.getByRole("button", { name: "Class dates", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
     await expect(page.getByText("Occurrences")).toHaveCount(0);
     await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(0);

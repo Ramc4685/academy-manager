@@ -56,6 +56,8 @@ export const queryKeys = {
       ["admin", "session", sessionId] as const,
     sessionOccurrences: (sessionId: string) =>
       ["admin", "session", sessionId, "occurrences"] as const,
+    sessionWelcomePreview: (sessionId: string) =>
+      ["admin", "session", sessionId, "welcome-email-preview"] as const,
     sessionAnnouncements: (sessionId: string) =>
       ["admin", "session", sessionId, "announcements"] as const,
     teachingPlan: (occurrenceId: string, programId?: string | null) =>
