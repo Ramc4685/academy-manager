@@ -1,0 +1,25 @@
+# Several live waivers with assignment (Settings overhaul Phase 6, PR 23)
+
+PR: #TBD
+
+## What changed
+
+- **An academy can keep several waivers live at once.** Every waiver now has a lineage key shared by all its versions. Publishing a version supersedes only the live rows of the same lineage, so "Photo consent" and "Liability" stay live together. Version numbers count per waiver, and a signature still points at the exact version signed. A signature for an older version still counts as signed only when its content hash matches the live version (the existing parent-page rule, unchanged).
+- **Existing waivers are one lineage.** Every template that existed before this change reads as the `legacy` lineage (they used to replace each other), with a read-time fallback for rows that have no key. BLNO's single live waiver, marked for registration, reads as required for all families, so BLNO behaves as before.
+- **Assignment.** Each live waiver is either not required, required for all families, or required for the families in one or more programs (the class groups on the public page; a class links to its program through `sessions.program_id`). Per-class and age rules are later steps.
+- **Families sign after choosing a class.** The set to sign is the all-family waivers plus the waivers of the chosen class's program, each at its live version. This applies to the parent registration stepper and the parent waivers page (one section per waiver, one button signs them all). Only when a waiver is assigned to a program does the stepper ask for the class before the waiver; with one waiver for everyone the flow, steps and request URLs are unchanged.
+- **Staff are warned, never blocked (decision 9).** Approving an application used to be rejected when the registration waiver was unsigned unless a "waiver override reason" was typed. It now always proceeds; the application review shows a warning naming the unsigned waivers, and the reason field is an optional note. Roster add and the other staff enroll paths never checked waivers and still do not. The parent registration flow still cannot reach checkout without accepting its waivers.
+- **Admin student page.** One row per waiver that applies to the student through their classes: Signed (version, date, link to the signature), Signed an older version, or Not signed, with a warning under the summary strip when any is missing. Endpoint: `GET /api/v2/admin/waivers/students/{student_id}`.
+- **Settings > Family policies > Waivers.** Each waiver lists its version, Live or Draft, and "Required for: All families / <programs>". Assign (owner and admins, the same permission as the rest of waiver management) sets required and scope. "New version" drafts a new version of a waiver; "New waiver" adds a separate one. Publishing one waiver leaves the others live. New endpoint: `PUT /api/v2/admin/waivers/templates/{id}/assignment`.
+
+## Deploy notes
+
+- Migration **0211_waiver_lineage_keys**, idempotent and safe to re-run. It sets `lineage_key: "legacy"` on every `waiver_templates` row without one, creates the unique index `waiver_templates_academy_lineage_version_unique` on `(academy_id, lineage_key, version)` (partial on `version > ""`), and then drops the old `waiver_templates_academy_version_unique` on `(academy_id, version)`. The new index is created before the old one is dropped. Every existing row is in the legacy lineage, so any data the old index accepted the new one accepts. The index leads with `academy_id`, uses `$gt: ""` (not `$type`) for its partial filter, and nothing queries it with `$or`. Apply it by hand in the usual order before or with the deploy; until it runs, a second waiver whose version number collides with the first would fail to publish, and everything else works (readers fall back to the legacy lineage for rows without a key).
+- No other data change. Assignment defaults are read at read time from `assigned_to_registration`.
+- Before deploying, run the usual read-only check on BLNO's live template: exactly one live row, `assigned_to_registration: true`.
+
+## Risk / rollback
+
+- Risk: "New waiver" no longer replaces the live waiver. An admin who used to draft a replacement and publish it must use "New version" on the existing waiver (the button sits on each live waiver); a plain new waiver is added alongside it and is not required of anyone until assigned.
+- Risk: application approval no longer stops on an unsigned waiver. The unsigned waivers show as a warning on the review page and the student page.
+- Rollback: revert the PR. Rows written meanwhile keep their extra fields (`lineage_key`, `required`, `scope`, `program_ids`), which old code ignores. If several lineages were live at once, old code publishes over all of them, so keep one live waiver before rolling back. The dropped `(academy_id, version)` index is not needed for the old code to work.

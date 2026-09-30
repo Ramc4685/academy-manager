@@ -228,16 +228,43 @@ class PatchApplication:
             )
 
         waiver_acceptance = app.waiver_acceptance
+        additional_acceptances = app.additional_waiver_acceptances
+        session_id = cmd.selected_session_id or app.selected_session_id
         if cmd.accept_waiver:
-            waiver = await self._waivers.get_active()
-            if waiver is None:
+            # Everything this class's family signs: the all-families waivers
+            # plus the ones assigned to the class's program. First = primary.
+            required = await self._waivers.list_required(session_id)
+            if not required:
                 raise NoActiveWaiver("no active waiver to accept")
-            waiver_acceptance = WaiverAcceptance(
-                waiver_version=waiver.version,
-                content_hash=waiver.content_hash,
-                accepted_at=self._now(),
-                waiver_template_id=waiver.waiver_id,
-            )
+            accepted_at = self._now()
+            accepted = [
+                WaiverAcceptance(
+                    waiver_version=waiver.version,
+                    content_hash=waiver.content_hash,
+                    accepted_at=accepted_at,
+                    waiver_template_id=waiver.waiver_id,
+                    lineage_key=waiver.lineage_key,
+                )
+                for waiver in required
+            ]
+            waiver_acceptance = accepted[0]
+            additional_acceptances = accepted[1:]
+        elif (
+            cmd.selected_session_id
+            and cmd.selected_session_id != app.selected_session_id
+            and app.waiver_acceptance is not None
+        ):
+            # A different class can add a required waiver: a parent who signed
+            # the first set is asked again only for what is now missing, by
+            # clearing the acceptance so the waiver step shows the new set.
+            # Same set (one waiver for everyone) leaves the acceptance alone.
+            required = await self._waivers.list_required(cmd.selected_session_id)
+            accepted_lineages = {
+                item.lineage_key or "legacy" for item in app.all_waiver_acceptances
+            }
+            if any(waiver.lineage_key not in accepted_lineages for waiver in required):
+                waiver_acceptance = None
+                additional_acceptances = []
 
         child_profile = (
             ChildProfile.model_validate(cmd.child_profile)
@@ -277,6 +304,7 @@ class PatchApplication:
                 "student_id": student_id,
                 "selected_session_id": cmd.selected_session_id or app.selected_session_id,
                 "waiver_acceptance": waiver_acceptance,
+                "additional_waiver_acceptances": additional_acceptances,
                 "updated_at": self._now(),
             }
         )

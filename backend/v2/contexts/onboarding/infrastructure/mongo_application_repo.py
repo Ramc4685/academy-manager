@@ -20,6 +20,7 @@ class MongoApplicationRepository(TenantScopedRepository):
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Application:
         wa = doc.get("waiver_acceptance")
+        extra_wa = doc.get("additional_waiver_acceptances")
         superseded = doc.get("superseded_payment_ids")
         return Application(
             application_id=str(doc["application_id"]),
@@ -31,6 +32,11 @@ class MongoApplicationRepository(TenantScopedRepository):
             child_profile=ChildProfile.model_validate(doc.get("child_profile") or {}),
             selected_session_id=doc.get("selected_session_id"),
             waiver_acceptance=WaiverAcceptance.model_validate(wa) if wa else None,
+            additional_waiver_acceptances=(
+                [WaiverAcceptance.model_validate(item) for item in extra_wa]
+                if isinstance(extra_wa, list)
+                else []
+            ),
             stripe_checkout_session_id=doc.get("stripe_checkout_session_id"),
             payment_id=doc.get("payment_id"),
             superseded_payment_ids=(

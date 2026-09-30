@@ -39,7 +39,6 @@ from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     ApplicationNotFound,
     IncompleteApplication,
-    WaiverNotAccepted,
 )
 from backend.v2.contexts.onboarding.domain.models import Application, WaiverSignature
 from backend.v2.shared.ids import new_ulid, stable_ulid
@@ -48,13 +47,15 @@ from backend.v2.shared.tenancy import current_academy_id
 logger = logging.getLogger(__name__)
 REVIEW_CLAIM_TTL = timedelta(minutes=15)
 
-# Sentinel distinguishing "no template argument given" (fetch it) from an
-# explicit `template=None` (no waiver template configured) in `_row`.
+# Sentinel distinguishing "no templates argument given" (fetch them) from an
+# explicit `templates=[]` (no waiver required) in `_row`.
 _UNSET = object()
 
 
 class RegistrationWaiverTemplateQuery(Protocol):
-    async def get_registration_template(self) -> AdminWaiverTemplateRecord | None: ...
+    async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]: ...
+
+    async def program_id_for_session(self, session_id: str | None) -> str | None: ...
 
 
 class RegistrationWaiverSignatureWriter(Protocol):
@@ -184,6 +185,14 @@ class PaidPeriodResolver(Protocol):
     async def paid_period_for_payment(self, payment_id: str) -> str | None: ...
 
 
+class UnsignedWaiver(BaseModel):
+    model_config = {"frozen": True}
+
+    waiver_template_id: str
+    title: str
+    version: str | None = None
+
+
 class AdminRegistrationRow(BaseModel):
     model_config = {"frozen": True}
 
@@ -198,6 +207,9 @@ class AdminRegistrationRow(BaseModel):
     session_title: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
+    # Required waivers this application has not signed. An unsigned waiver
+    # WARNS staff and never blocks approval (Settings overhaul decision 9).
+    unsigned_waivers: list[UnsignedWaiver] = Field(default_factory=list)
     zero_quote_period: str | None = None
     family_notified_at: datetime | None = None
     updated_at: datetime
@@ -301,13 +313,15 @@ class AdminRegistrationReview:
         apps = await self._apps.list_by_status(
             ["PENDING_APPROVAL", "APPROVING", "WAITLISTING", "DECLINING"]
         )
-        # Fetch the waiver template once for the whole page instead of once
-        # per row -- it does not vary per application.
-        template = await self._registration_template()
+        # Fetch the required waivers once for the whole page instead of once
+        # per row: the live set does not vary per application, only which of
+        # them a row's class asks for.
+        templates = await self._required_templates()
         # Issue #891: class titles are Mongo reads too, and a page of
         # applications usually points at a handful of classes -- resolve each
         # distinct one once for the whole page, not once per row.
         titles: dict[str, str | None] = {}
+        programs: dict[str, str | None] = {}
         rows: list[AdminRegistrationRow] = []
         for app in apps:
             if app.status != "PENDING_APPROVAL" and not self._review_claim_is_stale(app):
@@ -320,12 +334,24 @@ class AdminRegistrationReview:
                 # without guessing which child record should be changed.
                 rows.append(
                     (
-                        await self._row(app, template=template, session_title=session_title)
+                        await self._row(
+                            app,
+                            templates=templates,
+                            session_title=session_title,
+                            program_cache=programs,
+                        )
                     ).model_copy(update={"status": "MANUAL_REVIEW"})
                 )
                 continue
             if existing_student_id is None:
-                rows.append(await self._row(app, template=template, session_title=session_title))
+                rows.append(
+                    await self._row(
+                        app,
+                        templates=templates,
+                        session_title=session_title,
+                        program_cache=programs,
+                    )
+                )
         return rows
 
     async def _cached_session_title(
@@ -354,7 +380,9 @@ class AdminRegistrationReview:
             raise ApplicationNotEditable(
                 "Registration session changed; update the parent application before approval"
             )
-        await self._assert_waiver_ready(app, command.waiver_override_reason)
+        # Decision 9: an unsigned required waiver warns staff (the queue row and
+        # detail show it) and never blocks enrollment, so approval does not look
+        # at it. The optional reason is still recorded on the decision.
 
         now = self._now()
         app = await self._claim_review(app, "APPROVING", now)
@@ -799,58 +827,90 @@ class AdminRegistrationReview:
         if app.status != "PENDING_APPROVAL":
             raise ApplicationNotEditable("registration is not pending admin approval")
 
-    async def _registration_template(self) -> AdminWaiverTemplateRecord | None:
+    async def _required_templates(self) -> list[AdminWaiverTemplateRecord]:
         if self._waiver_templates is None:
-            return None
-        return await self._waiver_templates.get_registration_template()
+            return []
+        return await self._waiver_templates.list_required_templates()
 
-    async def _assert_waiver_ready(
-        self, app: Application, waiver_override_reason: str | None
-    ) -> None:
-        template = await self._registration_template()
-        if template is None:
-            return
-        if app.waiver_acceptance is not None:
-            return
-        if waiver_override_reason and waiver_override_reason.strip():
-            return
-        raise WaiverNotAccepted("Required registration waiver is not signed")
+    async def _required_for(
+        self,
+        app: Application,
+        templates: list[AdminWaiverTemplateRecord],
+        program_cache: dict[str, str | None] | None = None,
+    ) -> list[AdminWaiverTemplateRecord]:
+        """The live waivers this application's class asks the family to sign."""
+        if not templates or self._waiver_templates is None:
+            return []
+        session_id = app.selected_session_id
+        cache = program_cache if program_cache is not None else {}
+        program_id: str | None = None
+        if session_id:
+            if session_id not in cache:
+                cache[session_id] = await self._waiver_templates.program_id_for_session(session_id)
+            program_id = cache[session_id]
+        chosen = [
+            template
+            for template in templates
+            if template.assignment.for_all_families or template.assignment.applies_to([program_id])
+        ]
+        chosen.sort(key=lambda template: 0 if template.assignment.for_all_families else 1)
+        return chosen
+
+    @staticmethod
+    def _unsigned(
+        app: Application, required: list[AdminWaiverTemplateRecord]
+    ) -> list[AdminWaiverTemplateRecord]:
+        accepted_lineages = {item.lineage_key or "legacy" for item in app.all_waiver_acceptances}
+        accepted_ids = {
+            item.waiver_template_id
+            for item in app.all_waiver_acceptances
+            if item.waiver_template_id
+        }
+        return [
+            template
+            for template in required
+            if template.lineage not in accepted_lineages
+            and template.waiver_template_id not in accepted_ids
+        ]
 
     async def _record_registration_waiver_signature(
         self, app: Application, student_id: str
     ) -> None:
-        if self._waiver_signatures is None or app.waiver_acceptance is None:
-            return
-        acceptance = app.waiver_acceptance
-        if not acceptance.waiver_template_id:
+        if self._waiver_signatures is None:
             return
         signer_name = self._parent_name(app) or str(app.parent_email)
-        await self._waiver_signatures.save_signature(
-            WaiverSignature(
-                waiver_signature_id=(
-                    "ws_registration_"
-                    f"{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
-                ),
-                academy_id=self._request_academy_id(),
-                waiver_template_id=acceptance.waiver_template_id,
-                student_id=student_id,
-                parent_user_id=app.parent_user_id,
-                signed_at=acceptance.accepted_at,
-                signer_name=signer_name,
-                signer_email=app.parent_email,
-                content_hash=acceptance.content_hash,
+        for acceptance in app.all_waiver_acceptances:
+            if not acceptance.waiver_template_id:
+                continue
+            await self._waiver_signatures.save_signature(
+                WaiverSignature(
+                    waiver_signature_id=(
+                        "ws_registration_"
+                        f"{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
+                    ),
+                    academy_id=self._request_academy_id(),
+                    waiver_template_id=acceptance.waiver_template_id,
+                    student_id=student_id,
+                    parent_user_id=app.parent_user_id,
+                    signed_at=acceptance.accepted_at,
+                    signer_name=signer_name,
+                    signer_email=app.parent_email,
+                    content_hash=acceptance.content_hash,
+                )
             )
-        )
 
     async def _row(
         self,
         app: Application,
         *,
-        template: AdminWaiverTemplateRecord | None = _UNSET,  # type: ignore[assignment]
+        templates: list[AdminWaiverTemplateRecord] = _UNSET,  # type: ignore[assignment]
         session_title: str | None = None,
+        program_cache: dict[str, str | None] | None = None,
     ) -> AdminRegistrationRow:
-        if template is _UNSET:
-            template = await self._registration_template()
+        if templates is _UNSET:
+            templates = await self._required_templates()
+        required = await self._required_for(app, templates, program_cache)
+        unsigned = self._unsigned(app, required)
         return AdminRegistrationRow(
             application_id=app.application_id,
             status=app.status,
@@ -859,8 +919,16 @@ class AdminRegistrationReview:
             student_name=self._student_name(app) or None,
             selected_session_id=app.selected_session_id,
             session_title=session_title,
-            waiver_required=template is not None,
-            waiver_satisfied=template is None or app.waiver_acceptance is not None,
+            waiver_required=bool(required),
+            waiver_satisfied=not unsigned,
+            unsigned_waivers=[
+                UnsignedWaiver(
+                    waiver_template_id=template.waiver_template_id,
+                    title=template.title,
+                    version=template.version,
+                )
+                for template in unsigned
+            ],
             zero_quote_period=app.zero_quote_period,
             family_notified_at=app.family_notified_at,
             updated_at=app.updated_at,
@@ -873,13 +941,15 @@ class AdminRegistrationReview:
                 await self._registration_student_id(app)
             except ApplicationNotEditable:
                 display_app = app.model_copy(update={"status": "MANUAL_REVIEW"})
-        template = await self._registration_template()
+        templates = await self._required_templates()
+        required = await self._required_for(app, templates)
+        template = required[0] if required else None
         session: Session | None = None
         if app.selected_session_id:
             session = await self._sessions.get(app.selected_session_id)
         row = await self._row(
             display_app,
-            template=template,
+            templates=templates,
             session_title=session.title if session else None,
         )
         return AdminRegistrationDetail(

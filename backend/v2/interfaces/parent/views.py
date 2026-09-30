@@ -60,6 +60,9 @@ class ApplicationView(BaseModel):
     child_profile: ChildProfileView
     selected_session_id: str | None
     waiver_accepted: bool
+    # True when some live waiver is assigned to a program: the stepper then
+    # asks for the class before the waiver. False for a single-waiver academy.
+    waiver_class_first: bool = False
     expires_at: datetime
 
 
@@ -70,12 +73,25 @@ class PatchApplicationRequest(BaseModel):
     accept_waiver: bool = False
 
 
+class RegistrationWaiverItemView(BaseModel):
+    waiver_template_id: str
+    title: str | None = None
+    version: str
+    body: str
+
+
 class RegistrationWaiverView(BaseModel):
     """Active registration waiver for the parent onboarding stepper."""
 
     configured: bool
     version: str | None = None
     body: str | None = None
+    # Every waiver to sign for the chosen class. The three fields above are the
+    # first (primary) one, so a single-waiver academy reads exactly as before.
+    waivers: list[RegistrationWaiverItemView] = []
+    # True when some live waiver is assigned to a program: the stepper then
+    # asks for the class before the waiver.
+    class_first: bool = False
 
 
 # --- Checkout ---
@@ -398,13 +414,24 @@ class ParentWaiverStudentView(BaseModel):
     waiver_version: str | None = None
 
 
+class ParentWaiverItemView(BaseModel):
+    waiver_template_id: str
+    title: str | None = None
+    version: str | None = None
+    body: str | None = None
+    students: list[ParentWaiverStudentView] = []
+
+
 class ParentWaiverCurrentView(BaseModel):
     required: bool
+    # The first waiver, kept flat for clients that predate several waivers.
     waiver_template_id: str | None = None
     title: str | None = None
     version: str | None = None
     body: str | None = None
     students: list[ParentWaiverStudentView] = []
+    # Every waiver this parent's children must sign, one entry each.
+    waivers: list[ParentWaiverItemView] = []
 
 
 class ParentWaiverAcceptRequest(BaseModel):

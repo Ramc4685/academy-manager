@@ -266,6 +266,7 @@ from backend.v2.contexts.onboarding.domain.errors import (
     IncompleteApplication,
     MissingSelectedSession,
 )
+from backend.v2.contexts.onboarding.domain.models import Waiver
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
@@ -399,6 +400,9 @@ class ParentComposition:
     # cannot place a non-default field after a defaulted one.
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
+    # Waivers to sign for a chosen class + whether any is program-scoped
+    # (Settings Phase 6): callable(session_id | None) -> (list[Waiver], bool).
+    get_registration_waivers: object = None
 
 
 class _MongoTransactionRunner:
@@ -2509,6 +2513,12 @@ def compose_parent(
     async def get_registration_waiver():
         return await waivers_repo.get_active()
 
+    async def get_registration_waivers(session_id: str | None = None) -> tuple[list[Waiver], bool]:
+        return (
+            await waivers_repo.list_required(session_id),
+            await waivers_repo.has_program_scoped_waivers(),
+        )
+
     async def get_academy_info(*, academy_id: str) -> dict[str, Any]:
         # Settings overhaul Phase 1 Lane C: the parent shell hides disabled
         # self-service actions rather than only disabling them, so the
@@ -2967,6 +2977,7 @@ def compose_parent(
         accept_parent_waiver=accept_waiver,
         get_academy_info=get_academy_info,
         get_registration_waiver=get_registration_waiver,
+        get_registration_waivers=get_registration_waivers,
         student_progress=sp_composition,
         curriculum=curriculum_composition,
         list_messages=list_messages,

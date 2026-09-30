@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     AdminWaiverTemplateRecord,
+    AssignWaiverCommand,
     AssignWaiverTemplateToRegistrationCommand,
     CreateDraftWaiverTemplateCommand,
     ManageAdminWaiverTemplates,
@@ -19,8 +20,12 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminStudentWaiverRowView,
+    AdminStudentWaiverStatusView,
+    AdminWaiverAssignRequest,
     AdminWaiverDocumentView,
     AdminWaiverList,
+    AdminWaiverProgramView,
     AdminWaiverSignatureDetailView,
     AdminWaiverStudentView,
     AdminWaiverSummaryView,
@@ -57,8 +62,13 @@ async def list_admin_waiver_templates(
 ) -> AdminWaiverTemplateManagementList:
     manager = _template_manager(use_cases)
     templates = await manager.list_templates()
+    programs = await manager.list_programs()
     return AdminWaiverTemplateManagementList(
-        templates=[_template_management_view(template) for template in templates]
+        templates=[_template_management_view(template) for template in templates],
+        programs=[
+            AdminWaiverProgramView(program_id=program.program_id, name=program.name)
+            for program in programs
+        ],
     )
 
 
@@ -79,8 +89,11 @@ async def create_admin_waiver_template(
                 title=request.title,
                 body=request.body,
                 content=request.content,
+                based_on_waiver_template_id=request.based_on_waiver_template_id,
             )
         )
+    except WaiverTemplateNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _template_management_view(template)
@@ -128,10 +141,57 @@ async def assign_admin_waiver_template_to_registration(
     return _template_management_view(template)
 
 
+@router.put(
+    "/waivers/templates/{waiver_template_id}/assignment",
+    response_model=AdminWaiverTemplateManagementView,
+)
+async def assign_admin_waiver_template(
+    waiver_template_id: str,
+    request: AdminWaiverAssignRequest,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminWaiverTemplateManagementView:
+    """Set who must sign a live waiver: nobody, all families, or programs."""
+    manager = _template_manager(use_cases)
+    try:
+        template = await manager.assign(
+            AssignWaiverCommand(
+                waiver_template_id=waiver_template_id,
+                required=request.required,
+                scope=request.scope,
+                program_ids=request.program_ids,
+            )
+        )
+    except WaiverTemplateNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _template_management_view(template)
+
+
 def _template_manager(use_cases: AdminUseCases) -> ManageAdminWaiverTemplates:
     if use_cases.manage_admin_waiver_templates is None:
         raise HTTPException(status_code=503, detail="Waiver template management unavailable")
     return use_cases.manage_admin_waiver_templates
+
+
+@router.get("/waivers/students/{student_id}", response_model=AdminStudentWaiverStatusView)
+async def get_student_waiver_status(
+    student_id: str,
+    request: Request,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+) -> AdminStudentWaiverStatusView:
+    """One row per waiver that applies to this student, and whether it is signed.
+
+    A missing signature is a warning for staff and never blocks anything.
+    """
+    status_result = await request.app.state.admin_student_waivers.get_student_waiver_status.execute(
+        student_id
+    )
+    return AdminStudentWaiverStatusView(
+        student_id=status_result.student_id,
+        waivers=[AdminStudentWaiverRowView(**row.model_dump()) for row in status_result.waivers],
+    )
 
 
 @router.get("/waivers/signatures/{signature_id}", response_model=AdminWaiverSignatureDetailView)
@@ -203,6 +263,10 @@ def _template_management_view(
         assigned_to_registration=template.assigned_to_registration,
         assigned_at=template.assigned_at,
         updated_at=template.updated_at,
+        lineage_key=template.lineage,
+        required=template.required,
+        scope=template.scope,
+        program_ids=list(template.program_ids),
     )
 
 
