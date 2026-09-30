@@ -34,6 +34,15 @@ class StudentWaiverStatusReader(Protocol):
     async def signatures_for_students(
         self, student_ids: list[str]
     ) -> dict[tuple[str, str], ParentWaiverSignature]: ...
+    async def legacy_flag_signatures(
+        self, student_ids: list[str]
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        """Signatures implied by the old ``students.waiver_accepted`` flag.
+
+        Keyed by (student id, legacy lineage). Staff compliance views count the
+        flag as a signature, so this status must too.
+        """
+        ...
 
 
 class StudentWaiverRow(BaseModel):
@@ -73,13 +82,16 @@ class GetStudentWaiverStatus:
         )
         applicable = [t for t in templates if t.assignment.applies_to(programs)]
         applicable.sort(key=lambda t: 0 if t.assignment.for_all_families else 1)
-        signatures = await self._reader.signatures_for_students([student_id])
+        signatures = dict(await self._reader.signatures_for_students([student_id]))
+        # Fallback only: a real signature row always wins over the old flag.
+        for key, flagged in (await self._reader.legacy_flag_signatures([student_id])).items():
+            signatures.setdefault(key, flagged)
         rows: list[StudentWaiverRow] = []
         for template in applicable:
             signature = signatures.get((student_id, template.lineage))
             if signature is None:
                 state: StudentWaiverState = "unsigned"
-            elif signature_is_current(signature, template):
+            elif _is_bare_legacy_flag(signature) or signature_is_current(signature, template):
                 state = "signed"
             else:
                 state = "older_version"
@@ -98,3 +110,12 @@ class GetStudentWaiverStatus:
                 )
             )
         return StudentWaiverStatus(student_id=student_id, waivers=rows)
+
+
+def _is_bare_legacy_flag(signature: ParentWaiverSignature) -> bool:
+    """A flag-only acceptance that names no template, hash or version.
+
+    Nothing to compare against the live wording, so it reads as signed, the way
+    the admin compliance summary already counts it.
+    """
+    return not (signature.waiver_template_id or signature.content_hash or signature.waiver_version)

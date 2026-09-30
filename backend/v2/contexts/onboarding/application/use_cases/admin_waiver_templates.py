@@ -135,6 +135,10 @@ class WaiverTemplateNotDraft(ValueError):
     pass
 
 
+class WaiverVersionConflict(ValueError):
+    """The version being published is already taken, or the draft was published meanwhile."""
+
+
 class ManageAdminWaiverTemplates:
     def __init__(
         self,

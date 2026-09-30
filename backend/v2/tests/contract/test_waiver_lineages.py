@@ -451,3 +451,30 @@ def test_assignment_defaults_and_scope_rules() -> None:
     assert programs.applies_to([None, "prog-juniors"]) is True
     assert programs.applies_to(["prog-adults"]) is False
     assert programs.applies_to([]) is False
+
+
+@pytest.mark.asyncio
+async def test_failed_publish_leaves_the_live_waiver_untouched(db, acad) -> None:
+    """A version collision (e.g. the old (academy, version) index, before 0211)
+    raises a conflict and does NOT supersede the live waiver first."""
+    from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
+        WaiverVersionConflict,
+    )
+
+    manager, _repo = _manager(db)
+    liability = await _publish_new_waiver(manager, "Liability")
+    await db["waiver_templates"].create_index(
+        [("academy_id", 1), ("version", 1)],
+        unique=True,
+        name="old_academy_version_unique_for_test",
+    )
+    draft = await manager.create_draft(CreateDraftWaiverTemplateCommand(title="Photo", body="b"))
+
+    with pytest.raises(WaiverVersionConflict):
+        await manager.publish(
+            PublishWaiverTemplateCommand(waiver_template_id=draft.waiver_template_id)
+        )
+
+    rows = {row.waiver_template_id: row for row in await manager.list_templates()}
+    assert rows[liability].status == "active"
+    assert rows[draft.waiver_template_id].status == "draft"

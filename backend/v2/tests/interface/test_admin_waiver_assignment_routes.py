@@ -91,6 +91,11 @@ class FakeStatusReader:
     async def program_ids_for_students(self, student_ids: list[str]) -> dict[str, set[str]]:
         return {}
 
+    async def legacy_flag_signatures(
+        self, student_ids: list[str]
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        return {}
+
     async def signatures_for_students(
         self, student_ids: list[str]
     ) -> dict[tuple[str, str], ParentWaiverSignature]:

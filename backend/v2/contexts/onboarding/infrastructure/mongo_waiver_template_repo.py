@@ -12,9 +12,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId as BsonObjectId
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     AdminWaiverTemplateRecord,
+    WaiverVersionConflict,
 )
 from backend.v2.contexts.onboarding.domain.models import WaiverTemplate
 from backend.v2.contexts.onboarding.domain.waiver_assignment import (
@@ -238,17 +240,6 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
         # so exactly one row per lineage ever claims it.
         inherits_registration = any(doc.get("assigned_to_registration") for doc in superseded_docs)
         inherited_assignment = self._inherited_assignment(superseded_docs)
-        if superseded_docs:
-            await self.collection.update_many(
-                {"academy_id": academy_id, "_id": {"$in": [doc["_id"] for doc in superseded_docs]}},
-                {
-                    "$set": {
-                        "status": "superseded",
-                        "assigned_to_registration": False,
-                        "updated_at": published_at,
-                    }
-                },
-            )
         published_fields: dict[str, Any] = {
             "status": "active",
             "version": version,
@@ -264,9 +255,32 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
         if inherited_assignment is not None:
             published_fields.update(self._assignment_fields(inherited_assignment))
         if draft is not None:
-            await self._update_one(
-                {"_id": draft["_id"], "status": "draft"},
-                {"$set": published_fields},
+            # Publish the draft FIRST, then supersede. If the write fails (the
+            # version is taken, e.g. the old (academy, version) index before
+            # migration 0211, or another admin published this draft), the
+            # currently live waiver is untouched instead of left superseded
+            # with nothing live in its place.
+            try:
+                result = await self.collection.update_one(
+                    {"academy_id": academy_id, "_id": draft["_id"], "status": "draft"},
+                    {"$set": published_fields},
+                )
+            except DuplicateKeyError as exc:
+                raise WaiverVersionConflict(
+                    "That waiver version already exists. Refresh and try again."
+                ) from exc
+            if result.matched_count == 0:
+                raise WaiverVersionConflict("This draft was already published. Refresh the page.")
+        if superseded_docs:
+            await self.collection.update_many(
+                {"academy_id": academy_id, "_id": {"$in": [doc["_id"] for doc in superseded_docs]}},
+                {
+                    "$set": {
+                        "status": "superseded",
+                        "assigned_to_registration": False,
+                        "updated_at": published_at,
+                    }
+                },
             )
         published = await self.get_template(waiver_template_id)
         if published is None:

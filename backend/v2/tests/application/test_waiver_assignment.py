@@ -66,6 +66,7 @@ class FakeWaivers:
         self._students = students
         self._programs = programs or {}
         self.signatures = dict(signatures or {})
+        self.legacy_flags: dict[tuple[str, str], ParentWaiverSignature] = {}
         self.saved: list[WaiverSignature] = []
 
     async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]:
@@ -81,6 +82,11 @@ class FakeWaivers:
         self, student_ids: list[str]
     ) -> dict[tuple[str, str], ParentWaiverSignature]:
         return {key: sig for key, sig in self.signatures.items() if key[0] in student_ids}
+
+    async def legacy_flag_signatures(
+        self, student_ids: list[str]
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        return {key: sig for key, sig in self.legacy_flags.items() if key[0] in student_ids}
 
     async def save_signature(self, signature: WaiverSignature) -> None:
         self.saved.append(signature)
@@ -281,6 +287,46 @@ async def test_older_signature_with_the_same_wording_still_counts_as_signed() ->
     status = await GetStudentWaiverStatus(waivers).execute("st-alice")
 
     assert [row.status for row in status.waivers] == ["signed"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_student_flag_counts_as_signed_when_no_signature_row_exists() -> None:
+    legacy = _waiver("liability", "Liability waiver", lineage_key="legacy")
+    waivers = FakeWaivers([legacy], [ALICE])
+    waivers.legacy_flags[("st-alice", "legacy")] = ParentWaiverSignature(
+        student_id="st-alice", signed_at=NOW, lineage_key="legacy"
+    )
+
+    status = await GetStudentWaiverStatus(waivers).execute("st-alice")
+
+    assert [row.status for row in status.waivers] == ["signed"]
+    assert status.unsigned == []
+
+
+@pytest.mark.asyncio
+async def test_real_signature_row_wins_over_the_legacy_flag() -> None:
+    legacy = _waiver("liability", "Liability waiver", lineage_key="legacy", content_hash="new")
+    waivers = FakeWaivers(
+        [legacy],
+        [ALICE],
+        signatures={
+            ("st-alice", "legacy"): ParentWaiverSignature(
+                student_id="st-alice",
+                waiver_template_id="liability-v0",
+                content_hash="old",
+                signed_at=NOW,
+                lineage_key="legacy",
+                waiver_signature_id="ws-real",
+            )
+        },
+    )
+    waivers.legacy_flags[("st-alice", "legacy")] = ParentWaiverSignature(
+        student_id="st-alice", lineage_key="legacy"
+    )
+
+    status = await GetStudentWaiverStatus(waivers).execute("st-alice")
+
+    assert [row.status for row in status.waivers] == ["older_version"]
 
 
 # ---- registration flow ------------------------------------------------------

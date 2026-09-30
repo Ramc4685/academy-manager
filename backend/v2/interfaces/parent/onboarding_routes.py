@@ -27,7 +27,10 @@ async def _class_first(use_cases: ParentUseCases) -> bool:
     get_waivers = getattr(use_cases, "get_registration_waivers", None)
     if not get_waivers:
         return False
-    _waivers, class_first = await get_waivers(None)
+    try:
+        _waivers, class_first = await get_waivers(None)
+    except Exception:
+        return False
     return bool(class_first)
 
 

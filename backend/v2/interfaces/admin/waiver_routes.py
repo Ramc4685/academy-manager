@@ -13,6 +13,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
     PublishWaiverTemplateCommand,
     WaiverTemplateNotDraft,
     WaiverTemplateNotFound,
+    WaiverVersionConflict,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverReport,
@@ -115,7 +116,7 @@ async def publish_admin_waiver_template(
         )
     except WaiverTemplateNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except WaiverTemplateNotDraft as exc:
+    except (WaiverTemplateNotDraft, WaiverVersionConflict) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _template_management_view(template)
 

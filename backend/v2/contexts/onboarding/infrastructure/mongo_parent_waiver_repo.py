@@ -182,6 +182,45 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                 )
         return out
 
+    async def legacy_flag_signatures(
+        self, student_ids: list[str]
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        """Signatures implied by ``students.waiver_accepted`` (staff views only).
+
+        The admin compliance summary counts this old flag as a signature; the
+        per-waiver student status must agree. Filed under the legacy lineage.
+        """
+        if not student_ids:
+            return {}
+        academy_id = current_academy_id()
+        object_ids = [BsonObjectId(sid) for sid in student_ids if BsonObjectId.is_valid(sid)]
+        # Two plain lookups, never an ``$or`` across the two id fields.
+        queries: list[dict[str, Any]] = [{"student_id": {"$in": student_ids}}]
+        if object_ids:
+            queries.append({"_id": {"$in": object_ids}})
+        out: dict[tuple[str, str], ParentWaiverSignature] = {}
+        for query in queries:
+            async for doc in self._db["students"].find(
+                {"academy_id": academy_id, "waiver_accepted": True, **query}
+            ):
+                student_id = str(doc.get("student_id") or doc.get("_id"))
+                out.setdefault(
+                    (student_id, LEGACY_LINEAGE_KEY),
+                    ParentWaiverSignature(
+                        student_id=student_id,
+                        waiver_version=str(doc.get("waiver_version") or "") or None,
+                        content_hash=str(
+                            doc.get("waiver_text_hash") or doc.get("content_hash") or ""
+                        )
+                        or None,
+                        signed_at=self._as_datetime(
+                            doc.get("waiver_accepted_at") or doc.get("waiver_date")
+                        ),
+                        lineage_key=LEGACY_LINEAGE_KEY,
+                    ),
+                )
+        return out
+
     async def _template_versions(self, academy_id: str) -> dict[str, str]:
         versions: dict[str, str] = {}
         async for doc in self._db["waiver_templates"].find({"academy_id": academy_id}):

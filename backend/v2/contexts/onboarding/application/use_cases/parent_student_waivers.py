@@ -117,8 +117,13 @@ class _RequiredSet(BaseModel):
 async def _required_set(waivers: ParentWaiverRepository, parent_id: str) -> _RequiredSet:
     templates = await waivers.list_required_templates()
     students = await waivers.list_active_students_for_parent(parent_id)
-    if not templates or not students:
+    if not templates:
         return _RequiredSet(students=students, waivers=[])
+    if not students:
+        # No live-enrolled child: the page still shows the waiver everyone
+        # signs (as it did with one registration waiver), with nobody to sign.
+        everyone = [t for t in templates if t.assignment.for_all_families]
+        return _RequiredSet(students=students, waivers=[(t, []) for t in everyone])
     programs = await waivers.program_ids_for_students([s.student_id for s in students])
     applicable: list[tuple[AdminWaiverTemplateRecord, list[ParentWaiverStudent]]] = []
     for template in templates:

@@ -14,6 +14,7 @@ PR: #TBD
 
 ## Deploy notes
 
+- **Apply migration 0211 BEFORE or WITH the deploy.** Migrations are applied by hand in prod and boot-time migration is off, so nothing enforces the order. If the code ships first, the old `(academy_id, version)` unique index is still there and publishing a second waiver (version "1") is rejected with a 409 ("That waiver version already exists"); the live waiver is not touched, because publish now writes the new version before superseding the old one.
 - Migration **0211_waiver_lineage_keys**, idempotent and safe to re-run. It sets `lineage_key: "legacy"` on every `waiver_templates` row without one, creates the unique index `waiver_templates_academy_lineage_version_unique` on `(academy_id, lineage_key, version)` (partial on `version > ""`), and then drops the old `waiver_templates_academy_version_unique` on `(academy_id, version)`. The new index is created before the old one is dropped. Every existing row is in the legacy lineage, so any data the old index accepted the new one accepts. The index leads with `academy_id`, uses `$gt: ""` (not `$type`) for its partial filter, and nothing queries it with `$or`. Apply it by hand in the usual order before or with the deploy; until it runs, a second waiver whose version number collides with the first would fail to publish, and everything else works (readers fall back to the legacy lineage for rows without a key).
 - No other data change. Assignment defaults are read at read time from `assigned_to_registration`.
 - Before deploying, run the usual read-only check on BLNO's live template: exactly one live row, `assigned_to_registration: true`.
@@ -21,5 +22,7 @@ PR: #TBD
 ## Risk / rollback
 
 - Risk: "New waiver" no longer replaces the live waiver. An admin who used to draft a replacement and publish it must use "New version" on the existing waiver (the button sits on each live waiver); a plain new waiver is added alongside it and is not required of anyone until assigned.
+- Behaviour change: a plain "New waiver" no longer replaces the live one (see above).
+- Staff student page: the per-waiver status also counts the old `students.waiver_accepted` flag as signed (same as the admin compliance summary), so BLNO students signed only by that flag are not warned.
 - Risk: application approval no longer stops on an unsigned waiver. The unsigned waivers show as a warning on the review page and the student page.
 - Rollback: revert the PR. Rows written meanwhile keep their extra fields (`lineage_key`, `required`, `scope`, `program_ids`), which old code ignores. If several lineages were live at once, old code publishes over all of them, so keep one live waiver before rolling back. The dropped `(academy_id, version)` index is not needed for the old code to work.
