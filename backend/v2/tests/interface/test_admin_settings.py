@@ -52,6 +52,8 @@ def test_get_academy_contract(admin_client):
         "currency": "USD",
         "email_sender_name": None,
         "email_reply_to": None,
+        "effective_reply_to": None,
+        "effective_reply_to_source": None,
         "support_email": None,
         "terms_url": None,
         "refund_policy_url": None,

@@ -20,7 +20,9 @@ export function EmailSendingCard() {
   });
   const academy = query.data;
   const senderName = academy?.email_sender_name?.trim() || academy?.display_name || "Your academy";
-  const replyTo = academy?.email_reply_to?.trim() || null;
+  const explicitReplyTo = academy?.email_reply_to?.trim() || null;
+  const effectiveReplyTo = academy?.effective_reply_to?.trim() || explicitReplyTo;
+  const replyToSource = academy?.effective_reply_to_source ?? (explicitReplyTo ? "reply_to" : null);
 
   return (
     <Card p={24} className="max-w-3xl" data-testid="integrations-email-card">
@@ -39,7 +41,11 @@ export function EmailSendingCard() {
             </dd>
             <dt className="text-rally-muted">Replies go to</dt>
             <dd data-testid="integrations-email-reply-to" className="font-medium text-rally-ink">
-              {replyTo ?? "Not set. Replies use each email's default."}
+              {effectiveReplyTo
+                ? replyToSource === "support_email"
+                  ? `${effectiveReplyTo} (support email)`
+                  : effectiveReplyTo
+                : "Not set. Replies use each email's default."}
             </dd>
           </dl>
           <p className="text-sm text-rally-muted">
