@@ -53,3 +53,17 @@ class FirebaseStorageMediaStore:
             log.exception("media upload to %s failed", self._bucket_name)
             raise MediaStorageUnavailable("media storage failed") from exc
         return firebase_download_url(self._bucket_name, path, token)
+
+    def _delete(self, path: str) -> None:
+        from firebase_admin import storage
+        from google.api_core.exceptions import NotFound
+
+        bucket = storage.bucket(self._bucket_name, app=_ensure_firebase_app())
+        try:
+            bucket.blob(path).delete()
+        except NotFound:
+            return
+
+    async def delete_public(self, *, path: str) -> None:
+        """Delete one object; an already-missing object is fine."""
+        await asyncio.to_thread(self._delete, path)

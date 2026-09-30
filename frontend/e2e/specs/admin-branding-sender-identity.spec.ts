@@ -28,6 +28,8 @@ const ACADEMY = {
   currency: "USD",
   email_sender_name: null,
   email_reply_to: null,
+  effective_reply_to: null,
+  effective_reply_to_source: null,
 };
 
 function fulfillJson(route: Route, body: unknown, status = 200) {

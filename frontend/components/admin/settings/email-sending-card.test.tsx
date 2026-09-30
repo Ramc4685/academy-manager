@@ -34,4 +34,26 @@ describe("EmailSendingCard", () => {
     expect(out).toContain("BLNO Coaches");
     expect(out).toContain("hi@blno.test");
   });
+
+  it("shows the support email as the reply-to fallback", () => {
+    const out = html({
+      display_name: "BLNO",
+      email_reply_to: null,
+      effective_reply_to: "help@blno.test",
+      effective_reply_to_source: "support_email",
+    });
+    expect(out).toContain("help@blno.test (support email)");
+    expect(out).not.toContain("Not set");
+  });
+
+  it("does not label an explicit reply-to as the support email", () => {
+    const out = html({
+      display_name: "BLNO",
+      email_reply_to: "hi@blno.test",
+      effective_reply_to: "hi@blno.test",
+      effective_reply_to_source: "reply_to",
+    });
+    expect(out).toContain("hi@blno.test");
+    expect(out).not.toContain("(support email)");
+  });
 });

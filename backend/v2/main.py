@@ -143,6 +143,7 @@ from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
 from backend.v2.contexts.identity.infrastructure.firebase_storage_media_store import (
+    FirebaseStorageMediaStore,
     firebase_url_base,
 )
 from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import (
@@ -887,6 +888,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         db,
         media_url_base=(
             firebase_url_base(settings.media_storage_bucket)
+            if settings.media_storage_bucket
+            else None
+        ),
+        media_store=(
+            FirebaseStorageMediaStore(settings.media_storage_bucket)
             if settings.media_storage_bucket
             else None
         ),

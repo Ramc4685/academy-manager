@@ -278,3 +278,37 @@ async def test_current_academy_lookup_degrades_to_empty_identity() -> None:
         assert await sender_identity_for_current_academy(None) == SenderIdentity()
     # No tenant in context at all: still no exception, still no identity.
     assert await sender_identity_for_current_academy(_KeyedAcademies({})) == SenderIdentity()
+
+
+def test_resolve_reply_to_reports_the_source() -> None:
+    from backend.v2.shared.comms.sender_identity import resolve_reply_to
+
+    both = {"email_reply_to": "desk@example.com", "support_email": "help@example.com"}
+    assert resolve_reply_to(both) == ("desk@example.com", "reply_to")
+    assert resolve_reply_to({"support_email": "help@example.com"}) == (
+        "help@example.com",
+        "support_email",
+    )
+    assert resolve_reply_to({"email_reply_to": "bad", "support_email": "help@example.com"}) == (
+        "help@example.com",
+        "support_email",
+    )
+    assert resolve_reply_to({}) == (None, None)
+    assert resolve_reply_to(None) == (None, None)
+
+
+async def test_get_academy_exposes_effective_reply_to() -> None:
+    from unittest.mock import AsyncMock
+
+    from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {"academy_id": "a", "support_email": "help@example.com"}
+    out = await GetAcademyUseCase(repo).execute("a")
+    assert (out.effective_reply_to, out.effective_reply_to_source) == (
+        "help@example.com",
+        "support_email",
+    )
+    repo.find_by_id.return_value = {"academy_id": "a"}
+    out = await GetAcademyUseCase(repo).execute("a")
+    assert (out.effective_reply_to, out.effective_reply_to_source) == (None, None)

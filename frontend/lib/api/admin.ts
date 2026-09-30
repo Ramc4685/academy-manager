@@ -1595,6 +1595,9 @@ export interface AdminAcademyView {
   email_sender_name?: string | null;
   /** Where replies to academy email go. Null = unchanged per-email default. */
   email_reply_to?: string | null;
+  /** Read-only. The reply-to a send uses: explicit reply-to, else support email. */
+  effective_reply_to?: string | null;
+  effective_reply_to_source?: "reply_to" | "support_email" | null;
   /**
    * Settings overhaul Phase 4 PR 13. Support email for parents: the default
    * reply-to (when no reply-to is set) and the public page footer contact.

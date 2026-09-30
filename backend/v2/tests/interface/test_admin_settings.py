@@ -52,6 +52,8 @@ def test_get_academy_contract(admin_client):
         "currency": "USD",
         "email_sender_name": None,
         "email_reply_to": None,
+        "effective_reply_to": None,
+        "effective_reply_to_source": None,
         "support_email": None,
         "terms_url": None,
         "refund_policy_url": None,
@@ -689,3 +691,17 @@ def test_patch_academy_rejects_bad_support_email_and_legal_links(admin_client, b
 
     assert r.status_code == 422, r.text
     admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_get_academy_returns_a_non_null_effective_reply_to(admin_client):
+    admin_client.use_cases.get_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone="UTC",
+        support_email="help@example.com",
+        effective_reply_to="help@example.com",
+        effective_reply_to_source="support_email",
+    )
+    body = admin_client.get("/api/v2/admin/academy").json()
+    assert body["effective_reply_to"] == "help@example.com"
+    assert body["effective_reply_to_source"] == "support_email"
