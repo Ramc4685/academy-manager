@@ -40,6 +40,21 @@ class MongoWaiverProgramLookup:
             if doc.get("program_id")
         ]
 
+    async def list_archived_programs(self) -> list[ProgramRef]:
+        cursor = self._db["programs"].find(
+            {"academy_id": current_academy_id(), "archived": True},
+            sort=[("sort_order", 1)],
+        )
+        return [
+            ProgramRef(
+                program_id=str(doc["program_id"]),
+                name=str(doc.get("name") or "Program"),
+                archived=True,
+            )
+            async for doc in cursor
+            if doc.get("program_id")
+        ]
+
     async def program_id_for_session(self, session_id: str | None) -> str | None:
         if not session_id:
             return None

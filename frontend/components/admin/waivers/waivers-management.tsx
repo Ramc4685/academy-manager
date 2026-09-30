@@ -12,6 +12,7 @@ import {
   publishAdminWaiverTemplate,
   type AdminCurrentWaiverView,
   type AdminWaiverAssignRequest,
+  type AdminWaiverLineage,
   type AdminWaiverProgram,
   type AdminWaiverTemplateManagementView,
   type AdminWaiverStatus,
@@ -20,7 +21,7 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Avatar, BigNum, Card, Chip, LaneHeader, Overline } from "@/components/ds";
-import { requiredForLabel } from "@/lib/admin/waiver-assignment";
+import { archivedProgramLabel, requiredForLabel } from "@/lib/admin/waiver-assignment";
 
 /**
  * Waiver template list/editor/publish UI (issue #613 area), reused from the
@@ -97,18 +98,18 @@ export function WaiversManagement() {
   const summary = waiversQuery.data.summary;
   const currentWaiver = waiversQuery.data.current_waiver ?? null;
   const waivers = waiversQuery.data.waivers ?? [];
+  // Several live waivers each get their own counts and rows. One waiver (every
+  // academy until a second is published) keeps the single-waiver layout.
+  const lineages = waiversQuery.data.lineages ?? [];
+  const multipleWaivers = lineages.length > 1;
+  const programs = templatesQuery.data?.programs ?? [];
 
-  return (
-    <section data-testid="admin-waivers" className="space-y-6">
-      <SummaryCards summary={summary} />
-
-      <LaneHeader index="01" title="Current waiver" />
-      <CurrentWaiverCard waiver={currentWaiver} summary={summary} />
-
-      <LaneHeader index="02" title="Template management" />
+  const templatePanel = (index: string) => (
+    <>
+      <LaneHeader index={index} title="Template management" />
       <TemplateManagementPanel
         templates={templatesQuery.data?.templates ?? []}
-        programs={templatesQuery.data?.programs ?? []}
+        programs={programs}
         loading={templatesQuery.isPending}
         error={templatesQuery.isError}
         createPending={createMutation.isPending}
@@ -121,6 +122,33 @@ export function WaiversManagement() {
           assignMutation.mutate({ templateId, payload }, { onSuccess: onDone })
         }
       />
+    </>
+  );
+
+  if (multipleWaivers) {
+    return (
+      <section data-testid="admin-waivers" className="space-y-6">
+        {lineages.map((lineage, position) => (
+          <WaiverLineageSection
+            key={lineage.lineage_key}
+            lineage={lineage}
+            index={String(position + 1).padStart(2, "0")}
+            programs={programs}
+          />
+        ))}
+        {templatePanel(String(lineages.length + 1).padStart(2, "0"))}
+      </section>
+    );
+  }
+
+  return (
+    <section data-testid="admin-waivers" className="space-y-6">
+      <SummaryCards summary={summary} />
+
+      <LaneHeader index="01" title="Current waiver" />
+      <CurrentWaiverCard waiver={currentWaiver} summary={summary} />
+
+      {templatePanel("02")}
 
       <LaneHeader index="03" title="Per-student status" />
       <Card p={0}>
@@ -133,6 +161,55 @@ export function WaiversManagement() {
         )}
       </Card>
     </section>
+  );
+}
+
+/** One live waiver: who signs it, its counts, and each applicable student's status. */
+function WaiverLineageSection({
+  lineage,
+  index,
+  programs,
+}: {
+  lineage: AdminWaiverLineage;
+  index: string;
+  programs: AdminWaiverProgram[];
+}) {
+  const { waiver } = lineage;
+  const requiredFor = requiredForLabel(
+    {
+      required: lineage.required,
+      scope: lineage.scope,
+      program_ids: lineage.program_ids,
+      assigned_to_registration: false,
+    },
+    programs,
+  );
+  return (
+    <div
+      data-testid={`admin-waivers-lineage-${lineage.lineage_key}`}
+      className="space-y-4"
+    >
+      <LaneHeader index={index} title={`${waiver.title} v${waiver.version}`} />
+      <p
+        className="-mt-2 text-[12px] text-rally-muted"
+        data-testid={`admin-waivers-lineage-required-${lineage.lineage_key}`}
+      >
+        Required for: {requiredFor}
+      </p>
+      <SummaryCards summary={lineage.summary} />
+      <Card p={0}>
+        {lineage.waivers.length === 0 ? (
+          <p
+            className="p-5 text-sm text-rally-subtle"
+            data-testid={`admin-waivers-lineage-empty-${lineage.lineage_key}`}
+          >
+            No students this waiver applies to yet.
+          </p>
+        ) : (
+          <WaiversTable waivers={lineage.waivers} rowPrefix={lineage.lineage_key} />
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -392,7 +469,7 @@ function TemplateManagementPanel({
 
 type AssignChoice = "none" | "all" | "programs";
 
-function AssignPanel({
+export function AssignPanel({
   template,
   programs,
   pending,
@@ -413,7 +490,14 @@ function AssignPanel({
     !initialRequired ? "none" : template.scope === "programs" ? "programs" : "all",
   );
   const [selected, setSelected] = useState<string[]>(template.program_ids ?? []);
-  const canSave = choice !== "programs" || selected.length > 0;
+  // An archived program is not a new choice. It only shows while this waiver
+  // is still assigned to it, so the admin can take it off.
+  const livePrograms = programs.filter((program) => !program.archived);
+  const archivedAssigned = programs.filter(
+    (program) => program.archived && selected.includes(program.program_id),
+  );
+  const canSave =
+    choice !== "programs" || (selected.length > 0 && archivedAssigned.length === 0);
 
   const toggle = (programId: string) =>
     setSelected((prev) =>
@@ -453,16 +537,20 @@ function AssignPanel({
       <div className="mt-2">
         {radio("none", "Not required")}
         {radio("all", "All families")}
-        {radio("programs", "Only families in these programs", programs.length === 0)}
+        {radio(
+          "programs",
+          "Only families in these programs",
+          livePrograms.length === 0 && archivedAssigned.length === 0,
+        )}
       </div>
-      {programs.length === 0 && (
+      {livePrograms.length === 0 && archivedAssigned.length === 0 && (
         <p className="mt-1 text-[12px] text-rally-subtle">
           No programs yet. Add programs in Public page to assign a waiver to one.
         </p>
       )}
-      {choice === "programs" && programs.length > 0 && (
+      {choice === "programs" && (livePrograms.length > 0 || archivedAssigned.length > 0) && (
         <div className="mt-2 space-y-1 pl-6" role="group" aria-label="Programs">
-          {programs.map((program) => (
+          {[...livePrograms, ...archivedAssigned].map((program) => (
             <label
               key={program.program_id}
               className="flex min-h-touch items-center gap-2 text-sm text-rally-ink"
@@ -473,9 +561,17 @@ function AssignPanel({
                 onChange={() => toggle(program.program_id)}
                 data-testid={`admin-waiver-assign-program-${id}-${program.program_id}`}
               />
-              {program.name}
+              {program.archived ? archivedProgramLabel(program.name) : program.name}
             </label>
           ))}
+          {archivedAssigned.length > 0 && (
+            <p
+              className="text-[12px] text-status-amber-800"
+              data-testid={`admin-waiver-assign-archived-note-${id}`}
+            >
+              An archived program cannot be kept. Untick it to save.
+            </p>
+          )}
         </div>
       )}
       <p className="mt-2 text-[12px] text-rally-subtle">
@@ -659,7 +755,14 @@ function MetaTerm({ label, value }: { label: string; value: string }) {
   );
 }
 
-function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
+function WaiversTable({
+  waivers,
+  rowPrefix,
+}: {
+  waivers: AdminWaiverStudentRow[];
+  /** Set when several waivers are listed, so a student can appear once under each. */
+  rowPrefix?: string;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-sm">
@@ -678,7 +781,7 @@ function WaiversTable({ waivers }: { waivers: AdminWaiverStudentRow[] }) {
           {waivers.map((waiver) => (
             <tr
               key={waiver.waiver_id}
-              data-testid={`admin-waivers-row-${waiver.waiver_id}`}
+              data-testid={`admin-waivers-row-${rowPrefix ? `${rowPrefix}-` : ""}${waiver.waiver_id}`}
               className="border-b border-neutral-100 transition last:border-0 hover:bg-neutral-50 dark:border-neutral-800"
             >
               <td className="px-5 py-4">

@@ -152,10 +152,7 @@ function RegistrationsTable({ registrations }: { registrations: AdminRegistratio
                 <div className="text-[12px] text-rally-subtle">{registration.parent_email}</div>
               </td>
               <td className="px-3 py-4">
-                <Chip
-                  variant={registration.waiver_satisfied ? "approved" : "pending"}
-                  label={registration.waiver_required ? (registration.waiver_satisfied ? "SIGNED" : "NEEDED") : "NOT REQUIRED"}
-                />
+                <WaiverStatus registration={registration} />
               </td>
               <td className="px-3 py-4 font-mono text-[11px] text-rally-muted">{formatDate(registration.updated_at)}</td>
               <td className={`${actionCellClass} bg-white`}>
@@ -189,18 +186,7 @@ function RegistrationPhoneRow({ registration }: { registration: AdminRegistratio
       title={name}
       href={href}
       titleTestId={`admin-registration-link-${registration.application_id}`}
-      primary={
-        <Chip
-          variant={registration.waiver_satisfied ? "approved" : "pending"}
-          label={
-            registration.waiver_required
-              ? registration.waiver_satisfied
-                ? "SIGNED"
-                : "NEEDED"
-              : "NOT REQUIRED"
-          }
-        />
-      }
+      primary={<WaiverStatus registration={registration} />}
       actionsLabel={`Actions for ${name}`}
       actionsTestId={`admin-registration-actions-${registration.application_id}`}
       actions={[{ key: "review", label: "Review", href }]}
@@ -231,6 +217,25 @@ function RegistrationPhoneRow({ registration }: { registration: AdminRegistratio
         </>
       }
     />
+  );
+}
+
+/**
+ * The waiver fact for one application. A missing signature is a warning for
+ * staff, never a block, so an unsigned application says which waivers are
+ * still to sign (a family can owe more than one) and stays approvable.
+ */
+function WaiverStatus({ registration }: { registration: AdminRegistrationRow }) {
+  if (!registration.waiver_required) return <Chip variant="approved" label="NOT REQUIRED" />;
+  if (registration.waiver_satisfied) return <Chip variant="approved" label="SIGNED" />;
+  const titles = (registration.unsigned_waivers ?? []).map((waiver) => waiver.title);
+  return (
+    <div data-testid={`admin-registration-unsigned-waivers-${registration.application_id}`}>
+      <Chip variant="pending" label="UNSIGNED" />
+      {titles.length > 0 && (
+        <div className="mt-1 text-[12px] text-rally-muted">{titles.join(", ")}</div>
+      )}
+    </div>
   );
 }
 

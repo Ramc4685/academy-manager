@@ -23,8 +23,10 @@ from typing import Any
 from pydantic import ValidationError
 
 from backend.v2.contexts.enrollment.application.program_ports import (
+    AssignedWaiver,
     ClassPublicProfileRepository,
     ProgramRepository,
+    ProgramWaiverAssignments,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     InvalidClassPublicFields,
@@ -56,6 +58,7 @@ __all__ = [
     "PROGRAM_MUTABLE_FIELDS",
     "AgeBand",
     "ArchiveProgram",
+    "ArchivedProgram",
     "AssignClassToProgram",
     "ClassPublicProfile",
     "CoachDisplay",
@@ -166,15 +169,37 @@ class UpdateProgram:
         return saved
 
 
+@dataclass(frozen=True)
+class ArchivedProgram:
+    program: Program
+    #: Waivers still assigned to the program. Archiving is never blocked by
+    #: them; the caller warns so the admin can take the program off each one.
+    assigned_waivers: list[AssignedWaiver]
+
+
 class ArchiveProgram:
     """Soft delete: the program leaves the public page and the default admin
     list; classes keep their ``program_id`` and read as ungrouped."""
 
-    def __init__(self, update: UpdateProgram) -> None:
+    def __init__(
+        self,
+        update: UpdateProgram,
+        waiver_assignments: ProgramWaiverAssignments | None = None,
+    ) -> None:
         self._update = update
+        self._waiver_assignments = waiver_assignments
 
     async def execute(self, program_id: str) -> Program:
-        return await self._update.execute(program_id, {"archived": True})
+        return (await self.execute_with_warnings(program_id)).program
+
+    async def execute_with_warnings(self, program_id: str) -> ArchivedProgram:
+        program = await self._update.execute(program_id, {"archived": True})
+        assigned = (
+            await self._waiver_assignments.waivers_assigned_to(program_id)
+            if self._waiver_assignments is not None
+            else []
+        )
+        return ArchivedProgram(program=program, assigned_waivers=assigned)
 
 
 class ListPrograms:

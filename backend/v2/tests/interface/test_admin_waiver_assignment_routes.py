@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from fastapi import FastAPI
@@ -70,6 +71,11 @@ class FakeRepo:
 class Programs:
     async def list_programs(self) -> list[ProgramRef]:
         return [ProgramRef(program_id="prog-juniors", name="Juniors")]
+
+    archived: ClassVar[list[ProgramRef]] = []
+
+    async def list_archived_programs(self) -> list[ProgramRef]:
+        return list(self.archived)
 
 
 class FakeStatusReader:
@@ -169,12 +175,50 @@ def test_list_returns_assignment_fields_and_the_academys_programs(admin_client) 
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["programs"] == [{"program_id": "prog-juniors", "name": "Juniors"}]
+    assert body["programs"] == [
+        {"program_id": "prog-juniors", "name": "Juniors", "archived": False}
+    ]
     live = next(t for t in body["templates"] if t["waiver_template_id"] == "wt-live")
     assert live["lineage_key"] == "wl-photo"
     assert live["required"] is False
     assert live["scope"] == "all"
     assert live["program_ids"] == []
+
+
+def test_archived_program_still_assigned_is_listed_so_it_can_be_removed(monkeypatch) -> None:
+    monkeypatch.setattr(
+        Programs,
+        "archived",
+        [
+            ProgramRef(program_id="prog-old", name="Old squad", archived=True),
+            ProgramRef(program_id="prog-unused", name="Unused", archived=True),
+        ],
+    )
+    client, repo = _client()
+    repo.rows["wt-live"] = repo.rows["wt-live"].model_copy(
+        update={"required": True, "scope": "programs", "program_ids": ["prog-old"]}
+    )
+
+    with client:
+        body = client.get("/api/v2/admin/waivers/templates").json()
+
+        # Only the archived program a live waiver still points at is listed.
+        assert body["programs"] == [
+            {"program_id": "prog-juniors", "name": "Juniors", "archived": False},
+            {"program_id": "prog-old", "name": "Old squad", "archived": True},
+        ]
+        # Archived programs are not a new choice: keeping one is refused, removing it works.
+        refused = client.put(
+            "/api/v2/admin/waivers/templates/wt-live/assignment",
+            json={"required": True, "scope": "programs", "program_ids": ["prog-old"]},
+        )
+        assert refused.status_code == 409
+        removed = client.put(
+            "/api/v2/admin/waivers/templates/wt-live/assignment",
+            json={"required": True, "scope": "programs", "program_ids": ["prog-juniors"]},
+        )
+        assert removed.status_code == 200
+        assert removed.json()["program_ids"] == ["prog-juniors"]
 
 
 def test_assign_to_a_program_then_to_all_families(admin_client) -> None:

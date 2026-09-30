@@ -1620,6 +1620,9 @@ class AdminWaiverAssignRequest(BaseModel):
 class AdminWaiverProgramView(BaseModel):
     program_id: str
     name: str
+    # An archived program a waiver is still assigned to: listed so the admin
+    # can take it off, never offered as a new choice.
+    archived: bool = False
 
 
 class AdminWaiverTemplateManagementView(BaseModel):

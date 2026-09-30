@@ -302,9 +302,15 @@ function ProgramsCard() {
       void invalidate();
     },
   });
+  // Archiving is never blocked; if waivers are still assigned to the program
+  // the response says which, and the admin is pointed at where to change them.
+  const [archiveWarning, setArchiveWarning] = useState<string | null>(null);
   const archive = useMutation({
     mutationFn: (programId: string) => archiveAdminProgram(programId),
-    onSuccess: () => {
+    onMutate: () => setArchiveWarning(null),
+    onSuccess: (archived) => {
+      setArchiveWarning(archived.warning ?? null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waiverTemplates() });
       void invalidate();
       // Classes keep their program_id; the class list marks it "(archived)".
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.classPublicProfiles() });
@@ -426,6 +432,21 @@ function ProgramsCard() {
             </li>
           ))}
         </ul>
+      )}
+      {archiveWarning && (
+        <p
+          role="status"
+          data-testid="public-page-archive-waiver-warning"
+          className="mt-3 rounded-md border border-status-amber-200 bg-status-amber-50 p-3 text-sm text-status-amber-800"
+        >
+          {archiveWarning}{" "}
+          <Link
+            href="/admin/settings?panel=family-policies"
+            className="font-medium text-rally-cobalt underline"
+          >
+            Open Family policies
+          </Link>
+        </p>
       )}
       {error && (
         <p role="alert" className="mt-3 text-sm font-medium text-status-red-800">

@@ -1189,10 +1189,23 @@ export interface AdminWaiverStudentRow {
   share_status?: string | null;
 }
 
+/** One live waiver with its own counts, over only the students it applies to. */
+export interface AdminWaiverLineage {
+  lineage_key: string;
+  waiver: AdminCurrentWaiverView;
+  required?: boolean;
+  scope?: AdminWaiverScope;
+  program_ids?: string[];
+  summary: AdminWaiverSummary;
+  waivers: AdminWaiverStudentRow[];
+}
+
 export interface AdminWaiverList {
+  /** The primary waiver's summary; `lineages` carries every live waiver. */
   summary: AdminWaiverSummary;
   current_waiver?: AdminCurrentWaiverView | null;
   waivers: AdminWaiverStudentRow[];
+  lineages?: AdminWaiverLineage[];
 }
 
 export type AdminWaiverTemplateStatus = "draft" | "active" | "superseded" | "retired";
@@ -1222,6 +1235,8 @@ export type AdminWaiverScope = "all" | "programs";
 export interface AdminWaiverProgram {
   program_id: string;
   name: string;
+  /** Archived but still assigned to a live waiver: listed so it can be removed. */
+  archived?: boolean;
 }
 
 export interface AdminWaiverTemplateManagementList {
@@ -3237,15 +3252,6 @@ export function publishAdminWaiverTemplate(
   );
 }
 
-export function assignAdminWaiverTemplateToRegistration(
-  waiverTemplateId: string,
-): Promise<AdminWaiverTemplateManagementView> {
-  return apiFetch<AdminWaiverTemplateManagementView>(
-    `/admin/waivers/templates/${encodeURIComponent(waiverTemplateId)}/assign-registration`,
-    { method: "POST" },
-  );
-}
-
 export function assignAdminWaiverTemplate(
   waiverTemplateId: string,
   payload: AdminWaiverAssignRequest,
@@ -4153,6 +4159,18 @@ export interface AdminProgramView {
   updated_at: string;
 }
 
+/** A waiver that still asks an archived program's families to sign. */
+export interface AdminAssignedWaiver {
+  waiver_template_id: string;
+  title: string;
+}
+
+/** The archive response: archiving is never blocked by assigned waivers, only warned about. */
+export interface AdminArchivedProgramView extends AdminProgramView {
+  assigned_waivers?: AdminAssignedWaiver[];
+  warning?: string | null;
+}
+
 export interface AdminClassPublicProfileView {
   session_id: string;
   title: string | null;
@@ -4207,8 +4225,8 @@ export function renameAdminProgram(programId: string, name: string): Promise<Adm
   });
 }
 
-export function archiveAdminProgram(programId: string): Promise<AdminProgramView> {
-  return apiFetch<AdminProgramView>(`/admin/programs/${encodeURIComponent(programId)}/archive`, {
+export function archiveAdminProgram(programId: string): Promise<AdminArchivedProgramView> {
+  return apiFetch<AdminArchivedProgramView>(`/admin/programs/${encodeURIComponent(programId)}/archive`, {
     method: "POST",
   });
 }

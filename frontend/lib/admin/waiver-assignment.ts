@@ -13,9 +13,18 @@ export function requiredForLabel(
   const required = template.required ?? template.assigned_to_registration;
   if (!required) return "Not required";
   if (template.scope !== "programs") return "All families";
-  const names = new Map(programs.map((program) => [program.program_id, program.name]));
-  const labels = (template.program_ids ?? []).map((id) => names.get(id) ?? "Removed program");
+  const known = new Map(programs.map((program) => [program.program_id, program]));
+  const labels = (template.program_ids ?? []).map((id) => {
+    const program = known.get(id);
+    if (!program) return "Removed program";
+    return program.archived ? archivedProgramLabel(program.name) : program.name;
+  });
   return labels.length > 0 ? labels.join(", ") : "No programs chosen";
+}
+
+/** How a program that is archived but still assigned to a waiver reads. */
+export function archivedProgramLabel(name: string): string {
+  return `Archived: ${name}`;
 }
 
 /** Short, plain status line for one waiver on the admin student page. */

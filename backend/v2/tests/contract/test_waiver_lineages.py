@@ -40,6 +40,9 @@ class _Programs:
             ProgramRef(program_id="prog-adults", name="Adults"),
         ]
 
+    async def list_archived_programs(self) -> list[ProgramRef]:
+        return []
+
 
 class _Clock:
     def __init__(self) -> None:

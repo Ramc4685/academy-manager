@@ -69,11 +69,25 @@ async def list_admin_waiver_templates(
     manager = _template_manager(use_cases)
     templates = await manager.list_templates()
     programs = await manager.list_programs()
+    # Archived programs only matter while a live waiver is still assigned to one.
+    still_assigned = {
+        program_id
+        for template in templates
+        if template.status == "active"
+        for program_id in template.program_ids
+    }
+    archived = [
+        program
+        for program in await manager.list_archived_programs()
+        if program.program_id in still_assigned
+    ]
     return AdminWaiverTemplateManagementList(
         templates=[_template_management_view(template) for template in templates],
         programs=[
-            AdminWaiverProgramView(program_id=program.program_id, name=program.name)
-            for program in programs
+            AdminWaiverProgramView(
+                program_id=program.program_id, name=program.name, archived=program.archived
+            )
+            for program in [*programs, *archived]
         ],
     )
 
@@ -129,12 +143,20 @@ async def publish_admin_waiver_template(
 @router.post(
     "/waivers/templates/{waiver_template_id}/assign-registration",
     response_model=AdminWaiverTemplateManagementView,
+    deprecated=True,
 )
 async def assign_admin_waiver_template_to_registration(
     waiver_template_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminWaiverTemplateManagementView:
+    """DEPRECATED: use ``PUT /waivers/templates/{id}/assignment``.
+
+    The one-registration-waiver switch from before several live waivers. Kept
+    so a client loaded before the deploy keeps working; no shipped UI calls it.
+    It marks this waiver as the registration waiver (all families) and clears
+    the flag on the others, which the new Assign control does not do.
+    """
     manager = _template_manager(use_cases)
     try:
         template = await manager.assign_to_registration(
