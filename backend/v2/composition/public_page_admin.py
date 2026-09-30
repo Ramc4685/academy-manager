@@ -112,7 +112,7 @@ class MongoCoachRoster:
         return {cid for cid, known in aliases.items() if known & member_ids}
 
 
-def compose_admin_public_page(db: Any) -> AdminPublicPage:
+def compose_admin_public_page(db: Any, *, media_url_base: str | None = None) -> AdminPublicPage:
     programs = MongoProgramRepository(db)
     profiles = MongoClassPublicProfileRepository(db)
     academies = MongoAcademyRepository(db)
@@ -126,6 +126,8 @@ def compose_admin_public_page(db: Any) -> AdminPublicPage:
         set_class_public_fields=SetClassPublicFields(profiles),
         list_class_public_profiles=ListClassPublicProfiles(profiles),
         get_public_page_settings=GetPublicPageSettings(academies),
-        update_public_page_settings=UpdatePublicPageSettings(academies, MongoCoachRoster(db)),
+        update_public_page_settings=UpdatePublicPageSettings(
+            academies, MongoCoachRoster(db), upload_url_base=media_url_base
+        ),
         get_public_page_address=GetPublicPageAddress(academies),
     )

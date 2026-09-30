@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
 from pydantic import ValidationError
 
@@ -100,6 +100,23 @@ class GetPublicPageAddress:
         return None
 
 
+def _is_store_object(url: str, base: str | None, academy_id: str, purpose: str) -> bool:
+    """True only for ``base`` + ``academies/<academy_id>/<purpose>/<one file>``.
+
+    The prefix is compared on the raw string (scheme, host and bucket must
+    match exactly); the remainder, minus query and fragment, is decoded once
+    and must be exactly three fixed segments plus one plain file name.
+    """
+    if not base or not base.startswith("https://") or not url.startswith(base):
+        return False
+    rest = url[len(base) :].split("#", 1)[0].split("?", 1)[0]
+    parts = unquote(rest).split("/")
+    if len(parts) != 4 or parts[:3] != ["academies", academy_id, purpose]:
+        return False
+    name = parts[3]
+    return bool(name) and name not in {".", ".."} and not re.search(r"[\\%\x00-\x1f]", name)
+
+
 class CoachRoster(Protocol):
     async def coach_ids(self, academy_id: str, candidate_ids: list[str]) -> set[str]:
         """The subset of ``candidate_ids`` that hold an active coach (or
@@ -113,10 +130,14 @@ class UpdatePublicPageSettings:
         academy_repo: AcademyPublicPageRepo,
         coach_roster: CoachRoster | None = None,
         *,
+        upload_url_base: str | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = academy_repo
         self._coaches = coach_roster
+        # The media store's public URL prefix (``https://host/.../``). None
+        # means uploads are not set up, so no new photo URL can be genuine.
+        self._upload_url_base = upload_url_base
         self._now = now or (lambda: datetime.now(UTC))
 
     async def execute(
@@ -133,7 +154,7 @@ class UpdatePublicPageSettings:
         doc = await self._repo.find_by_id(academy_id)
         current = PublicPageSettings.from_stored((doc or {}).get(PUBLIC_PAGE_FIELD))
         fields = dict(fields)
-        self._check_photo_urls(academy_id, fields, current)
+        self._check_photo_urls(academy_id, fields, current, self._upload_url_base)
         if "gallery" in fields:
             fields["gallery"] = self._stamp_gallery(fields["gallery"], current, actor_id)
         if "coach_profiles" in fields:
@@ -164,19 +185,22 @@ class UpdatePublicPageSettings:
 
     @staticmethod
     def _check_photo_urls(
-        academy_id: str, fields: Mapping[str, Any], current: PublicPageSettings
+        academy_id: str,
+        fields: Mapping[str, Any],
+        current: PublicPageSettings,
+        upload_url_base: str | None,
     ) -> None:
         """A page photo must be an object this academy uploaded for that use
-        (``academies/<id>/<purpose>/...``): no third-party images (tracking
-        pixels) and no consent-free upload (hero, coach) republished as a
-        gallery photo. Links already saved are left alone."""
+        (``academies/<id>/<purpose>/<file>``) that the media store produced:
+        https, the store's own host (and bucket), and exactly that object
+        path. No third-party images (tracking pixels) and no consent-free
+        upload (hero, coach) republished as a gallery photo. Links already
+        saved are left alone."""
 
         def check(url: object, purpose: str, field: str, saved: set[Any]) -> None:
             if url is None or url in saved:
                 return
-            marker = f"/academies/{academy_id}/{purpose}/"
-            path = unquote(urlparse(str(url)).path)
-            if marker not in path:
+            if not _is_store_object(str(url), upload_url_base, academy_id, purpose):
                 raise InvalidPublicPageSettings(
                     "Photos must be uploaded here first. Upload the photo instead of "
                     "pasting a link.",

@@ -83,7 +83,9 @@ def _client(db: Any, roles: tuple[str, ...] = ("admin",), academy: str = ACADEMY
         academy_id=academy,
         roles=roles,  # type: ignore[arg-type]
     )
-    app.state.admin_public_page = compose_admin_public_page(db)
+    app.state.admin_public_page = compose_admin_public_page(
+        db, media_url_base="https://cdn.example.test/"
+    )
     return TestClient(app)
 
 
@@ -329,3 +331,15 @@ def test_content_limits_are_422(db: Any) -> None:
             {"coach_profiles": [{"coach_id": "coach-1", "bio": "b" * 281}]},
         ):
             assert client.patch(URL, json=body).status_code == 422, body
+
+
+def test_forged_photo_links_are_422_over_http(db: Any) -> None:
+    with _client(db) as client:
+        for url in (
+            "https://evil.example/x/academies/acad-riverside/hero/h.jpg",
+            "https://cdn.example.test/x/academies/acad-riverside/hero/h.jpg",
+            "https://cdn.example.test/academies/acad-riverside/hero/../../other/hero/h.jpg",
+        ):
+            res = client.patch(URL, json={"hero_photo_url": url})
+            assert res.status_code == 422, (url, res.text)
+    assert _stored(db, ACADEMY) is None

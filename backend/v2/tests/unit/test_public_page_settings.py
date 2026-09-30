@@ -107,6 +107,12 @@ async def test_a_missing_academy_row_is_created_then_patched() -> None:
 from datetime import UTC, datetime
 
 NOW = datetime(2026, 9, 30, 9, 0, tzinfo=UTC)
+BASE = "https://cdn.example.test/"
+FIREBASE_BASE = "https://firebasestorage.googleapis.com/v0/b/bkt/o/"
+
+
+def _update(repo: Any, *args: Any, **kwargs: Any) -> UpdatePublicPageSettings:
+    return UpdatePublicPageSettings(repo, *args, upload_url_base=BASE, **kwargs)
 
 
 class _Roster:
@@ -125,7 +131,7 @@ def _photo(
 
 async def test_content_saves_and_defaults_are_todays_page() -> None:
     db, repo = await _repo()
-    update = UpdatePublicPageSettings(repo, _Roster())
+    update = _update(repo, _Roster())
     saved = await update.execute(
         ACADEMY,
         {
@@ -165,12 +171,12 @@ async def test_content_saves_and_defaults_are_todays_page() -> None:
 async def test_content_validation_limits(fields: dict[str, Any]) -> None:
     _db, repo = await _repo()
     with pytest.raises(InvalidPublicPageSettings):
-        await UpdatePublicPageSettings(repo, _Roster()).execute(ACADEMY, fields)
+        await _update(repo, _Roster()).execute(ACADEMY, fields)
 
 
 async def test_gallery_needs_consent_and_is_stamped_by_the_server() -> None:
     db, repo = await _repo()
-    update = UpdatePublicPageSettings(repo, _Roster(), now=lambda: NOW)
+    update = _update(repo, _Roster(), now=lambda: NOW)
     saved = await update.execute(
         ACADEMY,
         # A client-supplied stamp is ignored.
@@ -201,9 +207,9 @@ async def test_gallery_needs_consent_and_is_stamped_by_the_server() -> None:
 
 async def test_resaving_a_gallery_keeps_the_original_consent_stamp() -> None:
     _db, repo = await _repo()
-    first = UpdatePublicPageSettings(repo, _Roster(), now=lambda: NOW)
+    first = _update(repo, _Roster(), now=lambda: NOW)
     await first.execute(ACADEMY, {"gallery": [_photo()]}, actor_id="u-owner")
-    later = UpdatePublicPageSettings(repo, _Roster(), now=lambda: datetime(2027, 1, 1, tzinfo=UTC))
+    later = _update(repo, _Roster(), now=lambda: datetime(2027, 1, 1, tzinfo=UTC))
     saved = await later.execute(
         ACADEMY,
         {
@@ -222,7 +228,7 @@ async def test_resaving_a_gallery_keeps_the_original_consent_stamp() -> None:
 
 async def test_coach_profiles_only_for_coaches_of_this_academy() -> None:
     _db, repo = await _repo()
-    update = UpdatePublicPageSettings(repo, _Roster("coach-1", "coach-2"))
+    update = _update(repo, _Roster("coach-1", "coach-2"))
     saved = await update.execute(
         ACADEMY,
         {
@@ -243,7 +249,7 @@ async def test_coach_profiles_only_for_coaches_of_this_academy() -> None:
         with pytest.raises(InvalidPublicPageSettings):
             await update.execute(ACADEMY, {"coach_profiles": bad})
     with pytest.raises(InvalidPublicPageSettings):
-        await UpdatePublicPageSettings(repo).execute(
+        await _update(repo).execute(
             ACADEMY, {"coach_profiles": [{"coach_id": "coach-1", "bio": ""}]}
         )
 
@@ -285,21 +291,94 @@ async def test_a_bad_stored_content_key_falls_back_without_breaking_the_read() -
 async def test_photo_links_must_be_this_academys_own_uploads(fields: dict[str, Any]) -> None:
     _db, repo = await _repo()
     with pytest.raises(InvalidPublicPageSettings):
-        await UpdatePublicPageSettings(repo, _Roster("coach-1")).execute(
-            ACADEMY, fields, actor_id="u-admin"
-        )
+        await _update(repo, _Roster("coach-1")).execute(ACADEMY, fields, actor_id="u-admin")
 
 
 async def test_owned_photo_links_are_accepted_including_firebase_encoded_paths() -> None:
     _db, repo = await _repo()
-    encoded = "https://firebasestorage.googleapis.com/v0/b/bkt/o/academies%2Facad-riverside%2Fcoach%2Fc.jpg"
-    saved = await UpdatePublicPageSettings(repo, _Roster("coach-1")).execute(
-        ACADEMY, {"coach_profiles": [{"coach_id": "coach-1", "photo_url": encoded}]}
-    )
+    encoded = f"{FIREBASE_BASE}academies%2Facad-riverside%2Fcoach%2Fc.jpg?alt=media&token=abc-123"
+    saved = await UpdatePublicPageSettings(
+        repo, _Roster("coach-1"), upload_url_base=FIREBASE_BASE
+    ).execute(ACADEMY, {"coach_profiles": [{"coach_id": "coach-1", "photo_url": encoded}]})
     assert saved.coach_profiles[0].photo_url == encoded
+
+
+_G = "academies/acad-riverside/gallery"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Other host carrying the marker in its path (the original forgery).
+        f"https://evil.example/x/{_G}/a.jpg",
+        f"https://evil.example/{_G}/a.jpg",
+        # Right host, marker behind a prefix.
+        f"{BASE}x/{_G}/a.jpg",
+        # Plain and encoded traversal.
+        f"{BASE}{_G}/../../other/gallery/a.jpg",
+        f"{BASE}{_G}/%2e%2e/%2e%2e/other/gallery/a.jpg",
+        f"{BASE}academies%2Facad-riverside%2Fgallery%2F..%2F..%2Fother%2Fgallery%2Fa.jpg",
+        f"{BASE}{_G}/..",
+        # Extra segments, encoded slash inside the file name, backslash.
+        f"{BASE}{_G}/sub/a.jpg",
+        f"{BASE}{_G}/sub%2Fa.jpg",
+        f"{BASE}{_G}/a%5Cb.jpg",
+        f"{BASE}{_G}/a\\b.jpg",
+        # Wrong scheme, credentials trick, wrong academy, wrong purpose.
+        f"http://cdn.example.test/{_G}/a.jpg",
+        f"https://cdn.example.test@evil.example/{_G}/a.jpg",
+        f"{BASE}academies/acad-other/gallery/a.jpg",
+        f"{BASE}academies/acad-riverside/hero/a.jpg",
+        # Marker only in the query or fragment.
+        f"{BASE}other/a.jpg?x=/{_G}/a.jpg",
+        f"{BASE}other/a.jpg#/{_G}/a.jpg",
+    ],
+)
+async def test_forged_or_traversing_photo_links_are_refused(url: str) -> None:
+    _db, repo = await _repo()
+    with pytest.raises(InvalidPublicPageSettings):
+        await _update(repo).execute(ACADEMY, {"gallery": [_photo(url)]}, actor_id="u-admin")
+
+
+async def test_a_genuine_store_url_with_query_is_accepted() -> None:
+    _db, repo = await _repo()
+    url = f"{FIREBASE_BASE}academies%2Facad-riverside%2Fgallery%2Fa.jpg?alt=media&token=t"
+    saved = await UpdatePublicPageSettings(repo, upload_url_base=FIREBASE_BASE).execute(
+        ACADEMY, {"gallery": [_photo(url)]}, actor_id="u-admin"
+    )
+    assert saved.gallery[0].url == url
+
+
+async def test_another_bucket_on_the_same_firebase_host_is_refused() -> None:
+    _db, repo = await _repo()
+    url = "https://firebasestorage.googleapis.com/v0/b/other/o/academies%2Facad-riverside%2Fgallery%2Fa.jpg"
+    with pytest.raises(InvalidPublicPageSettings):
+        await UpdatePublicPageSettings(repo, upload_url_base=FIREBASE_BASE).execute(
+            ACADEMY, {"gallery": [_photo(url)]}, actor_id="u-admin"
+        )
+
+
+async def test_without_a_media_store_new_photo_urls_are_refused() -> None:
+    _db, repo = await _repo()
+    with pytest.raises(InvalidPublicPageSettings):
+        await UpdatePublicPageSettings(repo).execute(
+            ACADEMY, {"hero_photo_url": f"{BASE}academies/acad-riverside/hero/h.jpg"}
+        )
+
+
+async def test_an_already_saved_url_is_still_accepted_without_a_store() -> None:
+    db, repo = await _repo()
+    legacy = "https://legacy.example/old.jpg"
+    await db["academies"].update_one(
+        {"academy_id": ACADEMY}, {"$set": {"public_page": {"hero_photo_url": legacy}}}, upsert=True
+    )
+    saved = await UpdatePublicPageSettings(repo).execute(
+        ACADEMY, {"hero_photo_url": legacy, "about_text": "Hi"}
+    )
+    assert saved.hero_photo_url == legacy
 
 
 async def test_gallery_write_without_an_actor_is_refused() -> None:
     _db, repo = await _repo()
     with pytest.raises(ValueError, match="actor_id"):
-        await UpdatePublicPageSettings(repo, _Roster()).execute(ACADEMY, {"gallery": [_photo()]})
+        await _update(repo, _Roster()).execute(ACADEMY, {"gallery": [_photo()]})
