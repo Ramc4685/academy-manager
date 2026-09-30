@@ -23,6 +23,8 @@ const SETTINGS = {
   price_period_default: "month",
   trials_open: true,
   privacy_notice_url: null,
+  theme: "floodlit",
+  seats_left_threshold: 3,
   public_url: "https://riverside.example/",
 };
 
@@ -189,6 +191,24 @@ test.describe("admin settings → public page", () => {
     expect(seen.settingsPatches).toEqual([{ published: true, price_period_default: "term" }]);
     await expect(page.getByTestId("public-page-live-note")).toContainText("Your page is live");
     await expect(save).toBeDisabled();
+  });
+
+  test("theme and seats threshold save on their own keys", async ({ page }) => {
+    const seen = await stub(page);
+    await page.goto("/admin/settings?panel=public-page");
+    const card = page.getByTestId("public-page-theme-card");
+    await expect(card).toBeVisible();
+    await expect(card.getByRole("radio", { name: /Floodlit/ })).toBeChecked();
+
+    const threshold = page.getByTestId("public-page-seats-threshold");
+    await expect(threshold).toHaveValue("3");
+    await card.getByTestId("public-page-theme-daylight").click();
+    await threshold.fill("0");
+    await page.getByTestId("public-page-save").click();
+
+    await expect(page.getByText(/Saved at/)).toBeVisible();
+    expect(seen.settingsPatches).toEqual([{ theme: "daylight", seats_left_threshold: 0 }]);
+    await expect(card.getByRole("radio", { name: /Daylight/ })).toBeChecked();
   });
 
   test("the privacy link is not edited here; a pointer sends you to Academy profile", async ({

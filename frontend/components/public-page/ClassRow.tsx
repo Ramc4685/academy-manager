@@ -25,15 +25,18 @@ export function ClassRow({
   cls,
   currency,
   trialsOpen,
+  seatsThreshold,
 }: {
   cls: PublicClass;
   currency: string;
   trialsOpen: boolean;
+  /** Show "N spots left" at or below this many; 0 never. Absent: today's 3. */
+  seatsThreshold?: number;
 }) {
   const when = formatWhen(cls);
   const time = formatTimeRange(cls.start_time, cls.end_time);
   const price = formatPrice(cls.price, currency);
-  const seats = formatSeatBand(cls.seats);
+  const seats = formatSeatBand(cls.seats, seatsThreshold);
   const full = seats?.full === true;
   const title = truncate(cls.title, 60);
   const label = [title, when, time].filter(Boolean).join(", ");

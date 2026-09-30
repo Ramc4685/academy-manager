@@ -18,14 +18,20 @@ from pydantic import ValidationError
 
 from backend.v2.contexts.identity.domain.errors import InvalidPublicPageSettings
 from backend.v2.contexts.identity.domain.public_page import (
+    DEFAULT_SEATS_LEFT_THRESHOLD,
+    MAX_SEATS_LEFT_THRESHOLD,
     PUBLIC_PAGE_FIELD,
     PublicPageSettings,
+    PublicPageTheme,
 )
 
 __all__ = [
+    "DEFAULT_SEATS_LEFT_THRESHOLD",
+    "MAX_SEATS_LEFT_THRESHOLD",
     "GetPublicPageAddress",
     "GetPublicPageSettings",
     "PublicPageSettings",
+    "PublicPageTheme",
     "UpdatePublicPageSettings",
 ]
 

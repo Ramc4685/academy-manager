@@ -4,7 +4,7 @@
  * tested without a server.
  */
 
-import { formatPricePeriod, formatSeatBand } from "./format";
+import { formatPricePeriod, formatSeatBand, safeContentImageUrl } from "./format";
 import type {
   PublicAcademyNotPublished,
   PublicAcademyPage,
@@ -117,7 +117,7 @@ export const CLASSES_ANCHOR = "#classes";
 export function describePublishedPage(page: PublicAcademyPage): PublishedView {
   const classes = allClasses(page);
   const hasClasses = classes.length > 0;
-  const bands = classes.map((cls) => formatSeatBand(cls.seats));
+  const bands = classes.map((cls) => formatSeatBand(cls.seats, page.page.seats_left_threshold));
   const allFull = hasClasses && bands.every((band) => band?.full === true);
   const trialsOpen = page.page.trials_open === true;
 
@@ -150,6 +150,35 @@ export function describePublishedPage(page: PublicAcademyPage): PublishedView {
   };
 }
 
+export interface CoachCard {
+  name: string;
+  photoUrl: string | null;
+  bio: string | null;
+}
+
+/**
+ * The coaches section: profiles the academy wrote first, then any class coach
+ * without a profile as a name only (today's behaviour, and the whole list
+ * when no profiles exist).
+ */
+export function coachCards(page: PublicAcademyPage, classCoachNames: string[]): CoachCard[] {
+  const cards: CoachCard[] = [];
+  const seen = new Set<string>();
+  for (const profile of page.coaches ?? []) {
+    const name = profile.name?.trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    cards.push({ name, photoUrl: safeContentImageUrl(profile.photo_url), bio: profile.bio?.trim() || null });
+  }
+  for (const raw of classCoachNames) {
+    const name = raw.trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    cards.push({ name, photoUrl: null, bio: null });
+  }
+  return cards;
+}
+
 /** Search engines index only a published page that lists classes. */
 export function isIndexable(result: PublicPageResult): boolean {
   return result.kind === "published" && allClasses(result.page).length > 0;
@@ -166,6 +195,8 @@ export interface FaqEntry {
  * but the public DTO does not carry those yet (flagged in the release note).
  */
 export function faqEntries(page: PublicAcademyPage): FaqEntry[] {
+  const own = (page.faqs ?? []).filter((f) => f.question?.trim() && f.answer?.trim());
+  if (own.length > 0) return own.map((f) => ({ question: f.question, answer: f.answer }));
   const entries: FaqEntry[] = [];
   if (page.page.trials_open) {
     entries.push({

@@ -62,6 +62,8 @@ def test_published_page_lists_only_published_listable_classes() -> None:
         "show_availability": True,
         "price_period_default": "month",
         "privacy_notice_url": None,
+        "theme": "floodlit",
+        "seats_left_threshold": 3,
         "terms_url": None,
         "refund_policy_url": None,
     }
@@ -245,3 +247,30 @@ def test_footer_never_renders_a_hostile_stored_legal_link() -> None:
     page = _get(build_app(db)).json()["page"]
     assert page["terms_url"] is None
     assert page["refund_policy_url"] is None
+
+
+def _threshold_body(value: int | None, theme: str | None = None) -> dict[str, Any]:
+    db = _db()
+    fields: dict[str, Any] = {}
+    if value is not None:
+        fields["public_page.seats_left_threshold"] = value
+    if theme is not None:
+        fields["public_page.theme"] = theme
+    asyncio.run(db["academies"].update_one({"academy_id": ACADEMY}, {"$set": fields}))
+    body: dict[str, Any] = _get(build_app(db)).json()
+    return body
+
+
+def test_theme_and_threshold_are_exposed_and_the_threshold_drives_the_seat_band() -> None:
+    body = _threshold_body(0, "daylight")
+    assert body["page"]["theme"] == "daylight"
+    assert body["page"]["seats_left_threshold"] == 0
+    classes = [c for p in body["programs"] for c in p["classes"]] + body["ungrouped_classes"]
+    assert all(c["seats"]["band"] != "few" for c in classes)
+
+    wide = _threshold_body(20)
+    wide_classes = [c for p in wide["programs"] for c in p["classes"]] + wide["ungrouped_classes"]
+    few = [c for c in wide_classes if c["seats"]["band"] == "few"]
+    assert few and all(c["seats"]["seats_left"] for c in few)
+    # A full class stays a waitlist whatever the threshold.
+    assert any(c["seats"]["band"] == "waitlist" for c in wide_classes)
