@@ -76,3 +76,17 @@ describe("student waiver rows", () => {
     expect(unsignedStudentWaivers(rows).map((r) => r.status)).toEqual(["older_version", "unsigned"]);
   });
 });
+
+describe("requiredForLabel with archived programs", () => {
+  it("reads an archived program as Archived: name", () => {
+    expect(
+      requiredForLabel(
+        { required: true, scope: "programs", program_ids: ["p1", "p2"] } as never,
+        [
+          { program_id: "p1", name: "Juniors" },
+          { program_id: "p2", name: "Old squad", archived: true },
+        ],
+      ),
+    ).toBe("Juniors, Archived: Old squad");
+  });
+});

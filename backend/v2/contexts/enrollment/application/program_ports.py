@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from backend.v2.contexts.enrollment.domain.programs import ClassPublicProfile, Program
@@ -37,3 +38,21 @@ class ClassPublicProfileRepository(Protocol):
     async def set_fields(
         self, session_id: str, fields: Mapping[str, Any]
     ) -> ClassPublicProfile | None: ...
+
+
+@dataclass(frozen=True)
+class AssignedWaiver:
+    """A live waiver that families in a program must still sign."""
+
+    waiver_template_id: str
+    title: str
+
+
+class ProgramWaiverAssignments(Protocol):
+    """Which waivers are assigned to a program (owned by Onboarding).
+
+    Archiving a program does not undo the assignment: the waiver keeps asking
+    the program's families to sign, so the admin is told which ones.
+    """
+
+    async def waivers_assigned_to(self, program_id: str) -> list[AssignedWaiver]: ...

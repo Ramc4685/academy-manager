@@ -119,6 +119,69 @@ def test_program_crud_and_class_assignment_round_trip(db: Any) -> None:
         assert res.status_code == 200 and res.json()["program_id"] is None
 
 
+def test_archiving_a_program_warns_about_waivers_still_assigned_to_it(db: Any) -> None:
+    async def seed_waivers(program_id: str) -> None:
+        base = {
+            "academy_id": ACADEMY,
+            "status": "active",
+            "version": "1",
+            "content_hash": "h",
+            "body": "b",
+            "effective_from": datetime(2026, 9, 1, tzinfo=UTC),
+            "required": True,
+        }
+        await db["waiver_templates"].insert_many(
+            [
+                {
+                    **base,
+                    "waiver_template_id": "wt-photo",
+                    "name": "Photo consent",
+                    "lineage_key": "photo",
+                    "scope": "programs",
+                    "program_ids": [program_id],
+                },
+                {
+                    **base,
+                    "waiver_template_id": "wt-liab",
+                    "name": "Liability",
+                    "lineage_key": "liab",
+                    "scope": "all",
+                },
+                {
+                    **base,
+                    "waiver_template_id": "wt-other-tenant",
+                    "academy_id": OTHER,
+                    "name": "Other academy waiver",
+                    "lineage_key": "x",
+                    "scope": "programs",
+                    "program_ids": [program_id],
+                },
+            ]
+        )
+
+    with _client(db) as client:
+        program = client.post(f"{BASE}/programs", json={"name": "Juniors"}).json()
+        clean = client.post(f"{BASE}/programs", json={"name": "Adults"}).json()
+        asyncio.run(seed_waivers(program["program_id"]))
+
+        res = client.post(f"{BASE}/programs/{program['program_id']}/archive")
+
+        # Never blocked: the program is archived and the response says what is left.
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["archived"] is True
+        assert body["assigned_waivers"] == [
+            {"waiver_template_id": "wt-photo", "title": "Photo consent"}
+        ]
+        assert "Photo consent" in body["warning"]
+        assert "Other academy waiver" not in body["warning"]
+
+        res = client.post(f"{BASE}/programs/{clean['program_id']}/archive")
+        assert res.status_code == 200
+        assert res.json()["assigned_waivers"] == []
+        assert res.json()["warning"] is None
+
+
 def test_classes_are_private_by_default_and_switch_on_explicitly(db: Any) -> None:
     with _client(db) as client:
         res = client.get(f"{BASE}/class-public-profiles")

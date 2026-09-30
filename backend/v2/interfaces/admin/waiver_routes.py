@@ -16,8 +16,11 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
     WaiverVersionConflict,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
+    AdminWaiverDocument,
+    AdminWaiverLineageReport,
     AdminWaiverReport,
     AdminWaiverStudentRow,
+    AdminWaiverSummary,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -25,6 +28,7 @@ from backend.v2.interfaces.admin.views import (
     AdminStudentWaiverStatusView,
     AdminWaiverAssignRequest,
     AdminWaiverDocumentView,
+    AdminWaiverLineageView,
     AdminWaiverList,
     AdminWaiverProgramView,
     AdminWaiverSignatureDetailView,
@@ -50,9 +54,10 @@ async def list_admin_waivers(
     active = _current_waiver_view(report)
     rows = [_student_waiver_view(row) for row in report.rows]
     return AdminWaiverList(
-        summary=_summary_view(report),
+        summary=_summary_view(report.summary),
         current_waiver=active,
         waivers=rows,
+        lineages=[_lineage_view(lineage) for lineage in report.lineages],
     )
 
 
@@ -64,11 +69,25 @@ async def list_admin_waiver_templates(
     manager = _template_manager(use_cases)
     templates = await manager.list_templates()
     programs = await manager.list_programs()
+    # Archived programs only matter while a live waiver is still assigned to one.
+    still_assigned = {
+        program_id
+        for template in templates
+        if template.status == "active"
+        for program_id in template.program_ids
+    }
+    archived = [
+        program
+        for program in await manager.list_archived_programs()
+        if program.program_id in still_assigned
+    ]
     return AdminWaiverTemplateManagementList(
         templates=[_template_management_view(template) for template in templates],
         programs=[
-            AdminWaiverProgramView(program_id=program.program_id, name=program.name)
-            for program in programs
+            AdminWaiverProgramView(
+                program_id=program.program_id, name=program.name, archived=program.archived
+            )
+            for program in [*programs, *archived]
         ],
     )
 
@@ -124,12 +143,21 @@ async def publish_admin_waiver_template(
 @router.post(
     "/waivers/templates/{waiver_template_id}/assign-registration",
     response_model=AdminWaiverTemplateManagementView,
+    deprecated=True,
 )
 async def assign_admin_waiver_template_to_registration(
     waiver_template_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminWaiverTemplateManagementView:
+    """DEPRECATED: use ``PUT /waivers/templates/{id}/assignment``.
+
+    The one-registration-waiver switch from before several live waivers. Kept
+    so a client loaded before the deploy keeps working; no shipped UI calls it.
+    It makes this waiver required for all families. That OVERWRITES any
+    program scope the waiver had (a program-scoped waiver becomes an
+    all-family one); other waivers keep their own assignment.
+    """
     manager = _template_manager(use_cases)
     try:
         template = await manager.assign_to_registration(
@@ -271,27 +299,24 @@ def _template_management_view(
     )
 
 
-def _summary_view(report: AdminWaiverReport) -> AdminWaiverSummaryView:
-    total = report.summary.total_students
-    current = report.summary.current_count
+def _summary_view(summary: AdminWaiverSummary) -> AdminWaiverSummaryView:
+    total = summary.total_students
+    current = summary.current_count
     return AdminWaiverSummaryView(
         signed_current=current,
-        pending_signature=report.summary.pending_count,
+        pending_signature=summary.pending_count,
         expiring_30d=0,
-        outdated_version=report.summary.outdated_count,
+        outdated_version=summary.outdated_count,
         active_students=total,
         adoption_rate=(current / total if total else None),
     )
 
 
-def _current_waiver_view(
-    report: AdminWaiverReport,
-) -> AdminWaiverDocumentView | None:
-    active = report.active_waiver
-    if active is None:
-        return None
-    total = report.summary.total_students
-    current = report.summary.current_count
+def _document_view(
+    active: AdminWaiverDocument, summary: AdminWaiverSummary
+) -> AdminWaiverDocumentView:
+    total = summary.total_students
+    current = summary.current_count
     return AdminWaiverDocumentView(
         waiver_id=active.waiver_id,
         title=active.title or f"Waiver {active.version}",
@@ -302,6 +327,28 @@ def _current_waiver_view(
         signed_count=current,
         total_count=total,
         adoption_rate=(current / total if total else None),
+    )
+
+
+def _current_waiver_view(
+    report: AdminWaiverReport,
+) -> AdminWaiverDocumentView | None:
+    active = report.active_waiver
+    if active is None:
+        return None
+    return _document_view(active, report.summary)
+
+
+def _lineage_view(lineage: AdminWaiverLineageReport) -> AdminWaiverLineageView:
+    waiver = lineage.waiver
+    return AdminWaiverLineageView(
+        lineage_key=waiver.lineage_key,
+        waiver=_document_view(waiver, lineage.summary),
+        required=waiver.required,
+        scope=waiver.scope,
+        program_ids=list(waiver.program_ids),
+        summary=_summary_view(lineage.summary),
+        waivers=[_student_waiver_view(row) for row in lineage.rows],
     )
 
 

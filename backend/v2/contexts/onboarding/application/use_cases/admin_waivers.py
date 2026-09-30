@@ -10,7 +10,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from backend.v2.contexts.onboarding.domain.waiver_assignment import (
+    LEGACY_LINEAGE_KEY,
+    WaiverAssignment,
+    WaiverScope,
+)
 
 WaiverStatus = Literal["current", "signed", "pending", "outdated"]
 
@@ -24,6 +30,21 @@ class AdminWaiverDocument(BaseModel):
     body: str | None = None
     content_hash: str | None = None
     effective_from: datetime | None = None
+    # Which waiver (across versions) this is, and who must sign it. The
+    # defaults read as "the one waiver every family signs" so callers that
+    # only know a single waiver keep their old meaning.
+    lineage_key: str = LEGACY_LINEAGE_KEY
+    required: bool = True
+    scope: WaiverScope = "all"
+    program_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def assignment(self) -> WaiverAssignment:
+        return WaiverAssignment(
+            required=self.required,
+            scope=self.scope,
+            program_ids=tuple(self.program_ids),
+        )
 
 
 class AdminWaiverStudent(BaseModel):
@@ -58,7 +79,16 @@ class AdminWaiverData(BaseModel):
 
     active_waiver: AdminWaiverDocument | None = None
     students: list[AdminWaiverStudent]
-    acceptances_by_student: dict[str, AdminWaiverAcceptance]
+    # Latest acceptance per student whatever waiver it was for. Only read when
+    # the data carries no per-waiver information (one waiver, or none).
+    acceptances_by_student: dict[str, AdminWaiverAcceptance] = Field(default_factory=dict)
+    # Every live waiver, one row per lineage (the current version of each),
+    # whether or not anyone is required to sign it yet.
+    live_waivers: list[AdminWaiverDocument] = Field(default_factory=list)
+    # Latest acceptance per (student id, lineage key). ``None``: not supplied.
+    acceptances_by_lineage: dict[tuple[str, str], AdminWaiverAcceptance] | None = None
+    # Program ids of each student's live classes (for program-scoped waivers).
+    program_ids_by_student: dict[str, set[str]] = Field(default_factory=dict)
 
 
 class AdminWaiverSummary(BaseModel):
@@ -81,6 +111,7 @@ class AdminWaiverStudentRow(BaseModel):
     parent_name: str | None = None
     parent_email: str | None = None
     status: WaiverStatus
+    lineage_key: str | None = None
     waiver_template_id: str | None = None
     waiver_version: str | None = None
     current_waiver_version: str | None = None
@@ -91,12 +122,33 @@ class AdminWaiverStudentRow(BaseModel):
     share_status: str = "unavailable"
 
 
+class AdminWaiverLineageReport(BaseModel):
+    """One live waiver: who it applies to and where each of them stands."""
+
+    model_config = {"frozen": True}
+
+    waiver: AdminWaiverDocument
+    summary: AdminWaiverSummary
+    rows: list[AdminWaiverStudentRow]
+
+
 class AdminWaiverReport(BaseModel):
+    """The waiver report.
+
+    ``summary``, ``active_waiver`` and ``rows`` are the *primary* waiver's (the
+    first entry of ``lineages``): a single-waiver academy reads exactly as it
+    always did. ``lineages`` carries every live waiver.
+    """
+
     model_config = {"frozen": True}
 
     summary: AdminWaiverSummary
     active_waiver: AdminWaiverDocument | None = None
     rows: list[AdminWaiverStudentRow]
+    lineages: list[AdminWaiverLineageReport] = Field(default_factory=list)
+    # Every live waiver (any lineage), required or not: the setup checklist
+    # counts "has a live waiver", not "has a required one".
+    live_waivers: list[AdminWaiverDocument] = Field(default_factory=list)
 
 
 class AdminWaiverTemplateDetail(BaseModel):
@@ -153,22 +205,77 @@ class ListAdminWaivers:
 
     async def execute(self) -> AdminWaiverReport:
         data = await self._waivers.load_admin_waiver_data()
+        live = list(data.live_waivers)
+        if not live and data.active_waiver is not None:
+            # A caller that only knows one waiver: it applies to everyone.
+            live = [data.active_waiver]
+        if not live:
+            summary, rows = self._classify(data, None, data.students)
+            return AdminWaiverReport(summary=summary, rows=rows)
+        if not any(doc.required for doc in live):
+            # Nothing is flagged required (an academy that never flagged its
+            # template, or only a draft exists): keep the single-waiver view
+            # this report always had, the newest template against every
+            # student and any acceptance they hold.
+            primary_doc = live[0]
+            summary, rows = self._classify(data, primary_doc, data.students, any_acceptance=True)
+            return AdminWaiverReport(
+                summary=summary,
+                active_waiver=primary_doc,
+                rows=rows,
+                lineages=[AdminWaiverLineageReport(waiver=primary_doc, summary=summary, rows=rows)],
+                live_waivers=live,
+            )
+
+        # All-family waivers first, so the primary one is the waiver a
+        # single-waiver academy has always shown.
+        live.sort(key=lambda doc: 0 if doc.assignment.for_all_families else 1)
+        lineages: list[AdminWaiverLineageReport] = []
+        for doc in live:
+            students = [
+                student
+                for student in data.students
+                if doc.assignment.applies_to(
+                    data.program_ids_by_student.get(student.student_id, ())
+                )
+            ]
+            summary, rows = self._classify(data, doc, students)
+            lineages.append(AdminWaiverLineageReport(waiver=doc, summary=summary, rows=rows))
+        primary = lineages[0]
+        return AdminWaiverReport(
+            summary=primary.summary,
+            active_waiver=primary.waiver,
+            rows=primary.rows,
+            lineages=lineages,
+            live_waivers=live,
+        )
+
+    def _classify(
+        self,
+        data: AdminWaiverData,
+        waiver: AdminWaiverDocument | None,
+        students: list[AdminWaiverStudent],
+        *,
+        any_acceptance: bool = False,
+    ) -> tuple[AdminWaiverSummary, list[AdminWaiverStudentRow]]:
         rows: list[AdminWaiverStudentRow] = []
         signed_count = 0
         current_count = 0
         pending_count = 0
         outdated_count = 0
 
-        for student in data.students:
-            acceptance = data.acceptances_by_student.get(student.student_id)
+        for student in students:
+            acceptance = self._acceptance_for(
+                data, student.student_id, None if any_acceptance else waiver
+            )
             if acceptance is None:
                 status: WaiverStatus = "pending"
                 pending_count += 1
-            elif self._is_current(acceptance, data.active_waiver):
+            elif self._is_current(acceptance, waiver):
                 status = "current"
                 signed_count += 1
                 current_count += 1
-            elif data.active_waiver is None:
+            elif waiver is None:
                 status = "signed"
                 signed_count += 1
             else:
@@ -184,12 +291,11 @@ class ListAdminWaivers:
                     parent_name=student.parent_name,
                     parent_email=student.parent_email,
                     status=status,
+                    lineage_key=waiver.lineage_key if waiver else None,
                     signature_id=acceptance.signature_id if acceptance else None,
                     waiver_template_id=acceptance.waiver_template_id if acceptance else None,
                     waiver_version=acceptance.waiver_version if acceptance else None,
-                    current_waiver_version=(
-                        data.active_waiver.version if data.active_waiver else None
-                    ),
+                    current_waiver_version=waiver.version if waiver else None,
                     content_hash=acceptance.content_hash if acceptance else None,
                     signed_at=acceptance.accepted_at if acceptance else None,
                     signed_by_user_id=(acceptance.accepted_by_user_id if acceptance else None),
@@ -204,17 +310,26 @@ class ListAdminWaivers:
                 )
             )
 
-        return AdminWaiverReport(
-            summary=AdminWaiverSummary(
-                total_students=len(data.students),
+        return (
+            AdminWaiverSummary(
+                total_students=len(students),
                 signed_count=signed_count,
                 current_count=current_count,
                 pending_count=pending_count,
                 outdated_count=outdated_count,
             ),
-            active_waiver=data.active_waiver,
-            rows=rows,
+            rows,
         )
+
+    @staticmethod
+    def _acceptance_for(
+        data: AdminWaiverData,
+        student_id: str,
+        waiver: AdminWaiverDocument | None,
+    ) -> AdminWaiverAcceptance | None:
+        if data.acceptances_by_lineage is not None and waiver is not None:
+            return data.acceptances_by_lineage.get((student_id, waiver.lineage_key))
+        return data.acceptances_by_student.get(student_id)
 
     @staticmethod
     def _is_current(

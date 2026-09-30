@@ -356,17 +356,12 @@ test.describe("admin waivers", () => {
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
-  test("allows requiring an active waiver from the detail page", async ({ page }) => {
+  test("points the detail page at the Assign control in Family policies", async ({ page }) => {
     const errors = collectConsoleErrors(page);
-    const assignmentRequests: string[] = [];
-    let detailRequests = 0;
+    const legacyAssignRequests: string[] = [];
     await stubAdminShell(page);
     await page.route("**/api/v2/admin/waivers/wt-2026", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
-      detailRequests += 1;
-      if (detailRequests > 1) {
-        return fulfillJson(route, { detail: "temporary refetch failure" }, 500);
-      }
       return fulfillJson(route, {
         waiver_id: "wt-2026",
         title: "BLNO Liability Waiver",
@@ -382,34 +377,20 @@ test.describe("admin waivers", () => {
         gap_note: "Signed PDF artifact/share links are not implemented yet.",
       });
     });
+    // The old one-waiver button is gone; nothing on the page should call it.
     await page.route("**/api/v2/admin/waivers/templates/wt-2026/assign-registration", (route) => {
-      if (route.request().method() !== "POST") return route.fallback();
-      assignmentRequests.push(route.request().url());
-      return fulfillJson(route, {
-        waiver_template_id: "wt-2026",
-        title: "BLNO Liability Waiver",
-        body: "Parent agrees to academy safety rules.",
-        status: "active",
-        version: "1.0",
-        content_hash: "hash-current",
-        effective_at: "2026-05-26T00:00:00Z",
-        published_at: "2026-05-26T00:00:00Z",
-        assigned_to_registration: true,
-        assigned_at: "2026-06-21T12:00:00Z",
-        updated_at: "2026-06-21T12:00:00Z",
-      });
+      legacyAssignRequests.push(route.request().url());
+      return route.abort();
     });
 
     await page.goto("/admin/waivers/wt-2026");
 
     await expect(page.getByTestId("admin-waiver-template-detail")).toBeVisible();
-    await expect(page.getByText("Not assigned").first()).toBeVisible();
-    await page.getByRole("button", { name: "Require for registration" }).click();
-    await expect(page.getByText("Required for registration").first()).toBeVisible();
-    await expect(
-      page.getByRole("alert").filter({ hasText: "Could not load waiver template." }),
-    ).toHaveCount(0);
-    expect(assignmentRequests).toHaveLength(1);
+    await expect(page.getByRole("button", { name: "Require for registration" })).toHaveCount(0);
+    const link = page.getByTestId("admin-waiver-detail-assign-link");
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", "/admin/settings?panel=family-policies");
+    expect(legacyAssignRequests).toHaveLength(0);
     expect(
       errors.filter((message) => !message.includes("500 (Internal Server Error)")),
       `App console errors: ${errors.join("\n")}`,

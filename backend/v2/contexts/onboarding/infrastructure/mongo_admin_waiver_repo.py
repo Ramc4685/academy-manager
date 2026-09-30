@@ -15,8 +15,19 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverStudent,
     AdminWaiverTemplateDetail,
 )
+from backend.v2.contexts.onboarding.domain.waiver_assignment import (
+    LEGACY_LINEAGE_KEY,
+    assignment_from_document,
+    lineage_of,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
     student_ids_with_live_enrollment,
+)
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_program_lookup import (
+    MongoWaiverProgramLookup,
+)
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
+    LIVE_TEMPLATE_STATUSES,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -28,13 +39,23 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
 
     async def load_admin_waiver_data(self) -> AdminWaiverData:
         academy_id = current_academy_id()
-        waiver_docs = await self._waiver_documents(academy_id)
-        active = waiver_docs[0] if waiver_docs else None
+        waiver_docs, live_waivers = await self._waiver_documents(academy_id)
         version_info = self._version_info_by_id(waiver_docs)
+        lineage_by_id = {doc.waiver_id: doc.lineage_key for doc in waiver_docs if doc.waiver_id}
 
         students = await self._student_docs(academy_id)
         parent_map = await self._parents_by_id(academy_id, students)
-        acceptances = await self._latest_acceptance_by_student(academy_id, students, version_info)
+        acceptances, acceptances_by_lineage = await self._latest_acceptances(
+            academy_id, students, version_info, lineage_by_id
+        )
+
+        program_ids_by_student: dict[str, set[str]] = {}
+        if any(doc.scope == "programs" for doc in live_waivers):
+            program_ids_by_student = await MongoWaiverProgramLookup(
+                self._db
+            ).program_ids_for_students(
+                [str(doc.get("student_id") or doc.get("_id")) for doc in students]
+            )
 
         student_rows: list[AdminWaiverStudent] = []
         for doc in students:
@@ -52,9 +73,16 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             )
 
         return AdminWaiverData(
-            active_waiver=active,
+            # No live template (draft or retired only): the newest template of
+            # any status, as before several live waivers existed.
+            active_waiver=(
+                live_waivers[0] if live_waivers else (waiver_docs[0] if waiver_docs else None)
+            ),
             students=student_rows,
             acceptances_by_student=acceptances,
+            live_waivers=live_waivers,
+            acceptances_by_lineage=acceptances_by_lineage,
+            program_ids_by_student=program_ids_by_student,
         )
 
     async def list_admin_waivers(self) -> AdminWaiverData:
@@ -102,11 +130,22 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             )
         return None
 
-    async def _waiver_documents(self, academy_id: str) -> list[AdminWaiverDocument]:
+    async def _waiver_documents(
+        self, academy_id: str
+    ) -> tuple[list[AdminWaiverDocument], list[AdminWaiverDocument]]:
+        """``(every template, the live ones)``, newest first.
+
+        The live list has one entry per lineage (the current version of each
+        waiver). Rows read from the older ``waivers`` / ``waiver_versions``
+        collections carry no lineage or assignment: they are the one legacy
+        waiver every family signs.
+        """
+        legacy_source = False
         docs: list[dict[str, Any]] = [
             doc async for doc in self._db["waiver_templates"].find({"academy_id": academy_id})
         ]
         if not docs:
+            legacy_source = True
             docs = [doc async for doc in self._db["waivers"].find({"academy_id": academy_id})]
         if not docs:
             docs = [
@@ -123,8 +162,11 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
                 )
             ]
 
-        waivers = [
-            AdminWaiverDocument(
+        def build(doc: dict[str, Any]) -> AdminWaiverDocument:
+            assignment = assignment_from_document(doc)
+            if legacy_source:
+                assignment = assignment_from_document({"assigned_to_registration": True})
+            return AdminWaiverDocument(
                 waiver_id=str(
                     doc.get("waiver_template_id") or doc.get("waiver_id") or doc.get("_id")
                 ),
@@ -140,14 +182,27 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
                     or doc.get("effective_date")
                     or doc.get("created_at")
                 ),
+                lineage_key=lineage_of(doc),
+                required=assignment.required,
+                scope=assignment.scope,
+                program_ids=list(assignment.program_ids),
             )
-            for doc in docs
-        ]
-        return sorted(
-            waivers,
-            key=lambda waiver: waiver.effective_from or datetime.min.replace(tzinfo=UTC),
-            reverse=True,
-        )
+
+        def newest_first(waivers: list[AdminWaiverDocument]) -> list[AdminWaiverDocument]:
+            return sorted(
+                waivers,
+                key=lambda waiver: waiver.effective_from or datetime.min.replace(tzinfo=UTC),
+                reverse=True,
+            )
+
+        every = newest_first([build(doc) for doc in docs])
+        if legacy_source:
+            return every, every[:1]
+        live_docs = [doc for doc in docs if doc.get("status") in LIVE_TEMPLATE_STATUSES]
+        live_by_lineage: dict[str, AdminWaiverDocument] = {}
+        for waiver in newest_first([build(doc) for doc in live_docs]):
+            live_by_lineage.setdefault(waiver.lineage_key, waiver)
+        return every, list(live_by_lineage.values())
 
     async def _student_docs(self, academy_id: str) -> list[dict[str, Any]]:
         cursor = self._db["students"].find(
@@ -231,16 +286,34 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             doc.waiver_id: (doc.version, doc.content_hash) for doc in waiver_docs if doc.waiver_id
         }
 
-    async def _latest_acceptance_by_student(
+    async def _latest_acceptances(
         self,
         academy_id: str,
         students: list[dict[str, Any]],
         version_info: dict[str, tuple[str | None, str | None]],
-    ) -> dict[str, AdminWaiverAcceptance]:
+        lineage_by_id: dict[str, str],
+    ) -> tuple[dict[str, AdminWaiverAcceptance], dict[tuple[str, str], AdminWaiverAcceptance]]:
+        """Latest acceptance per student, and per (student, waiver lineage).
+
+        An acceptance is filed under the lineage of the template it pins to, so
+        signing "Photo consent" never reads as signing "Liability". Acceptances
+        that name no known template, and the old ``students.waiver_accepted``
+        flag, are the legacy lineage. Signed rows win over the older
+        acceptances collection, which wins over the flag.
+        """
         student_ids = [str(doc.get("student_id") or doc.get("_id")) for doc in students]
-        out: dict[str, AdminWaiverAcceptance] = {}
+        by_student: dict[str, AdminWaiverAcceptance] = {}
+        by_lineage: dict[tuple[str, str], AdminWaiverAcceptance] = {}
         if not student_ids:
-            return out
+            return by_student, by_lineage
+
+        def file(acceptance: AdminWaiverAcceptance) -> None:
+            student_id = acceptance.student_id
+            if not student_id:
+                return
+            lineage = lineage_by_id.get(acceptance.waiver_template_id or "", LEGACY_LINEAGE_KEY)
+            by_student.setdefault(student_id, acceptance)
+            by_lineage.setdefault((student_id, lineage), acceptance)
 
         signature_docs = [
             doc
@@ -260,13 +333,7 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
         )
         share_links_by_artifact = await self._share_links_by_artifact(academy_id, signature_docs)
         for doc in signature_docs:
-            student_id = str(doc.get("student_id") or "")
-            if student_id and student_id not in out:
-                out[student_id] = self._to_signature_acceptance(
-                    doc,
-                    version_info,
-                    share_links_by_artifact,
-                )
+            file(self._to_signature_acceptance(doc, version_info, share_links_by_artifact))
 
         docs = [
             doc
@@ -289,29 +356,33 @@ class MongoAdminWaiverRepository(TenantScopedRepository):
             reverse=True,
         )
         for doc in docs:
-            student_id = str(doc.get("student_id") or "")
-            if student_id and student_id not in out:
-                out[student_id] = self._to_acceptance(doc, version_info)
+            file(self._to_acceptance(doc, version_info))
 
         for doc in students:
             student_id = str(doc.get("student_id") or doc.get("_id"))
-            if student_id in out or doc.get("waiver_accepted") is not True:
+            if doc.get("waiver_accepted") is not True:
                 continue
-            out[student_id] = AdminWaiverAcceptance(
-                signature_id=f"student:{student_id}",
-                student_id=student_id,
-                parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
-                accepted_by_user_id=(
-                    str(doc.get("waiver_accepted_by")) if doc.get("waiver_accepted_by") else None
-                ),
-                waiver_version=str(doc.get("waiver_version") or "") or None,
-                content_hash=str(doc.get("waiver_text_hash") or doc.get("content_hash") or "")
-                or None,
-                accepted_at=self._as_datetime(
-                    doc.get("waiver_accepted_at") or doc.get("waiver_date")
-                ),
+            if student_id in by_student and (student_id, LEGACY_LINEAGE_KEY) in by_lineage:
+                continue
+            file(
+                AdminWaiverAcceptance(
+                    signature_id=f"student:{student_id}",
+                    student_id=student_id,
+                    parent_id=str(doc.get("parent_id") or doc.get("parent_user_id") or ""),
+                    accepted_by_user_id=(
+                        str(doc.get("waiver_accepted_by"))
+                        if doc.get("waiver_accepted_by")
+                        else None
+                    ),
+                    waiver_version=str(doc.get("waiver_version") or "") or None,
+                    content_hash=str(doc.get("waiver_text_hash") or doc.get("content_hash") or "")
+                    or None,
+                    accepted_at=self._as_datetime(
+                        doc.get("waiver_accepted_at") or doc.get("waiver_date")
+                    ),
+                )
             )
-        return out
+        return by_student, by_lineage
 
     async def _share_links_by_artifact(
         self,

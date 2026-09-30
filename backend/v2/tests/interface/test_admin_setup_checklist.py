@@ -265,3 +265,17 @@ def test_checklist_links_land_on_live_settings_tabs():
     for href in hrefs.values():
         if "panel=" in href:
             assert href.split("panel=")[1].split("&")[0] not in retired
+
+
+def test_waiver_step_is_done_with_any_live_waiver_lineage():
+    liability = {"body": "Liability wording."}
+    photo = {"body": "Photo consent wording."}
+    placeholder = {"body": DEFAULT_WAIVER_BODY}
+    assert _derive(waivers=(True, {"live_waivers": [liability, photo]}))["waiver"] == "done"
+    # A program-scoped waiver alone is enough: it is the academy's own text.
+    assert _derive(waivers=(True, {"live_waivers": [photo]}))["waiver"] == "done"
+    # Nothing but the bootstrap placeholder is still to do.
+    assert _derive(waivers=(True, {"live_waivers": [placeholder]}))["waiver"] == "todo"
+    # A real waiver next to the placeholder counts.
+    assert _derive(waivers=(True, {"live_waivers": [placeholder, photo]}))["waiver"] == "done"
+    assert _derive(waivers=(True, {"live_waivers": []}))["waiver"] == "todo"

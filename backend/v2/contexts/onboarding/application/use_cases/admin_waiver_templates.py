@@ -60,12 +60,17 @@ class ProgramRef(BaseModel):
 
     program_id: str
     name: str
+    archived: bool = False
 
 
 class ProgramDirectory(Protocol):
     """The academy's live programs (class groups), owned by Enrollment."""
 
     async def list_programs(self) -> list[ProgramRef]: ...
+
+    async def list_archived_programs(self) -> list[ProgramRef]:
+        """Archived programs, so a waiver still pointing at one can be fixed."""
+        ...
 
 
 class CreateDraftWaiverTemplateCommand(BaseModel):
@@ -160,6 +165,11 @@ class ManageAdminWaiverTemplates:
         if self._programs is None:
             return []
         return await self._programs.list_programs()
+
+    async def list_archived_programs(self) -> list[ProgramRef]:
+        if self._programs is None:
+            return []
+        return await self._programs.list_archived_programs()
 
     async def create_draft(
         self, command: CreateDraftWaiverTemplateCommand

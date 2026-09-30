@@ -101,6 +101,24 @@ class ProgramView(BaseModel):
     updated_at: datetime
 
 
+class AssignedWaiverView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    waiver_template_id: str
+    title: str
+
+
+class ArchivedProgramView(ProgramView):
+    """The archived program, plus the waivers still assigned to it.
+
+    Archiving is never blocked by an assignment; the admin is told which
+    waivers still ask this program's families to sign.
+    """
+
+    assigned_waivers: list[AssignedWaiverView] = []
+    warning: str | None = None
+
+
 class ProgramList(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -346,14 +364,27 @@ async def update_program(
     return _program_view(row)
 
 
-@router.post("/programs/{program_id}/archive", response_model=ProgramView)
+@router.post("/programs/{program_id}/archive", response_model=ArchivedProgramView)
 async def archive_program(
     program_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
     services: AdminPublicPageServices = Depends(get_admin_public_page),
-) -> ProgramView:
-    row = await services.archive_program.execute(program_id)
-    return _program_view(row)
+) -> ArchivedProgramView:
+    result = await services.archive_program.execute_with_warnings(program_id)
+    titles = [waiver.title for waiver in result.assigned_waivers]
+    return ArchivedProgramView(
+        **_program_view(result.program).model_dump(),
+        assigned_waivers=[
+            AssignedWaiverView(waiver_template_id=w.waiver_template_id, title=w.title)
+            for w in result.assigned_waivers
+        ],
+        warning=(
+            f"{result.program.name} is archived, but these waivers are still assigned to it: "
+            f"{', '.join(titles)}. Open Waivers to change who signs them."
+            if titles
+            else None
+        ),
+    )
 
 
 @router.get("/class-public-profiles", response_model=ClassPublicProfileList)

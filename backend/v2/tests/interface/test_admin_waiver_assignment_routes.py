@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from fastapi import FastAPI
@@ -48,8 +49,15 @@ class FakeRepo:
     async def publish_draft(self, **_kwargs: object) -> AdminWaiverTemplateRecord:
         raise NotImplementedError
 
-    async def assign_to_registration(self, **_kwargs: object) -> AdminWaiverTemplateRecord:
-        raise NotImplementedError
+    async def assign_to_registration(
+        self, *, waiver_template_id: str, assigned_at: datetime
+    ) -> AdminWaiverTemplateRecord:
+        # Mirrors the Mongo repo: the deprecated route goes through set_assignment.
+        return await self.set_assignment(
+            waiver_template_id=waiver_template_id,
+            assignment=WaiverAssignment(required=True, scope="all"),
+            assigned_at=assigned_at,
+        )
 
     async def set_assignment(
         self, *, waiver_template_id: str, assignment: WaiverAssignment, assigned_at: datetime
@@ -70,6 +78,11 @@ class FakeRepo:
 class Programs:
     async def list_programs(self) -> list[ProgramRef]:
         return [ProgramRef(program_id="prog-juniors", name="Juniors")]
+
+    archived: ClassVar[list[ProgramRef]] = []
+
+    async def list_archived_programs(self) -> list[ProgramRef]:
+        return list(self.archived)
 
 
 class FakeStatusReader:
@@ -169,12 +182,50 @@ def test_list_returns_assignment_fields_and_the_academys_programs(admin_client) 
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["programs"] == [{"program_id": "prog-juniors", "name": "Juniors"}]
+    assert body["programs"] == [
+        {"program_id": "prog-juniors", "name": "Juniors", "archived": False}
+    ]
     live = next(t for t in body["templates"] if t["waiver_template_id"] == "wt-live")
     assert live["lineage_key"] == "wl-photo"
     assert live["required"] is False
     assert live["scope"] == "all"
     assert live["program_ids"] == []
+
+
+def test_archived_program_still_assigned_is_listed_so_it_can_be_removed(monkeypatch) -> None:
+    monkeypatch.setattr(
+        Programs,
+        "archived",
+        [
+            ProgramRef(program_id="prog-old", name="Old squad", archived=True),
+            ProgramRef(program_id="prog-unused", name="Unused", archived=True),
+        ],
+    )
+    client, repo = _client()
+    repo.rows["wt-live"] = repo.rows["wt-live"].model_copy(
+        update={"required": True, "scope": "programs", "program_ids": ["prog-old"]}
+    )
+
+    with client:
+        body = client.get("/api/v2/admin/waivers/templates").json()
+
+        # Only the archived program a live waiver still points at is listed.
+        assert body["programs"] == [
+            {"program_id": "prog-juniors", "name": "Juniors", "archived": False},
+            {"program_id": "prog-old", "name": "Old squad", "archived": True},
+        ]
+        # Archived programs are not a new choice: keeping one is refused, removing it works.
+        refused = client.put(
+            "/api/v2/admin/waivers/templates/wt-live/assignment",
+            json={"required": True, "scope": "programs", "program_ids": ["prog-old"]},
+        )
+        assert refused.status_code == 409
+        removed = client.put(
+            "/api/v2/admin/waivers/templates/wt-live/assignment",
+            json={"required": True, "scope": "programs", "program_ids": ["prog-juniors"]},
+        )
+        assert removed.status_code == 200
+        assert removed.json()["program_ids"] == ["prog-juniors"]
 
 
 def test_assign_to_a_program_then_to_all_families(admin_client) -> None:
@@ -197,6 +248,25 @@ def test_assign_to_a_program_then_to_all_families(admin_client) -> None:
     assert everyone.status_code == 200, everyone.text
     assert everyone.json()["program_ids"] == []
     assert everyone.json()["assigned_to_registration"] is True
+
+
+def test_deprecated_assign_registration_still_works_and_widens_a_program_scope(
+    admin_client,
+) -> None:
+    scoped = admin_client.put(
+        "/api/v2/admin/waivers/templates/wt-live/assignment",
+        json={"required": True, "scope": "programs", "program_ids": ["prog-juniors"]},
+    )
+    assert scoped.json()["scope"] == "programs"
+
+    old_client = admin_client.post("/api/v2/admin/waivers/templates/wt-live/assign-registration")
+
+    assert old_client.status_code == 200, old_client.text
+    body = old_client.json()
+    assert body["required"] is True
+    assert body["scope"] == "all"
+    assert body["program_ids"] == []
+    assert body["assigned_to_registration"] is True
 
 
 @pytest.mark.parametrize(

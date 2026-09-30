@@ -19,6 +19,7 @@ from typing import Any
 
 from bson import ObjectId
 
+from backend.v2.contexts.enrollment.application.program_ports import AssignedWaiver
 from backend.v2.contexts.enrollment.application.use_cases.programs import (
     ArchiveProgram,
     AssignClassToProgram,
@@ -43,6 +44,9 @@ from backend.v2.contexts.identity.domain.identity_aliases import identity_aliase
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
+    MongoWaiverTemplateRepository,
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,20 @@ class AdminPublicPage:
     get_public_page_settings: GetPublicPageSettings
     update_public_page_settings: UpdatePublicPageSettings
     get_public_page_address: GetPublicPageAddress
+
+
+class _OnboardingProgramWaivers:
+    """Enrollment's view of Onboarding: live waivers assigned to a program."""
+
+    def __init__(self, db: Any) -> None:
+        self._templates = MongoWaiverTemplateRepository(db)
+
+    async def waivers_assigned_to(self, program_id: str) -> list[AssignedWaiver]:
+        return [
+            AssignedWaiver(waiver_template_id=t.waiver_template_id, title=t.title)
+            for t in await self._templates.list_required_templates()
+            if t.scope == "programs" and program_id in t.program_ids
+        ]
 
 
 #: Roles that may carry a public coach profile.
@@ -122,7 +140,7 @@ def compose_admin_public_page(
     return AdminPublicPage(
         create_program=CreateProgram(programs),
         update_program=update_program,
-        archive_program=ArchiveProgram(update_program),
+        archive_program=ArchiveProgram(update_program, _OnboardingProgramWaivers(db)),
         list_programs=ListPrograms(programs),
         assign_class_to_program=AssignClassToProgram(programs, profiles),
         set_class_public_fields=SetClassPublicFields(profiles),
