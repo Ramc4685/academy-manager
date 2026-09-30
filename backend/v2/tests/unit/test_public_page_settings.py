@@ -416,3 +416,132 @@ def test_seat_band_honours_the_academy_threshold() -> None:
     assert seat_band(10, 6, 5) == ("few", 4)
     assert seat_band(10, 8, 0) == ("open", None)  # 0 hides "only N left"
     assert seat_band(10, 10, 0) == ("waitlist", None)  # full is never hidden
+
+
+# --- unused photo cleanup ---------------------------------------------------
+
+import logging
+
+from backend.v2.tests.fixtures.fake_media_store import FakeMediaStore
+
+_HERO_A = f"{BASE}academies/{ACADEMY}/hero/a.jpg"
+_HERO_B = f"{BASE}academies/{ACADEMY}/hero/b.jpg"
+_GAL_A = f"{BASE}academies/{ACADEMY}/gallery/a.jpg"
+
+
+def _store_with(*paths: str, fail: bool = False) -> FakeMediaStore:
+    store = FakeMediaStore(fail=False)
+    for path in paths:
+        store.objects[path] = {}
+    store.fail = fail
+    return store
+
+
+def _paths(*urls: str) -> list[str]:
+    return [u[len(BASE) :] for u in urls]
+
+
+async def test_replacing_the_hero_deletes_the_old_object() -> None:
+    _db, repo = await _repo()
+    store = _store_with(*_paths(_HERO_A, _HERO_B))
+    update = _update(repo, media_store=store)
+    await update.execute(ACADEMY, {"hero_photo_url": _HERO_A})
+    await update.execute(ACADEMY, {"hero_photo_url": _HERO_B})
+    assert list(store.objects) == _paths(_HERO_B)
+
+
+async def test_removing_a_gallery_item_deletes_it() -> None:
+    _db, repo = await _repo()
+    store = _store_with(*_paths(_GAL_A))
+    update = _update(repo, media_store=store)
+    await update.execute(ACADEMY, {"gallery": [_photo(_GAL_A)]}, actor_id="u1")
+    await update.execute(ACADEMY, {"gallery": []}, actor_id="u1")
+    assert store.objects == {}
+
+
+async def test_a_url_still_used_elsewhere_is_kept() -> None:
+    _db, repo = await _repo()
+    # Same object referenced by the hero and (legacy) by a coach profile.
+    store = _store_with(*_paths(_HERO_A))
+    await repo.update_by_id(
+        ACADEMY,
+        {
+            "public_page.hero_photo_url": _HERO_A,
+            "public_page.coach_profiles": [
+                {"coach_id": "c1", "photo_url": _HERO_A, "shown": True, "bio": ""}
+            ],
+        },
+    )
+    update = _update(repo, _Roster("c1"), media_store=store)
+    await update.execute(ACADEMY, {"hero_photo_url": None})
+    assert list(store.objects) == _paths(_HERO_A)
+
+
+async def test_foreign_and_other_academy_urls_are_never_deleted() -> None:
+    _db, repo = await _repo()
+    foreign = "https://evil.example/academies/acad-riverside/hero/x.jpg"
+    other = f"{BASE}academies/acad-other/hero/x.jpg"
+    store = _store_with("academies/acad-other/hero/x.jpg", "academies/acad-riverside/hero/x.jpg")
+    for url in (foreign, other):
+        await repo.update_by_id(ACADEMY, {"public_page.hero_photo_url": url})
+        await _update(repo, media_store=store).execute(ACADEMY, {"hero_photo_url": None})
+    assert len(store.objects) == 2
+
+
+async def test_delete_failure_is_logged_and_does_not_fail_the_save(caplog: Any) -> None:
+    _db, repo = await _repo()
+    store = _store_with(*_paths(_HERO_A), fail=True)
+    await repo.update_by_id(ACADEMY, {"public_page.hero_photo_url": _HERO_A})
+    with caplog.at_level(logging.WARNING):
+        saved = await _update(repo, media_store=store).execute(ACADEMY, {"hero_photo_url": None})
+    assert saved.hero_photo_url is None
+    assert "could not delete unused hero photo" in caplog.text
+
+
+_COACH_A = f"{BASE}academies/{ACADEMY}/coach/a.jpg"
+_COACH_B = f"{BASE}academies/{ACADEMY}/coach/b.jpg"
+
+
+async def test_replacing_and_removing_a_coach_photo_deletes_the_old_object() -> None:
+    _db, repo = await _repo()
+    store = _store_with(*_paths(_COACH_A, _COACH_B))
+
+    def profile(url: str | None) -> dict[str, Any]:
+        return {"coach_id": "c1", "photo_url": url, "shown": True, "bio": ""}
+
+    update = _update(repo, _Roster("c1"), media_store=store)
+    await update.execute(ACADEMY, {"coach_profiles": [profile(_COACH_A)]})
+    await update.execute(ACADEMY, {"coach_profiles": [profile(_COACH_B)]})
+    assert list(store.objects) == _paths(_COACH_B)
+    await update.execute(ACADEMY, {"coach_profiles": [profile(None)]})
+    assert store.objects == {}
+
+
+async def test_a_url_whose_path_purpose_mismatches_its_field_is_kept() -> None:
+    _db, repo = await _repo()
+    # A gallery-purpose object stored (legacy) as the hero is not a hero upload.
+    store = _store_with(*_paths(_GAL_A))
+    await repo.update_by_id(ACADEMY, {"public_page.hero_photo_url": _GAL_A})
+    await _update(repo, media_store=store).execute(ACADEMY, {"hero_photo_url": None})
+    assert list(store.objects) == _paths(_GAL_A)
+
+
+async def test_the_same_object_under_a_different_query_is_kept() -> None:
+    _db, repo = await _repo()
+    store = _store_with(*_paths(_HERO_A))
+    await repo.update_by_id(ACADEMY, {"public_page.hero_photo_url": f"{_HERO_A}?token=a"})
+    await _update(repo, media_store=store).execute(
+        ACADEMY, {"hero_photo_url": f"{_HERO_A}?token=b"}
+    )
+    assert list(store.objects) == _paths(_HERO_A)
+
+
+async def test_compose_wires_the_media_store_only_when_given() -> None:
+    from backend.v2.composition.public_page_admin import compose_admin_public_page
+
+    db, _ = await _repo()
+    store = _store_with()
+    wired = compose_admin_public_page(db, media_url_base=BASE, media_store=store)
+    assert wired.update_public_page_settings._media_store is store
+    bare = compose_admin_public_page(db)
+    assert bare.update_public_page_settings._media_store is None

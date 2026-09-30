@@ -127,10 +127,26 @@ def resolve_sender(academy_doc: dict[str, Any] | None) -> SenderIdentity:
         or _safe(validate_sender_name, academy_doc.get("display_name"))
         or _safe(validate_sender_name, academy_doc.get("name"))
     )
-    reply_to = _safe(validate_reply_to, academy_doc.get("email_reply_to")) or _safe(
-        validate_support_email, academy_doc.get("support_email")
-    )
+    reply_to, _source = resolve_reply_to(academy_doc)
     return SenderIdentity(sender_name=name, reply_to=reply_to)
+
+
+def resolve_reply_to(academy_doc: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """``(address, source)`` of the reply-to a send would use.
+
+    ``source`` is ``"reply_to"`` (explicit ``email_reply_to``), ``"support_email"``
+    (the fallback) or ``None`` (neither valid). The single rule behind both the
+    send paths and the Settings display.
+    """
+    if not academy_doc:
+        return None, None
+    explicit = _safe(validate_reply_to, academy_doc.get("email_reply_to"))
+    if explicit:
+        return explicit, "reply_to"
+    support = _safe(validate_support_email, academy_doc.get("support_email"))
+    if support:
+        return support, "support_email"
+    return None, None
 
 
 def format_from_header(sender_name: str | None, address: str) -> str:

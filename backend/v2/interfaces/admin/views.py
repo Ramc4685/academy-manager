@@ -1860,6 +1860,9 @@ class AdminAcademyView(BaseModel):
     currency: str = "USD"
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+    # Read-only (#1014): the reply-to a send uses, from the same resolver.
+    effective_reply_to: str | None = None
+    effective_reply_to_source: Literal["reply_to", "support_email"] | None = None
     # Settings overhaul Phase 4 PR 13. ``support_email`` is the parents' contact
     # (default reply-to, public footer); ``terms_url``/``refund_policy_url`` are
     # https links; ``privacy_notice_url`` is a view of the SAME value stored at
