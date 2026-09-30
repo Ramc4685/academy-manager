@@ -23,6 +23,10 @@ a custom class at the same price):
 * a cancel is refused once a month on or after the change is quoted or
   invoiced; the parent quote's "next month" price is the next invoice's;
 * a class marked custom leaves the change, a class linked later joins it;
+* an owner edit (cancel, a class leaving or joining) racing a quote or the
+  scheduler never leaves two prices for one month: an overlapping quote is
+  withdrawn and re-priced, the scheduler defers a change edited mid-run, and
+  a "next month" price told to a parent blocks the cancel;
 * the cancellation CREDIT amount matches main's for the month's price;
 * a custom-price class at the same price is not affected;
 * another academy's plan and class with the SAME ids are never touched.
@@ -64,6 +68,7 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
 )
 from backend.v2.contexts.billing.domain.errors import (
     PriceChangeAlreadyCharged,
+    PriceChangeInFlight,
     PriceChangeInvalid,
     PriceChangeMonthNotAllowed,
     PriceChangeNotCancellable,
@@ -844,3 +849,184 @@ def test_both_checkout_quote_wirings_read_the_fee_for_the_month() -> None:
     for module in ("admin.py", "parent.py"):
         source = (V2_ROOT / "composition" / module).read_text(encoding="utf-8")
         assert "class_fees=MongoClassFeeResolver(db)" in source, module
+
+
+# ------------------------------------------- owner edits racing charges
+
+
+class _CancelDuringPriceRead(MongoClassFeeResolver):
+    """A fee read that lets the owner's cancel land right after it (the race)."""
+
+    def __init__(self, db: Any, cancel: Any) -> None:
+        super().__init__(db)
+        self._cancel = cancel
+
+    async def fee_cents_for_period(self, session_doc: Any, period: str) -> int:
+        fee = await super().fee_cents_for_period(session_doc, period)
+        if self._cancel is not None:
+            cancel, self._cancel = self._cancel, None
+            await cancel()
+        return fee
+
+
+def _quote_uc(kit: _Kit, class_fees: MongoClassFeeResolver) -> QuoteEnrollment:
+    return QuoteEnrollment(
+        sessions=kit.payments,
+        snapshots=kit.payments,
+        occurrences=kit.payments,
+        clock=_clock,
+        class_fees=class_fees,
+        fence_retry_delay=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_quote_priced_before_a_cancel_landed_is_withdrawn_and_repriced(
+    real_db, acad
+) -> None:
+    await _seed_academy(real_db, acad)
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+
+    async def cancel() -> None:
+        await kit.cancel.execute(academy_id=acad, change_id=change.change_id, actor_id="owner-1")
+
+    # The quote reads November at the new price, then the owner cancels
+    # (nothing is stored yet, so the cancel is allowed), then the quote stores.
+    quote = await _quote_uc(kit, _CancelDuringPriceRead(real_db, cancel)).execute(
+        QuoteEnrollmentCommand(
+            session_id="juniors",
+            billing_start_at=datetime(2026, 11, 3, 12, tzinfo=UTC),
+            calculated_by="parent-1",
+        )
+    )
+
+    assert (await kit.changes.get(change.change_id)).status == "cancelled"  # type: ignore[union-attr]
+    assert quote.monthly_price_cents == OLD
+    stored = {
+        doc["snapshot_id"]: (doc["status"], doc["monthly_price_cents"])
+        async for doc in real_db["billing_calculation_snapshots"].find({"academy_id": acad})
+    }
+    # The quote at the new price can never be paid; only the re-priced one is open.
+    assert sorted(stored.values()) == [("OPEN", OLD), ("SUPERSEDED", NEW)]
+    assert stored[quote.snapshot_id] == ("OPEN", OLD)
+
+
+@pytest.mark.asyncio
+async def test_no_quote_is_stored_while_an_owner_edit_holds_the_change(real_db, acad) -> None:
+    await _seed_academy(real_db, acad)
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+    held = await kit.changes.begin_edit(change.change_id, ["squad"])
+    assert held is not None
+
+    for session_id in ("juniors", "squad"):  # in the change / about to join it
+        with pytest.raises(PriceChangeInFlight):
+            await _quote_uc(kit, MongoClassFeeResolver(real_db)).execute(
+                QuoteEnrollmentCommand(
+                    session_id=session_id,
+                    billing_start_at=datetime(2026, 11, 3, 12, tzinfo=UTC),
+                    calculated_by="parent-1",
+                )
+            )
+    assert await real_db["billing_calculation_snapshots"].count_documents({"status": "OPEN"}) == 0
+    # A second owner edit waits too; the scheduler leaves the change alone.
+    with pytest.raises(PriceChangeInFlight):
+        await kit.cancel.execute(academy_id=acad, change_id=change.change_id, actor_id="owner-1")
+    assert (await kit.apply_due.execute(academy_id=acad, period="2026-11")).applied == 0
+    assert (await kit.changes.get(change.change_id)).flipped_session_ids == ()  # type: ignore[union-attr]
+
+    await kit.changes.end_edit(change.change_id, held[0])
+    assert await kit.quote("juniors", datetime(2026, 11, 3, 12, tzinfo=UTC)) == NEW
+    assert (await kit.apply_due.execute(academy_id=acad, period="2026-11")).applied == 1
+
+
+@pytest.mark.asyncio
+async def test_a_next_month_price_told_to_a_parent_blocks_the_cancel(real_db, acad) -> None:
+    await _seed_academy(real_db, acad)
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+    # October 10: "Starting next month, tuition is $130.00/month."
+    snapshot = await kit.quote_snapshot("juniors", datetime(2026, 10, 10, 12, tzinfo=UTC))
+    assert (snapshot.billing_period_label, snapshot.next_monthly_price_cents) == ("2026-10", NEW)
+
+    with pytest.raises(PriceChangeAlreadyCharged):
+        await kit.cancel.execute(academy_id=acad, change_id=change.change_id, actor_id="owner-1")
+    with pytest.raises(PriceChangeAlreadyCharged):
+        await kit.set_link.execute(kit.link(acad, "juniors", None))
+
+    # Paid at checkout, the promise still holds after the quote's TTL.
+    assert await kit.payments.consume(snapshot.snapshot_id) is not None
+    await real_db["billing_calculation_snapshots"].update_many(
+        {"academy_id": acad}, {"$set": {"expires_at": datetime(2026, 9, 1, tzinfo=UTC)}}
+    )
+    with pytest.raises(PriceChangeAlreadyCharged):
+        await kit.cancel.execute(academy_id=acad, change_id=change.change_id, actor_id="owner-1")
+    assert (await kit.changes.get(change.change_id)).status == "scheduled"  # type: ignore[union-attr]
+
+
+class _LinkDuringFlip(MongoPriceChangeFlipWriter):
+    """The owner links Squad to the plan while the scheduler is mid-loop."""
+
+    def __init__(self, db: Any, link: Any) -> None:
+        super().__init__(db)
+        self._link = link
+
+    async def flip_class_fee(self, session_id: str, **kwargs: Any) -> bool:
+        if self._link is not None:
+            link, self._link = self._link, None
+            await link()
+        return await super().flip_class_fee(session_id, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_a_class_joining_mid_run_is_flipped_by_the_next_run_not_dropped(
+    real_db, acad
+) -> None:
+    await _seed_academy(real_db, acad)
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+
+    async def link_squad() -> None:
+        await kit.set_link.execute(kit.link(acad, "squad", "group"))
+
+    racing = ApplyDuePlanPriceChanges(
+        changes=kit.changes,
+        flips=_LinkDuringFlip(real_db, link_squad),
+        audit=RecordMoneySettingChange(audit=MongoBillingAuditLogRepository(real_db), now=_clock),
+        clock=_clock,
+    )
+    assert (await racing.execute(academy_id=acad, period="2026-11")).applied == 0
+
+    stored = await kit.changes.get(change.change_id)
+    assert stored is not None and stored.status == "scheduled"
+    assert "squad" in stored.session_ids
+    assert await kit.every_path("squad", "e4", "2026-11") == [NEW] * 4
+
+    assert (await kit.apply_due.execute(academy_id=acad, period="2026-11")).applied == 1
+    squad = await real_db["sessions"].find_one({"academy_id": acad, "session_id": "squad"})
+    assert squad["amount_cents"] == NEW
+    assert await kit.every_path("squad", "e4", "2026-11") == [NEW] * 4
+    assert await kit.every_path("squad", "e4", "2026-10") == [OLD] * 4
+
+
+@pytest.mark.asyncio
+async def test_the_link_audit_records_only_moves_that_were_made(real_db, acad) -> None:
+    await _seed_academy(real_db, acad)
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+    # The scheduler recorded Juniors as flipped after the owner's page loaded.
+    await real_db["plan_price_changes"].update_one(
+        {"academy_id": acad, "change_id": change.change_id},
+        {"$addToSet": {"flipped_session_ids": "juniors"}},
+    )
+
+    await kit.set_link.execute(kit.link(acad, "juniors", None))
+
+    stored = await kit.changes.get(change.change_id)
+    assert stored is not None and "juniors" in stored.session_ids
+    audit = await real_db["billing_audit_log"].find_one({"action": "class_plan_link_changed"})
+    assert "price_changes_left" not in audit["after"]
+    assert "edit" not in await real_db["plan_price_changes"].find_one(
+        {"academy_id": acad, "change_id": change.change_id}
+    )

@@ -35,6 +35,14 @@ linked to the plan later at the old price joins it. Both, and a cancel, are
 refused once a month on or after the change is charged or quoted for the
 class, so a month never ends up with two prices.
 
+That refusal is a check followed by a write, so it is fenced: the owner's
+edit first marks the change as being edited (and bumps ``revision``), then
+checks for charges, then writes. A registration quote reads the change's
+revision before and after it stores its snapshot and withdraws the snapshot
+if an edit started or finished in between; a quote cannot be stored while an
+edit is open. Either the owner's check sees the quote, or the quote sees the
+edit and retries at the settled price.
+
 Pure: no I/O, no academy id.
 """
 
@@ -87,6 +95,10 @@ class PlanPriceChange:
     flipped_session_ids: tuple[str, ...] = ()
     created_by: str = ""
     created_at: datetime | None = None
+    #: Bumped each time the owner starts an edit (cancel, a class leaving or
+    #: joining). The scheduler's writes are compare-and-set on it, so a change
+    #: edited mid-run is left for the next run instead of applied half-read.
+    revision: int = 0
 
 
 def is_period(value: str) -> bool:

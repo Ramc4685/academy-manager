@@ -284,3 +284,14 @@ class PriceChangeAlreadyCharged(DomainError):
 
     code = "Billing.PriceChangeAlreadyCharged"
     status_code = 409
+
+
+class PriceChangeInFlight(DomainError):
+    """Plan price change: the owner is editing a change that covers this class right now.
+
+    Raised to a registration quote that overlapped the edit, so it never
+    stores a price the edit is about to make wrong. Retry in a moment.
+    """
+
+    code = "Billing.PriceChangeInFlight"
+    status_code = 409

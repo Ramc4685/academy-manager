@@ -1,6 +1,6 @@
 """Indexes for ``plan_price_changes`` (Settings overhaul Phase 6 PR 26).
 
-A plan price change the owner scheduled from a future month. Three indexes:
+A plan price change the owner scheduled from a future month. Four indexes:
 
 * ``plan_price_changes_academy_pending_plan_unique``: ``(academy_id,
   pending_plan_id)``, unique, partial on ``pending_plan_id`` ``$gt ""``.
@@ -13,8 +13,11 @@ A plan price change the owner scheduled from a future month. Three indexes:
   change cover this class".
 * ``plan_price_changes_academy_change_unique``: ``(academy_id, change_id)``,
   unique; cancel and the scheduler's writes go by change id.
+* ``plan_price_changes_academy_edit_sessions``: ``(academy_id,
+  edit.session_ids)`` (multikey); the other half of a registration quote's
+  fence read (a class an open owner edit is about to add to a change).
 
-Both lead with ``academy_id`` (#849). New, empty collection: no data is read
+All lead with ``academy_id`` (#849). New, empty collection: no data is read
 or changed. Idempotent: ``create_index`` with the same name and spec is a
 no-op, so re-running is safe.
 """
@@ -46,6 +49,12 @@ INDEXES: list[tuple[str, str, list[tuple[str, int]], dict[str, Any]]] = [
         "plan_price_changes_academy_change_unique",
         [("academy_id", 1), ("change_id", 1)],
         {"unique": True},
+    ),
+    (
+        "plan_price_changes",
+        "plan_price_changes_academy_edit_sessions",
+        [("academy_id", 1), ("edit.session_ids", 1)],
+        {},
     ),
 ]
 

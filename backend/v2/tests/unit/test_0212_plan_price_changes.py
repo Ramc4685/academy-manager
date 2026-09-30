@@ -24,6 +24,10 @@ async def test_builds_the_indexes_and_rerun_is_a_no_op() -> None:
         ("session_ids", 1),
         ("status", 1),
     ]
+    assert info["plan_price_changes_academy_edit_sessions"]["key"] == [
+        ("academy_id", 1),
+        ("edit.session_ids", 1),
+    ]
 
 
 def test_every_index_leads_with_academy_id_and_never_uses_type() -> None:

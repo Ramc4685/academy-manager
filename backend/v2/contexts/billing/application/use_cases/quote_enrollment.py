@@ -7,6 +7,7 @@ they delegate here instead.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
@@ -18,7 +19,7 @@ from backend.v2.contexts.billing.application.ports import (
     SessionLoader,
     SnapshotWriter,
 )
-from backend.v2.contexts.billing.domain.errors import PaymentNotFound
+from backend.v2.contexts.billing.domain.errors import PaymentNotFound, PriceChangeInFlight
 from backend.v2.contexts.billing.domain.plan_price_change import next_period
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
@@ -46,6 +47,11 @@ class QuoteEnrollmentCommand:
     billing_start_date: date | None = None
 
 
+#: Tries at a quote that keeps overlapping an owner's plan price change edit.
+#: An edit holds a change for well under a second, so a short wait is enough.
+_FENCE_ATTEMPTS = 4
+
+
 class QuoteEnrollment:
     """Compute a first-month proration quote and store it as an OPEN snapshot."""
 
@@ -58,6 +64,7 @@ class QuoteEnrollment:
         clock=lambda: datetime.now(UTC),
         academy_timezone: AcademyTimezoneReader | None = None,
         class_fees: ClassFeeForPeriod | None = None,
+        fence_retry_delay: float = 0.25,
     ) -> None:
         self._sessions = sessions
         self._snapshots = snapshots
@@ -70,6 +77,7 @@ class QuoteEnrollment:
         # change applied (PR 26). Unset (tests, old wiring) reads the stored
         # fee, i.e. today's behaviour.
         self._class_fees = class_fees
+        self._fence_retry_delay = fence_retry_delay
 
     async def execute(self, cmd: QuoteEnrollmentCommand) -> BillingCalculationSnapshot:
         session_doc = await self._sessions.get_by_id(cmd.session_id)
@@ -89,38 +97,63 @@ class QuoteEnrollment:
         )
         occ_list = await self._occurrences.list_for_session(session_doc, period)
 
-        monthly_price_cents = (
-            await self._class_fees.fee_cents_for_period(session_doc, period.label)
-            if self._class_fees is not None
-            else _session_amount_cents(session_doc)
-        )
-        snapshot = FirstMonthProrationPolicy().quote(
-            monthly_price_cents=monthly_price_cents,
-            discount_cents=0,
-            period=period,
-            occurrences=occ_list,
-            billing_start_at=billing_start_at,
-            calculated_at=now,
-            calculated_by=cmd.calculated_by,
-        )
+        def _quote(monthly_price_cents: int) -> BillingCalculationSnapshot:
+            return FirstMonthProrationPolicy().quote(
+                monthly_price_cents=monthly_price_cents,
+                discount_cents=0,
+                period=period,
+                occurrences=occ_list,
+                billing_start_at=billing_start_at,
+                calculated_at=now,
+                calculated_by=cmd.calculated_by,
+            )
 
-        stored = await self._snapshots.persist_open(
-            snapshot=snapshot,
+        async def _persist(snapshot: BillingCalculationSnapshot) -> BillingCalculationSnapshot:
+            return await self._snapshots.persist_open(
+                snapshot=snapshot,
+                session_id=cmd.session_id,
+                parent_id=cmd.parent_id,
+                student_id=cmd.student_id,
+                enrollment_id=cmd.enrollment_id,
+                ttl_minutes=cmd.ttl_minutes,
+                now=now,
+            )
+
+        class_fees = self._class_fees
+        if class_fees is None:
+            return await _persist(_quote(_session_amount_cents(session_doc)))
+
+        # A plan price change the owner is cancelling (or moving this class
+        # in or out of) right now must not be priced half-way: read the
+        # change fence, price, store, read the fence again. A different
+        # fence means an edit overlapped: withdraw the quote and price again.
+        next_label = next_period(period.label)
+        for attempt in range(_FENCE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(self._fence_retry_delay)
+            try:
+                fence = await class_fees.price_fence(cmd.session_id)
+            except PriceChangeInFlight:
+                continue
+            fee = await class_fees.fee_cents_for_period(session_doc, period.label)
+            # "Starting next month, tuition is $X": the fee the next monthly
+            # invoice will charge, which a scheduled plan price change may move.
+            next_fee = await class_fees.fee_cents_for_period(session_doc, next_label)
+            stored = await _persist(
+                _quote(fee).model_copy(update={"next_billing_period_label": next_label})
+            )
+            try:
+                settled = await class_fees.price_fence(cmd.session_id) == fence
+            except PriceChangeInFlight:
+                settled = False
+            if settled:
+                return stored.model_copy(update={"next_monthly_price_cents": next_fee})
+            if stored.snapshot_id:
+                await class_fees.withdraw_quote(stored.snapshot_id)
+        raise PriceChangeInFlight(
+            "Prices for this class are being updated. Try again in a moment.",
             session_id=cmd.session_id,
-            parent_id=cmd.parent_id,
-            student_id=cmd.student_id,
-            enrollment_id=cmd.enrollment_id,
-            ttl_minutes=cmd.ttl_minutes,
-            now=now,
         )
-        if self._class_fees is None:
-            return stored
-        # "Starting next month, tuition is $X": the fee the next monthly
-        # invoice will charge, which a scheduled plan price change may move.
-        next_fee = await self._class_fees.fee_cents_for_period(
-            session_doc, next_period(period.label)
-        )
-        return stored.model_copy(update={"next_monthly_price_cents": next_fee})
 
     async def _session_timezone(self, session_doc: dict[str, Any]) -> str:
         """Session zone, else the session's academy zone, else the legacy zone."""

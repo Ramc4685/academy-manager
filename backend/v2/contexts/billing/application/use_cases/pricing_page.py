@@ -43,6 +43,7 @@ from backend.v2.contexts.billing.domain.class_pricing import (
 )
 from backend.v2.contexts.billing.domain.errors import (
     PriceChangeAlreadyCharged,
+    PriceChangeInFlight,
     PricingClassNotFound,
     SessionTypeNotFound,
 )
@@ -198,8 +199,13 @@ class PriceChangeMembership(Protocol):
     """Which classes a scheduled plan price change reaches (PR 26)."""
 
     async def list_scheduled(self) -> list[PlanPriceChange]: ...
-    async def add_session(self, change_id: str, session_id: str) -> bool: ...
-    async def remove_session(self, change_id: str, session_id: str) -> bool: ...
+    async def get(self, change_id: str) -> PlanPriceChange | None: ...
+    async def begin_edit(
+        self, change_id: str, session_ids: Sequence[str]
+    ) -> tuple[str, PlanPriceChange] | None: ...
+    async def end_edit(self, change_id: str, token: str) -> None: ...
+    async def add_session(self, change_id: str, session_id: str, *, token: str) -> bool: ...
+    async def remove_session(self, change_id: str, session_id: str, *, token: str) -> bool: ...
 
 
 class ChargedMonthReader(Protocol):
@@ -209,18 +215,44 @@ class ChargedMonthReader(Protocol):
 
 
 @dataclass(frozen=True)
+class _Hold:
+    change_id: str
+    token: str
+
+
+@dataclass(frozen=True)
 class _MembershipMoves:
-    remove: tuple[str, ...] = ()
-    add: tuple[str, ...] = ()
+    """Moves to make once the link is written, each under an edit hold on its change."""
+
+    remove: tuple[_Hold, ...] = ()
+    add: tuple[_Hold, ...] = ()
+    #: Holds taken for a change that turned out to need no move.
+    idle: tuple[_Hold, ...] = ()
+
+    def holds(self) -> tuple[_Hold, ...]:
+        return self.remove + self.add + self.idle
+
+
+@dataclass(frozen=True)
+class _AppliedMoves:
+    left: tuple[str, ...] = ()
+    joined: tuple[str, ...] = ()
 
     def audit_fields(self) -> dict[str, object]:
         """Only present when a link moved a class in or out of a scheduled change."""
         out: dict[str, object] = {}
-        if self.remove:
-            out["price_changes_left"] = list(self.remove)
-        if self.add:
-            out["price_changes_joined"] = list(self.add)
+        if self.left:
+            out["price_changes_left"] = list(self.left)
+        if self.joined:
+            out["price_changes_joined"] = list(self.joined)
         return out
+
+
+async def _release(membership: PriceChangeMembership | None, holds: Sequence[_Hold]) -> None:
+    if membership is None:
+        return
+    for hold in holds:
+        await membership.end_edit(hold.change_id, hold.token)
 
 
 async def _plan_membership_moves(
@@ -239,47 +271,104 @@ async def _plan_membership_moves(
     not go stale when the plan price moves. Either move is refused (or, for
     a join, skipped) when a month on or after the change is already charged
     or quoted for the class: those charges must keep matching the month.
-    Nothing is written here; the caller applies the moves after the link.
+
+    Each change a move may touch is held for an owner edit first (see
+    ``domain/plan_price_change.py``), and the move is decided from the change
+    as it stands under the hold: no quote for the class can be stored and the
+    scheduler cannot flip the class until the caller applies the moves with
+    :func:`_apply_membership_moves` (which releases every hold). On an error
+    here every hold taken is released.
     """
     if membership is None:
         return _MembershipMoves()
-    remove: list[str] = []
-    add: list[str] = []
-    for change in await membership.list_scheduled():
-        in_change = session_id in change.session_ids
-        applies = fee_cents == change.old_cents
-        if in_change and change.plan_id != plan_id:
-            if session_id in change.flipped_session_ids:
+    remove: list[_Hold] = []
+    add: list[_Hold] = []
+    idle: list[_Hold] = []
+    try:
+        for listed in await membership.list_scheduled():
+            leaving = session_id in listed.session_ids and listed.plan_id != plan_id
+            joining = (
+                session_id not in listed.session_ids
+                and listed.plan_id == plan_id
+                and fee_cents == listed.old_cents
+            )
+            if not (leaving or joining):
                 continue
-            if (
-                applies
-                and charges is not None
-                and await charges.has_charges_from([session_id], change.effective_period)
-            ):
-                raise PriceChangeAlreadyCharged(
-                    "This class already has charges at the plan's new price. It stays on the plan.",
-                    session_id=session_id,
-                    change_id=change.change_id,
-                )
-            remove.append(change.change_id)
-        elif not in_change and change.plan_id == plan_id and applies:
-            if charges is None or await charges.has_charges_from(
-                [session_id], change.effective_period
-            ):
-                continue  # already charged at today's price for that month
-            add.append(change.change_id)
-    return _MembershipMoves(remove=tuple(remove), add=tuple(add))
+            held = await membership.begin_edit(listed.change_id, [session_id])
+            if held is None:
+                latest = await membership.get(listed.change_id)
+                if latest is not None and latest.status == "scheduled":
+                    raise PriceChangeInFlight(
+                        "A plan price change for this class is being edited. "
+                        "Try again in a moment.",
+                        session_id=session_id,
+                        change_id=listed.change_id,
+                    )
+                continue  # applied or cancelled since it was listed
+            token, change = held
+            hold = _Hold(change.change_id, token)
+            in_change = session_id in change.session_ids
+            applies = fee_cents == change.old_cents
+            if in_change and change.plan_id != plan_id:
+                if session_id in change.flipped_session_ids:
+                    idle.append(hold)
+                    continue
+                if (
+                    applies
+                    and charges is not None
+                    and await charges.has_charges_from([session_id], change.effective_period)
+                ):
+                    idle.append(hold)
+                    raise PriceChangeAlreadyCharged(
+                        "This class already has charges at the plan's new price. "
+                        "It stays on the plan.",
+                        session_id=session_id,
+                        change_id=change.change_id,
+                    )
+                remove.append(hold)
+            elif not in_change and change.plan_id == plan_id and applies:
+                if charges is None or await charges.has_charges_from(
+                    [session_id], change.effective_period
+                ):
+                    idle.append(hold)  # already charged at today's price for that month
+                    continue
+                add.append(hold)
+            else:
+                idle.append(hold)
+    except BaseException:
+        await _release(membership, remove + add + idle)
+        raise
+    return _MembershipMoves(remove=tuple(remove), add=tuple(add), idle=tuple(idle))
 
 
 async def _apply_membership_moves(
     membership: PriceChangeMembership | None, session_id: str, moves: _MembershipMoves
-) -> None:
+) -> _AppliedMoves:
+    """Write the planned moves; returns the ones that were written. Releases every hold."""
     if membership is None:
-        return
-    for change_id in moves.remove:
-        await membership.remove_session(change_id, session_id)
-    for change_id in moves.add:
-        await membership.add_session(change_id, session_id)
+        return _AppliedMoves()
+    left: list[str] = []
+    joined: list[str] = []
+    try:
+        for hold in moves.remove:
+            if await membership.remove_session(hold.change_id, session_id, token=hold.token):
+                left.append(hold.change_id)
+            else:
+                log.warning(
+                    "plan_price_change_move_skipped",
+                    extra={"change_id": hold.change_id, "session_id": session_id, "move": "leave"},
+                )
+        for hold in moves.add:
+            if await membership.add_session(hold.change_id, session_id, token=hold.token):
+                joined.append(hold.change_id)
+            else:
+                log.warning(
+                    "plan_price_change_move_skipped",
+                    extra={"change_id": hold.change_id, "session_id": session_id, "move": "join"},
+                )
+    finally:
+        await _release(membership, moves.holds())
+    return _AppliedMoves(left=tuple(left), joined=tuple(joined))
 
 
 def plan_prices(plans: Sequence[SessionType]) -> list[PlanPrice]:
@@ -436,14 +525,18 @@ class SetClassPlanLink:
             plan_id=cmd.plan_id,
             fee_cents=cls.charged_cents,
         )
-        previous = await self._links.get_link(cmd.session_id)
-        await self._links.set_link(
-            session_id=cmd.session_id,
-            plan_id=cmd.plan_id,
-            actor_id=cmd.actor_id,
-            at=self._now(),
-        )
-        await _apply_membership_moves(self._price_changes, cmd.session_id, moves)
+        try:
+            previous = await self._links.get_link(cmd.session_id)
+            await self._links.set_link(
+                session_id=cmd.session_id,
+                plan_id=cmd.plan_id,
+                actor_id=cmd.actor_id,
+                at=self._now(),
+            )
+        except BaseException:
+            await _release(self._price_changes, moves.holds())
+            raise
+        applied = await _apply_membership_moves(self._price_changes, cmd.session_id, moves)
         await self._audit.execute(
             academy_id=cmd.academy_id,
             action="class_plan_link_changed",
@@ -460,7 +553,7 @@ class SetClassPlanLink:
                 # The fee is unchanged by a link; recorded so the trail shows
                 # what the class was charged when it was linked.
                 "charged_cents": cls.charged_cents,
-                **moves.audit_fields(),
+                **applied.audit_fields(),
             },
         )
         return PricingClassRow(
@@ -540,14 +633,20 @@ class LinkMatchingClasses:
                 plan_id=plan_id,
                 fee_cents=cls.charged_cents,
             )
-            if await self._links.set_link_if_unset(
-                session_id=cls.session_id, plan_id=plan_id, actor_id=actor_id, at=now
-            ):
-                await _apply_membership_moves(self._price_changes, cls.session_id, moves)
+            try:
+                was_unset = await self._links.set_link_if_unset(
+                    session_id=cls.session_id, plan_id=plan_id, actor_id=actor_id, at=now
+                )
+            except BaseException:
+                await _release(self._price_changes, moves.holds())
+                raise
+            if was_unset:
+                applied = await _apply_membership_moves(self._price_changes, cls.session_id, moves)
                 linked.append(
-                    {"session_id": cls.session_id, "plan_id": plan_id, **moves.audit_fields()}
+                    {"session_id": cls.session_id, "plan_id": plan_id, **applied.audit_fields()}
                 )
             else:
+                await _release(self._price_changes, moves.holds())
                 already += 1
 
         result = LinkMatchingClassesResult(

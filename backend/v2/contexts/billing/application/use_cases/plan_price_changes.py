@@ -41,6 +41,7 @@ from backend.v2.contexts.billing.application.use_cases.pricing_page import (
 from backend.v2.contexts.billing.domain.class_pricing import effective_plan_link
 from backend.v2.contexts.billing.domain.errors import (
     PriceChangeAlreadyCharged,
+    PriceChangeInFlight,
     PriceChangeInvalid,
     PriceChangeNotCancellable,
     PriceChangeNotFound,
@@ -73,12 +74,25 @@ class PlanPriceChangeRepository(Protocol):
         """Raise ``PriceChangePending`` when the plan already has a scheduled change."""
         ...
 
-    async def cancel(self, change_id: str, *, actor_id: str, at: datetime) -> bool: ...
-    async def record_flip(self, change_id: str, session_id: str) -> bool:
-        """False when the change is no longer scheduled or no longer holds the class."""
+    async def begin_edit(
+        self, change_id: str, session_ids: Sequence[str]
+    ) -> tuple[str, PlanPriceChange] | None:
+        """Hold a scheduled change for an owner edit: ``(token, fresh change)``.
+
+        ``None`` when it is no longer scheduled or another edit holds it.
+        """
         ...
 
-    async def mark_applied(self, change_id: str, *, plan_flipped: bool, at: datetime) -> bool: ...
+    async def end_edit(self, change_id: str, token: str) -> None: ...
+    async def cancel(self, change_id: str, *, token: str, actor_id: str, at: datetime) -> bool: ...
+    async def record_flip(self, change_id: str, session_id: str, *, revision: int) -> bool:
+        """False when the change moved on from ``revision``, is held by an edit,
+        is no longer scheduled or no longer holds the class."""
+        ...
+
+    async def mark_applied(
+        self, change_id: str, *, revision: int, plan_flipped: bool, at: datetime
+    ) -> bool: ...
 
 
 class InvoicedPeriodReader(Protocol):
@@ -357,6 +371,11 @@ class CancelPlanPriceChange:
     quoted for the change's classes (a registration quote, a checkout, a
     monthly run generated early): those were priced at the new price, and
     cancelling would leave the month with two prices.
+
+    The check and the cancel run under an edit hold on the change (see
+    ``domain/plan_price_change.py``): a registration quote cannot be stored
+    while the hold is open, and one that straddled it is withdrawn, so no
+    quote at the new price can land between the check and the cancel.
     """
 
     def __init__(
@@ -386,16 +405,37 @@ class CancelPlanPriceChange:
             raise PriceChangeNotCancellable(
                 "This price change has taken effect or was cancelled.", change_id=change_id
             )
-        if await self._charges.has_charges_from(change.session_ids, change.effective_period):
-            raise PriceChangeAlreadyCharged(
-                "Some charges from that month already use the new price, "
-                "so this change can no longer be cancelled.",
-                change_id=change_id,
-            )
-        if not await self._changes.cancel(change_id, actor_id=actor_id, at=self._now()):
+        held = await self._changes.begin_edit(change_id, change.session_ids)
+        if held is None:
+            latest = await self._changes.get(change_id)
+            if latest is not None and latest.status == "scheduled":
+                raise PriceChangeInFlight(
+                    "This price change is being edited. Try again in a moment.",
+                    change_id=change_id,
+                )
             raise PriceChangeNotCancellable(
                 "This price change has taken effect or was cancelled.", change_id=change_id
             )
+        token, change = held
+        try:
+            if change.flipped_session_ids:
+                raise PriceChangeNotCancellable(
+                    "This price change has taken effect or was cancelled.", change_id=change_id
+                )
+            if await self._charges.has_charges_from(change.session_ids, change.effective_period):
+                raise PriceChangeAlreadyCharged(
+                    "Some charges from that month already use the new price, "
+                    "so this change can no longer be cancelled.",
+                    change_id=change_id,
+                )
+            if not await self._changes.cancel(
+                change_id, token=token, actor_id=actor_id, at=self._now()
+            ):
+                raise PriceChangeNotCancellable(
+                    "This price change has taken effect or was cancelled.", change_id=change_id
+                )
+        finally:
+            await self._changes.end_edit(change_id, token)
         await self._audit.execute(
             academy_id=academy_id,
             action="plan_price_change_cancelled",
@@ -465,6 +505,11 @@ class ApplyDuePlanPriceChanges:
     old price, and a class is recorded as flipped before its fee moves. Does
     not change any charge (the charge paths already read the new price for
     the month); it keeps links current and the class editor accurate.
+
+    The change's flips and its "applied" mark are compare-and-set on the
+    revision read at the start, so a change the owner edits mid-run (a class
+    joining or leaving) is left scheduled and picked up whole by the next run
+    rather than applied from a stale list of classes.
     """
 
     def __init__(
@@ -487,31 +532,32 @@ class ApplyDuePlanPriceChanges:
                 continue
             now = self._now()
             flipped: list[str] = []
-            cancelled = False
+            deferred = False
             for session_id in change.session_ids:
                 if session_id in change.flipped_session_ids:
                     flipped.append(session_id)
                     continue
                 if await self._flips.current_class_fee(session_id) != change.old_cents:
                     continue  # fee edited by hand since: the owner's fee wins
-                if not await self._changes.record_flip(change.change_id, session_id):
-                    latest = await self._changes.get(change.change_id)
-                    if latest is None or latest.status != "scheduled":
-                        cancelled = True
-                        break
-                    continue  # the owner moved the class off the plan meanwhile
+                if not await self._changes.record_flip(
+                    change.change_id, session_id, revision=change.revision
+                ):
+                    # Cancelled, or the owner is editing (or edited) the
+                    # change since it was read: leave it for the next run.
+                    deferred = True
+                    break
                 flipped.append(session_id)
                 if await self._flips.flip_class_fee(
                     session_id, old_cents=change.old_cents, new_cents=change.new_cents, at=now
                 ):
                     moved += 1
-            if cancelled:
+            if deferred:
                 continue
             plan_flipped = await self._flips.flip_plan_price(
                 change.plan_id, old_cents=change.old_cents, new_cents=change.new_cents, at=now
             )
             if not await self._changes.mark_applied(
-                change.change_id, plan_flipped=plan_flipped, at=now
+                change.change_id, revision=change.revision, plan_flipped=plan_flipped, at=now
             ):
                 continue
             applied += 1
