@@ -100,3 +100,14 @@ test("portal-not-ready is distinct from the academy-setup failure copy", () => {
     toPortalErrorMessage(setupBroken, FALLBACK),
   );
 });
+
+test("maps Billing.AutopayClassUnpriced to an explanation, not the generic failure", () => {
+  const err = apiError("this class has no monthly fee, so there is nothing to put on autopay", {
+    code: "Billing.AutopayClassUnpriced",
+    status: 409,
+  });
+  const message = toPaymentErrorMessage(err, FALLBACK);
+  assert.notEqual(message, FALLBACK);
+  assert.match(message, /monthly fee/);
+  assert.match(message, /contact the academy/);
+});
