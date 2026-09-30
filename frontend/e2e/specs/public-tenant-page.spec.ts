@@ -69,6 +69,19 @@ test.describe("published page", () => {
     await expect(page.getByTestId("courtmastr-credit")).toHaveText(
       "Bookings and payments by CourtMastr",
     );
+    // Landing render (Settings Phase 6): BLNO-style academy with no content
+    // and no theme set is today's page: Floodlit, no content sections, the
+    // built-in FAQ, today's seat chips, its own support email only.
+    await expect(page.getByTestId("public-academy-page")).toHaveAttribute("data-theme", "floodlit");
+    await expect(page.getByTestId("public-hero-photo")).toHaveCount(0);
+    await expect(page.getByTestId("public-about")).toHaveCount(0);
+    await expect(page.getByTestId("public-gallery")).toHaveCount(0);
+    await expect(page.getByTestId("public-coach-card")).toHaveCount(0);
+    await expect(page.getByText("What happens at a free trial?")).toBeVisible();
+    await expect(page.getByTestId("academy-support-email")).toHaveText(
+      "hello@riverside.example.test",
+    );
+    await expect(page.getByText("lakeside", { exact: false })).toHaveCount(0);
     // Legal links the academy set (Settings overhaul Phase 4 PR 13).
     await expect(page.getByTestId("academy-terms-link")).toHaveAttribute(
       "href",
@@ -134,6 +147,48 @@ test.describe("published page", () => {
     const sitemap = await request.get("/sitemap.xml", { headers });
     expect(sitemap.status()).toBe(200);
     expect(await sitemap.text()).toMatch(/<loc>http:\/\/localhost:\d+\/<\/loc>/);
+  });
+});
+
+test.describe("a second academy on its own host (tenancy)", () => {
+  test.use({ userAgent: fixtureAgent("lakeside") });
+
+  test("shows only its own name, colours, content and support email", async ({ page }) => {
+    await page.goto("/");
+    const root = page.getByTestId("public-academy-page");
+    await expect(root).toHaveAttribute("data-theme", "daylight");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Lakeside Racquet Academy");
+
+    // Its own colour, with readable text: pale yellow fill, dark ink.
+    const primary = page.getByTestId("hero-primary-action");
+    await expect(primary).toHaveCSS("background-color", "rgb(250, 204, 21)");
+    await expect(primary).toHaveCSS("color", "rgb(15, 23, 42)");
+    // Daylight is a light page.
+    await expect(root).toHaveCSS("background-color", "rgb(248, 250, 252)");
+
+    // Its own content.
+    await expect(page.getByTestId("public-about")).toContainText("Lakeside opened in 2019");
+    await expect(page.getByTestId("public-highlights")).toContainText("Small groups");
+    await expect(page.getByTestId("public-gallery").locator("img")).toHaveCount(2);
+    await expect(
+      page.getByTestId("public-gallery").locator("img").first(),
+    ).toHaveAttribute("loading", "lazy");
+    await expect(page.getByTestId("public-coach-card")).toContainText("Former state champion");
+    await expect(page.getByText("Do you loan rackets?")).toBeVisible();
+    // The built-in FAQ is replaced when the academy wrote its own.
+    await expect(page.getByText("What happens at a free trial?")).toHaveCount(0);
+
+    // Threshold 5: four seats left reads as a few-seats chip.
+    await expect(page.getByTestId("public-class-seats").first()).toHaveText("4 spots left");
+
+    // Support email only, and it is this academy's.
+    await expect(page.getByTestId("academy-support-email")).toHaveText(
+      "front-desk@lakeside.example.test",
+    );
+    const html = await page.content();
+    expect(html).not.toContain("riverside");
+    expect(html).not.toContain("Riverside");
+    expect(html).not.toMatch(/tel:|\+1 ?555/);
   });
 });
 

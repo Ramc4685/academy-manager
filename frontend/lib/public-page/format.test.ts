@@ -190,3 +190,27 @@ describe("text and safety guards", () => {
     );
   });
 });
+
+describe("seat band with the academy's threshold", () => {
+  it("keeps today's chip at the default threshold of 3", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 2 })?.text).toBe("2 spots left");
+    expect(formatSeatBand({ band: "few", seats_left: 2 }, 3)?.text).toBe("2 spots left");
+  });
+
+  it("shows the number up to a wider threshold the server allowed", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 5 }, 8)?.text).toBe("5 spots left");
+  });
+
+  it("does not show a number above the threshold", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 5 }, 3)).toEqual({
+      text: "Open",
+      tone: "ok",
+      full: false,
+    });
+  });
+
+  it("0 disables the few-seats chip but never hides a full class", () => {
+    expect(formatSeatBand({ band: "few", seats_left: 1 }, 0)?.text).toBe("Open");
+    expect(formatSeatBand({ band: "waitlist", seats_left: null }, 0)?.full).toBe(true);
+  });
+});

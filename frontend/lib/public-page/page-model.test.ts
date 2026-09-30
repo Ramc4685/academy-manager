@@ -5,6 +5,7 @@ import fixtures from "@/e2e/fixtures/public-academy-pages.json";
 import {
   classGroups,
   classifyPublicAcademyResponse,
+  coachCards,
   describePublishedPage,
   faqEntries,
   isIndexable,
@@ -93,5 +94,47 @@ describe("faqEntries", () => {
   it("drops the free-trial question while trials are closed", () => {
     expect(faqEntries(published)[0].question).toBe("What happens at a free trial?");
     expect(faqEntries(closed).some((e) => e.question.includes("free trial"))).toBe(false);
+  });
+});
+
+describe("academy content (Settings Phase 6)", () => {
+  it("uses the built-in FAQ when the academy wrote none", () => {
+    expect(faqEntries({ ...published, faqs: [] }).map((f) => f.question)).toEqual(
+      faqEntries(published).map((f) => f.question),
+    );
+    expect(faqEntries(published)[0].question).toBe("What happens at a free trial?");
+  });
+
+  it("uses the academy's own FAQs when present", () => {
+    const own = [{ question: "Rackets?", answer: "Yes." }];
+    expect(faqEntries({ ...published, faqs: own })).toEqual(own);
+  });
+
+  it("with no profiles the coaches are today's name-only list", () => {
+    const view = describePublishedPage(published);
+    expect(coachCards(published, view.coaches)).toEqual(
+      view.coaches.map((name) => ({ name, photoUrl: null, bio: null })),
+    );
+  });
+
+  it("profiles come first and a coach without one stays a name", () => {
+    const page = {
+      ...published,
+      coaches: [
+        { name: "Coach Sam Okafor", photo_url: "https://cdn.example.test/s.jpg", bio: "Loves drills." },
+        { name: "coach alex rivera", photo_url: "http://insecure.test/a.jpg", bio: "" },
+      ],
+    };
+    const cards = coachCards(page, describePublishedPage(page).coaches);
+    expect(cards).toEqual([
+      { name: "Coach Sam Okafor", photoUrl: "https://cdn.example.test/s.jpg", bio: "Loves drills." },
+      { name: "coach alex rivera", photoUrl: null, bio: null },
+    ]);
+  });
+
+  it("the seat threshold reaches the all-full check", () => {
+    expect(describePublishedPage({ ...allFull, page: { ...allFull.page, seats_left_threshold: 0 } }).allFull).toBe(
+      true,
+    );
   });
 });

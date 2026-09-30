@@ -84,9 +84,29 @@ export interface PublicPageFlags {
   show_availability: boolean;
   price_period_default: PublicPricePeriod | string;
   privacy_notice_url: string | null;
+  /** The academy's chosen look; absent reads as "floodlit" (today's page). */
+  theme?: "floodlit" | "daylight" | "showcase" | string;
+  /** Classes show "N spots left" at or below this (0 never). Absent: 3. */
+  seats_left_threshold?: number;
   /** Footer links the academy set in Academy profile > Legal links. */
   terms_url?: string | null;
   refund_policy_url?: string | null;
+}
+
+export interface PublicGalleryPhoto {
+  url: string;
+  caption: string;
+}
+
+export interface PublicCoachProfile {
+  name: string;
+  photo_url: string | null;
+  bio: string;
+}
+
+export interface PublicFaq {
+  question: string;
+  answer: string;
 }
 
 export interface PublicAcademyPage {
@@ -95,6 +115,16 @@ export interface PublicAcademyPage {
   page: PublicPageFlags;
   programs: PublicProgram[];
   ungrouped_classes: PublicClass[];
+  /* Academy content. Every field is optional: an academy that has written
+   * nothing renders exactly the original page. */
+  hero_photo_url?: string | null;
+  about_text?: string;
+  highlights?: string[];
+  gallery?: PublicGalleryPhoto[];
+  /** Coaches with a profile; a class coach with none stays a name only. */
+  coaches?: PublicCoachProfile[];
+  /** Empty or absent: the built-in FAQ list. */
+  faqs?: PublicFaq[];
 }
 
 export interface PublicAcademyNotPublished {

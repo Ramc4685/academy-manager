@@ -24,6 +24,7 @@ import {
   COACH_DISPLAY_LABEL,
   PRICE_PERIOD_LABEL,
   listableClasses,
+  parseSeatsThreshold,
   programOptions,
   publicPagePayload,
   toPublicPageForm,
@@ -42,6 +43,7 @@ import {
 } from "@/components/ds";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
+import { PublicPageThemeCard } from "@/components/admin/settings/public-page-theme-card";
 
 const PRICE_PERIODS = Object.keys(PRICE_PERIOD_LABEL) as PublicPricePeriod[];
 const COACH_DISPLAYS = Object.keys(COACH_DISPLAY_LABEL) as PublicCoachDisplay[];
@@ -175,6 +177,31 @@ function PageSettingsCard() {
           checked={form.show_availability}
           onChange={(checked) => setForm((prev) => ({ ...prev, show_availability: checked }))}
         />
+        <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-rally-line px-4 py-2 text-sm font-medium text-rally-ink">
+          <span>
+            Show &ldquo;only N seats left&rdquo; at
+            <span className="block text-xs font-normal text-rally-subtle">
+              Seats left or fewer. 0 hides it. Needs seat availability on.
+            </span>
+          </span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={20}
+            step={1}
+            data-testid="public-page-seats-threshold"
+            value={form.seats_left_threshold}
+            disabled={!form.show_availability}
+            onChange={(event) =>
+              setForm((prev) => ({
+                ...prev,
+                seats_left_threshold: parseSeatsThreshold(event.target.value),
+              }))
+            }
+            className="min-h-11 w-20 rounded-md border border-rally-line bg-white px-2 py-1 text-right text-sm text-rally-ink disabled:opacity-50"
+          />
+        </label>
         <Toggle
           testId="public-page-trials-open"
           label="Accept free trial requests"
@@ -207,6 +234,10 @@ function PageSettingsCard() {
             ))}
           </select>
         </label>
+        <PublicPageThemeCard
+          value={form.theme}
+          onChange={(theme) => setForm((prev) => ({ ...prev, theme }))}
+        />
         <p className="text-sm text-rally-muted" data-testid="public-page-privacy-moved">
           The privacy notice now lives with the terms and refund links.{" "}
           <Link href="/admin/settings?panel=academy" className="font-medium text-rally-cobalt underline">

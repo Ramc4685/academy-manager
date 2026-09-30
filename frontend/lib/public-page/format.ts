@@ -59,6 +59,9 @@ export function formatPrice(price: PublicPrice | null, currency: string): PriceL
   return { amount, period: amount === "Free" ? "" : formatPricePeriod(price.period) };
 }
 
+/** Today's threshold: "N spots left" at 3 or fewer. Mirrors the backend default. */
+export const DEFAULT_SEATS_LEFT_THRESHOLD = 3;
+
 export type SeatTone = "ok" | "few" | "queue";
 
 export interface SeatLabel {
@@ -73,13 +76,21 @@ export interface SeatLabel {
  * small number ("2 spots left"), which the backend sends only when 3 or fewer
  * remain. Null when the academy hides availability.
  */
-export function formatSeatBand(seats: PublicSeats | null): SeatLabel | null {
+export function formatSeatBand(
+  seats: PublicSeats | null,
+  threshold: number = DEFAULT_SEATS_LEFT_THRESHOLD,
+): SeatLabel | null {
   if (!seats) return null;
   switch (seats.band) {
     case "open":
       return { text: "Open", tone: "ok", full: false };
     case "few": {
       const left = seats.seats_left;
+      // The server already applies the academy's threshold; this keeps the
+      // rule true for any answer that carries a wider band than it allows.
+      if (threshold <= 0 || (typeof left === "number" && left > threshold)) {
+        return { text: "Open", tone: "ok", full: false };
+      }
       if (typeof left === "number" && left > 0) {
         return { text: left === 1 ? "1 spot left" : `${left} spots left`, tone: "few", full: false };
       }

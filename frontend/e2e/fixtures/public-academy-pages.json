@@ -12,7 +12,8 @@
         "hours_text": "Mon to Fri 4 to 9:30 PM, Sat 9 AM to 1 PM"
       },
       "timezone": "America/Chicago",
-      "currency": "USD"
+      "currency": "USD",
+      "support_email": "hello@riverside.example.test"
     },
     "page": {
       "trials_open": true,
@@ -503,5 +504,128 @@
       "brand_fill": "#0f766e",
       "brand_on_color": "#ffffff"
     }
+  },
+  "lakeside": {
+    "state": "published",
+    "academy": {
+      "name": "Lakeside Racquet Academy",
+      "logo_url": "https://cdn.lakeside.example.test/logo.png",
+      "brand_color": "#facc15",
+      "brand_fill": "#facc15",
+      "brand_on_color": "#0f172a",
+      "venue": {
+        "address": "9 Harbour Lane, Lakeside",
+        "hours_text": "Tue and Thu 5 to 8 PM"
+      },
+      "timezone": "America/New_York",
+      "currency": "USD",
+      "support_email": "front-desk@lakeside.example.test"
+    },
+    "page": {
+      "trials_open": true,
+      "show_price": true,
+      "show_availability": true,
+      "price_period_default": "term",
+      "privacy_notice_url": null,
+      "theme": "daylight",
+      "seats_left_threshold": 5,
+      "terms_url": null,
+      "refund_policy_url": null
+    },
+    "programs": [
+      {
+        "public_id": "pg_lake_juniors",
+        "name": "Lakeside Juniors",
+        "description": null,
+        "level": "Beginner",
+        "age_band": {
+          "min_age": 7,
+          "max_age": 11
+        },
+        "classes": [
+          {
+            "public_id": "pc_lake_tue",
+            "title": "Juniors Tuesday",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Tue"
+            ],
+            "start_time": "17:00",
+            "end_time": "18:00",
+            "timezone": "America/New_York",
+            "starts_on": null,
+            "location": "Hall B",
+            "venue_address": null,
+            "coach_name": "Coach Priya Nair",
+            "price": {
+              "amount_cents": 18000,
+              "period": "term"
+            },
+            "seats": {
+              "band": "few",
+              "seats_left": 4
+            }
+          },
+          {
+            "public_id": "pc_lake_thu",
+            "title": "Juniors Thursday",
+            "description": null,
+            "level": null,
+            "age_band": null,
+            "days_of_week": [
+              "Thu"
+            ],
+            "start_time": "17:00",
+            "end_time": "18:00",
+            "timezone": "America/New_York",
+            "starts_on": null,
+            "location": "Hall B",
+            "venue_address": null,
+            "coach_name": "Coach Priya Nair",
+            "price": {
+              "amount_cents": 18000,
+              "period": "term"
+            },
+            "seats": {
+              "band": "open",
+              "seats_left": null
+            }
+          }
+        ]
+      }
+    ],
+    "ungrouped_classes": [],
+    "hero_photo_url": null,
+    "about_text": "Lakeside opened in 2019 and coaches every player like a future captain.",
+    "highlights": [
+      "Qualified coaches",
+      "Small groups",
+      "Indoor courts"
+    ],
+    "gallery": [
+      {
+        "url": "https://cdn.lakeside.example.test/g1.jpg",
+        "caption": "Juniors warming up"
+      },
+      {
+        "url": "https://cdn.lakeside.example.test/g2.jpg",
+        "caption": "Saturday match day"
+      }
+    ],
+    "coaches": [
+      {
+        "name": "Coach Priya Nair",
+        "photo_url": "https://cdn.lakeside.example.test/priya.jpg",
+        "bio": "Former state champion who loves teaching footwork."
+      }
+    ],
+    "faqs": [
+      {
+        "question": "Do you loan rackets?",
+        "answer": "Yes, for the first two weeks."
+      }
+    ]
   }
 }

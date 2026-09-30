@@ -86,6 +86,8 @@ def test_public_page_defaults_when_nothing_is_stored() -> None:
         "price_period_default": "month",
         "trials_open": True,
         "privacy_notice_url": None,
+        "theme": "floodlit",
+        "seats_left_threshold": 3,
     }
     assert PublicPageSettings.from_stored(None).model_dump() == expected
     assert PublicPageSettings.from_stored({}).model_dump() == expected
