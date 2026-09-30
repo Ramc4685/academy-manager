@@ -30,7 +30,7 @@ export function ClassRow({
   cls: PublicClass;
   currency: string;
   trialsOpen: boolean;
-  /** Show "N spots left" at or below this many; 0 never. Absent: today's 3. */
+  /** Show "Only N seats left" at or below this many; 0 never. Absent: today's 3. */
   seatsThreshold?: number;
 }) {
   const when = formatWhen(cls);

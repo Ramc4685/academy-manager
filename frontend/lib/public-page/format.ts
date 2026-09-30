@@ -59,7 +59,7 @@ export function formatPrice(price: PublicPrice | null, currency: string): PriceL
   return { amount, period: amount === "Free" ? "" : formatPricePeriod(price.period) };
 }
 
-/** Today's threshold: "N spots left" at 3 or fewer. Mirrors the backend default. */
+/** Today's threshold: "Only N seats left" at 3 or fewer. Mirrors the backend default. */
 export const DEFAULT_SEATS_LEFT_THRESHOLD = 3;
 
 export type SeatTone = "ok" | "few" | "queue";
@@ -73,7 +73,7 @@ export interface SeatLabel {
 
 /**
  * The availability ticket. Bands, never counts, except the "few" band's own
- * small number ("2 spots left"), which the backend sends only when 3 or fewer
+ * small number ("Only 2 seats left"), which the backend sends only when 3 or fewer
  * remain. Null when the academy hides availability.
  */
 export function formatSeatBand(
@@ -92,9 +92,9 @@ export function formatSeatBand(
         return { text: "Open", tone: "ok", full: false };
       }
       if (typeof left === "number" && left > 0) {
-        return { text: left === 1 ? "1 spot left" : `${left} spots left`, tone: "few", full: false };
+        return { text: left === 1 ? "Only 1 seat left" : `Only ${left} seats left`, tone: "few", full: false };
       }
-      return { text: "A few spots left", tone: "few", full: false };
+      return { text: "A few seats left", tone: "few", full: false };
     }
     case "waitlist":
       return { text: "Full, join waitlist", tone: "queue", full: true };

@@ -86,7 +86,7 @@ export interface PublicPageFlags {
   privacy_notice_url: string | null;
   /** The academy's chosen look; absent reads as "floodlit" (today's page). */
   theme?: "floodlit" | "daylight" | "showcase" | string;
-  /** Classes show "N spots left" at or below this (0 never). Absent: 3. */
+  /** Classes show "Only N seats left" at or below this (0 never). Absent: 3. */
   seats_left_threshold?: number;
   /** Footer links the academy set in Academy profile > Legal links. */
   terms_url?: string | null;
