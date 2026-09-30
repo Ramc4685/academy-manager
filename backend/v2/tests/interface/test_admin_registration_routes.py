@@ -58,6 +58,7 @@ def test_admin_lists_pending_registrations(admin_client) -> None:
             "session_title": "Junior A",
             "waiver_required": True,
             "waiver_satisfied": True,
+            "unsigned_waivers": [],
             "zero_quote_period": None,
             "family_notified_at": None,
             "updated_at": "2026-05-24T00:00:00Z",

@@ -689,19 +689,30 @@ async def test_pending_list_routes_ambiguous_legacy_child_to_manual_review() -> 
 
 
 class CountingWaiverTemplateQuery:
-    """Spies on how many times the registration waiver template is fetched.
+    """Spies on how many times the required waivers are fetched.
 
     Real waiver-template lookups are Mongo reads; `list_pending()` must fetch
-    the template once for the whole page, not once per application row.
+    them once for the whole page, not once per application row.
     """
 
-    def __init__(self, template: AdminWaiverTemplateRecord | None) -> None:
-        self._template = template
+    def __init__(
+        self,
+        templates: AdminWaiverTemplateRecord | list[AdminWaiverTemplateRecord] | None,
+        *,
+        session_programs: dict[str, str] | None = None,
+    ) -> None:
+        if templates is None:
+            templates = []
+        self._templates = templates if isinstance(templates, list) else [templates]
+        self._session_programs = session_programs or {}
         self.calls = 0
 
-    async def get_registration_template(self) -> AdminWaiverTemplateRecord | None:
+    async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]:
         self.calls += 1
-        return self._template
+        return self._templates
+
+    async def program_id_for_session(self, session_id: str | None) -> str | None:
+        return self._session_programs.get(session_id or "")
 
 
 @pytest.mark.asyncio
@@ -716,6 +727,7 @@ async def test_pending_list_fetches_waiver_template_once_for_whole_page() -> Non
         title="Registration Waiver",
         body="...",
         status="active",
+        required=True,
         updated_at=NOW,
     )
     waiver_templates = CountingWaiverTemplateQuery(template)
@@ -2090,3 +2102,136 @@ async def test_decisions_still_work_without_a_notifier_wired() -> None:
 
     assert detail.status == "WAITLISTED"
     assert apps.apps["app-1"].family_notified_at is None
+
+
+def _waiver(template_id: str, title: str, **overrides: object) -> AdminWaiverTemplateRecord:
+    fields: dict[str, object] = {
+        "waiver_template_id": template_id,
+        "title": title,
+        "body": "...",
+        "status": "active",
+        "version": "1",
+        "required": True,
+        "updated_at": NOW,
+        "lineage_key": template_id,
+    }
+    fields.update(overrides)
+    return AdminWaiverTemplateRecord(**fields)  # type: ignore[arg-type]
+
+
+def _review_with_waivers(
+    apps: InMemoryApplications, waiver_templates: CountingWaiverTemplateQuery
+) -> AdminRegistrationReview:
+    return AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        waiver_templates=waiver_templates,
+        waiver_signatures=InMemoryWaiverSignatures(),
+        clock=lambda: NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_with_unsigned_required_waiver_warns_and_does_not_block() -> None:
+    """Decision 9: staff approval never rejects over a missing waiver."""
+    app = _application(student_id="student-1")
+    queries = CountingWaiverTemplateQuery(_waiver("wt-liability", "Liability waiver"))
+    review = _review_with_waivers(InMemoryApplications(app), queries)
+
+    before = await review.detail("app-1")
+    assert before.waiver_required is True
+    assert before.waiver_satisfied is False
+    assert [w.title for w in before.unsigned_waivers] == ["Liability waiver"]
+
+    approved = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert approved.status == "APPROVED"
+    # The warning is still on the record after approval.
+    assert [w.title for w in approved.unsigned_waivers] == ["Liability waiver"]
+
+
+@pytest.mark.asyncio
+async def test_program_waiver_applies_only_to_a_class_in_that_program() -> None:
+    liability = _waiver("wt-liability", "Liability waiver")
+    photo = _waiver("wt-photo", "Photo consent", scope="programs", program_ids=["prog-juniors"])
+    app = _application(student_id="student-1")
+    in_program = CountingWaiverTemplateQuery(
+        [liability, photo], session_programs={"sess-1": "prog-juniors"}
+    )
+    other_program = CountingWaiverTemplateQuery(
+        [liability, photo], session_programs={"sess-1": "prog-adults"}
+    )
+    no_program = CountingWaiverTemplateQuery([liability, photo])
+
+    juniors = await _review_with_waivers(InMemoryApplications(app), in_program).detail("app-1")
+    adults = await _review_with_waivers(InMemoryApplications(app), other_program).detail("app-1")
+    ungrouped = await _review_with_waivers(InMemoryApplications(app), no_program).detail("app-1")
+
+    assert [w.title for w in juniors.unsigned_waivers] == ["Liability waiver", "Photo consent"]
+    assert [w.title for w in adults.unsigned_waivers] == ["Liability waiver"]
+    assert [w.title for w in ungrouped.unsigned_waivers] == ["Liability waiver"]
+
+
+@pytest.mark.asyncio
+async def test_waiver_is_satisfied_per_waiver_and_every_acceptance_becomes_a_signature() -> None:
+    liability = _waiver("wt-liability", "Liability waiver")
+    photo = _waiver("wt-photo", "Photo consent", scope="programs", program_ids=["prog-juniors"])
+    accepted_liability = WaiverAcceptance(
+        waiver_template_id="wt-liability",
+        waiver_version="1",
+        content_hash="h-l",
+        accepted_at=NOW,
+        lineage_key="wt-liability",
+    )
+    accepted_photo = WaiverAcceptance(
+        waiver_template_id="wt-photo",
+        waiver_version="1",
+        content_hash="h-p",
+        accepted_at=NOW,
+        lineage_key="wt-photo",
+    )
+    only_first = _application(student_id="student-1").model_copy(
+        update={"waiver_acceptance": accepted_liability}
+    )
+    both = _application(student_id="student-1").model_copy(
+        update={
+            "waiver_acceptance": accepted_liability,
+            "additional_waiver_acceptances": [accepted_photo],
+        }
+    )
+    queries = CountingWaiverTemplateQuery(
+        [liability, photo], session_programs={"sess-1": "prog-juniors"}
+    )
+
+    partial = await _review_with_waivers(InMemoryApplications(only_first), queries).detail("app-1")
+    assert [w.title for w in partial.unsigned_waivers] == ["Photo consent"]
+    assert partial.waiver_satisfied is False
+
+    signatures = InMemoryWaiverSignatures()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(both),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        waiver_templates=queries,
+        waiver_signatures=signatures,
+        clock=lambda: NOW,
+    )
+    approved = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert approved.waiver_satisfied is True
+    assert approved.unsigned_waivers == []
+    assert sorted(sig.waiver_template_id for sig in signatures.saved) == [
+        "wt-liability",
+        "wt-photo",
+    ]

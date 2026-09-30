@@ -8,11 +8,21 @@ from typing import Any
 
 from bson import ObjectId as BsonObjectId
 
+from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
+    AdminWaiverTemplateRecord,
+)
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     ParentWaiverSignature,
     ParentWaiverStudent,
 )
 from backend.v2.contexts.onboarding.domain.models import WaiverSignature
+from backend.v2.contexts.onboarding.domain.waiver_assignment import (
+    LEGACY_LINEAGE_KEY,
+    lineage_of,
+)
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_program_lookup import (
+    MongoWaiverProgramLookup,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     LIVE_TEMPLATE_STATUSES,
     MongoWaiverTemplateRepository,
@@ -77,6 +87,160 @@ class MongoParentWaiverRepository(TenantScopedRepository):
         async for doc in cursor:
             return MongoWaiverTemplateRepository._to_record(doc)
         return None
+
+    async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]:
+        """Every live waiver families must sign (all families or a program)."""
+        return await MongoWaiverTemplateRepository(self._db).list_required_templates()
+
+    async def program_ids_for_students(self, student_ids: list[str]) -> dict[str, set[str]]:
+        return await MongoWaiverProgramLookup(self._db).program_ids_for_students(student_ids)
+
+    async def signatures_for_students(
+        self, student_ids: list[str]
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        """Latest signature per (student, waiver lineage).
+
+        A signature is filed under the lineage of the template it pins to, so
+        signing "Photo consent" never counts as signing "Liability". Rows whose
+        template is unknown, and legacy acceptances with no template, are the
+        legacy lineage: for an academy with one waiver this is the same "latest
+        signature for the student" it has always been.
+        """
+        if not student_ids:
+            return {}
+        academy_id = current_academy_id()
+        lineages = await self._template_lineages(academy_id)
+        versions = await self._template_versions(academy_id)
+        out: dict[tuple[str, str], ParentWaiverSignature] = {}
+        signature_docs = [
+            doc
+            async for doc in self._db["waiver_signatures"].find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": {"$in": student_ids},
+                    "is_deleted": {"$ne": True},
+                }
+            )
+        ]
+        signature_docs.sort(
+            key=lambda doc: (
+                self._as_datetime(doc.get("signed_at")) or datetime.min.replace(tzinfo=UTC)
+            ),
+            reverse=True,
+        )
+        for doc in signature_docs:
+            student_id = str(doc.get("student_id") or "")
+            lineage = lineages.get(str(doc.get("waiver_template_id") or ""), LEGACY_LINEAGE_KEY)
+            if student_id and (student_id, lineage) not in out:
+                out[(student_id, lineage)] = ParentWaiverSignature(
+                    student_id=student_id,
+                    waiver_template_id=str(doc.get("waiver_template_id") or "") or None,
+                    content_hash=str(doc.get("content_hash") or "") or None,
+                    parent_user_id=self._signing_parent_id(doc),
+                    outdated_for_parent=bool(doc.get("outdated_for_parent") or False),
+                    signed_at=self._as_datetime(doc.get("signed_at")),
+                    lineage_key=lineage,
+                    waiver_signature_id=str(doc.get("waiver_signature_id") or "") or None,
+                    signed_version=versions.get(str(doc.get("waiver_template_id") or "")),
+                )
+        legacy_docs = [
+            doc
+            async for doc in self._db["waiver_acceptances"].find(
+                {
+                    "student_id": {"$in": student_ids},
+                    "is_deleted": {"$ne": True},
+                    "$or": [
+                        {"academy_id": academy_id},
+                        {"academy_id": {"$exists": False}},
+                        {"academy_id": None},
+                    ],
+                }
+            )
+        ]
+        legacy_docs.sort(
+            key=lambda doc: (
+                self._as_datetime(doc.get("accepted_at")) or datetime.min.replace(tzinfo=UTC)
+            ),
+            reverse=True,
+        )
+        for doc in legacy_docs:
+            student_id = str(doc.get("student_id") or "")
+            lineage = lineages.get(str(doc.get("waiver_template_id") or ""), LEGACY_LINEAGE_KEY)
+            if student_id and (student_id, lineage) not in out:
+                out[(student_id, lineage)] = ParentWaiverSignature(
+                    student_id=student_id,
+                    waiver_template_id=str(doc.get("waiver_template_id") or "") or None,
+                    waiver_version=str(doc.get("waiver_version") or "") or None,
+                    content_hash=str(doc.get("content_hash") or doc.get("waiver_text_hash") or "")
+                    or None,
+                    parent_user_id=self._signing_parent_id(doc),
+                    outdated_for_parent=bool(doc.get("outdated_for_parent") or False),
+                    signed_at=self._as_datetime(doc.get("accepted_at")),
+                    lineage_key=lineage,
+                    waiver_signature_id=str(doc.get("waiver_acceptance_id") or doc.get("_id") or "")
+                    or None,
+                )
+        return out
+
+    async def legacy_flag_signatures(
+        self, student_ids: list[str]
+    ) -> dict[tuple[str, str], ParentWaiverSignature]:
+        """Signatures implied by ``students.waiver_accepted`` (staff views only).
+
+        The admin compliance summary counts this old flag as a signature; the
+        per-waiver student status must agree. Filed under the legacy lineage.
+        """
+        if not student_ids:
+            return {}
+        academy_id = current_academy_id()
+        object_ids = [BsonObjectId(sid) for sid in student_ids if BsonObjectId.is_valid(sid)]
+        # Two plain lookups, never an ``$or`` across the two id fields.
+        queries: list[dict[str, Any]] = [{"student_id": {"$in": student_ids}}]
+        if object_ids:
+            queries.append({"_id": {"$in": object_ids}})
+        out: dict[tuple[str, str], ParentWaiverSignature] = {}
+        for query in queries:
+            async for doc in self._db["students"].find(
+                {"academy_id": academy_id, "waiver_accepted": True, **query}
+            ):
+                student_id = str(doc.get("student_id") or doc.get("_id"))
+                out.setdefault(
+                    (student_id, LEGACY_LINEAGE_KEY),
+                    ParentWaiverSignature(
+                        student_id=student_id,
+                        waiver_version=str(doc.get("waiver_version") or "") or None,
+                        content_hash=str(
+                            doc.get("waiver_text_hash") or doc.get("content_hash") or ""
+                        )
+                        or None,
+                        signed_at=self._as_datetime(
+                            doc.get("waiver_accepted_at") or doc.get("waiver_date")
+                        ),
+                        lineage_key=LEGACY_LINEAGE_KEY,
+                    ),
+                )
+        return out
+
+    async def _template_versions(self, academy_id: str) -> dict[str, str]:
+        versions: dict[str, str] = {}
+        async for doc in self._db["waiver_templates"].find({"academy_id": academy_id}):
+            version = str(doc.get("version") or "")
+            if not version:
+                continue
+            if doc.get("waiver_template_id"):
+                versions[str(doc["waiver_template_id"])] = version
+            versions[str(doc.get("_id"))] = version
+        return versions
+
+    async def _template_lineages(self, academy_id: str) -> dict[str, str]:
+        """``waiver_template_id`` (and legacy ``_id``) -> lineage key, this academy."""
+        lineages: dict[str, str] = {}
+        async for doc in self._db["waiver_templates"].find({"academy_id": academy_id}):
+            lineage = lineage_of(doc)
+            if doc.get("waiver_template_id"):
+                lineages[str(doc["waiver_template_id"])] = lineage
+            lineages[str(doc.get("_id"))] = lineage
+        return lineages
 
     async def list_active_students_for_parent(self, parent_id: str) -> list[ParentWaiverStudent]:
         # Split $or into two indexed queries — parent_user_id has no compound index,

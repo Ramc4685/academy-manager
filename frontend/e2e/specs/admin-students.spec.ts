@@ -413,6 +413,36 @@ test.describe("admin students", () => {
         delete_enrollment_requires_owner: true,
       });
     });
+    // Settings Phase 6: one row per waiver that applies to the student. A
+    // missing signature is a warning here, never a block.
+    await page.route("**/api/v2/admin/waivers/students/student-1", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        student_id: "student-1",
+        waivers: [
+          {
+            waiver_template_id: "wt-liability",
+            lineage_key: "wl-liability",
+            title: "Liability waiver",
+            version: "3",
+            status: "older_version",
+            signed_version: "2",
+            signed_at: "2026-06-01T12:00:00Z",
+            signature_id: "ws-liability-old",
+          },
+          {
+            waiver_template_id: "wt-photo",
+            lineage_key: "wl-photo",
+            title: "Photo consent",
+            version: "1",
+            status: "unsigned",
+            signed_version: null,
+            signed_at: null,
+            signature_id: null,
+          },
+        ],
+      });
+    });
     await page.route("**/api/v2/admin/students/student-1", (route) => {
       if (route.request().method() === "PATCH") {
         const requestBody = route.request().postDataJSON() as Record<string, unknown>;
@@ -523,8 +553,18 @@ test.describe("admin students", () => {
       page.getByTestId("admin-student-family-billing-link").getByRole("link"),
     ).toHaveAttribute("href", /\/admin\/families\//);
 
+    await expect(page.getByTestId("admin-student-waiver-warning")).toContainText(
+      "Liability waiver, Photo consent",
+    );
     await page.getByRole("tab", { name: "Family & Compliance" }).click();
     await expect(page.getByTestId("admin-student-compliance-tab")).toContainText("2026-v1");
+    const olderRow = page.getByTestId("admin-student-waiver-wt-liability");
+    await expect(olderRow).toContainText("Signed an older version (v2)");
+    await expect(olderRow.getByRole("link", { name: "View signature" })).toHaveAttribute(
+      "href",
+      "/admin/waivers/signatures/ws-liability-old",
+    );
+    await expect(page.getByTestId("admin-student-waiver-wt-photo")).toContainText("Not signed");
     await expect(page.getByLabel("T-shirt size")).toHaveValue("M");
     await expect(page.getByLabel("T-shirt size")).toHaveAttribute("maxlength", "20");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);

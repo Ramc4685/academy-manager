@@ -126,6 +126,19 @@ export default function AdminRegistrationDetailPage() {
             </Card>
           )}
 
+          {(query.data.unsigned_waivers?.length ?? 0) > 0 && (
+            <Card
+              data-testid="admin-registration-waiver-warning"
+              p={20}
+              style={{ borderColor: "#facc15", background: "#fefce8" }}
+            >
+              <p role="status" className="text-sm font-semibold text-amber-900">
+                Waiver not signed: {query.data.unsigned_waivers?.map((w) => w.title).join(", ")}.
+                You can still approve. The student page keeps showing it until it is signed.
+              </p>
+            </Card>
+          )}
+
           <LaneHeader index="02" title="Decision" />
           <Card p={20}>
             {/* Issue #747: `grid-cols-1` and `min-w-0` (below) are load-bearing.
@@ -137,7 +150,7 @@ export default function AdminRegistrationDetailPage() {
               <ActionPanel
                 title="Approve"
                 copy="Create the student record, reserve the roster seat, and activate enrollment."
-                textareaLabel="Waiver override reason"
+                textareaLabel="Note for the record (optional)"
                 textareaValue={overrideReason}
                 onTextareaChange={setOverrideReason}
                 buttonLabel={approveMutation.isPending ? "Approving..." : "Approve"}
@@ -294,6 +307,11 @@ function RegistrationSummary({ registration }: { registration: AdminRegistration
                 label={registration.waiver_required ? (registration.waiver_satisfied ? "SIGNED" : "NEEDED") : "NOT REQUIRED"}
               />
             </div>
+            {(registration.unsigned_waivers?.length ?? 0) > 1 && (
+              <p className="mt-2 text-[12px] text-rally-subtle">
+                Still to sign: {registration.unsigned_waivers?.map((w) => w.title).join(", ")}
+              </p>
+            )}
             {registration.waiver_title && (
               <p className="mt-2 text-[12px] text-rally-subtle">
                 {registration.waiver_title} {registration.waiver_version ? `v${registration.waiver_version}` : ""}

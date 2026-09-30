@@ -542,6 +542,9 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
     MongoParentWaiverRepository,
 )
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_program_lookup import (
+    MongoWaiverProgramLookup,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
 )
@@ -1823,7 +1826,9 @@ def compose_admin(
     waivers_repo = MongoAdminWaiverRepository(db)
     list_admin_waivers = ListAdminWaivers(waivers_repo)
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
-    manage_admin_waiver_templates = ManageAdminWaiverTemplates(waiver_templates_repo)
+    manage_admin_waiver_templates = ManageAdminWaiverTemplates(
+        waiver_templates_repo, programs=MongoWaiverProgramLookup(db)
+    )
     admin_registration_review = AdminRegistrationReview(
         apps=MongoApplicationRepository(db),
         sessions=sessions_w,

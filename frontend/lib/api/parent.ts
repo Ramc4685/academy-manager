@@ -36,6 +36,8 @@ export interface OnboardingApplication {
   child_profile: ChildProfile;
   selected_session_id: string | null;
   waiver_accepted: boolean;
+  /** True when a waiver is assigned to a program: the stepper asks for the class first. */
+  waiver_class_first?: boolean;
   expires_at: string;
 }
 
@@ -251,14 +253,26 @@ export interface ParentPauseRequest {
   decided_by: string | null;
 }
 
+export interface RegistrationWaiverItem {
+  waiver_template_id: string;
+  title: string | null;
+  version: string;
+  body: string;
+}
+
 export interface RegistrationWaiver {
   configured: boolean;
   version: string | null;
   body: string | null;
+  /** Every waiver to sign for the chosen class; the flat fields above are the first. */
+  waivers?: RegistrationWaiverItem[];
+  /** True when a waiver is assigned to a program: ask for the class first. */
+  class_first?: boolean;
 }
 
-export function getRegistrationWaiver(): Promise<RegistrationWaiver> {
-  return apiFetch("/parent/onboarding/waiver", { method: "GET" });
+export function getRegistrationWaiver(sessionId?: string | null): Promise<RegistrationWaiver> {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  return apiFetch(`/parent/onboarding/waiver${query}`, { method: "GET" });
 }
 
 export function startOnboarding(): Promise<OnboardingApplication> {
@@ -520,6 +534,14 @@ export interface ParentWaiverStudentView {
   waiver_version: string | null;
 }
 
+export interface ParentWaiverItemView {
+  waiver_template_id: string;
+  title: string | null;
+  version: string | null;
+  body: string | null;
+  students: ParentWaiverStudentView[];
+}
+
 export interface ParentWaiverCurrentView {
   required: boolean;
   waiver_template_id: string | null;
@@ -527,6 +549,8 @@ export interface ParentWaiverCurrentView {
   version: string | null;
   body: string | null;
   students: ParentWaiverStudentView[];
+  /** Every waiver this parent's children must sign; the flat fields above are the first. */
+  waivers?: ParentWaiverItemView[];
 }
 
 export function getParentCurrentWaiver(): Promise<ParentWaiverCurrentView> {

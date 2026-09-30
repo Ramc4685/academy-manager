@@ -208,6 +208,91 @@ test.describe("admin waivers", () => {
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
+  test("lists several live waivers and assigns one to a program", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    let assignBody: Record<string, unknown> | null = null;
+    await stubAdminShell(page);
+    await stubFamilyPoliciesSiblingCards(page);
+    await page.route(/\/api\/v2\/admin\/waivers(?:\?.*)?$/, (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        summary: { signed_current: 0, pending_signature: 0, expiring_30d: 0, outdated_version: 0 },
+        current_waiver: null,
+        waivers: [],
+      });
+    });
+    const template = (id: string, title: string, extra: Record<string, unknown>) => ({
+      waiver_template_id: id,
+      title,
+      body: `${title} text`,
+      status: "active",
+      version: "1",
+      content_hash: "h",
+      effective_at: "2026-09-01T00:00:00Z",
+      published_at: "2026-09-01T00:00:00Z",
+      assigned_to_registration: false,
+      assigned_at: null,
+      updated_at: "2026-09-01T00:00:00Z",
+      required: false,
+      scope: "all",
+      program_ids: [],
+      ...extra,
+    });
+    await page.route("**/api/v2/admin/waivers/templates", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        templates: [
+          template("wt-liability", "Liability waiver", {
+            version: "3",
+            required: true,
+            assigned_to_registration: true,
+          }),
+          template("wt-photo", "Photo consent", {}),
+        ],
+        programs: [
+          { program_id: "prog-juniors", name: "Juniors" },
+          { program_id: "prog-adults", name: "Adults" },
+        ],
+      });
+    });
+    await page.route("**/api/v2/admin/waivers/templates/wt-photo/assignment", (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      assignBody = route.request().postDataJSON() as Record<string, unknown>;
+      return fulfillJson(
+        route,
+        template("wt-photo", "Photo consent", {
+          required: true,
+          scope: "programs",
+          program_ids: ["prog-juniors"],
+        }),
+      );
+    });
+
+    await page.goto("/admin/settings?panel=family-policies");
+
+    await expect(page.getByTestId("admin-waiver-required-for-wt-liability")).toContainText(
+      "Required for: All families",
+    );
+    await expect(page.getByTestId("admin-waiver-required-for-wt-photo")).toContainText(
+      "Required for: Not required",
+    );
+    await expect(page.getByTestId("admin-waiver-template-row-wt-liability")).toContainText("v3");
+    await expect(page.getByTestId("admin-waiver-template-row-wt-liability")).toContainText("LIVE");
+
+    await page.getByTestId("admin-waiver-assign-button-wt-photo").click();
+    await page.getByTestId("admin-waiver-assign-choice-wt-photo-programs").check();
+    await expect(page.getByTestId("admin-waiver-assign-save-wt-photo")).toBeDisabled();
+    await page.getByTestId("admin-waiver-assign-program-wt-photo-prog-juniors").check();
+    await page.getByTestId("admin-waiver-assign-save-wt-photo").click();
+
+    await expect.poll(() => assignBody).toEqual({
+      required: true,
+      scope: "programs",
+      program_ids: ["prog-juniors"],
+    });
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
   test("shows a truthful empty state when the BFF returns no waiver rows", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminShell(page);

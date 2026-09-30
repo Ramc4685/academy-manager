@@ -404,11 +404,18 @@ class FakeParentWaivers:
             status="active",
             version="v1",
             content_hash="hash-1",
+            required=True,
             updated_at=FIXED_NOW,
         )
 
-    async def get_required_template(self):
-        return self.template
+    async def list_required_templates(self):
+        return [self.template]
+
+    async def program_ids_for_students(self, student_ids):
+        return {}
+
+    async def signatures_for_students(self, student_ids):
+        return {}
 
     async def list_active_students_for_parent(self, parent_id: str):
         return [ParentWaiverStudent(student_id="st-1", student_name="Kid One")]

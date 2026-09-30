@@ -76,3 +76,11 @@ class RegistrationSubmittedNotifier(Protocol):
 
 class WaiverRepository(Protocol):
     async def get_active(self) -> Waiver | None: ...
+
+    async def list_required(self, session_id: str | None) -> list[Waiver]:
+        """Waivers a family must sign for this class (all-family + its program's).
+
+        Newest assignment first: the first entry is the "primary" registration
+        waiver. Empty when the academy requires none.
+        """
+        ...

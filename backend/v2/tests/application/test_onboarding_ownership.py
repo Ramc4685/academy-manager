@@ -120,6 +120,9 @@ class FakeWaiverRepo:
     async def get_active(self):
         return None
 
+    async def list_required(self, session_id):
+        return []
+
 
 class ExistingStudentRegistrations:
     async def find_registration_student(

@@ -37,4 +37,14 @@ describe("waiverAcceptLabel", () => {
     expect(waiverAcceptLabel([kid("Kid Five", "not_required")])).toBe("Accept waiver");
     expect(waiverAcceptLabel([kid("  ", "pending")])).toBe("Accept waiver");
   });
+
+  it("says waivers, and names each child once, when several waivers are on the page", () => {
+    expect(
+      waiverAcceptLabel(
+        [kid("Kid One", "pending"), kid("Kid One", "pending"), kid("Kid Two", "outdated")],
+        2,
+      ),
+    ).toBe("Accept waivers for Kid One and Kid Two");
+    expect(waiverAcceptLabel([kid("Kid Five", "signed")], 2)).toBe("Accept waivers");
+  });
 });
