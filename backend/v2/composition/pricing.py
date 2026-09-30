@@ -70,12 +70,13 @@ def compose_admin_pricing(db: Any) -> AdminPricing:
     audit = RecordMoneySettingChange(audit=MongoBillingAuditLogRepository(db))
     changes = MongoPlanPriceChangeRepository(db)
     current_period = MongoAcademyBillingMonth(db).current_period
+    invoiced = MongoInvoicedPeriodReader(db)
     preview = PreviewPlanPriceChange(
         session_types=session_types,
         read_model=read_model,
         links=links,
         changes=changes,
-        invoiced=MongoInvoicedPeriodReader(db),
+        invoiced=invoiced,
         current_period=current_period,
     )
     return AdminPricing(
@@ -86,17 +87,27 @@ def compose_admin_pricing(db: Any) -> AdminPricing:
             price_changes=changes,
         ),
         set_link=SetClassPlanLink(
-            session_types=session_types, read_model=read_model, links=links, audit=audit
+            session_types=session_types,
+            read_model=read_model,
+            links=links,
+            audit=audit,
+            price_changes=changes,
+            charges=invoiced,
         ),
         link_matching=LinkMatchingClasses(
-            session_types=session_types, read_model=read_model, links=links, audit=audit
+            session_types=session_types,
+            read_model=read_model,
+            links=links,
+            audit=audit,
+            price_changes=changes,
+            charges=invoiced,
         ),
         preview_price_change=preview,
         schedule_price_change=SchedulePlanPriceChange(
             preview=preview, changes=changes, audit=audit
         ),
         cancel_price_change=CancelPlanPriceChange(
-            changes=changes, current_period=current_period, audit=audit
+            changes=changes, current_period=current_period, audit=audit, charges=invoiced
         ),
         scheduled_class_fees=ListScheduledClassFees(changes=changes, read_model=read_model),
         apply_due_price_changes=ApplyDuePlanPriceChanges(

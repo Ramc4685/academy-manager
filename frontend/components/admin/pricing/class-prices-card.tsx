@@ -15,6 +15,13 @@ import { queryKeys } from "@/lib/query/keys";
 
 const CUSTOM = "";
 
+/** The server's reason when it gives one (e.g. a class already charged at a scheduled price). */
+function saveError(error: unknown): string {
+  return error instanceof Error && error.message && error.message !== "Request failed"
+    ? error.message
+    : "Could not save. Try again.";
+}
+
 const STALE_MESSAGE: Record<NonNullable<PricingClass["stale_reason"]>, string> = {
   archived: "Its plan was archived, so it shows as Custom.",
   price_changed: "Its plan's price changed, so it shows as Custom.",
@@ -157,7 +164,7 @@ export function ClassPricesCard({
                       )}
                       {failedId === cls.session_id && (
                         <p role="alert" className="mt-1 text-xs text-status-red-800">
-                          Could not save. Try again.
+                          {saveError(linkMutation.error)}
                         </p>
                       )}
                     </td>

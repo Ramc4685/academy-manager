@@ -160,6 +160,11 @@ class BillingCalculationSnapshot(BaseModel):
     expires_at: datetime | None = None
     calculated_at: datetime
     calculated_by: str
+    #: The class's monthly fee for the month AFTER ``billing_period_label``
+    #: (a scheduled plan price change may move it, PR 26). Set on a fresh
+    #: registration quote only, never stored (``exclude``); ``None`` means
+    #: the same as ``monthly_price_cents``.
+    next_monthly_price_cents: int | None = Field(default=None, exclude=True)
 
 
 def schedule_signature(occurrences: list[ClassOccurrence], *, timezone_name: str) -> str:

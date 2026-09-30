@@ -19,6 +19,7 @@ from backend.v2.contexts.billing.application.ports import (
     SnapshotWriter,
 )
 from backend.v2.contexts.billing.domain.errors import PaymentNotFound
+from backend.v2.contexts.billing.domain.plan_price_change import next_period
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -112,7 +113,14 @@ class QuoteEnrollment:
             ttl_minutes=cmd.ttl_minutes,
             now=now,
         )
-        return stored
+        if self._class_fees is None:
+            return stored
+        # "Starting next month, tuition is $X": the fee the next monthly
+        # invoice will charge, which a scheduled plan price change may move.
+        next_fee = await self._class_fees.fee_cents_for_period(
+            session_doc, next_period(period.label)
+        )
+        return stored.model_copy(update={"next_monthly_price_cents": next_fee})
 
     async def _session_timezone(self, session_doc: dict[str, Any]) -> str:
         """Session zone, else the session's academy zone, else the legacy zone."""

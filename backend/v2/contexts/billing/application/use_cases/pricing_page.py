@@ -41,7 +41,11 @@ from backend.v2.contexts.billing.domain.class_pricing import (
     matching_plan_ids,
     stale_link_reason,
 )
-from backend.v2.contexts.billing.domain.errors import PricingClassNotFound, SessionTypeNotFound
+from backend.v2.contexts.billing.domain.errors import (
+    PriceChangeAlreadyCharged,
+    PricingClassNotFound,
+    SessionTypeNotFound,
+)
 from backend.v2.contexts.billing.domain.plan_price_change import (
     PlanPriceChange,
     pending_change_for_class,
@@ -190,6 +194,94 @@ class PriceChangeLister(Protocol):
     async def list_scheduled(self) -> list[PlanPriceChange]: ...
 
 
+class PriceChangeMembership(Protocol):
+    """Which classes a scheduled plan price change reaches (PR 26)."""
+
+    async def list_scheduled(self) -> list[PlanPriceChange]: ...
+    async def add_session(self, change_id: str, session_id: str) -> bool: ...
+    async def remove_session(self, change_id: str, session_id: str) -> bool: ...
+
+
+class ChargedMonthReader(Protocol):
+    async def has_charges_from(self, session_ids: Sequence[str], period: str) -> bool:
+        """True when a month on or after ``period`` is charged or quoted for the classes."""
+        ...
+
+
+@dataclass(frozen=True)
+class _MembershipMoves:
+    remove: tuple[str, ...] = ()
+    add: tuple[str, ...] = ()
+
+    def audit_fields(self) -> dict[str, object]:
+        """Only present when a link moved a class in or out of a scheduled change."""
+        out: dict[str, object] = {}
+        if self.remove:
+            out["price_changes_left"] = list(self.remove)
+        if self.add:
+            out["price_changes_joined"] = list(self.add)
+        return out
+
+
+async def _plan_membership_moves(
+    *,
+    membership: PriceChangeMembership | None,
+    charges: ChargedMonthReader | None,
+    session_id: str,
+    plan_id: str | None,
+    fee_cents: int,
+) -> _MembershipMoves:
+    """Keep scheduled plan price changes in step with a class's link.
+
+    A class moved off a plan (to custom or another plan) leaves that plan's
+    scheduled change, so it keeps its own fee. A class linked to a plan with
+    a scheduled change at the change's old price joins it, so its link does
+    not go stale when the plan price moves. Either move is refused (or, for
+    a join, skipped) when a month on or after the change is already charged
+    or quoted for the class: those charges must keep matching the month.
+    Nothing is written here; the caller applies the moves after the link.
+    """
+    if membership is None:
+        return _MembershipMoves()
+    remove: list[str] = []
+    add: list[str] = []
+    for change in await membership.list_scheduled():
+        in_change = session_id in change.session_ids
+        applies = fee_cents == change.old_cents
+        if in_change and change.plan_id != plan_id:
+            if session_id in change.flipped_session_ids:
+                continue
+            if (
+                applies
+                and charges is not None
+                and await charges.has_charges_from([session_id], change.effective_period)
+            ):
+                raise PriceChangeAlreadyCharged(
+                    "This class already has charges at the plan's new price. It stays on the plan.",
+                    session_id=session_id,
+                    change_id=change.change_id,
+                )
+            remove.append(change.change_id)
+        elif not in_change and change.plan_id == plan_id and applies:
+            if charges is None or await charges.has_charges_from(
+                [session_id], change.effective_period
+            ):
+                continue  # already charged at today's price for that month
+            add.append(change.change_id)
+    return _MembershipMoves(remove=tuple(remove), add=tuple(add))
+
+
+async def _apply_membership_moves(
+    membership: PriceChangeMembership | None, session_id: str, moves: _MembershipMoves
+) -> None:
+    if membership is None:
+        return
+    for change_id in moves.remove:
+        await membership.remove_session(change_id, session_id)
+    for change_id in moves.add:
+        await membership.add_session(change_id, session_id)
+
+
 def plan_prices(plans: Sequence[SessionType]) -> list[PlanPrice]:
     return [
         PlanPrice(plan_id=p.session_type_id, price_cents=p.price_cents, is_active=p.is_active)
@@ -314,12 +406,16 @@ class SetClassPlanLink:
         links: ClassPlanLinkRepository,
         audit: RecordMoneySettingChange,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        price_changes: PriceChangeMembership | None = None,
+        charges: ChargedMonthReader | None = None,
     ) -> None:
         self._session_types = session_types
         self._read_model = read_model
         self._links = links
         self._audit = audit
         self._now = clock
+        self._price_changes = price_changes
+        self._charges = charges
 
     async def execute(self, cmd: SetClassPlanLinkCommand) -> PricingClassRow:
         cls = await self._read_model.get_class(cmd.session_id)
@@ -333,6 +429,13 @@ class SetClassPlanLink:
                 raise SessionTypeNotFound("plan not found", session_type_id=cmd.plan_id)
             ensure_link_allowed(cls.charged_cents, plan)
 
+        moves = await _plan_membership_moves(
+            membership=self._price_changes,
+            charges=self._charges,
+            session_id=cmd.session_id,
+            plan_id=cmd.plan_id,
+            fee_cents=cls.charged_cents,
+        )
         previous = await self._links.get_link(cmd.session_id)
         await self._links.set_link(
             session_id=cmd.session_id,
@@ -340,6 +443,7 @@ class SetClassPlanLink:
             actor_id=cmd.actor_id,
             at=self._now(),
         )
+        await _apply_membership_moves(self._price_changes, cmd.session_id, moves)
         await self._audit.execute(
             academy_id=cmd.academy_id,
             action="class_plan_link_changed",
@@ -356,6 +460,7 @@ class SetClassPlanLink:
                 # The fee is unchanged by a link; recorded so the trail shows
                 # what the class was charged when it was linked.
                 "charged_cents": cls.charged_cents,
+                **moves.audit_fields(),
             },
         )
         return PricingClassRow(
@@ -400,12 +505,16 @@ class LinkMatchingClasses:
         links: ClassPlanLinkRepository,
         audit: RecordMoneySettingChange,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        price_changes: PriceChangeMembership | None = None,
+        charges: ChargedMonthReader | None = None,
     ) -> None:
         self._session_types = session_types
         self._read_model = read_model
         self._links = links
         self._audit = audit
         self._now = clock
+        self._price_changes = price_changes
+        self._charges = charges
 
     async def execute(self, *, academy_id: str, actor_id: str) -> LinkMatchingClassesResult:
         prices = plan_prices(await self._session_types.list_all())
@@ -424,10 +533,20 @@ class LinkMatchingClasses:
                 else:
                     no_match += 1
                 continue
+            moves = await _plan_membership_moves(
+                membership=self._price_changes,
+                charges=self._charges,
+                session_id=cls.session_id,
+                plan_id=plan_id,
+                fee_cents=cls.charged_cents,
+            )
             if await self._links.set_link_if_unset(
                 session_id=cls.session_id, plan_id=plan_id, actor_id=actor_id, at=now
             ):
-                linked.append({"session_id": cls.session_id, "plan_id": plan_id})
+                await _apply_membership_moves(self._price_changes, cls.session_id, moves)
+                linked.append(
+                    {"session_id": cls.session_id, "plan_id": plan_id, **moves.audit_fields()}
+                )
             else:
                 already += 1
 

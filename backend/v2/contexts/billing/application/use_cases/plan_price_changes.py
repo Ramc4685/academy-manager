@@ -9,7 +9,8 @@ plan, a new price and an "apply from" month:
 * :class:`SchedulePlanPriceChange`: re-validates everything the preview
   showed and records the change (plan, old and new price, month, the linked
   class ids, who, when). Audited. One scheduled change per plan.
-* :class:`CancelPlanPriceChange`: owner, before the month starts. Audited.
+* :class:`CancelPlanPriceChange`: owner, before the month starts and before
+  anything for that month (or later) is charged or quoted. Audited.
 * :class:`ApplyDuePlanPriceChanges`: the scheduler, once the month has
   started, moves the class fees and the plan price together so links stay
   current. Charges do not wait for it (see ``domain/plan_price_change.py``).
@@ -39,6 +40,7 @@ from backend.v2.contexts.billing.application.use_cases.pricing_page import (
 )
 from backend.v2.contexts.billing.domain.class_pricing import effective_plan_link
 from backend.v2.contexts.billing.domain.errors import (
+    PriceChangeAlreadyCharged,
     PriceChangeInvalid,
     PriceChangeNotCancellable,
     PriceChangeNotFound,
@@ -72,12 +74,18 @@ class PlanPriceChangeRepository(Protocol):
         ...
 
     async def cancel(self, change_id: str, *, actor_id: str, at: datetime) -> bool: ...
-    async def record_flip(self, change_id: str, session_id: str) -> bool: ...
+    async def record_flip(self, change_id: str, session_id: str) -> bool:
+        """False when the change is no longer scheduled or no longer holds the class."""
+        ...
+
     async def mark_applied(self, change_id: str, *, plan_flipped: bool, at: datetime) -> bool: ...
 
 
 class InvoicedPeriodReader(Protocol):
     async def latest_invoiced_period(self, session_ids: Sequence[str]) -> str | None: ...
+    async def has_charges_from(self, session_ids: Sequence[str], period: str) -> bool:
+        """True when a month on or after ``period`` is charged or quoted for the classes."""
+        ...
 
 
 class PriceChangeFlipWriter(Protocol):
@@ -343,7 +351,13 @@ class SchedulePlanPriceChange:
 
 
 class CancelPlanPriceChange:
-    """Owner cancels a scheduled change before its month starts."""
+    """Owner cancels a scheduled change before its month starts.
+
+    Refused once anything for the effective month or later is charged or
+    quoted for the change's classes (a registration quote, a checkout, a
+    monthly run generated early): those were priced at the new price, and
+    cancelling would leave the month with two prices.
+    """
 
     def __init__(
         self,
@@ -351,11 +365,13 @@ class CancelPlanPriceChange:
         changes: PlanPriceChangeRepository,
         current_period: CurrentPeriod,
         audit: RecordMoneySettingChange,
+        charges: InvoicedPeriodReader,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._changes = changes
         self._current_period = current_period
         self._audit = audit
+        self._charges = charges
         self._now = clock
 
     async def execute(self, *, academy_id: str, change_id: str, actor_id: str) -> None:
@@ -369,6 +385,12 @@ class CancelPlanPriceChange:
         ):
             raise PriceChangeNotCancellable(
                 "This price change has taken effect or was cancelled.", change_id=change_id
+            )
+        if await self._charges.has_charges_from(change.session_ids, change.effective_period):
+            raise PriceChangeAlreadyCharged(
+                "Some charges from that month already use the new price, "
+                "so this change can no longer be cancelled.",
+                change_id=change_id,
             )
         if not await self._changes.cancel(change_id, actor_id=actor_id, at=self._now()):
             raise PriceChangeNotCancellable(
@@ -473,8 +495,11 @@ class ApplyDuePlanPriceChanges:
                 if await self._flips.current_class_fee(session_id) != change.old_cents:
                     continue  # fee edited by hand since: the owner's fee wins
                 if not await self._changes.record_flip(change.change_id, session_id):
-                    cancelled = True
-                    break
+                    latest = await self._changes.get(change.change_id)
+                    if latest is None or latest.status != "scheduled":
+                        cancelled = True
+                        break
+                    continue  # the owner moved the class off the plan meanwhile
                 flipped.append(session_id)
                 if await self._flips.flip_class_fee(
                     session_id, old_cents=change.old_cents, new_cents=change.new_cents, at=now

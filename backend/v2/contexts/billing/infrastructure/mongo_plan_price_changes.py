@@ -153,12 +153,37 @@ class MongoPlanPriceChangeRepository(TenantScopedRepository):
         return bool(result.modified_count == 1)
 
     async def record_flip(self, change_id: str, session_id: str) -> bool:
-        """Note a class as flipped BEFORE its fee is written (see the domain module)."""
+        """Note a class as flipped BEFORE its fee is written (see the domain module).
+
+        Only while the class is still in the change: a class the owner moved
+        off the plan in the meantime is never flipped.
+        """
         result = await self._update_one(
-            {"change_id": change_id, "status": "scheduled"},
+            {"change_id": change_id, "status": "scheduled", "session_ids": session_id},
             {"$addToSet": {"flipped_session_ids": session_id}},
         )
         return bool(result.matched_count == 1)
+
+    async def add_session(self, change_id: str, session_id: str) -> bool:
+        """Add a class newly linked to the plan to a scheduled change."""
+        result = await self._update_one(
+            {"change_id": change_id, "status": "scheduled"},
+            {"$addToSet": {"session_ids": session_id}},
+        )
+        return bool(result.modified_count == 1)
+
+    async def remove_session(self, change_id: str, session_id: str) -> bool:
+        """Drop a class the owner moved off the plan, unless its fee has moved already."""
+        result = await self._update_one(
+            {
+                "change_id": change_id,
+                "status": "scheduled",
+                "session_ids": session_id,
+                "flipped_session_ids": {"$ne": session_id},
+            },
+            {"$pull": {"session_ids": session_id}},
+        )
+        return bool(result.modified_count == 1)
 
     async def mark_applied(self, change_id: str, *, plan_flipped: bool, at: datetime) -> bool:
         result = await self._update_one(
@@ -169,6 +194,20 @@ class MongoPlanPriceChangeRepository(TenantScopedRepository):
             },
         )
         return bool(result.modified_count == 1)
+
+
+def _new_fee_fields(doc: Mapping[str, Any], new_cents: int, at: datetime) -> dict[str, Any]:
+    """``amount_cents`` plus every legacy fee field the class already carries.
+
+    Some displays read ``monthly_price_cents`` / ``monthly_price`` directly,
+    so a legacy class keeps them in step with the fee that is charged.
+    """
+    fields: dict[str, Any] = {"amount_cents": new_cents, "updated_at": at}
+    if doc.get("monthly_price_cents") is not None:
+        fields["monthly_price_cents"] = new_cents
+    if doc.get("monthly_price") is not None:
+        fields["monthly_price"] = new_cents / 100
+    return fields
 
 
 class MongoPriceChangeFlipWriter(TenantScopedRepository):
@@ -195,7 +234,7 @@ class MongoPriceChangeFlipWriter(TenantScopedRepository):
                 "monthly_price_cents": doc.get("monthly_price_cents"),
                 "monthly_price": doc.get("monthly_price"),
             },
-            {"$set": {"amount_cents": new_cents, "updated_at": at}},
+            {"$set": _new_fee_fields(doc, new_cents, at)},
         )
         return bool(result.modified_count == 1)
 
@@ -210,17 +249,23 @@ class MongoPriceChangeFlipWriter(TenantScopedRepository):
 
 
 class MongoInvoicedPeriodReader(TenantScopedRepository):
-    """The latest billing month that already has invoices for some classes."""
+    """Which billing months already carry charges for some classes."""
 
     collection_name = "enrollments"
 
-    async def latest_invoiced_period(self, session_ids: Sequence[str]) -> str | None:
-        """Newest ``period`` among the monthly run's records and these classes' invoices.
+    def __init__(self, db: Any, *, clock: Callable[[], datetime] = lambda: datetime.now(UTC)):
+        super().__init__(db)
+        self._now = clock
 
-        Three sources, newest wins: a recorded monthly generation run for the
-        academy, an invoice (``invoices``) or a monthly invoice key
-        (``billing_invoice_keys``) for any enrollment in the classes, whatever
-        the enrollment's status.
+    async def latest_invoiced_period(self, session_ids: Sequence[str]) -> str | None:
+        """Newest billing month that already has a charge, among these sources.
+
+        * a recorded monthly generation run for the academy;
+        * an invoice (``invoices``), a monthly invoice key
+          (``billing_invoice_keys``) or a monthly payment (``payments``) for
+          any enrollment in the classes, whatever the enrollment's status;
+        * a consumed calculation snapshot for one of the classes: a checkout
+          (registration) or monthly charge priced for that month.
         """
         periods: list[str] = []
         run = await self._find_one_in_collection(
@@ -239,7 +284,7 @@ class MongoInvoicedPeriodReader(TenantScopedRepository):
                 if doc.get("enrollment_id")
             ]
             if enrollment_ids:
-                for collection in ("invoices", "billing_invoice_keys"):
+                for collection in ("invoices", "billing_invoice_keys", "payments"):
                     doc = await self._find_one_in_collection(
                         collection,
                         {"enrollment_id": {"$in": enrollment_ids}, "period": {"$gt": ""}},
@@ -247,7 +292,40 @@ class MongoInvoicedPeriodReader(TenantScopedRepository):
                     )
                     if doc and doc.get("period"):
                         periods.append(str(doc["period"]))
+            snapshot = await self._find_one_in_collection(
+                "billing_calculation_snapshots",
+                {
+                    "session_id": {"$in": list(session_ids)},
+                    "status": "CONSUMED",
+                    "billing_period_label": {"$gt": ""},
+                },
+                sort=[("billing_period_label", -1)],
+            )
+            if snapshot and snapshot.get("billing_period_label"):
+                periods.append(str(snapshot["billing_period_label"]))
         return max(periods) if periods else None
+
+    async def has_charges_from(self, session_ids: Sequence[str], period: str) -> bool:
+        """True when any month on or after ``period`` is charged or quoted for these classes.
+
+        Everything :meth:`latest_invoiced_period` counts, plus an open,
+        unexpired checkout quote: a parent can still pay it at its price.
+        """
+        latest = await self.latest_invoiced_period(session_ids)
+        if latest is not None and latest >= period:
+            return True
+        if not session_ids:
+            return False
+        quote = await self._find_one_in_collection(
+            "billing_calculation_snapshots",
+            {
+                "session_id": {"$in": list(session_ids)},
+                "status": "OPEN",
+                "billing_period_label": {"$gte": period},
+                "$or": [{"expires_at": None}, {"expires_at": {"$gt": self._now()}}],
+            },
+        )
+        return quote is not None
 
 
 class MongoAcademyBillingMonth:

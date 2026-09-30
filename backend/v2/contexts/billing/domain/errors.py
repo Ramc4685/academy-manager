@@ -272,3 +272,15 @@ class PriceChangeNotCancellable(DomainError):
 
     code = "Billing.PriceChangeNotCancellable"
     status_code = 409
+
+
+class PriceChangeAlreadyCharged(DomainError):
+    """Plan price change: a month on or after the change is already charged or quoted.
+
+    Refused so every charge for that month keeps one price: cancelling the
+    change, or moving a class off (or onto) the plan, would leave those
+    charges at a price the month no longer has.
+    """
+
+    code = "Billing.PriceChangeAlreadyCharged"
+    status_code = 409

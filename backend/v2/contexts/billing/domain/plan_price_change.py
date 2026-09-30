@@ -29,7 +29,11 @@ A change goes through two states that matter to charges:
 So the answer for a given (class, month) is the same before, during and after
 the flip: the flip only moves what is displayed. If the owner edits a class
 fee by hand, that fee wins: the change stops applying to the class (its
-stored fee is no longer the old price).
+stored fee is no longer the old price). If the owner moves a class off the
+plan (custom or another plan) the class leaves ``session_ids``; a class
+linked to the plan later at the old price joins it. Both, and a cancel, are
+refused once a month on or after the change is charged or quoted for the
+class, so a month never ends up with two prices.
 
 Pure: no I/O, no academy id.
 """
