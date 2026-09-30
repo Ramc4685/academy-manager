@@ -69,7 +69,7 @@ pydantic==2.13.5
 pydantic_core==2.46.5
 pydantic-settings==2.15.0
 Pygments==2.21.0
-PyJWT==2.14.0
+PyJWT==2.15.0
 pymongo==4.18.1
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
@@ -102,7 +102,7 @@ typing_extensions==4.16.0
 tzdata==2026.4
 tzlocal==5.4.4
 uritemplate==4.2.0
-urllib3==2.7.0
+urllib3==2.8.0
 uvicorn==0.53.0
 watchfiles==1.2.0
 websockets==17.1
