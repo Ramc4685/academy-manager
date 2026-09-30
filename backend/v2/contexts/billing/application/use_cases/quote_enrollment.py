@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from backend.v2.contexts.billing.application.ports import (
+    ClassFeeForPeriod,
     OccurrenceCatalog,
     SessionLoader,
     SnapshotWriter,
@@ -55,6 +56,7 @@ class QuoteEnrollment:
         occurrences: OccurrenceCatalog,
         clock=lambda: datetime.now(UTC),
         academy_timezone: AcademyTimezoneReader | None = None,
+        class_fees: ClassFeeForPeriod | None = None,
     ) -> None:
         self._sessions = sessions
         self._snapshots = snapshots
@@ -63,6 +65,10 @@ class QuoteEnrollment:
         # Zone for a legacy session doc with no ``timezone`` of its own. Unset
         # (tests, old wiring) means the legacy constant, i.e. today's behaviour.
         self._academy_timezone = academy_timezone
+        # The class fee for the quoted month, with a scheduled plan price
+        # change applied (PR 26). Unset (tests, old wiring) reads the stored
+        # fee, i.e. today's behaviour.
+        self._class_fees = class_fees
 
     async def execute(self, cmd: QuoteEnrollmentCommand) -> BillingCalculationSnapshot:
         session_doc = await self._sessions.get_by_id(cmd.session_id)
@@ -82,8 +88,13 @@ class QuoteEnrollment:
         )
         occ_list = await self._occurrences.list_for_session(session_doc, period)
 
+        monthly_price_cents = (
+            await self._class_fees.fee_cents_for_period(session_doc, period.label)
+            if self._class_fees is not None
+            else _session_amount_cents(session_doc)
+        )
         snapshot = FirstMonthProrationPolicy().quote(
-            monthly_price_cents=_session_amount_cents(session_doc),
+            monthly_price_cents=monthly_price_cents,
             discount_cents=0,
             period=period,
             occurrences=occ_list,

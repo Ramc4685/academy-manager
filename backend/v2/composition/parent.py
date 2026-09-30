@@ -122,6 +122,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo impor
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    MongoClassFeeResolver,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
 )
@@ -854,6 +857,7 @@ def compose_parent(
         occurrences=payments_repo,
         clock=clock,
         academy_timezone=academy_timezone_lookup(db),
+        class_fees=MongoClassFeeResolver(db),
     )
 
     # Enrollment

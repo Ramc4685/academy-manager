@@ -120,6 +120,9 @@ TENANT_OWNED_COLLECTIONS = {
     # Once-per-academy-local-day scheduler claims (migration 0210, Settings
     # Phase 4); every read and write filters on academy_id.
     "scheduler_run_markers",
+    # Scheduled plan price changes (migration 0212, Settings overhaul PR 26);
+    # read by every charge path with an explicit academy_id filter.
+    "plan_price_changes",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

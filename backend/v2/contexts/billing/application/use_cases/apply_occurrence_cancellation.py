@@ -125,7 +125,11 @@ class PeriodChargeBasis:
 
 
 class OccurrenceCancellationReader(Protocol):
-    async def session_pricing(self, session_id: str) -> SessionPricing | None: ...
+    async def session_pricing(
+        self, session_id: str, *, period: str | None = None
+    ) -> SessionPricing | None:
+        """The class's pricing; ``monthly_price_cents`` is the fee for ``period`` when given."""
+        ...
 
     async def occurrences_for_period(
         self, *, session_id: str, period: str
@@ -139,7 +143,9 @@ class OccurrenceCancellationReader(Protocol):
         """What was priced for this family for this period, if anything."""
         ...
 
-    async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]: ...
+    async def enrollments_for_session(
+        self, session_id: str, *, period: str | None = None
+    ) -> list[BillableEnrollment]: ...
 
 
 class OccurrenceOverrideWriter(Protocol):
@@ -250,6 +256,10 @@ class ApplyOccurrenceCancellation:
                 override_written=False,
             )
         period = period_of(cmd.start_at, pricing.timezone)
+        # Price the class for the cancelled date's month, so a credit agrees
+        # with that month's invoice when a plan price change is scheduled
+        # (PR 26). Unchanged with no change on record.
+        pricing = await self._reader.session_pricing(cmd.session_id, period=period) or pricing
         occurrences = await self._reader.occurrences_for_period(
             session_id=cmd.session_id, period=period
         )
@@ -284,7 +294,7 @@ class ApplyOccurrenceCancellation:
         )
 
         decisions: list[OccurrenceCreditDecision] = []
-        for enrollment in await self._reader.enrollments_for_session(cmd.session_id):
+        for enrollment in await self._reader.enrollments_for_session(cmd.session_id, period=period):
             decisions.append(
                 await self._decide(
                     enrollment=enrollment,

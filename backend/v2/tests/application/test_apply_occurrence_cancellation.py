@@ -62,7 +62,9 @@ class FakeReader:
     #: enrollment_id (or "student:session") -> what was priced for the period.
     bases: dict[str, PeriodChargeBasis] = field(default_factory=dict)
 
-    async def session_pricing(self, session_id: str) -> SessionPricing | None:
+    async def session_pricing(
+        self, session_id: str, *, period: str | None = None
+    ) -> SessionPricing | None:
         return self.pricing
 
     async def occurrences_for_period(
@@ -75,7 +77,9 @@ class FakeReader:
     ) -> PeriodChargeBasis | None:
         return self.bases.get(enrollment_id) or self.bases.get(f"{student_id}:{session_id}")
 
-    async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]:
+    async def enrollments_for_session(
+        self, session_id: str, *, period: str | None = None
+    ) -> list[BillableEnrollment]:
         return list(self.enrollments)
 
 

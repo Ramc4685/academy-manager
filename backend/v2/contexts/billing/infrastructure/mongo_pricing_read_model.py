@@ -20,6 +20,8 @@ from backend.v2.contexts.billing.application.use_cases.pricing_page import (
 )
 from backend.v2.contexts.billing.domain.session_type import SessionType
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+    MONTHLY_INVOICED_BILLING_TYPES,
+    MONTHLY_INVOICED_ENROLLMENT_STATUS,
     session_amount_cents,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -111,6 +113,33 @@ class MongoPricingReadModel(TenantScopedRepository):
             return None
         counts = await self._active_counts([_session_id(doc)])
         return self._facts(doc, counts.get(_session_id(doc), 0))
+
+    async def billed_students(self, session_ids: Sequence[str]) -> dict[str, int]:
+        """Distinct students the monthly run invoices on each class.
+
+        The generator's own rule: an enrollment in the invoiced status
+        (``active``; ``paused`` is read but skipped) whose ``billing_type``
+        (missing reads "standard", case-insensitive) is one it invoices.
+        Month-specific skips (a billing pause, a pending cancellation) are not
+        applied: the preview counts who is billed today.
+        """
+        if not session_ids:
+            return {}
+        cursor = self._find_many_in_collection(
+            "enrollments",
+            {
+                "session_id": {"$in": list(session_ids)},
+                "status": MONTHLY_INVOICED_ENROLLMENT_STATUS,
+            },
+            {"_id": 0, "session_id": 1, "student_id": 1, "billing_type": 1},
+        )
+        students: dict[str, set[str]] = {}
+        async for doc in cursor:
+            billing_type = str(doc.get("billing_type") or "standard").lower()
+            if billing_type not in MONTHLY_INVOICED_BILLING_TYPES or not doc.get("student_id"):
+                continue
+            students.setdefault(str(doc["session_id"]), set()).add(str(doc["student_id"]))
+        return {session_id: len(ids) for session_id, ids in students.items()}
 
     async def _students(self, student_ids: set[str]) -> dict[str, dict[str, Any]]:
         if not student_ids:

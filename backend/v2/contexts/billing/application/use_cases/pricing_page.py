@@ -24,7 +24,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -42,6 +42,10 @@ from backend.v2.contexts.billing.domain.class_pricing import (
     stale_link_reason,
 )
 from backend.v2.contexts.billing.domain.errors import PricingClassNotFound, SessionTypeNotFound
+from backend.v2.contexts.billing.domain.plan_price_change import (
+    PlanPriceChange,
+    pending_change_for_class,
+)
 from backend.v2.contexts.billing.domain.session_type import SessionType
 
 log = logging.getLogger(__name__)
@@ -96,6 +100,9 @@ class PricingReadModel(Protocol):
     async def list_saved_overrides(
         self, plans: Sequence[SessionType]
     ) -> list[SavedOverrideFacts]: ...
+    async def billed_students(self, session_ids: Sequence[str]) -> dict[str, int]:
+        """Students the monthly run invoices on each class (its own status rule)."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -127,6 +134,10 @@ class PricingPlanRow(BaseModel):
 
     plan: SessionType
     linked_classes: int
+    #: The plan's scheduled price change, if any (PR 26).
+    scheduled_change_id: str | None = None
+    scheduled_cents: int | None = None
+    scheduled_from: str | None = None
 
 
 class PricingClassRow(BaseModel):
@@ -145,6 +156,9 @@ class PricingClassRow(BaseModel):
     stale_link: bool
     #: Why the stored link is stale: "archived", "price_changed" or "plan_removed".
     stale_reason: StaleLinkReason | None = None
+    #: A scheduled plan price change that will move this class's fee (PR 26).
+    scheduled_cents: int | None = None
+    scheduled_from: str | None = None
 
 
 class PricingSavedOverride(BaseModel):
@@ -170,11 +184,22 @@ class PricingOverview(BaseModel):
     auto_linkable: int
 
 
-def _plan_prices(plans: Sequence[SessionType]) -> list[PlanPrice]:
+class PriceChangeLister(Protocol):
+    """The part of the plan price change store the overview reads (PR 26)."""
+
+    async def list_scheduled(self) -> list[PlanPriceChange]: ...
+
+
+def plan_prices(plans: Sequence[SessionType]) -> list[PlanPrice]:
     return [
         PlanPrice(plan_id=p.session_type_id, price_cents=p.price_cents, is_active=p.is_active)
         for p in plans
     ]
+
+
+def _change_attr(changes: dict[str, PlanPriceChange], plan: SessionType, attr: str) -> Any:
+    change = changes.get(plan.session_type_id)
+    return getattr(change, attr) if change is not None else None
 
 
 # ---------------------------------------------------------------- use cases
@@ -187,16 +212,22 @@ class GetPricingOverview:
         session_types: SessionTypeRepository,
         read_model: PricingReadModel,
         links: ClassPlanLinkRepository,
+        price_changes: PriceChangeLister | None = None,
     ) -> None:
         self._session_types = session_types
         self._read_model = read_model
         self._links = links
+        self._price_changes = price_changes
 
     async def execute(self) -> PricingOverview:
         plans = await self._session_types.list_all()
-        prices = _plan_prices(plans)
+        prices = plan_prices(plans)
         classes = await self._read_model.list_classes()
         stored = {link.session_id: link for link in await self._links.list_links()}
+        scheduled = (
+            await self._price_changes.list_scheduled() if self._price_changes is not None else []
+        )
+        change_by_plan = {change.plan_id: change for change in scheduled}
 
         linked_counts: dict[str, int] = {}
         rows: list[PricingClassRow] = []
@@ -209,6 +240,9 @@ class GetPricingOverview:
                 linked_counts[plan_id] = linked_counts.get(plan_id, 0) + 1
             if decision is None and initial_plan_link(cls.charged_cents, prices) is not None:
                 auto_linkable += 1
+            pending = pending_change_for_class(
+                session_id=cls.session_id, stored_fee_cents=cls.charged_cents, changes=scheduled
+            )
             rows.append(
                 PricingClassRow(
                     session_id=cls.session_id,
@@ -220,13 +254,21 @@ class GetPricingOverview:
                     matching_plan_ids=matching_plan_ids(cls.charged_cents, prices),
                     stale_link=stored_plan is not None and plan_id is None,
                     stale_reason=stale_link_reason(stored_plan, cls.charged_cents, prices),
+                    scheduled_cents=pending.new_cents if pending else None,
+                    scheduled_from=pending.effective_period if pending else None,
                 )
             )
 
         overrides = await self._read_model.list_saved_overrides(plans)
         return PricingOverview(
             plans=[
-                PricingPlanRow(plan=p, linked_classes=linked_counts.get(p.session_type_id, 0))
+                PricingPlanRow(
+                    plan=p,
+                    linked_classes=linked_counts.get(p.session_type_id, 0),
+                    scheduled_change_id=_change_attr(change_by_plan, p, "change_id"),
+                    scheduled_cents=_change_attr(change_by_plan, p, "new_cents"),
+                    scheduled_from=_change_attr(change_by_plan, p, "effective_period"),
+                )
                 for p in plans
             ],
             classes=rows,
@@ -284,7 +326,7 @@ class SetClassPlanLink:
         if cls is None:
             raise PricingClassNotFound("class not found", session_id=cmd.session_id)
         plans = await self._session_types.list_all()
-        prices = _plan_prices(plans)
+        prices = plan_prices(plans)
         if cmd.plan_id is not None:
             plan = next((p for p in prices if p.plan_id == cmd.plan_id), None)
             if plan is None:
@@ -366,7 +408,7 @@ class LinkMatchingClasses:
         self._now = clock
 
     async def execute(self, *, academy_id: str, actor_id: str) -> LinkMatchingClassesResult:
-        prices = _plan_prices(await self._session_types.list_all())
+        prices = plan_prices(await self._session_types.list_all())
         decided = {link.session_id for link in await self._links.list_links()}
         linked: list[dict[str, object]] = []
         no_match = several = already = 0

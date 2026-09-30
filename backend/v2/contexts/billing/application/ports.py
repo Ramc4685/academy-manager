@@ -825,6 +825,17 @@ class SnapshotWriter(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class ClassFeeForPeriod(Protocol):
+    """A class's monthly fee for one billing month (Settings overhaul PR 26).
+
+    The stored class fee, with any plan price change the owner scheduled for
+    that month applied. Every charge path reads the fee through this so they
+    agree on the price for a given month.
+    """
+
+    async def fee_cents_for_period(self, session_doc: Mapping[str, Any], period: str) -> int: ...
+
+
 class SessionTypeRepository(Protocol):
     async def save(self, session_type: SessionType) -> None: ...
     async def get(self, session_type_id: str) -> SessionType | None: ...
