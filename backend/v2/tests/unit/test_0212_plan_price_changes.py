@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from typing import Any
 
 import mongomock_motor
 
@@ -10,7 +11,7 @@ _M0212 = importlib.import_module("backend.v2.migrations.0212_plan_price_changes"
 
 
 async def test_builds_the_indexes_and_rerun_is_a_no_op() -> None:
-    db = mongomock_motor.AsyncMongoMockClient()["test"]
+    db: Any = mongomock_motor.AsyncMongoMockClient()["test"]
     await _M0212.up(db)
     await _M0212.up(db)
 

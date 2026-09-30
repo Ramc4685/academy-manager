@@ -128,6 +128,27 @@ class FakeCredits:
                 return row
         return None
 
+    async def resize_unapplied(
+        self, credit_id: str, *, from_cents: int, to_cents: int, now: datetime
+    ) -> bool:
+        """Compare-and-set like the real store: only an untouched, approved credit."""
+        for index, row in enumerate(self.rows):
+            if (
+                row.credit_id == credit_id
+                and row.status == "APPROVED"
+                and row.amount_cents == from_cents
+                and row.remaining_amount_cents == from_cents
+            ):
+                self.rows[index] = row.model_copy(
+                    update={
+                        "amount_cents": to_cents,
+                        "remaining_amount_cents": to_cents,
+                        "updated_at": now,
+                    }
+                )
+                return True
+        return False
+
 
 def _invoice(enrollment_id: str, *, subtotal: int, discount: int = 0, status: str = "open"):
     return LedgerInvoice(

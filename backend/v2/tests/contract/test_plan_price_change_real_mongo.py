@@ -27,7 +27,10 @@ a custom class at the same price):
   scheduler never leaves two prices for one month: an overlapping quote is
   withdrawn and re-priced, the scheduler defers a change edited mid-run, and
   a "next month" price told to a parent blocks the cancel;
-* the cancellation CREDIT amount matches main's for the month's price;
+* the cancellation CREDIT amount matches main's for the month's price; a
+  credit for a date in the change's month (or later) blocks the cancel and
+  moving the class, a credit for a later month moves the earliest month, and
+  a credit priced across an owner's cancel is re-sized to the old price;
 * a custom-price class at the same price is not affected;
 * another academy's plan and class with the SAME ids are never touched.
 """
@@ -43,6 +46,7 @@ import pytest
 
 from backend.v2.composition.occurrence_cancellation import compose_apply_occurrence_cancellation
 from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancellation import (
+    ApplyOccurrenceCancellation,
     ApplyOccurrenceCancellationCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.money_setting_audit import (
@@ -66,6 +70,7 @@ from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
 )
+from backend.v2.contexts.billing.domain.credits import class_cancellation_credit_cents
 from backend.v2.contexts.billing.domain.errors import (
     PriceChangeAlreadyCharged,
     PriceChangeInFlight,
@@ -80,6 +85,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
+    MongoCreditLedgerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_enrollment_billing_target import (
     MongoEnrollmentBillingTargetReader,
 )
@@ -91,6 +99,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_move_schedule_reader impor
 )
 from backend.v2.contexts.billing.infrastructure.mongo_occurrence_cancellation import (
     MongoOccurrenceCancellationReader,
+    MongoOccurrenceOverrideRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
@@ -810,6 +819,149 @@ async def test_cancellation_credit_amounts_follow_the_month_price(real_db, acad)
 
     assert await _credit_for(real_db, acad, october) == oct_old
     assert await _credit_for(real_db, acad, november) == nov_new
+
+
+#: Tue 2026-11-10 18:00 Chicago (CST) / Tue 2026-10-06 18:00 Chicago (CDT).
+_NOV_10 = datetime(2026, 11, 11, 0, 0, tzinfo=UTC)
+_OCT_06 = datetime(2026, 10, 6, 23, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_a_credit_at_the_new_price_blocks_cancel_and_moving_the_class(real_db, acad) -> None:
+    """October: a November date is called off and credited from November's
+    (new) fee. The owner can then neither cancel the change nor mark the class
+    custom: November would be billed at the old price against a new-price credit."""
+    await _seed_academy(real_db, acad)
+    await _seed_academy(real_db, "at-new", fee_cents=NEW)
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+
+    credited = await _credit_for(real_db, acad, _NOV_10)
+    assert credited == await _credit_for(real_db, "at-new", _NOV_10)
+    stored = await real_db["account_credit_ledger"].find_one(
+        {"academy_id": acad, "enrollment_id": "e1"}
+    )
+    assert (stored["session_id"], stored["billing_period"]) == ("juniors", "2026-11")
+
+    with pytest.raises(PriceChangeAlreadyCharged):
+        await kit.cancel.execute(academy_id=acad, change_id=change.change_id, actor_id="owner-1")
+    with pytest.raises(PriceChangeAlreadyCharged):
+        await kit.set_link.execute(kit.link(acad, "juniors", None))
+    after = await kit.changes.get(change.change_id)
+    assert after is not None and after.status == "scheduled"
+    assert "juniors" in after.session_ids
+    # Adults has no credit: it can still leave the change.
+    await kit.set_link.execute(kit.link(acad, "adults", None))
+
+
+@pytest.mark.asyncio
+async def test_a_credit_before_the_month_or_none_at_all_leaves_cancel_open(real_db, acad) -> None:
+    await _seed_academy(real_db, acad)
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+    # An October date is credited at October's (old) fee: before the change.
+    assert (await _credit_for(real_db, acad, _OCT_06))["e1"] > 0
+
+    await kit.cancel.execute(academy_id=acad, change_id=change.change_id, actor_id="owner-1")
+    assert (await kit.changes.get(change.change_id)).status == "cancelled"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_a_credit_for_a_future_month_moves_the_earliest_month(real_db, acad) -> None:
+    """Credited at today's fee for November, so November cannot get a new price."""
+    await _seed_academy(real_db, acad)
+    kit = _Kit(real_db)
+    assert (await _credit_for(real_db, acad, _NOV_10))["e1"] > 0
+
+    preview = await kit.preview.execute(plan_id="group", new_price_cents=NEW)
+
+    assert preview.earliest_period == "2026-12"
+    with pytest.raises(PriceChangeMonthNotAllowed):
+        await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+
+
+@pytest.mark.asyncio
+async def test_without_a_change_the_credit_is_mains_formula(real_db, acad) -> None:
+    """BLNO today: no change on record, so a November credit is the stored
+    fee over the month's billed classes, exactly as on main."""
+    await _seed_academy(real_db, acad)
+    token = _tenant.set(acad)
+    try:
+        occurrences = await MongoOccurrenceCancellationReader(real_db).occurrences_for_period(
+            session_id="juniors", period="2026-11"
+        )
+    finally:
+        _tenant.reset(token)
+    billed = len([o for o in occurrences if o.status != "holiday"])
+    expected = class_cancellation_credit_cents(period_charge_cents=OLD, billable_classes=billed)
+
+    credited = await _credit_for(real_db, acad, _NOV_10)
+
+    assert expected > 0
+    assert credited == {"e1": expected, "e2": expected, "e5": 0}
+    amounts = {
+        doc["enrollment_id"]: (doc["amount_cents"], doc["remaining_amount_cents"])
+        async for doc in real_db["account_credit_ledger"].find({"academy_id": acad})
+    }
+    assert amounts == {"e1": (expected, expected), "e2": (expected, expected)}
+
+
+class _CancelDuringCreditPricing(MongoOccurrenceCancellationReader):
+    """The owner's cancel lands right after the credit read November's fee."""
+
+    def __init__(self, db: Any, cancel: Any) -> None:
+        super().__init__(db)
+        self._cancel = cancel
+
+    async def session_pricing(self, session_id: str, *, period: str | None = None) -> Any:
+        pricing = await super().session_pricing(session_id, period=period)
+        if period is not None and self._cancel is not None:
+            cancel, self._cancel = self._cancel, None
+            await cancel()
+        return pricing
+
+
+@pytest.mark.asyncio
+async def test_a_credit_priced_across_a_cancel_is_resized_to_the_old_price(real_db, acad) -> None:
+    await _seed_academy(real_db, acad)
+    await _seed_academy(real_db, "at-old")
+    kit = _Kit(real_db)
+    change = await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+    main_at_old = await _credit_for(real_db, "at-old", _NOV_10)
+
+    async def cancel() -> None:
+        await kit.cancel.execute(academy_id=acad, change_id=change.change_id, actor_id="owner-1")
+
+    use_case = ApplyOccurrenceCancellation(
+        reader=_CancelDuringCreditPricing(real_db, cancel),
+        overrides=MongoOccurrenceOverrideRepository(real_db),
+        invoices=MongoBillingLedgerRepository(real_db),
+        credits=MongoCreditLedgerRepository(real_db),
+        price_fence=MongoClassFeeResolver(real_db),
+        fence_retry_delay=0,
+    )
+    token = _tenant.set(acad)
+    try:
+        result = await use_case.execute(
+            ApplyOccurrenceCancellationCommand(
+                occurrence_id=f"occ-{_NOV_10:%Y%m%d}",
+                session_id="juniors",
+                start_at=_NOV_10,
+                reason="Rain",
+            )
+        )
+    finally:
+        _tenant.reset(token)
+
+    # The cancel went through (nothing was credited when it checked) ...
+    assert (await kit.changes.get(change.change_id)).status == "cancelled"  # type: ignore[union-attr]
+    # ... so November is billed at the old price, and the credit follows it.
+    assert {d.enrollment_id: d.amount_cents for d in result.decisions} == main_at_old
+    stored = {
+        doc["enrollment_id"]: (doc["amount_cents"], doc["remaining_amount_cents"])
+        async for doc in real_db["account_credit_ledger"].find({"academy_id": acad})
+    }
+    assert stored == {e: (a, a) for e, a in main_at_old.items() if a}
 
 
 # -------------------------------------------------------- tenant isolation

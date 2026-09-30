@@ -17,9 +17,10 @@
 * The edit fence: an owner edit (cancel, a class leaving or joining) first
   sets ``edit`` on the change (a token, a short lease and the classes it
   touches) and bumps ``revision``; the write itself is compare-and-set on the
-  token. :func:`price_fence` is what a registration quote reads before and
-  after it stores a snapshot: it refuses while an edit is open and changes
-  whenever one started, so a quote that overlapped an edit is withdrawn.
+  token. :func:`price_fence` is what a registration quote (and a
+  class-cancellation credit) reads before and after it stores a charge: it
+  refuses while an edit is open and changes whenever one started, so a quote
+  that overlapped an edit is withdrawn and such a credit is re-sized.
 
 See ``domain/plan_price_change.py`` for why the flip does not change any
 charge.
@@ -34,6 +35,7 @@ from zoneinfo import ZoneInfo
 
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.contexts.billing.domain.credits import CLASS_CANCELLATION_SOURCE_TYPE
 from backend.v2.contexts.billing.domain.errors import PriceChangeInFlight, PriceChangePending
 from backend.v2.contexts.billing.domain.plan_price_change import (
     PlanPriceChange,
@@ -400,7 +402,13 @@ class MongoInvoicedPeriodReader(TenantScopedRepository):
           (``billing_invoice_keys``) or a monthly payment (``payments``) for
           any enrollment in the classes, whatever the enrollment's status;
         * a consumed calculation snapshot for one of the classes: a checkout
-          (registration) or monthly charge priced for that month.
+          (registration) or monthly charge priced for that month;
+        * a class-cancellation credit for one of the classes, for the month
+          of the cancelled date (``billing_period``). A month not invoiced
+          yet is credited from that month's class fee, so the credit carries
+          the price as surely as an invoice would. Credits issued before
+          ``billing_period`` was recorded carry no month and are not counted
+          (no plan price change existed then, see the release note).
         """
         periods: list[str] = []
         run = await self._find_one_in_collection(
@@ -438,12 +446,25 @@ class MongoInvoicedPeriodReader(TenantScopedRepository):
             )
             if snapshot and snapshot.get("billing_period_label"):
                 periods.append(str(snapshot["billing_period_label"]))
+            credit = await self._find_one_in_collection(
+                "account_credit_ledger",
+                {
+                    "source_type": CLASS_CANCELLATION_SOURCE_TYPE,
+                    "session_id": {"$in": list(session_ids)},
+                    "billing_period": {"$gt": ""},
+                    "status": {"$ne": "VOIDED"},
+                },
+                sort=[("billing_period", -1)],
+            )
+            if credit and credit.get("billing_period"):
+                periods.append(str(credit["billing_period"]))
         return max(periods) if periods else None
 
     async def has_charges_from(self, session_ids: Sequence[str], period: str) -> bool:
         """True when any month on or after ``period`` is charged or quoted for these classes.
 
-        Everything :meth:`latest_invoiced_period` counts, plus an open,
+        Everything :meth:`latest_invoiced_period` counts (a class-cancellation
+        credit for a date in such a month included), plus an open,
         unexpired checkout quote (a parent can still pay it at its price),
         plus a registration quote, open or paid, that told the parent the
         price of a month on or after ``period`` ("Starting next month,
