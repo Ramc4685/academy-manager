@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AdminAcademyView, AdminSessionView } from "@/lib/api/admin";
 
-import { WelcomeEmailRows } from "./WelcomeEmailTab";
+import { WelcomeEmailPreviewFrame, WelcomeEmailRows } from "./WelcomeEmailTab";
 import { buildPackPatch, packDefaults, resolveRow, PACK_ROWS } from "./welcome-email-model";
 
 function session(overrides: Partial<AdminSessionView> = {}): AdminSessionView {
@@ -178,5 +178,27 @@ describe("resolveRow", () => {
   });
   it("never defaults the WhatsApp link", () => {
     expect(resolveRow(whatsapp, "", { whatsapp_group_link: "https://x" })).toEqual({ kind: "unset" });
+  });
+});
+
+describe("Welcome email preview frame", () => {
+  it("renders the email in a sandbox that never allows scripts", () => {
+    const markup = renderToStaticMarkup(
+      createElement(WelcomeEmailPreviewFrame, { subject: "Welcome!", html: "<p>Hi</p>" }),
+    );
+    expect(markup).toContain("Welcome!");
+    expect(markup).toContain("srcDoc=");
+    const sandbox = /sandbox="([^"]*)"/.exec(markup)?.[1] ?? "missing";
+    expect(sandbox).not.toContain("allow-scripts");
+    expect(sandbox).not.toContain("allow-same-origin");
+  });
+});
+
+describe("buildPackPatch arrival minutes", () => {
+  it("treats 0 as clearing, and does not mark an unset field dirty", () => {
+    expect(buildPackPatch(session({ arrival_minutes_before: 15 }), { arrival_minutes_before: "0" })).toEqual({
+      arrival_minutes_before: null,
+    });
+    expect(buildPackPatch(session(), { arrival_minutes_before: "0" })).toEqual({});
   });
 });

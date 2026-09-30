@@ -129,6 +129,8 @@ export default function AdminSessionDetailPage() {
   );
   const [assistantsOpen, setAssistantsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
+  // The Welcome email tab keeps unsaved edits, so once opened it stays mounted (hidden) on other tabs.
+  const [welcomeOpened, setWelcomeOpened] = useState(false);
   const [rosterView, setRosterView] = useState<RosterView>("active");
   const [showAllDates, setShowAllDates] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -434,7 +436,10 @@ export default function AdminSessionDetailPage() {
             key={tab.id}
             type="button"
             data-testid={`session-tab-${tab.id}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setActiveTab(tab.id);
+              if (tab.id === "welcome") setWelcomeOpened(true);
+            }}
             className={`min-h-10 border-b-2 px-3 text-sm font-semibold ${
               activeTab === tab.id
                 ? "border-rally-cobalt-600 text-rally-ink"
@@ -655,14 +660,17 @@ export default function AdminSessionDetailPage() {
         </Card>
       )}
 
-      {activeTab === "welcome" &&
-        (session ? (
-          <WelcomeEmailTab key={session.session_id} session={session} />
-        ) : (
-          <Card p={20}>
-            <TableSkeleton />
-          </Card>
-        ))}
+      {welcomeOpened && (
+        <div hidden={activeTab !== "welcome"}>
+          {session ? (
+            <WelcomeEmailTab key={session.session_id} session={session} />
+          ) : (
+            <Card p={20}>
+              <TableSkeleton />
+            </Card>
+          )}
+        </div>
+      )}
 
       <ConfirmActionDialog
         open={cancelSessionOpen}

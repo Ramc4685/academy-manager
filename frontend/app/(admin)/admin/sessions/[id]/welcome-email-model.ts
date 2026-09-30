@@ -98,11 +98,14 @@ export function buildPackPatch(
   for (const spec of PACK_ROWS) {
     const draft = drafts[spec.field];
     if (draft === undefined) continue;
-    if (draft.trim() === storedText(session, spec.field)) continue;
     if (spec.kind === "minutes") {
+      // 0, blank and junk all mean "no arrival time": a cleared field (null).
       const minutes = Number.parseInt(draft.trim(), 10);
-      patch[spec.field] = Number.isFinite(minutes) ? minutes : null;
+      const normalized = minutes > 0 ? minutes : null;
+      if ((normalized === null ? "" : String(normalized)) === storedText(session, spec.field)) continue;
+      patch[spec.field] = normalized;
     } else {
+      if (draft.trim() === storedText(session, spec.field)) continue;
       patch[spec.field] = blankToNull(draft);
     }
   }

@@ -65,7 +65,7 @@ interface AcademyForm {
   privacy_notice_url: string;
 }
 
-function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
+export function normalize(data: AdminAcademyView | null | undefined): AcademyForm {
   return {
     display_name: data?.display_name ?? "",
     // NOT "UTC": the backend now returns null for an academy that has never
@@ -153,7 +153,7 @@ export function replyToHint(supportEmail: string): string {
     : "Replies to academy email go here. Defaults to the support email once you set one.";
 }
 
-function changedPayload(original: AcademyForm, form: AcademyForm): UpdateAdminAcademyRequest {
+export function changedPayload(original: AcademyForm, form: AcademyForm): UpdateAdminAcademyRequest {
   const payload: UpdateAdminAcademyRequest = {};
   TEXT_FIELDS.forEach((key) => {
     if (form[key] !== original[key]) {

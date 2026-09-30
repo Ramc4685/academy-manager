@@ -418,20 +418,26 @@ function WelcomeEmailPreviewDialog({
           retrying={previewQuery.isFetching}
         />
       ) : (
-        <>
-          <p className="mb-2 text-sm font-semibold text-rally-ink" data-testid="welcome-email-preview-subject">
-            {previewQuery.data.subject}
-          </p>
-          {/* No `allow-scripts`: the email is markup only. */}
-          <iframe
-            title="Welcome email preview"
-            data-testid="welcome-email-preview-frame"
-            sandbox=""
-            srcDoc={previewQuery.data.html}
-            className="h-[420px] w-full rounded-md border border-rally-line bg-white"
-          />
-        </>
+        <WelcomeEmailPreviewFrame subject={previewQuery.data.subject} html={previewQuery.data.html} />
       )}
     </Modal>
+  );
+}
+
+/** The rendered email. No `allow-scripts`: the email is markup only; popups let links be checked. */
+export function WelcomeEmailPreviewFrame({ subject, html }: { subject: string; html: string }) {
+  return (
+    <>
+      <p className="mb-2 text-sm font-semibold text-rally-ink" data-testid="welcome-email-preview-subject">
+        {subject}
+      </p>
+      <iframe
+        title="Welcome email preview"
+        data-testid="welcome-email-preview-frame"
+        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        srcDoc={html}
+        className="h-[420px] w-full rounded-md border border-rally-line bg-white"
+      />
+    </>
   );
 }
