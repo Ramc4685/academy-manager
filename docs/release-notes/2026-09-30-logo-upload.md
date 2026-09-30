@@ -1,6 +1,6 @@
 # Logo upload (Settings overhaul Phase 4 PR 13b)
 
-PR: #TBD
+PR: #1015
 
 ## What changed
 
