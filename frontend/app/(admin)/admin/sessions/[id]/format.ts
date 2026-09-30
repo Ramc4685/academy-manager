@@ -120,19 +120,6 @@ export function communicationPackFields(
   };
 }
 
-export function hasCommunicationPack(session: AdminSessionView): boolean {
-  return Object.values(communicationPackFields(session)).some(
-    (value) => value !== null && String(value).trim() !== "",
-  );
-}
-
-export function formatArrivalMinutes(
-  minutes: number | null | undefined,
-): string {
-  if (minutes == null) return "";
-  return `${minutes} minute${minutes === 1 ? "" : "s"} before start`;
-}
-
 /** Empty string is how the form clears a field; send null so the API clears it. */
 export function blankToNull(value: string): string | null {
   const trimmed = value.trim();

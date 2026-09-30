@@ -169,12 +169,19 @@ test.describe("admin session detail — class dates window and roster tabs (#711
     await stubAdminShell(page);
     await stubSessionDetail(page);
     await page.goto(`/admin/sessions/${SESSION_ID}`);
-    await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
+    // Roster is the first tab on every screen; Class dates is one click away.
+    await expect(page.getByTestId("enrollment-row-enr-active-1")).toBeVisible();
   });
+
+  async function openClassDates(page: Page) {
+    await page.getByRole("button", { name: "Class dates", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
+  }
 
   test("class dates default to 3 past + 3 upcoming and expand to the full list", async ({
     page,
   }) => {
+    await openClassDates(page);
     const rows = classDateRows(page);
     await expect(rows).toHaveCount(6);
     // The two oldest past dates are windowed out; the newest 3 past and all 3
@@ -245,97 +252,105 @@ test.describe("admin session detail — class dates window and roster tabs (#711
   });
 
   /**
-   * #859: most visits to this page are roster visits, but the roster sat below
-   * Coaching staff, Class dates and the Communication pack — on a phone that
-   * put the first student roughly 2,000px down. The three header cards now
-   * follow the roster below `md:` and keep their place above it on a desktop,
-   * where they cost no scroll worth speaking of.
+   * Most visits to this page are roster visits, so the Roster tab opens first
+   * on every screen and the first student is within the first two screens.
+   * Class dates, Waitlist, Teaching plan and Welcome email are tabs; Coaching
+   * staff is a one-line strip under the header.
    */
-  async function documentTop(page: Page, name: string): Promise<number> {
-    return page
-      .getByRole("heading", { name, exact: true })
-      .evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
-  }
-
-  // The viewport is set per test rather than left to the project: the layout
-  // branch this covers is the whole point of the fix, and `chromium-desktop`
-  // is scoped by `testMatch` to four other specs (see playwright.config.ts).
   const PHONE = { width: 400, height: 800 };
   const DESKTOP = { width: 1280, height: 800 };
 
-  test("at 400px the roster comes first and its first row is within two screens", async ({
+  for (const [label, viewport] of [
+    ["at 400px", PHONE],
+    ["on a desktop", DESKTOP],
+  ] as const) {
+    test(`${label} the roster opens first and its first row is within two screens`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      const firstRow = page.getByTestId("enrollment-row-enr-active-1");
+      await expect(firstRow).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
+      // The setup panels are not stacked above the roster any more.
+      await expect(page.getByRole("heading", { name: "Class dates" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Communication pack" })).toHaveCount(0);
+      const firstRowTop = await firstRow.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+      expect(firstRowTop).toBeLessThan(2 * viewport.height);
+    });
+  }
+
+  test("the tab strip lists Roster, Class dates, Waitlist, Teaching plan, Welcome email in order", async ({
     page,
   }) => {
-    await page.setViewportSize(PHONE);
-    await expect(page.getByTestId("enrollment-row-enr-active-1")).toBeVisible();
-
-    const rosterTop = await documentTop(page, "Roster");
-    expect(rosterTop).toBeLessThan(await documentTop(page, "Coaching staff"));
-    expect(rosterTop).toBeLessThan(await documentTop(page, "Class dates"));
-    expect(rosterTop).toBeLessThan(await documentTop(page, "Communication pack"));
-
-    const firstRowTop = await page
-      .getByTestId("enrollment-row-enr-active-1")
-      .evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
-    expect(firstRowTop).toBeLessThan(2 * PHONE.height);
+    const labels = await page.locator('[data-testid^="session-tab-"]').allInnerTexts();
+    expect(labels).toEqual(["Roster", "Class dates", "Waitlist", "Teaching plan", "Welcome email"]);
+    await expect(page.getByTestId("session-staff")).toContainText("Coach One");
   });
 
-  test("on a desktop the header cards stay above the roster, in their own order", async ({
-    page,
-  }) => {
-    await page.setViewportSize(DESKTOP);
-    await expect(page.getByTestId("enrollment-row-enr-active-1")).toBeVisible();
+  test.describe("Welcome email tab", () => {
+    test("shows academy defaults in grey, and Save sends only the pack fields", async ({ page }) => {
+      await page.route("**/api/v2/admin/academy", (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return fulfillJson(route, {
+          academy_id: ACADEMY,
+          display_name: "Academy E2E",
+          default_class_size: 10,
+          default_class_length_minutes: 45,
+          default_venue_address: "123 Court St",
+          default_parking_note: null,
+          default_what_to_bring: null,
+          default_arrival_minutes_before: 10,
+          default_coach_contact_policy: null,
+        });
+      });
+      await page.route("**/api/v2/admin/self-service/policy", (route) =>
+        fulfillJson(route, { welcome_email_absence_policy_default: "Tell us 24 hours ahead" }),
+      );
+      const patches: Array<Record<string, unknown>> = [];
+      await page.route(`**/api/v2/admin/sessions/${SESSION_ID}`, (route) => {
+        if (route.request().method() !== "PATCH") return route.fallback();
+        patches.push(JSON.parse(route.request().postData() ?? "{}"));
+        return fulfillJson(route, {
+          session_id: SESSION_ID,
+          coach_id: "coach-1",
+          coach_name: "Coach One",
+          title: "Tuesday 6:00 PM Beginner",
+          location: "Court 1",
+          start_at: OCCURRENCES[0].start_at,
+          end_at: OCCURRENCES[0].end_at,
+          days_of_week: ["Tue"],
+          start_time: "18:00",
+          end_time: "18:45",
+          timezone: "America/Chicago",
+          capacity: 12,
+          amount_cents: 10000,
+          status: "scheduled",
+          enrolled_count: 2,
+          waitlist_count: 0,
+          parking_notes: "Lot B",
+        });
+      });
 
-    const staffTop = await documentTop(page, "Coaching staff");
-    const datesTop = await documentTop(page, "Class dates");
-    const commsTop = await documentTop(page, "Communication pack");
-    const rosterTop = await documentTop(page, "Roster");
+      await page.getByRole("button", { name: "Welcome email", exact: true }).click();
+      const venue = page.getByTestId("welcome-row-venue_address");
+      await expect(venue).toContainText("123 Court St");
+      await expect(venue).toContainText("(academy default)");
+      await expect(page.getByTestId("welcome-row-arrival_minutes_before")).toContainText(
+        "10 minutes before start",
+      );
+      await expect(page.getByTestId("welcome-row-absence_policy")).toContainText(
+        "Tell us 24 hours ahead",
+      );
+      await expect(page.getByTestId("welcome-row-parking_notes")).toContainText("Not set");
+      await expect(page.getByTestId("welcome-email-save")).toBeDisabled();
 
-    expect(staffTop).toBeLessThan(datesTop);
-    expect(datesTop).toBeLessThan(commsTop);
-    expect(commsTop).toBeLessThan(rosterTop);
-  });
+      await page.getByTestId("welcome-row-parking_notes-override").click();
+      await page.getByTestId("welcome-input-parking_notes").fill("Lot B");
+      await page.getByTestId("welcome-email-save").click();
 
-  test("the header cards collapse and come back, and start open on every screen", async ({
-    page,
-  }) => {
-    const toggle = page.getByTestId("session-dates-toggle");
-    // Open by default: an admin who came for a date should not have to hunt.
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect(classDateRows(page).first()).toBeVisible();
-
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await expect(classDateRows(page)).toHaveCount(0);
-    // Collapsing one section leaves the others alone.
-    await expect(page.getByTestId("session-staff-toggle")).toHaveAttribute("aria-expanded", "true");
-
-    await toggle.click();
-    await expect(classDateRows(page)).toHaveCount(6);
-  });
-
-  // #859 remainder: collapsing a section used to reset on every navigation
-  // back to the page — `useState(true)` with nothing behind it. It is now
-  // remembered per device via localStorage (see `lib/use-persisted-open.ts`).
-  test("a collapsed section stays collapsed after a reload", async ({ page }) => {
-    const toggle = page.getByTestId("session-staff-toggle");
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
-
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-
-    await page.reload();
-
-    await expect(page.getByTestId("session-staff-toggle")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    // Only the toggled section's preference persists — the others are
-    // untouched and still default open.
-    await expect(page.getByTestId("session-dates-toggle")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+      await expect.poll(() => patches.length).toBe(1);
+      expect(patches[0]).toEqual({ parking_notes: "Lot B" });
+    });
   });
 
   // #521: the page only needs coach names (for the replacement-coach table),

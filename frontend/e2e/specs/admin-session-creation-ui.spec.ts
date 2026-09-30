@@ -374,6 +374,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.goto("/admin/sessions/series-wed");
 
     // #671 merged "Replacement coaches" into the single "Class dates" card.
+    await page.getByRole("button", { name: "Class dates", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
     await expect(page.getByText("Occurrences")).toHaveCount(0);
     await expect(page.getByRole("cell", { name: "Replacement Coach" })).toHaveCount(0);
