@@ -16,10 +16,15 @@ from backend.v2.contexts.enrollment.application.use_cases.departure_reasons impo
 from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
     PersonLifecycle,
 )
+from backend.v2.contexts.identity.application.update_academy_use_case import validate_https_url
 from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 from backend.v2.shared.comms.colour import _HEX as _HEX_COLOR_RE
-from backend.v2.shared.comms.sender_identity import validate_reply_to, validate_sender_name
+from backend.v2.shared.comms.sender_identity import (
+    validate_reply_to,
+    validate_sender_name,
+    validate_support_email,
+)
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
 # --- Directory ---
@@ -1809,6 +1814,14 @@ class AdminAcademyView(BaseModel):
     currency: str = "USD"
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+    # Settings overhaul Phase 4 PR 13. ``support_email`` is the parents' contact
+    # (default reply-to, public footer); ``terms_url``/``refund_policy_url`` are
+    # https links; ``privacy_notice_url`` is a view of the SAME value stored at
+    # ``public_page.privacy_notice_url`` (never a second copy).
+    support_email: str | None = None
+    terms_url: str | None = None
+    refund_policy_url: str | None = None
+    privacy_notice_url: str | None = None
     # Read-only here: set per academy by the platform (derived from the slug
     # at creation, locked after the first numbered invoice). Settings overhaul
     # Phase 1 PR 2. Deliberately absent from UpdateAdminAcademyRequest.
@@ -1847,6 +1860,11 @@ class UpdateAdminAcademyRequest(BaseModel):
     #: address itself is platform-owned and cannot be set here (L9a).
     email_sender_name: str | None = None
     email_reply_to: str | None = None
+    # Settings overhaul Phase 4 PR 13. Blank clears each one.
+    support_email: str | None = None
+    terms_url: str | None = None
+    refund_policy_url: str | None = None
+    privacy_notice_url: str | None = None
     # Class defaults (Settings overhaul Phase 3 PR 9). Admin-editable (not
     # owner-gated: these change what a class starts from, not what it
     # charges or where money lands).
@@ -1885,6 +1903,30 @@ class UpdateAdminAcademyRequest(BaseModel):
     @classmethod
     def _check_reply_to(cls, value: str | None) -> str | None:
         return validate_reply_to(value)
+
+    @field_validator("support_email")
+    @classmethod
+    def _check_support_email(cls, value: str | None) -> str | None:
+        return validate_support_email(value)
+
+    @field_validator("terms_url")
+    @classmethod
+    def _check_terms_url(cls, value: str | None) -> str | None:
+        return validate_https_url(value, field_label="terms of service link")
+
+    @field_validator("refund_policy_url")
+    @classmethod
+    def _check_refund_url(cls, value: str | None) -> str | None:
+        return validate_https_url(value, field_label="refund policy link")
+
+    @field_validator("privacy_notice_url")
+    @classmethod
+    def _check_privacy_url(cls, value: str | None) -> str | None:
+        # Same rule as the Public page setting it replaces (http or https).
+        try:
+            return validate_external_url(value, field_label="privacy notice link")
+        except InvalidExternalUrl as exc:
+            raise ValueError(exc.message) from exc
 
 
 class AdminFeesView(BaseModel):

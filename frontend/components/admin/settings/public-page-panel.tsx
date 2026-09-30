@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -23,7 +24,6 @@ import {
   COACH_DISPLAY_LABEL,
   PRICE_PERIOD_LABEL,
   listableClasses,
-  privacyUrlError,
   programOptions,
   publicPagePayload,
   toPublicPageForm,
@@ -39,7 +39,6 @@ import {
   Overline,
   TableSkeleton,
   Th,
-  fieldDescribedBy,
 } from "@/components/ds";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
@@ -106,7 +105,6 @@ function PageSettingsCard() {
   const payload = publicPagePayload(original, form);
   const dirty = Object.keys(payload).length > 0;
   useReportSettingsDirty("public-page", dirty);
-  const urlError = privacyUrlError(form.privacy_notice_url);
 
   const mutation = useMutation({
     mutationFn: () => updateAdminPublicPageSettings(payload),
@@ -209,37 +207,19 @@ function PageSettingsCard() {
             ))}
           </select>
         </label>
-        <FormField
-          label="Privacy notice link"
-          htmlFor="public-page-privacy-url"
-          hint="Shown next to the trial form. Leave blank if you do not have one."
-          error={urlError}
-        >
-          <input
-            id="public-page-privacy-url"
-            data-testid="public-page-privacy-url"
-            type="url"
-            inputMode="url"
-            placeholder="https://"
-            value={form.privacy_notice_url}
-            aria-invalid={urlError ? true : undefined}
-            aria-describedby={fieldDescribedBy("public-page-privacy-url", {
-              hint: true,
-              error: urlError,
-            })}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, privacy_notice_url: event.target.value }))
-            }
-            className="min-h-11 w-full rounded-md border border-rally-line bg-white px-3 text-sm"
-          />
-        </FormField>
+        <p className="text-sm text-rally-muted" data-testid="public-page-privacy-moved">
+          The privacy notice now lives with the terms and refund links.{" "}
+          <Link href="/admin/settings?panel=academy" className="font-medium text-rally-cobalt underline">
+            Open Academy profile
+          </Link>
+        </p>
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <Button
           variant={dirty ? "volt" : "secondary"}
           size="sm"
-          disabled={!dirty || Boolean(urlError) || mutation.isPending || query.isPending}
+          disabled={!dirty || mutation.isPending || query.isPending}
           onClick={() => mutation.mutate()}
           data-testid="public-page-save"
         >

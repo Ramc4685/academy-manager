@@ -69,6 +69,15 @@ test.describe("published page", () => {
     await expect(page.getByTestId("courtmastr-credit")).toHaveText(
       "Bookings and payments by CourtMastr",
     );
+    // Legal links the academy set (Settings overhaul Phase 4 PR 13).
+    await expect(page.getByTestId("academy-terms-link")).toHaveAttribute(
+      "href",
+      "https://riverside.example.test/terms",
+    );
+    await expect(page.getByTestId("academy-refund-link")).toHaveAttribute(
+      "href",
+      "https://riverside.example.test/refunds",
+    );
   });
 
   test("ships per-tenant metadata and JSON-LD without personal data", async ({ page }) => {

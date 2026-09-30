@@ -115,6 +115,8 @@ def _page(profile: PublicAcademyProfile, catalog: PublicCatalog) -> PublicAcadem
             show_availability=settings.show_availability,
             price_period_default=settings.price_period_default,
             privacy_notice_url=settings.privacy_notice_url,
+            terms_url=profile.terms_url,
+            refund_policy_url=profile.refund_policy_url,
         ),
         programs=[
             PublicProgramDto(

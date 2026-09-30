@@ -43,6 +43,10 @@ class BillingRuleRowView(BaseModel):
     max_value: int | None = None
     display: str | None = None
     detail: str | None = None
+    #: ``ach_discount`` only.
+    enabled: bool | None = None
+    percent: float | None = None
+    max_percent: float | None = None
     #: ``cancellation_effective_timing`` only.
     choice: str | None = None
     choices: list[str] | None = None
@@ -57,6 +61,17 @@ class BillingRuleGroupView(BaseModel):
 
 class BillingRulesResponse(BaseModel):
     groups: list[BillingRuleGroupView]
+
+
+class AchDiscountRequest(BaseModel):
+    """Settings overhaul Phase 4 PR 13. The ceiling is deliberately absent:
+    ``max_ach_discount_percent`` is platform-owned, and any key here that is
+    not ``enabled`` or ``percent`` is rejected."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool | None = None
+    percent: float | None = None
 
 
 class UpdateBillingRulesRequest(BaseModel):
@@ -82,6 +97,7 @@ class UpdateBillingRulesRequest(BaseModel):
     drop_default_outcome: (
         Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
     ) = None
+    ach_discount: AchDiscountRequest | None = None
     reason: str | None = None
 
 

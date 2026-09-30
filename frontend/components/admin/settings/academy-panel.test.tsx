@@ -5,7 +5,13 @@ import { describe, expect, it } from "vitest";
 import { queryKeys } from "@/lib/query/keys";
 import type { AdminAcademyView } from "@/lib/api/admin";
 
-import { AcademyPanel, invoicePrefixHint } from "./academy-panel";
+import {
+  AcademyPanel,
+  httpsLinkError,
+  invoicePrefixHint,
+  replyToHint,
+  supportEmailError,
+} from "./academy-panel";
 
 describe("invoicePrefixHint (Settings overhaul P1 PR 2)", () => {
   it("shows what an invoice number looks like with the academy's prefix", () => {
@@ -90,4 +96,52 @@ describe("Academy profile tab (Settings overhaul Phase 3 PR 9)", () => {
     expect(html).toContain('data-testid="admin-settings-academy"');
     expect(html).toContain('aria-label="Academy profile tab"');
   });
+});
+
+describe("AcademyPanel support email and legal links (Settings overhaul Phase 4 PR 13)", () => {
+  it("has a Support email field in Contact & location and a Legal links card", () => {
+    const html = renderPanel();
+
+    expect(html).toContain("Support email for parents");
+    expect(html).toContain('data-testid="academy-legal-links"');
+    expect(html).toContain("Terms of service");
+    expect(html).toContain("Refund policy");
+    expect(html).toContain("Privacy notice");
+    // Card order: Contact & location, Brand, Class defaults, Legal links.
+    const order = ["Contact &amp; location", ">Brand<", "Class defaults", "Legal links"].map((t) =>
+      html.indexOf(t),
+    );
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("says the reply-to defaults to the support email", () => {
+    expect(replyToHint("")).toContain("Defaults to the support email");
+    expect(replyToHint(" help@blno.example ")).toContain("use the support email (help@blno.example)");
+    expect(renderPanel()).toContain("Defaults to the support email");
+  });
+});
+
+describe("httpsLinkError", () => {
+  it.each(["", "  ", "https://blno.example/terms"])("accepts %j", (value) =>
+    expect(httpsLinkError(value)).toBeNull(),
+  );
+
+  it.each([
+    "http://blno.example/terms",
+    "javascript:alert(1)",
+    "data:text/html,hi",
+    "ftp://blno.example/x",
+    "blno.example/terms",
+    "mailto:a@b.co",
+  ])("rejects %j", (value) => expect(httpsLinkError(value)).not.toBeNull());
+});
+
+describe("supportEmailError", () => {
+  it.each(["", "  ", "help@blno.example"])("accepts %j", (value) =>
+    expect(supportEmailError(value)).toBeNull(),
+  );
+  it.each(["help", "help@", "a b@c.co"])("rejects %j", (value) =>
+    expect(supportEmailError(value)).not.toBeNull(),
+  );
 });

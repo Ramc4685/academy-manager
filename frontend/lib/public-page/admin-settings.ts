@@ -35,8 +35,9 @@ export interface PublicPageForm {
   show_availability: boolean;
   price_period_default: PublicPricePeriod;
   trials_open: boolean;
-  /** Text box value; blank means "no privacy link". */
-  privacy_notice_url: string;
+  // The privacy notice link is NOT part of this form any more: it moved to
+  // Academy profile > Legal links (Settings overhaul Phase 4 PR 13). It is
+  // still stored at `public_page.privacy_notice_url`; a Save here never sends it.
 }
 
 /** Form state from the server view; the domain defaults when nothing loaded yet. */
@@ -49,7 +50,6 @@ export function toPublicPageForm(
     show_availability: view?.show_availability ?? true,
     price_period_default: view?.price_period_default ?? "month",
     trials_open: view?.trials_open ?? true,
-    privacy_notice_url: view?.privacy_notice_url ?? "",
   };
 }
 
@@ -68,14 +68,13 @@ export function publicPagePayload(
     payload.price_period_default = form.price_period_default;
   }
   if (form.trials_open !== original.trials_open) payload.trials_open = form.trials_open;
-  const url = form.privacy_notice_url.trim();
-  if (url !== original.privacy_notice_url.trim()) payload.privacy_notice_url = url || null;
   return payload;
 }
 
 /**
  * The privacy link is rendered as an href on a public page. The server only
  * accepts http(s); this mirrors it so the Save button can say why up front.
+ * Used by Academy profile > Legal links.
  */
 export function privacyUrlError(value: string): string | null {
   const trimmed = value.trim();

@@ -191,26 +191,19 @@ test.describe("admin settings → public page", () => {
     await expect(save).toBeDisabled();
   });
 
-  test("a non-http privacy link blocks Save with an inline error", async ({ page }) => {
-    const seen = await stub(page);
+  test("the privacy link is not edited here; a pointer sends you to Academy profile", async ({
+    page,
+  }) => {
+    await stub(page);
     await page.goto("/admin/settings?panel=public-page");
-    // Wait for the server copy so the edit below is made on loaded data.
-    await expect(page.getByTestId("public-page-view-link")).toHaveAttribute(
+    await expect(page.getByTestId("public-page-view-link")).toBeVisible();
+    await expect(page.getByTestId("public-page-privacy-url")).toHaveCount(0);
+    const pointer = page.getByTestId("public-page-privacy-moved");
+    await expect(pointer).toContainText("The privacy notice now lives with the terms and refund links.");
+    await expect(pointer.getByRole("link", { name: "Open Academy profile", exact: true })).toHaveAttribute(
       "href",
-      "https://riverside.example/",
+      "/admin/settings?panel=academy",
     );
-    const url = page.getByTestId("public-page-privacy-url");
-    await url.fill("javascript:alert(1)");
-    await expect(page.getByText("Only http:// or https:// links are allowed.")).toBeVisible();
-    await expect(url).toHaveAttribute("aria-invalid", "true");
-    await expect(page.getByTestId("public-page-save")).toBeDisabled();
-
-    await url.fill("https://riverside.example/privacy");
-    await page.getByTestId("public-page-save").click();
-    await expect(page.getByText(/Saved at/)).toBeVisible();
-    expect(seen.settingsPatches).toEqual([
-      { privacy_notice_url: "https://riverside.example/privacy" },
-    ]);
   });
 
   test("an unsaved switch is guarded on a tab switch", async ({ page }) => {

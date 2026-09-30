@@ -19,7 +19,9 @@
       "show_price": true,
       "show_availability": true,
       "price_period_default": "month",
-      "privacy_notice_url": null
+      "privacy_notice_url": null,
+      "terms_url": "https://riverside.example.test/terms",
+      "refund_policy_url": "https://riverside.example.test/refunds"
     },
     "programs": [
       {

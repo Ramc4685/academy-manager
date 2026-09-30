@@ -27,6 +27,7 @@ from backend.v2.shared.comms.sender_identity import (
     sender_identity_for_current_academy,
     validate_reply_to,
     validate_sender_name,
+    validate_support_email,
 )
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -120,6 +121,36 @@ def test_resolve_sender_ignores_unsafe_stored_values() -> None:
         }
     )
     assert identity == SenderIdentity(sender_name="Synthetic Academy", reply_to=None)
+
+
+def test_support_email_is_the_default_reply_to() -> None:
+    identity = resolve_sender(
+        {"display_name": "Synthetic Academy", "support_email": "help@example.com"}
+    )
+    assert identity.reply_to == "help@example.com"
+
+
+def test_explicit_reply_to_beats_support_email() -> None:
+    identity = resolve_sender(
+        {"email_reply_to": "desk@example.com", "support_email": "help@example.com"}
+    )
+    assert identity.reply_to == "desk@example.com"
+
+
+def test_neither_reply_to_nor_support_email_is_unchanged() -> None:
+    """BLNO has neither set: replies behave exactly as before."""
+    assert resolve_sender({"display_name": "BLNO"}).reply_to is None
+
+
+def test_unsafe_stored_support_email_is_ignored() -> None:
+    assert resolve_sender({"support_email": "bad\r\nBcc: x@example.com"}).reply_to is None
+    assert resolve_sender({"support_email": "nope"}).reply_to is None
+
+
+def test_support_email_validation_says_support_email() -> None:
+    with pytest.raises(InvalidSenderValue, match="Support email"):
+        validate_support_email("nope")
+    assert validate_support_email("  ") is None
 
 
 # -- From header -------------------------------------------------------------

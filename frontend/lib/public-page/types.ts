@@ -84,6 +84,9 @@ export interface PublicPageFlags {
   show_availability: boolean;
   price_period_default: PublicPricePeriod | string;
   privacy_notice_url: string | null;
+  /** Footer links the academy set in Academy profile > Legal links. */
+  terms_url?: string | null;
+  refund_policy_url?: string | null;
 }
 
 export interface PublicAcademyPage {

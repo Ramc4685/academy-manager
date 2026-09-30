@@ -60,8 +60,10 @@ BANNED_FIELD_FRAGMENTS = (
 )
 #: The deliberately allowed public identifiers (opaque digests) and the one
 #: intentionally public contact field: a support email only, never a phone
-#: (owner decision, row 21 of the hardcoded-values sweep).
-ALLOWED_FIELDS = {"public_id", "support_email"}
+#: (owner decision, row 21 of the hardcoded-values sweep). ``refund_policy_url``
+#: is the academy's published refund-policy link for the footer (Phase 4
+#: PR 13): "policy" here names a public page, not private data.
+ALLOWED_FIELDS = {"public_id", "support_email", "refund_policy_url"}
 
 
 def _models_in(annotation: Any) -> list[type[BaseModel]]:
