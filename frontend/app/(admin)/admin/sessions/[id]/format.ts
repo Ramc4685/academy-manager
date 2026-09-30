@@ -1,24 +1,9 @@
-import {
-  type AdminSessionView,
-  type EditSessionRequest,
-} from "@/lib/api/admin";
+import { type AdminSessionView } from "@/lib/api/admin";
 import {
   formatAcademyTimeRange,
   parseAcademyInstant,
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
-
-/**
- * Fallback zone when a session document carries no `timezone`.
- *
- * This was "UTC", which meant EDITING a session that had a null timezone
- * silently stamped it as UTC — moving a 6:00 PM Chicago class to 18:00Z, i.e.
- * 1:00 PM Chicago, for the parent catalog, monthly billing and payroll alike.
- * `null` instead leaves the field for the caller to resolve (the edit form
- * seeds it from the academy) and lets the backend apply its own default rather
- * than having the browser assert a zone nobody chose.
- */
-const DEFAULT_TIMEZONE: string | null = null;
 
 // Shared sticky-action-column classes used by ReplacementCoachTable, RosterTable,
 // and WaitlistTable. Not a "pure format helper" in the strictest sense, but kept
@@ -146,42 +131,6 @@ export function looksLikeWhatsAppGroupInvite(value: string): boolean {
   return /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+\/?$/i.test(
     value.trim(),
   );
-}
-
-export function buildEditSessionForm(
-  session: AdminSessionView,
-): EditSessionRequest {
-  const common = {
-    coach_id: session.coach_id,
-    title: session.title,
-    location: session.location,
-    capacity: session.capacity,
-    amount_cents: session.amount_cents,
-    // Communication pack (#613). A field missing from this seed shows the
-    // admin an empty box for a value that IS set, and because the PATCH body
-    // is built with exclude_unset the stored value quietly survives — so the
-    // form looks broken while the data is fine.
-    ...communicationPackFields(session),
-    reason: "",
-  };
-  if (hasRecurringSchedule(session)) {
-    return {
-      ...common,
-      days_of_week: [...session.days_of_week],
-      start_time: session.start_time,
-      end_time: session.end_time,
-      timezone: session.timezone ?? DEFAULT_TIMEZONE,
-    };
-  }
-  return {
-    ...common,
-    start_at: session.start_at,
-    end_at: session.end_at,
-    days_of_week: [],
-    start_time: null,
-    end_time: null,
-    timezone: session.timezone ?? DEFAULT_TIMEZONE,
-  };
 }
 
 export function formatLocalDateInput(value: Date): string {
