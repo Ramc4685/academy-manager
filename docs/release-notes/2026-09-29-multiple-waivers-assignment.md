@@ -1,6 +1,6 @@
 # Several live waivers with assignment (Settings overhaul Phase 6, PR 23)
 
-PR: #TBD
+PR: #1016
 
 ## What changed
 
