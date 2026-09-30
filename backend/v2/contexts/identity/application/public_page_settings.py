@@ -186,12 +186,21 @@ class UpdatePublicPageSettings:
         """
         if self._media_store is None:
             return
-        still_used = _photo_urls(after)
+        # Compare object paths, not URL strings: two URLs (different query or
+        # token) can name one object. Re-read the stored page so a save that
+        # committed after ours and re-added a photo keeps it.
+        latest = PublicPageSettings.from_stored(
+            ((await self._repo.find_by_id(academy_id)) or {}).get(PUBLIC_PAGE_FIELD)
+        )
+        still_used: set[str] = set()
+        for settings in (after, latest):
+            for used_url, used_purpose in _photo_urls(settings).items():
+                used = _store_object_path(used_url, self._upload_url_base, academy_id, used_purpose)
+                if used is not None:
+                    still_used.add(used)
         for url, purpose in _photo_urls(before).items():
-            if url in still_used:
-                continue
             path = _store_object_path(url, self._upload_url_base, academy_id, purpose)
-            if path is None:
+            if path is None or path in still_used:
                 continue
             try:
                 await self._media_store.delete_public(path=path)
