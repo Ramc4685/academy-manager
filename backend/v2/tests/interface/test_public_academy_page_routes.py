@@ -274,3 +274,27 @@ def test_theme_and_threshold_are_exposed_and_the_threshold_drives_the_seat_band(
     assert few and all(c["seats"]["seats_left"] for c in few)
     # A full class stays a waitlist whatever the threshold.
     assert any(c["seats"]["band"] == "waitlist" for c in wide_classes)
+
+
+def _venues(body: dict[str, Any]) -> dict[str, str | None]:
+    classes = [c for p in body["programs"] for c in p["classes"]] + body["ungrouped_classes"]
+    return {c["title"]: c["venue_address"] for c in classes}
+
+
+def test_class_without_its_own_venue_shows_the_academy_default_venue() -> None:
+    db = _db()
+    asyncio.run(
+        db["academies"].update_one(
+            {"academy_id": ACADEMY}, {"$set": {"default_venue_address": "9 Default Way"}}
+        )
+    )
+    venues = _venues(_get(build_app(db)).json())
+    # `sess-jr-sat` has its own address; every other class picks up the default.
+    assert venues["Class jr-sat"] == "1 River Road, Riverside"
+    assert venues["Class jr-full"] == "9 Default Way"
+
+
+def test_no_academy_default_venue_leaves_a_bare_class_without_one() -> None:
+    venues = _venues(_get(build_app(_db())).json())
+    assert venues["Class jr-sat"] == "1 River Road, Riverside"
+    assert venues["Class jr-full"] is None

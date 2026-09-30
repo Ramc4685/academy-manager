@@ -79,6 +79,7 @@ class UpdateAcademyUseCase:
             default_venue_address=doc.get("default_venue_address") or None,
             default_parking_note=doc.get("default_parking_note") or None,
             default_what_to_bring=doc.get("default_what_to_bring") or None,
+            default_coach_contact_policy=doc.get("default_coach_contact_policy") or None,
             default_arrival_minutes_before=(
                 int(doc["default_arrival_minutes_before"])
                 if doc.get("default_arrival_minutes_before") is not None

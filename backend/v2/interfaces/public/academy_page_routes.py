@@ -90,6 +90,7 @@ async def get_public_academy_page(request: Request, response: Response) -> Any:
             show_price=settings.show_price,
             show_availability=settings.show_availability,
             few_seats_threshold=settings.seats_left_threshold,
+            default_venue_address=profile.default_venue_address,
         )
         shown = [p for p in settings.coach_profiles if p.shown]
         names = (

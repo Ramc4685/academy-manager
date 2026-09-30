@@ -66,6 +66,7 @@ def test_get_academy_contract(admin_client):
         "default_venue_address": None,
         "default_parking_note": None,
         "default_what_to_bring": None,
+        "default_coach_contact_policy": None,
         "default_arrival_minutes_before": None,
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
@@ -201,6 +202,7 @@ def test_patch_academy_class_defaults_contract(admin_client):
         default_parking_note="Free lot behind",
         default_what_to_bring="Racquet and water",
         default_arrival_minutes_before=15,
+        default_coach_contact_policy="Message on WhatsApp only",
     )
 
     r = admin_client.patch(
@@ -212,10 +214,12 @@ def test_patch_academy_class_defaults_contract(admin_client):
             "default_parking_note": "Free lot behind",
             "default_what_to_bring": "Racquet and water",
             "default_arrival_minutes_before": 15,
+            "default_coach_contact_policy": "Message on WhatsApp only",
         },
     )
 
     assert r.status_code == 200, r.text
+    assert r.json()["default_coach_contact_policy"] == "Message on WhatsApp only"
     assert r.json()["default_class_size"] == 8
     assert r.json()["default_class_length_minutes"] == 60
     assert r.json()["default_venue_address"] == "12 Court Lane"
@@ -228,6 +232,7 @@ def test_patch_academy_class_defaults_contract(admin_client):
             "default_parking_note": "Free lot behind",
             "default_what_to_bring": "Racquet and water",
             "default_arrival_minutes_before": 15,
+            "default_coach_contact_policy": "Message on WhatsApp only",
         },
     )
 

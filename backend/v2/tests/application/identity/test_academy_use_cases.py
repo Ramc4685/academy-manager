@@ -93,6 +93,7 @@ async def test_get_academy_class_defaults_fill_at_read_time_when_absent():
     assert output.default_parking_note is None
     assert output.default_what_to_bring is None
     assert output.default_arrival_minutes_before is None
+    assert output.default_coach_contact_policy is None
 
 
 @pytest.mark.asyncio
@@ -107,6 +108,7 @@ async def test_get_academy_class_defaults_use_stored_values_when_present():
         "default_parking_note": "Free lot behind",
         "default_what_to_bring": "Racquet and water",
         "default_arrival_minutes_before": 15,
+        "default_coach_contact_policy": "Message the office",
     }
     use_case = GetAcademyUseCase(academy_repo=repo)
     output = await use_case.execute("acad-1")
@@ -116,6 +118,7 @@ async def test_get_academy_class_defaults_use_stored_values_when_present():
     assert output.default_parking_note == "Free lot behind"
     assert output.default_what_to_bring == "Racquet and water"
     assert output.default_arrival_minutes_before == 15
+    assert output.default_coach_contact_policy == "Message the office"
 
 
 @pytest.mark.asyncio

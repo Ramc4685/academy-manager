@@ -68,6 +68,9 @@ class PublicAcademyProfile:
     #: Footer legal links (https only, re-checked on read); None when unset.
     terms_url: str | None = None
     refund_policy_url: str | None = None
+    #: Class defaults, venue address: shown on a class card that has no
+    #: venue address of its own.
+    default_venue_address: str | None = None
 
 
 class GetPublicAcademyProfile:
@@ -96,6 +99,7 @@ class GetPublicAcademyProfile:
             settings=PublicPageSettings.from_stored(doc.get(PUBLIC_PAGE_FIELD)),
             terms_url=https_url_or_none(doc.get("terms_url")),
             refund_policy_url=https_url_or_none(doc.get("refund_policy_url")),
+            default_venue_address=_text(doc.get("default_venue_address")),
         )
 
 
