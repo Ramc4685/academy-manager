@@ -36,8 +36,9 @@ class ProjectedClassFees(Protocol):
     """Class fee per billing month for a projection (billing owns the answer).
 
     A month after the academy's current billing month reads the fee that
-    month will be charged (a scheduled plan price change applied); the
-    current and past months read the stored fee passed in.
+    month will be charged (a scheduled plan price change applied); a past
+    month reads the fee it was billed at (an applied change's flip undone);
+    the current month reads the stored fee passed in.
     """
 
     async def fees_for_periods(
@@ -167,8 +168,11 @@ class MongoPayableOccurrenceQuery:
             return {}
 
         # A future month's occurrence is paid on the fee that month will be
-        # charged, so a scheduled plan price change moves the projection;
-        # the current and past months keep the stored fee.
+        # charged, so a scheduled plan price change moves the projection; a
+        # past month keeps the fee it was billed at even after the flip job
+        # moved the stored fee; the current month keeps the stored fee.
+        # Month labels here are UTC calendar months (the existing payroll
+        # bucketing), not the academy clock: see _billing_month_bounds.
         fee_by_session_month: dict[tuple[str, str], int] = {}
         if self._class_fees is not None:
             months = {

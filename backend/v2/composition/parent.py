@@ -90,7 +90,11 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutResult,
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable, QuoteExpired
+from backend.v2.contexts.billing.domain.errors import (
+    AutopayClassUnpriced,
+    InvoicePayLinkUnavailable,
+    QuoteExpired,
+)
 from backend.v2.contexts.billing.domain.plan_price_change import next_period
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
@@ -2461,8 +2465,10 @@ def compose_parent(
         if amount_cents <= 0:
             # An unpriced class reads $0, exactly as checkout reads it (a $0
             # quote skips payment): there is no monthly charge to automate.
-            # Same 409 as a non-active enrollment.
-            raise ValueError("this class has no monthly fee, so there is nothing to put on autopay")
+            # 409 with its own code so the parent portal can say why.
+            raise AutopayClassUnpriced(
+                "this class has no monthly fee, so there is nothing to put on autopay"
+            )
         result = await start_subscription_checkout.execute(
             StartSubscriptionCheckoutCommand(
                 parent_id=parent_id,

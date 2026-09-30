@@ -1039,7 +1039,8 @@ def make_projected_income_report(
 
     For a month after the academy's current billing month the monthly fee is
     the one that month will be charged (a scheduled plan price change
-    applied); the current and past months read the stored fee.
+    applied); a past month reads the fee it was billed at (an applied
+    change's flip undone); the current month reads the stored fee.
     """
     from backend.v2.shared.tenancy import current_academy_id
 
@@ -1689,7 +1690,8 @@ def make_session_economics_report(
 
     Expected revenue for a month after the academy's current billing month
     uses the fee that month will be charged (a scheduled plan price change
-    applied); the current and past months read the stored fee.
+    applied); a past month reads the fee it was billed at (an applied
+    change's flip undone); the current month reads the stored fee.
     """
     from backend.v2.shared.tenancy import current_academy_id
 

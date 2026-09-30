@@ -15,6 +15,10 @@ Pinned on the BLNO-shaped academy of ``test_plan_price_change_real_mongo``
 * with a change scheduled for November, a projection for November or later
   uses the new fee, October and the current month the old one, and payroll
   for an already-closed month is unchanged;
+* once the daily job has flipped the class at November (the change is
+  "applied"), a later report for a month before November still reads the old
+  fee it was billed at, the current month the stored (new) fee; two chained
+  changes (November, then January) each apply from their own month;
 * another academy's change on the same class ids moves nothing here;
 * "start autopay" reads the fee of the month its first charge collects
   (October here), through the same month-aware read as checkout; an unpriced
@@ -31,6 +35,7 @@ import pytest
 
 from backend.v2.composition.parent import compose_parent
 from backend.v2.contexts.billing.application.use_cases import parent_billing
+from backend.v2.contexts.billing.domain.errors import AutopayClassUnpriced
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
     make_projected_income_report,
     make_session_economics_report,
@@ -88,17 +93,19 @@ async def _seed_occurrences(db: Any, acad: str) -> None:
             )
 
 
-def _reports(db: Any) -> tuple[Any, Any]:
-    fees = MongoProjectedClassFees(db, clock=_clock)
+def _reports(db: Any, *, clock: Any = _clock) -> tuple[Any, Any]:
+    fees = MongoProjectedClassFees(db, clock=clock)
     return (
         make_projected_income_report(db, class_fees=fees),
         make_session_economics_report(db, class_fees=fees),
     )
 
 
-async def _payroll_basis(db: Any, acad: str, *, month_aware: bool = True) -> dict[str, Any]:
+async def _payroll_basis(
+    db: Any, acad: str, *, month_aware: bool = True, clock: Any = _clock
+) -> dict[str, Any]:
     query = MongoPayableOccurrenceQuery(
-        db, class_fees=MongoProjectedClassFees(db, clock=_clock) if month_aware else None
+        db, class_fees=MongoProjectedClassFees(db, clock=clock) if month_aware else None
     )
     rows = await query.list_in_period(
         academy_id=acad,
@@ -198,6 +205,91 @@ async def test_another_academys_change_on_the_same_class_ids_moves_nothing(real_
     assert (await projected("2026-12"))["total_cents"] == 3 * OLD
     assert await _economics(economics, "2026-12") == {"juniors": OLD}
     assert set((await _payroll_basis(real_db, acad)).values()) == {_per_occurrence(OLD)}
+
+
+def _clock_on(year: int, month: int, day: int) -> Any:
+    return lambda: datetime(year, month, day, 17, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_after_the_flip_past_months_keep_the_fee_they_were_billed_at(real_db, acad) -> None:
+    await _seed_academy(real_db, acad)
+    await _seed_occurrences(real_db, acad)
+    kit = _Kit(real_db)
+    before = await _payroll_basis(real_db, acad)
+
+    await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+    assert (await kit.apply_due.execute(academy_id=acad, period="2026-11")).applied == 1
+    change = await real_db["plan_price_changes"].find_one({"academy_id": acad})
+    assert change["status"] == "applied"
+    assert "juniors" in change["flipped_session_ids"]
+    juniors = await real_db["sessions"].find_one({"academy_id": acad, "session_id": "juniors"})
+    assert juniors["amount_cents"] == NEW
+
+    # Reports run in mid-December: December is the current month. The flip
+    # also wrote ``amount_cents`` on the legacy adults class (fields kept in
+    # step), so from here the report counts adults (one active enrollment).
+    december = _clock_on(2026, 12, 15)
+    projected, economics = _reports(real_db, clock=december)
+    for period in ("2026-08", "2026-09", "2026-10"):
+        # Billed at the old fee; the flipped stored fee must not rewrite them.
+        result = await projected(period)
+        assert result["total_cents"] == 4 * OLD, period
+        fees = {row["session_id"]: row["monthly_fee_cents"] for row in result["by_session"]}
+        assert fees == {"juniors": OLD, "adults": OLD, "squad": OLD}, period
+        assert await _economics(economics, period) == {"juniors": OLD}, period
+    for period in ("2026-11", "2026-12", "2027-01"):
+        assert (await projected(period))["total_cents"] == 3 * NEW + OLD, period
+        # Session economics lists classes with occurrences (seeded to Dec).
+        if period in _MONTHS:
+            assert await _economics(economics, period) == {"juniors": NEW}, period
+
+    basis = await _payroll_basis(real_db, acad, clock=december)
+    for occurrence_id, value in basis.items():
+        period = occurrence_id.split("_")[1]
+        assert value == _per_occurrence(NEW if period >= "2026-11" else OLD), occurrence_id
+        if period < "2026-11":
+            # Payroll for months closed before the change: unchanged by the flip.
+            assert value == before[occurrence_id], occurrence_id
+
+
+@pytest.mark.asyncio
+async def test_two_chained_changes_each_apply_from_their_own_month(real_db, acad) -> None:
+    await _seed_academy(real_db, acad)
+    await _seed_occurrences(real_db, acad)
+    kit = _Kit(real_db)
+    newer = NEW + 1_000
+
+    await kit.schedule.execute(kit.cmd(acad, "2026-11"))
+    assert (await kit.apply_due.execute(academy_id=acad, period="2026-11")).applied == 1
+    await kit.schedule.execute(kit.cmd(acad, "2027-01", price=newer))
+    statuses = sorted(
+        [
+            [doc["status"], doc["effective_period"]]
+            async for doc in real_db["plan_price_changes"].find({"academy_id": acad})
+        ]
+    )
+    assert statuses == [["applied", "2026-11"], ["scheduled", "2027-01"]]
+
+    december = _clock_on(2026, 12, 15)
+    projected, economics = _reports(real_db, clock=december)
+    expected = {
+        "2026-10": OLD,  # past, before both: the fee it was billed at
+        "2026-11": NEW,  # past, first change
+        "2026-12": NEW,  # current month: the stored fee
+        "2027-01": newer,  # future: the second (scheduled) change
+        "2027-02": newer,
+    }
+    for period, fee in expected.items():
+        # juniors (2) + adults (1, flipped too) at the plan fee; squad custom.
+        assert (await projected(period))["total_cents"] == 3 * fee + OLD, period
+        if period in _MONTHS:
+            assert await _economics(economics, period) == {"juniors": fee}, period
+
+    basis = await _payroll_basis(real_db, acad, clock=december)
+    for occurrence_id, value in basis.items():
+        period = occurrence_id.split("_")[1]
+        assert value == _per_occurrence(NEW if period >= "2026-11" else OLD), occurrence_id
 
 
 # ------------------------------------------------------------ start autopay
@@ -304,7 +396,9 @@ async def test_an_unpriced_class_reads_zero_in_checkout_and_autopay_refuses_it(
     assert snapshot.next_monthly_price_cents == 0
 
     # Autopay reads the same $0 and refuses (the route's 409), never $25.
-    with pytest.raises(ValueError, match="no monthly fee"):
+    with pytest.raises(AutopayClassUnpriced, match="no monthly fee") as refused:
         await _start_autopay(real_db, acad, "e4", monkeypatch)
+    # Its own code (not the generic 409), so the parent portal can say why.
+    assert (refused.value.code, refused.value.status_code) == ("Billing.AutopayClassUnpriced", 409)
     enrollment = await real_db["enrollments"].find_one({"academy_id": acad, "enrollment_id": "e4"})
     assert "payment_mode" not in enrollment
