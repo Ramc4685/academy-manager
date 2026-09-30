@@ -24,9 +24,9 @@ overrides:
   # GHSA-mh99-v99m-4gvg (brace-expansion unbounded-expansion OOM DoS) is
   # patched only in >=5.0.8, so the v5 range is bumped here; see auditConfig
   # below for why the 1.x/2.x ranges can't follow.
-  brace-expansion@1: ^1.1.18
-  brace-expansion@2: ^2.1.4
-  brace-expansion@5: ^5.0.9
+  brace-expansion@1: ^1.1.20
+  brace-expansion@2: ^2.1.6
+  brace-expansion@5: ^5.0.11
   js-yaml@3: ^3.15.2
   js-yaml@4: ^4.3.2
   # GHSA-c83g-rgw3-j3cx (unbounded memory growth: no cache eviction on
@@ -46,6 +46,8 @@ auditConfig:
     - GHSA-mwp4-54f8-5fhr # ip-address >=10.3.1
     - GHSA-mh99-v99m-4gvg # brace-expansion 1.x/2.x/5.x patched pins
     - GHSA-rgw5-rvv9-x895 # brace-expansion >=5.0.9
+    - GHSA-qhr7-859c-m2p7 # brace-expansion 1.1.20 / 2.1.6 / 5.0.11 pins
+    - GHSA-6j4f-fj2g-mc7p # brace-expansion 1.1.19 / 2.1.5 pins
     - GHSA-5p4m-2wfm-xmqj # js-yaml 3.15.2 / 4.3.2
     - GHSA-2883-xcg3-v3hh # js-yaml 3.15.2 / 4.3.2
     - GHSA-28wg-ghj8-5hjv # nanoid >=5.1.16
