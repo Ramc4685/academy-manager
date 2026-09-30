@@ -155,3 +155,26 @@ def test_photo_processor_flattens_transparency_and_never_upscales() -> None:
     out = process_photo_image(_img((100, 60), "PNG", "RGBA"), 2400)
     assert (out.width, out.height) == (100, 60)
     assert out.content_type == "image/jpeg"
+
+
+def test_a_huge_png_is_refused_but_the_same_canvas_as_jpeg_is_allowed() -> None:
+    """PNG is fully decoded (no draft), so it has a lower pixel cap than JPEG."""
+    import io
+
+    from PIL import Image
+
+    from backend.v2.contexts.identity.application.academy_media import LogoRejected
+    from backend.v2.contexts.identity.infrastructure.photo_image import (
+        MAX_PNG_PIXELS,
+        process_photo_image,
+    )
+
+    side = int(MAX_PNG_PIXELS**0.5) + 50
+    canvas = Image.new("L", (side, side), 128)
+    png = io.BytesIO()
+    canvas.save(png, format="PNG")
+    with pytest.raises(LogoRejected, match="PNG is too large"):
+        process_photo_image(png.getvalue(), 800)
+    jpeg = io.BytesIO()
+    canvas.save(jpeg, format="JPEG")
+    assert process_photo_image(jpeg.getvalue(), 800).width <= 800

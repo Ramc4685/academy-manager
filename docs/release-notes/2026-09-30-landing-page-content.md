@@ -9,6 +9,7 @@ PR: #TBD
 - The early body limit on that endpoint is now the photo size (5 MB) because the `purpose` field cannot be read before the body is parsed; a logo over 2 MB still gets the same 413 and message, from the use case.
 - `academies.public_page` gains `hero_photo_url`, `about_text`, `highlights`, `gallery`, `coach_profiles` and `faqs`, saved through `PATCH /admin/academy/public-page`. Each gallery item must carry `consent_confirmed: true`; the server stamps who confirmed and when from the caller (an existing photo keeps its original stamp). Coach profiles are accepted only for active coaches or assistant coaches of the caller's academy (422 otherwise).
 - `GET /public/academy` gains `hero_photo_url`, `about_text`, `highlights`, `gallery` (`url` and `caption` only), `coaches` (`name`, `photo_url`, `bio` for shown profiles; the name comes from the membership-gated lookup) and `faqs`. Consent and uploader fields never leave the server; the no-leak test now bans them by name and checks a seeded gallery.
+- Review fixes: public coach profiles are re-checked at read time against an active coach or assistant coach membership (a coach who left, was deactivated or lost the role is no longer published); a shown profile lists the full name and overrides the per-class `coach_display` (which only governs class cards); saved photo links must be objects this academy uploaded for that use (`academies/<id>/hero|gallery|coach/`), so no third-party images and no hero or coach upload reused as a gallery photo; a gallery write requires an actor (consent is never attributed to nobody); PNG sources are capped at about 16 megapixels (JPEG stays 30) to bound decode memory; the public TS type gains the new optional fields.
 - The public page itself is not changed here: the render lane draws these fields.
 
 ## Deploy notes
@@ -20,4 +21,5 @@ PR: #TBD
 ## Risk / rollback
 
 - Low. Additive fields and one additive form field on an existing endpoint. Logo behaviour and limits are unchanged apart from the shared hourly cap (20 to 40).
+- Retention: removing a photo from settings drops the link only; the stored object stays in the bucket (its `academy_media` row is kept, no delete path yet). Follow-up: delete the object on removal so a withdrawn-consent photo is gone, not just unlinked.
 - Gallery photos can show children: the upload consent box and the server-side consent refusal are the guard. Rollback: revert the PR; stored `public_page` content keys are ignored by the old code.

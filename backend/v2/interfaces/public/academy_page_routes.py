@@ -92,7 +92,9 @@ async def get_public_academy_page(request: Request, response: Response) -> Any:
         )
         shown = [p for p in settings.coach_profiles if p.shown]
         names = (
-            await public_page.coach_names.display_names([p.coach_id for p in shown])
+            await public_page.profile_coach_names.display_names(
+                str(academy_id), [p.coach_id for p in shown]
+            )
             if shown
             else {}
         )
@@ -100,8 +102,11 @@ async def get_public_academy_page(request: Request, response: Response) -> Any:
 
 
 def _coaches(shown: list[CoachProfile], names: dict[str, str]) -> list[PublicCoachDto]:
-    """Shown profiles whose coach still resolves to a name in this academy;
-    one that no longer does (left the academy) is quietly left out."""
+    """Shown profiles whose coach is still an active coach of this academy;
+    one that is not (left, deactivated, lost the coach role) is quietly left
+    out. A shown profile is the owner's explicit choice to list that person,
+    so it uses the full name and overrides the per-class ``coach_display``
+    (which only governs the class cards)."""
     return [
         PublicCoachDto(name=names[p.coach_id], photo_url=p.photo_url, bio=p.bio)
         for p in shown

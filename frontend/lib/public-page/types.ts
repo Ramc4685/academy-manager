@@ -95,6 +95,14 @@ export interface PublicAcademyPage {
   page: PublicPageFlags;
   programs: PublicProgram[];
   ungrouped_classes: PublicClass[];
+  /** Landing content (Settings > Public page > Photos & details). All optional. */
+  hero_photo_url?: string | null;
+  about_text?: string;
+  highlights?: string[];
+  gallery?: { url: string; caption: string }[];
+  coaches?: { name: string; photo_url: string | null; bio: string }[];
+  /** Empty or absent means the built-in questions. */
+  faqs?: { question: string; answer: string }[];
 }
 
 export interface PublicAcademyNotPublished {

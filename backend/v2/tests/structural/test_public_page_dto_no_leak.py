@@ -264,6 +264,54 @@ def test_gallery_consent_record_and_coach_id_never_reach_the_response() -> None:
         assert private not in raw, f"content lane leaked {private!r}"
 
 
+@pytest.mark.parametrize(
+    "membership_change",
+    [
+        {"status": "inactive"},
+        {"roles": ["parent"]},
+    ],
+    ids=["deactivated", "lost-coach-role"],
+)
+def test_a_coach_who_left_or_lost_the_role_is_not_published(
+    membership_change: dict[str, object],
+) -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-page-content-left"]
+    asyncio.run(seed(db))
+    asyncio.run(
+        db["academies"].update_one(
+            {"academy_id": ACADEMY},
+            {
+                "$set": {
+                    "public_page.coach_profiles": [
+                        {
+                            "coach_id": SECRETS["coach_id"],
+                            "photo_url": "https://cdn.example.test/coach.jpg",
+                            "bio": "Level 2 BWF.",
+                            "shown": True,
+                        }
+                    ]
+                }
+            },
+        )
+    )
+
+    def coaches() -> list[dict[str, object]]:
+        response = TestClient(build_app(db)).get(
+            "/api/v2/public/academy", headers={"host": RIVERSIDE_HOST}
+        )
+        assert response.status_code == 200
+        return response.json()["coaches"]
+
+    assert [c["name"] for c in coaches()] == ["Alex Morgan"]
+    asyncio.run(
+        db["academy_memberships"].update_one(
+            {"academy_id": ACADEMY, "user_id": SECRETS["coach_id"]}, {"$set": membership_change}
+        )
+    )
+    assert coaches() == []
+
+
 def test_an_academy_with_no_content_reads_todays_page() -> None:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["public-page-content-default"]

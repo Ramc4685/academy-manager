@@ -245,13 +245,13 @@ def test_owner_and_plain_admin_can_save_page_content(db: Any, roles: tuple[str, 
         res = client.patch(
             URL,
             json={
-                "hero_photo_url": "https://cdn.example.test/hero.jpg",
+                "hero_photo_url": "https://cdn.example.test/academies/acad-riverside/hero/h.jpg",
                 "about_text": "Est. 2019",
                 "highlights": ["Small groups"],
                 "faqs": [{"question": "Cost?", "answer": "See classes."}],
                 "gallery": [
                     {
-                        "url": "https://cdn.example.test/g1.jpg",
+                        "url": "https://cdn.example.test/academies/acad-riverside/gallery/g1.jpg",
                         "caption": "Sat",
                         "consent_confirmed": True,
                     }
@@ -264,7 +264,11 @@ def test_owner_and_plain_admin_can_save_page_content(db: Any, roles: tuple[str, 
         assert body["about_text"] == "Est. 2019"
         # Admin view shows consent as a flag, never who confirmed or when.
         assert body["gallery"] == [
-            {"url": "https://cdn.example.test/g1.jpg", "caption": "Sat", "consent_confirmed": True}
+            {
+                "url": "https://cdn.example.test/academies/acad-riverside/gallery/g1.jpg",
+                "caption": "Sat",
+                "consent_confirmed": True,
+            }
         ]
         assert body["coach_profiles"] == [
             {"coach_id": "coach-1", "photo_url": None, "bio": "L2 BWF", "shown": True}
@@ -278,8 +282,11 @@ def test_owner_and_plain_admin_can_save_page_content(db: Any, roles: tuple[str, 
 def test_gallery_item_without_consent_is_422(db: Any) -> None:
     with _client(db) as client:
         for item in (
-            {"url": "https://cdn.example.test/g.jpg"},
-            {"url": "https://cdn.example.test/g.jpg", "consent_confirmed": False},
+            {"url": "https://cdn.example.test/academies/acad-riverside/gallery/g.jpg"},
+            {
+                "url": "https://cdn.example.test/academies/acad-riverside/gallery/g.jpg",
+                "consent_confirmed": False,
+            },
         ):
             res = client.patch(URL, json={"gallery": [item]})
             assert res.status_code == 422, res.text
@@ -293,7 +300,7 @@ def test_gallery_rejects_client_supplied_consent_stamps(db: Any) -> None:
             json={
                 "gallery": [
                     {
-                        "url": "https://cdn.example.test/g.jpg",
+                        "url": "https://cdn.example.test/academies/acad-riverside/gallery/g.jpg",
                         "consent_confirmed": True,
                         "consent_confirmed_by": "someone-else",
                     }

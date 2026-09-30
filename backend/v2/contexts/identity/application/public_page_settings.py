@@ -14,6 +14,7 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from urllib.parse import unquote, urlparse
 
 from pydantic import ValidationError
 
@@ -132,6 +133,7 @@ class UpdatePublicPageSettings:
         doc = await self._repo.find_by_id(academy_id)
         current = PublicPageSettings.from_stored((doc or {}).get(PUBLIC_PAGE_FIELD))
         fields = dict(fields)
+        self._check_photo_urls(academy_id, fields, current)
         if "gallery" in fields:
             fields["gallery"] = self._stamp_gallery(fields["gallery"], current, actor_id)
         if "coach_profiles" in fields:
@@ -160,6 +162,40 @@ class UpdatePublicPageSettings:
             raise LookupError(f"academy {academy_id} not found")
         return PublicPageSettings.from_stored(stored.get(PUBLIC_PAGE_FIELD))
 
+    @staticmethod
+    def _check_photo_urls(
+        academy_id: str, fields: Mapping[str, Any], current: PublicPageSettings
+    ) -> None:
+        """A page photo must be an object this academy uploaded for that use
+        (``academies/<id>/<purpose>/...``): no third-party images (tracking
+        pixels) and no consent-free upload (hero, coach) republished as a
+        gallery photo. Links already saved are left alone."""
+
+        def check(url: object, purpose: str, field: str, saved: set[Any]) -> None:
+            if url is None or url in saved:
+                return
+            marker = f"/academies/{academy_id}/{purpose}/"
+            path = unquote(urlparse(str(url)).path)
+            if marker not in path:
+                raise InvalidPublicPageSettings(
+                    "Photos must be uploaded here first. Upload the photo instead of "
+                    "pasting a link.",
+                    fields=[field],
+                )
+
+        if "hero_photo_url" in fields:
+            check(fields["hero_photo_url"], "hero", "hero_photo_url", {current.hero_photo_url})
+        if isinstance(fields.get("gallery"), list):
+            saved = {g.url for g in current.gallery}
+            for item in fields["gallery"]:
+                if isinstance(item, Mapping):
+                    check(item.get("url"), "gallery", "gallery", saved)
+        if isinstance(fields.get("coach_profiles"), list):
+            saved = {p.photo_url for p in current.coach_profiles if p.photo_url}
+            for item in fields["coach_profiles"]:
+                if isinstance(item, Mapping):
+                    check(item.get("photo_url"), "coach", "coach_profiles", saved)
+
     def _stamp_gallery(
         self, raw: object, current: PublicPageSettings, actor_id: str | None
     ) -> list[dict[str, Any]]:
@@ -172,6 +208,9 @@ class UpdatePublicPageSettings:
         """
         if not isinstance(raw, list) or not all(isinstance(item, Mapping) for item in raw):
             raise InvalidPublicPageSettings("Gallery is not valid.", fields=["gallery"])
+        if not actor_id:
+            # Consent is an audit record: never attribute it to nobody.
+            raise ValueError("actor_id is required to write the gallery")
         existing = {photo.url: photo for photo in current.gallery}
         stamped: list[dict[str, Any]] = []
         now = self._now()
@@ -189,9 +228,7 @@ class UpdatePublicPageSettings:
                     "url": url,
                     "caption": item.get("caption") or "",
                     "consent_confirmed": True,
-                    "consent_confirmed_by": kept.consent_confirmed_by
-                    if kept
-                    else (actor_id or "unknown"),
+                    "consent_confirmed_by": kept.consent_confirmed_by if kept else actor_id,
                     "consent_confirmed_at": kept.consent_confirmed_at if kept else now,
                 }
             )

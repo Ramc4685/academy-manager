@@ -117,7 +117,9 @@ class _Roster:
         return {c for c in candidate_ids if c in self.coach_ids_}
 
 
-def _photo(url: str = "https://cdn.example.test/a.jpg", **extra: Any) -> dict[str, Any]:
+def _photo(
+    url: str = "https://cdn.example.test/academies/acad-riverside/gallery/a.jpg", **extra: Any
+) -> dict[str, Any]:
     return {"url": url, "caption": "Saturday juniors", "consent_confirmed": True, **extra}
 
 
@@ -127,7 +129,7 @@ async def test_content_saves_and_defaults_are_todays_page() -> None:
     saved = await update.execute(
         ACADEMY,
         {
-            "hero_photo_url": "https://cdn.example.test/hero.jpg",
+            "hero_photo_url": "https://cdn.example.test/academies/acad-riverside/hero/h.jpg",
             "about_text": "  Est. 2019.  ",
             "highlights": ["Small groups", " All levels "],
             "faqs": [{"question": " Do I need a racket? ", "answer": "We lend one."}],
@@ -182,7 +184,10 @@ async def test_gallery_needs_consent_and_is_stamped_by_the_server() -> None:
     assert stored[0]["consent_confirmed_by"] == "u-admin"
     assert stored[0]["consent_confirmed"] is True
 
-    for bad in ({"url": "https://cdn.example.test/b.jpg"}, _photo(consent_confirmed=False)):
+    for bad in (
+        {"url": "https://cdn.example.test/academies/acad-riverside/gallery/b.jpg"},
+        _photo(consent_confirmed=False),
+    ):
         bad = {k: v for k, v in bad.items()}
         with pytest.raises(InvalidPublicPageSettings, match="parents or guardians"):
             await update.execute(ACADEMY, {"gallery": [photo.model_dump(), bad]}, actor_id="u2")
@@ -201,7 +206,12 @@ async def test_resaving_a_gallery_keeps_the_original_consent_stamp() -> None:
     later = UpdatePublicPageSettings(repo, _Roster(), now=lambda: datetime(2027, 1, 1, tzinfo=UTC))
     saved = await later.execute(
         ACADEMY,
-        {"gallery": [_photo(caption="New caption"), _photo("https://cdn.example.test/b.jpg")]},
+        {
+            "gallery": [
+                _photo(caption="New caption"),
+                _photo("https://cdn.example.test/academies/acad-riverside/gallery/b.jpg"),
+            ]
+        },
         actor_id="u-admin",
     )
     old, new = saved.gallery
@@ -251,3 +261,45 @@ async def test_a_bad_stored_content_key_falls_back_without_breaking_the_read() -
     settings = await GetPublicPageSettings(repo).execute(ACADEMY)
     assert settings.published is True and settings.about_text == "Hi"
     assert settings.gallery == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"hero_photo_url": "https://tracker.example.test/pixel.jpg"},
+        # Another academy's object, and the wrong purpose folder.
+        {"hero_photo_url": "https://cdn.example.test/academies/acad-other/hero/h.jpg"},
+        {"hero_photo_url": "https://cdn.example.test/academies/acad-riverside/gallery/h.jpg"},
+        {"gallery": [_photo("https://cdn.example.test/academies/acad-riverside/hero/h.jpg")]},
+        {"gallery": [_photo("https://tracker.example.test/pixel.jpg")]},
+        {
+            "coach_profiles": [
+                {
+                    "coach_id": "coach-1",
+                    "photo_url": "https://cdn.example.test/academies/acad-riverside/gallery/x.jpg",
+                }
+            ]
+        },
+    ],
+)
+async def test_photo_links_must_be_this_academys_own_uploads(fields: dict[str, Any]) -> None:
+    _db, repo = await _repo()
+    with pytest.raises(InvalidPublicPageSettings):
+        await UpdatePublicPageSettings(repo, _Roster("coach-1")).execute(
+            ACADEMY, fields, actor_id="u-admin"
+        )
+
+
+async def test_owned_photo_links_are_accepted_including_firebase_encoded_paths() -> None:
+    _db, repo = await _repo()
+    encoded = "https://firebasestorage.googleapis.com/v0/b/bkt/o/academies%2Facad-riverside%2Fcoach%2Fc.jpg"
+    saved = await UpdatePublicPageSettings(repo, _Roster("coach-1")).execute(
+        ACADEMY, {"coach_profiles": [{"coach_id": "coach-1", "photo_url": encoded}]}
+    )
+    assert saved.coach_profiles[0].photo_url == encoded
+
+
+async def test_gallery_write_without_an_actor_is_refused() -> None:
+    _db, repo = await _repo()
+    with pytest.raises(ValueError, match="actor_id"):
+        await UpdatePublicPageSettings(repo, _Roster()).execute(ACADEMY, {"gallery": [_photo()]})

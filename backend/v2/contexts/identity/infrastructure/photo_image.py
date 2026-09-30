@@ -21,6 +21,11 @@ from backend.v2.contexts.identity.application.academy_media import LogoRejected,
 MAX_SOURCE_DIMENSION = 8000
 #: Largest accepted source canvas (width x height), about 30 megapixels.
 MAX_SOURCE_PIXELS = 30_000_000
+#: PNG has no decoder-side downscale: it is fully decoded, then copied a few
+#: times, so it gets a lower canvas cap (about 16 megapixels, ~64 MB per RGBA
+#: copy) than JPEG. Phone photos are JPEG; a PNG this big is a screenshot or
+#: an export.
+MAX_PNG_PIXELS = 16_000_000
 #: JPEG quality of the stored photo.
 JPEG_QUALITY = 85
 
@@ -28,6 +33,7 @@ _TOO_LARGE = (
     f"That image is too large. Use one up to {MAX_SOURCE_DIMENSION} pixels on a side "
     "and about 30 megapixels."
 )
+_PNG_TOO_LARGE = "That PNG is too large. Use one up to about 16 megapixels, or save it as a JPG."
 _BAD_IMAGE = "That file is not a PNG or JPG image. Choose a PNG or JPG."
 
 
@@ -55,6 +61,8 @@ def _process(raw: bytes, max_edge: int) -> ProcessedImage:
             or width * height > MAX_SOURCE_PIXELS
         ):
             raise LogoRejected(_TOO_LARGE)
+        if opened.format == "PNG" and width * height > MAX_PNG_PIXELS:
+            raise LogoRejected(_PNG_TOO_LARGE)
         if opened.format == "JPEG":
             # Decode at a reduced scale (never below the target size).
             opened.draft("RGB", (max_edge, max_edge))
