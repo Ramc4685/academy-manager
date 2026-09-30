@@ -1,6 +1,6 @@
 # Change a plan price from a future month (Settings overhaul Phase 6 PR 26)
 
-PR: #TBD
+PR: #1017
 
 ## What changed
 
