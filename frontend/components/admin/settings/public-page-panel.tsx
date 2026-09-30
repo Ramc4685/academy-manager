@@ -42,6 +42,7 @@ import {
 } from "@/components/ds";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
+import { PublicPageContentCard } from "@/components/admin/settings/public-page-content-card";
 
 const PRICE_PERIODS = Object.keys(PRICE_PERIOD_LABEL) as PublicPricePeriod[];
 const COACH_DISPLAYS = Object.keys(COACH_DISPLAY_LABEL) as PublicCoachDisplay[];
@@ -61,6 +62,7 @@ export function PublicPagePanel() {
   return (
     <section data-testid="admin-settings-public-page" className="space-y-6">
       <PageSettingsCard />
+      <PublicPageContentCard />
       <ProgramsCard />
       <ClassesCard />
     </section>

@@ -6,7 +6,9 @@ import { expect, test, type Page, type Route } from "@playwright/test";
  * Covers: Publish + Save sends only the changed key, the price period and
  * privacy link validation, the unsaved-changes guard on a tab switch, the
  * per-class switch saving on its own (no Save button), program create and
- * class-to-program assignment, and the "View page" link.
+ * class-to-program assignment, and the "View page" link. The Photos & details
+ * card (content lane) is covered at the end: the consent-gated gallery upload,
+ * the text sections and FAQ reorder, and coach profiles.
  */
 
 const ADMIN_ME = {
@@ -42,6 +44,31 @@ function classes() {
     { ...CLASS_ROW, session_id: "sess-adults", title: "Adult Beginners", status: "scheduled" },
     { ...CLASS_ROW, session_id: "sess-old", title: "Summer Camp", status: "completed" },
   ];
+}
+
+// A 1x1 PNG so preview images of stubbed uploads load without the network.
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+const COACHES = {
+  users: [
+    {
+      user_id: "coach-1",
+      email: "alex@riverside.example",
+      display_name: "Alex Morgan",
+      role: "coach",
+      status: "active",
+    },
+  ],
+};
+
+async function stubContent(page: Page) {
+  await page.route("https://cdn.example/**", (route) =>
+    route.fulfill({ status: 200, contentType: "image/png", body: PIXEL }),
+  );
+  await page.route(/\/api\/v2\/admin\/users\?.*/, (route) => fulfillJson(route, COACHES));
 }
 
 function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -320,5 +347,116 @@ test.describe("admin settings → public page", () => {
     const adults = page.locator('[data-session-id="sess-adults"]');
     await expect(adults.getByTestId("public-page-class-program")).toHaveValue("");
     await expect(adults.locator("option", { hasText: "Winter Squad" })).toHaveCount(0);
+  });
+
+  test("gallery upload needs the parents-agreed box, then saves the photo with consent", async ({
+    page,
+  }) => {
+    const seen = await stub(page);
+    await stubContent(page);
+    const uploads: string[] = [];
+    await page.route("**/api/v2/admin/academy/media", (route) => {
+      uploads.push(route.request().postData() ?? "");
+      return fulfillJson(route, {
+        logo_url: null,
+        url: "https://cdn.example/g1.jpg",
+        purpose: "gallery",
+      });
+    });
+    await page.goto("/admin/settings?panel=public-page");
+
+    const button = page.getByTestId("public-page-gallery-upload-button");
+    const file = page.getByTestId("public-page-gallery-upload-file");
+    await expect(button).toBeDisabled();
+    await expect(file).toBeDisabled();
+    expect(uploads).toEqual([]);
+
+    await page.getByTestId("public-page-gallery-consent").check();
+    await expect(button).toBeEnabled();
+    await file.setInputFiles({
+      name: "juniors.jpg",
+      mimeType: "image/jpeg",
+      buffer: Buffer.from("jpeg-bytes"),
+    });
+
+    await expect(page.getByTestId("public-page-gallery-item")).toHaveCount(1);
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]).toContain('name="purpose"');
+    expect(uploads[0]).toContain("gallery");
+    expect(uploads[0]).toContain('name="consent"');
+    // Each photo needs its own confirmation.
+    await expect(page.getByTestId("public-page-gallery-consent")).not.toBeChecked();
+    await expect(button).toBeDisabled();
+
+    await page.getByTestId("public-page-gallery-caption").fill("Saturday juniors");
+    await page.getByTestId("public-page-content-save").click();
+    await expect(page.getByText(/Saved at/)).toBeVisible();
+    expect(seen.settingsPatches).toEqual([
+      {
+        gallery: [
+          {
+            url: "https://cdn.example/g1.jpg",
+            caption: "Saturday juniors",
+            consent_confirmed: true,
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("about text, highlights and FAQs save as one patch; FAQ rows reorder", async ({ page }) => {
+    const seen = await stub(page);
+    await stubContent(page);
+    await page.goto("/admin/settings?panel=public-page");
+
+    await expect(page.getByTestId("public-page-faq-helper")).toContainText(
+      "Leave empty to use the standard questions.",
+    );
+    await page.getByTestId("public-page-about").fill("Est. 2019.");
+    await page.getByTestId("public-page-highlight-input").fill("Small groups");
+    await page.getByTestId("public-page-highlight-add").click();
+
+    await page.getByTestId("public-page-faq-add").click();
+    await page.getByTestId("public-page-faq-add").click();
+    const rows = page.getByTestId("public-page-faq-row");
+    await rows.nth(0).getByTestId("public-page-faq-question").fill("Do I need a racket?");
+    await rows.nth(0).getByTestId("public-page-faq-answer").fill("We lend one.");
+    await rows.nth(1).getByTestId("public-page-faq-question").fill("Where do we park?");
+    await rows.nth(1).getByTestId("public-page-faq-answer").fill("Behind the hall.");
+    await rows.nth(1).getByTestId("public-page-faq-up").click();
+
+    await page.getByTestId("public-page-content-save").click();
+    await expect(page.getByText(/Saved at/)).toBeVisible();
+    expect(seen.settingsPatches).toEqual([
+      {
+        about_text: "Est. 2019.",
+        highlights: ["Small groups"],
+        faqs: [
+          { question: "Where do we park?", answer: "Behind the hall." },
+          { question: "Do I need a racket?", answer: "We lend one." },
+        ],
+      },
+    ]);
+  });
+
+  test("a coach gets a profile when shown, with a bio counter", async ({ page }) => {
+    const seen = await stub(page);
+    await stubContent(page);
+    await page.goto("/admin/settings?panel=public-page");
+
+    const row = page.getByTestId("public-page-coach-row");
+    await expect(row).toContainText("Alex Morgan");
+    await row.getByTestId("public-page-coach-shown").check();
+    await row.getByTestId("public-page-coach-bio").fill("Level 2 BWF");
+    await expect(row.getByTestId("public-page-coach-bio-count")).toHaveText("11 / 280");
+    await page.getByTestId("public-page-content-save").click();
+    await expect(page.getByText(/Saved at/)).toBeVisible();
+    expect(seen.settingsPatches).toEqual([
+      {
+        coach_profiles: [
+          { coach_id: "coach-1", photo_url: null, bio: "Level 2 BWF", shown: true },
+        ],
+      },
+    ]);
   });
 });
