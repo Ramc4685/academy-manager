@@ -55,7 +55,7 @@ export default function AdminWaiverTemplateDetailPage() {
                 <Overline>Family policies</Overline>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-rally-muted">
                   {waiverQuery.data.status === "active"
-                    ? "Choose whether this waiver is required, and for all families or only families in certain programs."
+                    ? "Choose who signs this waiver: nobody, all families, or only families in certain programs."
                     : "Publish the draft before choosing who signs it."}
                 </p>
               </div>
