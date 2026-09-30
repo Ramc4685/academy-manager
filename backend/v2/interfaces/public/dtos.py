@@ -96,6 +96,11 @@ class PublicPageFlagsDto(BaseModel):
     show_availability: bool
     price_period_default: str
     privacy_notice_url: str | None = None
+    #: "floodlit" | "daylight" | "showcase": the academy's chosen look.
+    theme: str = "floodlit"
+    #: The class rows already apply it (a "few" band carries the number only
+    #: at or below it); sent so the page and its tests can read the setting.
+    seats_left_threshold: int = 3
     #: Footer legal links; null when the academy has not set them.
     terms_url: str | None = None
     refund_policy_url: str | None = None

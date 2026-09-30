@@ -51,6 +51,10 @@ from backend.v2.contexts.identity.application.public_page_settings import (
     PublicPageSettings,
     UpdatePublicPageSettings,
 )
+from backend.v2.contexts.identity.domain.public_page import (
+    MAX_SEATS_LEFT_THRESHOLD,
+    PublicPageTheme,
+)
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
@@ -216,6 +220,8 @@ class PublicPageSettingsView(BaseModel):
     price_period_default: PricePeriod
     trials_open: bool
     privacy_notice_url: str | None = None
+    theme: PublicPageTheme
+    seats_left_threshold: int
     #: ``https://<host>/`` of the academy's own domain for the "View page"
     #: link; ``null`` when the academy has no domain on record. Read-only.
     public_url: str | None = None
@@ -233,6 +239,10 @@ class UpdatePublicPageSettingsRequest(BaseModel):
     price_period_default: PricePeriod | None = None
     trials_open: StrictBool | None = None
     privacy_notice_url: str | None = Field(default=None, max_length=2048)
+    theme: PublicPageTheme | None = None
+    seats_left_threshold: int | None = Field(
+        default=None, ge=0, le=MAX_SEATS_LEFT_THRESHOLD, strict=True
+    )
 
 
 def _settings_view(settings: PublicPageSettings, public_url: str | None) -> PublicPageSettingsView:

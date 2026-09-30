@@ -15,11 +15,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Final, Literal
 
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
 PricePeriodDefault = Literal["month", "class", "term"]
+#: Look of the public page. ``floodlit`` is the original look (today's page).
+PublicPageTheme = Literal["floodlit", "daylight", "showcase"]
+
+#: At or below this many seats left a class shows "only N seats left". Equal
+#: to the enrollment catalog's ``FEW_SEATS_THRESHOLD`` (pinned by a test), so
+#: an academy that never touches the setting reads exactly as before.
+DEFAULT_SEATS_LEFT_THRESHOLD: Final = 3
+MAX_SEATS_LEFT_THRESHOLD: Final = 20
 
 #: The subdocument key on the academy record.
 PUBLIC_PAGE_FIELD: Final = "public_page"
@@ -34,6 +42,11 @@ class PublicPageSettings(BaseModel):
     price_period_default: PricePeriodDefault = "month"
     trials_open: bool = True
     privacy_notice_url: str | None = None
+    theme: PublicPageTheme = "floodlit"
+    #: 0 never shows "only N seats left"; 1..20 shows it at or below N.
+    seats_left_threshold: int = Field(
+        default=DEFAULT_SEATS_LEFT_THRESHOLD, ge=0, le=MAX_SEATS_LEFT_THRESHOLD, strict=True
+    )
 
     @field_validator("privacy_notice_url", mode="before")
     @classmethod
