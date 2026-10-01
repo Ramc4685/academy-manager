@@ -393,6 +393,9 @@ test.describe("admin month close", () => {
   });
 
   test("a clean month says so, in one line", async ({ page }) => {
+    // The headline names the page's default period ("this month"), so pin the
+    // browser clock to the fixture's month.
+    await page.clock.setFixedTime(new Date("2026-09-15T12:00:00"));
     const errors = collectConsoleErrors(page);
     await stubMonthCloseShell(page);
     await page.route(MONTH_CLOSE_URL, (route) =>
