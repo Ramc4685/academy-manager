@@ -11,6 +11,7 @@ import {
   markProgress,
   recentUnmarkedSessions,
 } from "@/lib/coach/marking";
+import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
 import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
@@ -115,10 +116,7 @@ export default function CoachTodayPage() {
               <li key={`recent-${s.occurrence_id}`}>
                 <Link
                   href={
-                    coachSessionHref(
-                      s.occurrence_id,
-                      sessionDateKey(s.start_at, s.timezone),
-                    ) as Parameters<typeof Link>[0]["href"]
+                    coachScheduleEntryHref(s) as Parameters<typeof Link>[0]["href"]
                   }
                   data-testid={`recent-unmarked-${s.occurrence_id}`}
                   className="block rounded-lg border border-amber-300 bg-amber-50 p-3 hover:border-amber-500 dark:border-amber-900 dark:bg-amber-950"

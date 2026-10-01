@@ -14,20 +14,11 @@
  * Pure functions in the node vitest environment — no React, no DOM.
  */
 
-import { parseAcademyInstant } from "@/lib/format/academy-time";
+import { isValidTimeZone, parseAcademyInstant } from "@/lib/format/academy-time";
 
 export type CalendarTimeZone =
   | { status: "ready"; timeZone: string }
   | { status: "unavailable" };
-
-export function isValidTimeZone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * The single zone a calendar grid renders in, from the zones its classes run

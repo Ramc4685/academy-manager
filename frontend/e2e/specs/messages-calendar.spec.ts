@@ -205,14 +205,22 @@ test.describe("parent messages inbox", () => {
   });
 });
 
+/**
+ * #1043: the grids run on America/Chicago, and phones open on a single day.
+ * A fixture built from the runner's wall clock (UTC in CI) lands on
+ * Chicago's "tomorrow" between 00:00 and 05:00/06:00 UTC, so every calendar
+ * test pins the browser clock to Chicago mid-day and uses fixed instants on
+ * that same Chicago date.
+ */
+const CALENDAR_NOW = new Date("2026-10-01T17:00:00Z"); // 12:00 PM CDT Oct 1
+const CLASS_START = "2026-10-01T15:00:00Z"; // 10:00 AM CDT Oct 1
+const CLASS_END = "2026-10-01T16:00:00Z";
+
 test.describe("calendar smoke", () => {
   test("coach calendar renders the schedule grid", async ({ page }) => {
     await stubIdentity(page, ["coach"]);
     await stubMessages(page, "coach");
-
-    const start = new Date();
-    start.setHours(9, 0, 0, 0);
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    await page.clock.setFixedTime(CALENDAR_NOW);
 
     await page.route("**/api/v2/coach/sessions", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
@@ -227,8 +235,8 @@ test.describe("calendar smoke", () => {
               title: "Junior A",
               location: "Court 1",
               timezone: "America/Chicago",
-              start_at: start.toISOString(),
-              end_at: end.toISOString(),
+              start_at: CLASS_START,
+              end_at: CLASS_END,
             },
           ],
         }),
@@ -277,12 +285,11 @@ test.describe("calendar smoke", () => {
   }) => {
     await stubIdentity(page, ["coach"]);
     await stubMessages(page, "coach");
+    await page.clock.setFixedTime(CALENDAR_NOW);
     await page.route("**/api/v2/coach/sessions", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
       // #1043: the grid needs a known academy zone, which comes with the
       // schedule; an empty schedule shows "No upcoming sessions" instead.
-      const start = new Date();
-      start.setHours(9, 0, 0, 0);
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -294,8 +301,8 @@ test.describe("calendar smoke", () => {
               title: "Junior A",
               location: "Court 1",
               timezone: "America/Chicago",
-              start_at: start.toISOString(),
-              end_at: new Date(start.getTime() + 60 * 60 * 1000).toISOString(),
+              start_at: CLASS_START,
+              end_at: CLASS_END,
             },
           ],
         }),
@@ -334,10 +341,7 @@ test.describe("calendar smoke", () => {
   test("parent calendar merges every child's schedule", async ({ page }) => {
     await stubIdentity(page, ["parent"]);
     await stubMessages(page, "parent");
-
-    const start = new Date();
-    start.setHours(10, 0, 0, 0);
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    await page.clock.setFixedTime(CALENDAR_NOW);
 
     await page.route("**/api/v2/parent/children", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
@@ -371,8 +375,8 @@ test.describe("calendar smoke", () => {
               session_id: "sess-1",
               session_title: "Junior Beginners",
               location: "Court 1",
-              start_at: start.toISOString(),
-              end_at: end.toISOString(),
+              start_at: CLASS_START,
+              end_at: CLASS_END,
               status: "scheduled",
               coach_name: "Coach Lee",
             },
@@ -419,7 +423,7 @@ test.describe("calendar in a Los Angeles browser (#1043)", () => {
   test("coach calendar shows academy time, not browser time", async ({ page }) => {
     await stubIdentity(page, ["coach"]);
     await stubMessages(page, "coach");
-    await page.clock.setFixedTime(new Date("2026-10-01T17:00:00Z"));
+    await page.clock.setFixedTime(CALENDAR_NOW);
     await page.route("**/api/v2/coach/sessions", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return route.fulfill({

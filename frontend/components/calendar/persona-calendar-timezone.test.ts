@@ -31,6 +31,9 @@ function onGrid(instant: string, timeZone: string): string {
   return formatDate(instant, {
     timeZone,
     // Same named-zone implementation the component registers via plugins.
+    // `namedTimeZonedImpl` is FullCalendar's INTERNAL plugin key (not public
+    // API, verified on 6.1.x); if an upgrade renames it this returns
+    // undefined, FullCalendar falls back to UTC and the Chicago cases fail.
     namedTimeZoneImpl: (luxonPlugin as unknown as { namedTimeZonedImpl: unknown })
       .namedTimeZonedImpl,
     year: "numeric",

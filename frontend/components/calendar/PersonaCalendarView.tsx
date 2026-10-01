@@ -11,6 +11,7 @@
  * (~250 KB) out of the initial persona bundle.
  */
 
+import { useId } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import luxonPlugin from "@fullcalendar/luxon3";
@@ -56,13 +57,17 @@ export default function PersonaCalendarView({ events, timeZone, onEventClick }: 
    * so it adds no view plugin of its own.
    */
   const phone = useIsPhone();
+  const timeZoneLabelId = useId();
 
   return (
     <div
       data-testid="calendar-grid"
+      // Screen readers moving through the grid hear which clock it uses.
+      aria-describedby={timeZoneLabelId}
       className={`${styles.wrap} rounded-lg border border-rally-line bg-white p-4`}
     >
       <p
+        id={timeZoneLabelId}
         data-testid="calendar-timezone"
         className="mb-3 text-xs text-rally-subtle"
       >
@@ -72,7 +77,8 @@ export default function PersonaCalendarView({ events, timeZone, onEventClick }: 
         // `initialView` is read once at mount, so crossing the breakpoint has
         // to remount rather than re-render. The events prop is unchanged.
         key={`${phone ? "phone" : "wide"}:${timeZone}`}
-        // The luxon plugin is FullCalendar's named-zone implementation; without
+        // The luxon plugin is FullCalendar's named-zone implementation (it
+        // registers the internal `namedTimeZonedImpl` plugin key); without
         // it a named `timeZone` silently degrades to UTC.
         plugins={[dayGridPlugin, luxonPlugin]}
         // Day placement, event times and the Today button all follow this

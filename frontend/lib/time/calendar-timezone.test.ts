@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { isValidTimeZone } from "@/lib/format/academy-time";
+
 import {
   calendarInstant,
   calendarTimeZoneLabel,
-  isValidTimeZone,
   resolveCalendarTimeZone,
 } from "./calendar-timezone";
 

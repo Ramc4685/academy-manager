@@ -13,9 +13,9 @@
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import type { CoachScheduleEntry } from "@/lib/api/coach";
 import { coachSessionHref } from "@/lib/coach/marking";
+import { isValidTimeZone } from "@/lib/format/academy-time";
 import {
   calendarInstant,
-  isValidTimeZone,
   resolveCalendarTimeZone,
   type CalendarTimeZone,
 } from "@/lib/time/calendar-timezone";
@@ -23,9 +23,21 @@ import { sessionDateKey } from "@/lib/time/session-time";
 
 type LinkableEntry = Pick<CoachScheduleEntry, "occurrence_id" | "start_at" | "timezone">;
 
-/** Detail link for one schedule entry, dated on the class's own clock. */
-export function coachScheduleEntryHref(entry: LinkableEntry): string {
-  return coachSessionHref(entry.occurrence_id, sessionDateKey(entry.start_at, entry.timezone));
+/**
+ * Detail link for one schedule entry, dated on the class's own clock.
+ *
+ * `fallbackTimeZone` is the academy zone to use when the entry carries none
+ * (the calendar passes its grid zone), so a zone-less class links to the same
+ * local date the grid shows it on instead of the UTC date.
+ */
+export function coachScheduleEntryHref(
+  entry: LinkableEntry,
+  fallbackTimeZone?: string | null,
+): string {
+  return coachSessionHref(
+    entry.occurrence_id,
+    sessionDateKey(entry.start_at, entry.timezone, fallbackTimeZone),
+  );
 }
 
 /**
@@ -37,8 +49,10 @@ export function coachScheduleToCalendar(entries: readonly CoachScheduleEntry[]):
   timeZone: CalendarTimeZone;
   events: CalendarViewEvent[];
 } {
+  const timeZone = resolveCalendarTimeZone(entries.map((e) => e.timezone));
+  const gridZone = timeZone.status === "ready" ? timeZone.timeZone : null;
   return {
-    timeZone: resolveCalendarTimeZone(entries.map((e) => e.timezone)),
+    timeZone,
     events: entries.map((s) => ({
       id: s.occurrence_id,
       title: s.title,
@@ -47,7 +61,7 @@ export function coachScheduleToCalendar(entries: readonly CoachScheduleEntry[]):
       // A corrupt zone name would make Intl throw; such an entry gets no
       // link instead of taking the whole calendar down.
       url: !s.timezone?.trim() || isValidTimeZone(s.timezone.trim())
-        ? coachScheduleEntryHref(s)
+        ? coachScheduleEntryHref(s, gridZone)
         : undefined,
     })),
   };

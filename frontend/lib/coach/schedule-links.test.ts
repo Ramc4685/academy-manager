@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import type { CoachScheduleEntry } from "@/lib/api/coach";
 import { sessionDateKey } from "@/lib/time/session-time";
 
-import { coachSessionHref } from "./marking";
 import { coachScheduleEntryHref, coachScheduleToCalendar } from "./schedule-links";
 
 /**
@@ -114,11 +113,18 @@ describe("coachScheduleEntryHref (#1045)", () => {
       const e = entry({ start_at: c.start_at, timezone: c.timezone });
       const { events } = coachScheduleToCalendar([e]);
       expect(events[0].url).toBe(coachScheduleEntryHref(e));
-      // …and the Today page's (it calls coachSessionHref + sessionDateKey).
-      expect(coachSessionHref(e.occurrence_id, sessionDateKey(e.start_at, e.timezone))).toBe(
-        coachScheduleEntryHref(e),
-      );
     }
+  });
+
+  it("dates a zone-less entry on the fallback (grid) zone, not UTC", () => {
+    const e = entry({ timezone: null, start_at: "2026-11-06T00:00:00Z" });
+    expect(coachScheduleEntryHref(e, "America/Chicago")).toBe(
+      "/coach/sessions/occ-1?date=2026-11-05",
+    );
+    // A class's own zone still wins over the fallback.
+    expect(
+      coachScheduleEntryHref(entry({ timezone: "UTC" }), "America/Chicago"),
+    ).toBe("/coach/sessions/occ-1?date=2026-11-06");
   });
 
   it("keeps the exact occurrence id, encoded", () => {
@@ -143,6 +149,18 @@ describe("Coach Sessions page wiring (#1045)", () => {
   });
 });
 
+describe("Coach Today page wiring (#1045)", () => {
+  const page = readFileSync(
+    join(__dirname, "..", "..", "app", "(coach)", "coach", "today", "page.tsx"),
+    "utf8",
+  );
+
+  it("builds its recent-unmarked links with the shared local-date helper", () => {
+    expect(page).toContain("coachScheduleEntryHref(s)");
+    expect(page).not.toMatch(/coachSessionHref\(\s*s\.occurrence_id,\s*sessionDateKey/);
+  });
+});
+
 describe("coachScheduleToCalendar (#1043)", () => {
   it("runs the grid on the sessions' zone and pins explicit UTC instants", () => {
     const { timeZone, events } = coachScheduleToCalendar([
@@ -154,6 +172,15 @@ describe("coachScheduleToCalendar (#1043)", () => {
     expect(events[0].start).toBe("2026-11-06T00:00:00.000Z");
     expect(events[0].end).toBe("2026-11-06T01:00:00.000Z");
     expect(events[0].url).toBe("/coach/sessions/occ-1?date=2026-11-05");
+  });
+
+  it("links a zone-less entry on the grid's local date (#1045)", () => {
+    const { events } = coachScheduleToCalendar([
+      entry({ occurrence_id: "occ-a" }),
+      entry({ occurrence_id: "occ-b", timezone: null }),
+    ]);
+    // 00:00Z Nov 6 is 6:00 PM Nov 5 on the Chicago grid; the link agrees.
+    expect(events[1].url).toBe("/coach/sessions/occ-b?date=2026-11-05");
   });
 
   it("is unavailable — not the browser zone — when no entry has a valid zone", () => {

@@ -9,6 +9,7 @@ import { scheduleEntryToEvent } from "@/lib/parent/schedule-events";
 import { queryKeys } from "@/lib/query/keys";
 import { resolveCalendarTimeZone } from "@/lib/time/calendar-timezone";
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
+import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
@@ -93,6 +94,19 @@ export default function ParentCalendarPage() {
         </Card>
       )}
 
+      {academyQuery.isError && (
+        <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
+          <div role="alert" className="flex items-center justify-between gap-3">
+            <p className="text-sm text-red-800">
+              Couldn&apos;t load the academy&apos;s timezone, so the calendar can&apos;t be shown.
+            </p>
+            <Button type="button" variant="secondary" onClick={() => void academyQuery.refetch()}>
+              Retry
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {children.length > 0 && (
         <div className="flex flex-wrap gap-3" data-testid="calendar-child-legend">
           {children.map((child, idx) => (
@@ -117,7 +131,7 @@ export default function ParentCalendarPage() {
         </Card>
       ) : calendarZone.status === "ready" ? (
         <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} />
-      ) : (
+      ) : academyQuery.isError ? null : (
         <CalendarTimeZoneUnavailable listHref="/parent/children" listLabel="My children" />
       )}
     </section>
