@@ -194,8 +194,11 @@ export default function AdminStudentDetailPage() {
         />
       )}
       <StudentSummaryStrip student={student} />
-      <StudentWaiverWarning rows={waiversQuery.data?.waivers ?? []} />
       <StudentTabs activeTab={activeTab} onChange={selectTab} />
+      {/* #1046: below the tabs, not above. Above them it pushed the tablist
+          off a 390x664 phone screen (#897 keeps the tabs on the first
+          screen); here it still shows on every tab. */}
+      <StudentWaiverWarning rows={waiversQuery.data?.waivers ?? []} />
 
       {activeTab === "overview" && (
         <TabPanel id="overview">
