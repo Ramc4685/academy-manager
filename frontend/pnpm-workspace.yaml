@@ -39,6 +39,9 @@ overrides:
   # Both patched in >=4.28.7. Transitive via @serwist/next; every other
   # consumer already resolved 4.28.7 before this pin.
   browserslist: '>=4.28.7'
+  # GHSA-c475-qrg2-pj4r (basic-ftp <=6.2.0); patched in >=6.2.1. Dev-only,
+  # transitive via @lhci/cli -> proxy-agent -> pac-proxy-agent -> get-uri.
+  basic-ftp: '>=6.2.1'
 
 # pnpm audit evaluates upstream declared ranges even when the lockfile applies
 # the patched override. Each entry below is pinned above to a patched release.
