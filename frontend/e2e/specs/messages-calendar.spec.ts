@@ -239,6 +239,37 @@ test.describe("calendar smoke", () => {
     await expect(page.getByTestId("coach-calendar")).toBeVisible();
     await expect(page.getByTestId("calendar-grid")).toBeVisible();
     await expect(page.getByTestId("calendar-grid")).toContainText("Junior A");
+    // #1043: the grid names the academy clock it runs on.
+    await expect(page.getByTestId("calendar-timezone")).toContainText("America/Chicago");
+  });
+
+  test("coach calendar withholds the grid when the timezone is unknown (#1043)", async ({ page }) => {
+    await stubIdentity(page, ["coach"]);
+    await stubMessages(page, "coach");
+    await page.route("**/api/v2/coach/sessions", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sessions: [
+            {
+              session_id: "sess-1",
+              occurrence_id: "occ-1",
+              title: "Evening Juniors",
+              location: "Court 1",
+              timezone: null,
+              start_at: "2026-10-01T23:00:00Z",
+              end_at: "2026-10-02T00:00:00Z",
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/coach/calendar");
+    await expect(page.getByTestId("calendar-timezone-unavailable")).toBeVisible();
+    await expect(page.getByTestId("calendar-grid")).toHaveCount(0);
   });
 
   test("coach calendar toolbar wraps (not overlaps) at 400px and uses the Rally accent (#866)", async ({
@@ -248,7 +279,27 @@ test.describe("calendar smoke", () => {
     await stubMessages(page, "coach");
     await page.route("**/api/v2/coach/sessions", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sessions: [] }) });
+      // #1043: the grid needs a known academy zone, which comes with the
+      // schedule; an empty schedule shows "No upcoming sessions" instead.
+      const start = new Date();
+      start.setHours(9, 0, 0, 0);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sessions: [
+            {
+              session_id: "sess-1",
+              occurrence_id: "occ-1",
+              title: "Junior A",
+              location: "Court 1",
+              timezone: "America/Chicago",
+              start_at: start.toISOString(),
+              end_at: new Date(start.getTime() + 60 * 60 * 1000).toISOString(),
+            },
+          ],
+        }),
+      });
     });
 
     await page.setViewportSize({ width: 400, height: 800 });
@@ -333,9 +384,68 @@ test.describe("calendar smoke", () => {
       });
     });
 
+    // #1043: the parent grid runs on the academy's timezone.
+    await page.route("**/api/v2/parent/academy", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          display_name: "Test Academy",
+          timezone: "America/Chicago",
+          contact_email: null,
+          contact_phone: null,
+          hours_text: null,
+          address: null,
+          logo_url: null,
+          brand_color: null,
+        }),
+      });
+    });
+
     await page.goto("/parent/calendar");
     await expect(page.getByTestId("parent-calendar")).toBeVisible();
     await expect(page.getByTestId("calendar-child-legend")).toContainText("Ava Kim");
     await expect(page.getByTestId("calendar-grid")).toContainText("Junior Beginners");
+    await expect(page.getByTestId("calendar-timezone")).toContainText("America/Chicago");
+  });
+});
+
+test.describe("calendar in a Los Angeles browser (#1043)", () => {
+  // A Los Angeles viewer looking at a Chicago academy: the 6:00 PM CDT class
+  // used to read "4p" with no timezone label.
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("coach calendar shows academy time, not browser time", async ({ page }) => {
+    await stubIdentity(page, ["coach"]);
+    await stubMessages(page, "coach");
+    await page.clock.setFixedTime(new Date("2026-10-01T17:00:00Z"));
+    await page.route("**/api/v2/coach/sessions", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sessions: [
+            {
+              session_id: "sess-1",
+              occurrence_id: "occ-1",
+              title: "Evening Juniors",
+              location: "Court 1",
+              timezone: "America/Chicago",
+              start_at: "2026-10-01T23:00:00Z",
+              end_at: "2026-10-02T00:00:00Z",
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/coach/calendar");
+    await expect(page.getByTestId("calendar-timezone")).toContainText("America/Chicago");
+    const cell = page.locator('.fc-daygrid-day[data-date="2026-10-01"]');
+    await expect(cell).toContainText("Evening Juniors");
+    await expect(cell.locator(".fc-event-time")).toHaveText("6p");
   });
 });

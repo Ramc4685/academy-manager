@@ -13,7 +13,9 @@
 
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
+import luxonPlugin from "@fullcalendar/luxon3";
 
+import { calendarTimeZoneLabel } from "@/lib/time/calendar-timezone";
 import { useIsPhone } from "@/lib/use-is-phone";
 
 import styles from "./persona-calendar-view.module.css";
@@ -31,10 +33,18 @@ export interface CalendarViewEvent {
 
 interface Props {
   events: CalendarViewEvent[];
+  /**
+   * #1043: the IANA zone the grid runs on — the academy/session zone the
+   * detail screens use. Required: FullCalendar's default is the browser
+   * zone, which showed a 6:00 PM Chicago class as "4p" in Los Angeles.
+   * Callers resolve it with `resolveCalendarTimeZone` and render their own
+   * explicit state when no valid zone is known.
+   */
+  timeZone: string;
   onEventClick?: (event: CalendarViewEvent) => void;
 }
 
-export default function PersonaCalendarView({ events, onEventClick }: Props) {
+export default function PersonaCalendarView({ events, timeZone, onEventClick }: Props) {
   const byId = new Map(events.map((e) => [e.id, e]));
   /**
    * #896: a month grid on a 400px phone is 7 columns of ~50px — the coach
@@ -43,7 +53,7 @@ export default function PersonaCalendarView({ events, onEventClick }: Props) {
    * the month still one tap away in the toolbar.
    *
    * The day view comes from the daygrid plugin the component already loads,
-   * so the persona bundle does not grow by a second FullCalendar plugin.
+   * so it adds no view plugin of its own.
    */
   const phone = useIsPhone();
 
@@ -52,11 +62,22 @@ export default function PersonaCalendarView({ events, onEventClick }: Props) {
       data-testid="calendar-grid"
       className={`${styles.wrap} rounded-lg border border-rally-line bg-white p-4`}
     >
+      <p
+        data-testid="calendar-timezone"
+        className="mb-3 text-xs text-rally-subtle"
+      >
+        {calendarTimeZoneLabel(timeZone)}
+      </p>
       <FullCalendar
         // `initialView` is read once at mount, so crossing the breakpoint has
         // to remount rather than re-render. The events prop is unchanged.
-        key={phone ? "phone" : "wide"}
-        plugins={[dayGridPlugin]}
+        key={`${phone ? "phone" : "wide"}:${timeZone}`}
+        // The luxon plugin is FullCalendar's named-zone implementation; without
+        // it a named `timeZone` silently degrades to UTC.
+        plugins={[dayGridPlugin, luxonPlugin]}
+        // Day placement, event times and the Today button all follow this
+        // zone (DST included), not the viewer's browser clock.
+        timeZone={timeZone}
         initialView={phone ? "dayGridDay" : "dayGridMonth"}
         events={events}
         headerToolbar={{

@@ -4,12 +4,15 @@ import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 
-import { getChildSchedule, listParentChildren } from "@/lib/api/parent";
+import { getChildSchedule, getParentAcademy, listParentChildren } from "@/lib/api/parent";
 import { scheduleEntryToEvent } from "@/lib/parent/schedule-events";
+import { queryKeys } from "@/lib/query/keys";
+import { resolveCalendarTimeZone } from "@/lib/time/calendar-timezone";
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
+import { CalendarTimeZoneUnavailable } from "@/components/calendar/CalendarTimeZoneUnavailable";
 
 // FullCalendar (~250 KB) is loaded client-side only, out of the initial
 // parent bundle — same pattern as AdminCalendarView.
@@ -32,6 +35,15 @@ export default function ParentCalendarPage() {
     queryFn: listParentChildren,
   });
 
+  // #1043: the grid runs on the academy's clock — the same zone the My
+  // children and Requests screens format class times in — never the
+  // browser's. Same query key as those screens, so it is usually cached.
+  const academyQuery = useQuery({
+    queryKey: queryKeys.parent.academy(),
+    queryFn: getParentAcademy,
+  });
+  const calendarZone = resolveCalendarTimeZone([academyQuery.data?.timezone]);
+
   const children = childrenData?.children ?? [];
 
   const scheduleQueries = useQueries({
@@ -42,7 +54,8 @@ export default function ParentCalendarPage() {
     })),
   });
 
-  const isLoading = childrenLoading || scheduleQueries.some((q) => q.isLoading);
+  const isLoading =
+    childrenLoading || academyQuery.isLoading || scheduleQueries.some((q) => q.isLoading);
   const isError = childrenError || scheduleQueries.some((q) => q.isError);
 
   const scheduleSignature = scheduleQueries
@@ -102,8 +115,10 @@ export default function ParentCalendarPage() {
         <Card p={16}>
           <EmptyState title="No children on file" description="Add a child to see their schedule here." />
         </Card>
+      ) : calendarZone.status === "ready" ? (
+        <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} />
       ) : (
-        <PersonaCalendarView events={events} />
+        <CalendarTimeZoneUnavailable listHref="/parent/children" listLabel="My children" />
       )}
     </section>
   );
