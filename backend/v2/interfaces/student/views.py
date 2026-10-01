@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -16,6 +17,9 @@ class StudentScheduleEntryView(BaseModel):
     end_at: datetime
     status: str
     coach_name: str | None = None
+    # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
+    # approved attendance (issue #1038).
+    source: Literal["regular", "makeup", "trial"] = "regular"
 
 
 class StudentScheduleResponse(BaseModel):

@@ -10,7 +10,7 @@ import { Button } from "@/components/ds/button";
 import { EmptyState } from "@/components/ds/empty-state";
 import { WaitlistOffers } from "@/components/parent/waitlist-offers";
 import { queryKeys } from "@/lib/query/keys";
-import { requestStatusChipVariant } from "@/lib/parent-requests";
+import { assignedClassCopy, requestStatusChipVariant } from "@/lib/parent-requests";
 import {
   formatAcademyDate,
   formatAcademyDateTime,
@@ -29,6 +29,7 @@ import {
   submitMakeupRequest,
   submitTrialRequest,
   type AbsenceNoticeView,
+  type AssignedClassView,
   type MakeupRequestView,
   type ParentChild,
   type ParentScheduleEntry,
@@ -458,6 +459,11 @@ function MakeupsPanel() {
                       {m.status === "denied" && m.denial_reason && (
                         <p className="mt-1 text-xs text-status-red-600">{m.denial_reason}</p>
                       )}
+                      <AssignedClassDetails
+                        kind="Make-up"
+                        assigned={m.assigned_class}
+                        academyTimezone={academyTimezone}
+                      />
                     </div>
                     <Chip variant={requestStatusChipVariant(m.status)} label={m.status.toUpperCase()} />
                   </div>
@@ -517,6 +523,7 @@ function TrialsPanel() {
   const children = childrenQuery.data?.children ?? [];
   const sessions = sessionsQuery.data?.sessions ?? [];
   const trials = trialsQuery.data?.trials ?? [];
+  const trialNameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
 
   const canSubmit = useMemo(() => {
     if (!sessionId || !preferredStart || !preferredEnd) return false;
@@ -679,7 +686,9 @@ function TrialsPanel() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-rally-ink">
-                        {t.prospective_child_name ?? "Existing child"}
+                        {t.prospective_child_name ??
+                          (t.student_id ? trialNameById.get(t.student_id) : undefined) ??
+                          "Existing child"}
                       </p>
                       <p className="mt-1 text-xs text-rally-muted">
                         Requested {formatAcademyDate(t.created_at, academyTimezone)} · {t.preferred_start} – {t.preferred_end}
@@ -687,6 +696,11 @@ function TrialsPanel() {
                       {t.status === "denied" && t.denial_reason && (
                         <p className="mt-1 text-xs text-status-red-600">{t.denial_reason}</p>
                       )}
+                      <AssignedClassDetails
+                        kind="Trial"
+                        assigned={t.assigned_class}
+                        academyTimezone={academyTimezone}
+                      />
                     </div>
                     <Chip variant={requestStatusChipVariant(t.status)} label={t.status.toUpperCase()} />
                   </div>
@@ -701,6 +715,43 @@ function TrialsPanel() {
 }
 
 // --- Shared list states ---
+
+/**
+ * #1038: where and when an approved make-up / trial actually happens, so the
+ * family is not left with a bare "APPROVED" chip.
+ */
+function AssignedClassDetails({
+  kind,
+  assigned,
+  academyTimezone,
+}: {
+  kind: "Make-up" | "Trial";
+  assigned: AssignedClassView | null | undefined;
+  academyTimezone: string | null;
+}) {
+  const copy = assignedClassCopy(assigned, academyTimezone);
+  if (!copy) return null;
+  return (
+    <div
+      data-testid="assigned-class"
+      className="mt-2 rounded-lg bg-rally-cobalt-50 p-2 text-xs text-rally-ink"
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip variant="makeup" label={kind.toUpperCase()} />
+        <span className={copy.cancelled ? "font-semibold line-through" : "font-semibold"}>
+          {copy.title}
+        </span>
+      </div>
+      <p className="mt-1 text-status-slate-600">{copy.when}</p>
+      <p className="text-status-slate-600">{copy.where}</p>
+      {copy.cancelled && (
+        <p className="mt-0.5 font-semibold text-status-red-800">
+          Cancelled — this class will not run
+        </p>
+      )}
+    </div>
+  );
+}
 
 function ListSkeleton() {
   return (

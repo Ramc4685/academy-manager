@@ -159,6 +159,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     ResumeEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.assigned_occurrences import (
+    ResolveAssignedOccurrences,
+)
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
 )
@@ -412,6 +415,9 @@ class ParentComposition:
     # Waivers to sign for a chosen class + whether any is program-scoped
     # (Settings Phase 6): callable(session_id | None) -> (list[Waiver], bool).
     get_registration_waivers: object = None
+    # #1038: approved make-up / trial target ids -> class facts + academy
+    # timezone, for the parent Requests screen.
+    resolve_assigned_classes: object = None
 
 
 class _MongoTransactionRunner:
@@ -897,6 +903,12 @@ def compose_parent(
         occurrences=occurrences_query,
         sessions=sessions_query,
         students=students_query,
+        # #1038: approved make-up / trial attendance (one-time roster rows).
+        occurrence_roster=occurrence_roster_repo,
+    )
+    resolve_assigned_occurrences_uc = ResolveAssignedOccurrences(
+        occurrences=occurrences_query,
+        sessions=sessions_query,
     )
 
     submit_absence_notice = SubmitAbsenceNotice(
@@ -2606,6 +2618,22 @@ def compose_parent(
             offset=offset,
         )
 
+    async def resolve_assigned_classes(occurrence_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Class facts behind approved make-up / trial ids (issue #1038).
+
+        Tenant comes from the request (never a boot-time default); the
+        timezone is the academy's own so the client can render academy-local
+        date/time without guessing an offset.
+        """
+        resolved = await resolve_assigned_occurrences_uc.execute(occurrence_ids)
+        if not resolved:
+            return {}
+        timezone_name = await academy_timezone_lookup(db)(current_academy_id())
+        return {
+            occurrence_id: {**details.model_dump(), "timezone": timezone_name}
+            for occurrence_id, details in resolved.items()
+        }
+
     async def get_parent_home(*, parent_id: str) -> dict[str, Any]:
         """Everything the kid-first Home screen needs, in one read.
 
@@ -2663,6 +2691,7 @@ def compose_parent(
                     "end_at": _as_utc(entry.end_at) or start_at,
                     # Always None today — see ParentHomeNextSessionView.
                     "coach_name": entry.coach_name,
+                    "source": entry.source,
                 }
             return None
 
@@ -2993,6 +3022,7 @@ def compose_parent(
         start_balance_payment_for_parent=start_balance_payment_for_parent,
         get_child_schedule=get_child_schedule,
         get_parent_home=get_parent_home,
+        resolve_assigned_classes=resolve_assigned_classes,
         # #828: claiming a held seat inside the three-day window.
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),

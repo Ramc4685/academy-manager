@@ -158,3 +158,23 @@ async def test_remove_future_for_session_returns_zero_when_nothing_matches(db) -
         deleted = await repo.remove_future_for_session(session_id="sess-1", after=NOW)
     assert deleted == 0
     assert await db["occurrence_roster_entries"].count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_for_student_returns_only_that_students_rows_in_the_tenant(db) -> None:
+    """Issue #1038: the parent schedule reads a child's one-time rows by
+    student. Siblings' rows and another academy's rows never leak."""
+    repo = MongoOccurrenceRosterRepository(db)
+    with tenant_scope("academy-a"):
+        await repo.add(_entry("academy-a", "a-1", "occ-1", "st-1"))
+        await repo.add(_entry("academy-a", "a-2", "occ-2", "st-2"))
+    with tenant_scope("academy-b"):
+        await repo.add(_entry("academy-b", "b-1", "occ-3", "st-1"))
+
+    with tenant_scope("academy-a"):
+        rows = await repo.list_for_student("st-1")
+    with tenant_scope("academy-b"):
+        foreign = await repo.list_for_student("st-1")
+
+    assert [r.entry_id for r in rows] == ["a-1"]
+    assert [r.entry_id for r in foreign] == ["b-1"]

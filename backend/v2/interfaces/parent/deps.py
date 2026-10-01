@@ -124,6 +124,10 @@ class ParentUseCases:
     # Home aggregate (kid-first Home, slice 4). Defaulted so fixtures that
     # predate it keep constructing; real parent composition always sets it.
     get_parent_home: object | None = None  # callable
+    # #1038: callable(occurrence_ids) -> {occurrence_id: class facts}. Defaulted
+    # so fixtures that predate it keep constructing; requests then carry no
+    # resolved class (the raw ids are still returned).
+    resolve_assigned_classes: object | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

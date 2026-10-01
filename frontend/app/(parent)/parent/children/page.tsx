@@ -47,6 +47,7 @@ import {
 } from "@/lib/format/hold-copy";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { reEnrollHref } from "@/lib/parent/re-enroll";
+import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -280,6 +281,8 @@ function SessionRow({
   // Showing it as a normal upcoming class contradicts the cancellation email
   // — and reporting an absence for a class that will not run makes no sense.
   const cancelled = entry.status === "cancelled";
+  // #1038: an approved make-up / trial sits alongside regular classes.
+  const sourceLabel = scheduleSourceLabel(entry.source);
 
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
@@ -309,6 +312,11 @@ function SessionRow({
             {entry.session_title}
           </p>
           <p className="text-xs mt-0.5 text-status-slate-600">{whenStr}</p>
+          {sourceLabel && (
+            <div className="mt-1">
+              <Chip variant="makeup" label={sourceLabel.toUpperCase()} />
+            </div>
+          )}
           {cancelled && (
             <p className="text-[11px] mt-0.5 font-semibold text-status-red-800">
               Cancelled — this class will not run

@@ -52,6 +52,7 @@ import {
   type ParentHomeActivity,
 } from "@/lib/parent-home";
 import { ErrorNotice } from "@/components/ds/error-notice";
+import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -283,6 +284,11 @@ function ChildCardList({
   );
 }
 
+function oneTimeClassLabel(source: string | null | undefined): string | null {
+  const label = scheduleSourceLabel(source);
+  return label ? `${label} class` : null;
+}
+
 /**
  * One card per child, and the whole card is the tap target — a single link
  * into that child's Progress. No nested interactive elements: a link inside a
@@ -328,7 +334,14 @@ function ChildCard({
           value={next ? next.when : "No upcoming sessions"}
           meta={
             next
-              ? [next.where, child.next_session?.coach_name].filter(Boolean).join(" · ")
+              ? [
+                  // #1038: say when the next class is a one-time make-up / trial.
+                  oneTimeClassLabel(child.next_session?.source),
+                  next.where,
+                  child.next_session?.coach_name,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               : null
           }
         />

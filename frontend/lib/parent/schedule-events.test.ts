@@ -4,6 +4,7 @@ import type { ParentScheduleEntry } from "@/lib/api/parent";
 import {
   CANCELLED_EVENT_COLOR,
   scheduleEntryToEvent,
+  scheduleSourceLabel,
 } from "./schedule-events";
 
 function entry(overrides: Partial<ParentScheduleEntry> = {}): ParentScheduleEntry {
@@ -39,5 +40,33 @@ describe("scheduleEntryToEvent (#671)", () => {
 
     expect(event.title).toBe("Cancelled — Ana — Thursday 6:00 PM Beginner");
     expect(event.color).toBe(CANCELLED_EVENT_COLOR);
+  });
+});
+
+describe("one-time classes (#1038)", () => {
+  it("labels an approved make-up on the calendar", () => {
+    const event = scheduleEntryToEvent(entry({ source: "makeup" }), {
+      childName: "Ana",
+      color: "#2563eb",
+    });
+
+    expect(event.title).toBe("Make-up — Ana — Thursday 6:00 PM Beginner");
+    expect(event.color).toBe("#2563eb");
+  });
+
+  it("labels an approved trial on the calendar", () => {
+    const event = scheduleEntryToEvent(entry({ source: "trial" }), {
+      childName: "Ana",
+      color: "#2563eb",
+    });
+
+    expect(event.title).toBe("Trial — Ana — Thursday 6:00 PM Beginner");
+  });
+
+  it("keeps a regular class unlabelled", () => {
+    expect(scheduleSourceLabel("regular")).toBeNull();
+    expect(scheduleSourceLabel(undefined)).toBeNull();
+    expect(scheduleSourceLabel("makeup")).toBe("Make-up");
+    expect(scheduleSourceLabel("trial")).toBe("Trial");
   });
 });
