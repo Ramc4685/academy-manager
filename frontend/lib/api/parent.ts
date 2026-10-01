@@ -229,6 +229,29 @@ export interface ParentScheduleEntry {
   end_at: string;
   status: string;
   coach_name: string | null;
+  /**
+   * #1038: "regular" for a standing enrollment, "makeup" / "trial" for a
+   * one-time approved attendance. Optional for responses that predate it.
+   */
+  source?: ParentScheduleSource;
+}
+
+export type ParentScheduleSource = "regular" | "makeup" | "trial";
+
+/**
+ * #1038: the class an approved make-up / trial puts the child in, resolved
+ * by the backend (never just a raw occurrence id). `start_at`/`end_at` are
+ * UTC instants; render them in `timezone` (the academy's IANA zone).
+ */
+export interface AssignedClassView {
+  occurrence_id: string;
+  session_id: string;
+  session_title: string;
+  location: string | null;
+  start_at: string;
+  end_at: string;
+  timezone: string | null;
+  status: string;
 }
 
 export interface ParentScheduleResponse {
@@ -604,6 +627,8 @@ export interface MakeupRequestView {
   decided_at: string | null;
   approved_target_occurrence_id: string | null;
   created_at: string;
+  /** #1038: set only while the approval stands. */
+  assigned_class?: AssignedClassView | null;
 }
 
 export function listParentMakeups(): Promise<{ makeups: MakeupRequestView[] }> {
@@ -661,6 +686,8 @@ export interface TrialRequestView {
   decided_by: string | null;
   decided_at: string | null;
   created_at: string;
+  /** #1038: set only while the approval stands (also for prospective children). */
+  assigned_class?: AssignedClassView | null;
 }
 
 export function listParentTrialRequests(): Promise<{ trials: TrialRequestView[] }> {

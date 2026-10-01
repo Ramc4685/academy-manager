@@ -24,6 +24,7 @@ from backend.v2.contexts.billing.domain.errors import (
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
     GetChildSchedule,
+    StudentNotOwnedByParent,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
@@ -3469,6 +3470,7 @@ async def test_parent_home_next_session_is_the_next_upcoming_occurrence() -> Non
         "end_at": now + timedelta(days=1, hours=1),
         # Always None today (decision 12) — kept for shape parity.
         "coach_name": None,
+        "source": "regular",
     }
     # st-2 has no enrollment, so no upcoming session.
     assert home["children"][1]["next_session"] is None
@@ -3678,3 +3680,149 @@ async def test_parent_enrollments_include_the_latest_terminal_row_per_student() 
     assert view["departed"] is True
     assert view["left_on"] == newer
     assert view["departure_reason"] == "move out of town"
+
+
+# --- #1038: approved make-up / trial attendance on parent surfaces -----------
+
+
+async def _seed_one_time_class(db: Any, now: datetime) -> None:
+    """Class B, where no child is enrolled, with a make-up date before the
+    regular class and a later trial date."""
+    await db["sessions"].insert_one(
+        {
+            "academy_id": "acad",
+            "session_id": "sess-b",
+            "title": "Squad B",
+            "location": "Court 7",
+            "coach_id": "coach-2",
+            "start_at": now,
+            "end_at": now + timedelta(hours=1),
+            "capacity": 12,
+        }
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-makeup",
+                "session_id": "sess-b",
+                "start_at": now + timedelta(hours=5),
+                "end_at": now + timedelta(hours=6),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-2",
+            },
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-trial",
+                "session_id": "sess-b",
+                "start_at": now + timedelta(days=2),
+                "end_at": now + timedelta(days=2, hours=1),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-2",
+            },
+        ]
+    )
+    await db["occurrence_roster_entries"].insert_many(
+        [
+            {
+                "entry_id": "ore-1",
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-makeup",
+                "student_id": "st-1",
+                "source": "makeup",
+                "origin_request_id": "mk-1",
+                "created_at": now - timedelta(days=1),
+            },
+            {
+                # st-2 has no enrollment at all — only this trial.
+                "entry_id": "ore-2",
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-trial",
+                "student_id": "st-2",
+                "source": "trial",
+                "origin_request_id": "tr-1",
+                "created_at": now - timedelta(days=1),
+            },
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_parent_home_next_session_picks_the_earliest_across_regular_and_one_time() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-one-time"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    await _seed_one_time_class(db, now)
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    asha, dev = home["children"]
+    # The make-up (in 5h) beats the regular class (tomorrow).
+    assert asha["next_session"]["occurrence_id"] == "occ-b-makeup"
+    assert asha["next_session"]["source"] == "makeup"
+    assert asha["next_session"]["session_title"] == "Squad B"
+    assert asha["next_session"]["location"] == "Court 7"
+    # A child with no regular enrollment still gets their approved trial.
+    assert dev["next_session"]["occurrence_id"] == "occ-b-trial"
+    assert dev["next_session"]["source"] == "trial"
+
+
+@pytest.mark.asyncio
+async def test_parent_child_schedule_ignores_another_tenants_roster_rows() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-schedule-one-time-tenant"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    await _seed_one_time_class(db, now)
+    # Same student id, same occurrence id, different academy: must not leak.
+    await db["occurrence_roster_entries"].insert_one(
+        {
+            "entry_id": "ore-foreign",
+            "academy_id": "other-acad",
+            "occurrence_id": "occ-b-trial",
+            "student_id": "st-1",
+            "source": "trial",
+            "origin_request_id": "tr-foreign",
+            "created_at": now,
+        }
+    )
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        entries, total = await parent.get_child_schedule(parent_id="parent-1", student_id="st-1")
+        # Another family cannot read this child's schedule at all.
+        with pytest.raises(StudentNotOwnedByParent):
+            await parent.get_child_schedule(parent_id="parent-9", student_id="st-1")
+
+    by_id = {e.occurrence_id: e.source for e in entries}
+    assert by_id == {"occ-b-makeup": "makeup", "occ-next": "regular"}
+    assert total == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_assigned_classes_returns_class_facts_in_academy_timezone() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-assigned-classes"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_one_time_class(db, now)
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        resolved = await parent.resolve_assigned_classes(["occ-b-trial", "missing"])
+    with tenant_scope("other-acad"):
+        foreign = await parent.resolve_assigned_classes(["occ-b-trial"])
+
+    assert set(resolved) == {"occ-b-trial"}
+    details = resolved["occ-b-trial"]
+    assert details["session_title"] == "Squad B"
+    assert details["location"] == "Court 7"
+    assert details["timezone"] == "America/Chicago"
+    assert details["status"] == "scheduled"
+    assert details["start_at"] == now + timedelta(days=2)
+    assert foreign == {}

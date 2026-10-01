@@ -54,6 +54,7 @@ async def get_child_schedule(
                 end_at=e.end_at,
                 status=e.status,
                 coach_name=e.coach_name,
+                source=e.source,
             )
             for e in entries
         ],
