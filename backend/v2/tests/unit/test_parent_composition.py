@@ -3513,7 +3513,9 @@ async def test_parent_home_degrades_per_child_when_one_schedule_leg_raises(
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["parent-home-isolation"]
     await _seed_home_db(db)
-    now = datetime.now(UTC).replace(microsecond=0)
+    # Pinned: the attendance seed is September 2026, so a wall clock makes
+    # the month total 0 from 1 October on.
+    now = _HOME_NOW
     await _seed_home_schedule(db, now)
     parent = _compose_home_parent(db, now=now)
 
