@@ -18,6 +18,11 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     SubmitTrialRequestCommand,
 )
+from backend.v2.interfaces.parent.assigned_class import (
+    ASSIGNED_CLASS_STATUSES,
+    AssignedClassView,
+    resolve_assigned_classes,
+)
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -53,6 +58,9 @@ class TrialRequestView(BaseModel):
     decided_by: str | None
     decided_at: datetime | None
     created_at: datetime
+    # #1038: the trial class the academy assigned, resolved — including for a
+    # prospective child, without creating any student or enrollment.
+    assigned_class: AssignedClassView | None = None
 
 
 class TrialRequestsResponse(BaseModel):
@@ -90,8 +98,24 @@ async def list_trial_requests(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> TrialRequestsResponse:
     rows = await use_cases.list_parent_trial_requests.execute(claims.user_id)
+
+    def _target(r: object) -> str | None:
+        if getattr(r, "status", None) not in ASSIGNED_CLASS_STATUSES:
+            return None
+        return getattr(r, "assigned_occurrence_id", None)
+
+    # Ids come only from this parent's own requests (ownership), and the
+    # resolver reads within the request's tenant.
+    classes = await resolve_assigned_classes(
+        getattr(use_cases, "resolve_assigned_classes", None),
+        [oid for oid in (_target(r) for r in rows) if oid],
+    )
     return TrialRequestsResponse(
         trials=[
-            TrialRequestView(**r.model_dump(exclude={"academy_id", "parent_user_id"})) for r in rows
+            TrialRequestView(
+                **r.model_dump(exclude={"academy_id", "parent_user_id"}),
+                assigned_class=classes.get(_target(r) or ""),
+            )
+            for r in rows
         ]
     )

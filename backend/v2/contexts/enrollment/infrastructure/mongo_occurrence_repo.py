@@ -53,6 +53,23 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         cursor = self._find_many({"occurrence_id": {"$in": list(occurrence_ids)}})
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_by_ids_between(
+        self, occurrence_ids: list[str], *, start_at: datetime, end_at: datetime
+    ) -> list[SessionOccurrence]:
+        """``get_many`` bounded to occurrences starting in ``[start_at, end_at]``
+        (issue #1038: the parent schedule's one-time make-up / trial rows).
+        One tenant-scoped ``$in`` read; out-of-window ids cost nothing."""
+        if not occurrence_ids:
+            return []
+        cursor = self._find_many(
+            {
+                "occurrence_id": {"$in": list(occurrence_ids)},
+                "start_at": {"$gte": start_at, "$lte": end_at},
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_session(self, session_id: str) -> list[SessionOccurrence]:
         cursor = self._find_many(
             {

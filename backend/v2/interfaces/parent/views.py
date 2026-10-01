@@ -450,6 +450,9 @@ class ParentScheduleEntryView(BaseModel):
     end_at: datetime
     status: str
     coach_name: str | None = None
+    # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
+    # approved attendance (issue #1038).
+    source: Literal["regular", "makeup", "trial"] = "regular"
 
 
 class ParentScheduleResponse(BaseModel):
@@ -666,6 +669,9 @@ class ParentHomeNextSessionView(BaseModel):
     start_at: datetime
     end_at: datetime
     coach_name: str | None = None
+    # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
+    # approved attendance (issue #1038).
+    source: Literal["regular", "makeup", "trial"] = "regular"
 
 
 class ParentHomeAttendanceView(BaseModel):
