@@ -25,7 +25,10 @@ const OCCURRENCE = {
 };
 
 test.describe("Coach Sessions links use the class's local date (#1045)", () => {
-  test.beforeEach(async ({ page }) => {
+  // Requesting `mock` installs the signed-in coach identity and shell stubs;
+  // the routes below are registered after it, so they take precedence.
+  test.beforeEach(async ({ page, mock }) => {
+    void mock;
     await page.clock.setFixedTime(new Date("2026-10-01T15:00:00Z"));
 
     await page.route("**/api/v2/coach/sessions", async (route: Route) => {
