@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { getCoachSchedule, type CoachScheduleEntry } from "@/lib/api/coach";
+import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
 import { queryKeys } from "@/lib/query/keys";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 import { RetryButton } from "@/components/coach/RetryButton";
@@ -52,11 +53,9 @@ export default function CoachSessionsPage() {
                 <li key={session.occurrence_id}>
                   <Link
                     href={
-                      // Raw UTC date matches backend _day_bounds_utc; sessionDateKey
-                      // is only for grouping headers (evening sessions cross UTC midnight).
-                      `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${session.start_at.slice(0, 10)}` as Parameters<
-                        typeof Link
-                      >[0]["href"]
+                      // #1045: the class's LOCAL date, same as the header above
+                      // and the Calendar/Today links — never the UTC date.
+                      coachScheduleEntryHref(session) as Parameters<typeof Link>[0]["href"]
                     }
                     className="block rounded-lg border border-neutral-200 bg-white p-3 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
                   >

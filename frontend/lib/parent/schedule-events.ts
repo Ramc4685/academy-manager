@@ -1,5 +1,6 @@
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import type { ParentScheduleEntry } from "@/lib/api/parent";
+import { calendarInstant } from "@/lib/time/calendar-timezone";
 
 /**
  * Grey used for a class the academy called off (#671).
@@ -34,8 +35,10 @@ export function scheduleEntryToEvent(
   return {
     id: entry.occurrence_id,
     title: cancelled ? `Cancelled — ${labelled}` : labelled,
-    start: entry.start_at,
-    end: entry.end_at,
+    // #1043: explicit UTC instants, so the academy-zone grid cannot read a
+    // naive timestamp as wall time in its own zone.
+    start: calendarInstant(entry.start_at),
+    end: calendarInstant(entry.end_at),
     color: cancelled ? CANCELLED_EVENT_COLOR : color,
   };
 }
