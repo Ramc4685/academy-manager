@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
+    ONE_TIME_ROSTER_READ_LIMIT,
     GetChildSchedule,
     StudentNotOwnedByParent,
 )
@@ -332,19 +333,32 @@ async def test_no_enrollments_returns_empty() -> None:
 
 
 class FakeOccurrenceQueryWithBatch(FakeOccurrenceQuery):
-    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]:
+    def __init__(self, occurrences: list[SessionOccurrence]) -> None:
+        super().__init__(occurrences)
+        self.batch_calls: list[list[str]] = []
+
+    async def list_by_ids_between(
+        self, occurrence_ids: list[str], *, start_at: datetime, end_at: datetime
+    ) -> list[SessionOccurrence]:
+        self.batch_calls.append(list(occurrence_ids))
         wanted = set(occurrence_ids)
-        return [o for o in self._occurrences if o.occurrence_id in wanted]
+        return [
+            o
+            for o in self._occurrences
+            if o.occurrence_id in wanted and start_at <= o.start_at <= end_at
+        ]
 
 
 class FakeOccurrenceRoster:
     def __init__(self, entries: list[OccurrenceRosterEntry]) -> None:
         self.entries = entries
         self.calls: list[str] = []
+        self.limits: list[int] = []
 
-    async def list_for_student(self, student_id: str) -> list[OccurrenceRosterEntry]:
+    async def list_for_student(self, student_id: str, *, limit: int) -> list[OccurrenceRosterEntry]:
         self.calls.append(student_id)
-        return [e for e in self.entries if e.student_id == student_id]
+        self.limits.append(limit)
+        return [e for e in self.entries if e.student_id == student_id][:limit]
 
 
 def _roster(
@@ -368,12 +382,14 @@ def _make_one_time_uc(
     sessions: list[Session],
     roster: list[OccurrenceRosterEntry],
 ) -> GetChildSchedule:
+    occurrence_query = FakeOccurrenceQueryWithBatch(occurrences)
     return GetChildSchedule(
         enrollments=FakeEnrollmentQuery(enrollments),
-        occurrences=FakeOccurrenceQueryWithBatch(occurrences),
+        occurrences=occurrence_query,
         sessions=FakeSessionQuery(sessions),
         students=FakeStudentQuery(students),
         occurrence_roster=FakeOccurrenceRoster(roster),
+        one_time_occurrences=occurrence_query,
         clock=lambda: _NOW,
     )
 
@@ -543,12 +559,14 @@ async def test_one_time_entries_respect_the_window() -> None:
 async def test_other_parent_cannot_read_a_childs_one_time_entries() -> None:
     sessions, occurrences = _two_classes()
     roster = FakeOccurrenceRoster([_roster("r1", "b1", "st-1", "makeup")])
+    occurrence_query = FakeOccurrenceQueryWithBatch(occurrences)
     uc = GetChildSchedule(
         enrollments=FakeEnrollmentQuery([]),
-        occurrences=FakeOccurrenceQueryWithBatch(occurrences),
+        occurrences=occurrence_query,
         sessions=FakeSessionQuery(sessions),
         students=FakeStudentQuery([_student("st-1", parent_id="parent-1")]),
         occurrence_roster=roster,
+        one_time_occurrences=occurrence_query,
         clock=lambda: _NOW,
     )
 
@@ -575,3 +593,38 @@ async def test_one_time_entry_on_a_template_derived_occurrence_names_the_class()
     assert [(e.session_id, e.session_title, e.location) for e in entries] == [
         ("sess-b", "Class B", "Court B")
     ]
+
+
+def test_roster_without_a_one_time_occurrence_query_is_rejected() -> None:
+    """Half-wiring the one-time path would fail per request; fail at
+    composition instead."""
+    with pytest.raises(ValueError):
+        GetChildSchedule(
+            enrollments=FakeEnrollmentQuery([]),
+            occurrences=FakeOccurrenceQuery([]),
+            sessions=FakeSessionQuery([]),
+            students=FakeStudentQuery([]),
+            occurrence_roster=FakeOccurrenceRoster([]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_one_time_read_is_capped_and_window_bounded() -> None:
+    sessions, occurrences = _two_classes()
+    roster = FakeOccurrenceRoster([_roster("r1", "b1", "st-1", "makeup")])
+    occurrence_query = FakeOccurrenceQueryWithBatch(occurrences)
+    uc = GetChildSchedule(
+        enrollments=FakeEnrollmentQuery([]),
+        occurrences=occurrence_query,
+        sessions=FakeSessionQuery(sessions),
+        students=FakeStudentQuery([_student("st-1")]),
+        occurrence_roster=roster,
+        one_time_occurrences=occurrence_query,
+        clock=lambda: _NOW,
+    )
+
+    entries, _ = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+
+    assert [e.occurrence_id for e in entries] == ["b1"]
+    assert roster.limits == [ONE_TIME_ROSTER_READ_LIMIT]
+    assert occurrence_query.batch_calls == [["b1"]]

@@ -178,3 +178,19 @@ async def test_list_for_student_returns_only_that_students_rows_in_the_tenant(db
 
     assert [r.entry_id for r in rows] == ["a-1"]
     assert [r.entry_id for r in foreign] == ["b-1"]
+
+
+@pytest.mark.asyncio
+async def test_list_for_student_is_capped_newest_first(db) -> None:
+    """Issue #1038 review: the read is bounded so a long history of
+    make-ups / trials cannot grow every schedule load."""
+    repo = MongoOccurrenceRosterRepository(db)
+    with tenant_scope("academy-a"):
+        for i in range(3):
+            entry = _entry("academy-a", f"a-{i}", f"occ-{i}", "st-1")
+            await repo.add(
+                entry.model_copy(update={"created_at": entry.created_at + timedelta(minutes=i)})
+            )
+        rows = await repo.list_for_student("st-1", limit=2)
+
+    assert [r.entry_id for r in rows] == ["a-2", "a-1"]

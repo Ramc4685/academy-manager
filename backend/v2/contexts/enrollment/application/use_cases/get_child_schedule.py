@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -31,11 +31,23 @@ class _StudentQuery(Protocol):
 
 
 class _OccurrenceRosterQuery(Protocol):
-    async def list_for_student(self, student_id: str) -> list[OccurrenceRosterEntry]: ...
+    async def list_for_student(
+        self, student_id: str, *, limit: int
+    ) -> list[OccurrenceRosterEntry]: ...
 
 
-class _OccurrenceBatchQuery(Protocol):
-    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]: ...
+class _OneTimeOccurrenceQuery(Protocol):
+    """Batch read of specific occurrences, bounded to a start window."""
+
+    async def list_by_ids_between(
+        self, occurrence_ids: list[str], *, start_at: datetime, end_at: datetime
+    ) -> list[SessionOccurrence]: ...
+
+
+#: Cap on how many one-time roster rows one schedule read considers. The
+#: newest rows are kept, so a long-enrolled child's old make-ups and trials
+#: cannot make every schedule / Home load grow without bound.
+ONE_TIME_ROSTER_READ_LIMIT = 200
 
 
 class ChildScheduleEntry(BaseModel):
@@ -62,6 +74,14 @@ class GetChildSchedule:
     (and the make-up re-opened) or the enrollment ends, and a row whose
     occurrence is cancelled or gone is hidden here exactly as
     ``GetOccurrenceRoster`` hides it, so a stale "attend here" never shows.
+
+    Cancelled classes are intentionally treated differently by source. A
+    regular row for a cancelled occurrence is kept (status ``cancelled``) so
+    the family sees "Cancelled — this class will not run" for a class they
+    attend every week. A one-time row is dropped instead: cancelling the
+    class re-opens the make-up / trial request (#671, #694), so the family's
+    next step is on the Requests page, and a cancelled one-off date would only
+    sit next to the replacement date the academy offers.
     """
 
     def __init__(
@@ -72,10 +92,14 @@ class GetChildSchedule:
         sessions: SessionQuery,
         students: _StudentQuery,
         occurrence_roster: _OccurrenceRosterQuery | None = None,
+        one_time_occurrences: _OneTimeOccurrenceQuery | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        if (occurrence_roster is None) != (one_time_occurrences is None):
+            raise ValueError("occurrence_roster and one_time_occurrences must be wired together")
         self._enrollments = enrollments
         self._occurrence_roster = occurrence_roster
+        self._one_time_occurrences_query = one_time_occurrences
         self._occurrences = occurrences
         self._sessions = sessions
         self._students = students
@@ -199,23 +223,29 @@ class GetChildSchedule:
         occurrence was cancelled or no longer exists are dropped (mirrors
         ``GetOccurrenceRoster``, issue #694).
         """
-        if self._occurrence_roster is None:
+        if self._occurrence_roster is None or self._one_time_occurrences_query is None:
             return []
-        entries = await self._occurrence_roster.list_for_student(student_id)
+        entries = await self._occurrence_roster.list_for_student(
+            student_id, limit=ONE_TIME_ROSTER_READ_LIMIT
+        )
         if not entries:
             return []
         source_by_occurrence: dict[str, ScheduleEntrySource] = {}
         for entry in entries:
             source_by_occurrence.setdefault(entry.occurrence_id, entry.source)
-        # The concrete occurrence repository batches by id (issue #841); the
-        # one-time path is only wired where it does.
-        batch = cast(_OccurrenceBatchQuery, self._occurrences)
-        occurrences = await batch.get_many(list(source_by_occurrence))
+        # Only occurrences that start inside the window are fetched.
+        occurrences = await self._one_time_occurrences_query.list_by_ids_between(
+            list(source_by_occurrence), start_at=start_dt, end_at=end_dt
+        )
         result: list[tuple[SessionOccurrence, ScheduleEntrySource]] = []
         for occ in occurrences:
+            # Dropped, not shown as cancelled: see the class docstring.
             if occ.status == "cancelled":
                 continue
             if not (start_dt <= occ.start_at <= end_dt):
                 continue
-            result.append((occ, source_by_occurrence[occ.occurrence_id]))
+            source = source_by_occurrence.get(occ.occurrence_id)
+            if source is None:
+                continue
+            result.append((occ, source))
         return result

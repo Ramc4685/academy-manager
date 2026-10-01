@@ -9,8 +9,9 @@ import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
 import { EmptyState } from "@/components/ds/empty-state";
 import { WaitlistOffers } from "@/components/parent/waitlist-offers";
+import { AssignedClassDetails } from "@/components/parent/one-time-class";
 import { queryKeys } from "@/lib/query/keys";
-import { assignedClassCopy, requestStatusChipVariant } from "@/lib/parent-requests";
+import { requestStatusChipVariant } from "@/lib/parent-requests";
 import {
   formatAcademyDate,
   formatAcademyDateTime,
@@ -29,7 +30,6 @@ import {
   submitMakeupRequest,
   submitTrialRequest,
   type AbsenceNoticeView,
-  type AssignedClassView,
   type MakeupRequestView,
   type ParentChild,
   type ParentScheduleEntry,
@@ -460,7 +460,7 @@ function MakeupsPanel() {
                         <p className="mt-1 text-xs text-status-red-600">{m.denial_reason}</p>
                       )}
                       <AssignedClassDetails
-                        kind="Make-up"
+                        kind="makeup"
                         assigned={m.assigned_class}
                         academyTimezone={academyTimezone}
                       />
@@ -697,7 +697,7 @@ function TrialsPanel() {
                         <p className="mt-1 text-xs text-status-red-600">{t.denial_reason}</p>
                       )}
                       <AssignedClassDetails
-                        kind="Trial"
+                        kind="trial"
                         assigned={t.assigned_class}
                         academyTimezone={academyTimezone}
                       />
@@ -715,43 +715,6 @@ function TrialsPanel() {
 }
 
 // --- Shared list states ---
-
-/**
- * #1038: where and when an approved make-up / trial actually happens, so the
- * family is not left with a bare "APPROVED" chip.
- */
-function AssignedClassDetails({
-  kind,
-  assigned,
-  academyTimezone,
-}: {
-  kind: "Make-up" | "Trial";
-  assigned: AssignedClassView | null | undefined;
-  academyTimezone: string | null;
-}) {
-  const copy = assignedClassCopy(assigned, academyTimezone);
-  if (!copy) return null;
-  return (
-    <div
-      data-testid="assigned-class"
-      className="mt-2 rounded-lg bg-rally-cobalt-50 p-2 text-xs text-rally-ink"
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Chip variant="makeup" label={kind.toUpperCase()} />
-        <span className={copy.cancelled ? "font-semibold line-through" : "font-semibold"}>
-          {copy.title}
-        </span>
-      </div>
-      <p className="mt-1 text-status-slate-600">{copy.when}</p>
-      <p className="text-status-slate-600">{copy.where}</p>
-      {copy.cancelled && (
-        <p className="mt-0.5 font-semibold text-status-red-800">
-          Cancelled — this class will not run
-        </p>
-      )}
-    </div>
-  );
-}
 
 function ListSkeleton() {
   return (

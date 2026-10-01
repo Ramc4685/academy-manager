@@ -47,12 +47,15 @@ class MongoOccurrenceRosterRepository(TenantScopedRepository):
         cursor = self._find_many({"occurrence_id": occurrence_id}, sort=[("created_at", 1)])
         return [self._to_domain(doc) async for doc in cursor]
 
-    async def list_for_student(self, student_id: str) -> list[OccurrenceRosterEntry]:
-        """Every one-time (make-up / trial) row for one student in the
-        current tenant (issue #1038: the parent schedule reads these alongside
-        regular enrollments). Ownership of ``student_id`` is the caller's job;
-        tenant isolation is enforced by ``_find_many``."""
-        cursor = self._find_many({"student_id": student_id}, sort=[("created_at", 1)])
+    async def list_for_student(
+        self, student_id: str, *, limit: int = 200
+    ) -> list[OccurrenceRosterEntry]:
+        """The newest one-time (make-up / trial) rows for one student in the
+        current tenant, newest first, at most ``limit`` (issue #1038: the
+        parent schedule reads these alongside regular enrollments).
+        Ownership of ``student_id`` is the caller's job; tenant isolation is
+        enforced by ``_find_many``."""
+        cursor = self._find_many({"student_id": student_id}, sort=[("created_at", -1)], limit=limit)
         return [self._to_domain(doc) async for doc in cursor]
 
     async def exists(self, occurrence_id: str, student_id: str) -> bool:

@@ -321,3 +321,18 @@ def test_get_makeups_degrades_when_the_class_lookup_fails() -> None:
     row = response.json()["makeups"][0]
     assert row["assigned_class"] is None
     assert row["approved_target_occurrence_id"] == "occ-target"
+
+
+def test_get_makeups_skips_a_malformed_assigned_class_instead_of_500() -> None:
+    async def _malformed(occurrence_ids: list[str]) -> dict[str, dict[str, object]]:
+        # Missing end_at: must not escape as a pydantic ValidationError.
+        return {oid: {"occurrence_id": oid, "status": "scheduled"} for oid in occurrence_ids}
+
+    use_cases = _ParentUseCases(list_result=[_with_target(_makeup_request(), "approved")])
+    use_cases.resolve_assigned_classes = _malformed  # type: ignore[attr-defined]
+
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/makeups")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["makeups"][0]["assigned_class"] is None

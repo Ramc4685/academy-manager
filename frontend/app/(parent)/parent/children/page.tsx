@@ -48,6 +48,7 @@ import {
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { reEnrollHref } from "@/lib/parent/re-enroll";
 import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import { OneTimeClassChip } from "@/components/parent/one-time-class";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -314,7 +315,7 @@ function SessionRow({
           <p className="text-xs mt-0.5 text-status-slate-600">{whenStr}</p>
           {sourceLabel && (
             <div className="mt-1">
-              <Chip variant="makeup" label={sourceLabel.toUpperCase()} />
+              <OneTimeClassChip source={entry.source} />
             </div>
           )}
           {cancelled && (

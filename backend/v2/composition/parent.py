@@ -905,6 +905,7 @@ def compose_parent(
         students=students_query,
         # #1038: approved make-up / trial attendance (one-time roster rows).
         occurrence_roster=occurrence_roster_repo,
+        one_time_occurrences=occurrences_query,
     )
     resolve_assigned_occurrences_uc = ResolveAssignedOccurrences(
         occurrences=occurrences_query,

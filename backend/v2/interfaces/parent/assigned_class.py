@@ -41,7 +41,17 @@ async def resolve_assigned_classes(
         return {}
     try:
         raw = await resolver(occurrence_ids)  # type: ignore[operator]
+        items = list(raw.items())
     except Exception:
         _log.warning("parent requests: assigned class lookup failed", exc_info=True)
         return {}
-    return {oid: AssignedClassView(**details) for oid, details in raw.items()}
+    views: dict[str, AssignedClassView] = {}
+    for oid, details in items:
+        try:
+            views[oid] = AssignedClassView(**details)
+        except Exception:
+            # One malformed occurrence hides only its own details.
+            _log.warning(
+                "parent requests: skipping malformed assigned class %s", oid, exc_info=True
+            )
+    return views
