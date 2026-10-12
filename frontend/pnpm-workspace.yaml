@@ -18,7 +18,7 @@ overrides:
   nanoid@5: ^5.1.16
   protobufjs: ^7.6.5
   # CVE-2026-33327/33328/35590/35591 (libvips via sharp); patched in >=0.35.0.
-  sharp: '>=0.35.0'
+  sharp: '>=0.35.5'
   # GHSA-6g55-p6wh-862q / GHSA-r28c-9q8g-f849 (PostCSS path traversal via
   # sourceMappingURL auto-loading); patched in >=8.5.18. Transitive via
   # next's bundled postcss.
@@ -42,6 +42,16 @@ overrides:
   # GHSA-c475-qrg2-pj4r (basic-ftp <=6.2.0); patched in >=6.2.1. Dev-only,
   # transitive via @lhci/cli -> proxy-agent -> pac-proxy-agent -> get-uri.
   basic-ftp: '>=6.2.1'
+  # GHSA-wq5f-xc86-pv6w (libvips via sharp); patched in >=0.35.5. Transitive
+  # via next. Supersedes the >=0.35.0 floor above.
+  # GHSA-68fv-2mgg-jv7q (source-map-js event-loop DoS); patched in >=1.2.2.
+  # Transitive via next's bundled postcss.
+  # GHSA-jqcg-44mw-7w3h (proxy-addr IPv4-mapped spoofing) and
+  # GHSA-vc2v-76pw-4v95 (compression memory DoS); patched in >=2.0.8 /
+  # >=1.8.2. Dev-only, transitive via @lhci/cli's express server.
+  source-map-js: '>=1.2.2'
+  proxy-addr: '>=2.0.8'
+  compression: '>=1.8.2'
 
 # pnpm audit evaluates upstream declared ranges even when the lockfile applies
 # the patched override. Each entry below is pinned above to a patched release.
@@ -71,6 +81,11 @@ auditConfig:
   # extract-zip.
     - GHSA-jmr9-qjv8-65gv # extract-zip <=2.0.1, dev-only, no patched release
     - GHSA-7pqw-9j4j-h8q3 # extract-zip <=2.0.1, dev-only, no patched release (re-issued advisory)
+  # GHSA-vfj7-8cjw-p6xm (braces <=3.0.3 stack exhaustion) names >=3.0.4 as
+  # patched, but 3.0.3 is the latest published release. Dev-only: reached only
+  # through eslint-config-next -> fast-glob -> micromatch. Remove once a fixed
+  # braces ships or micromatch drops it.
+    - GHSA-vfj7-8cjw-p6xm # braces <=3.0.3, dev-only, no patched release
 
 onlyBuiltDependencies:
   - esbuild
