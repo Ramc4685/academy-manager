@@ -224,3 +224,65 @@ async def test_is_running_tracks_the_poll_loop_lifecycle(db) -> None:
 
     await dispatcher.stop()
     assert dispatcher.is_running() is False
+
+
+class UnhandledPayload(BaseModel):
+    ref: str
+
+
+class AuditOnlyStandIn(DomainEvent):
+    # Reuses a real audit-only name so the dispatcher's allowlist applies.
+    name: Literal["Coaching.AttendanceMarked"] = "Coaching.AttendanceMarked"  # type: ignore[assignment]
+    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    payload: UnhandledPayload  # type: ignore[assignment]
+
+
+class UnknownEvent(DomainEvent):
+    name: Literal["Test.NobodyListens"] = "Test.NobodyListens"  # type: ignore[assignment]
+    schema_version: Literal[1] = 1  # type: ignore[assignment]
+    payload: UnhandledPayload  # type: ignore[assignment]
+
+
+async def _dispatch_once(db, event: DomainEvent) -> dict:
+    await MongoOutbox(db).append(event)
+    dispatcher = EventDispatcher(db, worker_id="worker-audit", lock_seconds=60)
+    await dispatcher._process_event(await dispatcher._claim_next_event())
+    return await db["outbox_events"].find_one({"event_id": event.event_id})
+
+
+@pytest.mark.asyncio
+async def test_audit_only_event_without_handler_is_processed_not_dead_lettered(db) -> None:
+    event = AuditOnlyStandIn(
+        aggregate_id="a-1", academy_id="acad", payload=UnhandledPayload(ref="a-1")
+    )
+    stored = await _dispatch_once(db, event)
+
+    assert stored["status"] == "processed"
+    assert await db["dead_letter_events"].count_documents({"event_id": event.event_id}) == 0
+
+
+@pytest.mark.asyncio
+async def test_unknown_event_without_handler_still_dead_letters(db) -> None:
+    event = UnknownEvent(aggregate_id="u-1", academy_id="acad", payload=UnhandledPayload(ref="u-1"))
+    stored = await _dispatch_once(db, event)
+
+    assert stored["status"] == "dead_lettered"
+    dead = await db["dead_letter_events"].find_one({"event_id": event.event_id})
+    assert dead["reason"] == "unregistered_schema_version"
+
+
+def test_audit_only_events_name_real_event_classes() -> None:
+    """A typo in AUDIT_ONLY_EVENTS would silently keep dead-lettering."""
+    from backend.v2.contexts.billing.domain import events as billing
+    from backend.v2.contexts.coaching.domain import events as coaching
+    from backend.v2.contexts.enrollment.domain import events as enrollment
+    from backend.v2.contexts.student_progress.domain import events as progress
+    from backend.v2.shared.events.dispatcher import AUDIT_ONLY_EVENTS
+
+    real = {
+        (cls.model_fields["name"].default, cls.model_fields["schema_version"].default)
+        for module in (billing, coaching, enrollment, progress)
+        for cls in vars(module).values()
+        if isinstance(cls, type) and issubclass(cls, DomainEvent) and cls is not DomainEvent
+    }
+    assert AUDIT_ONLY_EVENTS <= real, AUDIT_ONLY_EVENTS - real

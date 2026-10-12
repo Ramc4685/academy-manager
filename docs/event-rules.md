@@ -53,7 +53,7 @@ class PaymentSucceeded(DomainEvent):
 ## Schema Versioning
 
 - `schema_version` starts at 1 and increments on every breaking payload change.
-- Handlers register for `(name, schema_version)` tuples. Unknown versions go to `dead_letter_events` with reason `unregistered_schema_version` — never silently dropped.
+- Handlers register for `(name, schema_version)` tuples. Unknown versions go to `dead_letter_events` with reason `unregistered_schema_version` — never silently dropped. The one exception is `AUDIT_ONLY_EVENTS` in `shared/events/dispatcher.py`: events published as an audit record with no consumer yet are marked `processed`. When you publish a new event with no handler, add it there, or every occurrence lands in the ops digest as a dead letter.
 - A new version may run alongside the old until handlers migrate; both are valid until the old one is explicitly retired in an ADR.
 
 ## Outbox Pattern

@@ -1457,7 +1457,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # is meaningful too — otherwise a month-long email outage would be
         # invisible in the digest on all 29 days that did not generate.
         if not (
-            totals["academy_count"] or totals["invoices_emailed"] or totals["invoice_emails_failed"]
+            totals["academy_count"]
+            or totals["invoices_emailed"]
+            or totals["invoice_autopay_notices_sent"]
+            or totals["invoice_emails_failed"]
         ):
             return
         counts = {key: value for key, value in totals.items() if key != "created"}
@@ -2185,6 +2188,7 @@ async def _run_monthly_invoice_generation(
         "invoices_emailed": 0,
         "invoice_emails_failed": 0,
         "invoice_emails_skipped_autopay": 0,
+        "invoice_autopay_notices_sent": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -2335,6 +2339,9 @@ async def _email_generated_invoices(
         ("invoices_emailed", "emailed"),
         ("invoice_emails_failed", "email_failed"),
         ("invoice_emails_skipped_autopay", "skipped_autopay"),
+        # Autopay parents get a pre-charge notice, not an invoice email; without
+        # this the digest showed "0 emailed" for a fully notified run.
+        ("invoice_autopay_notices_sent", "autopay_notified"),
     ):
         totals[total_key] += int(_outcome_count(outcome, outcome_key))
 
