@@ -16,7 +16,6 @@ click==8.5.0
 cryptography==50.0.1
 distro==1.9.0
 dnspython==2.8.0
-ecdsa==0.19.2
 email-validator==2.3.0
 et_xmlfile==2.0.0
 fastapi==0.141.1
@@ -49,7 +48,7 @@ markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
 motor==3.7.1
-multidict==6.8.0
+multidict==6.9.1
 numpy==2.5.3
 oauthlib==4.0.0
 openai==3.14.0
@@ -70,11 +69,10 @@ pydantic_core==2.46.5
 pydantic-settings==2.15.0
 Pygments==2.21.0
 PyJWT==2.15.0
-pymongo==4.18.1
+pymongo==4.18.2
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.3
-python-jose==3.5.0
 python-multipart==0.0.32
 python-ulid==4.0.1
 pytokens==0.4.1
@@ -86,7 +84,6 @@ requests-oauthlib==2.0.0
 resend==2.45.0
 rich==15.0.0
 rpds-py==2026.6.3
-rsa==4.9.1
 s5cmd==0.3.3
 sentry-sdk[fastapi]==2.69.1
 shellingham==1.5.4
