@@ -1,6 +1,6 @@
 # csp-hosted-academy-logos
 
-PR: pending
+PR: #1071
 
 ## What changed
 The CSP `img-src` now also allows the project's Firebase Hosting site (`https://<project>.web.app`, so `https://academy-courtmastr.web.app` in production). On the Spark plan the project has no Storage bucket, so `POST /admin/academy/media` answers 503 and academy logos are hosted on Firebase Hosting instead, then saved with "Or paste a logo link". The first one is BLNo's: `https://academy-courtmastr.web.app/academies/blno/logo.png`. The policy is still report-only, so these logos already render; this keeps them rendering when it is flipped to enforcing, and stops them showing up as CSP reports meanwhile. A unit test pins both logo origins in `img-src`.
