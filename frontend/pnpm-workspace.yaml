@@ -52,6 +52,9 @@ overrides:
   source-map-js: '>=1.2.2'
   proxy-addr: '>=2.0.8'
   compression: '>=1.8.2'
+  # GHSA-587h-7wmj-h5pm (launch-editor existence check bypass on Windows);
+  # patched in >=8.1.6. Dev-only, transitive via vitest and @vitest/mocker.
+  vite@8: ^8.1.6
 
 # pnpm audit evaluates upstream declared ranges even when the lockfile applies
 # the patched override. Each entry below is pinned above to a patched release.
