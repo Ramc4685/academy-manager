@@ -86,8 +86,8 @@ export function SiteHeader({
             ))}
           </nav>
         ) : null}
-        <Link className={styles.login} href="/login">
-          Parent login
+        <Link className={styles.login} href="/login" data-testid="public-header-sign-in">
+          Sign in
         </Link>
         {action ? (
           <a className={`${styles.btn} ${styles.btnSm} ${styles.btnBrand} ${styles.topCta}`} href={action.href}>

@@ -269,3 +269,20 @@ test.describe("backend unavailable", () => {
     await expect(page.getByRole("link", { name: "Try again" })).toBeVisible();
   });
 });
+
+test.describe("published page on a phone", () => {
+  test.use({ userAgent: fixtureAgent("published"), viewport: { width: 390, height: 844 } });
+
+  test("keeps a tappable Sign in in the header while scrolling", async ({ page }) => {
+    await page.goto("/");
+    const signIn = page.getByTestId("public-header-sign-in");
+    await expect(signIn).toBeVisible();
+    await expect(signIn).toHaveText("Sign in");
+    await expect(signIn).toHaveAttribute("href", "/login");
+    expect((await signIn.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+
+    // The header is sticky, so Sign in stays on screen at the bottom of the page.
+    await page.getByTestId("courtmastr-credit").scrollIntoViewIfNeeded();
+    await expect(signIn).toBeInViewport();
+  });
+});
