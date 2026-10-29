@@ -197,7 +197,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
           </div>
         </section>
 
-        <section className="flex flex-1 items-center justify-center bg-slate-50 p-6">
+        <section className="flex flex-1 items-center justify-center bg-slate-50 p-6 pt-[calc(1.5rem+env(safe-area-inset-top,0px))]">
           <div className="w-full max-w-md">
             <div className="mb-8 lg:hidden">
               <BrandLockup tone="light" academyName={academyName} logoUrl={logoUrl} brandColor={brandColor} />

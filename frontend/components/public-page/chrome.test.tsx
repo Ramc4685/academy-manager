@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { SiteFooter } from "./chrome";
+import { SiteFooter, SiteHeader } from "./chrome";
 
 describe("SiteFooter legal links (Settings overhaul Phase 4 PR 13)", () => {
   it("keeps today's footer when the academy set no legal links", () => {
@@ -34,5 +34,18 @@ describe("SiteFooter legal links (Settings overhaul Phase 4 PR 13)", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("Refund policy");
     expect(html).toContain('href="/terms"');
+  });
+});
+
+describe("SiteHeader sign-in entry", () => {
+  it("always renders Sign in to /login, with or without a primary action", () => {
+    for (const action of [null, { label: "Book a free trial", href: "#trial" }]) {
+      const html = renderToStaticMarkup(
+        <SiteHeader brand={{ name: "Riverside", logo_url: null }} action={action} />,
+      );
+      expect(html).toContain('data-testid="public-header-sign-in"');
+      expect(html).toContain('href="/login"');
+      expect(html).toContain(">Sign in</a>");
+    }
   });
 });

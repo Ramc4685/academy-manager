@@ -215,6 +215,8 @@
   background: var(--night);
   border-bottom: 1px solid var(--night-line);
   color: var(--on-night);
+  /* viewport-fit=cover draws the page under the iOS status bar; keep the row below it. */
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 .topRow {
@@ -279,6 +281,17 @@
   padding: 12px 10px;
   border-radius: 6px;
   white-space: nowrap;
+}
+
+/* Returning families, coaches and admins: outlined so it never outranks the brand CTA. */
+.page .login {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  color: var(--on-night);
+  border: 1px solid color-mix(in srgb, var(--on-night) 45%, transparent);
 }
 
 .topCta {
