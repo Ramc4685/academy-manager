@@ -1,6 +1,6 @@
 # security-dependency-bumps
 
-PR: #TBD
+PR: #1082
 
 ## What changed
 Clears the critical and high dependency advisories that have failed the nightly strict audit since 2026-10-20 and that would block the next production deploy (including #1071).
