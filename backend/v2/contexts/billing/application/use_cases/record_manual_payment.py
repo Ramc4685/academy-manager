@@ -138,35 +138,35 @@ class RecordManualPayment:
         remaining = cmd.amount_cents - target_cents
         previous_balance_cents = 0
         if remaining > 0:
+            # shortcut: one query capped at 1,000 invoices per family (decades of
+            # monthly billing); page through the ledger if a family ever nears it.
+            family = await self._ledger.list_invoices_for_parent_aliases(
+                [invoice.parent_id], limit=1_000
+            )
             others = sorted(
-                (
-                    other
-                    for other in await self._ledger.list_invoices_for_parent_aliases(
-                        [invoice.parent_id]
-                    )
-                    if other.invoice_id != invoice.invoice_id and other.status in _PAYABLE_STATUSES
-                ),
+                (other for other in family if other.invoice_id != invoice.invoice_id),
                 key=lambda other: (other.due_date, other.invoice_id),
             )
             for other in others:
-                if remaining <= 0:
-                    break
                 key = f"alloc-{payment_id}:{other.invoice_id}"
+                # Check the key before the invoice's status: on a resumed retry the
+                # invoices this payment already settled read as paid, and their
+                # money must still count against what is left to spread.
                 done = await self._ledger.get_payment_allocation_by_idempotency_key(key)
-                amount = (
-                    done.amount_cents
-                    if done is not None
-                    else min(remaining, other.balance_due_cents)
-                )
-                if amount <= 0:
-                    continue
-                if done is None:
+                if done is not None:
+                    amount = done.amount_cents
+                elif remaining > 0 and other.status in _PAYABLE_STATUSES:
+                    amount = min(remaining, other.balance_due_cents)
+                    if amount <= 0:
+                        continue
                     await self._ledger.allocate_payment(
                         payment_id=payment_id,
                         invoice_id=other.invoice_id,
                         amount_cents=amount,
                         idempotency_key=key,
                     )
+                else:
+                    continue
                 remaining -= amount
                 previous_balance_cents += amount
         credit_cents = 0

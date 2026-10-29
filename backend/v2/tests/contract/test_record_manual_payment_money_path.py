@@ -426,3 +426,27 @@ async def test_overflow_retry_with_the_same_key_moves_no_more_money(real_db, boo
     assert first == second
     assert await _credit_cents(real_db) == 10_000
     assert await real_db["ledger_payments"].count_documents({"academy_id": ACAD}) == 1
+
+
+async def test_overflow_crash_retry_counts_invoices_it_already_settled(
+    real_db, boot_academy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # PR #1093 review: on resume the sibling this payment already paid reads as
+    # "paid"; skipping it left $60 to spread and the overflow step then raised.
+    from backend.v2.contexts.billing.application import manual_payment_idempotency
+
+    await _seed_family_months(real_db)
+    admin = _admin(real_db, store=_LosesTheFirstResultWrite(real_db))
+    with tenant_scope(ACAD):
+        with pytest.raises(RuntimeError):
+            await _pay(admin, key="k-crash-spread", amount=12_000, invoice_id="inv-2026-10")
+        monkeypatch.setattr(manual_payment_idempotency, "IN_FLIGHT_WINDOW", timedelta(0))
+        retried = await _pay(admin, key="k-crash-spread", amount=12_000, invoice_id="inv-2026-10")
+
+    assert retried["previous_balance_applied_cents"] == 6_000
+    assert retried["overpayment_credit_cents"] == 0
+    balances = await _balances(real_db)
+    assert balances["inv-2026-10"] == 0 and balances["inv-2026-06"] == 0
+    assert balances["inv-2026-07"] == 6_000
+    assert await _credit_cents(real_db) == 0
+    assert await real_db["ledger_payments"].count_documents({"academy_id": ACAD}) == 1
