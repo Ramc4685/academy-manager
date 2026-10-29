@@ -154,6 +154,11 @@ test("rejects return paths that would leave the app", () => {
     "/\\evil.example.com",
     "https://evil.example.com/admin",
     "/admin\\..\\x",
+    // Browsers strip tab/CR/LF from URLs, turning these into `//evil...`;
+    // only the URL-origin check catches them.
+    "/\t/evil.example.com",
+    "/\n/evil.example.com",
+    "/\r\n/evil.example.com",
   ]) {
     assert.equal(sanitizeReturnPath(raw), null, `expected ${raw} to be rejected`);
   }
