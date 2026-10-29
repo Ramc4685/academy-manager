@@ -61,13 +61,10 @@ test("without an override the per-worktree port is used (never a fixed 3001 for 
 test("bash implementation (scripts/dev/lib/worktree-port.sh) agrees byte-for-byte", () => {
   assert.ok(existsSync(bashLib), `missing ${bashLib}`);
   for (const p of SAMPLE_PATHS) {
-    const bashPort = execFileSync("bash", [
-      "-c",
-      `. "$1" && derive_worktree_port "$2"`,
-      "worktree-port-test",
-      bashLib,
-      p,
-    ])
+    // Script on stdin, paths as positional args: nothing is interpolated into a shell string.
+    const bashPort = execFileSync("bash", ["-s", bashLib, p], {
+      input: '. "$1" && derive_worktree_port "$2"',
+    })
       .toString()
       .trim();
     assert.equal(
