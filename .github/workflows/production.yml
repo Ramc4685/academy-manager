@@ -268,7 +268,11 @@ jobs:
           NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
           NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
           NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
-        run: pnpm build
+        # OpenNext runs `pnpm build` itself, then bundles the Worker we deploy.
+        run: pnpm exec opennextjs-cloudflare build
+
+      - name: Worker runtime smoke
+        run: bash "$GITHUB_WORKSPACE/scripts/smoke/worker_runtime_smoke.sh"
 
       - name: OpenAPI drift check
         run: |

@@ -19,6 +19,8 @@ overrides:
   ip-address: ^10.7.1
   nanoid@3: ^3.3.18
   nanoid@5: ^5.1.16
+  # GHSA-5j98-mcp5-4vw2; build-time only, via @opennextjs/aws > @node-minify/core.
+  glob@10: ^10.5.0
   protobufjs: ^7.6.5
   # CVE-2026-33327/33328/35590/35591 (libvips via sharp); patched in >=0.35.0.
   sharp: '>=0.35.5'
