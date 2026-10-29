@@ -1,6 +1,6 @@
 # mobile-sign-in-entry
 
-PR: #PRNUM
+PR: #1091
 
 ## What changed
 Returning parents, coaches and admins can find Sign in on a phone again. The app sets `viewport-fit=cover` with a translucent iOS status bar, so pages draw under the clock and battery. The public academy page's sticky header had no top inset, so its brand row and its "Parent login" link (visible at every width) sat under the status bar, where it was blurred and could not be tapped. The header now pads by `env(safe-area-inset-top)`. The link is now an outlined "Sign in" button (44px tall) that stays on screen while scrolling and sits next to the brand "Book a free trial" button without competing with it.
