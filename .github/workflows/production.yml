@@ -90,21 +90,6 @@ jobs:
       needs.changes.outputs.ci == 'true' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'push'
-    services:
-      mongo:
-        # Same major version as production (8.0). The 7.0 and 8.0 query
-        # planners differ, so a plan that is index-served here must be one
-        # production would also pick (#878, #894). Pinned: `mongo:8` drifted to
-        # 8.3, and 8.0 builds before 8.0.34 refuse to start on the ubuntu-26.04
-        # runner kernel (SERVER-121912 / SERVER-125742).
-        image: mongo:8.0.34
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
       REACT_APP_BACKEND_URL: https://api.academy.courtmastr.com
       MONGO_URL: mongodb://localhost:27017
@@ -121,6 +106,20 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+
+      - name: Install and start MongoDB 8.0 (native mongod)
+        # Same major version as production (8.0): the 7.0 and 8.0 query
+        # planners differ, so a plan that is index-served here must be one
+        # production would also pick (#878, #894). Native, not a `services:`
+        # container: the mongo:8.0 Docker image (8.0.34 included) exits at
+        # startup on the ubuntu-26.04 runner kernel (SERVER-121912), and the
+        # floating `mongo:8` tag had drifted to 8.3.
+        run: |
+          curl -fsSL https://pgp.mongodb.com/server-8.0.asc | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+          echo "deb [signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+          sudo apt-get update
+          sudo apt-get install -y mongodb-org-server mongodb-mongosh
+          bash "$GITHUB_WORKSPACE/scripts/ci/start_mongod.sh"
 
       - name: Set up Python
         uses: actions/setup-python@v7

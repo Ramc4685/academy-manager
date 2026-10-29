@@ -36,20 +36,8 @@ jobs:
     name: Backup / restore drill
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      mongo:
-        # Same major version as production. 8.0 builds before 8.0.34 refuse to
-        # start on the ubuntu-26.04 runner kernel (SERVER-121912 / SERVER-125742).
-        image: mongo:8.0.34
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      # Local, credential-free service container only.
+      # Local, credential-free mongod started in-job (see "Start mongod").
       MONGO_URL: mongodb://localhost:27017
       SCRATCH_MONGO_URL: mongodb://localhost:27017
       DB_NAME: academy_test
@@ -83,7 +71,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Install MongoDB Database Tools (mongodump / mongorestore)
+      - name: Install MongoDB server + Database Tools (mongodump / mongorestore)
         # Same apt repo as the real-auth e2e job. The key download has flaked
         # before, so retry it rather than fail the drill on a network blip.
         run: |
@@ -95,9 +83,15 @@ jobs:
           done
           echo "deb [signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
           sudo apt-get update
-          sudo apt-get install -y mongodb-database-tools
+          sudo apt-get install -y mongodb-org-server mongodb-mongosh mongodb-database-tools
           mongodump --version
           mongorestore --version
+
+      - name: Start mongod
+        # Native mongod, not a `services:` container: the mongo:8.0 Docker image
+        # (8.0.34 included) exits at startup on the ubuntu-26.04 runner kernel
+        # (SERVER-121912), while the apt 8.0.34 build runs fine on the same host.
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/start_mongod.sh"
 
       - name: Script tests (unit + real-mongod round trip)
         working-directory: backend
