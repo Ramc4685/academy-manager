@@ -55,6 +55,10 @@ overrides:
   # GHSA-587h-7wmj-h5pm (launch-editor existence check bypass on Windows);
   # patched in >=8.1.6. Dev-only, transitive via vitest and @vitest/mocker.
   vite@8: ^8.1.6
+  # GHSA-mrhx-c7xc-m3w5 (zod memory exhaustion on oversized input); patched in
+  # >=4.6.6. @serwist/build and @serwist/webpack-plugin pin 4.4.3 exactly.
+  # The 3.x line has no patched release; see auditConfig below.
+  zod@4: ^4.6.7
 
 # pnpm audit evaluates upstream declared ranges even when the lockfile applies
 # the patched override. Each entry below is pinned above to a patched release.
@@ -89,6 +93,11 @@ auditConfig:
   # through eslint-config-next -> fast-glob -> micromatch. Remove once a fixed
   # braces ships or micromatch drops it.
     - GHSA-vfj7-8cjw-p6xm # braces <=3.0.3, dev-only, no patched release
+  # GHSA-mrhx-c7xc-m3w5 (zod <4.6.6): the 4.x copies are pinned to ^4.6.7 above.
+  # 3.25.76 is the latest 3.x and has no fix. Dev-only: reached only through
+  # puppeteer-core -> chromium-bidi (lighthouse CI, size-limit), which parses
+  # its own browser protocol messages, not user input.
+    - GHSA-mrhx-c7xc-m3w5 # zod 4.x pinned ^4.6.7; 3.x dev-only, no patched release
 
 onlyBuiltDependencies:
   - esbuild
