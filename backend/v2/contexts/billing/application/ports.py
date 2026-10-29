@@ -1069,6 +1069,10 @@ class LedgerRepository(Protocol):
         idempotency_key: str,
     ) -> LedgerAllocationResult: ...
 
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: Sequence[str], *, limit: int = 100
+    ) -> list[LedgerInvoice]: ...
+
     async def reverse_payment_allocation(
         self,
         *,

@@ -267,6 +267,7 @@ async def record_manual_payment_once(
                 "amount_cents": amount_cents,
                 "invoice_status": result.invoice_status,
                 "balance_due_cents": result.balance_due_cents,
+                "previous_balance_applied_cents": result.previous_balance_applied_cents,
                 "overpayment_credit_cents": result.overpayment_credit_cents,
             },
         )
