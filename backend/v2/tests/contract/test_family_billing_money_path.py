@@ -606,3 +606,52 @@ async def test_refund_amounts_survive_the_response_model_for_non_owner_admins(
     stripped = strip_owner_actions(view)
     row = next(inv for inv in stripped["invoices"] if inv["invoice_id"] == "inv-refund")
     assert "refund" not in row["actions"]
+
+
+# ------------------------------------------------------------ voiding a manual payment
+
+
+async def test_billing_tab_lists_manual_payments_an_owner_can_void(real_db, boot_academy) -> None:
+    """A $300 Zelle on a $60 invoice: listed with its $240 credit, gone once voided.
+
+    Stripe money is never listed (it is refunded, not voided), and the void
+    reopens the invoice it paid.
+    """
+    await _seed_family(real_db)
+    await _seed_card_payment(real_db, ACAD)
+    await real_db["invoices"].insert_one(_invoice(ACAD, "inv-zelle", 6_000))
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        await admin.record_manual_payment(
+            invoice_id="inv-zelle",
+            amount_cents=30_000,
+            payment_method="zelle",
+            reference_number=None,
+            notes="",
+            actor_id="owner-1",
+            idempotency_key="zelle-300",
+        )
+        view = await _billing_tab(real_db).build(PARENT)
+        assert view is not None
+        shaped = AdminFamilyBillingView.model_validate(view).model_dump()
+        assert len(shaped["manual_payments"]) == 1
+        listed = shaped["manual_payments"][0]
+        assert listed["method"] == "zelle"
+        assert listed["amount_cents"] == 30_000
+        assert listed["allocations"] == [{"invoice_id": "inv-zelle", "amount_cents": 6_000}]
+        assert listed["credit_cents"] == 24_000
+        assert listed["credit_spent_cents"] == 0
+        assert listed["void_blocked_reason"] is None
+
+        await admin.void_payment(
+            payment_id=listed["payment_id"], reason="wrong invoice", actor_id="owner-1"
+        )
+        after = await _billing_tab(real_db).build(PARENT)
+
+    assert after is not None
+    assert after["manual_payments"] == []
+    voids = [e for e in after["timeline"] if e["code"] == "audit:payment_voided"]
+    assert len(voids) == 1 and voids[0]["reason"] == "wrong invoice"
+    row = next(inv for inv in after["invoices"] if inv["invoice_id"] == "inv-zelle")
+    assert row["status"] == "open"
+    assert row["balance_due_cents"] == 6_000
