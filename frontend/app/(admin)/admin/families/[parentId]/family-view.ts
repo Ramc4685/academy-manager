@@ -6,12 +6,14 @@ import type {
   FamilyEnrollment,
   FamilyHeader,
   FamilyInvoice,
+  FamilyManualPayment,
   FamilyStudent,
   InvoiceAction,
   RegistrationState,
   FamilyTimelineKind,
 } from "@/lib/api/admin-families";
 import { formatCents } from "@/lib/money";
+import { isManualPaymentMethod, MANUAL_PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 import {
   cardChip,
   cardStateFromRegistration,
@@ -275,4 +277,59 @@ export function mintRequestId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `req-${Date.now()}`;
+}
+
+export interface ManualPaymentSummary {
+  /** "Zelle $300.00 · Oct 29" */
+  title: string;
+  /** Where the money went: "Paid Oct 2026 $60.00 · $240.00 account credit" */
+  detail: string;
+  /** Why it cannot be voided here; null when it can. */
+  blocked: string | null;
+}
+
+/**
+ * One manual payment as the Fix something panel lists it. Invoices are named by
+ * their period when this page has them, else by id (a capped-out old invoice).
+ */
+export function manualPaymentSummary(
+  p: FamilyManualPayment,
+  invoices: Pick<FamilyInvoice, "invoice_id" | "period">[],
+): ManualPaymentSummary {
+  const periodById = new Map(invoices.map((inv) => [inv.invoice_id, inv.period]));
+  const method = isManualPaymentMethod(p.method)
+    ? MANUAL_PAYMENT_METHOD_LABELS[p.method]
+    : (p.method ?? "Payment");
+  const day = shortDate(p.paid_at);
+  const paid = p.allocations.map((a) => {
+    const period = periodById.get(a.invoice_id);
+    return `${period ? periodLabel(period) : a.invoice_id} ${formatCents(a.amount_cents)}`;
+  });
+  const parts = [paid.length ? `Paid ${paid.join(", ")}` : "Paid no invoice"];
+  if (p.credit_cents > 0) parts.push(`${formatCents(p.credit_cents)} account credit`);
+  const blocked =
+    p.void_blocked_reason === "credit_spent"
+      ? `${formatCents(p.credit_spent_cents)} of its credit already paid another invoice, so voiding it here would lose that money. Undo that first.`
+      : p.void_blocked_reason === "legacy_allocation"
+        ? "Recorded before payments were tracked per invoice; it needs reconciling by hand."
+        : null;
+  return {
+    title: `${method} ${formatCents(p.amount_cents)}${day ? ` · ${day}` : ""}`,
+    detail: parts.join(" · "),
+    blocked,
+  };
+}
+
+/**
+ * What voiding this payment does, said plainly: it is the PAYMENT that goes,
+ * never an invoice.
+ */
+export function voidPaymentExplainer(p: FamilyManualPayment | null): string {
+  const base =
+    "This voids the payment, not an invoice. Nothing is deleted: the payment is kept for " +
+    "the audit trail and stops counting in revenue and deposit reports. Every invoice it " +
+    "paid stays and its balance reopens.";
+  return p && p.credit_cents > 0
+    ? `${base} The ${formatCents(p.credit_cents)} account credit it created is cancelled.`
+    : base;
 }

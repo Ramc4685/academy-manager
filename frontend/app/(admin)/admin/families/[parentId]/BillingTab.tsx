@@ -24,12 +24,14 @@ import {
   fetchAdminFamilyBilling,
   pauseFamilyAutopay,
   type FamilyInvoice,
+  type FamilyManualPayment,
   type InvoiceAction,
 } from "@/lib/api/admin-families";
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
 import { RecordPaymentDialog } from "../../payments/buckets/RecordPaymentDialog";
+import { VoidPaymentDialog } from "../../payments/dialogs";
 import { FamilyHeader } from "./FamilyHeader";
 import { FixSomethingPanel } from "./FixSomethingPanel";
 import { InvoicesPanel } from "./InvoicesPanel";
@@ -38,10 +40,12 @@ import { ReasonDialog, type ReasonDialogKind, type ReasonDialogResult } from "./
 import {
   enrollmentOptions,
   invoiceDueDays,
+  manualPaymentSummary,
   mintRequestId,
   periodLabel,
   refundableCents,
   tuitionLineDescription,
+  voidPaymentExplainer,
   type EnrollmentOption,
 } from "./family-view";
 import {
@@ -110,6 +114,7 @@ export function BillingTab({ parentId }: { parentId: string }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [chargeTarget, setChargeTarget] = useState<ChargeTarget | null>(null);
   const [billEnrollmentId, setBillEnrollmentId] = useState<string | null>(null);
+  const [voidPaymentTarget, setVoidPaymentTarget] = useState<FamilyManualPayment | null>(null);
 
   const query = useQuery({
     queryKey: queryKeys.admin.familyBilling(parentId),
@@ -318,6 +323,23 @@ export function BillingTab({ parentId }: { parentId: string }) {
         invoices={view.invoices}
         isOwner={isOwner}
         onPick={(kind, invoiceId) => setDialog({ kind, invoiceId })}
+        manualPayments={view.manual_payments}
+        onVoidPayment={setVoidPaymentTarget}
+      />
+      <VoidPaymentDialog
+        target={
+          voidPaymentTarget && {
+            paymentId: voidPaymentTarget.payment_id,
+            description: manualPaymentSummary(voidPaymentTarget, view.invoices).title,
+          }
+        }
+        explainer={voidPaymentExplainer(voidPaymentTarget)}
+        onClose={() => setVoidPaymentTarget(null)}
+        onVoided={() => {
+          setVoidPaymentTarget(null);
+          void refresh();
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+        }}
       />
 
       {dialog && (

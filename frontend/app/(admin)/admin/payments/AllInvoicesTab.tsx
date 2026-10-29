@@ -37,6 +37,7 @@ import { useIsPhone } from "@/lib/use-is-phone";
 import { webhookEventLabel } from "@/lib/billing-health";
 
 import {
+  finalCents,
   formatCents,
   formatPeriodLabel,
   methodChip,
@@ -676,7 +677,12 @@ export function AllInvoicesTab() {
         }}
       />
       <VoidPaymentDialog
-        payment={voidTarget}
+        target={
+          voidTarget && {
+            paymentId: voidTarget.payment_id,
+            description: `${paymentDisplayLabel(voidTarget)} · ${formatCents(finalCents(voidTarget))}`,
+          }
+        }
         onClose={() => setVoidTarget(null)}
         onVoided={() => {
           setVoidTarget(null);
