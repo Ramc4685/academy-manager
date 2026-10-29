@@ -9,6 +9,8 @@ Frontend: `next` and `eslint-config-next` 16.3.8 -> 16.4.1 (critical unauthentic
 
 Backend: `pillow` 12.3.0 -> 13.0.0, `certifi` -> 2026.10.19, `aiohttp` 3.14.4 (with `yarl` 1.25.1, which it now requires), `dnspython` 2.9.0, `filelock` 4.2.1, `pymongo` 4.18.3. Dev: `black` 26.10.1.
 
+CI: the Backend job and the weekly restore drill pin their Mongo service container to `mongo:8.0.34`. Older 8.0 builds refuse to start on the new ubuntu-26.04 runner kernel (SERVER-121912), which has failed the restore drill since 2026-10-19. The floating `mongo:8` tag had also drifted to 8.3, away from production's 8.0.
+
 No app code changes. Supersedes Dependabot PRs #1069, #1074, #1075, #1077, #1078, #1079, #1080, #1081.
 
 ## Deploy notes
