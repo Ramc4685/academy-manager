@@ -119,6 +119,24 @@ export interface FamilyInvoiceCredit {
   amount_cents: number;
 }
 
+export interface FamilyManualPaymentAllocation {
+  invoice_id: string;
+  amount_cents: number;
+}
+
+/** A live cash/check/Zelle/... payment an owner may void if it was recorded by mistake. */
+export interface FamilyManualPayment {
+  payment_id: string;
+  method: string | null;
+  amount_cents: number;
+  paid_at: string | null;
+  allocations: FamilyManualPaymentAllocation[];
+  /** OVERPAYMENT credit this payment created; voiding cancels it. */
+  credit_cents: number;
+  credit_spent_cents: number;
+  void_blocked_reason: "credit_spent" | "legacy_allocation" | null;
+}
+
 export interface FamilyInvoice {
   invoice_id: string;
   invoice_number: string | null;
@@ -179,6 +197,7 @@ export interface AdminFamilyBillingView {
   header: FamilyHeader;
   students: FamilyStudent[];
   invoices: FamilyInvoice[];
+  manual_payments?: FamilyManualPayment[];
   timeline: FamilyTimelineEntry[];
   actions: FamilyAction[];
   warnings: string[];
