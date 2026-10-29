@@ -3,7 +3,7 @@
 PR: #1086
 
 ## What changed
-Restores the frontend. Since the #1082 deploy, every Worker request had returned HTTP 500 (Cloudflare 1101). `@opennextjs/cloudflare` 1.20.6 predates Next 16.4 support, so every request threw `Unexpected loadManifest(/.next/server/preview-props.json)`. Bumped it to 1.20.14 (`@opennextjs/aws` 4.1.13). Next stays at 16.4.1, so the advisory fix is kept.
+Restores the frontend. Since the #1082 deploy, every Worker request had returned HTTP 500 (Cloudflare 1101). `@opennextjs/cloudflare` 1.20.6 predates Next 16.4 support, so every request threw `Unexpected loadManifest(/.next/server/preview-props.json)`. Bumped it to 1.20.14 (`@opennextjs/aws` 4.1.13). Next stays at 16.4.1, so the advisory fix is kept. The new OpenNext pulls `glob` 10.4 (GHSA-5j98-mcp5-4vw2, build-time only, via `@node-minify/core`), so `glob@10` is overridden to ^10.5.0.
 
 CI: Frontend Static now builds with `opennextjs-cloudflare build` and runs `scripts/smoke/worker_runtime_smoke.sh`. The script serves the built Worker in local workerd and fails on any 5xx. A Workers-runtime break now blocks the merge and the deploy instead of reaching prod.
 
