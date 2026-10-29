@@ -839,6 +839,9 @@ export interface RecordManualPaymentResponse {
   payment_id: string;
   invoice_status: string;
   balance_due_cents: number;
+  /** Part of the payment that settled the family's other open invoices. */
+  previous_balance_applied_cents?: number;
+  overpayment_credit_cents?: number;
 }
 
 export interface InvoiceRefundRequest {

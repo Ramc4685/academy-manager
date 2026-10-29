@@ -345,3 +345,84 @@ async def test_audit_entry_is_stamped_with_the_request_academy(real_db, boot_aca
     audit = await real_db["billing_audit_log"].find_one({"payment_id": result["payment_id"]})
     assert audit is not None
     assert audit["academy_id"] == OTHER
+
+
+# ------------------------------------------------------------------ overflow
+
+
+async def _seed_family_months(db: Any) -> None:
+    """Five $60 months for one family, June (oldest) to October (newest)."""
+    for month in ("06", "07", "08", "09", "10"):
+        await _seed_invoice(db, invoice_id=f"inv-2026-{month}", total_cents=6_000)
+        await db["invoices"].update_one(
+            {"academy_id": ACAD, "invoice_id": f"inv-2026-{month}"},
+            {"$set": {"due_date": datetime(2026, int(month), 8, tzinfo=UTC)}},
+        )
+
+
+async def _balances(db: Any) -> dict[str, int]:
+    return {
+        doc["invoice_id"]: doc["balance_due_cents"]
+        async for doc in db["invoices"].find({"academy_id": ACAD}, {"_id": 0})
+    }
+
+
+async def _credit_cents(db: Any) -> int:
+    rows = [
+        doc
+        async for doc in db["account_credit_ledger"].find(
+            {"academy_id": ACAD, "source_type": "OVERPAYMENT"}, {"_id": 0}
+        )
+    ]
+    return sum(int(doc["amount_cents"]) for doc in rows)
+
+
+async def test_overpayment_pays_older_open_invoices_before_credit(real_db, boot_academy) -> None:
+    # 2026-10-29: $300 Zelle recorded on the October $60 invoice stranded $240 as
+    # credit while June-September stayed open. It must settle them instead.
+    await _seed_family_months(real_db)
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        result = await _pay(admin, key="k-overflow", amount=30_000, invoice_id="inv-2026-10")
+
+    assert result["invoice_status"] == "paid"
+    assert result["previous_balance_applied_cents"] == 24_000
+    assert result["overpayment_credit_cents"] == 0
+    assert set((await _balances(real_db)).values()) == {0}
+    assert await _credit_cents(real_db) == 0
+
+
+async def test_overflow_pays_oldest_first_and_only_the_rest_becomes_credit(
+    real_db, boot_academy
+) -> None:
+    await _seed_family_months(real_db)
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        partial = await _pay(admin, key="k-partial", amount=15_000, invoice_id="inv-2026-10")
+    balances = await _balances(real_db)
+    assert partial["previous_balance_applied_cents"] == 9_000
+    assert balances == {
+        "inv-2026-06": 0,
+        "inv-2026-07": 3_000,
+        "inv-2026-08": 6_000,
+        "inv-2026-09": 6_000,
+        "inv-2026-10": 0,
+    }
+
+    with tenant_scope(ACAD):
+        rest = await _pay(admin, key="k-rest", amount=25_000, invoice_id="inv-2026-07")
+    assert rest["previous_balance_applied_cents"] == 12_000
+    assert rest["overpayment_credit_cents"] == 10_000
+    assert set((await _balances(real_db)).values()) == {0}
+    assert await _credit_cents(real_db) == 10_000
+
+
+async def test_overflow_retry_with_the_same_key_moves_no_more_money(real_db, boot_academy) -> None:
+    await _seed_family_months(real_db)
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        first = await _pay(admin, key="k-retry", amount=40_000, invoice_id="inv-2026-10")
+        second = await _pay(admin, key="k-retry", amount=40_000, invoice_id="inv-2026-10")
+    assert first == second
+    assert await _credit_cents(real_db) == 10_000
+    assert await real_db["ledger_payments"].count_documents({"academy_id": ACAD}) == 1
