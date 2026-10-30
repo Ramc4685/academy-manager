@@ -77,7 +77,7 @@ def _subject(family: FamilyWins) -> str:
 def _skill_line(first_name: str, wins: SkillWins) -> str:
     left = max(wins.total_in_level - wins.passed_in_level, 0)
     if left == 0:
-        tail = f"That's every skill in {wins.level_name}. A level-up is on its way."
+        tail = f"That's every skill in {wins.level_name} done."
     else:
         tail = (
             f"That's {wins.passed_in_level} of {wins.total_in_level} skills in "

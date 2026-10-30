@@ -74,7 +74,8 @@ class _ParentWinsProvider:
             frontend_url=get_settings().frontend_url,
             academy_slug=str((doc or {}).get("slug") or ""),
         )
-        skills_by_level: dict[str, dict[str, str]] = {}
+        skills_by_level: dict[str, dict[str, Any]] = {}
+        level_names: dict[str, str] = {}
         families: dict[str, list[ChildWins]] = defaultdict(list)
         for student_id, student in students.items():
             if not student.parent_id:
@@ -83,20 +84,23 @@ class _ParentWinsProvider:
             for level_id, skill_ids in open_levels[student_id].items():
                 if level_id not in skills_by_level:
                     skills_by_level[level_id] = {
-                        s.skill_id: s.name for s in await self._skills.list_for_level(level_id)
+                        s.skill_id: s for s in await self._skills.list_for_level(level_id)
                     }
-                names = skills_by_level[level_id]
-                today = tuple(names[sid] for sid in sorted(skill_ids) if sid in names)
+                    level = await self._levels.get(level_id)
+                    level_names[level_id] = level.name if level else "this level"
+                skills = skills_by_level[level_id]
+                today = tuple(skills[sid].name for sid in sorted(skill_ids) if sid in skills)
                 if not today:  # only retired skills: nothing worth telling
                     continue
-                level = await self._levels.get(level_id)
+                # Count required skills only: that is what completes a level.
+                required = {sid for sid, s in skills.items() if s.is_required}
                 done = await self._progress.list_passed_for_student_level(student_id, level_id)
                 skill_wins.append(
                     SkillWins(
-                        level_name=level.name if level else "this level",
+                        level_name=level_names[level_id],
                         skill_names=today,
-                        passed_in_level=len({p.skill_id for p in done} & names.keys()),
-                        total_in_level=len(names),
+                        passed_in_level=len({p.skill_id for p in done} & required),
+                        total_in_level=len(required),
                     )
                 )
             ups = tuple(level_ups[student_id].values())

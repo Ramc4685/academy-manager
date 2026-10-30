@@ -49,7 +49,7 @@ def test_several_skills_and_a_full_level_awaiting_its_level_up() -> None:
     subject, body = render_parent_wins(family)
     assert subject == "Aarav mastered 2 skills today"
     assert "Aarav mastered Clear and Drop today." in body
-    assert "every skill in Level 2. A level-up is on its way." in body
+    assert "That&#x27;s every skill in Level 2 done." in body
 
 
 def test_level_up_celebrates_and_links_the_certificate() -> None:

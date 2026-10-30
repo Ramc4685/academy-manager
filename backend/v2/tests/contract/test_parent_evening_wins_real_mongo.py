@@ -16,6 +16,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from backend.v2.composition.evening_wins import _ParentWinsProvider
+from backend.v2.contexts.communications.application.unsubscribe_footer import (
+    render_unsubscribe_footer,
+)
 from backend.v2.contexts.communications.application.use_cases.send_parent_evening_wins import (
     SendParentEveningWins,
     SendParentEveningWinsCommand,
@@ -197,7 +200,7 @@ async def test_one_email_per_family_with_a_win_and_none_on_rerun(real_db: Any) -
     assert "/parent/progress?child=s-diya" in body
     assert "Footwork" not in body  # celebrated as the level-up, not a skill line
     assert "Ready stance" not in body and "Serve" not in body
-    assert "nsubscribe" in body or "email preferences" in body
+    assert render_unsubscribe_footer(None) in body
 
     rows = await real_db["parent_win_sends"].find({}, {"_id": 0}).to_list(None)
     by_parent = {r["parent_id"]: r for r in rows}
