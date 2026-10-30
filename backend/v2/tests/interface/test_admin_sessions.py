@@ -15,6 +15,7 @@ Routes covered:
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI, Request
@@ -3147,7 +3148,8 @@ async def test_create_session_resolves_the_zone_from_the_academy_record(
     row = await db.sessions.find_one({"title": "Thursday 6:00 PM Intermediate"})
     assert row is not None
     assert row["timezone"] == "America/Chicago"
-    assert row["start_at"].hour == 23
+    # Local wall-clock: the session may land either side of a DST change.
+    assert row["start_at"].replace(tzinfo=UTC).astimezone(ZoneInfo("America/Chicago")).hour == 18
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from backend.v2.contexts.student_progress.domain.errors import (
     RecommendationAlreadyReviewed,
     RecommendationNotFound,
     SkillAlreadyPassed,
+    SkillNotOnCurrentLevel,
     SkillProgressNotFound,
     StudentNotPlaced,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "RecommendationAlreadyReviewed",
     "RecommendationNotFound",
     "SkillAlreadyPassed",
+    "SkillNotOnCurrentLevel",
     "SkillProgressNotFound",
     "StudentNotPlaced",
 ]

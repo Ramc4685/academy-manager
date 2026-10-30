@@ -192,6 +192,7 @@ from backend.v2.contexts.platform.governance.infrastructure.mongo_governance_sto
 from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
     MongoTenantLifecycleRepository,
 )
+from backend.v2.interfaces.admin.progress_routes import resolve_certificate_display
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
@@ -300,6 +301,8 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "create_trial_follow_ups": LocalDailyTime(4, 50),
     "send_owner_daily_brief": LocalDailyTime(7, 30),
     "send_past_due_reminders": LocalDailyTime(_PAST_DUE_REMINDER_LOCAL_HOUR, 20),
+    # Evening, so a coach's mistaken tap can be undone the same day.
+    "auto_approve_level_ups": LocalDailyTime(18, 30),
 }
 
 #: Per-local-day claim budget for the jobs whose body is NOT safe to repeat
@@ -464,6 +467,12 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # (unique source_key, migration 0201), so an extra run creates nothing.
     "create_trial_follow_ups": {
         "schedule": {"type": "crontab", "value": "50 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },  # Tap-to-master: queued level-ups on levels without owner approval land
+    # once a day. Idempotent: an approved recommendation is never pending again.
+    "auto_approve_level_ups": {
+        "schedule": {"type": "crontab", "value": "30 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -1194,6 +1203,32 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["created"] or totals["failed"]:
             log.info("trial_follow_ups_created", extra=totals)
 
+    async def _auto_approve_level_ups() -> None:
+        await _run_leased_job(
+            "auto_approve_level_ups", timedelta(minutes=5), _auto_approve_level_ups_body
+        )
+
+    async def _auto_approve_level_ups_body() -> None:
+        totals = {"academy_count": 0, "approved": 0, "needs_owner": 0, "skipped": 0, "failed": 0}
+        admin = app.state.admin
+        if admin.student_progress is None:
+            return
+
+        async def _display_for(rec_id: str) -> dict[str, object]:
+            return await resolve_certificate_display(rec_id, admin)
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            run = await admin.student_progress.auto_approve_level_ups.execute(_display_for)
+            totals["academy_count"] += 1
+            totals["approved"] += run.approved
+            totals["needs_owner"] += run.needs_owner
+            totals["skipped"] += run.skipped
+
+        summary = await _run_local_daily("auto_approve_level_ups", _for_academy)
+        totals["failed"] = len(summary.failed)
+        if totals["approved"] or totals["failed"]:
+            log.info("auto_level_ups_approved", extra=totals)
+
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
         # release lets the next tick reclaim, and a crash frees the lease fast.
@@ -1823,6 +1858,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=LOCAL_DAILY_JOBS["create_trial_follow_ups"].minute,
         timezone=UTC,
         id="create_trial_follow_ups",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _auto_approve_level_ups,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["auto_approve_level_ups"].minute,
+        timezone=UTC,
+        id="auto_approve_level_ups",
         replace_existing=True,
         max_instances=1,
     )

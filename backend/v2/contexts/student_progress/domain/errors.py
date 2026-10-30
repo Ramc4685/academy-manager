@@ -60,3 +60,10 @@ class EnrollmentEnded(DomainError):
 
     code = "StudentProgress.EnrollmentEnded"
     status_code = 409
+
+
+class SkillNotOnCurrentLevel(DomainError):
+    """The skill belongs to a level other than the student's active one."""
+
+    code = "StudentProgress.SkillNotOnCurrentLevel"
+    status_code = 409
