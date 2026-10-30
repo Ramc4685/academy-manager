@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from backend.v2.contexts.student_progress.application.ports import (
     LevelUpRecommendationRepository,
     SkillLookup,
+    StudentSkillProgressRepository,
 )
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpCommand,
@@ -26,6 +27,7 @@ from backend.v2.contexts.student_progress.domain.errors import (
     EnrollmentEnded,
     RecommendationAlreadyReviewed,
 )
+from backend.v2.contexts.student_progress.domain.logic import check_level_completion
 
 log = logging.getLogger(__name__)
 
@@ -49,10 +51,12 @@ class AutoApproveLevelUps:
         self,
         *,
         recommendations: LevelUpRecommendationRepository,
+        skill_progress: StudentSkillProgressRepository,
         skill_lookup: SkillLookup,
         review_level_up: ReviewLevelUpRecommendation,
     ) -> None:
         self._recs = recommendations
+        self._skill_progress = skill_progress
         self._skill_lookup = skill_lookup
         self._review = review_level_up
 
@@ -64,6 +68,12 @@ class AutoApproveLevelUps:
                 continue
             level = await self._skill_lookup.get_level(rec.from_level_id)
             if level is None or getattr(level, "requires_admin_approval", False):
+                needs_owner += 1
+                continue
+            # No human looks at this row, so re-check it: a failed retest after
+            # the recommendation (RecordTestAttempt sets NEEDS_REVIEW) leaves
+            # the level incomplete, and that one goes to the owner instead.
+            if not await self._level_still_complete(rec.student_id, rec.from_level_id):
                 needs_owner += 1
                 continue
             display = await display_for(rec.rec_id)
@@ -87,3 +97,9 @@ class AutoApproveLevelUps:
         return AutoApproveLevelUpsResult(
             approved=approved, needs_owner=needs_owner, skipped=skipped
         )
+
+    async def _level_still_complete(self, student_id: str, level_id: str) -> bool:
+        skills = await self._skill_lookup.list_skills_for_level(level_id)
+        required = [s.skill_id for s in skills if getattr(s, "is_required", True)]  # type: ignore[attr-defined]
+        passed = await self._skill_progress.list_passed_for_student_level(student_id, level_id)
+        return check_level_completion(required, {p.skill_id for p in passed})

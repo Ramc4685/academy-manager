@@ -423,6 +423,7 @@ def compose_student_progress(
         ),
         auto_approve_level_ups=AutoApproveLevelUps(
             recommendations=recommendation_repo,
+            skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
             review_level_up=review_level_up,
         ),

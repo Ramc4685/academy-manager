@@ -55,6 +55,7 @@ export interface MockState {
   correctionCalls: Array<Record<string, unknown>>;
   bulkAttendanceCalls: Array<Record<string, unknown>>;
   bulkSkillCalls: Array<Record<string, unknown>>;
+  masteredCalls: Array<{ method: string; url: string; body: Record<string, unknown> }>;
   skillStatusCalls: Array<Record<string, unknown>>;
   attendanceResponder?: (body: Record<string, unknown>) => {
     status: number;
@@ -228,6 +229,7 @@ export const test = base.extend<{
       correctionCalls: [],
       bulkAttendanceCalls: [],
       bulkSkillCalls: [],
+      masteredCalls: [],
       skillStatusCalls: [],
       statusCalls: [],
       testCalls: [],
@@ -457,6 +459,25 @@ export const test = base.extend<{
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ ...dayHub, date }),
+      });
+    });
+
+    // Tap-to-master: POST marks students, DELETE undoes one tap.
+    await page.route("**/api/v2/coach/sessions/*/**/mastered**", async (route: Route) => {
+      const request = route.request();
+      const body = JSON.parse(request.postData() ?? "{}");
+      state.masteredCalls.push({ method: request.method(), url: request.url(), body });
+      const results = (body.student_ids ?? []).map((student_id: string) => ({
+        student_id,
+        outcome: "mastered",
+        level_up_queued: false,
+      }));
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          request.method() === "DELETE" ? { status: "PRACTICING", withdrawn_rec_ids: [] } : { results },
+        ),
       });
     });
 

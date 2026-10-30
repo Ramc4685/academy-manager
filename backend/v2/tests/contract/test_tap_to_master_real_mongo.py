@@ -27,6 +27,9 @@ from backend.v2.contexts.student_progress.application.use_cases.mark_skill_maste
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevelCommand,
 )
+from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
+    RecordTestAttemptCommand,
+)
 from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
     UNDONE_BY_COACH_REASON,
     UnmarkSkillMasteredCommand,
@@ -146,3 +149,31 @@ async def test_level_requiring_owner_approval_stays_in_the_queue(real_db: Any) -
         assert (run.approved, run.needs_owner) == (0, 1)
         pending = await real_db["level_up_recommendations"].find_one({"student_id": STUDENT})
         assert pending["status"] == "RECOMMENDED"
+
+
+@pytest.mark.asyncio
+async def test_failed_retest_after_queueing_sends_the_level_up_to_the_owner(real_db: Any) -> None:
+    with tenant_scope(ACADEMY):
+        progress, program_id, levels = await _setup(real_db)
+        skills = await real_db["skills"].find({"level_id": levels[0].level_id}).to_list(None)
+        for skill in skills:
+            await _tap(progress, program_id, skill["skill_id"])
+        # A detailed retest that fails knocks the skill back to NEEDS_REVIEW.
+        await progress.record_test_attempt.execute(
+            RecordTestAttemptCommand(
+                student_id=STUDENT,
+                skill_id=skills[0]["skill_id"],
+                level_id=levels[0].level_id,
+                program_id=program_id,
+                coach_id=COACH,
+                attempts_count=10,
+                success_count=1,
+            )
+        )
+
+        run = await progress.auto_approve_level_ups.execute(_display)
+        assert (run.approved, run.needs_owner) == (0, 1)
+        active = await real_db["student_level_progress"].find_one(
+            {"student_id": STUDENT, "status": "active"}
+        )
+        assert active["level_id"] == levels[0].level_id
