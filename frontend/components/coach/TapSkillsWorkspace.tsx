@@ -44,19 +44,22 @@ export function TapSkillsWorkspace({
   occurrenceId,
   sessionId,
   date,
+  programId: requestedProgramId,
   onUpdated,
 }: {
   occurrenceId: string;
   sessionId: string;
   date: string;
+  /** The page's `program_id`; omitted means the academy's default curriculum. */
+  programId?: string;
   /** Lets the page refresh the By skill / By student data too. */
   onUpdated?: () => void;
 }) {
   const queryClient = useQueryClient();
-  const boardKey = queryKeys.coach.skillBoard(sessionId);
+  const boardKey = queryKeys.coach.skillBoard(sessionId, requestedProgramId);
   const { data: board, isLoading, isError } = useQuery({
     queryKey: boardKey,
-    queryFn: () => getCoachSessionSkillBoard(sessionId),
+    queryFn: () => getCoachSessionSkillBoard(sessionId, requestedProgramId),
   });
   const [picked, setPicked] = useState<Selection | null>(null);
   const [notice, setNotice] = useState<LevelUpNotice | null>(null);

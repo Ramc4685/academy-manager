@@ -84,3 +84,19 @@ describe("TapSkillsWorkspace", () => {
     expect(out).toContain("No one in this class is placed on a level yet");
   });
 });
+
+describe("TapSkillsWorkspace program selection", () => {
+  it("reads the board for the page's program_id, not the default curriculum", () => {
+    const client = new QueryClient();
+    client.setQueryData(
+      queryKeys.coach.skillBoard("sess-1", "prog-2"),
+      board({ program_id: "prog-2", program_name: "Second" }),
+    );
+    const out = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <TapSkillsWorkspace occurrenceId="occ-1" sessionId="sess-1" date="2026-10-30" programId="prog-2" />
+      </QueryClientProvider>,
+    );
+    expect(out).toContain("coach-tap-skills");
+  });
+});

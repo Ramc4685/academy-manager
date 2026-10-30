@@ -6,6 +6,7 @@ Interface layer imports from here (allowed) rather than domain.errors (forbidden
 from backend.v2.contexts.student_progress.domain.errors import (
     ActiveRecommendationExists,
     LevelNotConfigured,
+    LevelUpInProgress,
     LevelUpNotReady,
     OverrideNotPermitted,
     RecommendationAlreadyReviewed,
@@ -20,6 +21,7 @@ from backend.v2.contexts.student_progress.domain.models import ProgressNextActio
 __all__ = [
     "ActiveRecommendationExists",
     "LevelNotConfigured",
+    "LevelUpInProgress",
     "LevelUpNotReady",
     "OverrideNotPermitted",
     "ProgressNextAction",

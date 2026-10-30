@@ -63,8 +63,11 @@ class AutoApproveLevelUps:
     async def execute(self, display_for: CertificateDisplayResolver) -> AutoApproveLevelUpsResult:
         approved = needs_owner = skipped = 0
         for rec in await self._recs.list_pending():
-            # A claimed row belongs to the reviewer holding it.
-            if rec.status != "RECOMMENDED":
+            # A rejection in flight is never turned into an approval. An
+            # APPROVING row is retried: the review's claim refuses a live one
+            # (skipped below) and takes back one whose lease expired, so an
+            # interrupted run does not strand the student.
+            if rec.status == "REJECTING":
                 continue
             level = await self._skill_lookup.get_level(rec.from_level_id)
             if level is None or getattr(level, "requires_admin_approval", False):

@@ -108,6 +108,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
               occurrenceId={occurrenceId}
               sessionId={data.session_id}
               date={date}
+              programId={programId}
               onUpdated={() => void queryClient.invalidateQueries({ queryKey })}
             />
           ) : mode === "skill" ? (

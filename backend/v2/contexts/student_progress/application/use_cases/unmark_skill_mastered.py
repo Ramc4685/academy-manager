@@ -19,6 +19,7 @@ from backend.v2.contexts.student_progress.application.ports import (
     StudentSkillProgressRepository,
 )
 from backend.v2.contexts.student_progress.domain.errors import (
+    LevelUpInProgress,
     SkillNotOnCurrentLevel,
     SkillProgressNotFound,
     StudentNotPlaced,
@@ -86,20 +87,30 @@ class UnmarkSkillMastered:
 
         now = datetime.now(UTC)
         withdrawn: list[str] = []
-        # Same compare-and-set as the enrollment-ended expiry: a row the owner
-        # is already approving (APPROVING) is theirs and is left alone.
-        for rec in await self._recs.list_recommended_for_student(cmd.student_id):
-            if rec.program_id != cmd.program_id or rec.from_level_id != active.level_id:
-                continue
-            if await self._recs.update_status(
-                rec.rec_id,
+        # The withdrawal must win before the skill is demoted: a level-up the
+        # owner or the evening job is already approving (APPROVING) would
+        # otherwise certify a level with this skill back at PRACTICING.
+        pending = await self._recs.get_active_for_student(cmd.student_id, cmd.program_id)
+        # A REJECTING row ends rejected anyway, so it does not block the undo.
+        if (
+            pending is not None
+            and pending.from_level_id == active.level_id
+            and pending.status != "REJECTING"
+        ):
+            if pending.status != "RECOMMENDED" or not await self._recs.update_status(
+                pending.rec_id,
                 "REJECTED",
                 cmd.updated_by,
                 now,
                 UNDONE_BY_COACH_REASON,
                 expected_status="RECOMMENDED",
             ):
-                withdrawn.append(rec.rec_id)
+                raise LevelUpInProgress(
+                    "this level-up is already being approved; undo it from the owner queue",
+                    student_id=cmd.student_id,
+                    rec_id=pending.rec_id,
+                )
+            withdrawn.append(pending.rec_id)
 
         if existing.status != "PASSED":
             return UnmarkSkillMasteredResult(

@@ -67,3 +67,10 @@ class SkillNotOnCurrentLevel(DomainError):
 
     code = "StudentProgress.SkillNotOnCurrentLevel"
     status_code = 409
+
+
+class LevelUpInProgress(DomainError):
+    """An approval already holds the student's level-up, so undo would race it."""
+
+    code = "StudentProgress.LevelUpInProgress"
+    status_code = 409

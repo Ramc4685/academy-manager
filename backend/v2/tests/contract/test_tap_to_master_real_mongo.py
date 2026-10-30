@@ -34,7 +34,10 @@ from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mas
     UNDONE_BY_COACH_REASON,
     UnmarkSkillMasteredCommand,
 )
-from backend.v2.contexts.student_progress.domain.errors import SkillNotOnCurrentLevel
+from backend.v2.contexts.student_progress.domain.errors import (
+    LevelUpInProgress,
+    SkillNotOnCurrentLevel,
+)
 from backend.v2.shared.tenancy import tenant_scope
 
 ACADEMY = "acad-tap"
@@ -214,3 +217,52 @@ async def test_student_without_live_enrollment_does_not_abort_the_batch(real_db:
 
         outcome = await _tap(progress, program_id, skills[-1]["skill_id"])
         assert (outcome.outcome, outcome.level_up_queued) == ("mastered", False)
+
+
+async def _queue_level_one(real_db: Any) -> tuple[Any, str, list[Any], list[dict[str, Any]]]:
+    progress, program_id, levels = await _setup(real_db)
+    skills = await real_db["skills"].find({"level_id": levels[0].level_id}).to_list(None)
+    for skill in skills:
+        await _tap(progress, program_id, skill["skill_id"])
+    return progress, program_id, levels, skills
+
+
+@pytest.mark.asyncio
+async def test_undo_refuses_a_level_up_already_being_approved(real_db: Any) -> None:
+    with tenant_scope(ACADEMY):
+        progress, program_id, _levels, skills = await _queue_level_one(real_db)
+        await real_db["level_up_recommendations"].update_one(
+            {"student_id": STUDENT},
+            {"$set": {"status": "APPROVING", "claimed_at": datetime.now(UTC)}},
+        )
+
+        with pytest.raises(LevelUpInProgress):
+            await progress.unmark_skill_mastered.execute(
+                UnmarkSkillMasteredCommand(
+                    student_id=STUDENT,
+                    skill_id=skills[-1]["skill_id"],
+                    program_id=program_id,
+                    updated_by=COACH,
+                )
+            )
+        row = await real_db["student_skill_progress"].find_one(
+            {"student_id": STUDENT, "skill_id": skills[-1]["skill_id"]}
+        )
+        assert row["status"] == "PASSED"
+
+
+@pytest.mark.asyncio
+async def test_evening_run_recovers_an_abandoned_approval_claim(real_db: Any) -> None:
+    with tenant_scope(ACADEMY):
+        progress, _program_id, levels, _skills = await _queue_level_one(real_db)
+        await real_db["level_up_recommendations"].update_one(
+            {"student_id": STUDENT},
+            {"$set": {"status": "APPROVING", "claimed_at": datetime(2026, 1, 1, tzinfo=UTC)}},
+        )
+
+        run = await progress.auto_approve_level_ups.execute(_display)
+        assert run.approved == 1
+        active = await real_db["student_level_progress"].find_one(
+            {"student_id": STUDENT, "status": "active"}
+        )
+        assert active["level_id"] == levels[1].level_id
