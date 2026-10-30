@@ -177,3 +177,40 @@ async def test_failed_retest_after_queueing_sends_the_level_up_to_the_owner(real
             {"student_id": STUDENT, "status": "active"}
         )
         assert active["level_id"] == levels[0].level_id
+
+
+@pytest.mark.asyncio
+async def test_retap_queues_a_level_that_was_already_complete(real_db: Any) -> None:
+    with tenant_scope(ACADEMY):
+        progress, program_id, levels = await _setup(real_db)
+        skills = await real_db["skills"].find({"level_id": levels[0].level_id}).to_list(None)
+        for skill in skills:
+            await _tap(progress, program_id, skill["skill_id"])
+        # The owner rejects the queued move; every skill is still passed.
+        await real_db["level_up_recommendations"].update_many(
+            {"student_id": STUDENT}, {"$set": {"status": "REJECTED"}}
+        )
+
+        outcome = await _tap(progress, program_id, skills[0]["skill_id"])
+        assert (outcome.outcome, outcome.level_up_queued) == ("already_mastered", True)
+        assert (
+            await real_db["level_up_recommendations"].count_documents(
+                {"student_id": STUDENT, "status": "RECOMMENDED"}
+            )
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_student_without_live_enrollment_does_not_abort_the_batch(real_db: Any) -> None:
+    with tenant_scope(ACADEMY):
+        progress, program_id, levels = await _setup(real_db)
+        skills = await real_db["skills"].find({"level_id": levels[0].level_id}).to_list(None)
+        for skill in skills[:-1]:
+            await _tap(progress, program_id, skill["skill_id"])
+        await real_db["enrollments"].update_one(
+            {"student_id": STUDENT}, {"$set": {"status": "held"}}
+        )
+
+        outcome = await _tap(progress, program_id, skills[-1]["skill_id"])
+        assert (outcome.outcome, outcome.level_up_queued) == ("mastered", False)

@@ -44,10 +44,13 @@ export function TapSkillsWorkspace({
   occurrenceId,
   sessionId,
   date,
+  onUpdated,
 }: {
   occurrenceId: string;
   sessionId: string;
   date: string;
+  /** Lets the page refresh the By skill / By student data too. */
+  onUpdated?: () => void;
 }) {
   const queryClient = useQueryClient();
   const boardKey = queryKeys.coach.skillBoard(sessionId);
@@ -65,7 +68,15 @@ export function TapSkillsWorkspace({
   const skill = group?.skills.find((s) => s.skill_id === selection?.skillId);
   const programId = board?.program_id ?? "";
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: boardKey });
+  const refresh = () => {
+    onUpdated?.();
+    return queryClient.invalidateQueries({ queryKey: boardKey });
+  };
+  // Pin the default skill on the first tap: otherwise, once everyone has it,
+  // the default moves to the next skill under the coach's thumb.
+  const pinSelection = () => {
+    if (!picked && selection) setPicked(selection);
+  };
 
   const mark = useMutation({
     mutationFn: (studentIds: string[]) =>
@@ -75,7 +86,10 @@ export function TapSkillsWorkspace({
         { program_id: programId, student_ids: studentIds },
         date,
       ),
-    onMutate: (studentIds) => setPendingIds(studentIds),
+    onMutate: (studentIds) => {
+      pinSelection();
+      setPendingIds(studentIds);
+    },
     onSuccess: ({ results }) => {
       const finished = results.find((r) => r.level_up_queued && r.outcome === "mastered");
       const student = group?.students.find((s) => s.student_id === finished?.student_id);
@@ -97,7 +111,10 @@ export function TapSkillsWorkspace({
   const unmark = useMutation({
     mutationFn: (args: { studentId: string; skillId: string }) =>
       unmarkCoachSkillMastered(occurrenceId, args.studentId, args.skillId, { programId, date }),
-    onMutate: (args) => setPendingIds([args.studentId]),
+    onMutate: (args) => {
+      pinSelection();
+      setPendingIds([args.studentId]);
+    },
     onSuccess: (_result, args) => {
       if (notice?.studentId === args.studentId) setNotice(null);
     },

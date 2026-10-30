@@ -26,7 +26,11 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
     RecordTestAttempt,
     RecordTestAttemptCommand,
 )
-from backend.v2.contexts.student_progress.domain.errors import ActiveRecommendationExists
+from backend.v2.contexts.student_progress.domain.errors import (
+    ActiveRecommendationExists,
+    EnrollmentEnded,
+)
+from backend.v2.contexts.student_progress.domain.logic import check_level_completion
 
 MASTERED_NOTE = "Marked as mastered in class"
 
@@ -85,7 +89,15 @@ class MarkSkillMastered:
             return MasteredOutcome(student_id=student_id, outcome="not_on_level")
         existing = await self._skill_progress.get(student_id, cmd.skill_id)
         if existing is not None and existing.status == "PASSED":
-            return MasteredOutcome(student_id=student_id, outcome="already_mastered")
+            # Skills passed before tap-to-master (or a level-up the owner
+            # rejected) leave a complete level with nothing queued; a re-tap
+            # is the coach's way to move them on.
+            complete = await self._level_complete(student_id, active.level_id)
+            return MasteredOutcome(
+                student_id=student_id,
+                outcome="already_mastered",
+                level_up_queued=complete and await self._queue_level_up(cmd, student_id),
+            )
 
         result = await self._record.execute(
             RecordTestAttemptCommand(
@@ -101,17 +113,26 @@ class MarkSkillMastered:
                 notes=MASTERED_NOTE,
             )
         )
-        queued = False
-        if result.level_completed:
-            try:
-                await self._recommend.execute(
-                    RecommendLevelUpCommand(
-                        student_id=student_id,
-                        program_id=cmd.program_id,
-                        recommended_by=cmd.coach_id,
-                    )
-                )
-                queued = True
-            except ActiveRecommendationExists:
-                queued = True
+        queued = result.level_completed and await self._queue_level_up(cmd, student_id)
         return MasteredOutcome(student_id=student_id, outcome="mastered", level_up_queued=queued)
+
+    async def _level_complete(self, student_id: str, level_id: str) -> bool:
+        skills = await self._skill_lookup.list_skills_for_level(level_id)
+        required = [s.skill_id for s in skills if getattr(s, "is_required", True)]  # type: ignore[attr-defined]
+        passed = await self._skill_progress.list_passed_for_student_level(student_id, level_id)
+        return check_level_completion(required, {p.skill_id for p in passed})
+
+    async def _queue_level_up(self, cmd: MarkSkillMasteredCommand, student_id: str) -> bool:
+        try:
+            await self._recommend.execute(
+                RecommendLevelUpCommand(
+                    student_id=student_id, program_id=cmd.program_id, recommended_by=cmd.coach_id
+                )
+            )
+        except ActiveRecommendationExists:
+            return True
+        except EnrollmentEnded:
+            # Roster-visible but not live (e.g. held): the pass stands, the
+            # move waits, and the rest of the class still gets marked.
+            return False
+        return True
