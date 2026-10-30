@@ -110,6 +110,9 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
 from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
     SendParentDailyDigestCommand,
 )
+from backend.v2.contexts.communications.application.use_cases.send_parent_evening_wins import (
+    SendParentEveningWinsCommand,
+)
 from backend.v2.contexts.communications.application.use_cases.set_email_preferences import (
     SetEmailPreferences,
 )
@@ -300,6 +303,9 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "create_trial_follow_ups": LocalDailyTime(4, 50),
     "send_owner_daily_brief": LocalDailyTime(7, 30),
     "send_past_due_reminders": LocalDailyTime(_PAST_DUE_REMINDER_LOCAL_HOUR, 20),
+    # After the 18:30 evening level-up sweep, so a level finished today is
+    # celebrated with its certificate in the same e-mail.
+    "send_parent_evening_wins": LocalDailyTime(19, 0),
 }
 
 #: Per-local-day claim budget for the jobs whose body is NOT safe to repeat
@@ -464,6 +470,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # (unique source_key, migration 0201), so an extra run creates nothing.
     "create_trial_follow_ups": {
         "schedule": {"type": "crontab", "value": "50 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # The parent "evening win" e-mail: hourly ticks, once per academy-local
+    # day at 19:00; idempotent per family per day (parent_win_sends claim).
+    "send_parent_evening_wins": {
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -808,6 +821,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.win_back import compose_win_back
 
     app.state.win_back = compose_win_back(db, settings)
+    from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
+
+    app.state.parent_evening_wins = compose_send_parent_evening_wins(db)
     # Roadmap L3c: the trial follow-up job's use case (composition/trial_follow_ups.py).
     from backend.v2.composition.trial_follow_ups import compose_trial_follow_ups
 
@@ -1193,6 +1209,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals["failed"] = len(summary.failed)
         if totals["created"] or totals["failed"]:
             log.info("trial_follow_ups_created", extra=totals)
+
+    async def _send_parent_evening_wins() -> None:
+        await _run_leased_job(
+            "send_parent_evening_wins", timedelta(minutes=10), _send_parent_evening_wins_body
+        )
+
+    async def _send_parent_evening_wins_body() -> None:
+        totals = {"academy_count": 0, "families": 0, "sent": 0, "failed": 0}
+
+        async def _for_academy(academy_id: str, local_now: datetime) -> None:
+            run = await app.state.parent_evening_wins.execute(
+                SendParentEveningWinsCommand(academy_id=academy_id, local_now=local_now)
+            )
+            totals["academy_count"] += 1
+            totals["families"] += run.families
+            totals["sent"] += run.sent
+            totals["failed"] += run.failed
+
+        await _run_local_daily("send_parent_evening_wins", _for_academy)
+        if totals["families"]:
+            log.info("parent_evening_wins_processed", extra=totals)
 
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
@@ -1823,6 +1860,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=LOCAL_DAILY_JOBS["create_trial_follow_ups"].minute,
         timezone=UTC,
         id="create_trial_follow_ups",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_parent_evening_wins,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_parent_evening_wins"].minute,
+        timezone=UTC,
+        id="send_parent_evening_wins",
         replace_existing=True,
         max_instances=1,
     )

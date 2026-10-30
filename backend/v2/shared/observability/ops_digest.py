@@ -142,6 +142,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "create_trial_follow_ups": timedelta(hours=3),
     # Issue #776: the owner's daily brief (hourly ticks, once per local day).
     "send_owner_daily_brief": timedelta(hours=3),
+    # The parent evening win e-mail (hourly ticks, once per local day at 19:00).
+    "send_parent_evening_wins": timedelta(hours=3),
 }
 
 
