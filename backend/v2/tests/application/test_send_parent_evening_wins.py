@@ -95,8 +95,8 @@ class FakeClaims:
 class FakeResolver:
     emails: dict[str, str | None]
 
-    async def resolve_selected_audience(self, audience: Any) -> list[ResolvedRecipient]:
-        uid = audience.user_ids[0]
+    async def resolve_user_ids(self, user_ids: list[str]) -> list[ResolvedRecipient]:
+        uid = user_ids[0]
         return (
             [ResolvedRecipient(user_id=uid, email=self.emails[uid])] if uid in self.emails else []
         )
@@ -137,8 +137,7 @@ async def test_provider_error_and_missing_email_branches() -> None:
     result = await use_case.execute(SendParentEveningWinsCommand("acad", local_now))
 
     assert provider.window == (local_now.replace(hour=0), local_now)
-    assert (result.families, result.sent, result.failed) == (3, 0, 3)
-    assert result.retryable_failed == 1  # only the provider outage
+    assert (result.families, result.sent, result.failed, result.retryable_failed) == (3, 0, 3, 1)
     # A provider outage stays retryable; a missing address does not.
     assert ("p1", "503", True) in claims.failed
     assert ("p2", "no email address", False) in claims.failed

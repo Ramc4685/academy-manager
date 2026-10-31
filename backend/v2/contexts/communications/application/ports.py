@@ -84,6 +84,12 @@ class AudienceResolver(Protocol):
         self, audience: PaymentRiskAudience
     ) -> list[ResolvedRecipient]: ...
 
+    async def resolve_user_ids(self, user_ids: list[str]) -> list[ResolvedRecipient]:
+        """Users by ``user_id`` or ``auth_uid`` alias: the current academy's doc
+        or a legacy global one, never another academy's (a student's
+        ``parent_id`` may hold either id)."""
+        ...
+
 
 class EmailSendPort(Protocol):
     """Outbound email port.

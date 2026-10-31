@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
@@ -94,6 +96,12 @@ class MongoAttendanceRepository(TenantScopedRepository):
     async def find_by_attendance_id(self, attendance_id: str) -> Attendance | None:
         doc = await self._find_one({"attendance_id": attendance_id})
         return self._to_domain(doc) if doc else None
+
+    async def list_marked_between(self, start: datetime, end: datetime) -> list[Attendance]:
+        """Rows marked in ``[start, end)``, voided ones included -- the parent
+        monthly report card."""
+        cursor = self._find_many({"marked_at": {"$gte": start, "$lt": end}})
+        return [self._to_domain(doc) async for doc in cursor]
 
     async def list_for_occurrence(self, occurrence_id: str) -> list[Attendance]:
         """All student attendance rows already recorded for one occurrence."""

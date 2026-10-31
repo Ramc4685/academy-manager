@@ -31,7 +31,6 @@ from backend.v2.contexts.communications.application.unsubscribe_token import (
     UnsubscribeLinkBuilder,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
-from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
 
 
 class ParentWinsProvider(Protocol):
@@ -53,8 +52,7 @@ class SendParentEveningWinsResult:
     already_claimed: int
     sent: int
     failed: int
-    #: Failures a later attempt may fix (a provider error). The scheduler
-    #: retries the day when this is non-zero; sent families stay claimed.
+    #: Of ``failed``, the provider errors a later tick can retry.
     retryable_failed: int = 0
 
 
@@ -94,9 +92,7 @@ class SendParentEveningWins:
                 already_claimed += 1
                 continue
 
-            resolved = await self.resolver.resolve_selected_audience(
-                SelectedRecipientsAudience(user_ids=(family.parent_id,))
-            )
+            resolved = await self.resolver.resolve_user_ids([family.parent_id])
             recipient = resolved[0] if resolved else None
             if recipient is None or not recipient.email:
                 await self.claims.mark_failed(
@@ -109,7 +105,7 @@ class SendParentEveningWins:
                 family,
                 brand=brand,
                 unsubscribe_url=self.unsubscribe_links.build(
-                    academy_id=academy_id, user_id=family.parent_id, academy_slug=slug
+                    academy_id=academy_id, user_id=recipient.user_id, academy_slug=slug
                 ),
             )
             outcome = await self.sender.send(

@@ -146,6 +146,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "send_owner_daily_brief": timedelta(hours=3),
     # The parent evening win e-mail (hourly ticks, once per local day at 19:00).
     "send_parent_evening_wins": timedelta(hours=3),
+    # The parent monthly report card (hourly ticks, once per local day at 09:00).
+    "send_parent_report_cards": timedelta(hours=3),
 }
 
 
