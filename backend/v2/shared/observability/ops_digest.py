@@ -140,6 +140,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "send_win_back_notices": timedelta(hours=3),
     # Roadmap L3c: daily "Trial passed, no registration" follow-ups.
     "create_trial_follow_ups": timedelta(hours=3),
+    # Tap-to-master: evening auto-approval of queued level-ups.
+    "auto_approve_level_ups": timedelta(hours=3),
     # Issue #776: the owner's daily brief (hourly ticks, once per local day).
     "send_owner_daily_brief": timedelta(hours=3),
 }

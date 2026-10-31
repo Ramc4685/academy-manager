@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, model_validator
@@ -24,11 +25,17 @@ from backend.v2.contexts.student_progress.application.use_cases.get_skill_board 
     SkillBoardRequest,
     SkillBoardStudentRef,
 )
+from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
+    MarkSkillMasteredCommand,
+)
 from backend.v2.contexts.student_progress.application.use_cases.recommend_level_up import (
     RecommendLevelUpCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
     RecordTestAttemptCommand,
+)
+from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
+    UnmarkSkillMasteredCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     CoachSettableStatus,
@@ -107,6 +114,11 @@ class BulkStatusBody(BaseModel):
     level_id: str
     student_ids: list[str]
     status: str
+
+
+class MarkMasteredBody(BaseModel):
+    program_id: str
+    student_ids: list[str]
 
 
 def _parse_date(value: str | None) -> date:
@@ -438,6 +450,86 @@ async def bulk_update_skill_status(
             )
         )
     return {"updated": len(selected_student_ids), "student_ids": selected_student_ids}
+
+
+async def _require_roster_students(
+    use_cases: CoachUseCases,
+    coach_id: str,
+    session_id: str,
+    student_ids: list[str],
+    on_date: str | None,
+    supervisor: bool,
+) -> str:
+    """404 unless every student is on the roster of a session this coach runs."""
+    session: Any = await _session_for_request(
+        use_cases, coach_id, session_id, _parse_date(on_date) if on_date else None, supervisor
+    )
+    resolved_session_id = str(session.session_id)
+    assigned: Any = use_cases.assigned_sessions
+    if not await assigned.is_coach_assigned(coach_id, resolved_session_id):
+        raise HTTPException(status_code=404, detail="session not found")
+    roster = await use_cases.get_roster.execute(
+        str(getattr(session, "roster_session_id", resolved_session_id))
+    )
+    allowed = {entry.student_id for entry in roster}
+    if not student_ids or any(student_id not in allowed for student_id in student_ids):
+        raise HTTPException(status_code=404, detail="student not found")
+    return resolved_session_id
+
+
+@router.post("/sessions/{session_id}/skills/{skill_id}/mastered")
+async def mark_skill_mastered(
+    session_id: str,
+    skill_id: str,
+    body: MarkMasteredBody,
+    on_date: str | None = Query(None, alias="date"),
+    claims: AuthClaims = Depends(require_coach_surface()),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> object:
+    """One tap per student who got the skill today; the level moves on its own."""
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    student_ids = list(dict.fromkeys(body.student_ids))
+    resolved_session_id = await _require_roster_students(
+        use_cases, claims.user_id, session_id, student_ids, on_date, is_coach_supervisor(claims)
+    )
+    outcomes = await use_cases.student_progress.mark_skill_mastered.execute(
+        MarkSkillMasteredCommand(
+            skill_id=skill_id,
+            program_id=body.program_id,
+            student_ids=student_ids,
+            coach_id=claims.user_id,
+            session_id=resolved_session_id,
+        )
+    )
+    return {"results": [o.model_dump() for o in outcomes]}
+
+
+@router.delete("/sessions/{session_id}/students/{student_id}/skills/{skill_id}/mastered")
+async def unmark_skill_mastered(
+    session_id: str,
+    student_id: str,
+    skill_id: str,
+    program_id: str = Query(...),
+    on_date: str | None = Query(None, alias="date"),
+    claims: AuthClaims = Depends(require_coach_surface()),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> object:
+    """Undo a mistaken tap, including a level-up still waiting for tonight."""
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    await _require_roster_students(
+        use_cases, claims.user_id, session_id, [student_id], on_date, is_coach_supervisor(claims)
+    )
+    result = await use_cases.student_progress.unmark_skill_mastered.execute(
+        UnmarkSkillMasteredCommand(
+            student_id=student_id,
+            skill_id=skill_id,
+            program_id=program_id,
+            updated_by=claims.user_id,
+        )
+    )
+    return result.model_dump()
 
 
 @router.get("/students/{student_id}/passport")

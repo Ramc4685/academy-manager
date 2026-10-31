@@ -73,6 +73,7 @@ OLD_CRON_TIMES = {
     "send_owner_daily_brief": (7, 30),
     # Hourly cron at :20 whose body only worked in the academy-local 9 o'clock.
     "send_past_due_reminders": (9, 20),
+    "auto_approve_level_ups": (18, 30),
 }
 
 #: The zone the OLD code used for each academy. Every fixed-hour cron ran in
