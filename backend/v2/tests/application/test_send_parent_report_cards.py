@@ -116,8 +116,8 @@ class FakeClaims:
 class FakeResolver:
     emails: dict[str, str | None]
 
-    async def resolve_selected_audience(self, audience: Any) -> list[ResolvedRecipient]:
-        uid = audience.user_ids[0]
+    async def resolve_user_ids(self, user_ids: list[str]) -> list[ResolvedRecipient]:
+        uid = user_ids[0]
         return (
             [ResolvedRecipient(user_id=uid, email=self.emails[uid])] if uid in self.emails else []
         )
@@ -174,7 +174,7 @@ async def test_claims_per_month_and_failure_branches() -> None:
 
     assert provider.window == report_month(local_now)
     assert set(claims.keys) == {"2026-10"}
-    assert (result.families, result.sent, result.failed) == (3, 0, 3)
+    assert (result.families, result.sent, result.failed, result.retryable_failed) == (3, 0, 3, 1)
     # A provider outage stays retryable; a missing address does not.
     assert ("p1", "503", True) in claims.failed
     assert ("p2", "no email address", False) in claims.failed

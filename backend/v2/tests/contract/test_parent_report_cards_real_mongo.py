@@ -82,6 +82,9 @@ async def _seed(db: Any) -> None:
             {"academy_id": ACADEMY, "user_id": "p-raj", "email": "raj@example.test"},
             {"academy_id": ACADEMY, "user_id": "p-kim", "email": "kim@example.test"},
             {"academy_id": ACADEMY, "user_id": "p-lee", "email": "lee@example.test"},
+            # Legacy global user, referenced by its Firebase auth_uid alias.
+            {"user_id": "p-zoe", "auth_uid": "uid-zoe", "email": "zoe@example.test"},
+            {"academy_id": OTHER, "user_id": "p-zoe", "email": "zoe@other.test"},
         ]
     )
     await db["students"].insert_many(
@@ -92,6 +95,7 @@ async def _seed(db: Any) -> None:
                 ("s-diya", "p-raj", "Diya Raj"),
                 ("s-kim", "p-kim", "Mina Kim"),
                 ("s-lee", "p-lee", "Jo Lee"),
+                ("s-zoe", "uid-zoe", "Zoe Park"),
             ]
         ]
     )
@@ -206,6 +210,7 @@ async def _seed(db: Any) -> None:
             mark("s-diya", 1, "present", OCT),
             mark("s-diya", 2, "absent", OCT),
             mark("s-kim", 1, "present", NOV),  # next month
+            mark("s-zoe", 1, "present", OCT),
         ]
     )
 
@@ -243,11 +248,13 @@ async def test_one_card_per_family_for_last_month_and_none_on_rerun(real_db: Any
         first = await _use_case(real_db, stub).execute(command)
         second = await _use_case(real_db, stub).execute(command)
 
-    # Raj (two children) and Lee (unsubscribed) had an October; Kim did not.
-    assert (first.families, first.sent, first.failed) == (2, 1, 1)
-    assert (second.sent, second.already_claimed) == (0, 2)
-    assert [m["email"] for m in stub.sent] == ["raj@example.test"]
-    mail = stub.sent[0]
+    # Raj (two children), Zoe (alias parent id) and Lee (unsubscribed) had an
+    # October; Kim did not.
+    assert (first.families, first.sent, first.failed, first.retryable_failed) == (3, 2, 1, 0)
+    assert (second.sent, second.already_claimed) == (0, 3)
+    # Zoe resolves through her auth_uid to the global doc, never OTHER's.
+    assert sorted(m["email"] for m in stub.sent) == ["raj@example.test", "zoe@example.test"]
+    mail = next(m for m in stub.sent if m["email"] == "raj@example.test")
     assert mail["subject"] == "October for Aarav and Diya"
     assert str(mail["category"]) == "digest"
     body = mail["body"]
@@ -265,7 +272,7 @@ async def test_one_card_per_family_for_last_month_and_none_on_rerun(real_db: Any
 
     rows = await real_db["parent_report_card_sends"].find({}, {"_id": 0}).to_list(None)
     by_parent = {r["parent_id"]: r for r in rows}
-    assert set(by_parent) == {"p-raj", "p-lee"}
+    assert set(by_parent) == {"p-raj", "p-lee", "uid-zoe"}
     assert by_parent["p-raj"]["status"] == "sent"
     assert by_parent["p-raj"]["digest_date"] == "2026-10"
     assert by_parent["p-lee"]["retryable"] is False
