@@ -72,7 +72,13 @@ async function stubAdminAcademy(page: Page) {
       address: null,
     });
   });
+  // Issue #842: AdminLayout now feeds the Inbox nav badge from this endpoint
+  // on every admin page, so every shell stub must cover it.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
 }
+
 
 test.describe("admin students", () => {
   test("searches, filters, and loads the next cursor using BFF-rendered attendance and dues", async ({
@@ -185,7 +191,8 @@ test.describe("admin students", () => {
     await page.goto("/admin/students");
     await expect(page.getByTestId("admin-students-row-student-1")).toContainText("Amit Rao");
     await expect(page.getByTestId("admin-students-row-student-1")).toContainText("91%");
-    await expect(page.getByTestId("admin-students-row-student-1")).toContainText("CURRENT");
+    // #897: People chips are Title Case everywhere, from lib/people-status.
+    await expect(page.getByTestId("admin-students-row-student-1")).toContainText("Current");
     await expect(requests[0]).toContain("limit=25");
 
     await page.getByRole("button", { name: /^next page$/i }).click();
@@ -380,7 +387,7 @@ test.describe("admin students", () => {
         ],
       });
     });
-    await page.route("**/api/v2/admin/programs*", (route) => {
+    await page.route("**/api/v2/admin/curriculum/programs*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { programs: [] });
     });
@@ -406,6 +413,36 @@ test.describe("admin students", () => {
         delete_enrollment_requires_owner: true,
       });
     });
+    // Settings Phase 6: one row per waiver that applies to the student. A
+    // missing signature is a warning here, never a block.
+    await page.route("**/api/v2/admin/waivers/students/student-1", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        student_id: "student-1",
+        waivers: [
+          {
+            waiver_template_id: "wt-liability",
+            lineage_key: "wl-liability",
+            title: "Liability waiver",
+            version: "3",
+            status: "older_version",
+            signed_version: "2",
+            signed_at: "2026-06-01T12:00:00Z",
+            signature_id: "ws-liability-old",
+          },
+          {
+            waiver_template_id: "wt-photo",
+            lineage_key: "wl-photo",
+            title: "Photo consent",
+            version: "1",
+            status: "unsigned",
+            signed_version: null,
+            signed_at: null,
+            signature_id: null,
+          },
+        ],
+      });
+    });
     await page.route("**/api/v2/admin/students/student-1", (route) => {
       if (route.request().method() === "PATCH") {
         const requestBody = route.request().postDataJSON() as Record<string, unknown>;
@@ -425,6 +462,31 @@ test.describe("admin students", () => {
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("$110");
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("91%");
     await expect(page.getByRole("tab", { name: "Training" })).toBeVisible();
+
+    // #897, the two geometry acceptance criteria. This test runs on
+    // chromium-mobile (Pixel 7, 412px), webkit-mobile (iPhone 14, 390px) and
+    // chromium-desktop, so each branch is really exercised: a phone must give
+    // the parent's number a 44px tap target and
+    // must show the tabs without scrolling; a desktop must NOT inflate an
+    // inline link to 44px (the `md:min-h-0` collapse).
+    const viewport = page.viewportSize();
+    const call = page
+      .getByTestId("admin-student-parent-contacts")
+      .getByRole("link", { name: /^Call/ });
+    await expect(call).toBeVisible();
+    const callBox = await call.boundingBox();
+    expect(callBox).not.toBeNull();
+    if (viewport && viewport.width < 768) {
+      expect(callBox!.height).toBeGreaterThanOrEqual(44);
+      const tabsBox = await page.getByTestId("admin-student-tabs").boundingBox();
+      expect(tabsBox).not.toBeNull();
+      expect(tabsBox!.y + tabsBox!.height).toBeLessThanOrEqual(viewport.height);
+    } else {
+      expect(callBox!.height).toBeLessThan(44);
+    }
+
+    // The high-impact action moved off the header row and into the menu.
+    await expect(page.getByTestId("admin-student-actions")).toBeVisible();
 
     await page.getByRole("tab", { name: "Training" }).click();
     await expect(page.getByTestId("admin-student-training-tab")).toContainText(
@@ -491,8 +553,18 @@ test.describe("admin students", () => {
       page.getByTestId("admin-student-family-billing-link").getByRole("link"),
     ).toHaveAttribute("href", /\/admin\/families\//);
 
+    await expect(page.getByTestId("admin-student-waiver-warning")).toContainText(
+      "Liability waiver, Photo consent",
+    );
     await page.getByRole("tab", { name: "Family & Compliance" }).click();
     await expect(page.getByTestId("admin-student-compliance-tab")).toContainText("2026-v1");
+    const olderRow = page.getByTestId("admin-student-waiver-wt-liability");
+    await expect(olderRow).toContainText("Signed an older version (v2)");
+    await expect(olderRow.getByRole("link", { name: "View signature" })).toHaveAttribute(
+      "href",
+      "/admin/waivers/signatures/ws-liability-old",
+    );
+    await expect(page.getByTestId("admin-student-waiver-wt-photo")).toContainText("Not signed");
     await expect(page.getByLabel("T-shirt size")).toHaveValue("M");
     await expect(page.getByLabel("T-shirt size")).toHaveAttribute("maxlength", "20");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);

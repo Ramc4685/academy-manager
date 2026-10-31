@@ -41,6 +41,35 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         doc = await self._find_one({"occurrence_id": occurrence_id})
         return self._to_domain(doc) if doc else None
 
+    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]:
+        """Batch counterpart of ``get`` (issue #841).
+
+        The admin makeup queue needs the class + start time behind several
+        occurrence ids at once; one ``$in`` read keeps that at a single
+        tenant-scoped query instead of one per row.
+        """
+        if not occurrence_ids:
+            return []
+        cursor = self._find_many({"occurrence_id": {"$in": list(occurrence_ids)}})
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_by_ids_between(
+        self, occurrence_ids: list[str], *, start_at: datetime, end_at: datetime
+    ) -> list[SessionOccurrence]:
+        """``get_many`` bounded to occurrences starting in ``[start_at, end_at]``
+        (issue #1038: the parent schedule's one-time make-up / trial rows).
+        One tenant-scoped ``$in`` read; out-of-window ids cost nothing."""
+        if not occurrence_ids:
+            return []
+        cursor = self._find_many(
+            {
+                "occurrence_id": {"$in": list(occurrence_ids)},
+                "start_at": {"$gte": start_at, "$lte": end_at},
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_session(self, session_id: str) -> list[SessionOccurrence]:
         cursor = self._find_many(
             {
@@ -58,17 +87,23 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         *,
         coach_id: str,
         on_date: date,
+        include_cancelled: bool = False,
     ) -> list[SessionOccurrence]:
         # Occurrences are stored as UTC instants but belong to a session-local
         # calendar day. Fetch a widened UTC window (±1 day) so evening classes
         # whose UTC instant rolls past midnight are still candidates; the
         # application layer (ListCoachOccurrencesForDate) narrows the result
         # to the requested date in each session's own timezone (#510).
+        #
+        # ``include_cancelled`` is opt-in (#777): the coach's own day asks for
+        # cancelled classes so it can show them struck through with the
+        # reason; every other caller (payroll, digests, the schedule) keeps
+        # the historical "scheduled classes only" contract.
         start, end = _candidate_day_bounds_utc(on_date)
         cursor = self._find_many(
             {
                 "start_at": {"$gte": start, "$lte": end},
-                "status": {"$ne": "cancelled"},
+                **_status_filter(include_cancelled),
                 "$or": [
                     {"scheduled_coach_id": coach_id},
                     {"actual_coach_id": coach_id},
@@ -104,17 +139,47 @@ class MongoSessionOccurrenceRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
-    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]:
-        """Every non-cancelled occurrence in the academy on ``on_date``.
+    async def list_on_date(
+        self, *, on_date: date, include_cancelled: bool = False
+    ) -> list[SessionOccurrence]:
+        """Every occurrence in the academy on ``on_date``.
 
         Coach-supervisor counterpart of ``list_for_coach_on_date``: same
-        widened UTC candidate window (#510), no coach filter. Tenant scope
-        comes from ``_find_many`` like every other read here.
+        widened UTC candidate window (#510), same opt-in ``include_cancelled``
+        (#777), no coach filter. Tenant scope comes from ``_find_many`` like
+        every other read here.
         """
         start, end = _candidate_day_bounds_utc(on_date)
         cursor = self._find_many(
             {
                 "start_at": {"$gte": start, "$lte": end},
+                **_status_filter(include_cancelled),
+            },
+            sort=[("start_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_between(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[SessionOccurrence]:
+        """Every non-cancelled occurrence in the academy within an EXACT
+        ``[start_at, end_at]`` UTC window (no widening).
+
+        Batching counterpart of ``list_for_session_between`` without the
+        ``session_id``/``template_session_id`` filter: used by the parent
+        daily digest (#531) to fetch "today's" occurrences for the whole
+        academy in one query instead of one query per enrollment. Unlike
+        ``list_on_date``, this takes the caller's own exact bounds (e.g. the
+        digest's timezone-aware ``_day_bounds_utc``) rather than widening
+        ±1 day, so callers that already computed a precise window don't need
+        an extra in-memory narrowing pass.
+        """
+        cursor = self._find_many(
+            {
+                "start_at": {"$gte": start_at, "$lte": end_at},
                 "status": {"$ne": "cancelled"},
             },
             sort=[("start_at", 1)],
@@ -320,6 +385,11 @@ def _to_doc(occurrence: SessionOccurrence) -> dict[str, Any]:
         "template_session_id": occurrence.template_session_id,
         "assistant_coach_ids": list(occurrence.assistant_coach_ids),
     }
+
+
+def _status_filter(include_cancelled: bool) -> dict[str, Any]:
+    """Mongo clause hiding cancelled rows unless the caller asked for them."""
+    return {} if include_cancelled else {"status": {"$ne": "cancelled"}}
 
 
 def _candidate_day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:

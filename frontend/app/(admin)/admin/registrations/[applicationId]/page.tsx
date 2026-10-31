@@ -14,6 +14,10 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Card, Chip, LaneHeader, Overline } from "@/components/ds";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+
+/** The three decisions, and the second look each one now needs (#838). */
+type Decision = "approve" | "waitlist" | "reject";
 
 export default function AdminRegistrationDetailPage() {
   const params = useParams<{ applicationId: string }>();
@@ -24,6 +28,7 @@ export default function AdminRegistrationDetailPage() {
   const [waitlistReason, setWaitlistReason] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<Decision | null>(null);
 
   const query = useQuery({
     queryKey: queryKeys.admin.registrationDetail(applicationId),
@@ -58,20 +63,33 @@ export default function AdminRegistrationDetailPage() {
     onError: (err: Error) => setError(err.message),
   });
   const rejectMutation = useMutation({
-    mutationFn: () =>
-      rejectAdminRegistration(applicationId, {
-        reason: rejectReason.trim() || "Registration rejected by admin",
-      }),
+    // #838: a blank reason used to be swapped for a canned one, so the family
+    // was declined with a sentence nobody wrote. The dialog now refuses to
+    // submit without one.
+    mutationFn: () => rejectAdminRegistration(applicationId, { reason: rejectReason.trim() }),
     onSuccess: () => {
       refresh();
-      router.push("/admin/registrations");
+      router.push("/admin/inbox?tab=registrations");
     },
     onError: (err: Error) => setError(err.message),
   });
 
+  const studentName = query.data?.student_name || "this student";
+  const familyLabel = query.data?.parent_name || query.data?.parent_email || "the family";
+  const sessionLabel =
+    query.data?.session_title || query.data?.selected_session_id || "the requested session";
+
+  const runDecision = (decision: Decision) => {
+    setError(null);
+    setConfirming(null);
+    if (decision === "approve") approveMutation.mutate();
+    if (decision === "waitlist") waitlistMutation.mutate();
+    if (decision === "reject") rejectMutation.mutate();
+  };
+
   return (
     <section data-testid="admin-registration-detail" className="space-y-6">
-      <Link href="/admin/registrations" className="text-sm font-semibold text-rally-cobalt hover:underline">
+      <Link href="/admin/inbox?tab=registrations" className="text-sm font-semibold text-rally-cobalt hover:underline">
         Back to registrations
       </Link>
 
@@ -108,13 +126,31 @@ export default function AdminRegistrationDetailPage() {
             </Card>
           )}
 
+          {(query.data.unsigned_waivers?.length ?? 0) > 0 && (
+            <Card
+              data-testid="admin-registration-waiver-warning"
+              p={20}
+              style={{ borderColor: "#facc15", background: "#fefce8" }}
+            >
+              <p role="status" className="text-sm font-semibold text-amber-900">
+                Waiver not signed: {query.data.unsigned_waivers?.map((w) => w.title).join(", ")}.
+                You can still approve. The student page keeps showing it until it is signed.
+              </p>
+            </Card>
+          )}
+
           <LaneHeader index="02" title="Decision" />
           <Card p={20}>
-            <div className="grid gap-4 lg:grid-cols-3">
+            {/* Issue #747: `grid-cols-1` and `min-w-0` (below) are load-bearing.
+                Without an explicit base track the implicit column is sized by the
+                panels' intrinsic content, and a grid item defaults to
+                `min-width:auto` — so at 390px the Approve/Waitlist/Reject buttons
+                were pushed off the right edge with no way to reach them. */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               <ActionPanel
                 title="Approve"
                 copy="Create the student record, reserve the roster seat, and activate enrollment."
-                textareaLabel="Waiver override reason"
+                textareaLabel="Note for the record (optional)"
                 textareaValue={overrideReason}
                 onTextareaChange={setOverrideReason}
                 buttonLabel={approveMutation.isPending ? "Approving..." : "Approve"}
@@ -124,7 +160,7 @@ export default function AdminRegistrationDetailPage() {
                 }
                 onClick={() => {
                   setError(null);
-                  approveMutation.mutate();
+                  setConfirming("approve");
                 }}
               />
               <ActionPanel
@@ -140,7 +176,7 @@ export default function AdminRegistrationDetailPage() {
                 }
                 onClick={() => {
                   setError(null);
-                  waitlistMutation.mutate();
+                  setConfirming("waitlist");
                 }}
               />
               <ActionPanel
@@ -152,16 +188,91 @@ export default function AdminRegistrationDetailPage() {
                 buttonLabel={rejectMutation.isPending ? "Rejecting..." : "Reject"}
                 disabled={
                   rejectMutation.isPending ||
+                  !rejectReason.trim() ||
                   !["PENDING_APPROVAL", "DECLINING"].includes(query.data.status)
+                }
+                hint={
+                  rejectReason.trim()
+                    ? undefined
+                    : "Type a reason above — a rejection is never sent without one."
                 }
                 onClick={() => {
                   setError(null);
-                  rejectMutation.mutate();
+                  setConfirming("reject");
                 }}
               />
             </div>
             {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
           </Card>
+
+          <ConfirmActionDialog
+            open={confirming === "approve"}
+            onOpenChange={(open) => !open && setConfirming(null)}
+            overline="Confirm approval"
+            title="Approve this registration?"
+            subject={`${studentName} — ${familyLabel}`}
+            consequence={
+              <>
+                <p>
+                  Creates the student record and takes a seat in {sessionLabel}. Enrollment goes
+                  active, so the family starts being invoiced for it.
+                </p>
+                <p>{familyLabel} is emailed a confirmation with the session details.</p>
+              </>
+            }
+            confirmLabel="Approve registration"
+            confirmVariant="primary"
+            pending={approveMutation.isPending}
+            onConfirm={() => runDecision("approve")}
+          />
+
+          <ConfirmActionDialog
+            open={confirming === "waitlist"}
+            onOpenChange={(open) => !open && setConfirming(null)}
+            overline="Confirm waitlist"
+            title="Move this registration to the waitlist?"
+            subject={`${studentName} — ${familyLabel}`}
+            consequence={
+              <>
+                <p>
+                  Creates the student record but takes no seat in {sessionLabel}. Nothing is
+                  invoiced while the registration waits.
+                </p>
+                <p>{familyLabel} is emailed that they are on the waitlist.</p>
+              </>
+            }
+            confirmLabel="Move to waitlist"
+            confirmVariant="primary"
+            pending={waitlistMutation.isPending}
+            onConfirm={() => runDecision("waitlist")}
+          />
+
+          <ConfirmActionDialog
+            open={confirming === "reject"}
+            onOpenChange={(open) => !open && setConfirming(null)}
+            overline="Confirm rejection"
+            title="Reject this registration?"
+            subject={`${studentName} — ${familyLabel}`}
+            consequence={
+              <>
+                <p>
+                  No student record, no seat in {sessionLabel} and no invoice. The application
+                  closes and cannot be approved afterwards — the family would have to re-apply.
+                </p>
+                <p>{familyLabel} is emailed that the registration was declined.</p>
+              </>
+            }
+            reason={{
+              label: "Reason for rejecting",
+              value: rejectReason,
+              onChange: setRejectReason,
+              required: true,
+              placeholder: "Recorded on the application.",
+            }}
+            confirmLabel="Reject registration"
+            pending={rejectMutation.isPending}
+            onConfirm={() => runDecision("reject")}
+          />
         </>
       )}
     </section>
@@ -193,9 +304,14 @@ function RegistrationSummary({ registration }: { registration: AdminRegistration
             <div className="mt-2">
               <Chip
                 variant={registration.waiver_satisfied ? "approved" : "pending"}
-                label={registration.waiver_required ? (registration.waiver_satisfied ? "SIGNED" : "NEEDED") : "NOT REQUIRED"}
+                label={registration.waiver_required ? (registration.waiver_satisfied ? "SIGNED" : "UNSIGNED") : "NOT REQUIRED"}
               />
             </div>
+            {(registration.unsigned_waivers?.length ?? 0) > 0 && (
+              <p className="mt-2 text-[12px] text-rally-subtle">
+                Still to sign: {registration.unsigned_waivers?.map((w) => w.title).join(", ")}
+              </p>
+            )}
             {registration.waiver_title && (
               <p className="mt-2 text-[12px] text-rally-subtle">
                 {registration.waiver_title} {registration.waiver_version ? `v${registration.waiver_version}` : ""}
@@ -216,6 +332,7 @@ function ActionPanel({
   onTextareaChange,
   buttonLabel,
   disabled,
+  hint,
   onClick,
 }: {
   title: string;
@@ -225,10 +342,11 @@ function ActionPanel({
   onTextareaChange: (value: string) => void;
   buttonLabel: string;
   disabled: boolean;
+  hint?: string;
   onClick: () => void;
 }) {
   return (
-    <div className="rounded-md border border-neutral-200 p-4">
+    <div className="min-w-0 rounded-md border border-neutral-200 p-4">
       <h3 className="font-semibold text-rally-base">{title}</h3>
       <p className="mt-2 min-h-[42px] text-[12px] leading-5 text-rally-muted">{copy}</p>
       <label className="mt-4 block text-[12px] font-semibold text-rally-ink">
@@ -247,6 +365,7 @@ function ActionPanel({
       >
         {buttonLabel}
       </button>
+      {hint && <p className="mt-2 text-[12px] leading-5 text-rally-muted">{hint}</p>}
     </div>
   );
 }

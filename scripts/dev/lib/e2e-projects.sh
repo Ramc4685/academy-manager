@@ -46,7 +46,9 @@ e2e_shard_list() {
 # skipped by default and included with `--full` or PRE_PUSH_E2E_ALL=1. WebKit
 # under local load misses first-load budgets on routes the diff never touched,
 # and failOnFlakyTests then blocks pushes that CI itself would merge.
-E2E_NIGHTLY_ONLY_PROJECTS="webkit-mobile"
+# a11y-chromium (the D11 axe gate) is advisory the same way: it runs as its
+# own job in nightly-e2e.yml, not in production.yml's per-PR matrix.
+E2E_NIGHTLY_ONLY_PROJECTS="webkit-mobile a11y-chromium"
 
 # Echoes the shards the local gate should run: e2e_shard_list minus the
 # nightly-only projects, unless $2 is "--full" or PRE_PUSH_E2E_ALL=1. Never

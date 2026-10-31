@@ -7,12 +7,27 @@ enrollments, payments, expenses, attendance, lesson_plans, progress_notes,
 coach_payouts, payout_rules, move_log, messages, notifications, invites).
 Keeps only the configured admin account, then adds the two real coaches
 and all parents from the sheet.
+
+HISTORICAL, SINGLE-TENANT (#881): this importer predates tenancy and has no
+``academy_id`` anywhere — not only the ``expenses`` inserts but every
+collection it writes (students, enrollments, payments, sessions, attendance,
+...) lands unscoped, keyed by that one spreadsheet's column names. It must not
+be run for a second academy; a reusable onboarding path needs ``academy_id``
+threaded through every document and selector (see ``apply_blno_mongo.py``,
+whose selectors are tenant-scoped).
+
+Runtime guard (``single_tenant_guard``): ``main()`` refuses to run unless
+``BLNO_IMPORT_SINGLE_TENANT_ACK=1`` is set AND the target database holds
+exactly one ``academies`` row. That row's ``academy_id`` is stamped on the
+``expenses`` documents (with an ``expense_id``) so they satisfy the per-academy
+identity the v2 repos expect; the other collections keep their legacy shape.
 """
 import os
 import re
 import sys
 import asyncio
 import json
+import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -30,11 +45,29 @@ from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 SOURCE = os.environ.get("BLNO_XLSX", "/tmp/blno.xlsx")
 COACH_PASSWORD = os.environ.get("BLNO_COACH_PASSWORD")
 PARENT_PASSWORD = os.environ.get("BLNO_PARENT_PASSWORD")
-if not COACH_PASSWORD or not PARENT_PASSWORD:
-    sys.exit(
-        "BLNO_COACH_PASSWORD and BLNO_PARENT_PASSWORD must be set "
-        "before running import_blno.py"
-    )
+SINGLE_TENANT_ACK_ENV = "BLNO_IMPORT_SINGLE_TENANT_ACK"
+
+
+def single_tenant_guard(*, academy_ids: list[str], ack: str | None) -> str:
+    """Refuse to run against anything but an acknowledged single-academy DB (#881).
+
+    Returns the one ``academy_id`` to stamp on the documents this importer
+    writes. Raises ``SystemExit`` when the operator has not set
+    ``BLNO_IMPORT_SINGLE_TENANT_ACK=1``, when the DB has no ``academies`` row
+    (nothing to scope to), or when it has more than one (a second tenant
+    exists and this importer would drop and rewrite shared collections).
+    """
+    if ack != "1":
+        raise SystemExit(
+            f"import_blno.py is a historical single-tenant importer; set "
+            f"{SINGLE_TENANT_ACK_ENV}=1 to confirm the target DB serves one academy"
+        )
+    if len(academy_ids) != 1:
+        raise SystemExit(
+            f"import_blno.py requires exactly one academies row, found "
+            f"{len(academy_ids)}; refusing to write unscoped documents"
+        )
+    return academy_ids[0]
 
 
 def hp(p: str) -> str:
@@ -94,8 +127,21 @@ def fmt_phone(p) -> str:
 
 
 async def main():
+    if not COACH_PASSWORD or not PARENT_PASSWORD:
+        sys.exit(
+            "BLNO_COACH_PASSWORD and BLNO_PARENT_PASSWORD must be set "
+            "before running import_blno.py"
+        )
     mongo_url = os.environ["MONGO_URL"]
     db = AsyncIOMotorClient(mongo_url)[os.environ["DB_NAME"]]
+    academy_ids = [
+        d["academy_id"]
+        async for d in db.academies.find({"academy_id": {"$gt": ""}}, {"academy_id": 1})
+    ]
+    academy_id = single_tenant_guard(
+        academy_ids=academy_ids, ack=os.environ.get(SINGLE_TENANT_ACK_ENV)
+    )
+    print("Single-tenant import acknowledged for academy:", academy_id)
 
     print("Loading spreadsheet:", SOURCE)
     wb = openpyxl.load_workbook(SOURCE, data_only=True)
@@ -339,6 +385,7 @@ async def main():
     for m in months_data:
         if m["rent"]:
             await db.expenses.insert_one({
+                "academy_id": academy_id, "expense_id": str(uuid.uuid4()),
                 "category": "Court rental", "description": "Monthly rent",
                 "amount": m["rent"], "date": f"{m['period']}-01",
                 "paid_to": "Landlord", "status": "paid", "notes": "imported",
@@ -346,6 +393,7 @@ async def main():
             })
         if m["other"]:
             await db.expenses.insert_one({
+                "academy_id": academy_id, "expense_id": str(uuid.uuid4()),
                 "category": "Miscellaneous", "description": "Other expenses",
                 "amount": m["other"], "date": f"{m['period']}-01",
                 "paid_to": "", "status": "paid", "notes": "imported",

@@ -11,7 +11,10 @@ import { getAll, put } from "./idb";
 
 export interface AuditEntry {
   id?: number;
-  kind: "synced" | "needs_review" | "dismissed" | "exported";
+  // "retried": the coach re-queued a tray entry by hand (#895). Recorded so
+  // the export still explains a mark that failed, was retried and then landed
+  // — otherwise the CSV shows only the failure and the eventual "synced".
+  kind: "synced" | "needs_review" | "dismissed" | "exported" | "retried";
   mutation_id: string;
   endpoint: string;
   error_code?: string;

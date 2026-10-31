@@ -46,8 +46,15 @@ from backend.v2.contexts.coaching.application.use_cases.session_notes import (
     ListProgressNotes,
     SetProgressNoteVisibility,
 )
+from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
+    VoidAttendance,
+)
 from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
-from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
+from backend.v2.contexts.coaching.domain.models import (
+    Attendance,
+    CoachAttendance,
+    CoachAttendanceAuditEntry,
+)
 from backend.v2.contexts.enrollment.application.use_cases.coach_roster_writes import (
     CoachAddStudentToRoster,
     CoachRemoveStudentFromRoster,
@@ -160,13 +167,15 @@ class FakeOccurrenceQuery:
         return None
 
     async def list_for_coach_on_date(
-        self, *, coach_id: str, on_date: date
+        self, *, coach_id: str, on_date: date, include_cancelled: bool = False
     ) -> list[SessionOccurrence]:
+        # Mirrors MongoSessionOccurrenceRepository: cancelled rows are hidden
+        # unless the caller opts in (#777).
         return [
             occurrence
             for occurrence in self._occurrences
             if occurrence.start_at.date() == on_date
-            and occurrence.status != "cancelled"
+            and (include_cancelled or occurrence.status != "cancelled")
             and coach_id
             in {
                 occurrence.scheduled_coach_id,
@@ -199,11 +208,14 @@ class FakeOccurrenceQuery:
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)[:limit]
 
-    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]:
+    async def list_on_date(
+        self, *, on_date: date, include_cancelled: bool = False
+    ) -> list[SessionOccurrence]:
         rows = [
             occurrence
             for occurrence in self._occurrences
-            if occurrence.start_at.date() == on_date and occurrence.status != "cancelled"
+            if occurrence.start_at.date() == on_date
+            and (include_cancelled or occurrence.status != "cancelled")
         ]
         return sorted(rows, key=lambda occurrence: occurrence.start_at)
 
@@ -322,12 +334,6 @@ class FakeOutbox:
 
     async def append(self, event, *, session=None) -> None:
         self.appended.append(event)
-
-    async def pull_unprocessed(self, limit: int = 100):
-        return []
-
-    async def mark_processed(self, event_id: str) -> None:
-        pass
 
 
 class FakeIdempotencyStore:
@@ -815,6 +821,16 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     _get_roster = GetSessionRoster(enrollments=enrollments, students=students)
 
+    # Issue #774: overdue cents per student, seeded per test via
+    # ``coach_client.seed["overdue_cents"]``. Empty = no PAYMENT DUE chip.
+    _overdue_seed: dict[str, int] = {}
+
+    async def _overdue_cents_by_student(student_ids, on_date):
+        _ = on_date
+        return {sid: cents for sid, cents in _overdue_seed.items() if sid in set(student_ids)}
+
+    _overdue_cents_by_student.seed = _overdue_seed  # type: ignore[attr-defined]
+
     use_cases = CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=_get_roster,
@@ -823,6 +839,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             absence_notices=absence_notices,
             occurrence_roster=occurrence_roster,
             students=students,
+            occurrences=occurrences,
         ),
         mark_attendance=MarkAttendance(
             attendance_repo=_attendance_repo,
@@ -850,6 +867,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             clock=_now,
         ),
         list_attendance_for_occurrence=_attendance_repo.list_for_occurrence,
+        overdue_cents_by_student=_overdue_cents_by_student,
         get_dashboard_metrics=_dashboard,
         create_lesson_plan=CreateLessonPlan(notes=notes, sessions=session_lookup),
         list_lesson_plans=ListLessonPlans(notes=notes, sessions=session_lookup),
@@ -929,6 +947,7 @@ def coach_client(seed) -> Iterator[TestClient]:
     with TestClient(app) as client:
         client.coach_use_cases = use_cases  # type: ignore[attr-defined]
         client.messages_repo = use_cases._messages_repo  # type: ignore[attr-defined]
+        client.overdue_cents = use_cases.overdue_cents_by_student.seed  # type: ignore[attr-defined]
         yield client
 
 
@@ -1013,6 +1032,9 @@ from backend.v2.contexts.billing.application.use_cases.finance import (
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders import (
+    SendPastDueReminders,
+)
 from backend.v2.contexts.billing.application.use_cases.tuition_discounts import (
     RemoveTuitionDiscount,
     SetTuitionDiscount,
@@ -1064,6 +1086,9 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    DeclineWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
@@ -1094,12 +1119,6 @@ class _AdminFakeOutbox:
 
     async def append(self, event, *, session=None):
         self.events.append(event)
-
-    async def pull_unprocessed(self, limit=100):
-        return []
-
-    async def mark_processed(self, _):
-        pass
 
 
 @dataclass
@@ -1263,6 +1282,14 @@ class FakeAdminCoachAttendanceRepo:
 
 
 @dataclass
+class FakeCoachAttendanceAuditRepo:
+    entries: list[CoachAttendanceAuditEntry] = field(default_factory=list)
+
+    async def append(self, entry: CoachAttendanceAuditEntry) -> None:
+        self.entries.append(entry)
+
+
+@dataclass
 class FakeEnrollmentWriter:
     rows: dict[str, Any] = field(default_factory=dict)
     amounts: dict[str, int | None] = field(default_factory=dict)
@@ -1348,6 +1375,27 @@ class FakeEnrollmentEvents:
 
     async def list_for_enrollment(self, enrollment_id):
         return [event for event in self.rows if event.enrollment_id == enrollment_id]
+
+    async def list_for_enrollment_paginated(self, enrollment_id, *, limit=100, cursor=None):
+        # Mirrors the AdminUseCases.list_enrollment_events contract (#748):
+        # production wires that to the paginated read model, not to this
+        # repo's plain list_for_enrollment — a different fake method keeps
+        # the two contracts distinct here too. Most-recent-first, real
+        # cursor semantics, so route-level pagination tests exercise the
+        # actual limit/cursor/next_cursor round trip.
+        matches = sorted(
+            (e for e in self.rows if e.enrollment_id == enrollment_id),
+            key=lambda e: (e.occurred_at, e.event_id),
+            reverse=True,
+        )
+        if cursor is not None:
+            cursor_at, cursor_id = cursor
+            matches = [e for e in matches if (e.occurred_at, e.event_id) < (cursor_at, cursor_id)]
+        page = matches[: limit + 1]
+        has_more = len(page) > limit
+        page = page[:limit]
+        next_cursor = (page[-1].occurred_at, page[-1].event_id) if has_more and page else None
+        return page, next_cursor
 
 
 @dataclass
@@ -1443,6 +1491,62 @@ class FakeWaitlistRepo:
         e = self.entries.get(waitlist_id)
         if e is not None:
             self.entries[waitlist_id] = e.model_copy(update={"status": status})
+
+    async def get(self, waitlist_id):
+        return self.entries.get(waitlist_id)
+
+    async def mark_offered(self, waitlist_id, *, offer_expires_at, holds_seat=True):
+        e = self.entries.get(waitlist_id)
+        if e is not None:
+            self.entries[waitlist_id] = e.model_copy(
+                update={
+                    "status": "offered",
+                    "offer_expires_at": offer_expires_at,
+                    "offer_holds_seat": holds_seat,
+                }
+            )
+
+    async def give_seat_to_seatless_offer(self, session_id):
+        open_ = sorted(
+            (
+                e
+                for e in self.entries.values()
+                if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+            ),
+            key=lambda e: e.joined_at,
+        )
+        if not open_:
+            return None
+        upgraded = open_[0].model_copy(update={"offer_holds_seat": True})
+        self.entries[upgraded.waitlist_id] = upgraded
+        return upgraded
+
+    async def count_seatless_offers(self, session_id):
+        return sum(
+            1
+            for e in self.entries.values()
+            if e.session_id == session_id and e.status == "offered" and not e.offer_holds_seat
+        )
+
+    async def find_expired_offers(self, *, before):
+        return [
+            e
+            for e in self.entries.values()
+            if e.status == "offered"
+            and e.offer_expires_at is not None
+            and e.offer_expires_at <= before
+        ]
+
+    async def transition_status(self, waitlist_id, *, expected, to):
+        e = self.entries.get(waitlist_id)
+        if e is None or e.status != expected:
+            return False
+        self.entries[waitlist_id] = e.model_copy(update={"status": to})
+        return True
+
+    async def list_for_parent(self, parent_id):
+        rows = [e for e in self.entries.values() if e.parent_id == parent_id]
+        return sorted(rows, key=lambda e: e.joined_at)
 
     async def find_waiting_for_session_student(self, session_id, student_id):
         return next(
@@ -1841,11 +1945,17 @@ class FakeMessageRepo:
         )
 
     async def for_admin(self, user_id):
+        """Mirrors MongoMessageRepository.for_admin — both DM directions (#864)."""
         return sorted(
             (
                 m
                 for m in self.rows.values()
-                if m.deleted_at is None and (m.recipient_id == user_id or m.kind == "announcement")
+                if m.deleted_at is None
+                and (
+                    m.recipient_id == user_id
+                    or (m.kind == "dm" and m.sender_id == user_id)
+                    or m.kind == "announcement"
+                )
             ),
             key=lambda m: m.created_at,
             reverse=True,
@@ -1955,6 +2065,7 @@ def admin_seed():
     enrollments = FakeEnrollmentWriter()
     occurrences = FakeAdminOccurrenceRepo()
     coach_attendance = FakeAdminCoachAttendanceRepo()
+    coach_attendance_audit = FakeCoachAttendanceAuditRepo()
     sessions.sessions["sess-1"] = Session(
         session_id="sess-1",
         academy_id="acad",
@@ -1979,6 +2090,7 @@ def admin_seed():
         "sessions": sessions,
         "occurrences": occurrences,
         "coach_attendance": coach_attendance,
+        "coach_attendance_audit": coach_attendance_audit,
         "enrollments": enrollments,
         "enrollment_query": enrollments,
         "enrollment_events": FakeEnrollmentEvents(),
@@ -1994,6 +2106,8 @@ def admin_seed():
         "payouts": FakePayoutRepo(),
         "messages": FakeMessageRepo(),
         "waivers": FakeAdminWaivers(),
+        # Issue #774: owner-facing autopay counts for the home attention list.
+        "dunning_alerts": {"failed_autopay": 0, "dunning_exhausted": 0},
         "invoice_details": {},
         "invoice_artifacts": {},
         "outbox": _AdminFakeOutbox(),
@@ -2006,7 +2120,7 @@ def admin_seed():
 class _FakeLoginInviteSender:
     def __init__(self) -> None:
         self.sent: list[str] = []
-        self.known = {"coach-1", "u-admin", "p-1"}
+        self.known = {"coach-1", "u-admin", "p-1", "o-1", "a-2"}
 
     async def execute(self, user_id, *, academy_id):
         from datetime import UTC, datetime
@@ -2250,10 +2364,21 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                 template_session_id=occurrence.template_session_id,
             )
 
+    class _AdminPayoutPeriodLock:
+        """Finance-backed freeze lookup (#787). ``coach-frozen`` sits inside an
+        approved payout period so the owner-override path (#821) is reachable
+        from the route tests; every other coach's window is open."""
+
+        async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+            return "approved" if coach_id == "coach-frozen" else None
+
+    _coach_attendance_audit = seed["coach_attendance_audit"]
     mark_coach_attendance = MarkCoachAttendance(
         coach_attendance=coach_attendance,
+        coach_attendance_audit=_coach_attendance_audit,
         occurrence_lookup=_AdminOccurrenceLookup(),
         academy_id="acad",
+        payout_lock=_AdminPayoutPeriodLock(),
         clock=lambda: datetime(2026, 5, 16, 10, 35, tzinfo=UTC),
     )
 
@@ -2273,6 +2398,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     correct_attendance = CorrectAttendance(
         attendance_repo=_student_attendance,
         occurrence_lookup=_AdminOccurrenceLookup(),
+        outbox=outbox,
+        academy_id=lambda: "acad",
+        clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
+    )
+    void_attendance = VoidAttendance(
+        attendance_repo=_student_attendance,
         outbox=outbox,
         academy_id=lambda: "acad",
         clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
@@ -2303,7 +2434,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             calculated_by="admin",
         )
 
-    async def list_audit_logs():
+    async def list_audit_logs(actor_type=None):
         return []
 
     async def list_dues_followup():
@@ -2333,12 +2464,38 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
     send_dues_reminders = SendDuesReminders(sender=_FakeDuesReminderSender())
 
+    class _NoPastDueInvoices:
+        async def list_past_due(self, *, due_on):
+            _ = due_on
+            return []
+
+    class _UnusedPastDueSender:
+        async def send_past_due_reminder(self, *, invoice, days_past_due):
+            raise AssertionError("no past-due invoices in the interface fixtures")
+
+    class _UnusedReminderStamp:
+        async def stamp_reminder(self, *, invoice_id, days_past_due):
+            raise AssertionError("no past-due invoices in the interface fixtures")
+
+    async def count_dunning_alerts() -> dict[str, int]:
+        return dict(seed["dunning_alerts"])
+
+    send_past_due_reminders = SendPastDueReminders(
+        invoices=_NoPastDueInvoices(),  # type: ignore[arg-type]
+        sender=_UnusedPastDueSender(),  # type: ignore[arg-type]
+        stamps=_UnusedReminderStamp(),  # type: ignore[arg-type]
+    )
+
     async def export_report_csv(report_name):
         return f"name\n{report_name}\n"
 
     class _ListAdminUsers:
-        async def execute(self, role=None, academy_id=None):
-            _ = academy_id
+        async def execute(self, role=None, academy_id=None, *, exclude_role=None, roles=None):
+            # Tenant scoping: the fake only knows academy "acad" (the admin
+            # claims' academy); any other tenant sees nothing, mirroring the
+            # real repo's academy_id clause.
+            if academy_id not in (None, "acad"):
+                return []
             users = [
                 AdminUserSummary(
                     user_id="coach-1",
@@ -2346,6 +2503,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     display_name="Coach One",
                     role="coach",
                     status="active",
+                    roles=("coach",),
                 ),
                 AdminUserSummary(
                     user_id="p-1",
@@ -2353,6 +2511,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     display_name="Parent One",
                     role="parent",
                     status="active",
+                    roles=("parent",),
                 ),
                 AdminUserSummary(
                     user_id="adm",
@@ -2360,9 +2519,42 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     display_name="Admin One",
                     role="admin",
                     status="active",
+                    roles=("admin",),
+                ),
+                # A parent who also coaches: primary role is parent, so a
+                # client-side "hide parents" filter would wrongly drop them.
+                AdminUserSummary(
+                    user_id="pc-1",
+                    email="parent-coach@example.com",
+                    display_name="Parent Coach",
+                    role="parent",
+                    status="active",
+                    roles=("parent", "coach"),
+                ),
+                # A former student who later self-registered as a parent:
+                # ``ensure_parent_user`` merges roles, so the doc carries
+                # ``student`` next to ``parent``. The list view must render
+                # it rather than 500 on a role an admin cannot assign.
+                AdminUserSummary(
+                    user_id="ps-1",
+                    email="parent-student@example.com",
+                    display_name="Parent Student",
+                    role="parent",
+                    status="active",
+                    roles=("parent", "student"),
                 ),
             ]
-            return [u for u in users if role is None or u.role == role]
+            out = []
+            for u in users:
+                held = set(u.roles) or {"parent"}
+                if role is not None and u.role != role:
+                    continue
+                if roles and not held & set(roles):
+                    continue
+                if exclude_role and not (held - {exclude_role}):
+                    continue
+                out.append(u)
+            return out
 
     class _ListAdminStudents:
         async def execute(self, search=None, lifecycle=(), limit=50, cursor=None, missing=()):
@@ -2440,6 +2632,12 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                 "u-admin": ["admin"],
                 # An owner other than the caller, for demotion-rule tests.
                 "o-1": ["owner", "admin"],
+                # A plain admin other than the caller, for the X3 rank rule.
+                "a-2": ["admin"],
+                # The PATCH /users fake's parents: the route reads a target's
+                # held roles through this lookup before editing (X3).
+                "p-1": ["parent"],
+                "p-2": ["parent"],
             }
 
         async def execute(self, user_id: str, *, academy_id: str) -> AdminUserDetail:
@@ -2482,6 +2680,16 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             remaining = [r for r in self.roles[user_id] if r != role]
             if not remaining:
                 raise CannotRemoveLastRole(user_id)
+            # Mirrors MongoUserRepository._assert_not_last_owner (#553): the
+            # academy must keep at least one other owner.
+            if role == "owner" and "owner" in self.roles[user_id]:
+                others = [uid for uid, held in self.roles.items() if uid != user_id]
+                if not any("owner" in self.roles[uid] for uid in others):
+                    from backend.v2.contexts.identity.application.errors import (
+                        CannotRemoveLastOwner,
+                    )
+
+                    raise CannotRemoveLastOwner("The academy must keep at least one owner")
             self.roles[user_id] = remaining
             return self._detail(user_id)
 
@@ -2513,7 +2721,24 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
                     status="active",
                     roles=("parent",),
                 ),
+                "o-1": AdminUserDetail(
+                    user_id="o-1",
+                    email="o-1@example.com",
+                    display_name="Other Owner",
+                    role="owner",
+                    status="active",
+                    roles=("owner", "admin"),
+                ),
+                "a-2": AdminUserDetail(
+                    user_id="a-2",
+                    email="a-2@example.com",
+                    display_name="Peer Admin",
+                    role="admin",
+                    status="active",
+                    roles=("admin",),
+                ),
             }
+            self.commands: list[object] = []
 
         async def get_admin_user(self, user_id, *, academy_id):
             _ = academy_id
@@ -2521,6 +2746,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
         async def update_admin_user(self, user_id, command, *, academy_id):
             _ = academy_id
+            self.commands.append(command)
             user = self.users.get(user_id)
             if user is None:
                 return None
@@ -2536,6 +2762,13 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
 
     _admin_user_editor = _FakeAdminUserEditor()
 
+    class _FakeGovernanceAudit:
+        def __init__(self) -> None:
+            self.rows: list[dict[str, object]] = []
+
+        async def record(self, **row):
+            self.rows.append(row)
+
     cancel_session_occurrence = CancelSessionOccurrence(
         occurrences=occurrences,
         sessions=sessions,
@@ -2548,6 +2781,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     return AdminUseCases(
         list_admin_users=_ListAdminUsers(),  # type: ignore[arg-type]
         send_login_invite=_login_invite_sender,  # type: ignore[arg-type]
+        user_governance_audit=_FakeGovernanceAudit(),
         update_admin_user=UpdateAdminUser(
             _admin_user_editor,  # type: ignore[arg-type]
             reader=_admin_user_editor,  # type: ignore[arg-type]
@@ -2569,6 +2803,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         promote_from_waitlist=promote,
         skip_from_waitlist=skip,
         remove_from_waitlist=remove,
+        withdraw_waitlist_offer=DeclineWaitlistOffer(
+            waitlist=waitlist, sessions=sessions, promote=promote
+        ),
         list_admin_pause_requests=list_admin_pause_requests,
         approve_pause_request=approve_pause_request,
         decline_pause_request=decline_pause_request,
@@ -2594,14 +2831,18 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         update_session_occurrence_coach=update_session_occurrence_coach,
         mark_coach_attendance=mark_coach_attendance,
         correct_attendance=correct_attendance,
+        void_attendance=void_attendance,
+        list_occurrence_attendance=_student_attendance.list_for_occurrence,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
+        send_past_due_reminders=send_past_due_reminders,
+        count_dunning_alerts=count_dunning_alerts,
         export_report_csv=export_report_csv,
-        list_enrollment_events=enrollment_events.list_for_enrollment,
+        list_enrollment_events=enrollment_events.list_for_enrollment_paginated,
         comms=comms,
         list_admin_waivers=waivers,  # type: ignore[arg-type]
         admin_registration_review=AsyncMock(),

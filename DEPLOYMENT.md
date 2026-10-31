@@ -385,6 +385,13 @@ mongorestore --uri "$RESTORE_MONGO_URL/academy_manager_restore" --archive=academ
 
 Run a restore drill before launch and at least quarterly.
 
+These steps are automated by `backend/scripts/backup_restore.py` (backup with a
+count/index manifest, 30-day prune, guarded scratch restore, verify). The
+schedule, retention, off-site storage guidance, drill procedure and the
+owner-only restore-to-production procedure are in
+`docs/runbooks/backup-restore.md`. The weekly `Restore Drill` workflow proves
+the round trip on a throwaway database.
+
 ## Startup Migrations
 
 The backend can run versioned, idempotent v2 Mongo migrations on startup

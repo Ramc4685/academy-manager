@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.onboarding.application.ports import (
     ApplicationRepository,
+    RegistrationSubmittedNotifier,
     WaiverRepository,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
@@ -38,6 +40,9 @@ APPLICATION_TTL_DAYS = 7
 # "DRAFT" literal at each site) because the legality of the move lives in
 # _TRANSITIONS, not in the resume code — see StartApplication._resume.
 _RESUME_TO = "DRAFT"
+
+
+logger = logging.getLogger(__name__)
 
 
 class SupersededCheckoutRetirement(Protocol):
@@ -78,6 +83,15 @@ class StartApplication:
 
     async def execute(self, cmd: StartApplicationCommand) -> Application:
         existing = await self._apps.latest_for_parent(cmd.parent_user_id)
+        if existing is not None and existing.is_expired(self._now()):
+            # The TTL passed with nobody finishing the wizard or Stripe.
+            # Retire it (issue #537) rather than handing it back below, or a
+            # parent who abandoned a draft weeks ago keeps editing/paying
+            # against a quote and a seat hold that should already be gone.
+            await self._apps.save(
+                existing.model_copy(update={"status": "ABANDONED", "updated_at": self._now()})
+            )
+            existing = None
         if existing and existing.status in _EDITABLE:
             return existing
         if existing is not None and _RESUME_TO in _TRANSITIONS.get(existing.status, set()):
@@ -207,23 +221,50 @@ class PatchApplication:
             # 404 (not 403) so a parent can't probe other parents'
             # application ids. Per docs/security-matrix.md.
             raise ApplicationNotFound("application missing", application_id=cmd.application_id)
-        if app.status not in _EDITABLE:
+        if app.status not in _EDITABLE or app.is_expired(self._now()):
             raise ApplicationNotEditable(
                 "application is not in an editable state",
                 status=app.status,
             )
 
         waiver_acceptance = app.waiver_acceptance
+        additional_acceptances = app.additional_waiver_acceptances
+        session_id = cmd.selected_session_id or app.selected_session_id
         if cmd.accept_waiver:
-            waiver = await self._waivers.get_active()
-            if waiver is None:
+            # Everything this class's family signs: the all-families waivers
+            # plus the ones assigned to the class's program. First = primary.
+            required = await self._waivers.list_required(session_id)
+            if not required:
                 raise NoActiveWaiver("no active waiver to accept")
-            waiver_acceptance = WaiverAcceptance(
-                waiver_version=waiver.version,
-                content_hash=waiver.content_hash,
-                accepted_at=self._now(),
-                waiver_template_id=waiver.waiver_id,
-            )
+            accepted_at = self._now()
+            accepted = [
+                WaiverAcceptance(
+                    waiver_version=waiver.version,
+                    content_hash=waiver.content_hash,
+                    accepted_at=accepted_at,
+                    waiver_template_id=waiver.waiver_id,
+                    lineage_key=waiver.lineage_key,
+                )
+                for waiver in required
+            ]
+            waiver_acceptance = accepted[0]
+            additional_acceptances = accepted[1:]
+        elif (
+            cmd.selected_session_id
+            and cmd.selected_session_id != app.selected_session_id
+            and app.waiver_acceptance is not None
+        ):
+            # A different class can add a required waiver: a parent who signed
+            # the first set is asked again only for what is now missing, by
+            # clearing the acceptance so the waiver step shows the new set.
+            # Same set (one waiver for everyone) leaves the acceptance alone.
+            required = await self._waivers.list_required(cmd.selected_session_id)
+            accepted_lineages = {
+                item.lineage_key or "legacy" for item in app.all_waiver_acceptances
+            }
+            if any(waiver.lineage_key not in accepted_lineages for waiver in required):
+                waiver_acceptance = None
+                additional_acceptances = []
 
         child_profile = (
             ChildProfile.model_validate(cmd.child_profile)
@@ -263,6 +304,7 @@ class PatchApplication:
                 "student_id": student_id,
                 "selected_session_id": cmd.selected_session_id or app.selected_session_id,
                 "waiver_acceptance": waiver_acceptance,
+                "additional_waiver_acceptances": additional_acceptances,
                 "updated_at": self._now(),
             }
         )
@@ -345,11 +387,13 @@ class TransitionApplication:
         student_registrations: StudentRegistrationQuery | None = None,
         clock=lambda: datetime.now(UTC),
         checkout_retirement: SupersededCheckoutRetirement | None = None,
+        submitted_notifier: RegistrationSubmittedNotifier | None = None,
     ) -> None:
         self._apps = apps
         self._student_registrations = student_registrations
         self._now = clock
         self._checkout_retirement = checkout_retirement
+        self._submitted_notifier = submitted_notifier
 
     async def execute_for_payment(
         self,
@@ -469,7 +513,35 @@ class TransitionApplication:
             updates["payment_id"] = payment_id
         updated = app.model_copy(update=updates)
         await self._apps.save(updated)
+        if to == "PENDING_APPROVAL":
+            await self._alert_staff(updated)
         return updated
+
+    async def _alert_staff(self, app: Application) -> None:
+        """Issue #776: a new application landing in the review queue is news.
+
+        After the save, and never able to undo it: the money has usually
+        already moved by this point, so a mail outage must not be what leaves a
+        paid registration outside ``PENDING_APPROVAL``.
+        """
+        if self._submitted_notifier is None:
+            return
+        child = app.child_profile
+        student_name = f"{child.first_name} {child.last_name}".strip() or "New student"
+        parent = app.parent_profile
+        parent_name = f"{parent.first_name} {parent.last_name}".strip() or None
+        try:
+            await self._submitted_notifier.registration_submitted(
+                application_id=app.application_id,
+                student_name=student_name,
+                parent_name=parent_name,
+                session_id=app.selected_session_id,
+            )
+        except Exception:
+            logger.exception(
+                "registration_staff_alert_failed",
+                extra={"application_id": app.application_id},
+            )
 
     async def _restamp_checkout(
         self,

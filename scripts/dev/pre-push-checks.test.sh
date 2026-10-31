@@ -251,11 +251,11 @@ rm -f "$ONLY_NIGHTLY_CONFIG"
 CASES=$((CASES + 1))
 REAL_CONFIG="$(cd "$(dirname "$0")/../.." && pwd)/frontend/playwright.config.ts"
 REAL_PROJECTS="$(e2e_projects "$REAL_CONFIG" | sort | tr '\n' ' ')"
-if [ "$REAL_PROJECTS" = "chromium-desktop chromium-mobile webkit-mobile " ]; then
-  echo "ok   real playwright.config.ts exposes the three CI projects"
+if [ "$REAL_PROJECTS" = "a11y-chromium chromium-desktop chromium-mobile webkit-mobile " ]; then
+  echo "ok   real playwright.config.ts exposes the four CI projects"
 else
-  echo "FAIL real playwright.config.ts exposes the three CI projects"
-  echo "     want: chromium-desktop chromium-mobile webkit-mobile "
+  echo "FAIL real playwright.config.ts exposes the four CI projects"
+  echo "     want: a11y-chromium chromium-desktop chromium-mobile webkit-mobile "
   echo "     got:  $REAL_PROJECTS"
   FAILURES=$((FAILURES + 1))
 fi

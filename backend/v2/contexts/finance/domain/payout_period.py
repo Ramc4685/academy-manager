@@ -188,17 +188,32 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
     return period.model_copy(update={"status": "approved", "approved_at": at})
 
 
-def reopen(period: PayoutPeriod) -> PayoutPeriod:
+def reopen(period: PayoutPeriod, *, acknowledge_paid_clawback: bool = False) -> PayoutPeriod:
     """Return a new ``PayoutPeriod`` back in status=draft.
 
     Used by admins to correct an approved or paid period: reopen, fix
     attendance/lines, recompute, re-approve. The audit log (not this
     function) records who reopened and why. Reopening a draft raises
     ``PayoutPeriodStateError``.
+
+    Reopening a **paid** period is different in kind from reopening an
+    approved one: the academy has already moved money, so clearing
+    ``paid_*`` here leaves a draft that is indistinguishable from one that
+    was never paid, and the difference has to be settled outside the app
+    (claw the payment back, or net it off the next period). Issue #787:
+    that transition now requires ``acknowledge_paid_clawback=True`` so the
+    decision is deliberate and lands in the audit trail.
     """
     if period.status == "draft":
         raise PayoutPeriodStateError(
             f"payout period {period.period_id!r} is already in status 'draft'"
+        )
+    if period.status == "paid" and not acknowledge_paid_clawback:
+        raise PayoutPeriodStateError(
+            f"payout period {period.period_id!r} was already paid "
+            f"({period.paid_amount_minor} minor units via {period.paid_method!r}); "
+            "reopening it requires acknowledging that the payment must be "
+            "clawed back or netted off a later period"
         )
     return period.model_copy(
         update={

@@ -23,7 +23,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_occurrence_roster 
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
+from backend.v2.contexts.enrollment.domain.models import Enrollment, SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 
 
@@ -68,6 +68,26 @@ class FakeOccurrenceRoster:
 
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]:
         return [e for e in self._entries if e.occurrence_id == occurrence_id]
+
+
+class FakeOccurrences:
+    def __init__(self, occurrences: list[SessionOccurrence] | None = None) -> None:
+        self._by_id = {o.occurrence_id: o for o in (occurrences or [])}
+
+    async def get(self, occurrence_id: str) -> SessionOccurrence | None:
+        return self._by_id.get(occurrence_id)
+
+
+def _occurrence(occurrence_id: str, status: str = "scheduled") -> SessionOccurrence:
+    return SessionOccurrence(
+        occurrence_id=occurrence_id,
+        academy_id="acad",
+        session_id="sess",
+        start_at=datetime(2026, 7, 1, 9, 0, tzinfo=UTC),
+        end_at=datetime(2026, 7, 1, 10, 0, tzinfo=UTC),
+        status=status,  # type: ignore[arg-type]
+        scheduled_coach_id="coach-1",
+    )
 
 
 def _student(sid: str, name: str) -> Student:
@@ -122,6 +142,7 @@ async def test_enrollment_backed_entries_get_entry_source_enrollment_and_no_abse
         absence_notices=FakeAbsenceNotices(),
         occurrence_roster=FakeOccurrenceRoster(),
         students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
     )
     result = await uc.execute(session_id="sess", occurrence_id="occ-1")
 
@@ -143,6 +164,7 @@ async def test_student_with_absence_notice_flagged_expected_absence() -> None:
         absence_notices=FakeAbsenceNotices([_notice("occ-1", "st1")]),
         occurrence_roster=FakeOccurrenceRoster(),
         students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
     )
     result = await uc.execute(session_id="sess", occurrence_id="occ-1")
 
@@ -162,6 +184,7 @@ async def test_absence_notice_for_other_occurrence_does_not_leak() -> None:
         absence_notices=FakeAbsenceNotices([_notice("occ-other", "st1")]),
         occurrence_roster=FakeOccurrenceRoster(),
         students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
     )
     result = await uc.execute(session_id="sess", occurrence_id="occ-1")
 
@@ -188,6 +211,7 @@ async def test_one_time_makeup_entry_appended_with_entry_source_makeup() -> None
             ]
         ),
         students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
     )
     result = await uc.execute(session_id="sess", occurrence_id="occ-1")
 
@@ -219,6 +243,7 @@ async def test_one_time_trial_entry_appended_with_entry_source_trial() -> None:
             ]
         ),
         students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
     )
     result = await uc.execute(session_id="sess", occurrence_id="occ-1")
 
@@ -247,6 +272,7 @@ async def test_one_time_entry_for_other_occurrence_not_included() -> None:
             ]
         ),
         students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
     )
     result = await uc.execute(session_id="sess", occurrence_id="occ-1")
 
@@ -275,7 +301,67 @@ async def test_one_time_entry_missing_student_skipped_not_crashed() -> None:
             ]
         ),
         students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
     )
     result = await uc.execute(session_id="sess", occurrence_id="occ-1")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_one_time_entry_for_cancelled_occurrence_excluded() -> None:
+    """Issue #694: a make-up/trial row that outlived its occurrence's
+    cancellation must not render — the coach can never mark it (#676's
+    occurrence-status guard rejects the write), so showing it is a dead end."""
+    students = FakeStudents([_student("st-makeup", "Charlie")])
+    uc = GetOccurrenceRoster(
+        get_roster=GetSessionRoster(
+            enrollments=FakeEnrollments([]),
+            students=students,
+        ),
+        absence_notices=FakeAbsenceNotices(),
+        occurrence_roster=FakeOccurrenceRoster(
+            [
+                _one_time_entry(
+                    entry_id="ore-5",
+                    occurrence_id="occ-1",
+                    student_id="st-makeup",
+                    source="makeup",
+                )
+            ]
+        ),
+        students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1", status="cancelled")]),
+    )
+    result = await uc.execute(session_id="sess", occurrence_id="occ-1")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_one_time_entry_for_missing_occurrence_excluded() -> None:
+    """Issue #694: a make-up/trial row orphaned by session delete/regenerate
+    (the occurrence itself no longer exists) must not render."""
+    students = FakeStudents([_student("st-makeup", "Charlie")])
+    uc = GetOccurrenceRoster(
+        get_roster=GetSessionRoster(
+            enrollments=FakeEnrollments([]),
+            students=students,
+        ),
+        absence_notices=FakeAbsenceNotices(),
+        occurrence_roster=FakeOccurrenceRoster(
+            [
+                _one_time_entry(
+                    entry_id="ore-6",
+                    occurrence_id="occ-gone",
+                    student_id="st-makeup",
+                    source="makeup",
+                )
+            ]
+        ),
+        students=students,
+        occurrences=FakeOccurrences([]),
+    )
+    result = await uc.execute(session_id="sess", occurrence_id="occ-gone")
 
     assert result == []

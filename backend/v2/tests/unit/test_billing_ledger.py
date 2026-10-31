@@ -79,6 +79,7 @@ class _FakeLedger:
         updated_invoice = self._invoice.model_copy(
             update={"balance_due_cents": new_balance, "status": new_status}
         )
+        self._invoice = updated_invoice
         self.allocated = {"payment_id": payment_id, "amount_cents": allocatable}
         dummy_payment = LedgerPayment(
             payment_id=payment_id,
@@ -129,6 +130,14 @@ class _FakeLedger:
         self, student_id: str, period: str
     ) -> LedgerInvoice | None:
         return None
+
+    async def get_payment_allocation_by_idempotency_key(self, idempotency_key: str) -> None:
+        return None
+
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: Any, *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        return [self._invoice] if self._invoice else []
 
     async def save_invoice(self, invoice: LedgerInvoice) -> LedgerInvoice:
         return invoice

@@ -19,6 +19,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from backend.v2.shared.comms.colour import readable_button_colors
+
 FONT_STACK = (
     "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 )
@@ -50,6 +52,11 @@ class EmailBrand:
     logo_url: str | None = None
     contact_email: str | None = None
     contact_phone: str | None = None
+    #: From-header display name and reply-to for this academy (L9a), resolved
+    #: by ``shared.comms.sender_identity.resolve_sender``. ``None`` keeps the
+    #: send path's previous behaviour.
+    sender_name: str | None = None
+    reply_to: str | None = None
 
     def accent(self) -> str:
         """The academy's colour if it is a valid hex, else cobalt. Free text
@@ -113,7 +120,13 @@ def button(
     safe_url = _html.escape(url, quote=True)
     safe_label = _html.escape(label)
     if variant == "primary":
-        style = f"background:{accent};color:#ffffff;border:1px solid {accent};"
+        # Text on the tenant's brand colour must clear WCAG AA (4.5:1): white
+        # on a light accent does not, so the pair is derived, not assumed.
+        # EmailBrand.accent() is the validating path, but a caller that hands
+        # in a raw setting must still get a readable button, not a ValueError.
+        safe_accent = accent.strip().lower() if _HEX_COLOUR.match(accent.strip()) else COBALT
+        fill, text = readable_button_colors(safe_accent)
+        style = f"background:{fill};color:{text};border:1px solid {fill};"
     else:
         style = f"background:#ffffff;color:{INK};border:1px solid #cbd5e1;"
     return (
@@ -133,12 +146,26 @@ def chip(text: str, *, bg: str, fg: str) -> str:
 _SYMBOLS = {"USD": "$", "CAD": "$", "AUD": "$", "EUR": "€", "GBP": "£", "INR": "₹"}
 
 
-def format_money(cents: int, currency: str) -> str:
+def format_money(
+    cents: int,
+    currency: str,
+    *,
+    group_thousands: bool = True,
+    drop_zero_cents: bool = False,
+) -> str:
     """``6000, "usd"`` → ``$60.00``. Codes without a symbol map render as
-    ``CHF 5.00`` so nothing is ever shown as a wrong currency."""
+    ``CHF 5.00`` so nothing is ever shown as a wrong currency.
+
+    ``group_thousands=False`` gives ``$1234.56`` and ``drop_zero_cents=True``
+    gives ``$60`` for whole amounts: the two older spellings some screens and
+    API strings already show, kept byte-identical while they share this one
+    formatter.
+    """
     code = (currency or "USD").upper()
     sign = "-" if cents < 0 else ""
-    amount = f"{abs(cents) / 100:,.2f}"
+    whole, part = divmod(abs(cents), 100)
+    units = f"{whole:,}" if group_thousands else str(whole)
+    amount = units if drop_zero_cents and part == 0 else f"{units}.{part:02d}"
     symbol = _SYMBOLS.get(code)
     return f"{sign}{symbol}{amount}" if symbol else f"{sign}{code} {amount}"
 

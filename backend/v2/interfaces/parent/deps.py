@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Request
 
@@ -35,6 +36,10 @@ from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ListParentTrialRequests,
     SubmitTrialRequest,
+)
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+    DeclineWaitlistOffer,
 )
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -91,6 +96,9 @@ class ParentUseCases:
     preview_self_cancel: PreviewSelfCancel | None = None
     self_cancel_enrollment: SelfCancelEnrollment | None = None
     get_registration_waiver: object = None  # callable -> Waiver | None
+    get_registration_waivers: Callable[[str | None], Awaitable[tuple[list[Any], bool]]] | None = (
+        None
+    )
     start_invoice_payment_for_parent: object | None = None  # callable
     start_balance_payment_for_parent: object | None = None  # callable
     # Optional so existing ParentUseCases constructions (and tests) that predate
@@ -107,9 +115,19 @@ class ParentUseCases:
     update_parent_profile: object | None = None  # callable
     confirm_parent_email: object | None = None  # callable
     update_parent_child: object | None = None  # callable
+    # Waitlist offer confirmation (#828). Defaulted so fixtures that predate
+    # the confirmation window keep constructing; real parent composition
+    # always sets it.
+    confirm_waitlist_offer: ConfirmWaitlistOffer | None = None
+    decline_waitlist_offer: DeclineWaitlistOffer | None = None
+    list_parent_waitlist: object | None = None  # callable(parent_id)
     # Home aggregate (kid-first Home, slice 4). Defaulted so fixtures that
     # predate it keep constructing; real parent composition always sets it.
     get_parent_home: object | None = None  # callable
+    # #1038: callable(occurrence_ids) -> {occurrence_id: class facts}. Defaulted
+    # so fixtures that predate it keep constructing; requests then carry no
+    # resolved class (the raw ids are still returned).
+    resolve_assigned_classes: object | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

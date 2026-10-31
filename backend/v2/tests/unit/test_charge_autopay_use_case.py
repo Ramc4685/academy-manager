@@ -229,6 +229,7 @@ class FakeStripeSucceeds:
         self.pi_id = pi_id
         self.lookup_calls: list[dict[str, str]] = []
         self.retrieve_payment_method_calls: list[str] = []
+        self.retrieve_payment_method_accounts: list[str | None] = []
         self.payment_method: dict = {"id": pm_id, "type": "card"}
         self.create_calls: list[dict] = []
 
@@ -238,8 +239,11 @@ class FakeStripeSucceeds:
         self.lookup_calls.append({"academy_id": academy_id, "parent_id": parent_id})
         return (self.customer_id, self.pm_id)
 
-    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+    async def retrieve_payment_method(
+        self, stripe_payment_method_id: str, *, stripe_account: str | None = None
+    ) -> dict:
         self.retrieve_payment_method_calls.append(stripe_payment_method_id)
+        self.retrieve_payment_method_accounts.append(stripe_account)
         return dict(self.payment_method)
 
     async def create_off_session_payment_intent(
@@ -251,7 +255,7 @@ class FakeStripeSucceeds:
         payment_method_id: str,
         idempotency_key: str,
         metadata: dict,
-        connected_account_id: str | None = None,
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         self.create_calls.append(
             {
@@ -261,10 +265,24 @@ class FakeStripeSucceeds:
                 "payment_method_id": payment_method_id,
                 "idempotency_key": idempotency_key,
                 "metadata": metadata,
-                "connected_account_id": connected_account_id,
+                "stripe_account": stripe_account,
             }
         )
         return (self.pi_id, "succeeded", None)
+
+
+class FakeSavedCards:
+    """The stored-card reader: one (customer, pm) per Stripe account."""
+
+    def __init__(self, cards: dict[str | None, tuple[str, str]] | None = None) -> None:
+        self._cards = cards or {}
+        self.calls: list[dict[str, str | None]] = []
+
+    async def get_saved_payment_method(
+        self, *, parent_id: str, stripe_account_id: str | None
+    ) -> tuple[str, str] | None:
+        self.calls.append({"parent_id": parent_id, "stripe_account_id": stripe_account_id})
+        return self._cards.get(stripe_account_id)
 
 
 class FakeStripeDeclines:
@@ -431,6 +449,7 @@ def _uc(
     enrollment_autopay: FakeEnrollmentAutopay | None = None,
     settings: FakeBillingSettingsRepo | None = None,
     connected_accounts: FakeConnectedAccounts | None = None,
+    parent_customers: FakeSavedCards | None = None,
 ) -> ChargeInvoiceViaAutopay:
     return ChargeInvoiceViaAutopay(
         ledger=repo,  # type: ignore[arg-type]
@@ -438,6 +457,7 @@ def _uc(
         enrollment_autopay=enrollment_autopay,  # type: ignore[arg-type]
         settings=settings,  # type: ignore[arg-type]
         connected_accounts=connected_accounts,  # type: ignore[arg-type]
+        parent_customers=parent_customers,
         clock=lambda: NOW,
     )
 
@@ -496,23 +516,41 @@ async def test_charge_routes_payment_intent_through_ready_connected_account() ->
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad-1",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)
     connected_accounts = FakeConnectedAccounts(connected_account)
+    saved = FakeSavedCards({"acct_ready": ("cus_on_acct", "pm_on_acct")})
 
-    result = await _uc(repo, stripe, connected_accounts=connected_accounts).execute("inv-1")
+    result = await _uc(
+        repo, stripe, connected_accounts=connected_accounts, parent_customers=saved
+    ).execute("inv-1")
 
     assert result.success is True
     assert connected_accounts.calls == 1
-    assert stripe.create_calls[0]["connected_account_id"] == "acct_ready"
+    call = stripe.create_calls[0]
+    # Direct charge: the STORED customer + card on the academy's account, the
+    # PaymentIntent created ON that account, the account in the key.
+    assert call["stripe_account"] == "acct_ready"
+    assert (call["customer_id"], call["payment_method_id"]) == ("cus_on_acct", "pm_on_acct")
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:acct:acct_ready"
+    assert saved.calls == [{"parent_id": "parent-1", "stripe_account_id": "acct_ready"}]
+    # Never the platform-wide Customer search on a direct route.
+    assert stripe.lookup_calls == []
 
 
 async def test_charge_fails_closed_without_ready_connected_account() -> None:
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
 
     result = await _uc(repo, stripe, connected_accounts=connected_accounts).execute("inv-1")
@@ -1307,7 +1345,12 @@ async def test_platform_fallback_enabled_charges_via_platform_when_account_not_r
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
     settings = FakeBillingSettingsRepo(
         BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=True)
@@ -1319,8 +1362,38 @@ async def test_platform_fallback_enabled_charges_via_platform_when_account_not_r
 
     assert result.success is True
     assert result.decline_code is None
-    assert stripe.create_calls[0]["connected_account_id"] is None
-    assert connected_accounts.calls == 1
+    assert stripe.create_calls[0]["stripe_account"] is None
+    # The house academy charges on the platform without consulting its
+    # connected account at all (billing/domain/charge_route.py).
+    assert connected_accounts.calls == 0
+
+
+async def test_house_academy_charges_on_platform_even_with_a_ready_connected_account() -> None:
+    """House academy is ALWAYS a platform charge — a ready account never re-routes it."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    ready = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id="acad-1",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
+    connected_accounts = FakeConnectedAccounts(ready)
+    settings = FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1", allow_platform_charge_fallback=True, application_fee_bps=250
+        )
+    )
+
+    result = await _uc(
+        repo, stripe, settings=settings, connected_accounts=connected_accounts
+    ).execute("inv-1")
+
+    assert result.success is True
+    assert stripe.create_calls[0]["stripe_account"] is None
+    # No platform fee on a platform charge, and the idempotency key is unscoped.
+    assert "application_fee_cents" not in stripe.create_calls[0]
+    assert ":fee" not in stripe.create_calls[0]["idempotency_key"]
 
 
 async def test_platform_fallback_disabled_still_declines_when_account_not_ready() -> None:
@@ -1328,7 +1401,12 @@ async def test_platform_fallback_disabled_still_declines_when_account_not_ready(
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
     settings = FakeBillingSettingsRepo(
         BillingSettings(academy_id="acad-1", allow_platform_charge_fallback=False)
@@ -1353,7 +1431,12 @@ async def test_platform_fallback_settings_lookup_failure_fails_closed_to_decline
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_pending",
+        )
     )
 
     result = await _uc(
@@ -1366,3 +1449,253 @@ async def test_platform_fallback_settings_lookup_failure_fails_closed_to_decline
     assert result.success is False
     assert result.decline_code == "connected_account_not_ready"
     assert stripe.create_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Roadmap L9b: per-academy platform application fee on the autopay charge.
+# ---------------------------------------------------------------------------
+
+
+class _FakeStripeRecordsFee(FakeStripeSucceeds):
+    async def create_off_session_payment_intent(  # type: ignore[override]
+        self, *, application_fee_cents: int = 0, **kwargs
+    ) -> tuple[str, str, str | None]:
+        result = await super().create_off_session_payment_intent(**kwargs)
+        self.create_calls[-1]["application_fee_cents"] = application_fee_cents
+        return result
+
+
+def _stored_card_on_ready_account() -> FakeSavedCards:
+    return FakeSavedCards({"acct_ready": ("cus_on_acct", "pm_on_acct")})
+
+
+def _ready_accounts() -> FakeConnectedAccounts:
+    return FakeConnectedAccounts(
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad-1",
+            stripe_account_id="acct_ready",
+        ).with_status(status="active", charges_enabled=True)
+    )
+
+
+async def test_autopay_default_fee_is_zero_and_request_is_unchanged() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = _FakeStripeRecordsFee()
+
+    result = await _uc(
+        repo,
+        stripe,
+        settings=FakeBillingSettingsRepo(BillingSettings(academy_id="acad-1")),
+        connected_accounts=_ready_accounts(),
+        parent_customers=_stored_card_on_ready_account(),
+    ).execute("inv-1")
+
+    assert result.success is True
+    call = stripe.create_calls[0]
+    assert call["application_fee_cents"] == 0
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:acct:acct_ready"
+
+
+async def test_autopay_sends_the_academy_fee_and_scopes_the_idempotency_key() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = _FakeStripeRecordsFee()
+
+    result = await _uc(
+        repo,
+        stripe,
+        settings=FakeBillingSettingsRepo(
+            BillingSettings(academy_id="acad-1", application_fee_bps=250)
+        ),
+        connected_accounts=_ready_accounts(),
+        parent_customers=_stored_card_on_ready_account(),
+    ).execute("inv-1")
+
+    assert result.success is True
+    call = stripe.create_calls[0]
+    assert call["stripe_account"] == "acct_ready"
+    assert call["application_fee_cents"] == 250  # 2.5% of $100.00
+    # A fee change inside Stripe's idempotency window must not replay the old
+    # key, and a direct charge's key names the account.
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:fee250:acct:acct_ready"
+
+
+async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = _FakeStripeRecordsFee()
+
+    result = await _uc(
+        repo,
+        stripe,
+        settings=FakeBillingSettingsRepo(
+            BillingSettings(
+                academy_id="acad-1",
+                application_fee_bps=250,
+                allow_platform_charge_fallback=True,
+            )
+        ),
+        connected_accounts=FakeConnectedAccounts(None),
+    ).execute("inv-1")
+
+    assert result.success is True
+    call = stripe.create_calls[0]
+    assert call["stripe_account"] is None
+    assert call["application_fee_cents"] == 0
+    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+
+
+def _seed_generator_discounted_month(repo: FakeLedgerRepo) -> None:
+    """The shape the monthly generator writes for a month with a tuition discount:
+    a gross tuition line, a negative ``tuition_discount`` line, AND the same
+    discount mirrored in the header's ``discount_cents`` (``subtotal_cents`` gross)."""
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={
+            "subtotal_cents": 10_000,
+            "discount_cents": 2_000,
+            "total_cents": 8_000,
+            "balance_due_cents": 8_000,
+        }
+    )
+    repo.lines_by_invoice["inv-1"] = [
+        InvoiceLine(
+            line_id="ledger-monthly-line-enr-1-2026-06",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="tuition",
+            description="Monthly tuition 2026-06",
+            quantity=1,
+            unit_amount_cents=10_000,
+            amount_cents=10_000,
+            source_type="payment",
+            source_id="pay-legacy-1",
+            created_at=NOW,
+        ),
+        InvoiceLine(
+            line_id="ledger-monthly-line-enr-1-2026-06-discount",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="discount",
+            description="Sibling discount",
+            quantity=1,
+            unit_amount_cents=-2_000,
+            amount_cents=-2_000,
+            source_type="tuition_discount",
+            source_id="disc-1",
+            created_at=NOW,
+        ),
+    ]
+
+
+class _AchDeclines(FakeStripeDeclines):
+    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
+        return {"id": stripe_payment_method_id, "type": "us_bank_account"}
+
+
+def _ach_settings() -> FakeBillingSettingsRepo:
+    return FakeBillingSettingsRepo(
+        BillingSettings(
+            academy_id="acad-1",
+            ach_discount_enabled=True,
+            ach_discount_percent=2.5,
+            ach_discount_label="ACH autopay savings",
+            disclosure_version="cash-discount-v1",
+        )
+    )
+
+
+async def test_ach_discount_on_a_tuition_discounted_month_charges_the_discount_once() -> None:
+    """ACH line added → header recomputed. It used to take the tuition discount
+    off twice: $100 gross, $20 sibling discount, ACH line → charged $57.50."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+    stripe = FakeStripeSucceeds()
+    stripe.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+
+    result = await _uc(repo, stripe, settings=_ach_settings()).execute("inv-1")
+
+    ach_line = next(
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    )
+    expected = 8_000 + ach_line.amount_cents
+    assert result.success is True
+    assert stripe.create_calls[0]["amount_cents"] == expected
+    assert repo.allocation_calls[0][2] == expected
+
+
+async def test_ach_retry_on_a_tuition_discounted_month_charges_the_discount_once() -> None:
+    """A retry that finds its ACH line already written recomputes the header
+    on every attempt; that path double-counted too."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+    first = _AchDeclines()
+    declined = await _uc(repo, first, settings=_ach_settings()).execute("inv-1")
+    assert declined.success is False
+    assert any(line.line_type == "ach_discount" for line in repo.lines_by_invoice["inv-1"])
+
+    retry = FakeStripeSucceeds()
+    retry.payment_method = {"id": "pm_1", "type": "us_bank_account"}
+    result = await _uc(repo, retry, settings=_ach_settings()).execute("inv-1")
+
+    ach_line = next(
+        line for line in repo.lines_by_invoice["inv-1"] if line.line_type == "ach_discount"
+    )
+    assert result.success is True
+    assert retry.create_calls[0]["amount_cents"] == 8_000 + ach_line.amount_cents
+
+
+def _ach_line_cents(repo: FakeLedgerRepo) -> int:
+    return next(
+        line.amount_cents
+        for line in repo.lines_by_invoice["inv-1"]
+        if line.line_type == "ach_discount"
+    )
+
+
+async def test_ach_discount_base_is_the_price_after_the_tuition_discount_on_every_attempt() -> None:
+    """The ACH cash discount is a percentage of the price after the tuition
+    discount (owner decision 2026-09-25): $100 month, $20 sibling discount, 2.5%
+    → -$2.00 on the first attempt AND on a retry. The first attempt used to base
+    it on the header's GROSS subtotal (-$2.50) and a retry rewrote it to -$2.00."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    _seed_generator_discounted_month(repo)
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    first_attempt_cents = _ach_line_cents(repo)
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    retry_cents = _ach_line_cents(repo)
+
+    assert first_attempt_cents == -200
+    assert retry_cents == -200
+
+
+async def test_ach_discount_base_subtracts_a_header_only_discount() -> None:
+    """A header-only ``discount_cents`` with no discount line is still a tuition
+    discount the family does not pay, so the ACH base excludes it too."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    repo._invoices["inv-1"] = repo._invoices["inv-1"].model_copy(
+        update={"discount_cents": 2_000, "total_cents": 8_000, "balance_due_cents": 8_000}
+    )
+    repo.lines_by_invoice["inv-1"] = [
+        InvoiceLine(
+            line_id="line-tuition",
+            academy_id="acad-1",
+            invoice_id="inv-1",
+            line_type="tuition",
+            description="Tuition",
+            quantity=1,
+            unit_amount_cents=10_000,
+            amount_cents=10_000,
+            source_type="manual",
+            source_id=None,
+            created_at=NOW,
+        )
+    ]
+
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+    first_attempt_cents = _ach_line_cents(repo)
+    await _uc(repo, _AchDeclines(), settings=_ach_settings()).execute("inv-1")
+
+    assert first_attempt_cents == -200
+    assert _ach_line_cents(repo) == -200

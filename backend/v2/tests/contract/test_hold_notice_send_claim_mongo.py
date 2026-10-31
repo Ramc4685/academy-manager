@@ -54,7 +54,7 @@ async def test_c9_a_fresh_claim_succeeds_and_can_be_marked_sent(db, with_index: 
             academy_id=ACADEMY_ID, enrollment_id="enr-0", notice_key="hold-reclaim:1"
         )
         assert claim is not None, "try_claim returned None — the digest_date claim key is missing"
-        await repo.mark_sent(claim["send_id"])
+        await repo.mark_sent(ACADEMY_ID, claim["send_id"])
 
     sent = await db["enrollment_hold_notice_sends"].find_one({"send_id": claim["send_id"]})
     assert sent is not None
@@ -73,7 +73,7 @@ async def test_c9_two_ticks_same_notice_key_send_exactly_once(db, with_index: bo
             academy_id=ACADEMY_ID, enrollment_id="enr-1", notice_key="hold-reminder:1:1"
         )
         assert first_claim is not None
-        await repo.mark_sent(first_claim["send_id"])
+        await repo.mark_sent(ACADEMY_ID, first_claim["send_id"])
 
         # A second tick for the SAME notice_key (e.g. an overlapping/late
         # job run on the same day) must never re-claim a sent row.
@@ -105,7 +105,7 @@ async def test_c9_a_new_hold_seq_gets_its_own_claim_not_blocked_by_the_old_one(
             academy_id=ACADEMY_ID, enrollment_id="enr-1", notice_key="hold-reminder:1:1"
         )
         assert first is not None
-        await repo.mark_sent(first["send_id"])
+        await repo.mark_sent(ACADEMY_ID, first["send_id"])
 
         second = await repo.try_claim(
             academy_id=ACADEMY_ID, enrollment_id="enr-1", notice_key="hold-reminder:2:1"

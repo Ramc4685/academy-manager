@@ -90,6 +90,11 @@ export interface AdminStudentRecentAttendance {
   date: string;
   status: string;
   marked_at?: string | null;
+  /** The dated occurrence: the key an admin correction takes (#517). */
+  occurrence_id?: string | null;
+  /** Set once the mark was corrected: what it replaced, and when. */
+  previous_status?: string | null;
+  corrected_at?: string | null;
 }
 
 export interface AdminStudentDetail extends AdminStudentView {

@@ -57,6 +57,11 @@ def test_settings_reuse_legacy_deploy_env_names(monkeypatch) -> None:
     monkeypatch.setenv("STRIPE_API_KEY", "sk_test_existing")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
     monkeypatch.setenv("STRIPE_CONNECT_WEBHOOK_SECRET", "whsec_connect_existing")
+    # Production's real launch shape (backend/fly.toml). A prod config with
+    # no tenancy mode would resolve every request to "default-academy".
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_blno_badminton")
+    monkeypatch.setenv("ENABLE_PLATFORM_ROUTES", "false")
 
     settings = Settings(_env_file=None)
 
@@ -287,3 +292,229 @@ def test_v2_sender_email_wins_over_existing_env_name(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.sender_email == "noreply@courtmastr.com"
+
+
+def _prod_env(monkeypatch) -> None:
+    """Minimal env for a valid prod Settings construction (#749)."""
+    _clear_production_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
+    monkeypatch.setenv("DB_NAME", "academy_prod")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
+    monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_existing")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
+    monkeypatch.setenv("APP_TENANCY_MODE", "single_academy")
+    monkeypatch.setenv("PRIMARY_ACADEMY_ID", "acad_blno_badminton")
+    monkeypatch.setenv("ENABLE_PLATFORM_ROUTES", "false")
+
+
+def test_sentry_traces_sample_rate_defaults_nonzero_in_production(monkeypatch) -> None:
+    _prod_env(monkeypatch)
+    monkeypatch.delenv("V2_SENTRY_TRACES_SAMPLE_RATE", raising=False)
+    monkeypatch.delenv("SENTRY_TRACES_SAMPLE_RATE", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env == "prod"
+    assert settings.sentry_traces_sample_rate == 0.1
+
+
+def test_sentry_traces_sample_rate_stays_zero_outside_production(monkeypatch) -> None:
+    monkeypatch.delenv("V2_ENV", raising=False)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("V2_SENTRY_TRACES_SAMPLE_RATE", raising=False)
+    monkeypatch.delenv("SENTRY_TRACES_SAMPLE_RATE", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env != "prod"
+    assert settings.sentry_traces_sample_rate == 0.0
+
+
+def test_sentry_traces_sample_rate_explicit_env_wins_in_production(monkeypatch) -> None:
+    _prod_env(monkeypatch)
+    monkeypatch.setenv("V2_SENTRY_TRACES_SAMPLE_RATE", "0.5")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env == "prod"
+    assert settings.sentry_traces_sample_rate == 0.5
+
+
+def test_house_academy_id_reads_root_env_name(monkeypatch) -> None:
+    monkeypatch.delenv("V2_HOUSE_ACADEMY_ID", raising=False)
+    monkeypatch.setenv("HOUSE_ACADEMY_ID", " acad_blno_badminton ")
+
+    assert Settings(_env_file=None).house_academy_id == "acad_blno_badminton"
+
+
+def test_house_academy_id_v2_name_wins_and_blank_means_unset(monkeypatch) -> None:
+    monkeypatch.setenv("HOUSE_ACADEMY_ID", "acad_root")
+    monkeypatch.setenv("V2_HOUSE_ACADEMY_ID", "acad_v2")
+    assert Settings(_env_file=None).house_academy_id == "acad_v2"
+
+    monkeypatch.delenv("V2_HOUSE_ACADEMY_ID", raising=False)
+    monkeypatch.setenv("HOUSE_ACADEMY_ID", "  ")
+    assert Settings(_env_file=None).house_academy_id is None
+
+
+def test_fly_toml_pins_blno_as_the_house_academy() -> None:
+    """Production must name the house academy: unset silently reverts to the
+    legacy per-academy flag."""
+    from pathlib import Path
+
+    fly = (Path(__file__).resolve().parents[3] / "fly.toml").read_text()
+    assert 'HOUSE_ACADEMY_ID = "acad_blno_badminton"' in fly
+
+
+# -- sender address -----------------------------------------------------------
+
+
+def _fly_prod_env(monkeypatch) -> None:
+    """``_prod_env`` plus the email-relevant lines of backend/fly.toml [env]."""
+    _prod_env(monkeypatch)
+    monkeypatch.setenv("V2_ENV", "prod")
+    monkeypatch.setenv("V2_EMAIL_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv("FRONTEND_URL", "https://academy.courtmastr.com")
+    monkeypatch.setenv(
+        "CORS_ORIGINS", "https://academy.courtmastr.com,https://blno-academy.courtmastr.com"
+    )
+
+
+def test_prod_with_the_fly_toml_env_shape_boots_and_resolves_the_same_sender(
+    monkeypatch,
+) -> None:
+    _fly_prod_env(monkeypatch)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.env == "prod"
+    assert settings.resolved_sender_email() == "noreply@academy.courtmastr.com"
+
+
+def test_prod_sender_email_secret_still_wins(monkeypatch) -> None:
+    _fly_prod_env(monkeypatch)
+    monkeypatch.setenv("SENDER_EMAIL", "hello@courtmastr.com")
+
+    assert Settings(_env_file=None).resolved_sender_email() == "hello@courtmastr.com"
+
+
+def test_prod_refuses_to_boot_when_delivery_is_on_and_no_sender_resolves(monkeypatch) -> None:
+    _fly_prod_env(monkeypatch)
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+
+    with pytest.raises(ValidationError, match="sender_email_or_frontend_url"):
+        Settings(_env_file=None)
+
+
+def test_prod_without_delivery_does_not_need_a_sender(monkeypatch) -> None:
+    _fly_prod_env(monkeypatch)
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+    monkeypatch.setenv("V2_EMAIL_DELIVERY_ENABLED", "false")
+
+    assert Settings(_env_file=None).resolved_sender_email() is None
+
+
+@pytest.mark.parametrize(
+    ("sender_email", "frontend_url", "expected"),
+    [
+        ("a@courtmastr.com", "https://academy.courtmastr.com", "a@courtmastr.com"),
+        (None, "https://academy.courtmastr.com", "noreply@academy.courtmastr.com"),
+        ("", "https://academy.courtmastr.com/", "noreply@academy.courtmastr.com"),
+        (None, "http://localhost:3000", "noreply@localhost:3000"),
+        (None, None, None),
+        (None, "", None),
+        (None, "https://", None),
+    ],
+)
+def test_resolve_sender_address(sender_email, frontend_url, expected) -> None:
+    from backend.v2.shared.config.settings import resolve_sender_address
+
+    assert resolve_sender_address(sender_email, frontend_url) == expected
+
+
+def _prod_multi_academy_env(monkeypatch, **extra: str) -> None:
+    _clear_production_env(monkeypatch)
+    for name in (
+        "V2_SAAS_MODE",
+        "V2_PLATFORM_BASE_DOMAIN",
+        "V2_PROXY_SHARED_SECRET",
+        "PRIMARY_ACADEMY_ID",
+        "V2_PRIMARY_ACADEMY_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MONGO_URL", "mongodb+srv://prod")
+    monkeypatch.setenv("DB_NAME", "academy_prod")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "academy-courtmastr")
+    monkeypatch.setenv("V2_STRIPE_USE_FAKE_GATEWAY", "false")
+    monkeypatch.setenv("STRIPE_API_KEY", "sk_live_existing")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_existing")
+    monkeypatch.setenv("APP_TENANCY_MODE", "multi_academy")
+    for name, value in extra.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_prod_multi_academy_without_saas_mode_is_refused(monkeypatch) -> None:
+    """multi_academy without saas_mode resolves every request to
+    default_academy_id ("default-academy"): a login outage for BLNO, not a
+    working second tenant. Refuse the half-switch at boot."""
+    _prod_multi_academy_env(monkeypatch)
+
+    with pytest.raises(ValidationError) as exc:
+        Settings(_env_file=None)
+
+    assert "saas_mode" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("missing", "extra"),
+    [
+        ("platform_base_domain", {"V2_PROXY_SHARED_SECRET": "s3cret"}),
+        ("proxy_shared_secret", {"V2_PLATFORM_BASE_DOMAIN": "courtmastr.com"}),
+    ],
+)
+def test_prod_saas_mode_requires_host_trust_settings(monkeypatch, missing, extra) -> None:
+    """In SaaS mode the tenant comes from the host. Without a base domain any
+    ``<slug>.<anything>`` host resolves by its first label, and without the
+    proxy secret a client-supplied x-forwarded-host is trusted."""
+    _prod_multi_academy_env(monkeypatch, V2_SAAS_MODE="true", **extra)
+
+    with pytest.raises(ValidationError) as exc:
+        Settings(_env_file=None)
+
+    assert missing in str(exc.value)
+
+
+def test_prod_saas_multi_academy_with_host_trust_settings_boots(monkeypatch) -> None:
+    _prod_multi_academy_env(
+        monkeypatch,
+        V2_SAAS_MODE="true",
+        V2_PLATFORM_BASE_DOMAIN="courtmastr.com",
+        V2_PROXY_SHARED_SECRET="s3cret",
+        ENABLE_PLATFORM_ROUTES="true",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.tenancy_mode == "multi_academy"
+    assert settings.saas_mode is True
+
+
+def test_prod_single_academy_saas_mode_boots_without_host_trust_settings(monkeypatch) -> None:
+    """Today's prod: single_academy with V2_SAAS_MODE set and neither host-trust
+    setting. The middleware pins every request to the primary academy, so the
+    host cannot pick a tenant; the release command must still boot."""
+    _prod_multi_academy_env(
+        monkeypatch,
+        V2_SAAS_MODE="true",
+        APP_TENANCY_MODE="single_academy",
+        PRIMARY_ACADEMY_ID="acad_blno_badminton",
+        ENABLE_PLATFORM_ROUTES="false",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.tenancy_mode == "single_academy"
+    assert settings.saas_mode is True

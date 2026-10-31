@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final, cast
@@ -28,6 +29,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     full_name_key,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
+    StudentParentChangeBlocked,
     StudentParentInactive,
     StudentParentInvalidRole,
     StudentParentNotFound,
@@ -36,10 +38,10 @@ from backend.v2.contexts.enrollment.domain.lifecycle import (
     PERSON_LIFECYCLES,
     LifecycleEnrollment,
     PersonLifecycleState,
+    StudentLifecycleSnapshot,
     derive_lifecycle,
 )
 from backend.v2.contexts.enrollment.domain.models import (
-    ACTIVE_OR_PAUSED,
     DROPPED_SPELLINGS,
     NON_TERMINAL,
     SEAT_HOLDING,
@@ -76,6 +78,44 @@ _AT_RISK_LOOKBACK_DAYS: Final[int] = 120
 
 #: "No attendance in the last three scheduled dates" (#773 / audit §3).
 _AT_RISK_OCCURRENCES: Final[int] = 3
+
+#: How far back ``attendance_rate`` / ``last_seen_at`` look, measured on the
+#: date the class ran (``session_occurrences.start_at``), not on when the mark
+#: was tapped. The admin student page labels this figure "Last 30 days"
+#: (frontend/app/(admin)/admin/students/[studentId]/page.tsx), so the label
+#: and this constant must move together.
+_ATTENDANCE_SUMMARY_WINDOW_DAYS: Final[int] = 30
+
+#: Marks that mean the student was in the room. Mirrors
+#: ``coaching.domain.models.RecordedAttendanceStatus`` minus ``absent``; copied
+#: rather than imported because enrollment may not depend on coaching
+#: (import-linter contract).
+_ATTENDED_STATUSES: Final[tuple[str, ...]] = ("present", "late")
+
+#: A voided mark (#554) is an admin annulment: the row stays for its audit
+#: trail but counts as unmarked everywhere downstream.
+_VOIDED_ATTENDANCE_STATUS: Final[str] = "voided"
+
+# --- change-parent cascade (#785) -------------------------------------------
+# Money moves with the child only while it is still *live*. Settled history
+# stays with the parent who actually paid it, which is why each set below is an
+# allow-list of open states rather than "not terminal": a row in an unexpected
+# state is left where it is instead of being rehomed on a guess.
+
+#: Invoice statuses that still owe (or may yet owe) money.
+_OPEN_INVOICE_STATUSES: Final[frozenset[str]] = frozenset({"draft", "open", "partially_paid"})
+
+#: Credit statuses that still hold spendable balance. Mirrors
+#: ``billing.domain.models.CreditStatus``; copied rather than imported because
+#: enrollment may not depend on the billing context (import-linter contract).
+_SPENDABLE_CREDIT_STATUSES: Final[frozenset[str]] = frozenset({"PENDING", "APPROVED"})
+
+#: Waitlist statuses that are still a live request for a seat.
+_LIVE_WAITLIST_STATUSES: Final[frozenset[str]] = frozenset({"waiting", "offered"})
+
+#: ``student_billing_enrollments.autopay_enrollment_status`` meaning the dunning
+#: worker may charge a saved card. Mirrors ``AUTOPAY_ACTIVE_STATUS``.
+_AUTOPAY_ACTIVE_STATUS: Final[str] = "active"
 
 
 class MongoStudentRepository(TenantScopedRepository):
@@ -230,9 +270,15 @@ class MongoStudentRepository(TenantScopedRepository):
         *,
         exclude_enrollment_id: str | None = None,
     ) -> bool:
+        # Issue #782: widened from ACTIVE_OR_PAUSED (a name that predates
+        # `held`, #697) to the domain's NON_TERMINAL — LIVE plus the in-flight
+        # `reclaim_pending`. "Already enrolled somewhere, manage that instead"
+        # is true of a child on hold: the hold IS an existing class, and
+        # reading it as "no enrollment" is what let registration approval mint
+        # a duplicate row for a held child.
         filter_: dict[str, object] = {
             "student_id": student_id,
-            "status": {"$in": sorted(ACTIVE_OR_PAUSED)},
+            "status": {"$in": sorted(NON_TERMINAL)},
         }
         if exclude_enrollment_id is not None:
             filter_["enrollment_id"] = {"$ne": exclude_enrollment_id}
@@ -629,10 +675,14 @@ class MongoStudentRepository(TenantScopedRepository):
 
         new_parent_id = self._canonical_parent_id(parent)
         old_parent_id = str(before.get("parent_id") or before.get("parent_user_id") or "")
-        impact_counts = await self._parent_change_impact_counts(
+        student_key = self._summary_id(before)
+        old_parent_ids = self._parent_lookup_ids_from_student(before)
+        # Refuse BEFORE the first write: a half-moved family (student under the
+        # new parent, money under the old one) is worse than no move at all.
+        await self._refuse_unmovable_money(
             academy_id=academy_id,
-            student_id=self._summary_id(before),
-            old_parent_ids=self._parent_lookup_ids_from_student(before),
+            student_id=student_key,
+            old_parent_ids=old_parent_ids,
         )
         now = datetime.now(UTC)
         updated = await self.collection.find_one_and_update(
@@ -648,6 +698,26 @@ class MongoStudentRepository(TenantScopedRepository):
         )
         if updated is None:
             return None
+
+        rehomed_counts = await self._rehome_live_money(
+            academy_id=academy_id,
+            student_id=student_key,
+            old_parent_ids=old_parent_ids,
+            new_parent_id=new_parent_id,
+            now=now,
+        )
+        await self._mark_waivers_outdated_for_parent(
+            academy_id=academy_id,
+            student_id=student_key,
+            new_parent_id=new_parent_id,
+            now=now,
+        )
+        # Counted AFTER the cascade, so this is what genuinely stayed behind.
+        impact_counts = await self._parent_change_impact_counts(
+            academy_id=academy_id,
+            student_id=student_key,
+            old_parent_ids=old_parent_ids,
+        )
 
         await self._write_parent_change_audit(
             academy_id=academy_id,
@@ -670,9 +740,162 @@ class MongoStudentRepository(TenantScopedRepository):
                 phone=str(parent.get("phone")) if parent.get("phone") is not None else None,
             ),
             previous_parent_id=old_parent_id or None,
-            warnings=["Historical billing, waiver, credit, and waitlist rows were not rewritten."],
+            warnings=[
+                "Settled invoices, spent credit and past waivers stay with the parent "
+                "who paid or signed them.",
+                "The new parent must re-sign the waiver and set up autopay again.",
+            ],
             impact_counts=impact_counts,
+            rehomed_counts=rehomed_counts,
         )
+
+    async def _refuse_unmovable_money(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        old_parent_ids: list[str],
+    ) -> None:
+        """Raise when the child's live money cannot follow them (#785).
+
+        Two states make a Mongo-side ``parent_id`` rewrite a lie: an open
+        invoice with a Stripe twin (Stripe keeps collecting from the OLD
+        parent's customer), and an enrollment still on active autopay (the
+        saved card is the old parent's and must never be re-pointed at anyone
+        else). Both are read-only checks run before the first write.
+        """
+        if not old_parent_ids:
+            return
+        stripe_invoice_ids = [
+            str(doc.get("invoice_id") or doc.get("_id"))
+            async for doc in self._db["invoices"].find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "parent_id": {"$in": old_parent_ids},
+                    "status": {"$in": sorted(_OPEN_INVOICE_STATUSES)},
+                    "stripe_invoice_id": {"$nin": [None, ""]},
+                },
+                {"invoice_id": 1},
+            )
+        ]
+        if stripe_invoice_ids:
+            raise StudentParentChangeBlocked(
+                "Open invoices are still live in Stripe under the current parent: "
+                f"{', '.join(sorted(stripe_invoice_ids))}. Settle or void them first.",
+                invoice_ids=sorted(stripe_invoice_ids),
+            )
+        autopay_enrollment_ids = [
+            str(doc.get("enrollment_id") or doc.get("_id"))
+            async for doc in self._db["student_billing_enrollments"].find(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    "autopay_enrollment_status": _AUTOPAY_ACTIVE_STATUS,
+                },
+                {"enrollment_id": 1},
+            )
+        ]
+        if autopay_enrollment_ids:
+            raise StudentParentChangeBlocked(
+                "Autopay is still active on the current parent's saved card for "
+                f"{', '.join(sorted(autopay_enrollment_ids))}. Turn autopay off first.",
+                enrollment_ids=sorted(autopay_enrollment_ids),
+            )
+
+    async def _rehome_live_money(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        old_parent_ids: list[str],
+        new_parent_id: str,
+        now: datetime,
+    ) -> dict[str, int]:
+        """Point this child's still-open money at the new parent (#785).
+
+        Only rows scoped to THIS student move, and only while they are live —
+        a settled invoice or a spent credit records what the previous parent
+        actually paid and is never rewritten. Every query carries
+        ``academy_id``: a same-named student in another tenant must be
+        untouchable.
+        """
+        rehomed = {"invoices": 0, "credits": 0, "waitlist": 0, "autopay_enrollments": 0}
+        if not old_parent_ids:
+            return rehomed
+        base = {
+            "academy_id": academy_id,
+            "student_id": student_id,
+            "parent_id": {"$in": old_parent_ids},
+        }
+        stamp = {"parent_id": new_parent_id, "updated_at": now}
+
+        invoices = await self._db["invoices"].update_many(
+            {**base, "status": {"$in": sorted(_OPEN_INVOICE_STATUSES)}},
+            {"$set": stamp},
+        )
+        rehomed["invoices"] = int(invoices.modified_count)
+
+        credits = await self._db["account_credit_ledger"].update_many(
+            {
+                **base,
+                "status": {"$in": sorted(_SPENDABLE_CREDIT_STATUSES)},
+                "remaining_amount_cents": {"$gt": 0},
+            },
+            {"$set": stamp},
+        )
+        rehomed["credits"] = int(credits.modified_count)
+
+        waitlist = await self._db["waitlist"].update_many(
+            {
+                "academy_id": academy_id,
+                "student_id": student_id,
+                "status": {"$in": sorted(_LIVE_WAITLIST_STATUSES)},
+                "$or": [
+                    {"parent_id": {"$in": old_parent_ids}},
+                    {"parent_user_id": {"$in": old_parent_ids}},
+                ],
+            },
+            {"$set": {**stamp, "parent_user_id": new_parent_id}},
+        )
+        rehomed["waitlist"] = int(waitlist.modified_count)
+
+        # The per-enrollment autopay row is what the dunning worker charges
+        # from. Reached only once `_refuse_unmovable_money` has proved no row
+        # is on active autopay, so nothing here re-points a saved card.
+        billing_enrollments = await self._db["student_billing_enrollments"].update_many(
+            base, {"$set": stamp}
+        )
+        rehomed["autopay_enrollments"] = int(billing_enrollments.modified_count)
+        return rehomed
+
+    async def _mark_waivers_outdated_for_parent(
+        self,
+        *,
+        academy_id: str,
+        student_id: str,
+        new_parent_id: str,
+        now: datetime,
+    ) -> None:
+        """Flag consent the new guardian never gave (#785).
+
+        The signature stays on file — it is the legal record of what the
+        previous parent agreed to — but it no longer counts as this family's
+        waiver, so the parent waiver page asks the new guardian to re-sign.
+        """
+        stamp = {"$set": {"outdated_for_parent": True, "outdated_for_parent_at": now}}
+        for collection, parent_field in (
+            ("waiver_signatures", "parent_user_id"),
+            ("waiver_acceptances", "parent_user_id"),
+        ):
+            await self._db[collection].update_many(
+                {
+                    "academy_id": academy_id,
+                    "student_id": student_id,
+                    parent_field: {"$ne": new_parent_id},
+                },
+                stamp,
+            )
 
     async def list_admin_students(
         self,
@@ -792,10 +1015,11 @@ class MongoStudentRepository(TenantScopedRepository):
         rows.sort(key=lambda row: (str(row["full_name_key"]), str(row["student_id"])))
 
         # --- Issue #773: derive BEFORE paginating. ---
-        # `attendance` is one aggregation over a 90-day window however many
-        # students are passed, and `_lifecycle_states` is three queries, so
-        # widening them from "the page" to "everyone who matched the search"
-        # costs a constant number of round trips, not one per student.
+        # `attendance` is one aggregation over a 30-day occurrence-date window
+        # however many students are passed, and `_lifecycle_states` is three
+        # queries, so widening them from "the page" to "everyone who matched
+        # the search" costs a constant number of round trips, not one per
+        # student.
         candidate_ids = [str(row["student_id"]) for row in rows]
         attendance = await self._attendance_summaries(academy_id, candidate_ids)
         lifecycles = await self._lifecycle_states(
@@ -1337,6 +1561,7 @@ class MongoStudentRepository(TenantScopedRepository):
                     "academy_id": academy_id,
                     "student_id": student_id,
                     "is_deleted": {"$ne": True},
+                    "status": {"$ne": _VOIDED_ATTENDANCE_STATUS},
                 }
             )
             .sort([("marked_at", -1), ("date", -1), ("_id", -1)])
@@ -1350,6 +1575,9 @@ class MongoStudentRepository(TenantScopedRepository):
                     date=self._attendance_date_label(doc.get("date")),
                     status=str(doc.get("status") or "unknown"),
                     marked_at=self._coerce_datetime(doc.get("marked_at")),
+                    occurrence_id=self._optional_str(doc.get("occurrence_id")),
+                    previous_status=self._optional_str(doc.get("previous_status")),
+                    corrected_at=self._coerce_datetime(doc.get("corrected_at")),
                 )
             )
         return rows
@@ -1820,18 +2048,65 @@ class MongoStudentRepository(TenantScopedRepository):
         last_seen_by_student: dict[str, datetime | None] | None = None,
     ) -> dict[str, PersonLifecycleState]:
         """Derive one lifecycle per student. Three queries, not 3N."""
+        states, _live = await self._lifecycle_facts(
+            academy_id, student_ids, last_seen_by_student=last_seen_by_student
+        )
+        return states
+
+    async def _lifecycle_facts(
+        self,
+        academy_id: str,
+        student_ids: list[str],
+        *,
+        last_seen_by_student: dict[str, datetime | None] | None = None,
+    ) -> tuple[dict[str, PersonLifecycleState], dict[str, set[str]]]:
+        """Lifecycle per student plus their live (seat-holding) session ids."""
         if not student_ids:
-            return {}
+            return {}, {}
         rows, live_sessions = await self._enrollment_rows_by_student(academy_id, student_ids)
         cutoffs = await self._at_risk_cutoffs(academy_id, live_sessions)
         last_seen = last_seen_by_student or {}
-        return {
+        states = {
             student_id: derive_lifecycle(
                 rows.get(student_id, []),
                 last_seen_at=last_seen.get(student_id),
                 at_risk_cutoff=cutoffs.get(student_id),
             )
             for student_id in student_ids
+        }
+        return states, live_sessions
+
+    async def lifecycle_snapshots(
+        self, *, academy_id: str, student_ids: Sequence[str]
+    ) -> dict[str, StudentLifecycleSnapshot]:
+        """The directory's own lifecycle derivation, for a batch of students.
+
+        Exactly what ``/admin/students`` shows per child (same attendance
+        window, same at-risk cutoff, same ``derive_lifecycle``), so the People
+        CRM family index can never disagree with the Students page about a
+        child. A fixed number of queries however many ids are passed: one
+        attendance aggregation, one enrollment read, one occurrence
+        aggregation.
+        """
+        ids = list(dict.fromkeys(str(sid) for sid in student_ids if sid))
+        if not ids:
+            return {}
+        attendance = await self._attendance_summaries(academy_id, ids)
+        states, live_sessions = await self._lifecycle_facts(
+            academy_id,
+            ids,
+            last_seen_by_student={
+                sid: att.get("last_seen_at")  # type: ignore[misc]
+                for sid, att in attendance.items()
+            },
+        )
+        return {
+            sid: StudentLifecycleSnapshot(
+                state=state.state,
+                as_of=state.as_of,
+                live_session_ids=tuple(sorted(live_sessions.get(sid, ()))),
+            )
+            for sid, state in states.items()
         }
 
     async def _active_session_summaries(
@@ -1914,32 +2189,58 @@ class MongoStudentRepository(TenantScopedRepository):
         academy_id: str,
         student_ids: list[str],
     ) -> dict[str, dict[str, object]]:
+        """``attendance_rate`` and ``last_seen_at`` per student over the last
+        ``_ATTENDANCE_SUMMARY_WINDOW_DAYS`` of *class dates*.
+
+        Attendance rows carry no date of their own (only ``marked_at``, which
+        is when the coach tapped), so the window is applied to the joined
+        occurrence's ``start_at``. A row whose occurrence no longer exists has
+        no class date to window on and is left out rather than guessed at
+        from ``marked_at``. Voided marks (#554) are annulled and never count.
+        ``last_seen_at`` is the latest mark that put the student in the room
+        (present/late): an absent-only student has none.
+        """
         if not student_ids:
             return {}
-        since = datetime.now(UTC) - timedelta(days=90)
+        since = datetime.now(UTC) - timedelta(days=_ATTENDANCE_SUMMARY_WINDOW_DAYS)
+        attended = {"$in": ["$status", list(_ATTENDED_STATUSES)]}
         cursor = self._db["attendance"].aggregate(
             [
                 {
                     "$match": {
                         "academy_id": academy_id,
                         "student_id": {"$in": student_ids},
-                        "marked_at": {"$gte": since},
+                        "status": {"$ne": _VOIDED_ATTENDANCE_STATUS},
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "session_occurrences",
+                        "localField": "occurrence_id",
+                        "foreignField": "occurrence_id",
+                        "as": "occurrence",
+                    }
+                },
+                {"$unwind": "$occurrence"},
+                {
+                    # Re-assert the tenant on the joined side: occurrence ids
+                    # are only unique per academy (migration 0186), so the
+                    # $lookup above can join another tenant's occurrence that
+                    # shares the id. That row must never reach a student's
+                    # rate (#849).
+                    "$match": {
+                        "occurrence.academy_id": academy_id,
+                        "occurrence.start_at": {"$gte": since},
                     }
                 },
                 {
                     "$group": {
                         "_id": "$student_id",
                         "total": {"$sum": 1},
-                        "attended": {
-                            "$sum": {
-                                "$cond": [
-                                    {"$in": ["$status", ["present", "late"]]},
-                                    1,
-                                    0,
-                                ]
-                            }
-                        },
-                        "last_seen_at": {"$max": "$marked_at"},
+                        "attended": {"$sum": {"$cond": [attended, 1, 0]}},
+                        # $max ignores nulls, so an absent-only student
+                        # resolves to null rather than to their absence.
+                        "last_seen_at": {"$max": {"$cond": [attended, "$marked_at", None]}},
                     }
                 },
             ]
@@ -1947,9 +2248,9 @@ class MongoStudentRepository(TenantScopedRepository):
         out: dict[str, dict[str, object]] = {}
         async for row in cursor:
             total = int(row.get("total") or 0)
-            attended = int(row.get("attended") or 0)
+            attended_count = int(row.get("attended") or 0)
             out[str(row["_id"])] = {
-                "attendance_rate": attended / total if total else None,
+                "attendance_rate": attended_count / total if total else None,
                 "last_seen_at": self._as_utc(row["last_seen_at"])
                 if isinstance(row.get("last_seen_at"), datetime)
                 else row.get("last_seen_at"),

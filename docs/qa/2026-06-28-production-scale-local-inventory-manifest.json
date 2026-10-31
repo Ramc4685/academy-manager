@@ -49,12 +49,20 @@
       "source": "frontend/app/page.tsx",
       "workflows": [
         "Landing entry",
-        "Navigate to auth"
+        "Navigate to auth",
+        "Tenant host public academy page",
+        "Book a free trial entry"
       ],
       "controls": {
         "buttons": [
           "Sign in",
-          "Register"
+          "Register",
+          "Book a free trial",
+          "See classes and prices",
+          "Try a class free",
+          "Join waitlist",
+          "Parent login",
+          "Try again"
         ],
         "inputs": [],
         "modals": []
@@ -62,19 +70,37 @@
       "states": [
         "default",
         "mobile",
-        "not-found guard"
+        "not-found guard",
+        "product host landing",
+        "loading",
+        "published",
+        "nothing published yet (not_published page, or published with no classes)",
+        "trials closed",
+        "all classes full",
+        "unknown host not found (404)",
+        "backend unavailable"
       ],
       "risk_edges": [
         "Broken primary auth links",
-        "Mobile hero overlap"
+        "Mobile hero overlap",
+        "Tenant data shown on the product host or another tenant host",
+        "Unpublished classes, exact seat counts or personal data on the public page",
+        "Brand colour below WCAG AA contrast"
       ],
       "acceptance": [
         "Primary auth navigation works",
         "No framework error overlay",
+        "On a product host (academy.courtmastr.com) / renders the CourtMastr landing page without calling the public API",
+        "On a tenant host / renders the academy page from GET /api/v2/public/academy with Book a free trial as the primary action",
         "Workflow evidence: \"Landing entry\" completes for the public route / with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Navigate to auth\" completes for the public route / with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Tenant host public academy page\" completes for the public route / with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Book a free trial entry\" completes for the public route / with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Broken primary auth links\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Mobile hero overlap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Mobile hero overlap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Tenant data shown on the product host or another tenant host\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Unpublished classes, exact seat counts or personal data on the public page\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Brand colour below WCAG AA contrast\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -871,6 +897,67 @@
       ]
     },
     {
+      "route": "/admin/pricing",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pricing/page.tsx",
+      "workflows": [
+        "Add plan",
+        "Edit plan",
+        "Archive plan",
+        "Link class to plan",
+        "Link matching classes",
+        "Review saved overrides"
+      ],
+      "controls": {
+        "buttons": [
+          "New plan",
+          "Edit",
+          "Archive",
+          "Reactivate",
+          "Save",
+          "Cancel",
+          "Link matching classes"
+        ],
+        "inputs": [
+          "Name",
+          "Description",
+          "Price ($)",
+          "Plan type",
+          "Overage rate ($)",
+          "Show archived",
+          "Plan for class"
+        ],
+        "modals": [
+          "Plan form",
+          "Archive confirmation"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "owner only",
+        "mutation error"
+      ],
+      "risk_edges": [
+        "Link changes a charged amount",
+        "Plain admin reaches owner-only pricing",
+        "Linked plan price disagrees with class fee"
+      ],
+      "acceptance": [
+        "A plain admin sees the owner-only panel and no Pricing nav item; every /admin/pricing API call is 403",
+        "Linking a class never changes the amount on its next invoice",
+        "Workflow evidence: \"Add plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Edit plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Archive plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Link class to plan\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Link matching classes\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review saved overrides\" completes for the admin route /admin/pricing with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Link changes a charged amount\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Plain admin reaches owner-only pricing\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Linked plan price disagrees with class fee\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/payouts",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/payouts/page.tsx",
@@ -964,36 +1051,92 @@
       ]
     },
     {
-      "route": "/admin/registrations",
+      "route": "/admin/inbox",
       "role": "admin",
-      "source": "frontend/app/(admin)/admin/registrations/page.tsx",
+      "source": "frontend/app/(admin)/admin/inbox/page.tsx",
       "workflows": [
         "Review applications",
-        "Open application"
+        "Open application",
+        "Approve makeup",
+        "Deny makeup",
+        "Approve trial",
+        "Deny trial",
+        "Review cancellations",
+        "Review pauses"
       ],
       "controls": {
         "buttons": [
           "Open",
-          "Filter"
+          "Review",
+          "Approve",
+          "Deny"
         ],
         "inputs": [
-          "Status filter"
+          "Status filter",
+          "Target occurrence id",
+          "Reason"
         ],
-        "modals": []
+        "modals": [
+          "Approve makeup",
+          "Deny makeup",
+          "Approve trial",
+          "Deny trial",
+          "Record absence"
+        ]
       },
       "states": [
         "loading",
         "empty",
-        "error"
+        "error",
+        "mutation error",
+        "status filters",
+        "validation"
       ],
       "risk_edges": [
-        "Pending applications hidden by filter"
+        "Pending applications hidden by filter",
+        "Approve into full occurrence",
+        "Fee billing failure visibility",
+        "Queue counts disagree with the tab contents"
       ],
       "acceptance": [
-        "Registration queue renders pending applications or clear empty state",
-        "Workflow evidence: \"Review applications\" completes for the admin route /admin/registrations with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open application\" completes for the admin route /admin/registrations with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Pending applications hidden by filter\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Every inbox tab renders its pending count and the first non-empty queue opens by default",
+        "Admin decisions surface backend capacity and billing errors as recoverable states",
+        "Workflow evidence: \"Review applications\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Open application\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Approve makeup\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Deny makeup\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Approve trial\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Deny trial\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review cancellations\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Review pauses\" completes for the admin route /admin/inbox with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Pending applications hidden by filter\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Approve into full occurrence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Fee billing failure visibility\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Queue counts disagree with the tab contents\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/admin/registrations",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/registrations/page.tsx",
+      "workflows": [
+        "Redirect to Inbox"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "redirect"
+      ],
+      "risk_edges": [
+        "Bookmarked tab lost on redirect"
+      ],
+      "acceptance": [
+        "Legacy route /admin/registrations redirects to /admin/inbox?tab=registrations preserving the requested tab",
+        "Workflow evidence: \"Redirect to Inbox\" completes for the admin route /admin/registrations with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Bookmarked tab lost on redirect\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -1220,48 +1363,23 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/requests/page.tsx",
       "workflows": [
-        "Approve makeup",
-        "Deny makeup",
-        "Approve trial",
-        "Deny trial",
-        "Review cancellations"
+        "Redirect to Inbox"
       ],
       "controls": {
-        "buttons": [
-          "Approve",
-          "Deny"
-        ],
-        "inputs": [
-          "Target occurrence id",
-          "Reason"
-        ],
-        "modals": [
-          "Approve makeup",
-          "Deny makeup",
-          "Approve trial",
-          "Deny trial"
-        ]
+        "buttons": [],
+        "inputs": [],
+        "modals": []
       },
       "states": [
-        "loading",
-        "empty",
-        "mutation error",
-        "status filters",
-        "validation"
+        "redirect"
       ],
       "risk_edges": [
-        "Approve into full occurrence",
-        "Fee billing failure visibility"
+        "Bookmarked tab lost on redirect"
       ],
       "acceptance": [
-        "Admin decisions surface backend capacity and billing errors as recoverable states",
-        "Workflow evidence: \"Approve makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Deny makeup\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Approve trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Deny trial\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Review cancellations\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Approve into full occurrence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Fee billing failure visibility\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Legacy route /admin/requests redirects to /admin/inbox?tab=makeups preserving the requested tab",
+        "Workflow evidence: \"Redirect to Inbox\" completes for the admin route /admin/requests with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Bookmarked tab lost on redirect\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -1781,21 +1899,29 @@
       "workflows": [
         "List users",
         "Create user",
+        "Bulk invite parents",
         "Change role"
       ],
       "controls": {
         "buttons": [
           "Create user",
+          "Bulk invite parents",
+          "Upload CSV",
+          "Send invites",
+          "Retry failed",
           "Edit role",
           "Deactivate"
         ],
         "inputs": [
           "Email",
           "Name",
-          "Role filter"
+          "Role filter",
+          "Bulk invite paste",
+          "Bulk invite CSV file"
         ],
         "modals": [
           "Create user",
+          "Bulk invite parents",
           "Role change"
         ]
       },
@@ -1803,21 +1929,29 @@
         "loading",
         "empty",
         "duplicate email",
-        "mutation error"
+        "mutation error",
+        "bulk invite preview",
+        "bulk invite partial success"
       ],
       "risk_edges": [
         "Duplicate email",
         "Invalid role",
-        "Multi-role precedence"
+        "Multi-role precedence",
+        "Bulk batch over 100 rows",
+        "Bulk invite partial failure"
       ],
       "acceptance": [
         "User mutations show errors without leaking cross-tenant data",
+        "Bulk invite never sends malformed, duplicate, or over-limit rows to the endpoint",
         "Workflow evidence: \"List users\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Create user\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Bulk invite parents\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Change role\" completes for the admin route /admin/users with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Duplicate email\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Invalid role\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Multi-role precedence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+        "Risk evidence: \"Multi-role precedence\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Bulk batch over 100 rows\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Bulk invite partial failure\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -1886,10 +2020,10 @@
         "submitting",
         "validation error",
         "create failed (email exists)",
-        "created \u2192 redirect to user detail"
+        "created → redirect to user detail"
       ],
       "risk_edges": [
-        "duplicate email \u2192 creation fails, surfaced inline",
+        "duplicate email → creation fails, surfaced inline",
         "parent auto-invite send failure is best-effort (user created, invite re-sendable)"
       ],
       "acceptance": [
@@ -2223,48 +2357,6 @@
         "Workflow evidence: \"Open role-scoped schedule handoff\" completes for the authenticated route /calendar with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Wrong role destination\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Unauthenticated user sees handoff content\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
-      ]
-    },
-    {
-      "route": "/coach/dashboard",
-      "role": "coach",
-      "source": "frontend/app/(coach)/coach/dashboard/page.tsx",
-      "workflows": [
-        "Day hub",
-        "Open session",
-        "Open passport"
-      ],
-      "controls": {
-        "buttons": [
-          "Previous day",
-          "Today",
-          "Next day",
-          "Prepare",
-          "Skills",
-          "Passport"
-        ],
-        "inputs": [
-          "Date selector"
-        ],
-        "modals": []
-      },
-      "states": [
-        "loading",
-        "empty day",
-        "API error",
-        "placeholder notice"
-      ],
-      "risk_edges": [
-        "Date change keeps stale data",
-        "Placeholder actions look real"
-      ],
-      "acceptance": [
-        "Coach sees correct day data and placeholder actions are clear",
-        "Workflow evidence: \"Day hub\" completes for the coach route /coach/dashboard with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open session\" completes for the coach route /coach/dashboard with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Open passport\" completes for the coach route /coach/dashboard with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Date change keeps stale data\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
-        "Risk evidence: \"Placeholder actions look real\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {
@@ -3365,7 +3457,7 @@
         "error"
       ],
       "risk_edges": [
-        "Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone",
+        "Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone",
         "Transactional email must not be offered as something to switch off",
         "A token from another academy must be refused, not silently applied"
       ],
@@ -3379,7 +3471,7 @@
         "Workflow evidence: \"Open the emailed unsubscribe link\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Save opt-out choices\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Re-open the link and opt back in\" completes for the public route /unsubscribe with real-user evidence and no framework or runtime errors.",
-        "Risk evidence: \"Nothing may change on page load \u2014 a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Nothing may change on page load — a mail scanner's link prefetch must not unsubscribe anyone\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Transactional email must not be offered as something to switch off\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"A token from another academy must be refused, not silently applied\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
@@ -3764,6 +3856,90 @@
         "Risk evidence: \"Wrong-role user driving tenant lifecycle\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Invalid lifecycle transition returning a conflict\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Stale tenant status after a lifecycle mutation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/og-card",
+      "role": "public",
+      "source": "frontend/app/og-card/route.ts",
+      "workflows": [
+        "Share preview card for the tenant page"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "published card",
+        "not published card",
+        "unknown host not found (404)"
+      ],
+      "risk_edges": [
+        "Personal data or class detail on the card",
+        "Card served for a host no academy serves"
+      ],
+      "acceptance": [
+        "Returns a 1200x630 PNG with the academy name, age span and address on night with the brand lane line",
+        "Workflow evidence: \"Share preview card for the tenant page\" completes for the public route /og-card with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Personal data or class detail on the card\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Card served for a host no academy serves\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/robots.txt",
+      "role": "public",
+      "source": "frontend/app/robots.txt/route.ts",
+      "workflows": [
+        "Crawler reads robots.txt for the host"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "product host",
+        "tenant host",
+        "unknown host"
+      ],
+      "risk_edges": [
+        "App persona paths crawlable",
+        "Sitemap pointing at another host"
+      ],
+      "acceptance": [
+        "Allows /, disallows the persona and API prefixes, and names this host's sitemap",
+        "Workflow evidence: \"Crawler reads robots.txt for the host\" completes for the public route /robots.txt with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"App persona paths crawlable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Sitemap pointing at another host\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/sitemap.xml",
+      "role": "public",
+      "source": "frontend/app/sitemap.xml/route.ts",
+      "workflows": [
+        "Crawler reads sitemap.xml for the host"
+      ],
+      "controls": {
+        "buttons": [],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "indexable page listed",
+        "unindexable page (not published, no classes) lists nothing",
+        "unknown host not found (404)"
+      ],
+      "risk_edges": [
+        "Unpublished page listed in the sitemap",
+        "Another host listed in the sitemap"
+      ],
+      "acceptance": [
+        "Lists this host's root only when the page is published with classes",
+        "Workflow evidence: \"Crawler reads sitemap.xml for the host\" completes for the public route /sitemap.xml with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Unpublished page listed in the sitemap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Another host listed in the sitemap\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     }
   ],

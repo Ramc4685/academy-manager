@@ -60,6 +60,9 @@ class ApplicationView(BaseModel):
     child_profile: ChildProfileView
     selected_session_id: str | None
     waiver_accepted: bool
+    # True when some live waiver is assigned to a program: the stepper then
+    # asks for the class before the waiver. False for a single-waiver academy.
+    waiver_class_first: bool = False
     expires_at: datetime
 
 
@@ -70,12 +73,25 @@ class PatchApplicationRequest(BaseModel):
     accept_waiver: bool = False
 
 
+class RegistrationWaiverItemView(BaseModel):
+    waiver_template_id: str
+    title: str | None = None
+    version: str
+    body: str
+
+
 class RegistrationWaiverView(BaseModel):
     """Active registration waiver for the parent onboarding stepper."""
 
     configured: bool
     version: str | None = None
     body: str | None = None
+    # Every waiver to sign for the chosen class. The three fields above are the
+    # first (primary) one, so a single-waiver academy reads exactly as before.
+    waivers: list[RegistrationWaiverItemView] = []
+    # True when some live waiver is assigned to a program: the stepper then
+    # asks for the class before the waiver.
+    class_first: bool = False
 
 
 # --- Checkout ---
@@ -288,6 +304,16 @@ class ParentEnrollmentView(BaseModel):
     # Issue #740: ISO calendar date the hold is expected to end; None unless
     # the row is held. A date, not an instant — it must not shift by zone.
     hold_return_on: str | None = None
+    # Issue #775: a terminal row carried alongside the live ones so a departed
+    # child's card shows the class that ended instead of nothing. These three
+    # MUST stay declared: the model would otherwise drop them on the floor
+    # (pydantic's default extra="ignore") and the portal could never render
+    # the departed state the composition takes the trouble to build.
+    departed: bool = False
+    #: Instant the enrollment ended (withdrawal or removal); None when undated.
+    left_on: datetime | None = None
+    #: Free-text reason the family or the academy recorded, when there is one.
+    departure_reason: str | None = None
     payment_mode: str | None = None
     subscription_status: str | None = None
     autopay_enrollment_status: str | None = None
@@ -343,6 +369,10 @@ class ParentAttendanceRecordView(BaseModel):
     session_id: str
     session_title: str
     status: str
+    # "voided" (#554) means the academy annulled the mark; ``previous_status``
+    # is what it used to say, so the parent sees that a record changed rather
+    # than a row silently vanishing from their history.
+    previous_status: str | None = None
     marked_at: datetime
     coach_name: str | None = None
 
@@ -384,13 +414,24 @@ class ParentWaiverStudentView(BaseModel):
     waiver_version: str | None = None
 
 
+class ParentWaiverItemView(BaseModel):
+    waiver_template_id: str
+    title: str | None = None
+    version: str | None = None
+    body: str | None = None
+    students: list[ParentWaiverStudentView] = []
+
+
 class ParentWaiverCurrentView(BaseModel):
     required: bool
+    # The first waiver, kept flat for clients that predate several waivers.
     waiver_template_id: str | None = None
     title: str | None = None
     version: str | None = None
     body: str | None = None
     students: list[ParentWaiverStudentView] = []
+    # Every waiver this parent's children must sign, one entry each.
+    waivers: list[ParentWaiverItemView] = []
 
 
 class ParentWaiverAcceptRequest(BaseModel):
@@ -409,6 +450,9 @@ class ParentScheduleEntryView(BaseModel):
     end_at: datetime
     status: str
     coach_name: str | None = None
+    # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
+    # approved attendance (issue #1038).
+    source: Literal["regular", "makeup", "trial"] = "regular"
 
 
 class ParentScheduleResponse(BaseModel):
@@ -473,6 +517,20 @@ class ParentAvailableSessionsResponse(BaseModel):
 # --- Academy info ---
 
 
+class ParentSelfServiceSwitchesView(BaseModel):
+    """What parents can do in the app (Settings overhaul Phase 1 Lane C).
+    All default True = today's behaviour. ``can_request_trial`` reflects the
+    Public page "Accept free trial requests" toggle rather than a duplicate
+    switch on the self-service policy."""
+
+    can_report_absence: bool = True
+    can_request_makeup: bool = True
+    can_request_pause: bool = True
+    can_request_cancel: bool = True
+    can_claim_waitlist_offer: bool = True
+    can_request_trial: bool = True
+
+
 class ParentAcademyView(BaseModel):
     display_name: str
     timezone: str | None = None
@@ -481,6 +539,13 @@ class ParentAcademyView(BaseModel):
     hours_text: str | None = None
     address: str | None = None
     logo_url: str | None = None
+    brand_color: str | None = None
+    self_service: ParentSelfServiceSwitchesView = Field(
+        default_factory=ParentSelfServiceSwitchesView
+    )
+    #: Owner-edited plain text for manual payers (Settings overhaul Phase 1
+    #: Lane C item 5). None/empty = nothing shown.
+    payment_instructions: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +669,9 @@ class ParentHomeNextSessionView(BaseModel):
     start_at: datetime
     end_at: datetime
     coach_name: str | None = None
+    # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
+    # approved attendance (issue #1038).
+    source: Literal["regular", "makeup", "trial"] = "regular"
 
 
 class ParentHomeAttendanceView(BaseModel):
@@ -647,3 +715,39 @@ class ParentHomeResponse(BaseModel):
     balance: ParentHomeBalanceView
     month_label: str
     timezone: str
+
+
+class WaitlistOfferConfirmation(BaseModel):
+    """What the parent gets back after claiming a held seat (#828)."""
+
+    waitlist_id: str
+    enrollment_id: str
+
+
+class ParentWaitlistEntryView(BaseModel):
+    """One of the family's own waitlist rows (X2).
+
+    ``offer_expires_at`` is set while ``status == "offered"``: the seat is
+    held until then. ``expired`` rows stay listed for two weeks so a late
+    click on the offer email explains itself.
+    """
+
+    waitlist_id: str
+    session_id: str
+    session_title: str
+    schedule_label: str | None = None
+    location: str | None = None
+    student_id: str
+    student_name: str
+    status: Literal["waiting", "offered", "expired"]
+    joined_at: datetime
+    offer_expires_at: datetime | None = None
+
+
+class ParentWaitlistList(BaseModel):
+    entries: list[ParentWaitlistEntryView]
+
+
+class WaitlistOfferDecline(BaseModel):
+    waitlist_id: str
+    status: Literal["removed"] = "removed"

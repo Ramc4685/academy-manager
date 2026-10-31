@@ -9,7 +9,9 @@ import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
 } from "@/lib/billing-rules-form";
+import type { DepartureReasonCode } from "@/lib/admin/departure-reasons";
 import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
+import type { ManualPaymentMethod } from "@/lib/payment-methods";
 
 import { apiFetch } from "./client";
 
@@ -88,6 +90,26 @@ export interface AdminCoachAttendanceView {
   marked_at: string;
   rate_override_minor: number | null;
   note: string;
+}
+
+/** One student's recorded mark for one dated occurrence (#517, #554). */
+export interface AdminStudentAttendanceView {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  student_id: string;
+  /** "voided" is an admin annulment: the row stays, but counts as unmarked. */
+  status: "present" | "absent" | "late" | "voided";
+  previous_status: "present" | "absent" | "late" | "voided" | null;
+  corrected_by: string | null;
+  corrected_at: string | null;
+  correction_reason: string | null;
+  marked_by: string | null;
+  marked_at: string | null;
+}
+
+export interface AdminStudentAttendanceList {
+  attendance: AdminStudentAttendanceView[];
 }
 
 export interface UpdateSessionOccurrenceCoachRequest {
@@ -241,6 +263,14 @@ export interface WithdrawEnrollmentRequest {
   effective_date: string;
   outcome?: "credit" | "refund" | "adjustment";
   reason: string;
+  /** Issue #775: the closed-vocabulary departure reason, beside the note. */
+  reason_code?: DepartureReasonCode;
+  /**
+   * Issue #820: schedule the drop for the academy-local period end instead of
+   * performing it now (the `no_credit_end_of_period` departure policy). The
+   * backend ignores `effective_date` when this is set.
+   */
+  defer_to_period_end?: boolean;
 }
 
 export interface RemoveEnrollmentRequest {
@@ -263,19 +293,34 @@ export interface EnrollmentEventView {
 export interface EnrollmentEventsResponse {
   enrollment_id: string;
   events: EnrollmentEventView[];
+  next_cursor: string | null;
 }
 
-export type WaitlistStatus = "waiting" | "skipped" | "promoted" | "removed";
+/**
+ * X2: `offered` = a seat is being held for this family until
+ * `offer_expires_at`; `expired` = they did not answer in time.
+ */
+export type WaitlistStatus = "waiting" | "offered" | "expired" | "skipped" | "promoted" | "removed";
 
 export interface AdminWaitlistEntry {
   waitlist_id: string;
   session_id: string;
   student_id: string;
   parent_id: string;
+  /** #860: the parent's display name, so the row never prints `parent_id`. */
+  parent_name?: string | null;
   full_name: string;
   status: WaitlistStatus;
+  /** 0 for an `offered` row: it has left the queue and is holding a seat. */
   position: number;
   added_at: string;
+  /** Set while `status === "offered"`: when the held seat moves on. */
+  offer_expires_at?: string | null;
+  /**
+   * X2: false = the class was full of holds, so no seat is held for this
+   * offer; a held family's seat is reclaimed only if this family confirms.
+   */
+  offer_holds_seat?: boolean;
 }
 
 export interface AdminWaitlistList {
@@ -290,11 +335,14 @@ export interface AdminGlobalWaitlistSession {
   capacity: number;
   enrolled_count: number;
   waitlist_count: number;
+  /** X2: seats held for families that have not answered yet. */
+  offered_count?: number;
   entries: AdminWaitlistEntry[];
 }
 
 export interface AdminGlobalWaitlistList {
   total_waitlisted: number;
+  total_offered?: number;
   sessions: AdminGlobalWaitlistSession[];
 }
 
@@ -534,7 +582,7 @@ export interface MonthlyGenerationSkippedDetail {
 }
 
 export interface MarkPaymentPaidRequest {
-  payment_method: "cash" | "check" | "zelle" | "venmo" | "bank_transfer" | "other";
+  payment_method: ManualPaymentMethod;
   amount_received_cents?: number;
   reference_number?: string;
   notes?: string;
@@ -791,6 +839,9 @@ export interface RecordManualPaymentResponse {
   payment_id: string;
   invoice_status: string;
   balance_due_cents: number;
+  /** Part of the payment that settled the family's other open invoices. */
+  previous_balance_applied_cents?: number;
+  overpayment_credit_cents?: number;
 }
 
 export interface InvoiceRefundRequest {
@@ -1086,6 +1137,14 @@ export interface AdminMessageView {
   scope_label?: string | null;
   recipient_count?: number | null;
   delivery_status?: string | null;
+  /**
+   * #864: the family on the other side of a DM, from the reading admin's
+   * point of view. `recipient_id` is the admin themselves on everything a
+   * family sends in, so it is the wrong key to group a thread by.
+   */
+  counterparty_id?: string | null;
+  /** #864: false only for an incoming DM this admin has not opened yet. */
+  is_read?: boolean;
 }
 
 export interface AdminMessageList {
@@ -1133,10 +1192,23 @@ export interface AdminWaiverStudentRow {
   share_status?: string | null;
 }
 
+/** One live waiver with its own counts, over only the students it applies to. */
+export interface AdminWaiverLineage {
+  lineage_key: string;
+  waiver: AdminCurrentWaiverView;
+  required?: boolean;
+  scope?: AdminWaiverScope;
+  program_ids?: string[];
+  summary: AdminWaiverSummary;
+  waivers: AdminWaiverStudentRow[];
+}
+
 export interface AdminWaiverList {
+  /** The primary waiver's summary; `lineages` carries every live waiver. */
   summary: AdminWaiverSummary;
   current_waiver?: AdminCurrentWaiverView | null;
   waivers: AdminWaiverStudentRow[];
+  lineages?: AdminWaiverLineage[];
 }
 
 export type AdminWaiverTemplateStatus = "draft" | "active" | "superseded" | "retired";
@@ -1153,15 +1225,58 @@ export interface AdminWaiverTemplateManagementView {
   assigned_to_registration: boolean;
   assigned_at: string | null;
   updated_at: string;
+  /** One key per waiver, shared by all its versions. */
+  lineage_key?: string | null;
+  /** Who must sign it: not required, all families, or the listed programs. */
+  required?: boolean;
+  scope?: AdminWaiverScope;
+  program_ids?: string[];
+}
+
+export type AdminWaiverScope = "all" | "programs";
+
+export interface AdminWaiverProgram {
+  program_id: string;
+  name: string;
+  /** Archived but still assigned to a live waiver: listed so it can be removed. */
+  archived?: boolean;
 }
 
 export interface AdminWaiverTemplateManagementList {
   templates: AdminWaiverTemplateManagementView[];
+  /** The academy's programs, for the Assign control and the "Required for" label. */
+  programs?: AdminWaiverProgram[];
 }
 
 export interface AdminWaiverTemplateCreateRequest {
   title: string;
   body: string;
+  /** Draft a new version of this waiver instead of a new waiver. */
+  based_on_waiver_template_id?: string | null;
+}
+
+export interface AdminWaiverAssignRequest {
+  required: boolean;
+  scope: AdminWaiverScope;
+  program_ids: string[];
+}
+
+export type AdminStudentWaiverState = "signed" | "older_version" | "unsigned";
+
+export interface AdminStudentWaiverRow {
+  waiver_template_id: string;
+  lineage_key: string;
+  title: string;
+  version: string | null;
+  status: AdminStudentWaiverState;
+  signed_version: string | null;
+  signed_at: string | null;
+  signature_id: string | null;
+}
+
+export interface AdminStudentWaiverStatus {
+  student_id: string;
+  waivers: AdminStudentWaiverRow[];
 }
 
 export interface AdminWaiverTemplateDetail {
@@ -1198,6 +1313,12 @@ export interface AdminWaiverSignatureDetail {
   gap_note: string;
 }
 
+export interface AdminUnsignedWaiver {
+  waiver_template_id: string;
+  title: string;
+  version: string | null;
+}
+
 export interface AdminRegistrationRow {
   application_id: string;
   status: string;
@@ -1205,9 +1326,15 @@ export interface AdminRegistrationRow {
   parent_name: string | null;
   student_name: string | null;
   selected_session_id: string | null;
+  /** Issue #891: the class this family asked for, on the list row itself. */
+  session_title: string | null;
   waiver_required: boolean;
   waiver_satisfied: boolean;
+  /** Required waivers not yet signed: a warning for staff, never a block. */
+  unsigned_waivers?: AdminUnsignedWaiver[];
   zero_quote_period: string | null;
+  /** Issue #776: when the waitlist/decline email actually reached the family. */
+  family_notified_at: string | null;
   updated_at: string;
 }
 
@@ -1233,7 +1360,10 @@ export interface AdminRegistrationDetail extends AdminRegistrationRow {
 
 export type AdminAttentionSeverity = "high" | "medium" | "low";
 export type AdminAttentionKind =
+  | "pending_registrations"
   | "overdue_dues"
+  | "autopay_failure"
+  | "dunning_exhaustion"
   | "pause_requests"
   | "scheduled_resume_blocked"
   | "scheduled_action_failed"
@@ -1268,18 +1398,29 @@ export interface DmRequest {
 
 /**
  * Roles an academy admin surface can grant. `owner` is the money-governance
- * scope; granting or revoking `admin`/`owner` is itself owner-only (the BFF
- * 403s anyone else), so the pages offer those options only to owners.
+ * scope; `billing` and `front_desk` are the staff money tiers (#553). Granting
+ * or revoking `admin`/`owner`/`billing`/`front_desk` is itself owner-only (the
+ * BFF 403s anyone else), so the pages offer those options only to owners.
  */
-export type AdminUserRole = "admin" | "coach" | "assistant_coach" | "parent" | "owner";
+export type AdminUserRole =
+  | "admin"
+  | "coach"
+  | "assistant_coach"
+  | "parent"
+  | "owner"
+  | "billing"
+  | "front_desk";
 
 export interface AdminUserView {
   user_id: string;
   email: string;
   display_name: string;
+  /** Primary role (`roles[0]`). Use `roles` to know every role the user holds. */
   role: AdminUserRole;
   status: string;
   phone?: string | null;
+  /** Every role held, primary first. Optional until every caller's fixture carries it. */
+  roles?: AdminUserRole[];
 }
 
 export interface AdminUserDetail extends AdminUserView {
@@ -1361,7 +1502,10 @@ export interface AdminStudentParentChangeView {
   parent: AdminStudentParentSummaryView;
   previous_parent_id: string | null;
   warnings: string[];
+  /** Rows deliberately left with the previous parent (settled history). */
   impact_counts: Record<string, number>;
+  /** What the change moved to the new parent: issue #785. */
+  rehomed_counts: Record<string, number>;
 }
 
 export interface ListAdminStudentsParams {
@@ -1405,9 +1549,14 @@ export interface AdminPauseRequestList {
   requests: AdminPauseRequestView[];
 }
 
+export type AdminAuditActorType = "admin" | "owner" | "coach" | "parent" | "system";
+
 export interface AdminAuditLogView {
   audit_id: string;
   actor_id: string | null;
+  actor_type: AdminAuditActorType | null;
+  actor_role: string | null;
+  actor_name: string | null;
   action: string;
   entity_type: string | null;
   entity_id: string | null;
@@ -1445,6 +1594,56 @@ export interface AdminAcademyView {
   logo_url: string | null;
   brand_color: string | null;
   currency: string;
+  /** Display name on outbound email; the From address stays the platform's. */
+  email_sender_name?: string | null;
+  /** Where replies to academy email go. Null = unchanged per-email default. */
+  email_reply_to?: string | null;
+  /** Read-only. The reply-to a send uses: explicit reply-to, else support email. */
+  effective_reply_to?: string | null;
+  effective_reply_to_source?: "reply_to" | "support_email" | null;
+  /**
+   * Settings overhaul Phase 4 PR 13. Support email for parents: the default
+   * reply-to (when no reply-to is set) and the public page footer contact.
+   * Null = not set.
+   */
+  support_email?: string | null;
+  /** https links shown in the public page footer. Null = not set. */
+  terms_url?: string | null;
+  refund_policy_url?: string | null;
+  /**
+   * The SAME stored value as the Public page setting
+   * (`public_page.privacy_notice_url`); Academy profile edits it here.
+   */
+  privacy_notice_url?: string | null;
+  /**
+   * Invoice-number prefix ("BLNO" -> BLNO-2026-09-0042). Read-only for the
+   * academy: CourtMastr sets it per academy and it locks after the first
+   * numbered invoice. Null = not set yet (no invoice numbers are issued).
+   */
+  invoice_prefix?: string | null;
+  /**
+   * Read-only calling code for bare national phone numbers in WhatsApp links,
+   * derived from the academy's country ("1" when unset, every academy today).
+   */
+  phone_country_code?: string;
+  /**
+   * Read-only: set per academy by the platform at bootstrap. Absent on an
+   * academy created before this field defaults to "badminton".
+   */
+  sport?: string;
+  /**
+   * Class defaults (Settings overhaul Phase 3 PR 9). Admin-editable and
+   * filled at read time: an academy that never set these reads 10 / 45 /
+   * null, exactly what the create-class form already defaulted to.
+   */
+  default_class_size: number;
+  default_class_length_minutes: number;
+  default_venue_address: string | null;
+  default_parking_note: string | null;
+  default_what_to_bring: string | null;
+  default_arrival_minutes_before: number | null;
+  /** Fallback for a class's welcome-email "Coach contact" line. */
+  default_coach_contact_policy: string | null;
 }
 
 export type UpdateAdminAcademyRequest = Partial<{
@@ -1457,23 +1656,29 @@ export type UpdateAdminAcademyRequest = Partial<{
   logo_url: string | null;
   brand_color: string | null;
   currency: string | null;
+  email_sender_name: string | null;
+  email_reply_to: string | null;
+  support_email: string | null;
+  terms_url: string | null;
+  refund_policy_url: string | null;
+  privacy_notice_url: string | null;
+  default_class_size: number | null;
+  default_class_length_minutes: number | null;
+  default_venue_address: string | null;
+  default_parking_note: string | null;
+  default_what_to_bring: string | null;
+  default_arrival_minutes_before: number | null;
+  default_coach_contact_policy: string | null;
 }>;
 
-export interface AdminFeesView {
-  late_fee_cents: number | null;
-  grace_days: number | null;
-}
-
-export type UpdateAdminFeesRequest = Partial<AdminFeesView>;
-
 export interface AdminNotificationsView {
-  dues_reminders: boolean;
-  attendance_alerts: boolean;
   daily_digest_to_admin: boolean;
   coach_digest_enabled: boolean;
   coach_digest_hour: number;
   parent_digest_enabled: boolean;
   parent_digest_hour: number;
+  /** Win-back emails 30/60/90 days after a student leaves. Absent = on. */
+  win_back_enabled: boolean;
 }
 
 export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;
@@ -1516,8 +1721,26 @@ export interface AdminGatewayView {
 // Directory
 // ---------------------------------------------------------------------------
 
-export function listAdminUsers(role?: AdminUserRole): Promise<AdminUserList> {
-  const q = role ? `?role=${encodeURIComponent(role)}` : "";
+export interface ListAdminUsersOptions {
+  /**
+   * Drop users who hold no role other than this one. A parent who is also a
+   * coach is kept, which a client-side filter on `role` would get wrong.
+   */
+  excludeRole?: "parent";
+  /** Union filter: users holding any of these roles. Sent as repeated `roles=`. */
+  roles?: AdminUserRole[];
+}
+
+export function listAdminUsers(
+  role?: AdminUserRole,
+  options: ListAdminUsersOptions = {},
+): Promise<AdminUserList> {
+  const params = new URLSearchParams();
+  if (role) params.set("role", role);
+  if (options.excludeRole) params.set("exclude_role", options.excludeRole);
+  for (const r of options.roles ?? []) params.append("roles", r);
+  const qs = params.toString();
+  const q = qs ? `?${qs}` : "";
   return apiFetch<AdminUserList>(`/admin/users${q}`, { method: "GET" });
 }
 
@@ -1647,6 +1870,19 @@ export function updateAdminSession(
   });
 }
 
+export interface WelcomeEmailPreview {
+  subject: string;
+  html: string;
+}
+
+/** The real enrollment welcome email for this class, rendered but never sent. */
+export function getSessionWelcomeEmailPreview(sessionId: string): Promise<WelcomeEmailPreview> {
+  return apiFetch<WelcomeEmailPreview>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/welcome-email-preview`,
+    { method: "GET" },
+  );
+}
+
 export interface SetSessionAssistantsRequest {
   assistant_coach_ids: string[];
   reason?: string | null;
@@ -1772,6 +2008,35 @@ export function updateOccurrenceCoachAttendance(
   );
 }
 
+export function listOccurrenceStudentAttendance(
+  occurrenceId: string
+): Promise<AdminStudentAttendanceList> {
+  return apiFetch<AdminStudentAttendanceList>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance`,
+    { method: "GET" }
+  );
+}
+
+/**
+ * Void one student's mark (#554). Admin-only, allowed at any time, and the
+ * reason is mandatory — it is the only explanation the audit trail keeps.
+ */
+export function voidOccurrenceStudentAttendance(
+  occurrenceId: string,
+  studentId: string,
+  reason: string
+): Promise<AdminStudentAttendanceView> {
+  return apiFetch<AdminStudentAttendanceView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(
+      studentId
+    )}/void`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ reason }),
+    }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Enrollments
 // ---------------------------------------------------------------------------
@@ -1821,6 +2086,16 @@ export function withdrawEnrollment(
   return apiFetch<void>(`/admin/enrollments/${enrollmentId}/withdraw`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Issue #820: call off a drop scheduled for the end of the period, before the
+ * month-end worker performs it. Leaves the enrollment exactly as it was.
+ */
+export function cancelScheduledDrop(enrollmentId: string): Promise<void> {
+  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/cancel-scheduled-drop`, {
+    method: "POST",
   });
 }
 
@@ -1878,10 +2153,18 @@ export function returnFromHold(
   });
 }
 
-export function listEnrollmentEvents(enrollmentId: string): Promise<EnrollmentEventsResponse> {
-  return apiFetch<EnrollmentEventsResponse>(`/admin/enrollments/${enrollmentId}/events`, {
-    method: "GET",
-  });
+export function listEnrollmentEvents(
+  enrollmentId: string,
+  params?: { limit?: number; cursor?: string }
+): Promise<EnrollmentEventsResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit != null) query.set("limit", String(params.limit));
+  if (params?.cursor) query.set("cursor", params.cursor);
+  const qs = query.toString();
+  return apiFetch<EnrollmentEventsResponse>(
+    `/admin/enrollments/${enrollmentId}/events${qs ? `?${qs}` : ""}`,
+    { method: "GET" }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1952,10 +2235,17 @@ export function getAdminLastPaymentByFamily(): Promise<AdminFamilyLastPaymentsRe
   });
 }
 
-export function refundPayment(payload: RefundRequest): Promise<RefundResponse> {
+// #930: refunds are deduped per REQUEST, not per amount + reason. Callers mint
+// one key per refund attempt (mintPaymentIdempotencyKey) and reuse it on retry;
+// a new key is a new refund. The per-call fallback only covers direct callers.
+export function refundPayment(
+  payload: RefundRequest,
+  options?: { idempotencyKey?: string },
+): Promise<RefundResponse> {
   return apiFetch<RefundResponse>("/admin/payments/refund", {
     method: "POST",
     body: JSON.stringify(payload),
+    headers: { "Idempotency-Key": options?.idempotencyKey ?? mintPaymentIdempotencyKey() },
   });
 }
 
@@ -2010,13 +2300,9 @@ export function reconcileStripeBilling(
   });
 }
 
+/** True only for the house academy, whose charges settle on the platform account. */
 export interface PlatformChargeFallbackView {
   allow_platform_charge_fallback: boolean;
-}
-
-export interface SetPlatformChargeFallbackRequest {
-  enabled: boolean;
-  reason?: string | null;
 }
 
 export interface InvoiceScheduleView {
@@ -2024,22 +2310,9 @@ export interface InvoiceScheduleView {
   invoice_due_days: number;
 }
 
-export interface SetInvoiceScheduleRequest {
-  billing_day: number;
-  invoice_due_days: number;
-  reason?: string | null;
-}
-
 export function getInvoiceSchedule(): Promise<InvoiceScheduleView> {
   return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
     method: "GET",
-  });
-}
-
-export function setInvoiceSchedule(payload: SetInvoiceScheduleRequest): Promise<InvoiceScheduleView> {
-  return apiFetch<InvoiceScheduleView>("/admin/billing/settings/invoice-schedule", {
-    method: "PUT",
-    body: JSON.stringify(payload),
   });
 }
 
@@ -2065,15 +2338,6 @@ export function updateBillingRules(
 export function getPlatformChargeFallback(): Promise<PlatformChargeFallbackView> {
   return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
     method: "GET",
-  });
-}
-
-export function setPlatformChargeFallback(
-  payload: SetPlatformChargeFallbackRequest,
-): Promise<PlatformChargeFallbackView> {
-  return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
-    method: "PUT",
-    body: JSON.stringify(payload),
   });
 }
 
@@ -2579,12 +2843,14 @@ export function recordAdminInvoicePayment(
 export function refundAdminInvoice(
   invoiceId: string,
   payload: InvoiceRefundRequest,
+  options?: { idempotencyKey?: string },
 ): Promise<InvoiceRefundResponse> {
   return apiFetch<InvoiceRefundResponse>(
     `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/refund`,
     {
       method: "POST",
       body: JSON.stringify(payload),
+      headers: { "Idempotency-Key": options?.idempotencyKey ?? mintPaymentIdempotencyKey() },
     },
   );
 }
@@ -2744,6 +3010,142 @@ export function getEnrollmentFunnel(period?: string): Promise<AdminEnrollmentFun
   });
 }
 
+/**
+ * People reports (roadmap L5a): money owed by age band. Owner/admin only
+ * (`can_view_family_money`); any other admin gets 403 and the card hides.
+ */
+export interface AdminMoneyAgeBand {
+  key: "not_yet_due" | "days_1_30" | "days_31_60" | "days_over_60" | string;
+  label: string;
+  min_days: number | null;
+  max_days: number | null;
+  family_count: number;
+  total_cents: number;
+}
+
+export interface AdminMoneyOwedByAgeResponse {
+  as_of: string;
+  generated_at: string;
+  not_yet_due: AdminMoneyAgeBand;
+  bands: AdminMoneyAgeBand[];
+  overdue_cents: number;
+  overdue_family_count: number;
+  balance_cents: number;
+  owing_family_count: number;
+}
+
+export function getMoneyOwedByAge(): Promise<AdminMoneyOwedByAgeResponse> {
+  return apiFetch<AdminMoneyOwedByAgeResponse>("/admin/reports/people/money-owed-by-age", {
+    method: "GET",
+  });
+}
+
+/** People reports (roadmap L5a): crm_contacts by source and pipeline status. */
+export interface AdminInquirySourceRow {
+  source: "website" | "whatsapp_or_phone" | "referral" | "other" | "all" | string;
+  inquiries: number;
+  lead: number;
+  trial: number;
+  enrolled: number;
+  conversion_rate: number | null;
+}
+
+export interface AdminInquiryConversionResponse {
+  date_from: string;
+  date_to: string;
+  timezone: string;
+  sources: AdminInquirySourceRow[];
+  total: AdminInquirySourceRow;
+}
+
+export function getInquiryConversion(range: {
+  from?: string;
+  to?: string;
+}): Promise<AdminInquiryConversionResponse> {
+  const params = new URLSearchParams();
+  if (range.from) params.set("from", range.from);
+  if (range.to) params.set("to", range.to);
+  const q = params.toString();
+  return apiFetch<AdminInquiryConversionResponse>(
+    `/admin/reports/people/inquiry-conversion${q ? `?${q}` : ""}`,
+    { method: "GET" },
+  );
+}
+
+/**
+ * People reports (roadmap L5b): students whose lifecycle is at_risk (no
+ * attendance in the last three class dates), by class and by the class's
+ * coach. No money.
+ */
+export interface AdminClassRiskRow {
+  session_id: string;
+  title: string;
+  coach_id: string | null;
+  coach_name: string | null;
+  students: number;
+  at_risk: number;
+  at_risk_rate: number | null;
+}
+
+export interface AdminCoachRiskRow {
+  coach_id: string | null;
+  coach_name: string | null;
+  classes: number;
+  students: number;
+  at_risk: number;
+  at_risk_rate: number | null;
+}
+
+export interface AdminAttendanceRiskResponse {
+  generated_at: string;
+  by_class: AdminClassRiskRow[];
+  by_coach: AdminCoachRiskRow[];
+  students: number;
+  at_risk: number;
+}
+
+export function getAttendanceRisk(): Promise<AdminAttendanceRiskResponse> {
+  return apiFetch<AdminAttendanceRiskResponse>("/admin/reports/people/attendance-risk", {
+    method: "GET",
+  });
+}
+
+/**
+ * People reports (roadmap L5b): families whose children have all left, with
+ * the departure in the window, by recorded reason (#775) or, when none was
+ * recorded, by how the last class ended. No money.
+ */
+export interface AdminReasonCount {
+  key: string;
+  label: string | null;
+  families: number;
+}
+
+export interface AdminFamiliesLostResponse {
+  date_from: string;
+  date_to: string;
+  timezone: string;
+  families_lost: number;
+  by_reason: AdminReasonCount[];
+  with_reason: number;
+  by_transition: AdminReasonCount[];
+  without_reason: number;
+}
+
+export function getFamiliesLost(range: {
+  from?: string;
+  to?: string;
+}): Promise<AdminFamiliesLostResponse> {
+  const params = new URLSearchParams();
+  if (range.from) params.set("from", range.from);
+  if (range.to) params.set("to", range.to);
+  const q = params.toString();
+  return apiFetch<AdminFamiliesLostResponse>(
+    `/admin/reports/people/families-lost${q ? `?${q}` : ""}`,
+    { method: "GET" },
+  );
+}
+
 export interface AdminAttendanceTrendsPeriod {
   period: string;
   scheduled_count: number;
@@ -2770,6 +3172,7 @@ export interface AdminCoachUtilizationEntry {
   hours: number;
   payout_minor: number;
   utilization_rate: number;
+  compliance_within_24h_rate: number | null;
 }
 
 export interface AdminCoachUtilizationResponse {
@@ -2798,6 +3201,14 @@ export function broadcastMessage(payload: BroadcastRequest): Promise<AdminMessag
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+/** #864: clear the unread marker on one incoming DM. Idempotent server-side. */
+export function markAdminMessageRead(messageId: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(
+    `/admin/messages/${encodeURIComponent(messageId)}/read`,
+    { method: "POST" },
+  );
 }
 
 export function sendDm(payload: DmRequest): Promise<AdminMessageView> {
@@ -2863,12 +3274,20 @@ export function publishAdminWaiverTemplate(
   );
 }
 
-export function assignAdminWaiverTemplateToRegistration(
+export function assignAdminWaiverTemplate(
   waiverTemplateId: string,
+  payload: AdminWaiverAssignRequest,
 ): Promise<AdminWaiverTemplateManagementView> {
   return apiFetch<AdminWaiverTemplateManagementView>(
-    `/admin/waivers/templates/${encodeURIComponent(waiverTemplateId)}/assign-registration`,
-    { method: "POST" },
+    `/admin/waivers/templates/${encodeURIComponent(waiverTemplateId)}/assignment`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function getAdminStudentWaivers(studentId: string): Promise<AdminStudentWaiverStatus> {
+  return apiFetch<AdminStudentWaiverStatus>(
+    `/admin/waivers/students/${encodeURIComponent(studentId)}`,
+    { method: "GET" },
   );
 }
 
@@ -2926,8 +3345,55 @@ export function rejectAdminRegistration(
   );
 }
 
+/** Issue #776: pending counts for every admin inbox queue, keyed by queue id. */
+export interface AdminInboxCounts {
+  counts: Record<string, number>;
+  total: number;
+}
+
+export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
+  return apiFetch<AdminInboxCounts>("/admin/inbox/counts", { method: "GET" });
+}
+
 export function listAdminAttention(): Promise<AdminAttentionList> {
   return apiFetch<AdminAttentionList>("/admin/dashboard/attention", { method: "GET" });
+}
+
+// ---------------------------------------------------------------------------
+// Setup checklist (roadmap L7): derived from existing settings, read-only
+// ---------------------------------------------------------------------------
+
+export type SetupChecklistStatus = "done" | "todo" | "unknown";
+export type SetupChecklistKey =
+  | "academy_profile"
+  | "branding"
+  | "billing_rules"
+  | "stripe_connect"
+  | "session_types"
+  | "classes"
+  | "staff"
+  | "waiver"
+  | "public_page";
+
+export interface SetupChecklistItem {
+  key: SetupChecklistKey;
+  label: string;
+  detail: string;
+  status: SetupChecklistStatus;
+  href: string;
+  /** The step lives on an owner-only settings panel (billing rules, Stripe). */
+  owner_only: boolean;
+}
+
+export interface SetupChecklist {
+  items: SetupChecklistItem[];
+  done_count: number;
+  total: number;
+  complete: boolean;
+}
+
+export function getAdminSetupChecklist(): Promise<SetupChecklist> {
+  return apiFetch<SetupChecklist>("/admin/setup-checklist", { method: "GET" });
 }
 
 // ---------------------------------------------------------------------------
@@ -2961,9 +3427,27 @@ export interface SelfServicePolicyView {
   cancellation_minimum_notice_days: number;
   cancellation_fee_cents: number;
   cancellation_effective_timing: "immediate" | "end_of_period";
+  // "What parents can do in the app" (Settings overhaul Phase 1 Lane C).
+  // Free trial requests reuse the Public page "Accept free trial requests"
+  // toggle instead of a duplicate switch here.
+  can_report_absence: boolean;
+  can_request_makeup: boolean;
+  can_request_pause: boolean;
+  can_request_cancel: boolean;
+  can_claim_waitlist_offer: boolean;
+  payment_instructions: string;
+  //: Academy-level fallback for a class's welcome-email "Absences and
+  //: make-ups" text (Settings overhaul Phase 3 PR 10). Used only when the
+  //: class leaves its own field empty.
+  welcome_email_absence_policy_default: string;
 }
 
-export type UpdateSelfServicePolicyRequest = SelfServicePolicyView;
+/**
+ * Only the fields that changed. The cancellation fee and notice are shared
+ * with Billing rules, and re-sending a stale copy of them reverted the
+ * owner's edit (money audit X5); changing them is owner-only and audited.
+ */
+export type UpdateSelfServicePolicyRequest = Partial<SelfServicePolicyView>;
 
 export interface AbsenceNoticeAdminRow {
   notice_id: string;
@@ -2976,6 +3460,9 @@ export interface AbsenceNoticeAdminRow {
   student_full_name: string | null;
   /** True when an admin recorded the notice on the parent's behalf (#616). */
   recorded_by_admin?: boolean;
+  /** #860: which class on which date was missed. Null if it no longer resolves. */
+  occurrence_session_title?: string | null;
+  occurrence_start_at?: string | null;
 }
 
 export interface AbsencesAdminResponse {
@@ -3004,6 +3491,20 @@ export interface MakeupRequestAdminRow {
   approved_target_occurrence_id: string | null;
   created_at: string;
   student_full_name: string | null;
+  /**
+   * Issue #841: the class name and start instant behind each occurrence id, so
+   * the queue renders words and academy-local dates. Null when the occurrence
+   * no longer resolves — the UI then falls back to the id rather than a blank.
+   */
+  missed_session_id?: string | null;
+  missed_session_title?: string | null;
+  missed_start_at?: string | null;
+  requested_target_session_id?: string | null;
+  requested_target_session_title?: string | null;
+  requested_target_start_at?: string | null;
+  approved_target_session_id?: string | null;
+  approved_target_session_title?: string | null;
+  approved_target_start_at?: string | null;
 }
 
 export interface MakeupRequestsAdminResponse {
@@ -3034,6 +3535,15 @@ export interface TrialRequestAdminRow {
   decided_by: string | null;
   decided_at: string | null;
   created_at: string;
+  /** Issue #841: see MakeupRequestAdminRow — names and instants, not ids. */
+  requested_session_title?: string | null;
+  assigned_occurrence_start_at?: string | null;
+  /** Null for a prospective child, who has `prospective_child_name` instead. */
+  student_full_name?: string | null;
+  /** People CRM L3a: Came / Didn't come, set once the trial is `completed`. */
+  outcome?: "came" | "no_show" | null;
+  outcome_by?: string | null;
+  outcome_at?: string | null;
 }
 
 export interface TrialRequestsAdminResponse {
@@ -3145,14 +3655,26 @@ export function denyTrial(
   );
 }
 
+/** People CRM L3a: record Came / Didn't come on an approved trial. */
+export function recordTrialOutcome(
+  requestId: string,
+  outcome: "came" | "no_show",
+): Promise<TrialRequestAdminRow> {
+  return apiFetch<TrialRequestAdminRow>(
+    `/admin/self-service/trials/${encodeURIComponent(requestId)}/outcome`,
+    { method: "POST", body: JSON.stringify({ outcome }) },
+  );
+}
+
 export function listAdminCancellations(): Promise<SelfCancellationsAdminResponse> {
   return apiFetch<SelfCancellationsAdminResponse>("/admin/self-service/cancellations", {
     method: "GET",
   });
 }
 
-export function listAuditLogs(): Promise<AdminAuditLogList> {
-  return apiFetch<AdminAuditLogList>("/admin/audit-logs", { method: "GET" });
+export function listAuditLogs(actorType?: AdminAuditActorType | null): Promise<AdminAuditLogList> {
+  const query = actorType ? `?actor_type=${encodeURIComponent(actorType)}` : "";
+  return apiFetch<AdminAuditLogList>(`/admin/audit-logs${query}`, { method: "GET" });
 }
 
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {
@@ -3375,15 +3897,48 @@ export function updateAdminAcademy(
   });
 }
 
-export function getAdminFees(): Promise<AdminFeesView> {
-  return apiFetch<AdminFeesView>("/admin/academy/fees", { method: "GET" });
+export type AdminMediaPurpose = "logo" | "hero" | "gallery" | "coach";
+
+export interface AdminAcademyMediaView {
+  /** Set for a logo only. */
+  logo_url: string | null;
+  /** The stored image's public URL, for every purpose. */
+  url: string;
+  purpose: AdminMediaPurpose;
 }
 
-export function updateAdminFees(payload: UpdateAdminFeesRequest): Promise<AdminFeesView> {
-  return apiFetch<AdminFeesView>("/admin/academy/fees", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
+/**
+ * Upload a logo (PNG or JPEG, up to 2 MB). Returns the stored image's URL;
+ * the caller saves it with `updateAdminAcademy({ logo_url })` like any other
+ * field (single writer).
+ */
+export function uploadAdminAcademyLogo(
+  file: File,
+): Promise<AdminAcademyMediaView & { logo_url: string }> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch<AdminAcademyMediaView & { logo_url: string }>("/admin/academy/media", {
+    method: "POST",
+    body,
   });
+}
+
+/**
+ * Upload a landing-page photo (PNG or JPEG, up to 5 MB): `hero`, `gallery`
+ * or `coach`. A gallery photo may show children, so it is refused unless
+ * `consent` is true (parents or guardians agreed). The caller saves the URL
+ * with `updateAdminPublicPageSettings` (single writer).
+ */
+export function uploadAdminAcademyPhoto(
+  file: File,
+  purpose: Exclude<AdminMediaPurpose, "logo">,
+  options: { consent?: boolean } = {},
+): Promise<AdminAcademyMediaView> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("purpose", purpose);
+  if (options.consent) body.append("consent", "true");
+  return apiFetch<AdminAcademyMediaView>("/admin/academy/media", { method: "POST", body });
 }
 
 export function getAdminNotifications(): Promise<AdminNotificationsView> {
@@ -3418,6 +3973,26 @@ export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
 }
 
+export interface AdminPaymentMethodsView {
+  manual_methods: string[];
+}
+
+/** The offline methods the payment dialogs offer (owner, admin, billing staff). */
+export function getAdminPaymentMethods(): Promise<AdminPaymentMethodsView> {
+  return apiFetch<AdminPaymentMethodsView>("/admin/academy/payment-methods", { method: "GET" });
+}
+
+/** Owner only, audited. At least one of the six known methods. */
+export function updateAdminPaymentMethods(payload: {
+  manual_methods: string[];
+  reason?: string | null;
+}): Promise<AdminPaymentMethodsView> {
+  return apiFetch<AdminPaymentMethodsView>("/admin/academy/payment-methods", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export interface AdminGatewayConnectLinkView {
   url: string;
 }
@@ -3443,6 +4018,45 @@ export interface CreateAdminUserRequest {
 
 export function createAdminUser(payload: CreateAdminUserRequest): Promise<AdminUserDetail> {
   return apiFetch<AdminUserDetail>("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * UIM6 (#449) — bulk parent invites.
+ *
+ * Mirrors `BulkInviteRequest`/`BulkInviteResponse` in
+ * `backend/v2/interfaces/admin/views.py`. The role is hardcoded to `parent`
+ * server-side, so the payload carries no role. Partial success is normal: the
+ * call returns 200 with per-row `created` / `skipped` / `failed` statuses.
+ */
+export interface BulkInviteUserRequest {
+  email: string;
+  display_name: string;
+}
+
+export interface BulkInviteRequest {
+  users: BulkInviteUserRequest[];
+  reason?: string;
+}
+
+export interface BulkInviteResultItem {
+  email: string;
+  status: "created" | "skipped" | "failed";
+  user_id: string | null;
+  detail: string | null;
+}
+
+export interface BulkInviteResponse {
+  created: number;
+  skipped: number;
+  failed: number;
+  results: BulkInviteResultItem[];
+}
+
+export function bulkInviteParents(payload: BulkInviteRequest): Promise<BulkInviteResponse> {
+  return apiFetch<BulkInviteResponse>("/admin/users/bulk-invite", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -3550,5 +4164,177 @@ export function overrideAdminBillingEnrollmentPrice(
       method: "POST",
       body: JSON.stringify({ override_price_cents: overridePriceCents }),
     },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Public page (Lane B5): academy settings, programs, per-class public fields
+// ---------------------------------------------------------------------------
+
+export type PublicPricePeriod = "month" | "class" | "term";
+export type PublicCoachDisplay = "full_name" | "first_name" | "hidden";
+
+/** A gallery photo. Who confirmed consent, and when, stays on the server. */
+export interface AdminGalleryPhoto {
+  url: string;
+  caption: string;
+  /** Must be true: parents or guardians of anyone shown agreed. */
+  consent_confirmed: boolean;
+}
+
+export interface AdminCoachProfile {
+  coach_id: string;
+  photo_url: string | null;
+  bio: string;
+  shown: boolean;
+}
+
+export interface AdminFaq {
+  question: string;
+  answer: string;
+}
+
+export interface AdminPublicPageSettingsView {
+  published: boolean;
+  show_price: boolean;
+  show_availability: boolean;
+  price_period_default: PublicPricePeriod;
+  trials_open: boolean;
+  privacy_notice_url: string | null;
+  // Landing-page content (Settings overhaul Phase 6). Optional so older
+  // fixtures compile; the server always sends them.
+  hero_photo_url?: string | null;
+  about_text?: string;
+  highlights?: string[];
+  gallery?: AdminGalleryPhoto[];
+  coach_profiles?: AdminCoachProfile[];
+  /** Empty = the public page uses its standard questions. */
+  faqs?: AdminFaq[];
+  /** Look of the public page; "floodlit" is the original. */
+  theme: "floodlit" | "daylight" | "showcase";
+  /** "Only N seats left" shows at or below this many seats (0 hides it, max 20). */
+  seats_left_threshold: number;
+  /** `https://<host>/` of the academy's own domain; null when none is on record. Read-only. */
+  public_url: string | null;
+}
+
+export type UpdateAdminPublicPageSettingsRequest = Partial<
+  Omit<AdminPublicPageSettingsView, "public_url">
+>;
+
+export interface AdminAgeBand {
+  min_age: number | null;
+  max_age: number | null;
+}
+
+export interface AdminProgramView {
+  program_id: string;
+  name: string;
+  public_description: string | null;
+  level: string | null;
+  age_band: AdminAgeBand | null;
+  sort_order: number;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A waiver that still asks an archived program's families to sign. */
+export interface AdminAssignedWaiver {
+  waiver_template_id: string;
+  title: string;
+}
+
+/** The archive response: archiving is never blocked by assigned waivers, only warned about. */
+export interface AdminArchivedProgramView extends AdminProgramView {
+  assigned_waivers?: AdminAssignedWaiver[];
+  warning?: string | null;
+}
+
+export interface AdminClassPublicProfileView {
+  session_id: string;
+  title: string | null;
+  status: string | null;
+  program_id: string | null;
+  published: boolean;
+  /** null = the academy's default price period. */
+  price_period: PublicPricePeriod | null;
+  coach_display: PublicCoachDisplay;
+  public_description: string | null;
+  level: string | null;
+  age_band: AdminAgeBand | null;
+}
+
+export interface UpdateAdminClassPublicFieldsRequest {
+  published?: boolean;
+  price_period?: PublicPricePeriod | null;
+  coach_display?: PublicCoachDisplay;
+}
+
+export function getAdminPublicPageSettings(): Promise<AdminPublicPageSettingsView> {
+  return apiFetch<AdminPublicPageSettingsView>("/admin/academy/public-page", { method: "GET" });
+}
+
+export function updateAdminPublicPageSettings(
+  payload: UpdateAdminPublicPageSettingsRequest
+): Promise<AdminPublicPageSettingsView> {
+  return apiFetch<AdminPublicPageSettingsView>("/admin/academy/public-page", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listAdminPrograms(
+  options: { includeArchived?: boolean } = {}
+): Promise<{ programs: AdminProgramView[] }> {
+  const path = options.includeArchived ? "/admin/programs?include_archived=true" : "/admin/programs";
+  return apiFetch<{ programs: AdminProgramView[] }>(path, { method: "GET" });
+}
+
+export function createAdminProgram(payload: { name: string }): Promise<AdminProgramView> {
+  return apiFetch<AdminProgramView>("/admin/programs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function renameAdminProgram(programId: string, name: string): Promise<AdminProgramView> {
+  return apiFetch<AdminProgramView>(`/admin/programs/${encodeURIComponent(programId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function archiveAdminProgram(programId: string): Promise<AdminArchivedProgramView> {
+  return apiFetch<AdminArchivedProgramView>(`/admin/programs/${encodeURIComponent(programId)}/archive`, {
+    method: "POST",
+  });
+}
+
+export function listAdminClassPublicProfiles(): Promise<{
+  classes: AdminClassPublicProfileView[];
+}> {
+  return apiFetch<{ classes: AdminClassPublicProfileView[] }>("/admin/class-public-profiles", {
+    method: "GET",
+  });
+}
+
+export function assignAdminClassProgram(
+  sessionId: string,
+  programId: string | null
+): Promise<AdminClassPublicProfileView> {
+  return apiFetch<AdminClassPublicProfileView>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/program`,
+    { method: "PUT", body: JSON.stringify({ program_id: programId }) }
+  );
+}
+
+export function updateAdminClassPublicFields(
+  sessionId: string,
+  payload: UpdateAdminClassPublicFieldsRequest
+): Promise<AdminClassPublicProfileView> {
+  return apiFetch<AdminClassPublicProfileView>(
+    `/admin/sessions/${encodeURIComponent(sessionId)}/public-fields`,
+    { method: "PATCH", body: JSON.stringify(payload) }
   );
 }

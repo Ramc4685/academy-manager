@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -24,7 +25,10 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.errors import (
+    CannotRemoveLastOwner,
     CannotRemoveLastRole,
+    CoachHasFutureSessions,
+    ParentHasLiveChildren,
     RoleRevocationFailed,
     UserCreateFailed,
     UserEmailAlreadyExists,
@@ -32,11 +36,19 @@ from backend.v2.contexts.identity.domain.errors import (
     UserOutsideAcademy,
 )
 from backend.v2.contexts.identity.domain.identity_aliases import (
+    PARENT_REFERENCE_FIELDS,
+    ParentAliasSet,
     aliases_from_doc,
     identity_aliases,
     membership_match_rank,
+    parent_alias_set,
 )
-from backend.v2.contexts.identity.domain.models import Role, User, normalize_email
+from backend.v2.contexts.identity.domain.models import (
+    GlobalUserStatus,
+    Role,
+    User,
+    normalize_email,
+)
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
@@ -55,8 +67,12 @@ _ROLE_PRIVILEGE: dict[str, int] = {
     "parent": 0,
     "assistant_coach": 1,
     "coach": 2,
-    "admin": 3,
-    "owner": 4,
+    # Staff tiers (#553): front desk sees an "owes money" flag only, billing
+    # also sees amounts and records payments; both are narrower than admin.
+    "front_desk": 2,
+    "billing": 3,
+    "admin": 4,
+    "owner": 5,
 }
 
 
@@ -64,6 +80,50 @@ def _lowers_privilege(previous: list[str], role: str) -> bool:
     """True when the replacement lowers the account's privilege ceiling."""
     ceiling = max((_ROLE_PRIVILEGE.get(r, 0) for r in previous), default=0)
     return _ROLE_PRIVILEGE.get(role, 0) < ceiling
+
+
+#: Legacy ``users.status`` spellings that mean "cannot sign in".
+_DISABLED_STATUSES: frozenset[str] = frozenset({"disabled", "inactive", "suspended"})
+
+#: Academy roles whose removal has to be preceded by reassigning the work.
+COACHING_ROLES: frozenset[str] = frozenset({"coach", "assistant_coach"})
+
+#: Enrollment statuses that still bind the academy to the family — the seat is
+#: either being taught or being held, and either way it is still billable.
+#: Mirrors `enrollment.domain.models.LIVE`; copied rather than imported because
+#: identity may not depend on the enrollment context (import-linter contract).
+_LIVE_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"active", "paused", "held"})
+
+#: `academy_memberships.status` spellings that mean the membership grants
+#: nothing. Anything else (including a legacy row with no status at all) is
+#: treated as live, so a shared Firebase account is never disabled on a guess.
+_SUSPENDED_MEMBERSHIP_STATUSES: frozenset[str] = frozenset(
+    {"suspended", "revoked", "removed", "disabled", "inactive"}
+)
+
+
+def _global_status_from_doc(doc: dict[str, object], *, is_active: bool) -> GlobalUserStatus:
+    """Resolve the SaaS ``global_status`` a stored ``users`` doc stands for.
+
+    `User.global_status` defaults to ``"active"`` and `_user_is_active` in
+    `load_auth_claims` trusts it *first* — so leaving it unmapped meant the
+    legacy ``is_active`` fallback was never reached and "Disable" changed
+    nothing about who could sign in (#785).
+
+    Precedence: an explicit ``global_status`` (written by the disable path
+    below) wins; otherwise the legacy ``status``/``is_active`` pair is
+    translated. A doc carrying *neither* field must resolve to ``"active"``,
+    or the backfill locks out every account that predates the column.
+    """
+    explicit = doc.get("global_status")
+    if isinstance(explicit, str) and explicit in {"active", "disabled", "deleted"}:
+        return cast("GlobalUserStatus", explicit)
+    status = doc.get("status")
+    if isinstance(status, str) and status.lower() == "deleted":
+        return "deleted"
+    if isinstance(status, str) and status.lower() in _DISABLED_STATUSES:
+        return "disabled"
+    return "active" if is_active else "disabled"
 
 
 class MongoUserRepository:
@@ -88,6 +148,7 @@ class MongoUserRepository:
 
         status = doc.get("status")
         is_active = bool(doc.get("is_active", status != "inactive" and status != "disabled"))
+        global_status = _global_status_from_doc(doc, is_active=is_active)
 
         raw_fuid = doc.get("firebase_uid") or doc.get("auth_uid")
         raw_auth_uid = doc.get("auth_uid")
@@ -104,6 +165,7 @@ class MongoUserRepository:
             display_name=str(doc.get("display_name") or doc.get("name") or doc["email"]),
             phone=str(raw_phone) if raw_phone else None,
             roles=normalized_roles,
+            global_status=global_status,
             is_active=is_active,
             academy_id=str(doc.get("academy_id") or self._default_academy_id),
             email_confirmed_at=raw_confirmed if isinstance(raw_confirmed, datetime) else None,
@@ -230,6 +292,7 @@ class MongoUserRepository:
             role=primary_role,
             status=status,
             phone=str(doc.get("phone")) if doc.get("phone") is not None else None,
+            roles=user.roles,
         )
 
     def _to_admin_detail(
@@ -239,12 +302,11 @@ class MongoUserRepository:
         linked_student_count: int,
         session_count: int = 0,
         login_invite_sent_at: datetime | None = None,
+        membership_roles: tuple[str, ...] = (),
     ) -> AdminUserDetail:
-        user = self._to_domain(doc)
         summary = self._to_admin_summary(doc)
         return AdminUserDetail(
             **summary.model_dump(),
-            roles=user.roles,
             linked_student_count=linked_student_count,
             session_count=session_count,
             # Passed in from the tenant's `academy_memberships` row, never read
@@ -254,6 +316,7 @@ class MongoUserRepository:
             # successful send -- and each re-send mints a new Firebase oobCode
             # that invalidates the link already emailed to the parent.
             login_invite_sent_at=login_invite_sent_at,
+            membership_roles=membership_roles,
         )
 
     @staticmethod
@@ -270,14 +333,133 @@ class MongoUserRepository:
             ]
         }
 
+    @staticmethod
+    def _roles_any_filter(roles: Sequence[Role]) -> dict[str, object]:
+        """Docs holding any of ``roles``, on either the v2 array or the legacy scalar."""
+        wanted = list(dict.fromkeys(roles))
+        return {"$or": [{"roles": {"$in": wanted}}, {"role": {"$in": wanted}}]}
+
+    @staticmethod
+    def _exclude_role_filter(excluded: Role) -> dict[str, object]:
+        """Keep only docs that hold some role other than ``excluded``.
+
+        Mirrors ``_to_domain``: the ``roles`` array (or scalar string) wins
+        when present, else the legacy scalar ``role``; a doc with neither, a
+        null in both, or an empty array is treated as a plain parent, so it
+        survives only when the excluded role is not ``parent``. ``{"roles":
+        None}`` matches a missing *or* null field, which is exactly the case
+        where ``_to_domain`` falls back to ``role``. The branches are disjoint
+        on the shape of ``roles``, so this is one clause of the outer ``$and``,
+        never a second ``$or`` folded into ``_role_filter``.
+        """
+        branches: list[dict[str, object]] = [
+            {"roles": {"$elemMatch": {"$ne": excluded}}},
+            {"roles": {"$type": "string", "$ne": excluded}},
+            {"roles": None, "role": {"$nin": [None, excluded]}},
+        ]
+        if excluded != "parent":
+            branches.append({"roles": None, "role": None})
+            branches.append({"roles": {"$size": 0}})
+        return {"$or": branches}
+
     async def list_users(
-        self, role: Role | None = None, academy_id: str | None = None
+        self,
+        role: Role | None = None,
+        academy_id: str | None = None,
+        *,
+        exclude_role: Role | None = None,
+        roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]:
-        query: dict[str, object] = {"academy_id": academy_id or self._default_academy_id}
+        # Tenant scope first, then each optional filter as its own ``$and``
+        # clause so the planner can still lead with ``academy_id``.
+        clauses: list[dict[str, object]] = [{"academy_id": academy_id or self._default_academy_id}]
         if role:
-            query = {"$and": [query, self._role_filter(role)]}
+            clauses.append(self._role_filter(role))
+        if roles:
+            clauses.append(self._roles_any_filter(roles))
+        if exclude_role:
+            clauses.append(self._exclude_role_filter(exclude_role))
+        query: dict[str, object] = clauses[0] if len(clauses) == 1 else {"$and": clauses}
         cursor = self.collection.find(query).sort([("role", 1), ("display_name", 1), ("email", 1)])
         return [self._to_admin_summary(doc) async for doc in cursor]
+
+    #: Projection for :meth:`resolve_parent_aliases`: ids plus the contact
+    #: fields a family row shows. Never the whole document.
+    _PARENT_ALIAS_PROJECTION: ClassVar[dict[str, int]] = {
+        "user_id": 1,
+        "firebase_uid": 1,
+        "auth_uid": 1,
+        "display_name": 1,
+        "name": 1,
+        "email": 1,
+        "phone": 1,
+        "roles": 1,
+        "role": 1,
+        "academy_id": 1,
+    }
+
+    async def resolve_parent_aliases(self, raw_ids: Sequence[str]) -> dict[str, ParentAliasSet]:
+        """Resolve stored parent references to their users document, in bulk.
+
+        A student's ``parent_id`` may hold the parent's roster ``user_id``,
+        their ``firebase_uid``, an old ``auth_uid`` or the users ``_id``
+        (People CRM spec §1). This asks ONE ``$in`` equality question per
+        field, in :data:`PARENT_REFERENCE_FIELDS` order and then ``_id``, and
+        each later field only asks about the ids still unresolved. It never
+        puts an ``$or`` across the fields: that is the #878/#886 shape MongoDB
+        8.0 answers with a collection scan (#894). At most four queries
+        however many ids are passed.
+
+        ``users`` is global (identity spans academies), so this widens only
+        the identity side: callers pass ids they read from their own tenant's
+        rows and keep ``academy_id`` on every tenant query they build from
+        the result. Ids no users document answers to are absent from the
+        result, never an error.
+        """
+        remaining = list(dict.fromkeys(str(raw) for raw in raw_ids if raw))
+        resolved: dict[str, ParentAliasSet] = {}
+        for field_name in PARENT_REFERENCE_FIELDS:
+            if not remaining:
+                break
+            matches: dict[str, dict[str, Any]] = {}
+            cursor = self.collection.find(
+                {field_name: {"$in": remaining}}, self._PARENT_ALIAS_PROJECTION
+            )
+            async for doc in cursor:
+                key = str(doc.get(field_name) or "")
+                # Deterministic when legacy rows share a value: lowest _id wins.
+                if key and (key not in matches or str(doc["_id"]) < str(matches[key]["_id"])):
+                    matches[key] = doc
+            for key, doc in matches.items():
+                resolved[key] = parent_alias_set(doc)
+            remaining = [raw for raw in remaining if raw not in resolved]
+        if remaining:
+            # ``_id`` is an ObjectId on most documents and a plain string on a
+            # few legacy ones; one ``$in`` over both spellings, served by _id_.
+            by_id: list[Any] = [*remaining]
+            by_id.extend(ObjectId(raw) for raw in remaining if ObjectId.is_valid(raw))
+            cursor = self.collection.find({"_id": {"$in": by_id}}, self._PARENT_ALIAS_PROJECTION)
+            async for doc in cursor:
+                resolved[str(doc["_id"])] = parent_alias_set(doc)
+        return resolved
+
+    async def find_alias_set_by_normalized_email(self, email: str) -> ParentAliasSet | None:
+        """The users document whose ``normalized_email`` equals ``email``, as an alias set.
+
+        One equality lookup served by ``users_normalized_email_unique``
+        (0080). ``users`` is global: the caller MUST check a membership in its
+        own academy before treating the answer as "someone of this academy"
+        (the People CRM duplicate warning does, through
+        ``MongoMembershipRepository.get_membership``). Legacy rows without a
+        ``normalized_email`` are not found here; parents among them are still
+        matched by the family index.
+        """
+        if not email:
+            return None
+        doc = await self.collection.find_one(
+            {"normalized_email": email}, self._PARENT_ALIAS_PROJECTION
+        )
+        return parent_alias_set(doc) if doc else None
 
     async def list_existing_user_ids(self, user_ids: list[str], *, academy_id: str) -> set[str]:
         """Which of ``user_ids`` (== parent_id, per this codebase's convention
@@ -288,47 +470,30 @@ class MongoUserRepository:
         """
         if not user_ids:
             return set()
-        object_ids = [ObjectId(value) for value in user_ids if ObjectId.is_valid(value)]
-        aliases: list[dict[str, object]] = [
-            {"user_id": {"$in": user_ids}},
-            {"auth_uid": {"$in": user_ids}},
-            {"firebase_uid": {"$in": user_ids}},
-        ]
-        if object_ids:
-            aliases.append({"_id": {"$in": object_ids}})
-        cursor = self.collection.find(
-            {"$or": aliases},
-            {"user_id": 1, "auth_uid": 1, "firebase_uid": 1},
-        )
+        # One equality lookup per alias field (resolve_parent_aliases), not an
+        # $or across user_id/auth_uid/firebase_uid/_id (#878/#894).
+        resolved = await self.resolve_parent_aliases(user_ids)
         wanted = set(user_ids)
         found: set[str] = set()
-        async for doc in cursor:
-            firebase_uid = doc.get("firebase_uid") or doc.get("auth_uid")
-            if not firebase_uid:
+        checked: dict[str, bool] = {}
+        for alias_set in resolved.values():
+            login_uid = alias_set.login_uid
+            if not login_uid:
                 continue
-            membership = await self._db["academy_memberships"].find_one(
-                {
-                    "academy_id": academy_id,
-                    "user_id": str(firebase_uid),
-                    "status": "active",
-                    "roles": "parent",
-                    "login_invite_pending": {"$ne": True},
-                },
-                {"_id": 1},
-            )
-            if membership is None:
-                continue
-            doc_aliases = {
-                str(value)
-                for value in (
-                    doc.get("user_id"),
-                    doc.get("auth_uid"),
-                    doc.get("firebase_uid"),
-                    doc.get("_id"),
+            if login_uid not in checked:
+                membership = await self._db["academy_memberships"].find_one(
+                    {
+                        "academy_id": academy_id,
+                        "user_id": login_uid,
+                        "status": "active",
+                        "roles": "parent",
+                        "login_invite_pending": {"$ne": True},
+                    },
+                    {"_id": 1},
                 )
-                if value
-            }
-            found.update(wanted & doc_aliases)
+                checked[login_uid] = membership is not None
+            if checked[login_uid]:
+                found.update(wanted & alias_set.aliases)
         return found
 
     async def get_billing_setup_parent(self, parent_id: str, *, academy_id: str) -> User | None:
@@ -727,6 +892,9 @@ class MongoUserRepository:
             login_invite_sent_at=cast(
                 "datetime | None", (membership or {}).get("login_invite_sent_at")
             ),
+            membership_roles=tuple(
+                str(role) for role in cast("list[object]", (membership or {}).get("roles") or [])
+            ),
         )
 
     async def record_login_invite(
@@ -865,9 +1033,23 @@ class MongoUserRepository:
             set_doc["display_name"] = " ".join(command.display_name.split())
         if command.phone is not None:
             set_doc["phone"] = command.phone.strip() or None
+        status_change: str | None = None
         if command.status is not None:
             set_doc["status"] = command.status
             set_doc["is_active"] = command.status == "active"
+            # #785: `status`/`is_active` alone never reached auth. `_to_domain`
+            # now reads `global_status` first, so the disable write has to
+            # produce it, or the read-back resolves the account back to active.
+            set_doc["global_status"] = "active" if command.status == "active" else "disabled"
+            if str(before.get("status") or "active") != command.status:
+                status_change = command.status
+        if status_change is not None and status_change != "active":
+            # #785 review: the role-removal door was guarded and this one was
+            # not, so "Disable" stayed a way to strand exactly the work the
+            # guard exists to protect. A disable is strictly *wider* than a
+            # role removal — it suspends the membership and the Firebase
+            # account — so it has to clear at least the same bar.
+            await self._assert_offboardable(before, academy_id=academy_id)
         changed = [
             key
             for key, value in set_doc.items()
@@ -896,6 +1078,10 @@ class MongoUserRepository:
                     },
                 )
                 raise
+        if status_change is not None:
+            await self._cascade_status_change(
+                doc, academy_id=academy_id, status=status_change, now=set_doc["updated_at"]
+            )
         if changed:
             await self._write_audit(
                 academy_id=academy_id,
@@ -906,6 +1092,9 @@ class MongoUserRepository:
                 changed_keys=changed,
                 before=before,
                 after=doc,
+                metadata={"actor_roles": list(command.actor_roles)}
+                if command.actor_roles
+                else None,
             )
         return await self.get_admin_user(self._to_domain(doc).user_id, academy_id=academy_id)
 
@@ -953,6 +1142,239 @@ class MongoUserRepository:
         except Exception:
             return
 
+    async def _assert_no_future_coaching_work(
+        self,
+        doc: dict[str, Any],
+        *,
+        role: str,
+        academy_id: str,
+    ) -> None:
+        """Refuse a coaching-role removal that would strand dated work.
+
+        Scoped to ``session_occurrences`` rather than ``sessions`` on purpose:
+        a recurring series has no single "is it over" instant, while its
+        materialised occurrences carry the real dates — and they are what the
+        attendance, roster and payroll reads join on. ``start_at`` is stored in
+        UTC (migration 0160 repaired the rows that were not), so comparing it
+        against an aware ``now`` is timezone-correct without re-deriving the
+        academy's zone here.
+
+        Cancelled occurrences are excluded: nobody has to run them, so they
+        cannot orphan.
+        """
+        ids = list(self._membership_aliases(doc))
+        if not ids:
+            return
+        assignment: dict[str, object] = (
+            {"$or": [{"scheduled_coach_id": {"$in": ids}}, {"actual_coach_id": {"$in": ids}}]}
+            if role == "coach"
+            else {"assistant_coach_ids": {"$in": ids}}
+        )
+        pending = await self._db["session_occurrences"].count_documents(
+            {
+                "academy_id": academy_id,
+                "start_at": {"$gte": datetime.now(UTC)},
+                "status": {"$nin": ["cancelled", "completed"]},
+                **assignment,
+            }
+        )
+        if pending:
+            raise CoachHasFutureSessions(
+                f"{pending} upcoming session(s) are still assigned to this "
+                f"{role.replace('_', ' ')}; reassign them before removing the role."
+            )
+
+    async def _membership_statuses_elsewhere(
+        self, doc: dict[str, Any], *, academy_id: str
+    ) -> set[str]:
+        """Membership statuses this account holds in OTHER academies.
+
+        Alias matching widens identity only; `academy_id` stays an explicit
+        term (`identity_aliases` module docstring), so this asks a deliberately
+        narrow question: "which other tenants does the shared Firebase account
+        still serve, and in what state?".
+        """
+        aliases = list(self._membership_aliases(doc))
+        if not aliases:
+            return set()
+        return {
+            str(row.get("status") or "active")
+            async for row in self._db["academy_memberships"].find(
+                {"academy_id": {"$ne": academy_id}, "user_id": {"$in": aliases}},
+                {"status": 1},
+            )
+        }
+
+    async def _assert_not_last_owner(self, doc: dict[str, Any], *, academy_id: str) -> None:
+        """Refuse a change that would leave the academy with no live owner (#553).
+
+        Owner is the only role that can grant or revoke owner, admin, billing
+        and front desk, and the only one that moves money. Revoking, replacing
+        or disabling the last one would lock the academy out of both for good.
+        The count reads ``academy_memberships`` (what ``LoadAuthClaims`` turns
+        into claims), excluding every alias of this account, and treats an
+        invited or suspended membership as no owner at all.
+        """
+
+        aliases = list(self._membership_aliases(doc))
+        other_owner = await self._db["academy_memberships"].find_one(
+            {
+                "academy_id": academy_id,
+                "roles": "owner",
+                "user_id": {"$nin": aliases},
+                "status": {"$nin": [*sorted(_SUSPENDED_MEMBERSHIP_STATUSES), "invited"]},
+            },
+            {"_id": 1},
+        )
+        if other_owner is None:
+            raise CannotRemoveLastOwner("The academy must keep at least one owner")
+
+    async def _assert_offboardable(self, doc: dict[str, Any], *, academy_id: str) -> None:
+        """Every dated-work guard a *disable* has to clear, in one place.
+
+        Disabling is the widest offboarding door the admin UI has: it suspends
+        the membership and the Firebase account in one write. Guarding only
+        role removal (#785's first pass) left that door open, so the same
+        orphans came back through it.
+        """
+        roles = list(doc.get("roles") or ([doc["role"]] if doc.get("role") else []))
+        if "owner" in roles:
+            await self._assert_not_last_owner(doc, academy_id=academy_id)
+        for role in sorted(COACHING_ROLES & set(roles)):
+            await self._assert_no_future_coaching_work(doc, role=role, academy_id=academy_id)
+        if "parent" in roles:
+            await self._assert_no_live_children(doc, academy_id=academy_id)
+
+    async def _assert_no_live_children(self, doc: dict[str, Any], *, academy_id: str) -> None:
+        """Refuse disabling a parent whose children are still enrolled.
+
+        A live enrollment keeps generating attendance and invoices; suspending
+        the payer's login leaves that money owed by an account that can no
+        longer see or pay it. ``held`` counts alongside ``active``/``paused``
+        because a held seat is still the academy's to bill or release — only a
+        withdrawal or a transfer really ends the relationship.
+        """
+        ids = list(self._offboarding_lookup_ids(doc))
+        if not ids:
+            return
+        student_ids = [
+            str(row["student_id"])
+            async for row in self._db["students"].find(
+                {
+                    "academy_id": academy_id,
+                    "$or": [{"parent_id": {"$in": ids}}, {"parent_user_id": {"$in": ids}}],
+                },
+                {"student_id": 1},
+            )
+            if row.get("student_id")
+        ]
+        if not student_ids:
+            return
+        live = await self._db["enrollments"].count_documents(
+            {
+                "academy_id": academy_id,
+                "student_id": {"$in": student_ids},
+                "status": {"$in": list(_LIVE_ENROLLMENT_STATUSES)},
+                "is_deleted": {"$ne": True},
+            }
+        )
+        if live:
+            raise ParentHasLiveChildren(
+                f"{live} enrollment(s) for this parent's children are still live; "
+                "withdraw or transfer them before disabling the account."
+            )
+
+    def _offboarding_lookup_ids(self, doc: dict[str, Any]) -> tuple[str, ...]:
+        """Alias set plus the raw ``_id``, which is what roster rows can carry.
+
+        `students.parent_id` is written by several paths and has been seen
+        holding the users `_id` as well as `user_id`/`firebase_uid`, so the
+        narrower membership alias set would miss a family and report the
+        parent as free to disable.
+        """
+        return identity_aliases(*self._membership_aliases(doc), doc.get("_id"))
+
+    async def _cascade_status_change(
+        self,
+        doc: dict[str, Any],
+        *,
+        academy_id: str,
+        status: str,
+        now: Any,
+    ) -> None:
+        """Carry an admin "Disable"/"Enable" through to the other two doors.
+
+        Before #785 this write stopped at the ``users`` doc, which is not what
+        auth reads: `LoadAuthClaims` rejects a non-active *membership*, and
+        Firebase owns the password itself. A "disabled" parent therefore kept
+        their claims and kept their login, and the admin screen said otherwise.
+
+        Both cascades resolve through the full alias set — a membership row
+        keyed by `firebase_uid` while the directory is keyed by `user_id` is
+        the normal shape for a parent provisioned by the invite path (#400).
+        """
+        disabled = status != "active"
+        aliases = list(self._membership_aliases(doc))
+        if aliases:
+            await self._db["academy_memberships"].update_many(
+                {"academy_id": academy_id, "user_id": {"$in": aliases}},
+                {
+                    "$set": {
+                        "status": "suspended" if disabled else "active",
+                        "updated_at": now,
+                    }
+                },
+            )
+        auth_uid = self._firebase_uid(doc)
+        if not auth_uid:
+            return
+        # `set_user_disabled` is not academy-scoped: one Firebase account can
+        # back a separate `users` doc per academy (`ensure_parent_login` reuses
+        # the uid when it finds the person by email). Writing it from a
+        # single-tenant admin action would reach across tenants in both
+        # directions, so it is skipped whenever another academy's state still
+        # depends on it:
+        #
+        # * disabling while another academy's membership is live would deny
+        #   that tenant's user service on an admin's say-so they never granted;
+        # * enabling while another academy holds a suspended membership would
+        #   lift THAT academy's lockout.
+        #
+        # Skipping is safe because `LoadAuthClaims` checks the membership per
+        # academy, and the suspension above already closed this one.
+        elsewhere = await self._membership_statuses_elsewhere(doc, academy_id=academy_id)
+        live_elsewhere = bool(elsewhere - _SUSPENDED_MEMBERSHIP_STATUSES)
+        if (disabled and live_elsewhere) or (not disabled and bool(elsewhere)):
+            _log.info(
+                "identity.firebase_status_skipped_shared_account",
+                extra={
+                    "academy_id": academy_id,
+                    "auth_uid": auth_uid,
+                    "disabled": disabled,
+                },
+            )
+            return
+        # Best-effort by design: the local lockout is the part that must land.
+        # Failing the request on a Firebase outage would leave the operator
+        # unable to disable anyone at the exact moment they most need to.
+        try:
+            await get_firebase_admin_adapter().set_user_disabled(auth_uid, disabled)
+        except Exception:
+            _log.warning(
+                "identity.firebase_disable_failed",
+                extra={
+                    "academy_id": academy_id,
+                    "auth_uid": auth_uid,
+                    "disabled": disabled,
+                },
+                exc_info=True,
+            )
+            capture_message(
+                f"Firebase account status not synced for {auth_uid} "
+                f"after an admin {'disable' if disabled else 'enable'}",
+                level="warning",
+            )
+
     @staticmethod
     async def _update_firebase_email(auth_uid: str, email: str) -> None:
         try:
@@ -999,6 +1421,8 @@ class MongoUserRepository:
         # A *replacement* always drops the old role, so "lost a role" cannot tell
         # a demotion from a promotion — only the privilege ceiling can.
         narrowing = _lowers_privilege(previous_roles, role)
+        if "owner" in previous_roles and role != "owner":
+            await self._assert_not_last_owner(before, academy_id=academy_id)
 
         if narrowing:
             await self._replace_membership_roles(before, role=role, academy_id=academy_id, now=now)
@@ -1281,14 +1705,17 @@ class MongoUserRepository:
         changed_keys: list[str],
         before: dict[str, Any],
         after: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         from backend.v2.shared.ids import new_ulid
 
         def pick(doc: dict[str, Any]) -> dict[str, Any]:
             return {key: doc.get(key) for key in changed_keys}
 
+        extra: dict[str, Any] = {"metadata": metadata} if metadata else {}
         await self._db["audit_logs"].insert_one(
             {
+                **extra,
                 "audit_id": str(new_ulid()),
                 "academy_id": academy_id,
                 "actor_id": actor_id,
@@ -1363,6 +1790,16 @@ class MongoUserRepository:
             new_roles = [r for r in current if r != role]
             if not new_roles:
                 raise CannotRemoveLastRole(user_id)
+            if role == "owner" and role in current:
+                await self._assert_not_last_owner(before, academy_id=academy_id)
+            # #785: this method rewrote `roles` and nothing else. Sessions and
+            # occurrences kept naming the ex-coach, so the roster rendered
+            # `coach_name: None` and no one was accountable for the class.
+            # Refuse while future work is still assigned — the same shape as
+            # the `CannotRemoveLastRole` guard directly above — so the admin
+            # has to reassign first rather than discover the orphan later.
+            if role in COACHING_ROLES:
+                await self._assert_no_future_coaching_work(before, role=role, academy_id=academy_id)
         # Keep the legacy single `role` field meaningful: preserve it unless
         # it was the role being removed, in which case fall back to the first
         # remaining role.

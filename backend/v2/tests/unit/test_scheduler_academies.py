@@ -118,7 +118,7 @@ def test_scheduler_job_tables_cover_every_registered_job() -> None:
     source = inspect.getsource(_lifespan)
     registered = set(re.findall(r'id="(\w+)"', source))
 
-    assert len(registered) == 13
+    assert len(registered) == 19  # +auto_approve_level_ups (tap-to-master)
     assert registered == set(JOB_STALE_AFTER)
     assert registered == set(SCHEDULED_JOB_MONITORS)
     # Every leased wrapper names a registered job, so a typo cannot leave a
@@ -134,8 +134,11 @@ def test_every_scheduled_job_records_a_heartbeat_after_its_body() -> None:
     helper = source.split("async def _run_leased_job(", 1)[1].split("async def ", 1)[0]
 
     body_call = helper.index("await body()")
-    heartbeat = helper.index("await record_job_run(db, name, {}, meaningful=False)")
+    heartbeat = helper.index("await record_job_run(")
     assert body_call < heartbeat
+    # Settings Phase 4: the academy-clock jobs mark their heartbeat as the new
+    # code's, so it never reads as the old fixed-hour cron having run today.
+    assert "local_clock=name in LOCAL_DAILY_JOBS" in helper
     # Heartbeat-only: it must never clobber the invoice generator's totals.
     assert "meaningful=False" in helper
 
@@ -658,7 +661,7 @@ async def test_generated_invoices_are_emailed_per_academy_and_period() -> None:
 
     async def _send(period: str) -> dict[str, int]:
         sent.append(period)
-        return {"emailed": 2, "email_failed": 0, "skipped_autopay": 1}
+        return {"emailed": 2, "email_failed": 0, "skipped_autopay": 1, "autopay_notified": 3}
 
     totals = await _run_monthly_invoice_generation(
         db=db,
@@ -675,6 +678,7 @@ async def test_generated_invoices_are_emailed_per_academy_and_period() -> None:
     assert totals["invoices_emailed"] == 4
     assert totals["invoice_emails_skipped_autopay"] == 2
     assert totals["invoice_emails_failed"] == 0
+    assert totals["invoice_autopay_notices_sent"] == 6
 
 
 @pytest.mark.asyncio
@@ -788,3 +792,63 @@ async def test_generation_without_a_send_pass_behaves_as_before() -> None:
 
     assert totals["created"] == 3
     assert totals["invoices_emailed"] == 0
+
+
+# --- Row 24: no phantom ``default-academy`` tenant in multi-academy mode ------
+
+
+def _settings(**overrides: object):
+    from types import SimpleNamespace
+
+    base: dict[str, object] = {
+        "tenancy_mode": "single_academy",
+        "primary_academy_id": "acad_blno_badminton",
+        "default_academy_id": "default-academy",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_single_academy_scheduler_fallback_is_the_primary_academy() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    # BLNO prod: single_academy, PRIMARY_ACADEMY_ID set. Unchanged.
+    assert _scheduler_fallback_academy_id(_settings()) == "acad_blno_badminton"
+
+
+def test_multi_academy_scheduler_has_no_fallback_academy() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    assert _scheduler_fallback_academy_id(_settings(tenancy_mode="multi_academy")) == ""
+
+
+@pytest.mark.asyncio
+async def test_single_mode_still_runs_blno_when_the_academies_list_is_empty() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    fallback = _scheduler_fallback_academy_id(_settings())
+    assert await _scheduler_academy_ids(_FakeAcademyRepo([]), fallback) == ["acad_blno_badminton"]
+
+
+@pytest.mark.asyncio
+async def test_multi_mode_loops_only_real_academies() -> None:
+    from backend.v2.main import _scheduler_fallback_academy_id
+
+    fallback = _scheduler_fallback_academy_id(_settings(tenancy_mode="multi_academy"))
+    academies = _FakeAcademyRepo([{"academy_id": "academy-a"}, {"academy_id": "academy-b"}])
+    assert await _scheduler_academy_ids(academies, fallback) == ["academy-a", "academy-b"]
+
+
+def test_every_scheduler_loop_uses_the_mode_aware_fallback() -> None:
+    import backend.v2.main as main_module
+
+    source = inspect.getsource(main_module)
+    calls = [m.start() for m in re.finditer(r"_scheduler_academy_ids\(", source)]
+    call_args = [
+        source[start : source.index(")", source.index(",", start))]
+        for start in calls
+        if not source[max(0, start - 10) : start].endswith("def ")
+    ]
+    assert call_args, "expected scheduler loops"
+    offenders = [args for args in call_args if "scheduler_fallback_academy_id" not in args]
+    assert not offenders, offenders

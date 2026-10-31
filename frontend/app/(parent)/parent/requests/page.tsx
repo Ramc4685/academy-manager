@@ -1,12 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
 import { EmptyState } from "@/components/ds/empty-state";
+import { WaitlistOffers } from "@/components/parent/waitlist-offers";
+import { AssignedClassDetails } from "@/components/parent/one-time-class";
 import { queryKeys } from "@/lib/query/keys";
 import { requestStatusChipVariant } from "@/lib/parent-requests";
 import {
@@ -36,7 +39,7 @@ import {
 
 type RequestTab = "absences" | "makeups" | "trials";
 
-const TABS: { id: RequestTab; label: string }[] = [
+const ALL_TABS: { id: RequestTab; label: string }[] = [
   { id: "absences", label: "Absences" },
   { id: "makeups", label: "Makeups" },
   { id: "trials", label: "Trials" },
@@ -44,6 +47,21 @@ const TABS: { id: RequestTab; label: string }[] = [
 
 export default function ParentRequestsPage() {
   const [tab, setTab] = useState<RequestTab>("absences");
+  const academyQuery = useQuery({
+    queryKey: queryKeys.parent.academy(),
+    queryFn: getParentAcademy,
+  });
+  // Settings overhaul Phase 1 Lane C: hide (not just disable) an action the
+  // academy has switched off. Undefined switches (query still loading)
+  // default true, matching the server's own default.
+  const selfService = academyQuery.data?.self_service;
+  const TABS = ALL_TABS.filter((t) => {
+    if (t.id === "absences") return selfService?.can_report_absence ?? true;
+    if (t.id === "makeups") return selfService?.can_request_makeup ?? true;
+    if (t.id === "trials") return selfService?.can_request_trial ?? true;
+    return true;
+  });
+  const activeTab = TABS.some((t) => t.id === tab) ? tab : (TABS[0]?.id ?? "absences");
 
   return (
     <section data-testid="parent-requests" className="space-y-4">
@@ -52,30 +70,53 @@ export default function ParentRequestsPage() {
         <p className="text-sm mt-0.5 text-rally-muted">Absences, makeups &amp; trial classes</p>
       </div>
 
-      <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
-            className={`min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150 ${
-              tab === t.id
-                ? "bg-white text-rally-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
-                : "bg-transparent text-rally-muted"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* X2: the "a seat opened" email lands here (?offer=<waitlist_id>). */}
+      <Suspense fallback={null}>
+        <WaitlistOffersFromLink />
+      </Suspense>
 
-      {tab === "absences" && <AbsencesPanel />}
-      {tab === "makeups" && <MakeupsPanel />}
-      {tab === "trials" && <TrialsPanel />}
+      {/* #843: the inactive tab label was rally-muted (#64748b) on the
+          rally-line track (#e2e8f0) — 3.86:1, under AA. slate-600 clears it. */}
+      {TABS.length > 1 && (
+        <div role="tablist" aria-label="Request type" className="flex gap-1 rounded-xl bg-rally-line p-1">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`min-h-touch flex-1 rounded-lg text-sm font-semibold transition-all duration-150 ${
+                activeTab === t.id
+                  ? "bg-white text-rally-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                  : "bg-transparent text-status-slate-600"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {TABS.length === 0 ? (
+        <EmptyState
+          title="No requests available"
+          description="Your academy has turned off self-service requests. Contact them directly for absences, makeups or trials."
+        />
+      ) : (
+        <>
+          {activeTab === "absences" && <AbsencesPanel />}
+          {activeTab === "makeups" && <MakeupsPanel />}
+          {activeTab === "trials" && <TrialsPanel />}
+        </>
+      )}
     </section>
   );
+}
+
+function WaitlistOffersFromLink() {
+  const offerId = useSearchParams().get("offer");
+  return <WaitlistOffers highlightId={offerId} />;
 }
 
 // --- Absences ---
@@ -114,6 +155,7 @@ function AbsencesPanel() {
   });
 
   const children = childrenQuery.data?.children ?? [];
+  const nameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
   const academyTimezone = academyQuery.data?.timezone ?? null;
   // A cancelled class cannot be missed, so it must not be offered as the
   // subject of an absence notice (#671).
@@ -227,6 +269,9 @@ function AbsencesPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
+                      <p className="text-xs font-semibold text-rally-subtle">
+                        {nameById.get(n.student_id) ?? "Your child"}
+                      </p>
                       <p className="text-sm font-semibold text-rally-ink">
                         {formatAcademyDateTime(n.submitted_at, academyTimezone)}
                       </p>
@@ -259,6 +304,10 @@ function MakeupsPanel() {
     queryKey: ["parent", "academy"],
     queryFn: getParentAcademy,
   });
+  const childrenQuery = useQuery({
+    queryKey: ["parent", "children"],
+    queryFn: listParentChildren,
+  });
   const absencesQuery = useQuery({
     queryKey: queryKeys.parent.absences(),
     queryFn: listParentAbsences,
@@ -289,6 +338,8 @@ function MakeupsPanel() {
   });
 
   const academyTimezone = academyQuery.data?.timezone ?? null;
+  const children = childrenQuery.data?.children ?? [];
+  const nameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
   const absences = absencesQuery.data?.notices ?? [];
   const makeups = makeupsQuery.data?.makeups ?? [];
   const targets = targetsQuery.data?.targets ?? [];
@@ -396,6 +447,9 @@ function MakeupsPanel() {
                 <Card p={12}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
+                      <p className="text-xs font-semibold text-rally-subtle">
+                        {nameById.get(m.student_id) ?? "Your child"}
+                      </p>
                       <p className="text-sm font-semibold text-rally-ink">
                         Requested {formatAcademyDate(m.created_at, academyTimezone)}
                       </p>
@@ -405,6 +459,11 @@ function MakeupsPanel() {
                       {m.status === "denied" && m.denial_reason && (
                         <p className="mt-1 text-xs text-status-red-600">{m.denial_reason}</p>
                       )}
+                      <AssignedClassDetails
+                        kind="makeup"
+                        assigned={m.assigned_class}
+                        academyTimezone={academyTimezone}
+                      />
                     </div>
                     <Chip variant={requestStatusChipVariant(m.status)} label={m.status.toUpperCase()} />
                   </div>
@@ -464,6 +523,7 @@ function TrialsPanel() {
   const children = childrenQuery.data?.children ?? [];
   const sessions = sessionsQuery.data?.sessions ?? [];
   const trials = trialsQuery.data?.trials ?? [];
+  const trialNameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
 
   const canSubmit = useMemo(() => {
     if (!sessionId || !preferredStart || !preferredEnd) return false;
@@ -626,7 +686,9 @@ function TrialsPanel() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-rally-ink">
-                        {t.prospective_child_name ?? "Existing child"}
+                        {t.prospective_child_name ??
+                          (t.student_id ? trialNameById.get(t.student_id) : undefined) ??
+                          "Existing child"}
                       </p>
                       <p className="mt-1 text-xs text-rally-muted">
                         Requested {formatAcademyDate(t.created_at, academyTimezone)} · {t.preferred_start} – {t.preferred_end}
@@ -634,6 +696,11 @@ function TrialsPanel() {
                       {t.status === "denied" && t.denial_reason && (
                         <p className="mt-1 text-xs text-status-red-600">{t.denial_reason}</p>
                       )}
+                      <AssignedClassDetails
+                        kind="trial"
+                        assigned={t.assigned_class}
+                        academyTimezone={academyTimezone}
+                      />
                     </div>
                     <Chip variant={requestStatusChipVariant(t.status)} label={t.status.toUpperCase()} />
                   </div>

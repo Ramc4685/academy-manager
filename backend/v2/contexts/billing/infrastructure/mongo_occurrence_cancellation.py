@@ -36,16 +36,18 @@ from backend.v2.contexts.billing.domain.proration import ClassOccurrence
 from backend.v2.contexts.billing.domain.tuition_discount import monthly_discount_cents
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import session_amount_cents
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    class_fee_cents_for_period,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
     MongoTuitionDiscountRepository,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE
 
 #: Enrollment rows a cancelled date can affect. ``paused`` is here because a
 #: pause that started mid-month leaves a real invoice behind.
 _AFFECTED_STATUSES = ("active", "paused")
-
-_DEFAULT_TIMEZONE = "America/Chicago"
 
 
 class MongoOccurrenceOverrideRepository(TenantScopedRepository):
@@ -96,7 +98,9 @@ class MongoOccurrenceCancellationReader:
         self._payments = MongoPaymentRepository(db)
         self._discounts = MongoTuitionDiscountRepository(db)
 
-    async def session_pricing(self, session_id: str) -> SessionPricing | None:
+    async def session_pricing(
+        self, session_id: str, *, period: str | None = None
+    ) -> SessionPricing | None:
         doc = await self._db["sessions"].find_one(
             {"academy_id": current_academy_id(), "session_id": session_id}
         )
@@ -105,10 +109,16 @@ class MongoOccurrenceCancellationReader:
         return SessionPricing(
             session_id=session_id,
             timezone=str(doc.get("timezone") or "") or await self._academy_timezone(),
-            # The generator's own helper, never a bare ``amount_cents`` read:
+            # The generator's own read, never a bare ``amount_cents`` read:
             # a legacy session doc priced only in ``monthly_price_cents``
             # would otherwise credit 0 while still being billed in full (#671).
-            monthly_price_cents=session_amount_cents(doc),
+            # For a known month it is the monthly invoice's fee FOR that
+            # month, scheduled plan price change included (PR 26).
+            monthly_price_cents=(
+                await class_fee_cents_for_period(self._db, doc, period)
+                if period is not None
+                else session_amount_cents(doc)
+            ),
         )
 
     async def occurrences_for_period(
@@ -177,7 +187,9 @@ class MongoOccurrenceCancellationReader:
             ),
         )
 
-    async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]:
+    async def enrollments_for_session(
+        self, session_id: str, *, period: str | None = None
+    ) -> list[BillableEnrollment]:
         academy_id = current_academy_id()
         cursor = self._db["enrollments"].find(
             {
@@ -193,7 +205,7 @@ class MongoOccurrenceCancellationReader:
         student_ids = sorted({str(row["student_id"]) for row in rows if row.get("student_id")})
         parents = await self._parents_by_student(academy_id, student_ids)
         price = 0
-        pricing = await self.session_pricing(session_id)
+        pricing = await self.session_pricing(session_id, period=period)
         if pricing is not None:
             price = pricing.monthly_price_cents
         discounts = await self._discounts.active_by_enrollments(
@@ -244,7 +256,7 @@ class MongoOccurrenceCancellationReader:
 
     async def _academy_timezone(self) -> str:
         doc = await self._db["academies"].find_one({"academy_id": current_academy_id()})
-        return str((doc or {}).get("timezone") or "") or _DEFAULT_TIMEZONE
+        return str((doc or {}).get("timezone") or "") or LEGACY_FALLBACK_TIMEZONE
 
 
 def _coerce_datetime(value: Any) -> datetime | None:

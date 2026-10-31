@@ -16,6 +16,7 @@ export const queryKeys = {
       ["coach", "skill-board", sessionId, programId ?? "default"] as const,
     schedule: () => ["coach", "schedule"] as const,
     profile: () => ["coach", "profile"] as const,
+    academy: () => ["coach", "academy"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
     sessionAnnouncements: (sessionId: string) =>
       ["coach", "session", sessionId, "announcements"] as const,
@@ -55,6 +56,8 @@ export const queryKeys = {
       ["admin", "session", sessionId] as const,
     sessionOccurrences: (sessionId: string) =>
       ["admin", "session", sessionId, "occurrences"] as const,
+    sessionWelcomePreview: (sessionId: string) =>
+      ["admin", "session", sessionId, "welcome-email-preview"] as const,
     sessionAnnouncements: (sessionId: string) =>
       ["admin", "session", sessionId, "announcements"] as const,
     teachingPlan: (occurrenceId: string, programId?: string | null) =>
@@ -66,8 +69,37 @@ export const queryKeys = {
     waitlist: (sessionId: string) => ["admin", "waitlist", sessionId] as const,
     globalWaitlist: () => ["admin", "waitlist", "global"] as const,
     families: () => ["admin", "families"] as const,
+    // People CRM family index (spec §3.2). Under `families()` so any
+    // invalidation of the family pages also refreshes the list.
+    familyIndex: (params: Record<string, unknown>) =>
+      ["admin", "families", "index", params] as const,
+    familyIndexSummary: () => ["admin", "families", "index-summary"] as const,
+    // People CRM Pipeline board (L3b). Under `families()` so a families-wide
+    // invalidation refreshes it too.
+    pipelineBoard: () => ["admin", "families", "pipeline"] as const,
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
+    familyRecord: (familyId: string) =>
+      ["admin", "families", familyId, "record"] as const,
+    // People CRM Phase 5: the unified family timeline (paged).
+    familyTimeline: (parentId: string) =>
+      ["admin", "families", parentId, "timeline"] as const,
+    // People CRM Phase 4a: team notes and follow-ups on a family.
+    // People CRM Phase 6: the family Messages tab.
+    familyMessages: (parentId: string) =>
+      ["admin", "families", parentId, "messages"] as const,
+    familyNotes: (parentId: string) =>
+      ["admin", "families", parentId, "notes"] as const,
+    familyFollowUps: (parentId: string) =>
+      ["admin", "families", parentId, "follow-ups"] as const,
+    // The signed-in staff member (`/me`), for "you" labels and defaults.
+    currentUser: () => ["admin", "current-user"] as const,
+    // Every cross-family follow-up queue (the dashboard's "My follow-ups").
+    followUpQueueAll: () => ["admin", "families", "follow-up-queue"] as const,
+    followUpQueue: (assignee: "me" | "all", bucket: string | null) =>
+      ["admin", "families", "follow-up-queue", assignee, bucket ?? "open"] as const,
+    studentCoachNotes: (studentId: string) =>
+      ["admin", "student", studentId, "coach-notes"] as const,
     registrations: () => ["admin", "registrations"] as const,
     registrationDetail: (applicationId: string) =>
       ["admin", "registrations", applicationId] as const,
@@ -84,6 +116,12 @@ export const queryKeys = {
     revenue: () => ["admin", "finance", "revenue"] as const,
     enrollmentFunnel: (period?: string) =>
       ["admin", "reports", "funnel", period ?? "all"] as const,
+    moneyOwedByAge: () => ["admin", "reports", "people", "money-owed-by-age"] as const,
+    inquiryConversion: (from: string, to: string) =>
+      ["admin", "reports", "people", "inquiry-conversion", from || "default", to || "default"] as const,
+    attendanceRisk: () => ["admin", "reports", "people", "attendance-risk"] as const,
+    familiesLost: (from: string, to: string) =>
+      ["admin", "reports", "people", "families-lost", from || "default", to || "default"] as const,
     attendanceTrends: (periods: string[]) =>
       ["admin", "reports", "attendance-trends", ...periods] as const,
     coachUtilization: (periods: string[]) =>
@@ -91,17 +129,31 @@ export const queryKeys = {
     messages: () => ["admin", "messages"] as const,
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,
+    studentWaivers: (studentId: string) => ["admin", "waivers", "student", studentId] as const,
     attention: () => ["admin", "dashboard", "attention"] as const,
+    setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
+    inboxCounts: () => ["admin", "inbox", "counts"] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
+    publicPage: () => ["admin", "academy", "public-page"] as const,
+    programs: () => ["admin", "programs"] as const,
+    // Under the programs() prefix so a program change refetches it too.
+    programsWithArchived: () => ["admin", "programs", "with-archived"] as const,
+    classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
     // sessionTypes() is the invalidation prefix; sessionTypesList() is the
     // per-view cache key, since the archived and active lists differ.
     sessionTypes: () => ["admin", "session-types"] as const,
+    // Pricing page (Settings overhaul PR 11b): plans + class links + overrides.
+    pricing: () => ["admin", "pricing"] as const,
+    pricingPriceChangePreview: (planId: string, newPriceCents: number, month: string | null) =>
+      ["admin", "pricing", "price-change-preview", planId, newPriceCents, month] as const,
+    scheduledClassFees: () => ["admin", "pricing-scheduled-class-fees"] as const,
     sessionTypesList: (includeArchived: boolean) =>
       ["admin", "session-types", { includeArchived }] as const,
     lessonCards: (programId: string) =>
@@ -120,6 +172,13 @@ export const queryKeys = {
     billingSetupAll: () => ["admin", "billing", "setup"] as const,
     billingSetup: (params?: { status?: string; q?: string }) =>
       [...queryKeys.admin.billingSetupAll(), params?.status ?? "all", params?.q ?? ""] as const,
+    // #865: the shell's people search reads the same families endpoint with a
+    // much smaller `limit`, so it must NOT share `billingSetup`'s key — the
+    // Families page would otherwise render whichever of the two answered last.
+    // The Families page's bulk invite walks every not-invited Billing Setup
+    // row; its own key so the list's paging never shares a cache entry.
+    familiesNotInvited: () => [...queryKeys.admin.billingSetupAll(), "not-invited-all"] as const,
+    peopleSearchFamilies: (q: string) => ["admin", "people-search", "families", q] as const,
     selfServicePolicy: () => ["admin", "self-service", "policy"] as const,
     departurePolicy: () => ["admin", "enrollment", "departure-policy"] as const,
     selfServiceAbsences: () => ["admin", "self-service", "absences"] as const,
@@ -148,11 +207,16 @@ export const queryKeys = {
     makeupTargets: (studentId: string, missedOccurrenceId: string) =>
       ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
     trials: () => ["parent", "trials"] as const,
+    waitlist: () => ["parent", "waitlist"] as const,
+    // Same arrays the Requests page and shell already use inline.
+    academy: () => ["parent", "academy"] as const,
+    children: () => ["parent", "children"] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
     messages: () => ["parent", "messages"] as const,
     calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
+    emailPreferences: () => ["parent", "email-preferences"] as const,
   },
   platform: {
     all: ["platform"] as const,
@@ -161,6 +225,10 @@ export const queryKeys = {
       ["platform", "tenant", academyId, "status"] as const,
     tenantHealth: (academyId: string) =>
       ["platform", "tenant", academyId, "health"] as const,
+    tenantApplicationFee: (academyId: string) =>
+      ["platform", "tenant", academyId, "application-fee"] as const,
+    tenantBillingIdentity: (academyId: string) =>
+      ["platform", "tenant", academyId, "billing-identity"] as const,
   },
   student: {
     all: ["student"] as const,

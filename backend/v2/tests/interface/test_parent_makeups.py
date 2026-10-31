@@ -250,3 +250,89 @@ def test_duplicate_makeup_request_returns_409_with_error_code() -> None:
     assert response.status_code == 409, response.text
     body = response.json()
     assert body["error"]["code"] == "Enrollment.DuplicateMakeupRequest"
+
+
+# --- #1038: approved make-ups carry the resolved assigned class -------------
+
+
+class _Resolver:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[list[str]] = []
+        self._fail = fail
+
+    async def __call__(self, occurrence_ids: list[str]) -> dict[str, dict[str, object]]:
+        self.calls.append(list(occurrence_ids))
+        if self._fail:
+            raise RuntimeError("boom")
+        return {
+            oid: {
+                "occurrence_id": oid,
+                "session_id": "sess-b",
+                "session_title": "Squad B",
+                "location": "Court 7",
+                "start_at": datetime(2026, 10, 3, 22, 0, tzinfo=UTC),
+                "end_at": datetime(2026, 10, 3, 23, 0, tzinfo=UTC),
+                "timezone": "America/Chicago",
+                "status": "scheduled",
+            }
+            for oid in occurrence_ids
+            if oid == "occ-target"
+        }
+
+
+def _with_target(request: MakeupRequest, status: str) -> MakeupRequest:
+    return request.model_copy(
+        update={"status": status, "approved_target_occurrence_id": "occ-target"}
+    )
+
+
+def test_get_makeups_resolves_the_approved_class_only_for_standing_approvals() -> None:
+    approved = _with_target(_makeup_request(request_id="req-approved"), "approved")
+    # A stale target id on a non-approved row must never be resolved/shown.
+    denied = _with_target(_makeup_request(request_id="req-denied"), "denied")
+    pending = _makeup_request(request_id="req-pending")
+    use_cases = _ParentUseCases(list_result=[approved, denied, pending])
+    resolver = _Resolver()
+    use_cases.resolve_assigned_classes = resolver  # type: ignore[attr-defined]
+
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/makeups")
+
+    assert response.status_code == 200, response.text
+    rows = {r["request_id"]: r for r in response.json()["makeups"]}
+    assigned = rows["req-approved"]["assigned_class"]
+    assert assigned["session_title"] == "Squad B"
+    assert assigned["location"] == "Court 7"
+    assert assigned["timezone"] == "America/Chicago"
+    assert assigned["start_at"].startswith("2026-10-03T22:00:00")
+    assert rows["req-denied"]["assigned_class"] is None
+    assert rows["req-pending"]["assigned_class"] is None
+    assert resolver.calls == [["occ-target"]]
+
+
+def test_get_makeups_degrades_when_the_class_lookup_fails() -> None:
+    use_cases = _ParentUseCases(list_result=[_with_target(_makeup_request(), "approved")])
+    use_cases.resolve_assigned_classes = _Resolver(fail=True)  # type: ignore[attr-defined]
+
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/makeups")
+
+    assert response.status_code == 200, response.text
+    row = response.json()["makeups"][0]
+    assert row["assigned_class"] is None
+    assert row["approved_target_occurrence_id"] == "occ-target"
+
+
+def test_get_makeups_skips_a_malformed_assigned_class_instead_of_500() -> None:
+    async def _malformed(occurrence_ids: list[str]) -> dict[str, dict[str, object]]:
+        # Missing end_at: must not escape as a pydantic ValidationError.
+        return {oid: {"occurrence_id": oid, "status": "scheduled"} for oid in occurrence_ids}
+
+    use_cases = _ParentUseCases(list_result=[_with_target(_makeup_request(), "approved")])
+    use_cases.resolve_assigned_classes = _malformed  # type: ignore[attr-defined]
+
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/makeups")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["makeups"][0]["assigned_class"] is None

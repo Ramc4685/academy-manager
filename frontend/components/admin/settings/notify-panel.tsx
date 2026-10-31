@@ -18,22 +18,26 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
+import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
-function normalize(data: AdminNotificationsView | null | undefined): AdminNotificationsView {
+export function normalize(
+  data: Partial<AdminNotificationsView> | null | undefined
+): AdminNotificationsView {
   return {
-    dues_reminders: data?.dues_reminders ?? false,
-    attendance_alerts: data?.attendance_alerts ?? false,
     daily_digest_to_admin: data?.daily_digest_to_admin ?? false,
     coach_digest_enabled: data?.coach_digest_enabled ?? false,
     coach_digest_hour: data?.coach_digest_hour ?? 6,
     parent_digest_enabled: data?.parent_digest_enabled ?? false,
     parent_digest_hour: data?.parent_digest_hour ?? 6,
+    // On unless the academy switched it off: the backend reads it the same way.
+    win_back_enabled: data?.win_back_enabled ?? true,
   };
 }
 
-function toPayload(
+export function toPayload(
   original: AdminNotificationsView,
   form: AdminNotificationsView
 ): UpdateAdminNotificationsRequest {
@@ -57,7 +61,7 @@ function formatHour(hour: number): string {
 export function NotifyPanel() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<AdminNotificationsView>(() => normalize(null));
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const query = useQuery({
     queryKey: queryKeys.admin.notifications(),
     queryFn: getAdminNotifications,
@@ -70,12 +74,12 @@ export function NotifyPanel() {
 
   const payload = toPayload(original, form);
   const dirty = Object.keys(payload).length > 0;
+  useReportSettingsDirty("notify", dirty);
   const mutation = useMutation({
     mutationFn: () => updateAdminNotifications(payload),
     onSuccess: () => {
-      setSaved(true);
+      setSavedAt(savedAtNow());
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.notifications() });
-      window.setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -84,18 +88,23 @@ export function NotifyPanel() {
       <Card p={24} className="max-w-3xl">
         <Overline>Notifications</Overline>
         <div className="mt-5 grid gap-3">
+          {/* Issue #774: the "Dues reminders" toggle used to live here. It was
+              persisted and read by nothing. The real control is Billing rules
+              → Past-due reminder days, where an empty list is the off switch. */}
+          <p className="text-sm text-rally-muted" data-testid="notify-dues-reminders-moved">
+            Past-due reminder emails are configured in Settings &rarr; Billing rules.
+          </p>
           <Toggle
-            label="Dues reminders"
-            checked={form.dues_reminders}
-            onChange={(checked) => setForm((prev) => ({ ...prev, dues_reminders: checked }))}
+            label="Win-back emails (30/60/90 days after leaving)"
+            testId="notify-win-back-enabled"
+            checked={form.win_back_enabled}
+            onChange={(checked) =>
+              setForm((prev) => ({ ...prev, win_back_enabled: checked }))
+            }
           />
           <Toggle
-            label="Attendance alerts"
-            checked={form.attendance_alerts}
-            onChange={(checked) => setForm((prev) => ({ ...prev, attendance_alerts: checked }))}
-          />
-          <Toggle
-            label="Daily admin digest"
+            label="CC admins on coach digests"
+            helper="Admins get a copy of each coach's daily digest email. Needs the coach daily digest turned on."
             checked={form.daily_digest_to_admin}
             onChange={(checked) =>
               setForm((prev) => ({ ...prev, daily_digest_to_admin: checked }))
@@ -170,7 +179,7 @@ export function NotifyPanel() {
           >
             {mutation.isPending ? "Saving..." : "Save changes"}
           </Button>
-          {saved && <p className="text-sm font-medium text-emerald-700">Saved.</p>}
+          <SavedNote at={savedAt} />
           {(query.isError || mutation.isError) && (
             <p className="text-sm font-medium text-red-700">
               {(mutation.error ?? query.error)?.message}
@@ -350,17 +359,27 @@ function Toggle({
   label,
   checked,
   onChange,
+  testId,
+  helper,
 }: {
   label: string;
+  helper?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  testId?: string;
 }) {
   return (
     <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-rally-line px-4 text-sm font-medium text-rally-ink">
-      {label}
+      <span>
+        {label}
+        {helper && (
+          <span className="mt-0.5 block text-xs font-normal text-rally-muted">{helper}</span>
+        )}
+      </span>
       <input
         type="checkbox"
         checked={checked}
+        data-testid={testId}
         onChange={(event) => onChange(event.target.checked)}
         className="size-4 accent-blue-600"
       />

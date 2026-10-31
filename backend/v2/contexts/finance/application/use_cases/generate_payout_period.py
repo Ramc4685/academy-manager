@@ -4,6 +4,10 @@ Calls the injected ``PayoutCalculator`` adapter (which wraps the coaching
 context's ``ComputeCoachPayout``), then persists the resulting period and
 its lines atomically through the ``PayoutPeriodRepository``.
 
+Every generated period opens its audit trail with one ``generated``
+entry (#787). Returning an existing period for the same window writes
+nothing — that call created no snapshot.
+
 Idempotency:
 
 - The natural key is ``(academy_id, coach_id, period_start, period_end)``.
@@ -26,7 +30,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from backend.v2.contexts.finance.application.payout_audit_recorder import PayoutAuditRecorder
 from backend.v2.contexts.finance.application.ports import (
+    PayoutAuditLog,
     PayoutCalculator,
     PayoutPeriodRepository,
 )
@@ -53,6 +59,7 @@ class GeneratePayoutPeriod:
         *,
         calculator: PayoutCalculator,
         repository: PayoutPeriodRepository,
+        audit: PayoutAuditLog,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         id_factory: Callable[[], str] = lambda: str(new_ulid()),
     ) -> None:
@@ -60,6 +67,10 @@ class GeneratePayoutPeriod:
         self._repo = repository
         self._clock = clock
         self._id = id_factory
+        # Deliberately NOT sharing ``id_factory``: that one mints period ids,
+        # and an audit entry drawing from the same sequence would consume a
+        # period id (and make the pair look related when they are not).
+        self._audit = PayoutAuditRecorder(audit=audit, clock=clock)
 
     async def execute(
         self,
@@ -68,6 +79,7 @@ class GeneratePayoutPeriod:
         academy_id: str,
         period_start: datetime,
         period_end: datetime,
+        actor_id: str = "system",
     ) -> PayoutPeriod:
         if period_end <= period_start:
             raise ValueError("period_end must be after period_start")
@@ -117,4 +129,14 @@ class GeneratePayoutPeriod:
             approved_at=None,
             paid_at=None,
         )
-        return await self._repo.save(period)
+        stored = await self._repo.save(period)
+        # #787: creating the snapshot is itself a money-moving step — it is
+        # what a later approval and payment are measured against — so the
+        # trail starts here, not at the first correction.
+        await self._audit.record(
+            stored,
+            action="generated",
+            actor_id=actor_id,
+            after={"total_minor": stored.total_minor, "line_count": len(stored.lines)},
+        )
+        return stored

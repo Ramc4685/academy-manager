@@ -15,6 +15,11 @@ from backend.v2.contexts.billing.domain.proration import (
     snapshot_charge_denominator,
     snapshot_classes_charged,
 )
+from backend.v2.shared.comms.email_theme import format_money
+
+#: Tuition is charged in USD only today (currency is locked), and these
+#: strings have always been ungrouped: ``$1500.00``, not ``$1,500.00``.
+_CURRENCY = "USD"
 
 __all__ = [
     "BILLABLE_CLASSES_PER_MONTH",
@@ -38,7 +43,8 @@ def billable_classes_charged(snapshot: BillingCalculationSnapshot) -> int:
 def first_month_quote_formula(snapshot: BillingCalculationSnapshot) -> str:
     """Human-readable arithmetic behind ``final_amount_cents``."""
     if not snapshot.total_eligible_classes:
-        return "$0.00"
+        return format_money(0, _CURRENCY, group_thousands=False)
     monthly = snapshot.monthly_price_cents
     billable = billable_classes_charged(snapshot)
-    return f"${monthly / 100:.2f} x {billable} / {billable_classes_denominator(snapshot)}"
+    price = format_money(monthly, _CURRENCY, group_thousands=False)
+    return f"{price} x {billable} / {billable_classes_denominator(snapshot)}"

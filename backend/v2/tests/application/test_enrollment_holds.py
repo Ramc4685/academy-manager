@@ -659,6 +659,36 @@ async def test_pause_a_held_enrollment_is_refused_with_409() -> None:
     assert sessions.reserved_seats["sess-1"] == 1
 
 
+# -- Issue #783: pausing a row that holds no seat must not release one -----
+
+
+@pytest.mark.parametrize("status", [*sorted(SEATLESS - {"paused"}), "reclaim_pending"])
+@pytest.mark.asyncio
+async def test_pause_a_row_that_holds_no_seat_never_releases_someone_elses(
+    status: str,
+) -> None:
+    """#783: ``PauseEnrollment`` only special-cased ``paused`` and ``held``.
+
+    Every other non-seat-holding status — the terminal spellings and the
+    in-flight ``reclaim_pending`` — fell through to ``release_seat``, which
+    decrements ``reserved_seats`` whenever it is above zero. Pausing a row
+    that had already given its seat back therefore stole a slot from a
+    family that really was holding one, under-counting the session for good.
+    """
+    enrollments = FakeEnrollmentWriter(rows={"enr-1": make_enrollment(status=status)})
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session(capacity=4)})
+    # One OTHER family genuinely holds a seat in this class.
+    sessions.reserved_seats["sess-1"] = 1
+    pause = PauseEnrollment(enrollments=enrollments, sessions=sessions, clock=lambda: NOW)
+
+    with pytest.raises(EnrollmentNotPausable):
+        await pause.execute(PauseEnrollmentCommand(enrollment_id="enr-1"))
+
+    assert enrollments.rows["enr-1"].status == status
+    assert sessions.release_calls == []
+    assert sessions.reserved_seats["sess-1"] == 1
+
+
 # -- Defect #6: every seat-release predicate must be exhaustive over the --
 # -- full EnrollmentStatus set --------------------------------------------
 

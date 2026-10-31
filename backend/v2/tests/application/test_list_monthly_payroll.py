@@ -401,3 +401,41 @@ async def test_rows_sorted_by_coach_id() -> None:
     uc = ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc)
     rows = await uc.execute(academy_id="a1", period_start=JUNE_START, period_end=JUNE_END)
     assert [r.coach_id for r in rows] == ["c1", "c2", "c3"]
+
+
+@pytest.mark.asyncio
+async def test_departed_coach_with_an_unpaid_period_still_gets_a_row() -> None:
+    """#785: enumeration started at ``coaches_with_occurrences``.
+
+    A coach who left mid-month has no occurrences in the *next* period scan
+    the admin opens, so their draft/approved-but-unpaid period vanished from
+    the payroll screen and the money was never paid out. Any persisted period
+    in the window is a row, occurrences or not.
+    """
+    reader = _FakeOccurrenceReader([("c1", 4)])
+    repo = FakePayoutPeriodRepository()
+    await repo.save(
+        make_fake_period(
+            coach_id="c-departed",
+            period_start=JUNE_START,
+            period_end=JUNE_END,
+            academy_id="a1",
+            status="approved",
+            total_minor=25000,
+        )
+    )
+    calc = _FakeCalculator({"c1": (18000, "MYR", [])})
+
+    rows = await ListMonthlyPayroll(reader=reader, periods=repo, calculator=calc).execute(
+        academy_id="a1", period_start=JUNE_START, period_end=JUNE_END
+    )
+    by_coach = {r.coach_id: r for r in rows}
+
+    assert "c-departed" in by_coach, "a departed coach's unpaid period must stay visible"
+    assert by_coach["c-departed"].status == "approved"
+    assert by_coach["c-departed"].total_minor == 25000
+    assert by_coach["c-departed"].session_count == 0
+    # The coach still on the roster is unaffected.
+    assert by_coach["c1"].total_minor == 18000
+    # A period-only coach must never be handed to the preview calculator.
+    assert calc.calculate_many_calls == [["c1"]]

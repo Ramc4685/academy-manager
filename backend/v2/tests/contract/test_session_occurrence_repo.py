@@ -115,3 +115,79 @@ async def test_occurrence_repo_lists_occurrences_assigned_to_coach_on_date(db) -
         "occ-sub",
         "occ-adjacent-day",
     ]
+
+
+@pytest.mark.asyncio
+async def test_occurrence_repo_can_include_cancelled_occurrences_for_coach(db) -> None:
+    """Issue #777: a cancelled class must still be able to reach the coach's
+    day, or the coach shows up to an empty court. Default stays exclusive so
+    every other caller (payroll, digests, the calendar) is unchanged."""
+    await run_pending_migrations(db)
+
+    with tenant_scope("academy-a"):
+        repo = MongoSessionOccurrenceRepository(db)
+        await repo.save_many(
+            [
+                _occurrence("occ-scheduled", "academy-a", "sess-1"),
+                _occurrence("occ-cancelled", "academy-a", "sess-2").model_copy(
+                    update={
+                        "status": "cancelled",
+                        "cancellation_reason": "Court flooded",
+                        "is_billable": False,
+                        "is_payable": False,
+                    }
+                ),
+            ]
+        )
+
+        default_rows = await repo.list_for_coach_on_date(
+            coach_id="coach-1",
+            on_date=datetime(2026, 6, 1, tzinfo=UTC).date(),
+        )
+        with_cancelled = await repo.list_for_coach_on_date(
+            coach_id="coach-1",
+            on_date=datetime(2026, 6, 1, tzinfo=UTC).date(),
+            include_cancelled=True,
+        )
+        academy_wide = await repo.list_on_date(
+            on_date=datetime(2026, 6, 1, tzinfo=UTC).date(),
+            include_cancelled=True,
+        )
+
+    assert [row.occurrence_id for row in default_rows] == ["occ-scheduled"]
+    assert {row.occurrence_id for row in with_cancelled} == {"occ-scheduled", "occ-cancelled"}
+    assert {row.occurrence_id for row in academy_wide} == {"occ-scheduled", "occ-cancelled"}
+    cancelled = next(row for row in with_cancelled if row.occurrence_id == "occ-cancelled")
+    assert cancelled.cancellation_reason == "Court flooded"
+
+
+@pytest.mark.asyncio
+async def test_list_by_ids_between_is_window_bounded_and_tenant_scoped(db) -> None:
+    """Issue #1038: the parent schedule fetches one-time occurrences by id,
+    but only those that start inside the requested window."""
+    await run_pending_migrations(db)
+    repo = MongoSessionOccurrenceRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.save_many(
+            [
+                _occurrence("occ-in", "academy-a", "sess-1"),
+                _occurrence("occ-later", "academy-a", "sess-2").model_copy(
+                    update={
+                        "start_at": datetime(2026, 7, 1, 18, 0, tzinfo=UTC),
+                        "end_at": datetime(2026, 7, 1, 19, 0, tzinfo=UTC),
+                    }
+                ),
+            ]
+        )
+    with tenant_scope("academy-b"):
+        await repo.save_many([_occurrence("occ-foreign", "academy-b", "sess-3")])
+
+    with tenant_scope("academy-a"):
+        rows = await repo.list_by_ids_between(
+            ["occ-in", "occ-later", "occ-foreign"],
+            start_at=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 6, 30, 0, 0, tzinfo=UTC),
+        )
+
+    assert [row.occurrence_id for row in rows] == ["occ-in"]

@@ -66,8 +66,10 @@ test.describe("local authenticated admin session fixes", () => {
     const before = await countSessionRows(page);
     expect(before).toBeGreaterThan(0);
 
-    page.once("dialog", (d) => void d.accept());
+    // #838: the native confirm is gone — cancelling now goes through the Rally
+    // dialog, which names the session and counts who loses a seat.
     await cancelButton.click();
+    await page.getByTestId("confirm-action-submit").click();
 
     // Before the fix the row stayed put: the backend soft-cancelled but the
     // listing had no status predicate, so the refetch re-emitted the cancelled
@@ -110,7 +112,11 @@ async function createSession(page: Page, title: string) {
   await dialog.getByLabel("Name").fill(title);
   await dialog.getByLabel("Location").fill("E2E Court");
   await dialog.getByLabel("Capacity").fill("4");
-  await dialog.getByLabel("Monthly fee").fill("10");
+  // The price is owner-only (Settings overhaul P1 PR 5): an admin without the
+  // owner scope sees it read-only and creates the class unpriced. An owner
+  // starts on "Custom price", which shows the monthly fee box.
+  const fee = dialog.getByLabel("Monthly fee");
+  if ((await fee.count()) > 0) await fee.fill("10");
 
   await dialog.getByRole("button", { name: "Create" }).click();
   await expect(dialog).toHaveCount(0, { timeout: 30_000 });

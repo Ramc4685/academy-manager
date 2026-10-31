@@ -10,6 +10,19 @@ class InvalidWebhookSignature(DomainError):
     status_code = 400
 
 
+class WebhookAccountLookupUnavailable(DomainError):
+    """The Connect account-owner lookup failed while ingesting a webhook.
+
+    503 on purpose: the event is NOT stored, so Stripe redelivers it once the
+    directory is reachable, instead of it being filed under the boot academy
+    and later quarantined there. An account that simply has no owner is not
+    this error (that event is stored and quarantined by the processor).
+    """
+
+    code = "Billing.WebhookAccountLookupUnavailable"
+    status_code = 503
+
+
 class PaymentNotFound(DomainError):
     code = "Billing.PaymentNotFound"
     status_code = 404
@@ -28,6 +41,25 @@ class RefundExceedsAmount(DomainError):
 class RefundFailed(DomainError):
     code = "Billing.RefundFailed"
     status_code = 502
+
+
+class RefundPossibleDuplicate(DomainError):
+    """A keyless refund identical to one issued inside the idempotency TTL (#930).
+
+    Two refunds with the same amount and reason can both be legitimate, so the
+    repeat is neither replayed nor executed: the owner confirms it by resending
+    with an ``Idempotency-Key``.
+    """
+
+    code = "Billing.RefundPossibleDuplicate"
+    status_code = 409
+
+
+class RefundIdempotencyKeyReused(DomainError):
+    """An ``Idempotency-Key`` already used for a DIFFERENT refund (#930)."""
+
+    code = "Billing.RefundIdempotencyKeyReused"
+    status_code = 422
 
 
 class CheckoutCreationFailed(DomainError):
@@ -50,9 +82,61 @@ class InvoicePayLinkUnavailable(DomainError):
     status_code = 409
 
 
+class BillingPortalNotReady(DomainError):
+    """The parent has no Stripe customer yet, so no customer portal exists.
+
+    This is a *prerequisite*, not a failure: the parent must complete autopay
+    setup once before Stripe has a customer to open a portal for. It was
+    previously folded into ``CheckoutCreationFailed`` (502), which made it
+    indistinguishable from "the academy's Stripe is broken" and left the
+    frontend unable to render the one actionable next step (issue #595).
+
+    409 mirrors ``InvoicePayLinkUnavailable``: the request is well-formed but
+    the account is not in a state where it can be served.
+    """
+
+    code = "Billing.BillingPortalNotReady"
+    status_code = 409
+
+
+class AutopayClassUnpriced(DomainError):
+    """A parent asked to start autopay for a class with no monthly fee.
+
+    The class reads $0 for the billing month, exactly as checkout reads it (a
+    $0 quote skips payment), so there is no monthly charge to automate. 409
+    like the other "not in a payable state" refusals; the ``code`` lets the
+    parent portal explain it instead of showing a generic failure.
+    """
+
+    code = "Billing.AutopayClassUnpriced"
+    status_code = 409
+
+
 class ConnectOnboardingFailed(DomainError):
     code = "Billing.ConnectOnboardingFailed"
     status_code = 502
+
+
+class HouseAcademyUsesPlatformAccount(DomainError):
+    """The house academy charges on the platform Stripe account (BLNO owns it).
+
+    Connecting a second Stripe account would silently move its parents'
+    charges, saved cards and autopay off the platform account.
+    """
+
+    code = "Billing.HouseAcademyUsesPlatformAccount"
+    status_code = 409
+
+
+class UnsupportedConnectAccountRegion(DomainError):
+    """The academy is not in a region a connected account can be created for.
+
+    Only US academies billing in USD are supported today. 409, like the house
+    academy refusal: the request is fine, the academy's configuration is not.
+    """
+
+    code = "Billing.UnsupportedConnectAccountRegion"
+    status_code = 409
 
 
 class PaymentOperationNotAllowed(DomainError):
@@ -63,6 +147,24 @@ class PaymentOperationNotAllowed(DomainError):
 class SessionTypeNotFound(DomainError):
     code = "Billing.SessionTypeNotFound"
     status_code = 404
+
+
+class PricingClassNotFound(DomainError):
+    """Pricing page: the class (session) is not in this academy."""
+
+    code = "Billing.PricingClassNotFound"
+    status_code = 404
+
+
+class PlanPriceMismatch(DomainError):
+    """Pricing page: a class may only link to an active plan at its own fee.
+
+    A link is a label, never an amount, so a link to a plan with another price
+    would show a price the family is not charged (Settings overhaul PR 11b).
+    """
+
+    code = "Billing.PlanPriceMismatch"
+    status_code = 409
 
 
 class StudentBillingEnrollmentNotFound(DomainError):
@@ -106,3 +208,103 @@ class AcademyMismatchError(DomainError):
 
     code = "Billing.AcademyMismatch"
     status_code = 404
+
+
+class ApplicationFeeAcademyNotFound(DomainError):
+    """Platform admin tried to read/set the application fee of an unknown academy."""
+
+    code = "Billing.AcademyNotFound"
+    status_code = 404
+
+
+class InvoicePrefixAcademyNotFound(DomainError):
+    """Platform admin tried to read/set the invoice prefix of an unknown academy."""
+
+    code = "Billing.AcademyNotFound"
+    status_code = 404
+
+
+class InvalidInvoicePrefix(DomainError):
+    """The invoice prefix breaks the format rules (2-6 of A-Z/0-9, letter first)."""
+
+    code = "Billing.InvalidInvoicePrefix"
+    status_code = 422
+
+
+class InvoicePrefixTaken(DomainError):
+    """Another academy already uses this invoice prefix; prefixes are unique."""
+
+    code = "Billing.InvoicePrefixTaken"
+    status_code = 409
+
+
+class InvoicePrefixLocked(DomainError):
+    """The academy has issued a numbered invoice, so its prefix can no longer change."""
+
+    code = "Billing.InvoicePrefixLocked"
+    status_code = 409
+
+
+class StripeAccountMismatch(DomainError):
+    """A Stripe event names a different connected account than the one the
+    app recorded the payment on. The two cannot both be true, so the event is
+    not projected (the webhook quarantines it for a human)."""
+
+    code = "Billing.StripeAccountMismatch"
+    status_code = 409
+
+
+class PriceChangeMonthNotAllowed(DomainError):
+    """Plan price change: the "apply from" month is not a future month free of invoices."""
+
+    code = "Billing.PriceChangeMonthNotAllowed"
+    status_code = 422
+
+
+class PriceChangeInvalid(DomainError):
+    """Plan price change: the plan is archived or the new price equals the current one."""
+
+    code = "Billing.PriceChangeInvalid"
+    status_code = 422
+
+
+class PriceChangePending(DomainError):
+    """Plan price change: the plan already has a scheduled change (one at a time)."""
+
+    code = "Billing.PriceChangePending"
+    status_code = 409
+
+
+class PriceChangeNotFound(DomainError):
+    code = "Billing.PriceChangeNotFound"
+    status_code = 404
+
+
+class PriceChangeNotCancellable(DomainError):
+    """Plan price change: it has taken effect (or was cancelled) and can no longer be cancelled."""
+
+    code = "Billing.PriceChangeNotCancellable"
+    status_code = 409
+
+
+class PriceChangeAlreadyCharged(DomainError):
+    """Plan price change: a month on or after the change is already charged or quoted.
+
+    Refused so every charge for that month keeps one price: cancelling the
+    change, or moving a class off (or onto) the plan, would leave those
+    charges at a price the month no longer has.
+    """
+
+    code = "Billing.PriceChangeAlreadyCharged"
+    status_code = 409
+
+
+class PriceChangeInFlight(DomainError):
+    """Plan price change: the owner is editing a change that covers this class right now.
+
+    Raised to a registration quote that overlapped the edit, so it never
+    stores a price the edit is about to make wrong. Retry in a moment.
+    """
+
+    code = "Billing.PriceChangeInFlight"
+    status_code = 409

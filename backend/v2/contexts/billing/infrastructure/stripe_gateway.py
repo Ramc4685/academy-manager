@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeResourceNotFound,
     StripeTransientFailure,
 )
+from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +75,26 @@ def _autopay_enrollment_ids_value(enrollment_ids: list[str] | None) -> str:
     return joined
 
 
+def _on_account(stripe_account: str | None) -> dict[str, Any]:
+    """The ``stripe_account`` (Stripe-Account header) kwarg for one SDK call.
+
+    Empty for the platform account, so a platform (house academy) call sends
+    exactly the kwargs it always did.
+    """
+    return {"stripe_account": stripe_account} if stripe_account else {}
+
+
+def _check_single_route(connected_account_id: str | None, stripe_account: str | None) -> None:
+    """A charge is either a destination charge from the platform
+    (``connected_account_id``) or a direct charge on a connected account
+    (``stripe_account``) — never both at once."""
+    if connected_account_id and stripe_account:
+        raise ValueError(
+            "a charge cannot be both a destination charge (connected_account_id) "
+            "and a direct charge on a connected account (stripe_account)"
+        )
+
+
 class RealStripeGateway(StripeGateway):
     def __init__(
         self,
@@ -109,11 +130,22 @@ class RealStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
         DESTINATION charge (``on_behalf_of`` + ``transfer_data.destination``),
         matching ``create_invoice_checkout_session`` and the autopay fund flow.
+        ``application_fee_cents`` (the academy's platform fee for this charge,
+        default 0) is sent as ``application_fee_amount``. ``stripe_account``
+        creates the session ON that connected account (Stripe-Account header).
         """
+        _check_single_route(connected_account_id, stripe_account)
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id or stripe_account,
+        )
 
         def _create() -> Any:
             request: dict[str, Any] = {
@@ -140,8 +172,14 @@ class RealStripeGateway(StripeGateway):
                     "metadata": metadata,
                     "on_behalf_of": connected_account_id,
                     "transfer_data": {"destination": connected_account_id},
-                    "application_fee_amount": 0,
+                    "application_fee_amount": application_fee_cents,
                 }
+            elif stripe_account and application_fee_cents:
+                request["payment_intent_data"] = {
+                    "metadata": metadata,
+                    "application_fee_amount": application_fee_cents,
+                }
+            request.update(_on_account(stripe_account))
             return self._stripe.checkout.Session.create(**request)
 
         result = await asyncio.to_thread(_create)
@@ -157,9 +195,11 @@ class RealStripeGateway(StripeGateway):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str]:
         def _create() -> Any:
             return self._stripe.checkout.Session.create(
+                **_on_account(stripe_account),
                 mode="subscription",
                 line_items=[
                     {
@@ -195,7 +235,9 @@ class RealStripeGateway(StripeGateway):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
+        _check_single_route(connected_account_id, stripe_account)
         setup_metadata = metadata | {
             "enrollment_id": enrollment_id,
             "session_id": session_id,
@@ -218,6 +260,7 @@ class RealStripeGateway(StripeGateway):
                 customer_creation="always",
                 metadata=setup_metadata,
                 setup_intent_data=setup_intent_data,
+                **_on_account(stripe_account),
             )
 
         result = await asyncio.to_thread(_create)
@@ -236,13 +279,17 @@ class RealStripeGateway(StripeGateway):
         connected_account_id: str | None = None,
         save_payment_method_for_autopay: bool = False,
         autopay_enrollment_ids: list[str] | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         """When ``connected_account_id`` is set, the checkout's PaymentIntent is a
         DESTINATION charge: the connected academy account is the merchant of
         record (``on_behalf_of``) and funds settle to it
         (``transfer_data.destination``) — same fund flow as
-        ``create_off_session_payment_intent``. The platform accepts liability,
-        so ``application_fee_amount`` stays 0.
+        ``create_off_session_payment_intent``. The platform accepts liability;
+        ``application_fee_amount`` is ``application_fee_cents``, the academy's
+        platform fee for this charge (default 0, set per academy by a platform
+        admin — roadmap L9b).
 
         When ``save_payment_method_for_autopay`` is set, the payment doubles as
         an autopay enrollment: the payment method is saved for off-session use
@@ -250,7 +297,17 @@ class RealStripeGateway(StripeGateway):
         session carries ``autopay_optin``/``enrollment_ids`` metadata for the
         completion handlers. Default False keeps the request byte-identical to
         the plain one-time payment.
+
+        ``stripe_account`` creates the session ON that connected account
+        (Stripe-Account header); omitted, the call is byte-identical to the
+        platform one.
         """
+        _check_single_route(connected_account_id, stripe_account)
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id or stripe_account,
+        )
         session_metadata = metadata
         if save_payment_method_for_autopay:
             session_metadata = dict(metadata)
@@ -266,7 +323,9 @@ class RealStripeGateway(StripeGateway):
             if connected_account_id:
                 payment_intent_data["on_behalf_of"] = connected_account_id
                 payment_intent_data["transfer_data"] = {"destination": connected_account_id}
-                payment_intent_data["application_fee_amount"] = 0
+                payment_intent_data["application_fee_amount"] = application_fee_cents
+            elif stripe_account and application_fee_cents:
+                payment_intent_data["application_fee_amount"] = application_fee_cents
             request: dict[str, Any] = {
                 "mode": "payment",
                 "line_items": [
@@ -290,6 +349,7 @@ class RealStripeGateway(StripeGateway):
                 request["customer_creation"] = "always"
             if idempotency_key:
                 request["idempotency_key"] = idempotency_key
+            request.update(_on_account(stripe_account))
             return self._stripe.checkout.Session.create(**request)
 
         result = await asyncio.to_thread(_create)
@@ -301,6 +361,7 @@ class RealStripeGateway(StripeGateway):
         parent_id: str,
         return_url: str,
         stripe_customer_id: str | None,
+        stripe_account: str | None = None,
     ) -> str:
         if not stripe_customer_id:
             raise ValueError(
@@ -311,6 +372,7 @@ class RealStripeGateway(StripeGateway):
             return self._stripe.billing_portal.Session.create(
                 customer=stripe_customer_id,
                 return_url=return_url,
+                **_on_account(stripe_account),
             )
 
         result = await asyncio.to_thread(_create)
@@ -336,9 +398,13 @@ class RealStripeGateway(StripeGateway):
                 raise last_exc
         return json.loads(payload)  # type: ignore[no-any-return]
 
-    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+    async def retrieve_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.checkout.Session.retrieve(checkout_session_id)
+            return self._stripe.checkout.Session.retrieve(
+                checkout_session_id, **_on_account(stripe_account)
+            )
 
         result = await self._run_stripe_retrieve(
             _retrieve,
@@ -346,9 +412,11 @@ class RealStripeGateway(StripeGateway):
         )
         return _stripe_object_to_dict(result)
 
-    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+    async def expire_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> None:
         def _expire() -> None:
-            self._stripe.checkout.Session.expire(checkout_session_id)
+            self._stripe.checkout.Session.expire(checkout_session_id, **_on_account(stripe_account))
 
         try:
             await asyncio.to_thread(_expire)
@@ -405,6 +473,14 @@ class RealStripeGateway(StripeGateway):
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe Invoice")
         return _stripe_object_to_dict(result)
 
+    async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
+        """Void the Stripe-side invoice when the ledger voids ours (#784)."""
+
+        def _void() -> None:
+            self._stripe.Invoice.void_invoice(stripe_invoice_id)
+
+        await asyncio.to_thread(_void)
+
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         def _retrieve() -> Any:
             return self._stripe.Subscription.retrieve(stripe_subscription_id)
@@ -412,23 +488,35 @@ class RealStripeGateway(StripeGateway):
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe Subscription")
         return _stripe_object_to_dict(result)
 
-    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+    async def retrieve_payment_intent(
+        self, stripe_payment_intent_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.PaymentIntent.retrieve(stripe_payment_intent_id)
+            return self._stripe.PaymentIntent.retrieve(
+                stripe_payment_intent_id, **_on_account(stripe_account)
+            )
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe PaymentIntent")
         return _stripe_object_to_dict(result)
 
-    async def retrieve_setup_intent(self, stripe_setup_intent_id: str) -> dict[str, Any]:
+    async def retrieve_setup_intent(
+        self, stripe_setup_intent_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.SetupIntent.retrieve(stripe_setup_intent_id)
+            return self._stripe.SetupIntent.retrieve(
+                stripe_setup_intent_id, **_on_account(stripe_account)
+            )
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe SetupIntent")
         return _stripe_object_to_dict(result)
 
-    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+    async def retrieve_payment_method(
+        self, stripe_payment_method_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.PaymentMethod.retrieve(stripe_payment_method_id)
+            return self._stripe.PaymentMethod.retrieve(
+                stripe_payment_method_id, **_on_account(stripe_account)
+            )
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe PaymentMethod")
         return _stripe_object_to_dict(result)
@@ -439,12 +527,14 @@ class RealStripeGateway(StripeGateway):
         stripe_customer_id: str,
         stripe_payment_method_id: str,
         metadata: dict[str, str],
+        stripe_account: str | None = None,
     ) -> None:
         def _modify() -> Any:
             return self._stripe.Customer.modify(
                 stripe_customer_id,
                 invoice_settings={"default_payment_method": stripe_payment_method_id},
                 metadata=metadata,
+                **_on_account(stripe_account),
             )
 
         try:
@@ -472,8 +562,7 @@ class RealStripeGateway(StripeGateway):
             by_id: dict[str, dict[str, Any]] = {}
             for query in queries:
                 kwargs: dict[str, Any] = {"query": query, "limit": safe_limit}
-                if stripe_account:
-                    kwargs["stripe_account"] = stripe_account
+                kwargs.update(_on_account(stripe_account))
                 payment_intents = self._stripe.PaymentIntent.search(**kwargs)
                 data = getattr(payment_intents, "data", None) or []
                 for item in data:
@@ -489,7 +578,7 @@ class RealStripeGateway(StripeGateway):
             raise ValueError(f"Stripe PaymentIntent search failed: {exc}") from exc
 
     async def list_charges_for_customer(
-        self, *, stripe_customer_id: str, limit: int = 100
+        self, *, stripe_customer_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), 100))
 
@@ -497,6 +586,7 @@ class RealStripeGateway(StripeGateway):
             charges = self._stripe.Charge.list(
                 customer=stripe_customer_id,
                 limit=safe_limit,
+                **_on_account(stripe_account),
             )
             data = getattr(charges, "data", None) or []
             return [_stripe_object_to_dict(item) for item in data]
@@ -506,11 +596,34 @@ class RealStripeGateway(StripeGateway):
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe Charge list failed: {exc}") from exc
 
-    async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
+    async def issue_refund(
+        self,
+        payment_intent_id: str,
+        amount_cents: int | None,
+        *,
+        idempotency_key: str | None = None,
+        stripe_account: str | None = None,
+    ) -> str:
+        """``stripe_account`` refunds a charge that lives ON a connected account
+        (a direct charge); omitted, the call is the platform one."""
+
         def _create() -> Any:
             kwargs: dict[str, Any] = {"payment_intent": payment_intent_id}
             if amount_cents is not None:
                 kwargs["amount"] = amount_cents
+            # A destination charge's funds sit with the connected academy; pull
+            # the refund back from it and return the platform fee pro-rata.
+            # Derived from the PaymentIntent (immutable once paid), so a retry
+            # with the same idempotency key sends identical parameters.
+            payment_intent = _stripe_object_to_dict(
+                self._stripe.PaymentIntent.retrieve(
+                    payment_intent_id, **_on_account(stripe_account)
+                )
+            )
+            kwargs.update(destination_refund_params(payment_intent))
+            if idempotency_key:
+                kwargs["idempotency_key"] = idempotency_key
+            kwargs.update(_on_account(stripe_account))
             return self._stripe.Refund.create(**kwargs)
 
         result = await asyncio.to_thread(_create)
@@ -621,45 +734,59 @@ class RealStripeGateway(StripeGateway):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
-    ) -> str:
+        country: str = "US",
+        currency: str = "USD",
+    ) -> dict[str, Any]:
         """Create an Accounts v2 connected account via ``POST /v2/core/accounts``.
+
+        ``country`` / ``currency`` are sent lowercased as ``identity.country``
+        and ``defaults.currency`` (US / USD gives the same payload as before
+        they were parameters). The use case refuses unsupported regions first.
 
         Configured through Accounts v2 ``configuration`` and
         ``defaults.responsibilities`` (never legacy ``type`` or v1
-        ``controller``). The platform accepts payment liability for destination
-        charges and uses an idempotency key so retries after local persistence
-        failures do not create duplicate Stripe accounts.
+        ``controller``). Uses an idempotency key so retries after local
+        persistence failures do not create duplicate Stripe accounts.
+
+        Direct charges (verified against Stripe docs 2026-09-25; see
+        docs/runbooks/stripe-direct-charges.md):
+
+        * ``dashboard="full"`` — the academy manages refunds and disputes in
+          its own Stripe Dashboard. Stripe recommends direct charges for
+          full-dashboard accounts (docs.stripe.com/connect/direct-charges).
+        * ``fees_collector="stripe"`` — Stripe takes its processing fee from
+          the connected account, so the platform pays no Stripe fee; an
+          ``application_fee_amount`` is then only the platform's own fee.
+        * ``losses_collector="stripe"`` — Stripe, not the platform, is liable
+          for the account's negative balances (refunds, disputes). ``express``
+          would require both collectors to be ``application``
+          (error ``account_controller_express_dash_without_application_losses_or_fees``).
+        * Merchant ``card_payments`` + ``ach_debit_payments`` (the v2 name of
+          v1 ``us_bank_account_ach_payments``). No ``recipient`` configuration:
+          ``stripe_transfers`` is only for destination/separate charges.
+
+        Responsibilities cannot be changed after the merchant configuration is
+        added, so accounts created before this change stay express +
+        platform-liable destination-charge accounts.
         """
         request: dict[str, Any] = {
-            # Express dashboard: Stripe rejects "full" when the application
-            # collects fees/losses (destination charges, platform liability).
-            "dashboard": "express",
+            "dashboard": "full",
             "configuration": {
                 "merchant": {
                     "capabilities": {
                         "card_payments": {"requested": True},
-                    }
-                },
-                # Destination charges transfer funds to the connected account,
-                # which requires the recipient stripe_transfers capability —
-                # without it Stripe rejects checkout/PI creation with
-                # insufficient_capabilities_for_transfer.
-                "recipient": {
-                    "capabilities": {
-                        "stripe_balance": {
-                            "stripe_transfers": {"requested": True},
-                        }
+                        "ach_debit_payments": {"requested": True},
                     }
                 },
             },
             "defaults": {
-                "currency": "usd",
+                "currency": currency.strip().lower(),
                 "responsibilities": {
-                    "fees_collector": "application",
-                    "losses_collector": "application",
+                    "fees_collector": "stripe",
+                    "losses_collector": "stripe",
                 },
             },
-            "identity": {"country": "us"},
+            "identity": {"country": country.strip().lower()},
             "metadata": {"academy_id": academy_id},
         }
         if display_name:
@@ -677,7 +804,12 @@ class RealStripeGateway(StripeGateway):
             account = await asyncio.to_thread(_create)
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe connected account creation failed: {exc}") from exc
-        return str(account["id"])
+        # The whole account, not just its id: the caller persists the
+        # liability model Stripe actually recorded (an idempotent replay can
+        # return an account created with a different request).
+        created = _stripe_object_to_dict(account)
+        created["id"] = str(account["id"])
+        return created
 
     async def create_account_onboarding_link(
         self,
@@ -702,6 +834,15 @@ class RealStripeGateway(StripeGateway):
             raise ValueError(f"Stripe account onboarding link creation failed: {exc}") from exc
         return str(link["url"])
 
+    async def retrieve_connected_account(self, stripe_account_id: str) -> dict[str, Any]:
+        """Read the connected account's live flags (v1 Account retrieve)."""
+
+        def _retrieve() -> Any:
+            return self._stripe.Account.retrieve(stripe_account_id)
+
+        result = await self._run_stripe_retrieve(_retrieve, label="Stripe Account")
+        return _stripe_object_to_dict(result)
+
     async def _run_stripe_retrieve(self, fn: Any, *, label: str) -> Any:
         try:
             return await asyncio.to_thread(fn)
@@ -715,15 +856,19 @@ class RealStripeGateway(StripeGateway):
             raise ValueError(f"{label} lookup failed: {exc}") from exc
 
     async def get_default_payment_method(
-        self, *, academy_id: str, parent_id: str
+        self, *, academy_id: str, parent_id: str, stripe_account: str | None = None
     ) -> tuple[str, str] | None:
-        """Return (stripe_customer_id, payment_method_id) or None if no saved card."""
+        """Return (stripe_customer_id, payment_method_id) or None if no saved card.
+
+        Searches the platform's Customers, or ``stripe_account``'s when set.
+        """
 
         def _find() -> tuple[str, str] | None:
             query = f'metadata["academy_id"]:"{academy_id}" AND metadata["parent_id"]:"{parent_id}"'
             customers = self._stripe.Customer.search(
                 query=query,
                 limit=1,
+                **_on_account(stripe_account),
             )
             data = getattr(customers, "data", None) or []
             if not data:
@@ -750,15 +895,28 @@ class RealStripeGateway(StripeGateway):
         idempotency_key: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         """Return (pi_id, pi_status, decline_code_or_None).
 
         Slice I: when ``connected_account_id`` is set, this is a DESTINATION
         charge — the connected academy account is the merchant of record
         (``on_behalf_of``) and funds settle to it (``transfer_data.destination``).
-        The platform accepts liability, so ``application_fee_amount`` stays 0.
+        The platform accepts liability; ``application_fee_amount`` is
+        ``application_fee_cents``, the academy's platform fee (default 0).
         The Customer stays on the platform (no ``stripe_account`` header).
+
+        ``stripe_account`` instead creates the PaymentIntent ON that connected
+        account (a direct charge); the customer and payment method must then
+        live on that account too.
         """
+        _check_single_route(connected_account_id, stripe_account)
+        check_application_fee_cents(
+            fee_cents=application_fee_cents,
+            amount_cents=amount_cents,
+            connected_account_id=connected_account_id or stripe_account,
+        )
 
         def _create() -> Any:
             request: dict[str, Any] = {
@@ -774,7 +932,10 @@ class RealStripeGateway(StripeGateway):
             if connected_account_id:
                 request["on_behalf_of"] = connected_account_id
                 request["transfer_data"] = {"destination": connected_account_id}
-                request["application_fee_amount"] = 0
+                request["application_fee_amount"] = application_fee_cents
+            elif stripe_account and application_fee_cents:
+                request["application_fee_amount"] = application_fee_cents
+            request.update(_on_account(stripe_account))
             return self._stripe.PaymentIntent.create(**request)
 
         try:
@@ -785,6 +946,24 @@ class RealStripeGateway(StripeGateway):
             return "", "failed", str(getattr(err, "decline_code", None) or str(exc))
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe PaymentIntent creation failed: {exc}") from exc
+
+
+def destination_refund_params(payment_intent: dict[str, Any]) -> dict[str, bool]:
+    """Refund flags for a destination charge (platform policy, 2026-09-25).
+
+    ``reverse_transfer`` pulls the refunded amount back from the connected
+    account, so the platform balance does not fund the academy's refund.
+    ``refund_application_fee`` returns the platform fee on the refunded
+    portion. Both are pro-rata on partial refunds. A platform charge (no
+    ``transfer_data``) gets neither.
+    """
+    transfer_data = payment_intent.get("transfer_data") or {}
+    if not isinstance(transfer_data, dict) or not transfer_data.get("destination"):
+        return {}
+    params = {"reverse_transfer": True}
+    if payment_intent.get("application_fee_amount"):
+        params["refund_application_fee"] = True
+    return params
 
 
 def _stripe_object_to_dict(result: Any) -> dict[str, Any]:

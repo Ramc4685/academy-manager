@@ -17,11 +17,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
-    LEGACY_FALLBACK_TIMEZONE,
     synthesize_recurring_session_docs,
 )
 from backend.v2.interfaces.parent.views import ParentAvailableSessionView
-from backend.v2.shared.time import ensure_utc
+from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE, ensure_utc
 
 RANGE_START = datetime(2026, 9, 1, 0, 0, tzinfo=UTC)
 RANGE_END = datetime(2026, 9, 30, 23, 59, tzinfo=UTC)

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { rowActionControl } from "../helpers/row-actions";
 import { collectConsoleErrors, installTenantGuard } from "../fixtures/tenant-isolation";
 import {
   ACADEMY_A,
@@ -271,6 +272,21 @@ async function stubAdminShell(page: Page): Promise<void> {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { events: [] });
   });
+  // Issue #842: AdminLayout now feeds the Inbox nav badge from this endpoint
+  // on every admin page, so every shell stub must cover it.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
+}
+
+const ALL_SIX_METHODS = ["cash", "check", "zelle", "venmo", "bank_transfer", "other"];
+
+/** Row 22: the academy's offline methods, which the Method select lists. */
+async function stubPaymentMethods(page: Page, manualMethods: string[]): Promise<void> {
+  await page.route("**/api/v2/admin/academy/payment-methods", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { manual_methods: manualMethods });
+  });
 }
 
 async function stubCollections(page: Page): Promise<void> {
@@ -352,6 +368,43 @@ test.describe("admin payments buckets", () => {
     await expect(page.getByTestId("record-payment-amount")).toHaveValue("360.00");
   });
 
+  test("record payment lists all six methods with cash selected by default (BLNO)", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await stubCollections(page);
+    await stubPaymentMethods(page, ALL_SIX_METHODS);
+
+    await page.goto("/admin/payments");
+    await page.getByTestId("action-record_payment-parent-past-due").click();
+
+    const method = page.getByTestId("record-payment-method");
+    await expect(method.locator("option")).toHaveText([
+      "Cash",
+      "Check",
+      "Zelle",
+      "Venmo",
+      "Bank transfer",
+      "Other",
+    ]);
+    await expect(method).toHaveValue("cash");
+  });
+
+  test("record payment lists only the academy's chosen methods, first one selected", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await stubCollections(page);
+    await stubPaymentMethods(page, ["zelle", "other"]);
+
+    await page.goto("/admin/payments");
+    await page.getByTestId("action-record_payment-parent-past-due").click();
+
+    const method = page.getByTestId("record-payment-method");
+    await expect(method.locator("option")).toHaveText(["Zelle", "Other"]);
+    await expect(method).toHaveValue("zelle");
+  });
+
   test("send reminder posts the row's parent id and the row reports it", async ({ page }) => {
     const reminderBodies: Array<Record<string, unknown>> = [];
     await stubAdminShell(page);
@@ -371,7 +424,15 @@ test.describe("admin payments buckets", () => {
 
     await page.goto("/admin/payments");
 
-    await page.getByTestId("action-send_reminder-parent-past-due").click();
+    // #861: below `md` only the row's primary action (Record payment) stays a
+    // button; Send reminder moves into the row menu.
+    const reminder = await rowActionControl(page, {
+      rowTestId: "family-row-parent-past-due",
+      actionsTestId: "family-actions-parent-past-due",
+      directTestId: "action-send_reminder-parent-past-due",
+      label: "Send reminder",
+    });
+    await reminder.click();
 
     await expect.poll(() => reminderBodies.length).toBe(1);
     expect(reminderBodies[0]).toMatchObject({ parent_ids: ["parent-past-due"] });
@@ -388,8 +449,15 @@ test.describe("admin payments buckets", () => {
 
     await page.goto("/admin/payments");
 
-    // Past due: a link (not a button), pointing at the pre-filled wa.me chat.
-    const link = page.getByTestId("action-whatsapp-parent-past-due");
+    // Past due: a link (not a button), pointing at the pre-filled wa.me chat —
+    // as a row button on md+, as a menu item on a phone (#861). Either way it
+    // must stay an anchor the platform hands to WhatsApp.
+    const link = await rowActionControl(page, {
+      rowTestId: "family-row-parent-past-due",
+      actionsTestId: "family-actions-parent-past-due",
+      directTestId: "action-whatsapp-parent-past-due",
+      label: "WhatsApp",
+    });
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute("href", /^https:\/\/wa\.me\/15550100100\?text=/);
     await expect(link).toHaveAttribute("target", "_blank");

@@ -15,6 +15,12 @@ const FIREBASE_AUTH_HELPER_ORIGIN = `https://${
   process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "academy-courtmastr"
 }.firebaseapp.com`;
 
+// Firebase Hosting site that serves academy logos while the project is on the
+// Spark plan (no Storage bucket, so the logo upload endpoint answers 503).
+const FIREBASE_HOSTING_ORIGIN = `https://${
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "academy-courtmastr"
+}.web.app`;
+
 const IS_DEV = process.env.NODE_ENV === "development";
 
 // Report-Only rollout first (QW5): watch for violations in staging/prod, then
@@ -39,7 +45,7 @@ const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com${IS_DEV ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://firebasestorage.googleapis.com",
+  `img-src 'self' data: blob: https://firebasestorage.googleapis.com ${FIREBASE_HOSTING_ORIGIN}`,
   "font-src 'self' data:",
   `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com https://cloudflareinsights.com https://*.ingest.us.sentry.io${
     IS_DEV ? " ws: http://localhost:* http://127.0.0.1:*" : ""
@@ -60,6 +66,28 @@ const CONTENT_SECURITY_POLICY = [
 const RETIRED_ROUTE_REDIRECTS = [
   { source: "/admin/dues", destination: "/admin/payments", permanent: true },
   { source: "/admin/reports/dues", destination: "/admin/payments", permanent: true },
+  // #827: the old people routes. Both were already forwards, but they forwarded
+  // by rendering the `(admin)` layout and throwing `redirect()` from it —
+  // exactly what tripped the Cloudflare Workers resource ceiling on the Dues
+  // paths (#689). Matched here, before route resolution, the layout never runs.
+  // The page files stay as the fallback for anything that reaches route
+  // resolution anyway, and so the route-manifest equality test still passes.
+  // Sidebar regroup PR 3: parents left the Staff list, so the bookmark lands on
+  // Families. Temporary on purpose: the old 308 to `/admin/users?role=parent`
+  // is pinned in some browsers, and a 307 keeps this move reversible.
+  // People CRM Phase 1: it lands on the Families view by name, because the
+  // bare `/admin/families` becomes the Today view once the People sub-nav
+  // lands (engineering spec §1 "Redirects"; the page ignores `?view=` until then).
+  { source: "/admin/parents", destination: "/admin/families?view=families", permanent: false },
+  // Lane A verify #3: old per-parent bookmarks (`/admin/parents/{id}`) 404ed.
+  // The family record opens by any parent id (the page swaps an alias for the
+  // canonical id), so the id carries straight over. Temporary for the same
+  // reason as the rule above; no app route is added for it.
+  { source: "/admin/parents/:parentId", destination: "/admin/families/:parentId", permanent: false },
+  { source: "/admin/coaches", destination: "/admin/users?role=coach", permanent: true },
+  // #839: the orphan add-user page. One form now — the directory's dialog,
+  // which `?add=1` opens.
+  { source: "/admin/users/new", destination: "/admin/users?add=1", permanent: true },
 ];
 
 const config: NextConfig = {

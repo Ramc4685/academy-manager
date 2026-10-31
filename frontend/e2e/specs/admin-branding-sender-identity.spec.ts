@@ -1,0 +1,160 @@
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+/**
+ * Settings → Academy profile → Outbound email (roadmap L9a; the Branding
+ * panel merged into Academy profile in Settings overhaul Phase 3 PR 9),
+ * against a mocked admin BFF: the sender name + reply-to save as a PATCH of
+ * only the changed keys, an unsafe sender name blocks Save with an inline
+ * error, and the hint shows the display name families will see.
+ */
+
+const ADMIN_ME = {
+  user_id: "user-admin-branding-e2e",
+  email: "admin@alpha.example",
+  academy_id: "academy-e2e",
+  roles: ["admin"],
+};
+
+const ACADEMY = {
+  academy_id: "academy-e2e",
+  display_name: "Alpha Shuttle Club",
+  timezone: "America/Chicago",
+  contact_email: null,
+  contact_phone: null,
+  hours_text: null,
+  address: null,
+  logo_url: null,
+  brand_color: null,
+  currency: "USD",
+  email_sender_name: null,
+  email_reply_to: null,
+  effective_reply_to: null,
+  effective_reply_to_source: null,
+};
+
+function fulfillJson(route: Route, body: unknown, status = 200) {
+  return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+async function stub(page: Page): Promise<unknown[]> {
+  const patches: unknown[] = [];
+  let academy: Record<string, unknown> = { ...ACADEMY };
+  // Catch-all first: the most recently registered route wins in Playwright.
+  await page.route("**/api/v2/admin/**", (route) =>
+    route.request().method() === "GET" ? fulfillJson(route, {}) : route.fallback(),
+  );
+  await page.route("**/api/v2/me", (route) =>
+    route.request().method() === "GET" ? fulfillJson(route, ADMIN_ME) : route.fallback(),
+  );
+  await page.route("**/api/v2/me/memberships", (route) =>
+    fulfillJson(route, {
+      memberships: [
+        {
+          academy_id: "academy-e2e",
+          academy_name: "Alpha Shuttle Club",
+          academy_slug: "academy-e2e",
+          roles: ADMIN_ME.roles,
+          status: "active",
+          is_default: true,
+        },
+      ],
+      active_academy_id: "academy-e2e",
+    }),
+  );
+  await page.route("**/api/v2/admin/academy", (route) => {
+    const request = route.request();
+    if (request.method() === "GET") return fulfillJson(route, academy);
+    if (request.method() === "PATCH") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      patches.push(body);
+      academy = { ...academy, ...body };
+      return fulfillJson(route, academy);
+    }
+    return route.fallback();
+  });
+  return patches;
+}
+
+test.describe("admin settings → branding → outbound email", () => {
+  test("saves sender name and reply-to as a PATCH of just those keys", async ({ page }) => {
+    const patches = await stub(page);
+    await page.goto("/admin/settings?panel=branding");
+    const panel = page.getByTestId("admin-settings-academy");
+    await expect(panel).toBeVisible();
+
+    const name = panel.getByLabel("Sender name");
+    // Wait for the server copy (placeholder = academy name) before editing.
+    await expect(name).toHaveAttribute("placeholder", "Alpha Shuttle Club");
+    await expect(panel.getByText('Families see email from "Alpha Shuttle Club"')).toBeVisible();
+
+    await name.fill("Alpha Front Desk");
+    await panel.getByLabel("Reply-to email").fill("desk@alpha.example");
+    await expect(panel.getByText('Families see email from "Alpha Front Desk"')).toBeVisible();
+
+    await panel.getByRole("button", { name: "Save changes" }).click();
+    await expect(panel.getByText(/Saved at/)).toBeVisible();
+    expect(patches).toEqual([
+      { email_sender_name: "Alpha Front Desk", email_reply_to: "desk@alpha.example" },
+    ]);
+  });
+
+  test("angle brackets in the sender name block Save with an inline error", async ({ page }) => {
+    const patches = await stub(page);
+    await page.goto("/admin/settings?panel=branding");
+    const panel = page.getByTestId("admin-settings-academy");
+    const name = panel.getByLabel("Sender name");
+    await expect(name).toHaveAttribute("placeholder", "Alpha Shuttle Club");
+
+    await name.fill("Alpha <spoof@example.com>");
+    await expect(
+      panel.getByText("Sender name cannot contain line breaks or angle brackets."),
+    ).toBeVisible();
+    await expect(name).toHaveAttribute("aria-invalid", "true");
+    await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(patches).toEqual([]);
+  });
+
+  test("saves the support email and legal links, and the reply-to helper follows the support email", async ({
+    page,
+  }) => {
+    const patches = await stub(page);
+    await page.goto("/admin/settings?panel=academy");
+    const panel = page.getByTestId("admin-settings-academy");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("Defaults to the support email once you set one.")).toBeVisible();
+
+    await panel.locator("#academy-support-email").fill("help@alpha.example");
+    await expect(panel.getByText("use the support email (help@alpha.example)")).toBeVisible();
+    await panel.locator("#academy-terms-url").fill("https://alpha.example/terms");
+    await panel.locator("#academy-refund-url").fill("https://alpha.example/refunds");
+    await panel.locator("#academy-privacy-url").fill("https://alpha.example/privacy");
+
+    await panel.getByRole("button", { name: "Save changes" }).click();
+    await expect(panel.getByText(/Saved at/)).toBeVisible();
+    expect(patches).toEqual([
+      {
+        support_email: "help@alpha.example",
+        terms_url: "https://alpha.example/terms",
+        refund_policy_url: "https://alpha.example/refunds",
+        privacy_notice_url: "https://alpha.example/privacy",
+      },
+    ]);
+  });
+
+  test("a non-https terms link blocks Save with an inline error", async ({ page }) => {
+    const patches = await stub(page);
+    await page.goto("/admin/settings?panel=academy");
+    const panel = page.getByTestId("admin-settings-academy");
+    const terms = panel.locator("#academy-terms-url");
+    await expect(panel.getByTestId("academy-legal-links")).toBeVisible();
+
+    await terms.fill("http://alpha.example/terms");
+    await expect(panel.getByText("Only https:// links are allowed.")).toBeVisible();
+    await expect(terms).toHaveAttribute("aria-invalid", "true");
+    await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
+
+    await terms.fill("javascript:alert(1)");
+    await expect(panel.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(patches).toEqual([]);
+  });
+});

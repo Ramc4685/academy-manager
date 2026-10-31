@@ -24,17 +24,23 @@ import {
   type CoachPayBillingUnit,
   type LoginInviteOutcome,
 } from "@/lib/api/admin";
+import { hasCoachRole } from "@/lib/admin/coach-roles";
 import { roleLabel } from "@/lib/admin/role-label";
-import { assignableRoles } from "@/lib/auth/assignable-roles";
+import { ROLE_HINTS, planRoleChanges } from "@/lib/admin/staff-roles";
+import { assignableRoles, canManageUser } from "@/lib/auth/assignable-roles";
 import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
+import { ContactLinks } from "@/components/ds/contact-links";
 import { Overline } from "@/components/ds/typography";
+import { userLoginChip } from "@/lib/people-status";
 
 const editableStatuses = ["active", "inactive", "disabled"] as const;
 
@@ -42,6 +48,7 @@ export default function AdminUserDetailPage() {
   const params = useParams<{ userId: string }>();
   const userId = params?.userId ?? "";
   const queryClient = useQueryClient();
+  const isOwner = useIsOwner();
 
   const userQuery = useQuery({
     queryKey: queryKeys.admin.userDetail(userId),
@@ -73,7 +80,15 @@ export default function AdminUserDetailPage() {
   }
 
   const user = userQuery.data;
-  const isCoach = user.role === "coach";
+  // Any coaching role on the user, not only the primary one: a parent who
+  // also coaches, or an assistant coach, still needs pay rates and sessions.
+  const isCoach = hasCoachRole(user);
+  // Sidebar regroup PR 3: the sidebar says Staff, so a parent-only account
+  // opened from Families, search or an old link says what it is up front.
+  const heldRoles = user.roles.length > 0 ? user.roles : [user.role];
+  const parentOnly = heldRoles.every((r) => r === "parent");
+  // X3: only the owner changes an owner's or admin's account.
+  const canManage = canManageUser(isOwner, heldRoles);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({
@@ -85,30 +100,65 @@ export default function AdminUserDetailPage() {
   return (
     <section className="space-y-6" data-testid="admin-user-detail">
       <BackLink />
+      {parentOnly && (
+        <p
+          className="rounded-md border border-rally-line bg-white px-3 py-2 text-sm text-rally-base"
+          role="status"
+          data-testid="admin-user-parent-only-banner"
+        >
+          This is a parent account, not staff. Children, invoices and autopay are on the{" "}
+          <Link
+            href={`/admin/families/${encodeURIComponent(user.user_id)}`}
+            className="font-medium underline underline-offset-2"
+          >
+            family record
+          </Link>
+          .
+        </p>
+      )}
       <Header user={user} />
       <div className="grid gap-6 lg:grid-cols-3">
+        {!canManage && (
+          <p
+            className="text-sm text-rally-muted lg:col-span-3"
+            data-testid="admin-user-owner-managed"
+            role="note"
+          >
+            Only the academy owner can change an owner&apos;s or admin&apos;s
+            account: email, status, roles and login invites.{" "}
+            <OwnerOnlyHint />
+          </p>
+        )}
         <Card p={20} className="lg:col-span-2">
           <Overline>Profile</Overline>
-          <UserEditForm user={user} onSaved={invalidate} />
+          {/* A disabled fieldset disables every input and button inside. */}
+          <fieldset disabled={!canManage} className="m-0 min-w-0 border-0 p-0">
+            <UserEditForm user={user} onSaved={invalidate} />
+          </fieldset>
         </Card>
         <Card p={20}>
           <Overline>Access</Overline>
-          <RolesPanel user={user} onSaved={invalidate} />
+          <fieldset disabled={!canManage} className="m-0 min-w-0 border-0 p-0">
+            <RolesPanel user={user} onSaved={invalidate} />
+          </fieldset>
         </Card>
       </div>
-      <LoginInvitePanel user={user} onSaved={invalidate} />
-      {isCoach && <CoachPayRatePanel coachId={user.user_id} />}
+      <FamilyPanel user={user} />
+      {canManage && <LoginInvitePanel user={user} onSaved={invalidate} />}
+      {isCoach && <CoachPayRatePanel coachId={user.user_id} isOwner={isOwner} />}
       {isCoach && <CoachSessionsPanel user={user} onAssigned={invalidate} />}
     </section>
   );
 }
 
-function CoachPayRatePanel({ coachId }: { coachId: string }) {
+function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boolean }) {
   const queryClient = useQueryClient();
   const ratesQuery = useQuery({
     queryKey: ["admin", "coaches", coachId, "pay-rates"],
     queryFn: () => listCoachPayRates(coachId),
-    enabled: Boolean(coachId),
+    // Pay rates are owner-only money (owner_gate.py): the route 404s for a
+    // plain admin. Don't even ask — show a read-only note instead (LANE E).
+    enabled: isOwner && Boolean(coachId),
   });
 
   const [billingUnit, setBillingUnit] = useState<CoachPayBillingUnit>("percent_of_revenue");
@@ -119,6 +169,8 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
   const [repairFrom, setRepairFrom] = useState("");
   const [repairUntil, setRepairUntil] = useState("");
   const [repairReason, setRepairReason] = useState("");
+  // UI-2: set by any typed value, cleared by a successful save or repair.
+  const [payEdited, setPayEdited] = useState(false);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -132,6 +184,7 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
       setError(null);
       setPercent("");
       setAmount("");
+      setPayEdited(false);
       void queryClient.invalidateQueries({
         queryKey: ["admin", "coaches", coachId, "pay-rates"],
       });
@@ -155,6 +208,7 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
       setError(null);
       setRepairOpen(false);
       setRepairReason("");
+      setPayEdited(false);
       void queryClient.invalidateQueries({
         queryKey: ["admin", "coaches", coachId, "pay-rates"],
       });
@@ -173,6 +227,22 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
     ? !(Number(percent) > 0 && Number(percent) <= 100)
     : !(Number(amount) > 0);
   const repairInvalid = valueInvalid || !repairFrom || !repairUntil || !repairReason.trim();
+  useReportUnsavedChanges(
+    "admin-coach-pay-rate",
+    payEdited && Boolean(percent || amount || repairReason.trim()),
+  );
+
+  if (!isOwner) {
+    return (
+      <Card p={20} data-testid="admin-coach-pay-rate-owner-managed">
+        <Overline>Pay rate</Overline>
+        <p className="mt-3 text-sm text-rally-muted" role="note">
+          Only the academy owner can view or change coach pay rates.{" "}
+          <OwnerOnlyHint />
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <Card p={20} data-testid="admin-coach-pay-rate">
@@ -245,7 +315,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 max={100}
                 step="0.5"
                 value={percent}
-                onChange={(event) => setPercent(event.target.value)}
+                onChange={(event) => {
+                  setPercent(event.target.value);
+                  setPayEdited(true);
+                }}
                 placeholder="60"
                 className="w-24 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 data-testid="coach-pay-rate-percent"
@@ -267,7 +340,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 min={0}
                 step="0.01"
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) => {
+                  setAmount(event.target.value);
+                  setPayEdited(true);
+                }}
                 placeholder="50.00"
                 className="w-28 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 data-testid="coach-pay-rate-amount"
@@ -314,7 +390,10 @@ function CoachPayRatePanel({ coachId }: { coachId: string }) {
                 Reason
                 <input
                   value={repairReason}
-                  onChange={(event) => setRepairReason(event.target.value)}
+                  onChange={(event) => {
+                    setRepairReason(event.target.value);
+                    setPayEdited(true);
+                  }}
                   className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
                 />
               </label>
@@ -411,6 +490,7 @@ function BackLink() {
 }
 
 function Header({ user }: { user: AdminUserDetail }) {
+  const loginState = userLoginChip(user.status);
   return (
     <Card p={20}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -425,30 +505,51 @@ function Header({ user }: { user: AdminUserDetail }) {
                 variant={roleVariant(user.role)}
                 label={roleLabel(user.role).toUpperCase()}
               />
-              <Chip
-                variant={user.status === "active" ? "enrolled" : "expired"}
-                label={user.status.toUpperCase()}
-              />
+              {/* #840: "ACTIVE" here borrowed the billing chip's shout and
+                  collided with the Students page's "ACTIVE" (attending). This
+                  is the Login fact, in the shared People wording. */}
+              <Chip variant={loginState.variant} label={loginState.label} />
             </div>
           </div>
         </div>
-        <div className="text-sm text-rally-muted">
-          <a
-            href={`mailto:${user.email}`}
-            className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-          >
-            {user.email}
-          </a>
-          {user.phone && (
-            <a
-              href={`tel:${user.phone}`}
-              className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-            >
-              {user.phone}
-            </a>
-          )}
-        </div>
+        {/* #865: this page already had mailto:/tel:, but on its own; the
+            shared component adds WhatsApp and keeps it the same everywhere. */}
+        <ContactLinks
+          className="text-sm text-rally-muted"
+          data-testid="admin-user-contacts"
+          name={user.display_name}
+          email={user.email}
+          phone={user.phone}
+        />
       </div>
+    </Card>
+  );
+}
+
+/**
+ * #839: a parent's user page said nothing about the family it belongs to, so
+ * the trail from a login account back to the children and the money ran out
+ * here. Only parents have a family page — anyone else would be sent to a 404.
+ */
+function FamilyPanel({ user }: { user: AdminUserDetail }) {
+  if (!user.roles.includes("parent")) return null;
+  const count = user.linked_student_count;
+  return (
+    <Card p={20} data-testid="admin-user-family">
+      <Overline>Family</Overline>
+      <p className="mt-1 text-sm text-rally-muted">
+        {count} {count === 1 ? "student" : "students"} on this account. Enrollments, invoices and
+        autopay live on the family page.
+      </p>
+      <Link
+        href={`/admin/families/${encodeURIComponent(user.user_id)}`}
+        className="mt-3 inline-block"
+        data-testid="admin-user-family-link"
+      >
+        <Button size="sm" variant="secondary">
+          Open family
+        </Button>
+      </Link>
     </Card>
   );
 }
@@ -470,6 +571,10 @@ function UserEditForm({
   const [inviteOutcome, setInviteOutcome] = useState<LoginInviteOutcome | null>(
     null,
   );
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  // UI-2: true from the first edit until a save succeeds or Reset is
+  // pressed, so a successful save is clean before the refetch lands.
+  const [edited, setEdited] = useState(false);
 
   useEffect(() => {
     setEmail(user.email);
@@ -491,6 +596,7 @@ function UserEditForm({
     onSuccess: (updated) => {
       setSubmitError(null);
       setSubmitOk(true);
+      setEdited(false);
       setInviteOutcome(updated.login_invite ?? null);
       onSaved();
     },
@@ -514,15 +620,27 @@ function UserEditForm({
     displayName !== user.display_name ||
     phone !== (user.phone ?? "") ||
     status !== user.status;
+  useReportUnsavedChanges("admin-user-profile", dirty && edited);
+
+  // Anything other than "active" locks the person out of the app (#838).
+  const losesAccess = status !== user.status && status !== "active";
 
   return (
     <form
       className="mt-3 space-y-4"
       data-testid="admin-user-edit-form"
+      // React's onChange bubbles per keystroke from every field below.
+      onChange={() => setEdited(true)}
       onSubmit={(event) => {
         event.preventDefault();
         setSubmitOk(false);
         setSubmitError(null);
+        // #838: losing access is not a save like any other — it signs the
+        // person out of the app, so it gets its own second look.
+        if (losesAccess) {
+          setConfirmDeactivate(true);
+          return;
+        }
         mutation.mutate();
       }}
     >
@@ -649,12 +767,47 @@ function UserEditForm({
               setSubmitError(null);
               setSubmitOk(false);
               setInviteOutcome(null);
+              setEdited(false);
             }}
           >
             Reset
           </Button>
         )}
       </div>
+
+      <ConfirmActionDialog
+        open={confirmDeactivate}
+        onOpenChange={setConfirmDeactivate}
+        overline="Change account status"
+        title={`Set this account to ${status}?`}
+        subject={`${user.display_name || user.email} · ${user.email}`}
+        consequence={
+          <>
+            <p>
+              They are signed out and cannot log in again until the account is set back to active.
+              Enrollments, invoices and autopay are untouched — a paused login does not pause
+              billing.
+            </p>
+            <p>
+              Anything that emails this person (digests, reminders, invoices) keeps trying to reach
+              them; only the app is closed.
+            </p>
+          </>
+        }
+        reason={{
+          label: "Reason",
+          value: reason,
+          onChange: setReason,
+          required: true,
+          placeholder: "Recorded on the user's audit trail.",
+        }}
+        confirmLabel={`Set to ${status}`}
+        pending={mutation.isPending}
+        onConfirm={() => {
+          mutation.mutate();
+          setConfirmDeactivate(false);
+        }}
+      />
     </form>
   );
 }
@@ -675,6 +828,8 @@ function RolesPanel({
   const [reason, setReason] = useState("Admin role change");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
+  const [confirmOwner, setConfirmOwner] = useState(false);
+  const [rolesEdited, setRolesEdited] = useState(false);
 
   useEffect(() => {
     setSelected(user.roles.length > 0 ? user.roles : [user.role]);
@@ -682,22 +837,18 @@ function RolesPanel({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const current = new Set(initialRoles);
-      const next = new Set(selected);
-      for (const role of academyRoles) {
-        if (next.has(role) && !current.has(role)) {
-          await addAdminUserRole(user.user_id, role, reason);
-        }
+      const plan = planRoleChanges(initialRoles, selected, academyRoles);
+      for (const role of plan.add) {
+        await addAdminUserRole(user.user_id, role, reason);
       }
-      for (const role of academyRoles) {
-        if (current.has(role) && !next.has(role)) {
-          await removeAdminUserRole(user.user_id, role, reason);
-        }
+      for (const role of plan.remove) {
+        await removeAdminUserRole(user.user_id, role, reason);
       }
     },
     onSuccess: () => {
       setSubmitError(null);
       setSubmitOk(true);
+      setRolesEdited(false);
       onSaved();
     },
     onError: (err: unknown) => {
@@ -708,10 +859,22 @@ function RolesPanel({
 
   const toggle = (role: AdminUserRole) => {
     setSubmitOk(false);
+    setRolesEdited(true);
     setSelected((prev) =>
       prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
     );
   };
+
+  // UI-2: only the roles this editor can toggle count as a draft.
+  const rolesDirty = academyRoles.some(
+    (role) => selected.includes(role) !== initialRoles.includes(role),
+  );
+  useReportUnsavedChanges("admin-user-roles", rolesEdited && rolesDirty);
+
+  const hadOwner = initialRoles.includes("owner");
+  const willHaveOwner = selected.includes("owner");
+  const ownerChange: "grant" | "revoke" | null =
+    hadOwner === willHaveOwner ? null : willHaveOwner ? "grant" : "revoke";
 
   return (
     <form
@@ -725,6 +888,12 @@ function RolesPanel({
           setSubmitError("User must keep at least one role.");
           return;
         }
+        // #838: owner is the role that can move money and change other
+        // people's roles, so granting or revoking it asks first.
+        if (ownerChange) {
+          setConfirmOwner(true);
+          return;
+        }
         mutation.mutate();
       }}
     >
@@ -733,16 +902,23 @@ function RolesPanel({
         coach who is also a parent. Users with more than one role get a view
         switcher in the app header.
       </p>
-      <div className="flex flex-wrap gap-3">
+      <div className="grid gap-2 sm:grid-cols-2">
         {academyRoles.map((role) => (
-          <label key={role} className="inline-flex items-center gap-2 text-sm">
+          <label key={role} className="flex items-start gap-2 text-sm">
             <input
               type="checkbox"
+              className="mt-1"
               checked={selected.includes(role)}
               onChange={() => toggle(role)}
               data-testid={`role-checkbox-${role}`}
+              aria-describedby={`role-hint-${role}`}
             />
-            <span>{roleLabel(role)}</span>
+            <span>
+              <span className="block font-medium text-rally-base">{roleLabel(role)}</span>
+              <span id={`role-hint-${role}`} className="block text-xs text-rally-muted">
+                {ROLE_HINTS[role]}
+              </span>
+            </span>
           </label>
         ))}
       </div>
@@ -779,6 +955,50 @@ function RolesPanel({
       >
         {mutation.isPending ? "Saving..." : "Save roles"}
       </Button>
+
+      <ConfirmActionDialog
+        open={confirmOwner}
+        onOpenChange={setConfirmOwner}
+        overline={ownerChange === "revoke" ? "Revoke owner" : "Grant owner"}
+        title={
+          ownerChange === "revoke"
+            ? "Take the owner role away?"
+            : "Give this person the owner role?"
+        }
+        subject={`${user.display_name || user.email} · ${user.email}`}
+        consequence={
+          ownerChange === "revoke" ? (
+            <>
+              <p>
+                They immediately lose refunds, discounts, voiding invoices and payout approval, and
+                can no longer change anyone&apos;s roles. Their other roles stay.
+              </p>
+              <p>The academy always keeps at least one owner: the last one cannot be removed.</p>
+            </>
+          ) : (
+            <>
+              <p>
+                Owner can refund, discount, void invoices and approve payouts, and can grant or
+                revoke anyone&apos;s roles — including taking owner from you.
+              </p>
+              <p>They get it as soon as this saves. Nobody is emailed.</p>
+            </>
+          )
+        }
+        reason={{
+          label: "Reason",
+          value: reason,
+          onChange: setReason,
+          required: true,
+          placeholder: "Recorded on the user's audit trail.",
+        }}
+        confirmLabel={ownerChange === "revoke" ? "Revoke owner" : "Grant owner"}
+        pending={mutation.isPending}
+        onConfirm={() => {
+          mutation.mutate();
+          setConfirmOwner(false);
+        }}
+      />
     </form>
   );
 }
@@ -849,6 +1069,8 @@ function CoachSessionsPanel({
   const [assignReason, setAssignReason] = useState("Admin coach assignment");
   const [assignError, setAssignError] = useState<string | null>(null);
   const [assignOk, setAssignOk] = useState(false);
+  // UI-2: a picked-but-unassigned session is a draft worth a confirm.
+  useReportUnsavedChanges("admin-coach-assign-session", assignSessionId !== "");
 
   const coachSessionsQuery = useQuery({
     queryKey: queryKeys.admin.coachSessions(user.user_id),

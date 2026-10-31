@@ -18,6 +18,12 @@ from backend.v2.contexts.coaching.application.use_cases.correct_attendance impor
 from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance import (
     MarkCoachAttendanceCommand,
 )
+from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
+    VoidAttendanceCommand,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_period_end_drop import (
+    ScheduleAdminDropAtPeriodEndCommand,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     AcademyTimezoneUnset,
     CancelEnrollmentCommand,
@@ -37,6 +43,7 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import (
     ensure_owner_for_enrollment_delete,
+    ensure_owner_for_price_change,
     ensure_owner_for_withdrawal_credit,
 )
 from backend.v2.interfaces.admin.views import (
@@ -48,6 +55,7 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionOccurrenceList,
     AdminSessionOccurrenceView,
     AdminSessionView,
+    AdminStudentAttendanceList,
     AdminStudentAttendanceView,
     CancelSessionOccurrenceRequest,
     CancelSessionOccurrenceResponse,
@@ -69,6 +77,8 @@ from backend.v2.interfaces.admin.views import (
     UpdateOccurrenceCoachAttendanceRequest,
     UpdateOccurrenceReplacementRequest,
     UpdateSessionOccurrenceCoachRequest,
+    VoidStudentAttendanceRequest,
+    WelcomeEmailPreviewView,
     WithdrawEnrollmentRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -138,12 +148,22 @@ async def list_sessions(
     return AdminSessionList(sessions=[AdminSessionView(**s) for s in rows])
 
 
+def _row_field(row: object, field_name: str) -> object:
+    return row.get(field_name) if isinstance(row, dict) else getattr(row, field_name, None)
+
+
 @router.post("/sessions", response_model=AdminSessionView, summary="Create a session")
 async def create_session(
     body: CreateSessionRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
+    # Money is owner-only (Settings overhaul Phase 1 PR 5). An admin may still
+    # create a class, but only unpriced: no fee is the default an owner gets
+    # too (there is no academy-wide default fee), and the owner sets the
+    # price afterwards. Any fee, including an explicit 0 (free), is a price.
+    if body.amount_cents is not None:
+        ensure_owner_for_price_change(claims)
     await _reject_percent_pay_missing_price(
         use_cases=use_cases,
         coach_id=body.coach_id,
@@ -168,17 +188,23 @@ async def edit_session(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
     field_set = body.model_fields_set
-    amount_is_being_cleared = "amount_cents" in field_set and body.amount_cents is None
+    amount_sent = "amount_cents" in field_set
+    current = None
+    if amount_sent and use_cases.get_admin_session is not None:
+        current = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+    previous_amount = _row_field(current, "amount_cents") if current is not None else None
+    # Money is owner-only (Settings overhaul Phase 1 PR 5): an admin's edit is
+    # refused only when it changes the fee, so the full-form resubmit the
+    # class editor sends (fee untouched) still saves. A class we cannot read
+    # has no known fee to compare against, so a non-owner is refused.
+    amount_changes = amount_sent and (current is None or body.amount_cents != previous_amount)
+    if amount_changes:
+        ensure_owner_for_price_change(claims)
+    amount_is_being_cleared = amount_sent and body.amount_cents is None
     if amount_is_being_cleared:
         coach_id = body.coach_id
-        if coach_id is None and use_cases.get_admin_session is not None:
-            current = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
-            if current is not None:
-                coach_id = (
-                    current.get("coach_id")
-                    if isinstance(current, dict)
-                    else getattr(current, "coach_id", None)
-                )
+        if coach_id is None and current is not None:
+            coach_id = _row_field(current, "coach_id")  # type: ignore[assignment]
         if coach_id is not None:
             await _reject_percent_pay_missing_price(
                 use_cases=use_cases,
@@ -197,9 +223,37 @@ async def edit_session(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AcademyTimezoneUnset as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if amount_changes and current is not None and use_cases.record_money_setting_change:
+        await use_cases.record_money_setting_change.execute(
+            academy_id=claims.academy_id,
+            action="session_fee_changed",
+            actor_id=claims.user_id,
+            before={"session_id": session_id, "amount_cents": previous_amount},
+            after={"session_id": session_id, "amount_cents": body.amount_cents},
+            reason=body.reason,
+        )
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.get(
+    "/sessions/{session_id}/welcome-email-preview",
+    response_model=WelcomeEmailPreviewView,
+    summary="Render the enrollment welcome email for a class (never sent)",
+)
+async def preview_welcome_email(
+    session_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> WelcomeEmailPreviewView:
+    if use_cases.preview_welcome_email is None:
+        raise HTTPException(status_code=503, detail="Welcome email preview is not configured")
+    rendered = await use_cases.preview_welcome_email(session_id)  # type: ignore[operator]
+    if rendered is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    subject, html = rendered
+    return WelcomeEmailPreviewView(subject=subject, html=html)
 
 
 @router.put(
@@ -426,8 +480,13 @@ async def update_occurrence_coach_attendance(
                 source="admin",
                 rate_override_minor=body.rate_override_minor,
                 note=body.note,
+                override_reason=body.override_reason,
             ),
             actor_id=claims.user_id,
+            # Ordinary admins must keep marking attendance, so the owner check
+            # is a condition on the frozen-period override (#821), not a gate on
+            # the route itself.
+            actor_is_owner="owner" in claims.roles,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -457,6 +516,70 @@ async def correct_occurrence_student_attendance(
         ),
         actor_id=claims.user_id,
         actor_role="admin",
+    )
+    return AdminStudentAttendanceView(**result.model_dump())
+
+
+@router.get(
+    "/session-occurrences/{occurrence_id}/attendance",
+    response_model=AdminStudentAttendanceList,
+    summary="List the student attendance marks recorded for a dated occurrence (#554)",
+)
+async def list_occurrence_student_attendance(
+    occurrence_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentAttendanceList:
+    reader = use_cases.list_occurrence_attendance
+    if reader is None:
+        raise HTTPException(status_code=503, detail="Attendance correction is not configured")
+    rows = await reader(occurrence_id)  # type: ignore[operator]
+    return AdminStudentAttendanceList(
+        attendance=[
+            AdminStudentAttendanceView(
+                attendance_id=row.attendance_id,
+                occurrence_id=row.occurrence_id,
+                session_id=row.session_id,
+                student_id=row.student_id,
+                status=row.status,
+                previous_status=row.previous_status,
+                corrected_by=row.corrected_by,
+                corrected_at=row.corrected_at,
+                correction_reason=row.correction_reason,
+                marked_by=row.marked_by,
+                marked_at=row.marked_at,
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.patch(
+    "/session-occurrences/{occurrence_id}/attendance/{student_id}/void",
+    response_model=AdminStudentAttendanceView,
+    summary="Void a student's recorded attendance for a dated occurrence (#554)",
+)
+async def void_occurrence_student_attendance(
+    occurrence_id: str,
+    student_id: str,
+    body: VoidStudentAttendanceRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminStudentAttendanceView:
+    """Admin-only, any time, reason required (owner decision 2026-09-12).
+
+    Coaches have no void path: their own mis-tap is a correction inside the
+    24h window on the coach BFF.
+    """
+    if use_cases.void_attendance is None:
+        raise HTTPException(status_code=503, detail="Attendance voiding is not configured")
+    result = await use_cases.void_attendance.execute(  # type: ignore[attr-defined]
+        VoidAttendanceCommand(
+            occurrence_id=occurrence_id,
+            student_id=student_id,
+            reason=body.reason,
+        ),
+        actor_id=claims.user_id,
     )
     return AdminStudentAttendanceView(**result.model_dump())
 
@@ -539,13 +662,32 @@ async def add_to_roster(
     )
 
 
+def _encode_enrollment_events_cursor(cursor: tuple[datetime, str]) -> str:
+    occurred_at, event_id = cursor
+    return f"{occurred_at.isoformat()}|{event_id}"
+
+
+def _decode_enrollment_events_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        occurred_at_raw, event_id = cursor.split("|", 1)
+        occurred_at = datetime.fromisoformat(occurred_at_raw)
+    except (ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid cursor.") from exc
+    return occurred_at, event_id
+
+
 @router.get("/enrollments/{enrollment_id}/events", response_model=EnrollmentEventsResponse)
 async def get_enrollment_events(
     enrollment_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    cursor: str | None = Query(None),
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> EnrollmentEventsResponse:
-    events = await use_cases.list_enrollment_events(enrollment_id)
+    decoded_cursor = _decode_enrollment_events_cursor(cursor) if cursor else None
+    events, next_cursor = await use_cases.list_enrollment_events(
+        enrollment_id, limit=limit, cursor=decoded_cursor
+    )
     return EnrollmentEventsResponse(
         enrollment_id=enrollment_id,
         events=[
@@ -564,6 +706,7 @@ async def get_enrollment_events(
             )
             for e in events
         ],
+        next_cursor=_encode_enrollment_events_cursor(next_cursor) if next_cursor else None,
     )
 
 
@@ -683,7 +826,28 @@ async def withdraw_enrollment(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     # Issue #670: one withdraw path. The credit outcome is money governance.
+    # The gate runs BEFORE the deferred branch too: a scheduled drop replays
+    # this exact outcome at month end with nobody left to check it.
     ensure_owner_for_withdrawal_credit(claims, body.outcome)
+    if body.defer_to_period_end:
+        # Issue #820: the academy's `no_credit_end_of_period` policy. The row
+        # stays live and seated until the academy-local month ends; the hourly
+        # worker then replays WithdrawEnrollment with this same outcome and
+        # actor. `effective_date` is deliberately not forwarded — the period
+        # end is computed server-side from the academy's timezone.
+        schedule = use_cases.schedule_admin_drop_at_period_end
+        if schedule is None:  # pragma: no cover - wiring bug, never in prod
+            raise HTTPException(500, "Scheduled drops are not available")
+        await schedule.execute(  # type: ignore[attr-defined]
+            ScheduleAdminDropAtPeriodEndCommand(
+                enrollment_id=enrollment_id,
+                outcome=body.outcome,
+                actor_id=claims.user_id,
+                reason=body.reason,
+                reason_code=body.reason_code,
+            )
+        )
+        return
     await use_cases.withdraw_enrollment.execute(
         WithdrawEnrollmentCommand(
             enrollment_id=enrollment_id,
@@ -691,7 +855,30 @@ async def withdraw_enrollment(
             outcome=body.outcome,
             actor_id=claims.user_id,
             reason=body.reason,
+            reason_code=body.reason_code,
         )
+    )
+
+
+@router.post(
+    "/enrollments/{enrollment_id}/cancel-scheduled-drop", status_code=204, response_model=None
+)
+async def cancel_scheduled_drop(
+    enrollment_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    """Issue #820: call off a drop that has not fired yet.
+
+    No money side and no owner gate: nothing was charged, credited or refunded
+    when the drop was scheduled — the whole decision was deferred with it — so
+    undoing it is the same authority as scheduling it.
+    """
+    cancel = use_cases.cancel_scheduled_admin_drop
+    if cancel is None:  # pragma: no cover - wiring bug, never in prod
+        raise HTTPException(500, "Scheduled drops are not available")
+    await cancel.execute(  # type: ignore[attr-defined]
+        enrollment_id=enrollment_id, actor_id=claims.user_id
     )
 
 

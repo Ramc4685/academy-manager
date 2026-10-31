@@ -1,7 +1,7 @@
 .page {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 28px 48px 80px;
+  padding: calc(28px + env(safe-area-inset-top, 0px)) 48px 80px;
   background: #f8fafc;
   color: #0f172a;
   font-family: var(--font-manrope), system-ui, sans-serif;
@@ -98,6 +98,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 44px;
   padding: 9px 16px;
   border-radius: 8px;
   background: #0f172a;
@@ -752,7 +753,7 @@
 }
 @media (max-width: 600px) {
   .page {
-    padding: 20px 20px 60px;
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 60px;
   }
   .heroTitle {
     font-size: 52px;

@@ -255,3 +255,42 @@ def test_verification_body_uses_shared_shell() -> None:
     body = _verification_body(academy_name="A", verify_link="https://x.test")
     assert FONT_STACK in body
     assert "Sent by A" in body
+
+
+class FakeBrands:
+    def __init__(self, brand: object | None) -> None:
+        self._brand = brand
+        self.calls: list[str] = []
+
+    async def get_academy_brand(self, academy_id: str) -> object | None:
+        self.calls.append(academy_id)
+        return self._brand
+
+
+@pytest.mark.asyncio
+async def test_verification_email_carries_the_academy_brand() -> None:
+    from backend.v2.shared.comms.email_theme import EmailBrand
+
+    brands = FakeBrands(
+        EmailBrand(
+            academy_name="BLNO Badminton",
+            logo_url="https://cdn.test/blno.png",
+            brand_color="#112233",
+        )
+    )
+    sender = FakeSender()
+    use_case = SendRegistrationVerificationEmail(
+        verifier=FakeVerifier({"email": "parent@example.com", "uid": "uid-1"}),
+        links=FakeLinks(),
+        sender=sender,
+        academies=FakeAcademies(),
+        cooldown=FakeCooldown(),
+        brands=brands,  # type: ignore[arg-type]
+    )
+    await use_case.execute("token-1", academy_id="acad-1")
+
+    assert brands.calls == ["acad-1"]
+    body = sender.sent[0]["body"]
+    assert '<img src="https://cdn.test/blno.png" alt="BLNO Badminton"' in body
+    assert "background:#112233" in body
+    assert sender.sent[0]["subject"] == "Verify your email for BLNO Badminton"

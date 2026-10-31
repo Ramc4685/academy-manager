@@ -19,8 +19,9 @@ partitions must cover the vocabulary exactly. A status added to
 ``EnrollmentStatus`` without being classified fails here rather than falling
 into whichever readers happen to use ``$nin``.
 
-**2. No module inside ``contexts/enrollment/`` outside ``domain/`` may spell
-its own status set.** An AST scan flags every set/list/tuple literal of two or
+**2. No module inside ``contexts/enrollment/`` outside ``domain/``, and no
+module of ``contexts/crm/`` (People CRM spec §6), may spell its own status
+set.** An AST scan flags every set/list/tuple literal of two or
 more string constants whose values are ALL enrollment statuses — the exact
 shape of ``_BLOCKING_STATUSES``, ``_WITHDRAWABLE``, ``{"$in": ["active",
 "paused"]}`` and friends. Mixed-vocabulary literals are untouched on purpose:
@@ -64,6 +65,7 @@ from backend.v2.contexts.enrollment.domain.models import (
 V2_ROOT = Path(__file__).resolve().parents[2]
 ENROLLMENT_ROOT = V2_ROOT / "contexts" / "enrollment"
 DOMAIN_ROOT = ENROLLMENT_ROOT / "domain"
+CRM_ROOT = V2_ROOT / "contexts" / "crm"
 
 #: Every predicate the domain publishes, by name, so a new one cannot be
 #: added without being checked against the closed vocabulary below.
@@ -149,11 +151,25 @@ def test_the_transient_delete_sentinel_is_storable_but_not_a_real_status() -> No
 
 
 def _scanned_files() -> list[Path]:
+    """Enrollment outside its domain, plus the CRM context.
+
+    People CRM spec §6: the CRM rolls child lifecycles up into a family stage
+    and must never grow its own enrollment-status policy, so it is scanned
+    like enrollment's own application and infrastructure layers.
+    """
+    roots = (ENROLLMENT_ROOT, CRM_ROOT)
     return sorted(
         path
-        for path in ENROLLMENT_ROOT.rglob("*.py")
+        for root in roots
+        for path in root.rglob("*.py")
         if DOMAIN_ROOT not in path.parents and "tests" not in path.relative_to(V2_ROOT).parts
     )
+
+
+def test_the_scan_covers_the_crm_context() -> None:
+    scanned = _scanned_files()
+    assert any(CRM_ROOT in path.parents for path in scanned)
+    assert any(ENROLLMENT_ROOT in path.parents for path in scanned)
 
 
 def _status_set_literals(tree: ast.AST) -> list[tuple[int, list[str]]]:

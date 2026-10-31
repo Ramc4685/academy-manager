@@ -108,7 +108,13 @@ class ReviewLevelUpRecommendation:
         # (cert_id, cert_number, progress_id) once the approval has been applied.
         approval: tuple[str, str, str | None] | None = None
         approving = cmd.action == "approve"
-        decision = "APPROVED" if approving else "REJECTED"
+        # Issue #786: approve must land on a terminal status. ``_apply_approval``
+        # (called below) already performs every side effect idempotently, so
+        # the status write here *is* the commit point — there is no real
+        # intermediate "approved but not yet applied" state to preserve, and
+        # writing "COMPLETED" directly stops the row from ever matching the
+        # active-recommendation lookup again (see ACTIVE_LEVEL_UP_STATUSES).
+        decision = "COMPLETED" if approving else "REJECTED"
         # Mirrors LevelUpStatus in domain/models.py and the enum in migration
         # 0176 — all three have to list the same two claim statuses.
         claim_status = "APPROVING" if approving else "REJECTING"

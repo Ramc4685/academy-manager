@@ -18,7 +18,10 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.enrollment.application.ports import StudentQuery
+from backend.v2.contexts.enrollment.application.ports import (
+    SessionOccurrenceRepository,
+    StudentQuery,
+)
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
@@ -49,6 +52,11 @@ class OccurrenceRosterItem(BaseModel):
     # was simply dropped here, so the coach saw a held student with no hint
     # that the seat is on hold or when they come back.
     hold_return_on: date | None = None
+    # People CRM L3a: a trial row carries its trial request id so the coach
+    # can record Came / Didn't come, and the outcome already recorded (None
+    # while unmarked). Both None on every other row.
+    trial_request_id: str | None = None
+    trial_outcome: str | None = None
 
 
 class AbsenceNoticeQuery(Protocol):
@@ -59,6 +67,10 @@ class OccurrenceRosterQuery(Protocol):
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
 
 
+class TrialOutcomeQuery(Protocol):
+    async def outcomes_for(self, request_ids: list[str]) -> dict[str, str | None]: ...
+
+
 class GetOccurrenceRoster:
     def __init__(
         self,
@@ -67,13 +79,22 @@ class GetOccurrenceRoster:
         absence_notices: AbsenceNoticeQuery,
         occurrence_roster: OccurrenceRosterQuery,
         students: StudentQuery,
+        occurrences: SessionOccurrenceRepository,
+        trial_outcomes: TrialOutcomeQuery | None = None,
     ) -> None:
+        # Optional so hand-built fixtures that predate L3a keep working.
+        self._trial_outcomes = trial_outcomes
         self._get_roster = get_roster
         self._absence_notices = absence_notices
         self._occurrence_roster = occurrence_roster
         # Same student query GetSessionRoster uses internally, so one-time
         # entries resolve full_name the same way regular roster entries do.
         self._students = students
+        # Issue #694: one-time (makeup/trial) rows outlive their occurrence
+        # when a session is deleted/regenerated or the date is cancelled —
+        # the write-side cleanup can miss a path, so this read defensively
+        # drops rows whose occurrence no longer exists or is cancelled.
+        self._occurrences = occurrences
 
     async def execute(self, *, session_id: str, occurrence_id: str) -> list[OccurrenceRosterItem]:
         roster = await self._get_roster.execute(session_id)
@@ -96,8 +117,22 @@ class GetOccurrenceRoster:
 
         one_time_entries = await self._occurrence_roster.list_for_occurrence(occurrence_id)
         if one_time_entries:
+            # Issue #694: the occurrence may have been cancelled or dropped
+            # entirely (session deleted/regenerated) after these rows were
+            # written. A coach can never mark such a row (#676's
+            # occurrence-status guard rejects the write), so don't render it.
+            occurrence = await self._occurrences.get(occurrence_id)
+            if occurrence is None or occurrence.status == "cancelled":
+                one_time_entries = []
+        if one_time_entries:
             students = await self._students.by_ids([e.student_id for e in one_time_entries])
             students_by_id = {s.student_id: s for s in students}
+            trial_ids = [e.origin_request_id for e in one_time_entries if e.source == "trial"]
+            outcomes: dict[str, str | None] = (
+                await self._trial_outcomes.outcomes_for(trial_ids)
+                if trial_ids and self._trial_outcomes is not None
+                else {}
+            )
             for entry in one_time_entries:
                 student = students_by_id.get(entry.student_id)
                 if student is None:
@@ -112,6 +147,14 @@ class GetOccurrenceRoster:
                         status=None,
                         entry_source=entry.source,
                         expected_absence=student.student_id in absent_student_ids,
+                        trial_request_id=(
+                            entry.origin_request_id if entry.source == "trial" else None
+                        ),
+                        trial_outcome=(
+                            outcomes.get(entry.origin_request_id)
+                            if entry.source == "trial"
+                            else None
+                        ),
                     )
                 )
         return out

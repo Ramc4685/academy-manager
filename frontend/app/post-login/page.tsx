@@ -4,8 +4,17 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthChange } from "@/lib/auth/firebase";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
-import { getCurrentUserWithToken, homeForRoles } from "@/lib/api/me";
+import {
+  getCurrentUserWithToken,
+  hasPlatformAccess,
+  homeForRoles,
+} from "@/lib/api/me";
+import {
+  clearPersonaHintCookie,
+  setPersonaHintCookie,
+} from "@/lib/auth/persona-hint-cookie";
 import { loginPathForError } from "@/lib/auth/login-error";
+import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
 
 export default function PostLoginPage() {
@@ -18,6 +27,7 @@ export default function PostLoginPage() {
       onAuthChange((user) => {
         if (!user) {
           clearBffIdentityCookie();
+          clearPersonaHintCookie();
           router.replace("/login");
           return;
         }
@@ -27,13 +37,26 @@ export default function PostLoginPage() {
           user.getIdToken(true).then((idToken) => getCurrentUserWithToken(idToken)),
         )
           .then((currentUser) => {
-            replaceLocation(router, homeForRoles(currentUser.roles));
+            // Persona hint for the edge gate (#451): written here, where the
+            // persona is first known, so the next visit to a shell is
+            // decided before anything paints.
+            setPersonaHintCookie(
+              currentUser.roles,
+              hasPlatformAccess(currentUser),
+            );
+            // The edge gate stashed the deep link the visitor actually asked
+            // for on /login?returnTo=... and the login page handed it on
+            // (#451); honour it when it is a safe in-app path, otherwise fall
+            // back to this persona's home.
+            const returnTo = sanitizeReturnPath(readReturnToParam());
+            replaceLocation(router, returnTo ?? homeForRoles(currentUser.roles));
           })
           .catch((err: unknown) => {
             if (isAuthRejection(err)) {
               // 401/403: the backend rejected this session — treat as a real
               // auth failure and bounce to /login with the reason code.
               clearBffIdentityCookie();
+              clearPersonaHintCookie();
               replaceLocation(router, loginPathForError(err));
               return;
             }
@@ -75,6 +98,16 @@ export default function PostLoginPage() {
       <p className="text-center text-neutral-500">Signing you in...</p>
     </main>
   );
+}
+
+/**
+ * Read `?returnTo=` straight off the URL rather than via `useSearchParams`,
+ * which would force this page behind a Suspense boundary. The effect only runs
+ * in the browser, so `window` is always there.
+ */
+function readReturnToParam(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("returnTo");
 }
 
 function replaceLocation(

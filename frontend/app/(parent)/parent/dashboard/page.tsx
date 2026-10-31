@@ -51,6 +51,8 @@ import {
   type ParentHomeAction,
   type ParentHomeActivity,
 } from "@/lib/parent-home";
+import { ErrorNotice } from "@/components/ds/error-notice";
+import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -178,12 +180,15 @@ export default function ParentDashboardPage() {
       {coreLoading ? (
         <DashboardSkeleton />
       ) : homeQuery.isError ? (
-        <p
-          data-testid="parent-home-error"
-          className="rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm font-semibold text-status-red-800"
-        >
-          We couldn&apos;t load your children right now. Pull down to refresh, or try again in a moment.
-        </p>
+        // #837: "pull down to refresh" is not an instruction a desktop or
+        // keyboard user can follow — give the retry a button.
+        <ErrorNotice
+          testId="parent-home-error"
+          className="rounded-xl font-semibold"
+          message="We couldn't load your children right now."
+          onRetry={() => void homeQuery.refetch()}
+          retrying={homeQuery.isFetching}
+        />
       ) : (
         <>
           {showBanner && balance && <BalanceBanner balance={balance} />}
@@ -231,9 +236,9 @@ function BalanceBanner({ balance }: { balance: ParentHomeBalance }) {
     ? "border-status-red-500/30 bg-status-red-50 text-status-red-800"
     : "border-status-amber-500/30 bg-status-amber-50 text-status-amber-800";
   const iconTone = failed ? "bg-status-red-500/15" : "bg-status-amber-500/15";
-  const payTone = failed
-    ? "bg-status-red-600 text-white"
-    : "bg-status-amber-800 text-white";
+  // #843: the card keeps its alert tone, but the action is the one pay style
+  // the whole app uses — the DS primary cobalt.
+  const payTone = "bg-rally-cobalt-600 text-white hover:bg-rally-cobalt-700";
 
   return (
     <div
@@ -246,7 +251,9 @@ function BalanceBanner({ balance }: { balance: ParentHomeBalance }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold">{headline}</p>
-        <p className="mt-0.5 text-xs opacity-80">{detail}</p>
+        {/* No opacity on the detail line: amber-800 at 80% fell to 4.41:1 on
+            the amber-50 banner, under the 4.5:1 AA floor (D11 axe gate). */}
+        <p className="mt-0.5 text-xs">{detail}</p>
       </div>
       <Link
         href="/parent/payments"
@@ -275,6 +282,11 @@ function ChildCardList({
       ))}
     </ul>
   );
+}
+
+function oneTimeClassLabel(source: string | null | undefined): string | null {
+  const label = scheduleSourceLabel(source);
+  return label ? `${label} class` : null;
 }
 
 /**
@@ -322,7 +334,14 @@ function ChildCard({
           value={next ? next.when : "No upcoming sessions"}
           meta={
             next
-              ? [next.where, child.next_session?.coach_name].filter(Boolean).join(" · ")
+              ? [
+                  // #1038: say when the next class is a one-time make-up / trial.
+                  oneTimeClassLabel(child.next_session?.source),
+                  next.where,
+                  child.next_session?.coach_name,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               : null
           }
         />
@@ -355,15 +374,18 @@ function CardRow({
   meta: string | null;
 }) {
   return (
-    <div className="flex gap-2.5">
-      <span className="mt-0.5 shrink-0 text-rally-cobalt-600">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <dt className="text-[10px] font-bold uppercase tracking-widest text-rally-subtle">
-          {label}
-        </dt>
-        <dd className="text-sm font-semibold text-rally-ink">{value}</dd>
-        {meta && <p className="mt-0.5 truncate text-xs text-rally-muted">{meta}</p>}
-      </div>
+    // A <dl> may only hold <div>s whose children are <dt>/<dd> (axe
+    // definition-list / dlitem), so the icon rides inside the <dt>, pinned
+    // into the left gutter, and the meta line is a second <dd>.
+    <div className="relative min-w-0 pl-[25px]">
+      <dt className="text-[10px] font-bold uppercase tracking-widest text-rally-subtle">
+        <span className="absolute left-0 top-0.5 text-rally-cobalt-600" aria-hidden="true">
+          {icon}
+        </span>
+        {label}
+      </dt>
+      <dd className="text-sm font-semibold text-rally-ink">{value}</dd>
+      {meta && <dd className="mt-0.5 truncate text-xs text-rally-muted">{meta}</dd>}
     </div>
   );
 }
@@ -467,7 +489,9 @@ function PrimaryActionCard({ action }: { action: ParentHomeAction }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold">{action.title}</p>
-        <p className="mt-0.5 line-clamp-2 text-xs opacity-80">{action.body}</p>
+        {/* Full-strength text: at 80% opacity the amber-on-volt "register"
+            card fell to 4.27:1, under the 4.5:1 AA floor (D11 axe gate). */}
+        <p className="mt-0.5 line-clamp-2 text-xs">{action.body}</p>
       </div>
       <ChevronRight className="shrink-0" size={18} />
     </Link>

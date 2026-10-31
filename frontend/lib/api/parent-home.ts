@@ -24,6 +24,8 @@ export interface ParentHomeNextSession {
    * the coach line only when it is non-null.
    */
   coach_name: string | null;
+  /** #1038: "makeup" / "trial" for a one-time approved class; optional for older payloads. */
+  source?: "regular" | "makeup" | "trial";
 }
 
 export interface ParentHomeAttendance {

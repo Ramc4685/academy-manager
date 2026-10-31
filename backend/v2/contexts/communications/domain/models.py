@@ -64,9 +64,18 @@ class CoachAudience:
 
 @dataclass(frozen=True, slots=True)
 class SelectedRecipientsAudience:
-    """An explicit list of users (resolved via admin search UI)."""
+    """An explicit list of users (resolved via admin search UI).
+
+    ``include_family_contacts`` (People CRM Phase 4b) opts a family-directed
+    send into the per-parent expansion: each selected parent's family contacts
+    with "Gets notices" on are added after the users. It is OFF by default
+    because this audience also carries staff alerts (a coach who is also a
+    parent must never have a staff alert copied to their family contact);
+    only a send addressed to the family itself sets it.
+    """
 
     user_ids: tuple[str, ...]
+    include_family_contacts: bool = False
 
     type: Literal["selected"] = field(default="selected", init=False)
 

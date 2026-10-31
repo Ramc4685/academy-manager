@@ -250,3 +250,60 @@ def test_wrong_persona_cannot_list_trial_requests() -> None:
         response = client.get("/api/v2/parent/trial-requests")
 
     assert response.status_code == 404
+
+
+# --- #1038: approved trials carry the resolved assigned class ---------------
+
+
+def test_list_trial_requests_resolves_assigned_class_for_prospective_child() -> None:
+    approved = _trial_request(
+        request_id="req-prospective",
+        student_ref="prospective",
+        student_id=None,
+        prospective_child_name="Kai Example",
+        status="approved",
+        assigned_occurrence_id="occ-trial",
+    )
+    denied = _trial_request(request_id="req-denied", status="denied", assigned_occurrence_id="x")
+    use_cases = _ParentUseCases(list_result=[approved, denied])
+    calls: list[list[str]] = []
+
+    async def _resolve(occurrence_ids: list[str]) -> dict[str, dict[str, object]]:
+        calls.append(list(occurrence_ids))
+        return {
+            "occ-trial": {
+                "occurrence_id": "occ-trial",
+                "session_id": "sess-b",
+                "session_title": "Beginners",
+                "location": None,
+                "start_at": datetime(2026, 10, 4, 15, 0, tzinfo=UTC),
+                "end_at": datetime(2026, 10, 4, 16, 0, tzinfo=UTC),
+                "timezone": "Europe/London",
+                "status": "scheduled",
+            }
+        }
+
+    use_cases.resolve_assigned_classes = _resolve  # type: ignore[attr-defined]
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/trial-requests")
+
+    assert response.status_code == 200, response.text
+    rows = {r["request_id"]: r for r in response.json()["trials"]}
+    assigned = rows["req-prospective"]["assigned_class"]
+    assert assigned["session_title"] == "Beginners"
+    assert assigned["timezone"] == "Europe/London"
+    # No student/enrollment is fabricated for the prospective child.
+    assert rows["req-prospective"]["student_id"] is None
+    assert rows["req-denied"]["assigned_class"] is None
+    assert calls == [["occ-trial"]]
+
+
+def test_list_trial_requests_without_resolver_still_lists() -> None:
+    use_cases = _ParentUseCases(
+        list_result=[_trial_request(status="approved", assigned_occurrence_id="occ-trial")]
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/trial-requests")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["trials"][0]["assigned_class"] is None

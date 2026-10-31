@@ -193,3 +193,18 @@ def test_verdict_serialises_for_the_readiness_response() -> None:
     assert payload["reasons"] == [
         {"code": "webhooks_quarantined", "detail": payload["reasons"][0]["detail"]}
     ]
+
+
+def test_open_disputes_need_attention_but_never_block() -> None:
+    verdict = _evaluate(open_disputes=2)
+    assert verdict.state == "attention"
+    assert "payments_disputed" in _codes(verdict)
+    assert "payments_disputed" in REASON_CODES
+    detail = next(r.detail for r in verdict.reasons if r.code == "payments_disputed")
+    assert detail.startswith("2 payment disputes are open")
+
+
+def test_no_open_disputes_adds_no_reason() -> None:
+    verdict = _evaluate(open_disputes=0)
+    assert "payments_disputed" not in _codes(verdict)
+    assert verdict.state == "ok"

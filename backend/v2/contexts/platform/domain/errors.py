@@ -18,3 +18,10 @@ class TenantAlreadyExists(DomainError):
 class TenantInvalidTransition(DomainError):
     code = "Platform.TenantInvalidTransition"
     status_code = 409
+
+
+class TenantAgreementNotAccepted(DomainError):
+    """Activation refused: no platform agreement acceptance on record (L9c)."""
+
+    code = "Platform.TenantAgreementNotAccepted"
+    status_code = 409

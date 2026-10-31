@@ -50,7 +50,25 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 # sessions whose `assistant_coach_ids` list them, limited to attendance,
 # skills and notes. Never on payroll, never a coach supervisor. Distinct from
 # the per-occurrence coach-attendance role literal "assistant" (payroll).
-Role = Literal["admin", "coach", "assistant_coach", "parent", "student", "owner"]
+#
+# `billing` and `front_desk` are the staff tiers of #553 (owner decision
+# 2026-09-22, roadmap section 6 item 2). Both are additive, standalone roles:
+# neither implies `admin`, so a bare `billing` or `front_desk` membership
+# reaches only the admin routes that name its tier (see
+# `interfaces/admin/staff_tier.py`). `billing` sees amounts and records
+# payments a family already made; `front_desk` sees an "owes money" flag
+# only and has no money write. Money-moving actions stay owner-only. Kept in
+# sync by hand with `shared.auth.claims.Role`.
+Role = Literal[
+    "admin",
+    "coach",
+    "assistant_coach",
+    "parent",
+    "student",
+    "owner",
+    "billing",
+    "front_desk",
+]
 
 # Platform-wide roles. Granted via `PlatformRole` records and carried on
 # `AuthClaims.platform_roles` separately from academy roles.

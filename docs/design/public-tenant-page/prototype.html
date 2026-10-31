@@ -1,0 +1,463 @@
+<title>Public Class Page</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&family=Manrope:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap">
+<style>
+/* ---------- Fixed Rally tokens (never tenant-editable) ---------- */
+:root{
+  --paper:#f8fafc; --surface:#ffffff; --line:#e2e8f0; --ink:#0f172a; --muted:#5b6b82;
+  --night:#0a0f1c; --night-line:#1e293b; --night-panel:#101a2e; --on-night:#ffffff; --on-night-2:#cbd5e1; --on-night-3:#94a3b8;
+  --focus:#2563eb; --volt:#facc15;
+  --ok-bg:#ecfdf5; --ok-fg:#065f46; --ok-dot:#10b981;
+  --few-bg:#fffbeb; --few-fg:#92400e; --few-dot:#f59e0b;
+  --queue-bg:#fefce8; --queue-fg:#854d0e; --queue-dot:#eab308;
+  --bench-bg:#f1f5f9; --bench-fg:#334155; --bench-dot:#64748b;
+  --err:#991b1b;
+  /* ---------- Tenant tokens: one input colour, the rest is derived by script ---------- */
+  --brand:#0f766e; --brand-fill:#0f766e; --brand-on:#ffffff;
+  --brand-text-l:#0f766e; --brand-text-d:#2dd4bf;
+  --brand-text:var(--brand-text-l);
+  --brand-wash:color-mix(in srgb, var(--brand) 9%, var(--surface));
+  --display:"Outfit","Manrope",system-ui,sans-serif;
+  --body:"Manrope",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0a0f1c; --surface:#101a2e; --line:#22304a; --ink:#f1f5f9; --muted:#9fb0c7;
+    --focus:#93c5fd;
+    --ok-bg:#062b22; --ok-fg:#6ee7b7; --few-bg:#2b1d06; --few-fg:#fcd34d;
+    --queue-bg:#292306; --queue-fg:#fde047; --bench-bg:#1e293b; --bench-fg:#cbd5e1; --bench-dot:#94a3b8;
+    --err:#fca5a5;
+    --brand-text:var(--brand-text-d);
+    --brand-wash:color-mix(in srgb, var(--brand) 16%, var(--surface));
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0a0f1c; --surface:#101a2e; --line:#22304a; --ink:#f1f5f9; --muted:#9fb0c7;
+  --focus:#93c5fd;
+  --ok-bg:#062b22; --ok-fg:#6ee7b7; --few-bg:#2b1d06; --few-fg:#fcd34d;
+  --queue-bg:#292306; --queue-fg:#fde047; --bench-bg:#1e293b; --bench-fg:#cbd5e1; --bench-dot:#94a3b8;
+  --err:#fca5a5;
+  --brand-text:var(--brand-text-d);
+  --brand-wash:color-mix(in srgb, var(--brand) 16%, var(--surface));
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:76px}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 16px/1.55 var(--body);overflow-x:hidden}
+::selection{background:var(--brand-fill);color:var(--brand-on)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.on-night :focus-visible{outline-color:#93c5fd}
+h1,h2,h3,p,ul,ol,dl,dd,figure{margin:0}
+ul,ol{padding:0;list-style:none}
+a{color:var(--brand-text);text-underline-offset:3px;text-decoration-thickness:1px}
+a:hover{text-decoration-thickness:2px}
+input,select,textarea,button{font:inherit;color:inherit;accent-color:var(--brand-fill);caret-color:var(--brand-text)}
+.wrap{width:100%;max-width:1080px;margin-inline:auto;padding-inline:16px}
+@media (min-width:640px){.wrap{padding-inline:24px}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+svg.i{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- Prototype controls (not part of the design) ---------- */
+.proto{border-bottom:1px dashed var(--line);background:var(--surface);font-size:13px}
+.proto .wrap{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;padding-block:10px}
+.proto b{font:700 10px/1.4 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);flex-basis:100%}
+.proto label{display:grid;gap:3px;font-weight:600;font-size:12px;color:var(--muted);min-width:0}
+.proto select,.proto input[type=color]{height:36px;border:1px solid var(--line);border-radius:6px;background:var(--surface);padding:0 8px;max-width:100%}
+.proto input[type=color]{width:52px;padding:3px}
+.proto output{font:600 11px/1.5 var(--mono);color:var(--muted);flex:1 1 220px;min-width:0}
+
+/* ---------- Buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:12px 20px;border-radius:8px;border:1px solid transparent;font-weight:700;font-size:15px;line-height:1.2;text-decoration:none;cursor:pointer;transition:background-color .12s,transform .1s}
+.btn:active{transform:scale(.985)}
+.btn-brand{background:var(--brand-fill);color:var(--brand-on);box-shadow:0 1px 0 rgba(0,0,0,.08)}
+.btn-brand:hover{background:color-mix(in srgb,var(--brand-fill) 86%,#000)}
+.btn-line{background:var(--surface);color:var(--ink);border-color:var(--line)}
+.btn-line:hover{background:var(--paper)}
+.btn-ghost-night{color:var(--on-night);border-color:#334155;background:transparent}
+.btn-ghost-night:hover{background:rgba(255,255,255,.08)}
+.btn-sm{min-height:44px;padding:8px 14px;font-size:14px}
+
+/* ---------- Header (night chrome) ---------- */
+.top{position:sticky;top:0;z-index:20;background:var(--night);border-bottom:1px solid var(--night-line);color:var(--on-night)}
+.top .wrap{display:flex;align-items:center;gap:12px;min-height:60px}
+.brandmark{display:flex;align-items:center;gap:10px;min-width:0;color:inherit;text-decoration:none;margin-right:auto}
+.logo{width:36px;height:36px;border-radius:8px;flex:none;background:var(--brand-fill);color:var(--brand-on);display:grid;place-items:center;font:700 14px/1 var(--display);letter-spacing:-.02em}
+.brandmark span{font:600 16px/1.2 var(--display);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top nav{display:none;gap:4px}
+.top nav a,.login{color:var(--on-night-2);text-decoration:none;font-weight:600;font-size:14px;padding:12px 10px;border-radius:6px;white-space:nowrap}
+.top nav a:hover,.login:hover{color:#fff;background:rgba(255,255,255,.08)}
+.top .btn{display:none}
+@media (min-width:800px){.top nav{display:flex}.top .btn{display:inline-flex}}
+
+/* ---------- Hero ---------- */
+.hero{position:relative;background:var(--night);color:var(--on-night);overflow:hidden;isolation:isolate}
+.hero .wrap{position:relative;padding-block:40px 190px}
+.hero h1{font:700 clamp(2.15rem,8.4vw,3.75rem)/1.02 var(--display);letter-spacing:-.03em;text-wrap:balance;max-width:15ch}
+.hero h1 em{font-style:normal;color:var(--brand-text-d)}
+.hero .lede{margin-top:16px;max-width:46ch;color:var(--on-night-2);font-size:17px;text-wrap:pretty}
+.hero .cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+.hero .facts{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:22px;color:var(--on-night-2);font-size:14px;font-weight:500}
+.hero .facts li{display:flex;align-items:center;gap:7px}
+.hero .facts svg{color:var(--brand-text-d)}
+.court{position:absolute;z-index:-1;width:520px;left:50%;margin-left:-215px;bottom:-58px;transform:perspective(900px) rotateX(60deg) rotateZ(-14deg);transform-origin:50% 50%}
+.court rect.floor{fill:color-mix(in srgb,var(--brand) 22%,var(--night))}
+.court .ln{fill:none;stroke:var(--brand-text-d);stroke-width:2.5;stroke-dasharray:1;stroke-dashoffset:0}
+.court .net{stroke:#e2e8f0;stroke-width:2;stroke-dasharray:3 4;opacity:.75}
+@media (prefers-reduced-motion:no-preference){
+  .court .ln{animation:draw 1.1s cubic-bezier(.16,1,.3,1) both}
+  .court .ln:nth-of-type(2){animation-delay:.12s}.court .ln:nth-of-type(3){animation-delay:.2s}
+  .court .ln:nth-of-type(4){animation-delay:.28s}.court .ln:nth-of-type(n+5){animation-delay:.36s}
+  @keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+}
+@media (min-width:800px){
+  .hero .wrap{padding-block:72px 84px}
+  .hero .facts{max-width:400px}
+  .court{width:760px;left:auto;margin-left:0;right:-120px;bottom:auto;top:50%;translate:0 -46%;transform:perspective(1100px) rotateX(58deg) rotateZ(-24deg)}
+}
+.lane{height:4px;background:var(--brand-fill);border-bottom:1px solid var(--line)}
+
+/* ---------- Sections ---------- */
+section{padding-block:48px 8px}
+.sec-h{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}
+.sec-h h2{font:600 clamp(1.5rem,4.6vw,1.95rem)/1.15 var(--display);letter-spacing:-.02em}
+.sec-h::after{content:"";flex:1;height:1px;background:var(--line);align-self:center}
+.sec-p{color:var(--muted);max-width:62ch;margin-bottom:20px}
+
+/* filter */
+.filter{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 22px}
+.filter legend{font-weight:700;font-size:14px;padding:0;margin-bottom:8px}
+fieldset{border:0;padding:0;margin:0;min-width:0}
+.pill{min-height:44px;padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:14px;cursor:pointer}
+.pill:hover{border-color:var(--brand-text)}
+.pill[aria-pressed="true"]{background:var(--brand-wash);border-color:var(--brand-text);color:var(--brand-text)}
+
+/* programs + class rows */
+.prog{margin-top:30px}
+.prog-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding-bottom:10px;border-bottom:2px solid var(--ink)}
+.prog-h h3{font:600 1.2rem/1.2 var(--display);letter-spacing:-.01em}
+.prog-h p{color:var(--muted);font-size:14px}
+.cls{display:grid;gap:10px;padding:18px 0;border-bottom:1px solid var(--line)}
+.when{font:600 1.08rem/1.25 var(--display);letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.when small{display:block;font:500 14px/1.4 var(--body);color:var(--muted);letter-spacing:0;margin-top:2px}
+.meta{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--muted);font-size:14px}
+.meta span{display:inline-flex;align-items:center;gap:6px}
+.meta svg{width:16px;height:16px}
+.price{font:600 1.05rem/1.2 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.price small{font:500 13px/1.3 var(--body);color:var(--muted)}
+.pr-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
+.acts{display:flex;flex-wrap:wrap;gap:8px}
+.acts .btn{flex:1 1 140px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px 3px 7px;border-radius:3px;font:700 10px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.chip.ok{background:var(--ok-bg);color:var(--ok-fg)}.chip.ok::before{background:var(--ok-dot)}
+.chip.few{background:var(--few-bg);color:var(--few-fg)}.chip.few::before{background:var(--few-dot)}
+.chip.queue{background:var(--queue-bg);color:var(--queue-fg)}.chip.queue::before{background:var(--queue-dot)}
+.chip.bench{background:var(--bench-bg);color:var(--bench-fg)}.chip.bench::before{background:var(--bench-dot)}
+@media (min-width:800px){
+  .cls{grid-template-columns:210px minmax(0,1fr) 150px auto;align-items:center;gap:20px}
+  .pr-row{flex-direction:column;align-items:flex-start;gap:6px}
+  .acts{flex-wrap:nowrap}.acts .btn{flex:none}
+}
+.none{padding:28px 0;color:var(--muted)}
+
+/* notice / empty states */
+.notice{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:22px;display:grid;gap:8px;margin-top:20px}
+.notice h3{font:600 1.15rem/1.25 var(--display)}
+.notice p{color:var(--muted);max-width:60ch}
+.notice .cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+
+/* steps */
+.steps{display:grid;gap:0;counter-reset:s;margin-top:18px}
+.steps li{counter-increment:s;display:grid;grid-template-columns:44px 1fr;gap:4px 14px;padding:16px 0;border-top:1px solid var(--line)}
+.steps li::before{content:counter(s);grid-row:span 2;font:700 1.9rem/1 var(--display);color:var(--brand-text);font-variant-numeric:tabular-nums}
+.steps b{font:600 1.05rem/1.3 var(--display)}
+.steps span{color:var(--muted);font-size:15px;max-width:58ch}
+@media (min-width:800px){.steps{grid-template-columns:repeat(3,1fr);gap:28px}.steps li{border-top:2px solid var(--ink)}}
+
+/* trial form */
+.trial{background:var(--brand-wash);border-block:1px solid var(--line);margin-top:48px;padding-block:44px}
+.trial-grid{display:grid;gap:28px}
+.trial h2{font:600 clamp(1.6rem,5vw,2.1rem)/1.12 var(--display);letter-spacing:-.02em;text-wrap:balance}
+.trial .sec-p{margin:10px 0 0;color:var(--ink);opacity:.8}
+.ticks{margin-top:16px;display:grid;gap:8px;font-size:15px}
+.ticks li{display:flex;gap:9px;align-items:flex-start}
+.ticks svg{color:var(--brand-text);margin-top:3px}
+form{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;display:grid;gap:14px}
+.f{display:grid;gap:5px;min-width:0}
+.f label{font-weight:600;font-size:13px}
+.f label i{font-style:normal;font-weight:500;color:var(--muted)}
+.f input,.f select{height:48px;width:100%;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);padding:0 12px;font-size:16px}
+.f input:focus,.f select:focus{outline:none;border-color:var(--brand-text);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand-text) 22%,transparent)}
+.f input::placeholder{color:var(--muted)}
+.two{display:grid;gap:14px}
+@media (min-width:520px){.two{grid-template-columns:1fr 1fr}}
+.fine{font-size:13px;color:var(--muted)}
+.err{color:var(--err);font-size:13px;font-weight:600}
+.done{display:grid;gap:10px;justify-items:start}
+.done h3{font:600 1.3rem/1.2 var(--display)}
+.done svg{width:36px;height:36px;color:var(--ok-dot)}
+@media (min-width:800px){.trial-grid{grid-template-columns:5fr 6fr;gap:56px;align-items:start}}
+
+/* coaches */
+.coaches{display:grid;gap:0;margin-top:14px}
+.coaches li{display:flex;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}
+.av{width:44px;height:44px;border-radius:50%;flex:none;display:grid;place-items:center;background:var(--brand-wash);color:var(--brand-text);font:700 15px/1 var(--display)}
+.coaches b{display:block;font-weight:700}
+.coaches span{color:var(--muted);font-size:14px}
+@media (min-width:800px){.coaches{grid-template-columns:repeat(3,1fr);gap:0 28px}}
+
+/* faq */
+details{border-bottom:1px solid var(--line)}
+summary{display:flex;justify-content:space-between;gap:16px;align-items:center;min-height:56px;padding:12px 0;cursor:pointer;font-weight:700;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary svg{transition:transform .2s cubic-bezier(.16,1,.3,1);color:var(--muted)}
+details[open] summary svg{transform:rotate(45deg)}
+details p{padding:0 0 18px;color:var(--muted);max-width:68ch}
+
+/* visit */
+.visit{display:grid;gap:24px;margin-top:16px}
+.visit dl{display:grid;gap:14px}
+.visit dt{font:700 10px/1.4 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.visit dd{margin-top:3px}
+.visit dd a{display:inline-flex;align-items:center;min-height:32px;font-weight:600}
+@media (min-width:800px){.visit{grid-template-columns:1fr 1fr}}
+
+/* footer */
+footer{margin-top:56px;background:var(--night);color:var(--on-night-3);font-size:14px;padding-block:28px 110px}
+footer .wrap{display:grid;gap:16px}
+footer ul{display:flex;flex-wrap:wrap;gap:4px 18px}
+footer a{color:var(--on-night-2);display:inline-flex;align-items:center;min-height:44px}
+.pw{display:flex;align-items:center;gap:8px;color:var(--on-night-3)}
+.pw svg{width:16px;height:16px;fill:var(--volt);stroke:none}
+@media (min-width:800px){footer{padding-bottom:32px}}
+
+/* sticky mobile action */
+.stick{position:fixed;inset:auto 0 0 0;z-index:30;background:var(--surface);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px}
+.stick .btn{flex:1}
+@media (min-width:800px){.stick{display:none}}
+[hidden]{display:none!important}
+</style>
+
+<div class="proto" role="region" aria-label="Prototype controls">
+  <div class="wrap">
+    <b>Prototype controls</b>
+    <label>Academy (tenant)
+      <select id="pTenant"><option value="riverside">Riverside Badminton</option><option value="baseline">Baseline Tennis Club</option></select>
+    </label>
+    <label>Page state
+      <select id="pState">
+        <option value="normal">Classes open</option>
+        <option value="empty">No classes published</option>
+        <option value="full">All classes full</option>
+        <option value="notrial">Trial requests closed</option>
+        <option value="paused">Academy paused</option>
+      </select>
+    </label>
+    <label>Theme
+      <select id="pTheme"><option value="">Match device</option><option value="light">Light</option><option value="dark">Dark</option></select>
+    </label>
+    <label>Try any brand colour
+      <input type="color" id="pColor" value="#0f766e">
+    </label>
+    <output id="pOut" for="pColor" aria-live="polite"></output>
+  </div>
+</div>
+
+<div id="page"></div>
+
+<script>
+(function(){
+"use strict";
+/* ---------- colour guardrails: one tenant colour in, safe tokens out ---------- */
+var WHITE="#ffffff",INK="#0f172a",PAPER="#f8fafc",DARK_SURFACE="#101a2e";
+function rgb(h){h=h.replace("#","");return [0,2,4].map(function(i){return parseInt(h.substr(i,2),16)})}
+function hex(a){return "#"+a.map(function(v){return ("0"+Math.round(v).toString(16)).slice(-2)}).join("")}
+function lum(h){var c=rgb(h).map(function(v){v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)});return .2126*c[0]+.7152*c[1]+.0722*c[2]}
+function cr(a,b){var x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)}
+function mix(a,b,t){var x=rgb(a),y=rgb(b);return hex(x.map(function(v,i){return v+(y[i]-v)*t}))}
+function until(start,toward,against,min){var c=start,t=0;while(cr(c,against)<min&&t<1){t+=.04;c=mix(start,toward,t)}return c}
+function derive(brand){
+  var fill=brand,on,note=[];
+  if(cr(fill,WHITE)>=4.5)on=WHITE;
+  else if(cr(fill,INK)>=4.5){on=INK;note.push("button text switched to ink")}
+  else{fill=until(brand,INK,WHITE,4.5);on=WHITE;note.push("button fill darkened")}
+  var tl=until(brand,INK,PAPER,4.5),td=until(brand,WHITE,DARK_SURFACE,4.5);
+  if(tl!==brand)note.push("link colour darkened for light");
+  return {fill:fill,on:on,tl:tl,td:td,ratio:cr(fill,on),note:note};
+}
+function applyBrand(brand){
+  var d=derive(brand),s=document.documentElement.style;
+  s.setProperty("--brand",brand);s.setProperty("--brand-fill",d.fill);s.setProperty("--brand-on",d.on);
+  s.setProperty("--brand-text-l",d.tl);s.setProperty("--brand-text-d",d.td);
+  document.getElementById("pOut").textContent="Button "+d.ratio.toFixed(1)+":1 (AA pass)"+(d.note.length?" · "+d.note.join(", "):" · no adjustment needed");
+}
+
+/* ---------- fictional tenants ---------- */
+var T={
+ riverside:{
+  name:"Riverside Badminton",mono:"RB",sport:"badminton",brand:"#0f766e",
+  h1:"Badminton coaching for ages 6 to 18 in <em>Riverside</em>.",
+  lede:"Small groups, qualified coaches and a clear path from a first shuttle to match play. Come and try a class before you decide.",
+  facts:["Ages 6 to adult","8 classes a week","First class free"],
+  showPrice:true,showSeats:true,per:"month",
+  place:"Riverside Sports Hall",addr:"214 Millbrook Road, Riverside",hours:"Mon to Fri 4 to 9:30 PM · Sat 9 AM to 1 PM",
+  phone:"(555) 014-2277",email:"hello@riversidebadminton.example",
+  progs:[
+   {n:"Shuttle Starters",d:"Beginner · ages 6 to 8",a:[6,8],c:[
+     {id:"ss1",days:"Mon & Wed",time:"4:30 to 5:30 PM",coach:"Coach Priya Nair",court:"Courts 1 and 2",price:120,seats:"open"},
+     {id:"ss2",days:"Saturday",time:"9:00 to 10:00 AM",coach:"Coach Daniel Osei",court:"Courts 1 and 2",price:70,seats:"few",left:2}]},
+   {n:"Rally Builders",d:"Beginner to intermediate · ages 9 to 12",a:[9,12],c:[
+     {id:"rb1",days:"Tue & Thu",time:"5:00 to 6:15 PM",coach:"Coach Priya Nair",court:"Courts 3 and 4",price:145,seats:"few",left:3},
+     {id:"rb2",days:"Saturday",time:"10:15 to 11:30 AM",coach:"Coach Daniel Osei",court:"Courts 1 to 3",price:85,seats:"open"}]},
+   {n:"Match Play",d:"Intermediate · ages 13 to 18",a:[13,18],c:[
+     {id:"mp1",days:"Mon & Wed",time:"6:00 to 7:30 PM",coach:"Coach Marcus Lindqvist",court:"Courts 1 to 4",price:165,seats:"full"},
+     {id:"mp2",days:"Friday",time:"5:30 to 7:00 PM",coach:"Coach Marcus Lindqvist",court:"Courts 1 to 4",price:95,seats:"open"}]},
+   {n:"Competition Squad",d:"Advanced · ages 11 to 18 · entry by assessment",a:[11,18],c:[
+     {id:"cs1",days:"Tue, Thu & Sat",time:"6:30 to 8:30 PM · Sat 12 to 2 PM",coach:"Coach Marcus Lindqvist",court:"Courts 1 to 4",price:240,seats:"assess"}]},
+   {n:"Adult Coaching",d:"All levels · 18 and over",a:[18,99],c:[
+     {id:"ad1",days:"Wednesday",time:"7:45 to 9:15 PM",coach:"Coach Daniel Osei",court:"Courts 1 to 4",price:90,seats:"open"}]}],
+  coaches:[["Priya Nair","PN","Head of juniors · 9 years coaching"],["Marcus Lindqvist","ML","Performance coach · former national league player"],["Daniel Osei","DO","Beginners and adults · first-aid certified"]],
+  faq:[["What happens at a free trial?","Your child joins a real class at their level for one session. A coach has a quick word with you afterwards about which group fits. There is no charge and no obligation."],
+       ["What should we bring?","Indoor non-marking shoes, water and comfortable sports clothes. We lend rackets and shuttles for the first month."],
+       ["How does payment work?","Classes are billed monthly. You register once online, pay by card or bank debit, and can turn on autopay. Join mid-month and the first invoice only covers the classes left."],
+       ["What if we miss a class?","Tell us in the parent app before the session and you can request a make-up class in any group at the same level, subject to space."],
+       ["Can I stop at any time?","Yes. Give notice before the next month is invoiced and nothing further is charged."]]
+ },
+ baseline:{
+  name:"Baseline Tennis Club",mono:"BT",sport:"tennis",brand:"#bfd730",
+  h1:"Junior and adult tennis coaching at <em>Harbour Park</em>.",
+  lede:"Red, orange and green ball groups for children, performance squads for teens and cardio tennis for adults. Six floodlit hard courts, all year.",
+  facts:["Ages 5 to adult","Term-based groups","First class free"],
+  showPrice:true,showSeats:false,per:"term",
+  place:"Harbour Park Courts",addr:"3 Quayside Walk, Harbour Park",hours:"Daily 8 AM to 9 PM",
+  phone:"(555) 019-4410",email:"play@baselinetennis.example",
+  progs:[
+   {n:"Red Ball",d:"First steps · ages 5 to 8",a:[5,8],c:[
+     {id:"r1",days:"Tue & Sat",time:"4:00 to 4:45 PM · Sat 9:00 AM",coach:"Coach Elena Rossi",court:"Mini courts",price:180,seats:"open"}]},
+   {n:"Orange and Green Ball",d:"Developing · ages 9 to 12",a:[9,12],c:[
+     {id:"o1",days:"Mon & Thu",time:"4:30 to 5:30 PM",coach:"Coach Tom Archer",court:"Courts 3 and 4",price:220,seats:"open"}]},
+   {n:"Teen Performance",d:"Intermediate to advanced · ages 13 to 18",a:[13,18],c:[
+     {id:"t1",days:"Wed & Fri",time:"5:30 to 7:00 PM",coach:"Coach Elena Rossi",court:"Courts 1 and 2",price:310,seats:"full"}]},
+   {n:"Cardio Tennis",d:"All levels · 18 and over",a:[18,99],c:[
+     {id:"c1",days:"Thursday",time:"7:00 to 8:00 PM",coach:"Coach Tom Archer",court:"Courts 5 and 6",price:140,seats:"open"}]}],
+  coaches:[["Elena Rossi","ER","Head coach · junior development"],["Tom Archer","TA","Club coach · adults and orange ball"]],
+  faq:[["What happens at a free trial?","Your child joins one group session at the right ball colour. No charge, no obligation."],
+       ["What should we bring?","Trainers, water and a hat in summer. Rackets are provided for every trial."],
+       ["How does payment work?","Groups run in ten-week terms, paid online when you register. Join part-way and you only pay for the weeks left."]]
+ }
+};
+
+var I={
+ pin:'<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.1-7-11.2A7 7 0 0 1 19 9.8C19 14.9 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.4"/></svg>',
+ user:'<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4s6.3 1.8 7.5 5.4"/></svg>',
+ check:'<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12.5l5 5L19.5 7"/></svg>',
+ arrow:'<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+ plus:'<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+ ok:'<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>',
+ shuttle:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a4 4 0 0 1-4-4l-3-13 4 5 3-8 3 8 4-5-3 13a4 4 0 0 1-4 4z"/></svg>'
+};
+function court(sport){
+ var b=sport==="badminton";
+ var ln=b
+  ? '<rect class="ln" pathLength="1" x="4" y="4" width="402" height="183"/><path class="ln" pathLength="1" d="M4 18H406"/><path class="ln" pathLength="1" d="M4 173H406"/><path class="ln" pathLength="1" d="M27 4V187M383 4V187"/><path class="ln" pathLength="1" d="M146 4V187M264 4V187"/><path class="ln" pathLength="1" d="M4 95.5H146M264 95.5H406"/>'
+  : '<rect class="ln" pathLength="1" x="4" y="4" width="402" height="183"/><path class="ln" pathLength="1" d="M4 27H406"/><path class="ln" pathLength="1" d="M4 164H406"/><path class="ln" pathLength="1" d="M96 27V164M314 27V164"/><path class="ln" pathLength="1" d="M96 95.5H314"/><path class="ln" pathLength="1" d="M4 95.5H12M398 95.5H406"/>';
+ return '<svg class="court" viewBox="-30 -30 470 251" aria-hidden="true"><rect class="floor" x="-30" y="-30" width="470" height="251" rx="6"/>'+ln+'<path class="net" d="M205 -6V197"/></svg>';
+}
+var BUCKETS=[["all","All ages",0,99],["k1","5 to 8",5,8],["k2","9 to 12",9,12],["k3","13 to 18",13,18],["ad","Adults",18,99]];
+var st={tenant:"riverside",state:"normal",age:"all"};
+
+function seatChip(c,t,state){
+ var s=state==="full"&&c.seats!=="assess"?"full":c.seats;
+ if(s==="assess")return '<span class="chip bench">By assessment</span>';
+ if(s==="full")return '<span class="chip queue">Waitlist</span>';
+ if(!t.showSeats)return "";
+ if(s==="few")return '<span class="chip few">'+c.left+' spots left</span>';
+ return '<span class="chip ok">Open</span>';
+}
+function classRow(c,p,t,state){
+ var s=state==="full"&&c.seats!=="assess"?"full":c.seats,trial=state!=="notrial";
+ var primary=s==="full"?["Join waitlist","waitlist"]:s==="assess"?["Book assessment","assessment"]:trial?["Try a class free","trial"]:null;
+ var label=p.n+", "+c.days+" "+c.time;
+ return '<li class="cls"><div class="when">'+c.days+'<small>'+c.time+'</small></div>'+
+  '<div class="meta"><span>'+I.user+c.coach+'</span><span>'+I.pin+c.court+'</span></div>'+
+  '<div class="pr-row">'+(t.showPrice?'<span class="price">$'+c.price+' <small>per '+t.per+'</small></span>':'')+seatChip(c,t,state)+'</div>'+
+  '<div class="acts">'+(primary?'<button class="btn btn-sm btn-brand" type="button" data-pick="'+c.id+'" data-kind="'+primary[1]+'" aria-label="'+primary[0]+': '+label+'">'+primary[0]+'</button>':'')+
+  (s!=="full"&&s!=="assess"?'<a class="btn btn-sm btn-line" href="#register" aria-label="Register for '+label+'">Register</a>':'')+'</div></li>';
+}
+function classes(t,state){
+ if(state==="empty")return '<div class="notice"><h3>The new timetable is on its way</h3><p>'+t.name+' has not published classes for the coming term yet. Leave your details and we will email you the day the timetable opens.</p><div class="cta"><a class="btn btn-brand" href="#trial">Tell me when classes open</a></div></div>';
+ var b=BUCKETS.filter(function(x){return x[0]===st.age})[0],out="";
+ t.progs.forEach(function(p){
+  if(!(p.a[0]<=b[3]&&p.a[1]>=b[2]))return;
+  if(st.age==="ad"&&p.a[1]<19)return; if(st.age==="k3"&&p.a[0]>=18)return;
+  out+='<div class="prog"><div class="prog-h"><h3>'+p.n+'</h3><p>'+p.d+'</p></div><ul>'+p.c.map(function(c){return classRow(c,p,t,state)}).join("")+'</ul></div>';
+ });
+ var f='<fieldset><legend>How old is the player?</legend><div class="filter">'+BUCKETS.map(function(x){return '<button type="button" class="pill" data-age="'+x[0]+'" aria-pressed="'+(st.age===x[0])+'">'+x[1]+'</button>'}).join("")+'</div></fieldset>';
+ var full=state==="full"?'<div class="notice"><h3>Every group is full right now</h3><p>Places open up most months. Join a waitlist and we will offer you the next free spot in order. It costs nothing to wait.</p></div>':"";
+ return f+full+'<div id="list" aria-live="polite">'+(out||'<p class="none">No classes for this age group at the moment. Pick another age or <a href="#visit">ask us</a>.</p>')+'</div>';
+}
+function options(t){return t.progs.map(function(p){return p.c.map(function(c){return '<option value="'+c.id+'">'+p.n+' · '+c.days+' '+c.time.split(" · ")[0]+'</option>'}).join("")}).join("")}
+function trial(t,state){
+ if(state==="notrial")return '<div class="trial" id="trial"><div class="wrap"><div class="notice" style="margin:0"><h3>Free trials are paused until the new term</h3><p>Groups are settled for this term so we are not running trial sessions. You can still register for any class with open places, or send us a question.</p><div class="cta"><a class="btn btn-brand" href="#classes">See open classes</a><a class="btn btn-line" href="#visit">Contact us</a></div></div></div></div>';
+ var empty=state==="empty",full=state==="full";
+ var h=empty?"Hear first when classes open":full?"Join the waitlist":"Book a free trial class";
+ var p=empty?"One email when the timetable is published. Nothing else.":full?"Tell us which group you want. We offer places in the order families joined.":"Pick a class, tell us who is coming, and we will confirm a date by email within one working day.";
+ var btn=empty?"Notify me":full?"Join the waitlist":"Request my free trial";
+ return '<div class="trial" id="trial"><div class="wrap trial-grid"><div><h2 id="trialH">'+h+'</h2><p class="sec-p">'+p+'</p>'+
+  (empty?'':'<ul class="ticks"><li>'+I.check+'No payment details needed</li><li>'+I.check+'Rackets provided for the session</li><li>'+I.check+'A coach talks you through the right group afterwards</li></ul>')+'</div>'+
+  '<form id="tf" novalidate aria-labelledby="trialH"><div class="two"><div class="f"><label for="fn">Your name</label><input id="fn" name="name" autocomplete="name" required></div>'+
+  '<div class="f"><label for="fe">Email</label><input id="fe" name="email" type="email" autocomplete="email" inputmode="email" required></div></div>'+
+  '<div class="two"><div class="f"><label for="fp">Phone <i>(optional)</i></label><input id="fp" name="tel" type="tel" autocomplete="tel" inputmode="tel"></div>'+
+  '<div class="f"><label for="fa">Player\'s age</label><input id="fa" name="age" type="number" min="4" max="99" inputmode="numeric" required></div></div>'+
+  (empty?'':'<div class="f"><label for="fc">Class</label><select id="fc" name="cls"><option value="">Not sure, please suggest one</option>'+options(t)+'</select></div>')+
+  '<p class="err" id="ferr" role="alert" hidden></p><button class="btn btn-brand" type="submit">'+btn+'</button>'+
+  '<p class="fine">We only use these details to reply to this request. We do not ask for the child\'s name here. <a href="#privacy">Privacy</a></p></form></div></div>';
+}
+function render(){
+ var t=T[st.tenant],s=st.state,paused=s==="paused";
+ var cta=s==="empty"?"Tell me when classes open":s==="full"?"Join the waitlist":s==="notrial"?"See open classes":"Book a free trial";
+ var ctaHref=s==="notrial"?"#classes":"#trial";
+ var h='<div class="on-night"><header class="top"><div class="wrap"><a class="brandmark" href="#top"><span class="logo" aria-hidden="true">'+t.mono+'</span><span>'+t.name+'</span></a>'+
+  (paused?'':'<nav aria-label="Page"><a href="#classes">Classes</a><a href="#coaches">Coaches</a><a href="#faq">FAQ</a><a href="#visit">Visit</a></nav>')+
+  '<a class="login" href="#login">Parent login</a>'+(paused?'':'<a class="btn btn-sm btn-brand" href="'+ctaHref+'">'+cta+'</a>')+'</div></header>';
+ if(paused){
+  h+='<div class="hero" id="top"><div class="wrap"><h1>'+t.name+' is not taking new players right now.</h1><p class="lede">Current families can still sign in to see schedules and pay. If you have a question, the team is happy to hear from you.</p><div class="cta"><a class="btn btn-brand" href="#login">Parent login</a><a class="btn btn-ghost-night" href="mailto:'+t.email+'">Email the academy</a></div></div>'+court(t.sport)+'</div></div><div class="lane"></div>';
+ }else{
+  h+='<div class="hero" id="top"><div class="wrap"><h1>'+t.h1+'</h1><p class="lede">'+t.lede+'</p><div class="cta"><a class="btn btn-brand" href="'+ctaHref+'">'+cta+I.arrow+'</a>'+(s==="notrial"?'':'<a class="btn btn-ghost-night" href="#classes">See classes and prices</a>')+'</div>'+
+   '<ul class="facts">'+t.facts.map(function(f,i){return (s==="notrial"&&i===2)?"":'<li>'+I.check+f+'</li>'}).join("")+'<li>'+I.pin+t.place+'</li></ul></div>'+court(t.sport)+'</div></div><div class="lane"></div>';
+  h+='<main><section id="classes"><div class="wrap"><div class="sec-h"><h2>Classes'+(t.showPrice?' and prices':'')+'</h2></div><p class="sec-p">Every group below is running this term'+(t.showPrice?'. Prices are per '+t.per+' for the days shown':'')+'.</p>'+classes(t,s)+'</div></section>';
+  h+=trial(t,s);
+  h+='<section><div class="wrap"><div class="sec-h"><h2>How joining works</h2></div><ol class="steps"><li><b>Try a class</b><span>One free session in a real group, so your child and the coach can both see if the level fits.</span></li><li id="register"><b>Register online</b><span>Create a parent account, add your child and choose the class. It takes about three minutes.</span></li><li><b>Pay per '+t.per+'</b><span>Card or bank debit, with receipts, schedules and make-up requests all in the parent app.</span></li></ol></div></section>';
+  h+='<section id="coaches"><div class="wrap"><div class="sec-h"><h2>Your coaches</h2></div><ul class="coaches">'+t.coaches.map(function(c){return '<li><span class="av" aria-hidden="true">'+c[1]+'</span><div><b>Coach '+c[0]+'</b><span>'+c[2]+'</span></div></li>'}).join("")+'</ul></div></section>';
+  h+='<section id="faq"><div class="wrap"><div class="sec-h"><h2>Questions parents ask</h2></div>'+t.faq.map(function(q){return '<details><summary>'+q[0]+I.plus+'</summary><p>'+q[1]+'</p></details>'}).join("")+'</div></section>';
+ }
+ h+=(paused?'<main>':'')+'<section id="visit"><div class="wrap"><div class="sec-h"><h2>Find us</h2></div><div class="visit"><dl><div><dt>Where</dt><dd>'+t.place+'<br>'+t.addr+'<br><a href="#map">Open in maps</a></dd></div><div><dt>Coaching hours</dt><dd>'+t.hours+'</dd></div></dl><dl><div><dt>Talk to us</dt><dd><a href="tel:'+t.phone.replace(/\D/g,"")+'">'+t.phone+'</a><br><a href="mailto:'+t.email+'">'+t.email+'</a></dd></div><div><dt>Already a member?</dt><dd><a href="#login">Sign in to the parent app</a></dd></div></dl></div></div></section></main>';
+ h+='<footer class="on-night"><div class="wrap"><ul><li><a href="#login">Parent login</a></li><li><a href="#register">Register</a></li><li><a href="#privacy" id="privacy">Privacy</a></li><li><a href="#terms">Terms</a></li></ul><p class="pw">'+I.shuttle+'Bookings and payments by CourtMastr</p></div></footer>';
+ h+=paused?'':'<div class="stick"><a class="btn btn-brand" href="'+ctaHref+'">'+cta+'</a></div>';
+ document.getElementById("page").innerHTML=h;
+}
+function setTenant(id){st.tenant=id;st.age="all";var b=T[id].brand;document.getElementById("pColor").value=b;applyBrand(b);render()}
+
+document.getElementById("pTenant").addEventListener("change",function(e){setTenant(e.target.value)});
+document.getElementById("pState").addEventListener("change",function(e){st.state=e.target.value;render()});
+document.getElementById("pTheme").addEventListener("change",function(e){var r=document.documentElement;if(e.target.value)r.setAttribute("data-theme",e.target.value);else r.removeAttribute("data-theme")});
+document.getElementById("pColor").addEventListener("input",function(e){applyBrand(e.target.value)});
+
+var page=document.getElementById("page");
+page.addEventListener("click",function(e){
+ var a=e.target.closest("[data-age]");
+ if(a){st.age=a.getAttribute("data-age");render();var n=page.querySelector('[data-age="'+st.age+'"]');if(n)n.focus();return}
+ var p=e.target.closest("[data-pick]");
+ if(p){var sel=document.getElementById("fc");if(sel)sel.value=p.getAttribute("data-pick");var f=document.getElementById("fn");document.getElementById("trial").scrollIntoView();if(f)f.focus({preventScroll:true})}
+});
+page.addEventListener("submit",function(e){
+ e.preventDefault();
+ var f=e.target,err=document.getElementById("ferr"),bad=[].filter.call(f.elements,function(el){return el.willValidate&&!el.checkValidity()});
+ if(bad.length){err.hidden=false;err.textContent=bad[0].id==="fe"?"Enter an email address we can reply to, like name@example.com.":"Fill in "+f.querySelector('label[for="'+bad[0].id+'"]').firstChild.textContent.trim().toLowerCase()+" so we can confirm your request.";bad[0].focus();return}
+ var first=f.elements.name.value.trim().split(" ")[0],t=T[st.tenant];
+ f.outerHTML='<div class="done" role="status" tabindex="-1" id="done" style="background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:24px">'+I.ok+'<h3>Thanks, '+first.replace(/[<>&]/g,"")+'. Request received.</h3><p style="color:var(--muted)">'+t.name+' will email you within one working day to confirm a date. Nothing is booked or charged until then.</p><a class="btn btn-line" href="#classes">Back to classes</a></div>';
+ document.getElementById("done").focus();
+});
+setTenant("riverside");
+})();
+</script>

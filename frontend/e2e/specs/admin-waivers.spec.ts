@@ -75,6 +75,11 @@ async function stubAdminShell(page: Page) {
       brand_color: null,
     });
   });
+  // Issue #842: AdminLayout now feeds the Inbox nav badge from this endpoint
+  // on every admin page, so every shell stub must cover it.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
 }
 
 async function stubWaiverTemplates(page: Page) {
@@ -84,12 +89,49 @@ async function stubWaiverTemplates(page: Page) {
   });
 }
 
+/**
+ * Settings overhaul Phase 3 PR 10: the waiver management UI now embeds in
+ * Settings -> Family policies, which also mounts the self-service policy and
+ * departure-policy (Holds) cards. Both are stubbed here so navigating to
+ * that tab does not leave those cards stuck loading or erroring.
+ */
+async function stubFamilyPoliciesSiblingCards(page: Page) {
+  await page.route("**/api/v2/admin/self-service/policy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      absence_notice_min_hours: 2,
+      makeup_expiry_days: 30,
+      makeup_requires_notice: true,
+      cancellation_minimum_notice_days: 7,
+      cancellation_fee_cents: 0,
+      cancellation_effective_timing: "end_of_period",
+      can_report_absence: true,
+      can_request_makeup: true,
+      can_request_pause: true,
+      can_request_cancel: true,
+      can_claim_waitlist_offer: true,
+      payment_instructions: "",
+      welcome_email_absence_policy_default: "",
+    });
+  });
+  await page.route("**/api/v2/admin/enrollment/departure-policy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      max_hold_days: 60,
+      hold_reclaim_policy: "longest_held",
+      drop_default_outcome: "no_credit_mid_month",
+      delete_enrollment_requires_owner: true,
+    });
+  });
+}
+
 test.describe("admin waivers", () => {
   test("renders BFF summary counts and waiver student rows", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     const requests: string[] = [];
     await stubAdminShell(page);
     await stubWaiverTemplates(page);
+    await stubFamilyPoliciesSiblingCards(page);
     await page.route("**/api/v2/admin/waivers*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       requests.push(route.request().url());
@@ -143,7 +185,7 @@ test.describe("admin waivers", () => {
       });
     });
 
-    await page.goto("/admin/waivers");
+    await page.goto("/admin/settings?panel=family-policies");
 
     await expect(page.getByTestId("admin-waivers")).toBeVisible();
     await expect(page.getByText("Signed current")).toBeVisible();
@@ -166,10 +208,96 @@ test.describe("admin waivers", () => {
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
+  test("lists several live waivers and assigns one to a program", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    let assignBody: Record<string, unknown> | null = null;
+    await stubAdminShell(page);
+    await stubFamilyPoliciesSiblingCards(page);
+    await page.route(/\/api\/v2\/admin\/waivers(?:\?.*)?$/, (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        summary: { signed_current: 0, pending_signature: 0, expiring_30d: 0, outdated_version: 0 },
+        current_waiver: null,
+        waivers: [],
+      });
+    });
+    const template = (id: string, title: string, extra: Record<string, unknown>) => ({
+      waiver_template_id: id,
+      title,
+      body: `${title} text`,
+      status: "active",
+      version: "1",
+      content_hash: "h",
+      effective_at: "2026-09-01T00:00:00Z",
+      published_at: "2026-09-01T00:00:00Z",
+      assigned_to_registration: false,
+      assigned_at: null,
+      updated_at: "2026-09-01T00:00:00Z",
+      required: false,
+      scope: "all",
+      program_ids: [],
+      ...extra,
+    });
+    await page.route("**/api/v2/admin/waivers/templates", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        templates: [
+          template("wt-liability", "Liability waiver", {
+            version: "3",
+            required: true,
+            assigned_to_registration: true,
+          }),
+          template("wt-photo", "Photo consent", {}),
+        ],
+        programs: [
+          { program_id: "prog-juniors", name: "Juniors" },
+          { program_id: "prog-adults", name: "Adults" },
+        ],
+      });
+    });
+    await page.route("**/api/v2/admin/waivers/templates/wt-photo/assignment", (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      assignBody = route.request().postDataJSON() as Record<string, unknown>;
+      return fulfillJson(
+        route,
+        template("wt-photo", "Photo consent", {
+          required: true,
+          scope: "programs",
+          program_ids: ["prog-juniors"],
+        }),
+      );
+    });
+
+    await page.goto("/admin/settings?panel=family-policies");
+
+    await expect(page.getByTestId("admin-waiver-required-for-wt-liability")).toContainText(
+      "Required for: All families",
+    );
+    await expect(page.getByTestId("admin-waiver-required-for-wt-photo")).toContainText(
+      "Required for: Not required",
+    );
+    await expect(page.getByTestId("admin-waiver-template-row-wt-liability")).toContainText("v3");
+    await expect(page.getByTestId("admin-waiver-template-row-wt-liability")).toContainText("LIVE");
+
+    await page.getByTestId("admin-waiver-assign-button-wt-photo").click();
+    await page.getByTestId("admin-waiver-assign-choice-wt-photo-programs").check();
+    await expect(page.getByTestId("admin-waiver-assign-save-wt-photo")).toBeDisabled();
+    await page.getByTestId("admin-waiver-assign-program-wt-photo-prog-juniors").check();
+    await page.getByTestId("admin-waiver-assign-save-wt-photo").click();
+
+    await expect.poll(() => assignBody).toEqual({
+      required: true,
+      scope: "programs",
+      program_ids: ["prog-juniors"],
+    });
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
   test("shows a truthful empty state when the BFF returns no waiver rows", async ({ page }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminShell(page);
     await stubWaiverTemplates(page);
+    await stubFamilyPoliciesSiblingCards(page);
     await page.route("**/api/v2/admin/waivers*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
@@ -186,7 +314,7 @@ test.describe("admin waivers", () => {
       });
     });
 
-    await page.goto("/admin/waivers");
+    await page.goto("/admin/settings?panel=family-policies");
     await expect(page.getByTestId("admin-waivers-empty")).toContainText("No waiver rows returned.");
     await expect(page.getByText("Current waiver details are not available yet.")).toBeVisible();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
@@ -228,17 +356,12 @@ test.describe("admin waivers", () => {
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
-  test("allows requiring an active waiver from the detail page", async ({ page }) => {
+  test("points the detail page at the Assign control in Family policies", async ({ page }) => {
     const errors = collectConsoleErrors(page);
-    const assignmentRequests: string[] = [];
-    let detailRequests = 0;
+    const legacyAssignRequests: string[] = [];
     await stubAdminShell(page);
     await page.route("**/api/v2/admin/waivers/wt-2026", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
-      detailRequests += 1;
-      if (detailRequests > 1) {
-        return fulfillJson(route, { detail: "temporary refetch failure" }, 500);
-      }
       return fulfillJson(route, {
         waiver_id: "wt-2026",
         title: "BLNO Liability Waiver",
@@ -254,34 +377,20 @@ test.describe("admin waivers", () => {
         gap_note: "Signed PDF artifact/share links are not implemented yet.",
       });
     });
+    // The old one-waiver button is gone; nothing on the page should call it.
     await page.route("**/api/v2/admin/waivers/templates/wt-2026/assign-registration", (route) => {
-      if (route.request().method() !== "POST") return route.fallback();
-      assignmentRequests.push(route.request().url());
-      return fulfillJson(route, {
-        waiver_template_id: "wt-2026",
-        title: "BLNO Liability Waiver",
-        body: "Parent agrees to academy safety rules.",
-        status: "active",
-        version: "1.0",
-        content_hash: "hash-current",
-        effective_at: "2026-05-26T00:00:00Z",
-        published_at: "2026-05-26T00:00:00Z",
-        assigned_to_registration: true,
-        assigned_at: "2026-06-21T12:00:00Z",
-        updated_at: "2026-06-21T12:00:00Z",
-      });
+      legacyAssignRequests.push(route.request().url());
+      return route.abort();
     });
 
     await page.goto("/admin/waivers/wt-2026");
 
     await expect(page.getByTestId("admin-waiver-template-detail")).toBeVisible();
-    await expect(page.getByText("Not assigned").first()).toBeVisible();
-    await page.getByRole("button", { name: "Require for registration" }).click();
-    await expect(page.getByText("Required for registration").first()).toBeVisible();
-    await expect(
-      page.getByRole("alert").filter({ hasText: "Could not load waiver template." }),
-    ).toHaveCount(0);
-    expect(assignmentRequests).toHaveLength(1);
+    await expect(page.getByRole("button", { name: "Require for registration" })).toHaveCount(0);
+    const link = page.getByTestId("admin-waiver-detail-assign-link");
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", "/admin/settings?panel=family-policies");
+    expect(legacyAssignRequests).toHaveLength(0);
     expect(
       errors.filter((message) => !message.includes("500 (Internal Server Error)")),
       `App console errors: ${errors.join("\n")}`,

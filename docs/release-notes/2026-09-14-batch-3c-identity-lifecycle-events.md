@@ -1,0 +1,16 @@
+# Finish identity lifecycle events: parent change and departed children
+
+PR: #826
+
+## What changed
+- Fixes #785 — Publishing a new registration-waiver template version superseded the row carrying `assigned_to_registration` without moving the flag, so `get_registration_template` found nothing and registration silently stopped asking anyone to sign. The assignment now rides onto the published version and is cleared on the rows it supersedes, so exactly one row ever claims the slot; the registration read and the parent prompt also now share one "live" status set instead of disagreeing (active/published vs active only); and waiver signatures are keyed by student plus signing parent, so a child moved to a new guardian is re-asked to sign instead of inheriting a stranger's consent.
+- Fixes #785 — `change_admin_student_parent` used to rewrite `parent_id` on the student document and return a warning string while open invoices, spendable credit, the live waitlist request, and the per-enrollment autopay row the dunning worker charges from all kept naming the previous parent — so the academy went on billing someone who no longer has the child. Live, student-scoped money now follows the child on a parent change; settled history stays with the parent who actually paid or signed it. Two states are refused outright before the first write: an open invoice with a Stripe twin, and an enrollment still on active autopay (the saved card belongs to the old parent). Waiver rows for the student are stamped `outdated_for_parent` so the new guardian re-signs, and every query is academy-scoped. The admin API's frontend types now mirror the `rehomed_counts` the backend cascade actually reports.
+- Fixes #775 — Terminal (dropped) enrollments were excluded from every parent read, so a family that left the academy logged in to a child card with no history and no way back. `GET /parent/enrollments` now also returns the most recent terminal enrollment per child, tagged `departed` with the class title, the date it ended, and the free-text reason — capped at one row per child. Departed rows are history, never money: every autopay/attempt field is pinned to `None` so a stale declined-payment attempt on a long-dead enrollment cannot arm the parent home payment banner. The children card renders the departed state as "Your child has left this class" with no cancel action offered.
+
+## Deploy notes
+- No migrations. All changes are read/write logic against existing collections (students, waiver assignments, autopay rows, parent enrollment reads); no new indexes or schema changes.
+- No new environment variables or manual steps required.
+
+## Risk / rollback
+- Risk: low-to-moderate. The parent-change money cascade (#785) touches billing-adjacent writes (invoices, credit, waitlist, autopay), but it refuses to proceed on the two unsafe states (Stripe-linked open invoice, active autopay) rather than guessing, and is covered by new unit/composition tests. The departed-enrollment read (#775) is additive and read-only for parents, with autopay fields hard-pinned to `None` to prevent false payment-banner triggers.
+- Rollback: revert this PR. No data cleanup is required — the parent-change cascade only rewrites ownership fields on records that already exist, and the departed-enrollment read is purely additive to an API response.

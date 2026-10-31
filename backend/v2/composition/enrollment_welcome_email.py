@@ -42,11 +42,13 @@ from backend.v2.contexts.communications.application.ports import (
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
 from backend.v2.contexts.enrollment.domain.models import Session
+from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEZONE = "America/Chicago"
+_DEFAULT_TIMEZONE = LEGACY_FALLBACK_TIMEZONE
 
 #: Required verbatim by #613 whenever a group link is present. `{session}` is
 #: the only substitution, and it is HTML-escaped before it lands here.
@@ -66,12 +68,24 @@ _DAY_LABELS = {
 }
 
 
+#: Shown in the admin "Preview email" dialog; never a real family's name.
+_PREVIEW_STUDENT_NAME = "Sample Student"
+
+
 class SessionLookup(Protocol):
     async def get(self, session_id: str) -> Session | None: ...
 
 
 class UserLookup(Protocol):
     async def get_by_id(self, user_id: str) -> Any: ...
+
+
+class SelfServicePolicyLookup(Protocol):
+    """Narrow port over ``GetSelfServicePolicy`` — just the one field this
+    adapter needs, so it never grows a dependency on the whole policy
+    document's other eleven fields."""
+
+    async def execute(self) -> Any: ...
 
 
 class AcademyLookup(Protocol):
@@ -156,12 +170,25 @@ def render_welcome_email(
     student_name: str,
     coach_name: str | None = None,
     academy_timezone: str | None = None,
+    academy_absence_policy_default: str | None = None,
+    academy_venue_address: str | None = None,
+    academy_parking_note: str | None = None,
+    academy_what_to_bring: str | None = None,
+    academy_arrival_minutes_before: int | None = None,
+    academy_coach_contact_policy: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(subject, html_body)``.
 
     Every block below is emitted only when its field is populated: an academy
     that has configured nothing still gets a correct, short welcome rather
     than a message full of empty headings.
+
+    Venue address, parking, what-to-bring, arrival time and coach contact
+    each fall back to
+    the academy's Class defaults (Settings overhaul Phase 3 PR 9) when the
+    class itself leaves the field empty. A class value, when set, always
+    wins — this is a fallback, not an override — so BLNO's existing classes
+    (which already carry their own values) render exactly as before.
     """
     safe_session_title = html.escape(session.title)
     safe_student = html.escape(student_name)
@@ -182,9 +209,10 @@ def render_welcome_email(
         )
     )
 
+    venue_address = session.venue_address or academy_venue_address
     where_lines = [html.escape(session.location)] if session.location else []
-    if session.venue_address:
-        where_lines.append(_multiline(session.venue_address))
+    if venue_address:
+        where_lines.append(_multiline(venue_address))
     if where_lines:
         parts.append(_block("Where", _para("<br />".join(where_lines))))
     if session.whatsapp_group_link:
@@ -201,31 +229,41 @@ def render_welcome_email(
             )
         )
 
-    if session.parking_notes:
-        parts.append(_block("Parking", _para(_multiline(session.parking_notes))))
-    if session.arrival_minutes_before is not None:
+    parking_note = session.parking_notes or academy_parking_note
+    if parking_note:
+        parts.append(_block("Parking", _para(_multiline(parking_note))))
+    arrival_minutes_before = (
+        session.arrival_minutes_before
+        if session.arrival_minutes_before is not None
+        else academy_arrival_minutes_before
+    )
+    if arrival_minutes_before is not None:
         parts.append(
             _block(
                 "Arrival",
-                _para(
-                    f"Please arrive {session.arrival_minutes_before} minutes before "
-                    f"the class starts."
-                ),
+                _para(f"Please arrive {arrival_minutes_before} minutes before the class starts."),
             )
         )
-    if session.what_to_bring:
-        parts.append(_block("What to bring", _para(_multiline(session.what_to_bring))))
+    what_to_bring = session.what_to_bring or academy_what_to_bring
+    if what_to_bring:
+        parts.append(_block("What to bring", _para(_multiline(what_to_bring))))
 
     coach_lines = []
     if coach_name:
         coach_lines.append(f"Your coach is {html.escape(coach_name)}.")
-    if session.coach_contact_policy:
-        coach_lines.append(_multiline(session.coach_contact_policy))
+    coach_contact_policy = session.coach_contact_policy or academy_coach_contact_policy
+    if coach_contact_policy:
+        coach_lines.append(_multiline(coach_contact_policy))
     if coach_lines:
         parts.append(_block("Your coach", _para("<br />".join(coach_lines))))
 
-    if session.absence_policy:
-        parts.append(_block("Absences and make-ups", _para(_multiline(session.absence_policy))))
+    # Settings overhaul Phase 3 PR 10: the class's own text always wins; the
+    # academy-level default (Family policies) fills in only when the class
+    # left this field empty. Default "" means every academy with no class
+    # text and no academy default keeps today's behaviour: no block at all.
+    absence_policy = session.absence_policy or academy_absence_policy_default
+    if absence_policy:
+        parts.append(_block("Absences and make-ups", _para(_multiline(absence_policy))))
 
     body = _branded_shell(academy_name=academy_name, inner_html="".join(parts))
     return f"Welcome to {session.title}", body
@@ -254,12 +292,17 @@ class EnrollmentWelcomeEmailAdapter:
         academies: AcademyLookup,
         audiences: AudienceResolver,
         sender: EmailSendPort,
+        self_service_policy: SelfServicePolicyLookup | None = None,
     ) -> None:
         self._sessions = sessions
         self._users = users
         self._academies = academies
         self._audiences = audiences
         self._sender = sender
+        #: Settings overhaul Phase 3 PR 10. Optional so an older composition
+        #: root (or a test double) that predates this field still works —
+        #: `None` behaves exactly like an academy that never set a default.
+        self._self_service_policy = self_service_policy
 
     async def send_welcome(
         self,
@@ -293,21 +336,8 @@ class EnrollmentWelcomeEmailAdapter:
             return
         display_name = (parent.display_name if parent else None) or None
 
-        academy_id = current_academy_id()
-        academy_doc = await self._academies.find_by_id(academy_id) or {}
-        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
-            "Your academy"
-        )
-        academy_timezone = str(academy_doc.get("timezone") or "") or None
-        coach_name = await self._coach_name(session.coach_id)
-
-        subject, body = render_welcome_email(
-            session=session,
-            academy_name=academy_name,
-            student_name=student_name,
-            coach_name=coach_name,
-            academy_timezone=academy_timezone,
-        )
+        subject, body, academy_doc = await self._compose(session, student_name)
+        identity = resolve_sender(academy_doc)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_user_id,
@@ -322,6 +352,8 @@ class EnrollmentWelcomeEmailAdapter:
             # everything) but is deliberately outside the #555 unsubscribable
             # categories, and therefore carries no CAN-SPAM footer.
             category=EmailCategory.TRANSACTIONAL,
+            reply_to=identity.reply_to,
+            sender_name=identity.sender_name,
         )
         if not outcome.ok and not outcome.suppressed:
             logger.warning(
@@ -332,6 +364,52 @@ class EnrollmentWelcomeEmailAdapter:
                     "reason": outcome.failed_reason,
                 },
             )
+
+    async def preview(self, session_id: str) -> tuple[str, str] | None:
+        """The real welcome email for a class, with a sample student name.
+
+        Read-only: it resolves no recipient, calls no sender and writes
+        nothing. ``None`` when the class does not exist in this academy (the
+        session repo is tenant-scoped).
+        """
+        session = await self._sessions.get(session_id)
+        if session is None:
+            return None
+        subject, body, _academy_doc = await self._compose(session, _PREVIEW_STUDENT_NAME)
+        return subject, body
+
+    async def _compose(
+        self, session: Session, student_name: str
+    ) -> tuple[str, str, dict[str, Any]]:
+        academy_id = current_academy_id()
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
+            "Your academy"
+        )
+        academy_timezone = str(academy_doc.get("timezone") or "") or None
+        coach_name = await self._coach_name(session.coach_id)
+        absence_default = await self._absence_policy_default()
+
+        subject, body = render_welcome_email(
+            session=session,
+            academy_name=academy_name,
+            student_name=student_name,
+            coach_name=coach_name,
+            academy_timezone=academy_timezone,
+            academy_absence_policy_default=absence_default,
+            academy_venue_address=str(academy_doc.get("default_venue_address") or "") or None,
+            academy_parking_note=str(academy_doc.get("default_parking_note") or "") or None,
+            academy_what_to_bring=str(academy_doc.get("default_what_to_bring") or "") or None,
+            academy_arrival_minutes_before=(
+                int(academy_doc["default_arrival_minutes_before"])
+                if academy_doc.get("default_arrival_minutes_before") is not None
+                else None
+            ),
+            academy_coach_contact_policy=(
+                str(academy_doc.get("default_coach_contact_policy") or "") or None
+            ),
+        )
+        return subject, body, academy_doc
 
     async def _resolve_parent(self, parent_user_id: str) -> ResolvedRecipient | None:
         """The parent, only if they belong to the academy running this request."""
@@ -360,3 +438,19 @@ class EnrollmentWelcomeEmailAdapter:
             return None
         name = str(getattr(coach, "display_name", "") or "").strip()
         return name or None
+
+    async def _absence_policy_default(self) -> str | None:
+        """The academy-level Family policies fallback, or ``None``.
+
+        Defensive like ``_coach_name``: a policy-store hiccup must not block
+        sending the welcome email, it just means the fallback text is left
+        out (the class's own text, if any, is unaffected).
+        """
+        if self._self_service_policy is None:
+            return None
+        try:
+            policy = await self._self_service_policy.execute()
+        except Exception:  # pragma: no cover - defensive
+            return None
+        text = str(getattr(policy, "welcome_email_absence_policy_default", "") or "").strip()
+        return text or None

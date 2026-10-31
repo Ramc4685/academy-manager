@@ -24,8 +24,13 @@ from backend.v2.contexts.billing.application.use_cases.invoice_numbering import 
     mint_invoice_number,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import (
+    ACCOUNT_CREDIT_SOURCE_TYPE,
+    InvoiceLine,
+    LedgerInvoice,
+)
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
+from backend.v2.contexts.billing.domain.plan_price_change import stored_class_fee_cents
 from backend.v2.contexts.billing.domain.proration import (
     BILLABLE_CLASSES_PER_MONTH,
     MOVE_SOURCE_TYPE,
@@ -50,14 +55,89 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo impor
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    class_fee_cents_for_period,
+)
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.time import (
+    LEGACY_FALLBACK_TIMEZONE,
+    academy_timezone_lookup,
+    resolve_session_doc_timezone,
+)
 
 if TYPE_CHECKING:
     from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
         MongoPaymentRepository,
     )
+
+
+# ``billing_invoice_keys.status`` values this module writes and reads back.
+# ``reviewed`` (#599) is terminal-until-the-invoice-changes: recovery cannot
+# repair some pre-PR-#494 invoices in place (their tuition line is written with
+# ``$setOnInsert``), so those keys would report ``repair_failed`` on every run
+# forever. Once an operator has judged one and recorded why, the generator
+# leaves it alone instead of re-reporting it.
+MONTHLY_KEY_STATUS_REPAIR_FAILED = "repair_failed"
+
+#: Enrollment statuses the monthly run reads. ``paused`` rows are read only to
+#: be skipped (#651), so ``active`` is the one status that is invoiced.
+MONTHLY_RUN_ENROLLMENT_STATUSES: tuple[str, ...] = ("active", "paused")
+MONTHLY_INVOICED_ENROLLMENT_STATUS = "active"
+#: ``billing_type`` values the monthly run invoices (missing reads "standard").
+MONTHLY_INVOICED_BILLING_TYPES: frozenset[str] = frozenset({"", "standard", "monthly", "manual"})
+MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Compare a stored timestamp against an aware one.
+
+    Mongo hands back naive datetimes; comparing one to ``now`` raises (#706).
+    Stored billing timestamps are UTC, so read a naive one as UTC.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+async def mark_monthly_invoice_key_reviewed(
+    db: Any,
+    *,
+    academy_id: str,
+    enrollment_id: str,
+    period: str,
+    reason: str,
+    reviewed_by: str,
+    now: datetime,
+) -> bool:
+    """Record that an operator judged a ``repair_failed`` key and accepted it.
+
+    Writes only ``billing_invoice_keys`` — never the invoice, its lines, or any
+    payment — so reviewing is a statement about money, not a change to it. The
+    filter pins ``status`` to ``repair_failed`` so a key that has since been
+    repaired (or never failed) cannot be silenced by mistake; ``False`` means
+    no such key was found. Called by
+    ``backend/scripts/monthly_invoice_key_repair_review.py``.
+    """
+    result = await db["billing_invoice_keys"].update_one(
+        {
+            "academy_id": academy_id,
+            "enrollment_id": enrollment_id,
+            "period": period,
+            "status": MONTHLY_KEY_STATUS_REPAIR_FAILED,
+        },
+        {
+            "$set": {
+                "status": MONTHLY_KEY_STATUS_REVIEWED,
+                "updated_at": now,
+                "reviewed": {
+                    "reason": reason,
+                    "reviewed_at": now,
+                    "reviewed_by": reviewed_by,
+                },
+            }
+        },
+    )
+    return int(getattr(result, "matched_count", 0) or 0) == 1
 
 
 class MongoMonthlyBillingGenerator:
@@ -321,6 +401,7 @@ class MongoMonthlyBillingGenerator:
         gross_cents: int,
         discount_cents: int = 0,
         total_cents: int | None = None,
+        applied_credit_cents: int = 0,
         discount_policy: TuitionDiscount | None = None,
         tuition_description: str | None = None,
         now: datetime,
@@ -328,6 +409,12 @@ class MongoMonthlyBillingGenerator:
         """Write a LedgerInvoice for a monthly-generated enrollment charge.
 
         Uses a deterministic invoice_id for idempotency so re-runs are safe.
+
+        Account credit spent on the charge is recorded as its own negative
+        ``account_credit`` line, keyed by ``payment_id`` like the credit
+        application itself. A header-only credit was lost by every later
+        ``recompute_totals`` (late fee, added line, ACH discount), which billed
+        the family the already-spent credit again.
         """
         _log = logging.getLogger(__name__)
         invoice_id = self._monthly_invoice_id(enrollment_id, period)
@@ -403,6 +490,22 @@ class MongoMonthlyBillingGenerator:
                     created_at=now,
                 )
             )
+        if applied_credit_cents > 0:
+            lines.append(
+                InvoiceLine(
+                    line_id=f"{self._monthly_invoice_line_id(enrollment_id, period)}-credit",
+                    academy_id=academy_id,
+                    invoice_id=invoice_id,
+                    line_type="credit",
+                    description="Account credit applied",
+                    quantity=1,
+                    unit_amount_cents=-applied_credit_cents,
+                    amount_cents=-applied_credit_cents,
+                    source_type=ACCOUNT_CREDIT_SOURCE_TYPE,
+                    source_id=payment_id,
+                    created_at=now,
+                )
+            )
         await ledger_repo.create_invoice(invoice, lines=lines, idempotency_key=idempotency_key)
 
     async def _mark_monthly_invoice_key(
@@ -422,14 +525,49 @@ class MongoMonthlyBillingGenerator:
             update["repair_error"] = repair_error
         elif status == "complete":
             update["repair_error"] = None
+        # Any status this method writes supersedes an operator's review: the key
+        # has moved on from the state that was judged, so the recorded reason no
+        # longer describes it and must not silence the next run (#599).
         await self._db["billing_invoice_keys"].update_one(
             {
                 "academy_id": current_academy_id(),
                 "enrollment_id": enrollment_id,
                 "period": period,
             },
-            {"$set": update},
+            {"$set": update, "$unset": {"reviewed": ""}},
         )
+
+    async def _monthly_invoice_key_review_is_current(
+        self,
+        *,
+        invoice_key: dict[str, object] | None,
+        enrollment_id: str,
+        period: str,
+    ) -> bool:
+        """Has an operator reviewed this key, and does that review still hold?
+
+        A review is a judgement about the invoice as it stood when it was made,
+        so it lapses the moment that invoice changes: the comparison is against
+        the LEDGER invoice's ``updated_at``, never the key's own (the key is
+        stamped by the review itself). No invoice, no readable timestamp, or a
+        run without a ledger repo means nothing can have changed under the
+        review, so it stands.
+        """
+        if invoice_key is None:
+            return False
+        if str(invoice_key.get("status") or "") != MONTHLY_KEY_STATUS_REVIEWED:
+            return False
+        reviewed = invoice_key.get("reviewed")
+        reviewed_at = reviewed.get("reviewed_at") if isinstance(reviewed, dict) else None
+        if not isinstance(reviewed_at, datetime) or self._ledger_repo is None:
+            return True
+        invoice = await self._ledger_repo.get_invoice(
+            self._monthly_invoice_id(enrollment_id, period)
+        )
+        updated_at = getattr(invoice, "updated_at", None) if invoice is not None else None
+        if not isinstance(updated_at, datetime):
+            return True
+        return _as_utc(updated_at) <= _as_utc(reviewed_at)
 
     async def _monthly_invoice_is_complete(
         self,
@@ -509,7 +647,8 @@ class MongoMonthlyBillingGenerator:
 
         ``create_invoice`` never updates an existing header, and when it back-fills a
         missing line it recomputes totals from the lines alone - which knows nothing
-        about applied credit and double-subtracts a discount line. Recovery repairs a
+        about a header-only credit written before credit became an ``account_credit``
+        line. Recovery repairs a
         header that predates it, so it restates the header itself. Only the header is
         touched, and only when the lines already match what we expect; a conflicting
         line is left for the caller to report as a failed repair. Allocations already
@@ -529,7 +668,9 @@ class MongoMonthlyBillingGenerator:
             return
         lines = await self._ledger_repo.get_lines_for_invoice(invoice_id)
         tuition_cents = sum(
-            line.amount_cents for line in lines if line.source_type != "tuition_discount"
+            line.amount_cents
+            for line in lines
+            if line.source_type not in ("tuition_discount", ACCOUNT_CREDIT_SOURCE_TYPE)
         )
         discount_line_cents = sum(
             abs(line.amount_cents) for line in lines if line.source_type == "tuition_discount"
@@ -562,9 +703,11 @@ class MongoMonthlyBillingGenerator:
 
         * the generator's own shape - ``subtotal_cents`` GROSS with the tuition
           discount mirrored in ``discount_cents`` alongside its discount line;
-        * the ledger's shape (``recompute_totals``, used by every hand-billed
-          invoice) - ``subtotal_cents`` NET of the negative discount line, with
+        * every other writer's shape (e.g. ``BillEnrollmentPeriod``) -
+          ``subtotal_cents`` NET of the negative discount line, with
           ``discount_cents`` left at 0.
+
+        ``recompute_totals`` keeps whichever of the two it is given.
 
         A line-less invoice is consistent only when every header amount is 0: that is
         the blank draft ``create_student_invoice`` opens for an admin to fill in.
@@ -584,6 +727,7 @@ class MongoMonthlyBillingGenerator:
 
         gross_line_cents = 0
         discount_line_cents = 0
+        credit_line_cents = 0
         async for line_doc in self._db["invoice_lines"].find(
             {
                 "academy_id": academy_id,
@@ -593,6 +737,8 @@ class MongoMonthlyBillingGenerator:
             amount = int(line_doc.get("amount_cents", 0))
             if line_doc.get("source_type") == "tuition_discount":
                 discount_line_cents += abs(amount)
+            elif line_doc.get("source_type") == ACCOUNT_CREDIT_SOURCE_TYPE:
+                credit_line_cents += abs(amount)
             else:
                 gross_line_cents += amount
 
@@ -605,7 +751,7 @@ class MongoMonthlyBillingGenerator:
         return (
             (amount_cents is None or gross_line_cents == amount_cents)
             and (gross_shape or net_shape)
-            and total_cents == max(subtotal_cents - discount_cents, 0)
+            and total_cents == max(subtotal_cents - discount_cents - credit_line_cents, 0)
             and 0 <= balance_due_cents <= total_cents
         )
 
@@ -658,6 +804,9 @@ class MongoMonthlyBillingGenerator:
                     "invoice_key_id": str(new_ulid()),
                     "created_at": now,
                 },
+                # The invoice is complete, so an operator's acceptance of an
+                # earlier failure no longer describes this key (#599).
+                "$unset": {"reviewed": ""},
             },
             upsert=True,
         )
@@ -799,6 +948,7 @@ class MongoMonthlyBillingGenerator:
             gross_cents=gross_amount_cents,
             discount_cents=discount_cents,
             total_cents=amount_cents,
+            applied_credit_cents=applied_credit_cents,
             discount_policy=discount_policy,
             tuition_description=tuition_description,
             now=now,
@@ -912,7 +1062,7 @@ class MongoMonthlyBillingGenerator:
         cursor = self._db["enrollments"].find(
             {
                 "academy_id": academy_id,
-                "status": {"$in": ["active", "paused"]},
+                "status": {"$in": list(MONTHLY_RUN_ENROLLMENT_STATUSES)},
             },
             sort=[("created_at", 1), ("enrollment_id", 1)],
         )
@@ -926,6 +1076,7 @@ class MongoMonthlyBillingGenerator:
         repaired_orphan_keys = 0
         repaired_partial_invoices = 0
         failed_repair = 0
+        skipped_reviewed = 0
         async for enrollment in cursor:
             enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
             session_id = str(enrollment.get("session_id") or "")
@@ -986,7 +1137,7 @@ class MongoMonthlyBillingGenerator:
                 )
                 continue
             billing_type = str(enrollment.get("billing_type") or "standard").lower()
-            if billing_type not in {"", "standard", "monthly", "manual"}:
+            if billing_type not in MONTHLY_INVOICED_BILLING_TYPES:
                 skipped_no_charge += 1
                 continue
             existing = await self._repo._find_one(
@@ -1081,6 +1232,16 @@ class MongoMonthlyBillingGenerator:
                         "period": period,
                     }
                 )
+                if await self._monthly_invoice_key_review_is_current(
+                    invoice_key=invoice_key,
+                    enrollment_id=enrollment_id,
+                    period=period,
+                ):
+                    # An operator already looked at this key and wrote down why
+                    # it is acceptable. Re-running recovery would re-derive the
+                    # same unrepairable outcome and re-report it (#599).
+                    skipped_reviewed += 1
+                    continue
                 recovered = await self._recover_orphan_monthly_invoice(
                     enrollment_id=enrollment_id,
                     parent_id=parent_id,
@@ -1127,6 +1288,7 @@ class MongoMonthlyBillingGenerator:
                     gross_cents=gross_amount_cents,
                     discount_cents=discount_cents,
                     total_cents=amount_cents,
+                    applied_credit_cents=applied_credit_cents,
                     discount_policy=discount_policy,
                     tuition_description=tuition_description,
                     now=now,
@@ -1147,6 +1309,7 @@ class MongoMonthlyBillingGenerator:
             repaired_orphan_keys=repaired_orphan_keys,
             repaired_partial_invoices=repaired_partial_invoices,
             failed_repair=failed_repair,
+            skipped_reviewed=skipped_reviewed,
             skipped_details=skipped_details,
         )
 
@@ -1160,14 +1323,12 @@ def session_amount_cents(doc: dict[str, object]) -> int:
     ``monthly_price_cents`` or ``monthly_price`` and would price at zero,
     crediting nobody for a date the family is still billed for in full
     (see the #609 warning in ``mongo_session_repo``).
+
+    This is the STORED fee. A charge for a billing month reads
+    ``class_fee_cents_for_period`` instead, which also applies a plan price
+    change the owner scheduled for that month (Settings overhaul PR 26).
     """
-    if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])
-    if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])
-    if doc.get("monthly_price") is not None:
-        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
-    return 0
+    return stored_class_fee_cents(doc)
 
 
 def _local_period_label(instant: datetime, timezone_name: str) -> str:
@@ -1381,7 +1542,9 @@ def _session_occurrences(
     doc: dict[str, object],
     period: BillingPeriod,
 ) -> list[ClassOccurrence]:
-    timezone_name = str(doc.get("timezone") or period.timezone or "America/Chicago")
+    # ``period`` was built on this session's resolved clock (session ->
+    # academy -> legacy), so its zone is the right fallback for a zoneless doc.
+    timezone_name = str(doc.get("timezone") or period.timezone or LEGACY_FALLBACK_TIMEZONE)
     tz = ZoneInfo(timezone_name)
     session_id = str(doc.get("session_id") or doc.get("_id") or "")
     if doc.get("days_of_week"):
@@ -1450,14 +1613,19 @@ async def resolve_monthly_charge(
     withdrawal and cancellation credits are measured against. Resolving a period
     STAMPS that snapshot, so call it only for a charge you are about to write.
     """
-    amount_cents = session_amount_cents(session_doc)
+    # The class fee FOR THIS MONTH: the stored fee, unless the owner scheduled
+    # a plan price change that covers this class and month (PR 26). With no
+    # change on record this is exactly ``session_amount_cents(session_doc)``.
+    amount_cents = await class_fee_cents_for_period(repo._db, session_doc, period)
     billing_start = _coerce_datetime(
         enrollment.get("billing_start_at")
         or enrollment.get("enrolled_at")
         or enrollment.get("created_at")
     )
     enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-    timezone_name = str(session_doc.get("timezone") or "America/Chicago")
+    timezone_name = await resolve_session_doc_timezone(
+        academy_timezone_lookup(repo._db), session_doc
+    )
     billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
     occurrences = await repo._occurrences_for_session(session_doc, billing_period)
 

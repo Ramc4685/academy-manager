@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { Icon } from "../ds/icons";
 import {
   ADMIN_NAV,
   OWNER_ONLY_ROUTE_EXCEPTIONS,
@@ -22,6 +23,7 @@ describe("navForRoles", () => {
     expect(visible).not.toContain("/admin/payouts");
     expect(visible).not.toContain("/admin/reports");
     expect(visible).not.toContain("/admin/audit-logs");
+    expect(visible).not.toContain("/admin/pricing");
     // Operations items survive.
     expect(visible).toContain("/admin/payments");
     expect(visible).toContain("/admin/expenses");
@@ -32,17 +34,32 @@ describe("navForRoles", () => {
     expect(visible).not.toContain("/admin/billing-setup");
   });
 
+  // #839: Students, Users and Families all shipped `icon: "user"`, so the
+  // three People destinations were indistinguishable in the sidebar.
+  it("gives Students, Users and Families three distinct icons", () => {
+    const items = ADMIN_NAV.flatMap((group) => group.items);
+    const iconFor = (href: string) => items.find((item) => item.href === href)?.icon;
+    const icons = [
+      iconFor("/admin/students"),
+      iconFor("/admin/users"),
+      iconFor("/admin/families"),
+    ];
+
+    expect(icons.every(Boolean)).toBe(true);
+    expect(new Set(icons).size).toBe(3);
+  });
+
   it("removes a group whose every item was owner-only", () => {
     const nav: AdminNavGroup[] = [
       {
         group: "MONEY",
         items: [
-          { href: "/admin/reports", label: "Reports", icon: "chart", match: () => false, ownerOnly: true },
+          { id: "reports", href: "/admin/reports", label: "Reports", icon: "chart", match: () => false, ownerOnly: true },
         ],
       },
       {
         group: "WORK",
-        items: [{ href: "/admin", label: "Dashboard", icon: "home", match: () => false }],
+        items: [{ id: "dashboard", href: "/admin", label: "Dashboard", icon: "home", match: () => false }],
       },
     ];
     expect(navForRoles(nav, false).map((group) => group.group)).toEqual(["WORK"]);
@@ -59,8 +76,94 @@ describe("navForRoles", () => {
       "/admin/audit-logs",
       "/admin/billing-health",
       "/admin/payouts",
+      "/admin/pricing",
       "/admin/reports",
     ]);
+  });
+
+  it("puts Pricing in MONEY right after Payments (Settings overhaul PR 11b)", () => {
+    const money = ADMIN_NAV.find((group) => group.group === "MONEY");
+    const ids = money?.items.map((item) => item.id) ?? [];
+    expect(ids.slice(0, 2)).toEqual(["payments", "pricing"]);
+    expect(isOwnerOnlyRoute("/admin/pricing")).toBe(true);
+    expect(metaForPath("/admin/pricing").breadcrumbs).toEqual(["Admin", "Money", "Pricing"]);
+  });
+});
+
+// Sidebar regroup spec §2 / §6 PR 1.
+describe("ADMIN_NAV shape", () => {
+  const items = ADMIN_NAV.flatMap((group) => group.items);
+
+  it("has the six groups in sidebar order", () => {
+    expect(ADMIN_NAV.map((group) => group.group)).toEqual([
+      "TODAY",
+      "CLASSES",
+      "PEOPLE",
+      "REACH",
+      "MONEY",
+      "ACADEMY",
+    ]);
+  });
+
+  it("gives every item a unique, testid-safe id", () => {
+    const ids = items.map((item) => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+  });
+
+  it("keeps the ids the e2e specs address as admin-nav-<id>", () => {
+    // These were once derived from the label; they are pinned here so a
+    // relabel (Users -> Staff in PR 3) cannot move a testid.
+    const byHref = Object.fromEntries(items.map((item) => [item.href, item.id]));
+    expect(byHref).toMatchObject({
+      "/admin/students": "students",
+      "/admin/inbox": "inbox",
+      "/admin/users": "users",
+      "/admin/payments": "payments",
+      "/admin/expenses": "expenses",
+      "/admin/reports": "month-close",
+      "/admin/payouts": "coach-payouts",
+      "/admin/billing-health": "billing-health",
+      "/admin/audit-logs": "audit-logs",
+      "/admin/pricing": "pricing",
+    });
+  });
+
+  it("uses only icon keys the Rally Icon set implements", () => {
+    // renderNavIcon falls back to `home` for an unknown key, so a typo would
+    // silently show a house; pin it here instead.
+    for (const item of items) {
+      expect(typeof Icon[item.icon], `${item.href} -> ${item.icon}`).toBe("function");
+    }
+  });
+
+  it("gives Students, Users and... distinct glyphs", () => {
+    const iconFor = (href: string) => items.find((item) => item.href === href)?.icon;
+    expect(iconFor("/admin/users")).toBe("badge");
+  });
+
+  it("no longer lists Waivers in the nav — it moved into Settings -> Family policies", () => {
+    // Settings overhaul Phase 3 PR 10: /admin/waivers redirects there now;
+    // the standalone nav item would be a dead end pointing at a redirect.
+    const hrefsList = hrefs(ADMIN_NAV);
+    expect(hrefsList).not.toContain("/admin/waivers");
+  });
+
+  it("places the people lists together and Inbox under Dashboard", () => {
+    const groupOf = (href: string) =>
+      ADMIN_NAV.find((group) => group.items.some((item) => item.href === href))?.group;
+    expect(groupOf("/admin/inbox")).toBe("TODAY");
+    expect(groupOf("/admin/students")).toBe("PEOPLE");
+    expect(groupOf("/admin/families")).toBe("PEOPLE");
+    expect(groupOf("/admin/users")).toBe("PEOPLE");
+    expect(groupOf("/admin/messages")).toBe("REACH");
+    expect(groupOf("/admin/settings")).toBe("ACADEMY");
+  });
+
+  it("still shows all six groups to a non-owner", () => {
+    expect(navForRoles(ADMIN_NAV, false).map((group) => group.group)).toEqual(
+      ADMIN_NAV.map((group) => group.group),
+    );
   });
 });
 
@@ -107,6 +210,19 @@ describe("isOwnerOnlyRoute", () => {
 });
 
 describe("metaForPath", () => {
+  // Sidebar regroup PR 3: the list holds coaches and admins only, so it is
+  // named for what is in it. The nav id stays `users` (pinned above).
+  it("titles the Staff list and keeps its nav id", () => {
+    const meta = metaForPath("/admin/users");
+    expect(meta.title).toBe("Staff");
+    expect(meta.subtitle).toBe("Coaches and admins: logins, roles, pay");
+    expect(meta.breadcrumbs).toEqual(["Admin", "People", "Staff"]);
+    const item = ADMIN_NAV.flatMap((group) => group.items).find(
+      (entry) => entry.href === "/admin/users",
+    );
+    expect(item).toMatchObject({ id: "users", label: "Staff" });
+  });
+
   it("titles the Families list", () => {
     expect(metaForPath("/admin/families").title).toBe("Families");
     // Reports is Month close now (spec §5); the sub-reports say so too.
@@ -118,16 +234,33 @@ describe("metaForPath", () => {
       "Month close",
       "Deposit slip",
     ]);
-    expect(metaForPath("/admin/families").breadcrumbs).toEqual(["Admin", "Money", "Families"]);
+    // Families moved from MONEY to PEOPLE (sidebar regroup spec §2.2 row 6).
+    expect(metaForPath("/admin/families").breadcrumbs).toEqual(["Admin", "People", "Families"]);
   });
 
   it("resolves the dynamic family billing route by its [parentId] key", () => {
     const meta = metaForPath("/admin/families/par_1");
-    expect(meta.title).toBe("Family billing");
-    expect(meta.breadcrumbs).toEqual(["Admin", "Money", "Families", "Family"]);
+    expect(meta.title).toBe("Family");
+    expect(meta.breadcrumbs).toEqual(["Admin", "People", "Families", "Family"]);
   });
 
   it("still appends Detail for routes without a dynamic key", () => {
     expect(metaForPath("/admin/sessions/sess_1").breadcrumbs).toEqual(["Admin", "Sessions", "Detail"]);
+  });
+});
+
+describe("Progress sidebar item (Settings overhaul Phase 3 PR 11)", () => {
+  it("hides the item when the progress overview flag is off", () => {
+    expect(ADMIN_NAV.flatMap((group) => group.items).some((entry) => entry.id === "progress")).toBe(false);
+  });
+
+  it("renames Pathway to Progress and points at the progress overview", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW", "1");
+    vi.resetModules();
+    const { ADMIN_NAV, metaForPath } = await import("./screen-meta");
+    const item = ADMIN_NAV.flatMap((group) => group.items).find((entry) => entry.id === "progress");
+    expect(item).toMatchObject({ label: "Progress", href: "/admin/pathway/progress" });
+    expect(item?.match("/admin/pathway/progress")).toBe(true);
+    expect(metaForPath("/admin/pathway/progress").title).toBe("Progress");
   });
 });

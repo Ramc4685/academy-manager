@@ -155,12 +155,15 @@ async def main() -> int:
     parser.add_argument(
         "--academy-id",
         default=(
-            os.environ.get("PRIMARY_ACADEMY_ID")
-            or os.environ.get("V2_PRIMARY_ACADEMY_ID")
-            or "acad_blno_badminton"
+            os.environ.get("PRIMARY_ACADEMY_ID") or os.environ.get("V2_PRIMARY_ACADEMY_ID")
         ),
     )
     args = parser.parse_args()
+
+    if not args.academy_id:
+        parser.error(
+            "--academy-id is required (or set PRIMARY_ACADEMY_ID / V2_PRIMARY_ACADEMY_ID)"
+        )
 
     if not args.mongo_url or not args.db_name:
         parser.error("--mongo-url/--db-name or MONGO_URL/DB_NAME is required")

@@ -141,6 +141,7 @@ def test_charge_success_returns_result(admin_client):
         expected_amount_cents=5000,
         request_id=REQUEST_ID,
         actor_id="u-admin",
+        actor_roles=("admin", "owner"),
     )
 
 

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
+import { SharedShellSkeleton } from "@/components/shared/shell-skeleton";
 import { getCurrentUser } from "@/lib/api/me";
 
 export default function CalendarPage() {
@@ -31,9 +32,7 @@ export default function CalendarPage() {
     };
   }, [router]);
 
-  return (
-    <div className="min-h-screen flex items-center justify-center text-neutral-500">
-      Redirecting...
-    </div>
-  );
+  // The role lookup runs after the layout has already painted the shell, so keep
+  // the same skeleton instead of flashing bare status text here (#451).
+  return <SharedShellSkeleton testId="shared-role-redirect-skeleton" />;
 }

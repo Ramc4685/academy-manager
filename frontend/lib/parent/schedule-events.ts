@@ -1,5 +1,6 @@
 import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import type { ParentScheduleEntry } from "@/lib/api/parent";
+import { calendarInstant } from "@/lib/time/calendar-timezone";
 
 /**
  * Grey used for a class the academy called off (#671).
@@ -12,18 +13,32 @@ import type { ParentScheduleEntry } from "@/lib/api/parent";
  */
 export const CANCELLED_EVENT_COLOR = "#9ca3af";
 
+/**
+ * Badge text for a one-time class (#1038): an approved make-up or trial is
+ * on the schedule alongside regular classes and must be told apart from
+ * them. `null` for a regular class (or a payload without `source`).
+ */
+export function scheduleSourceLabel(source: string | null | undefined): "Make-up" | "Trial" | null {
+  if (source === "makeup") return "Make-up";
+  if (source === "trial") return "Trial";
+  return null;
+}
+
 export function scheduleEntryToEvent(
   entry: ParentScheduleEntry,
   { childName, color }: { childName: string; color: string },
 ): CalendarViewEvent {
   const cancelled = entry.status === "cancelled";
+  const sourceLabel = scheduleSourceLabel(entry.source);
+  const base = `${childName} — ${entry.session_title}`;
+  const labelled = sourceLabel ? `${sourceLabel} — ${base}` : base;
   return {
     id: entry.occurrence_id,
-    title: cancelled
-      ? `Cancelled — ${childName} — ${entry.session_title}`
-      : `${childName} — ${entry.session_title}`,
-    start: entry.start_at,
-    end: entry.end_at,
+    title: cancelled ? `Cancelled — ${labelled}` : labelled,
+    // #1043: explicit UTC instants, so the academy-zone grid cannot read a
+    // naive timestamp as wall time in its own zone.
+    start: calendarInstant(entry.start_at),
+    end: calendarInstant(entry.end_at),
     color: cancelled ? CANCELLED_EVENT_COLOR : color,
   };
 }

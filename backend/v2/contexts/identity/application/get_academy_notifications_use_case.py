@@ -13,8 +13,6 @@ class AcademyRepo(Protocol):
 
 @dataclass(frozen=True)
 class GetAcademyNotificationsOutput:
-    dues_reminders: bool = False
-    attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
     # Per-academy override for the coach teaching-plan digest. ``coach_digest_hour``
     # is interpreted in the scheduler timezone (see scheduler refactor in main.py),
@@ -26,6 +24,9 @@ class GetAcademyNotificationsOutput:
     # not the academy's local timezone.
     parent_digest_enabled: bool = False
     parent_digest_hour: int = 6
+    # Win-back emails at 30/60/90 days after a student leaves (row 10). Read
+    # with a default of on: an academy that never saved it keeps sending.
+    win_back_enabled: bool = True
 
 
 def _coerce_hour(value: Any, default: int = 6) -> int:
@@ -46,8 +47,6 @@ def _notifications_output(
     default_parent_digest_hour: int = 6,
 ) -> GetAcademyNotificationsOutput:
     return GetAcademyNotificationsOutput(
-        dues_reminders=bool(notifs.get("dues_reminders", False)),
-        attendance_alerts=bool(notifs.get("attendance_alerts", False)),
         daily_digest_to_admin=bool(notifs.get("daily_digest_to_admin", False)),
         coach_digest_enabled=bool(notifs.get("coach_digest_enabled", default_coach_digest_enabled)),
         coach_digest_hour=_coerce_hour(
@@ -61,6 +60,7 @@ def _notifications_output(
             notifs.get("parent_digest_hour", default_parent_digest_hour),
             default=default_parent_digest_hour,
         ),
+        win_back_enabled=notifs.get("win_back_enabled", True) is not False,
     )
 
 

@@ -55,8 +55,14 @@ async def test_mongo_bootstrap_store_creates_idempotent_tenant_defaults(db) -> N
     assert membership is not None
     assert membership["roles"] == ["admin"]
 
-    assert await db["academy_settings"].count_documents({"academy_id": first.academy_id}) == 1
-    assert await db["billing_policies"].count_documents({"academy_id": first.academy_id}) == 1
+    # Settings overhaul Phase 2: setup-only collections are no longer written.
+    for unread in (
+        "academy_settings",
+        "billing_policies",
+        "academy_roles",
+        "academy_feature_flags",
+    ):
+        assert await db[unread].count_documents({"academy_id": first.academy_id}) == 0
     assert await db["waiver_templates"].count_documents({"academy_id": first.academy_id}) == 1
     waiver = await db["waiver_templates"].find_one({"academy_id": first.academy_id})
     assert waiver is not None
@@ -66,5 +72,3 @@ async def test_mongo_bootstrap_store_creates_idempotent_tenant_defaults(db) -> N
     assert waiver["body"]
     assert waiver["content_hash"]
     assert waiver["effective_from"] is not None
-    assert await db["academy_roles"].count_documents({"academy_id": first.academy_id}) == 3
-    assert await db["academy_feature_flags"].count_documents({"academy_id": first.academy_id}) == 1

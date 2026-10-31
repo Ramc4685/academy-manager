@@ -9,6 +9,8 @@ const ROLE_LABELS: Record<string, string> = {
   coach: "Coach",
   assistant_coach: "Assistant coach",
   parent: "Parent",
+  billing: "Billing",
+  front_desk: "Front desk",
   student: "Student",
 };
 

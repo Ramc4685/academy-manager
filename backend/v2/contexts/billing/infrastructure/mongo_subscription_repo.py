@@ -30,7 +30,8 @@ class MongoSubscriptionRepository(TenantScopedRepository):
         fields = {k: v for k, v in doc.items() if k != "academy_id"}
         update: dict[str, object] = {"$set": fields}
         # Stripe assigns the subscription id only after Checkout completes;
-        # until then the domain model carries "". The stripe_sub_unique
+        # until then the domain model carries "". The
+        # stripe_sub_unique_per_academy (0187; stripe_sub_unique before it)
         # partial index covers every string value including "", so a second
         # pending row would raise DuplicateKeyError — keep the field unset
         # instead so pending rows never enter the unique index.

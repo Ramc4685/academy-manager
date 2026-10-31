@@ -703,12 +703,17 @@ def test_full_levelup_and_certificate_flow(env):
     # Recommendation appears in the admin level-up queue.
     queue = env.client.get("/api/v2/admin/level-up-queue").json()["queue"]
     assert any(item["rec_id"] == rec.rec_id for item in queue)
+    # Issue #841: the queue is read by a human, so it carries names, not ids.
+    row = next(item for item in queue if item["rec_id"] == rec.rec_id)
+    assert row["student_name"] == "Alice Flow"
+    assert row["program_name"] == "Badminton Skill Pathway"
+    assert row["from_level_name"] == env.level1.name
 
     # 8. Admin approves level-up.
     approve = env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve")
     assert approve.status_code == 200, approve.text
     approved = approve.json()
-    assert approved["status"] == "APPROVED"
+    assert approved["status"] == "COMPLETED"
     assert approved["cert_id"]
 
     # 9 & 10. Current level completed, next level progress created & active.
@@ -780,7 +785,7 @@ def test_replayed_approve_is_conflict_and_performs_no_writes(env):
     # Surfaced through the registered DomainError handler, so the UI gets the
     # structured envelope rather than a free-text detail string.
     assert second.json()["error"]["code"] == "StudentProgress.RecommendationAlreadyReviewed"
-    assert second.json()["error"]["details"]["status"] == "APPROVED"
+    assert second.json()["error"]["details"]["status"] == "COMPLETED"
     # No second certificate.
     certs = env.client.get(f"/api/v2/admin/students/{student_id}/certificates").json()[
         "certificates"

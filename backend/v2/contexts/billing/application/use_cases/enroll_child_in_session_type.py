@@ -16,6 +16,10 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.application.charge_route import (
+    ChargeRoute,
+    resolve_charge_route,
+)
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -104,7 +108,7 @@ class EnrollChildInSessionType:
         now = self._now()
 
         # 4. Start Stripe setup checkout so the app owns future invoices.
-        connected_account_id = await self._ready_connected_account_id()
+        route = await self._ready_charge_route()
         (
             _checkout_id,
             redirect_url,
@@ -122,7 +126,8 @@ class EnrollChildInSessionType:
                 "session_type_id": cmd.session_type_id,
                 "source": "autopay_setup",
             },
-            connected_account_id=connected_account_id,
+            # House: platform. Otherwise ON the academy's connected account.
+            **route.on_account_kwargs(),
         )
 
         # 5. Persist enrollment with active status
@@ -147,33 +152,15 @@ class EnrollChildInSessionType:
 
         return {"enrollment": enrollment, "redirect_url": redirect_url}
 
-    async def _ready_connected_account_id(self) -> str | None:
-        if self._connected_accounts is None:
-            return None
-        account = await self._connected_accounts.get_for_academy()
-        if account is None or not account.is_ready_for_charges():
-            if await self._platform_fallback_enabled():
-                log.warning(
-                    "enroll_child_in_session_type: connected account not ready — falling back "
-                    "to PLATFORM charge (allow_platform_charge_fallback=on)"
-                )
-                return None
+    async def _ready_charge_route(self) -> ChargeRoute:
+        route = await resolve_charge_route(
+            connected_accounts=self._connected_accounts,
+            settings=self._settings,
+            context="enroll_child_in_session_type",
+        )
+        if route.refused:
             raise CheckoutCreationFailed("Stripe connected account is not ready for autopay setup.")
-        return account.stripe_account_id
-
-    async def _platform_fallback_enabled(self) -> bool:
-        if self._settings is None:
-            return False
-        try:
-            settings = await self._settings.get()
-        except Exception as exc:
-            log.warning(
-                "enroll_child_in_session_type: billing settings lookup failed; keeping "
-                "fail-closed connected-account requirement err=%s",
-                exc,
-            )
-            return False
-        return settings.allow_platform_charge_fallback
+        return route
 
 
 class CancelBillingEnrollment:

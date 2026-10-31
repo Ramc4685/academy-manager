@@ -12,7 +12,10 @@ from backend.v2.contexts.enrollment.application.ports import (
     SessionOccurrenceRepository,
     SessionQuery,
 )
-from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
+from backend.v2.contexts.enrollment.domain.models import (
+    SessionOccurrence,
+    SessionOccurrenceStatus,
+)
 
 
 class CoachOccurrenceForDate(BaseModel):
@@ -29,6 +32,10 @@ class CoachOccurrenceForDate(BaseModel):
     # Primary coach of the roster session, so a supervisor's academy-wide
     # list can say whose class each row is. None when the session is gone.
     coach_id: str | None = None
+    # Issue #777: a cancelled class stays on the coach's day, struck through
+    # with its reason, instead of silently disappearing from the list.
+    status: SessionOccurrenceStatus = "scheduled"
+    cancellation_reason: str | None = None
 
 
 class ListCoachOccurrencesForDate:
@@ -41,17 +48,28 @@ class ListCoachOccurrencesForDate:
         self._occurrences = occurrences
         self._sessions = sessions
 
-    async def execute(self, coach_id: str, on_date: date) -> list[CoachOccurrenceForDate]:
+    async def execute(
+        self,
+        coach_id: str,
+        on_date: date,
+        *,
+        include_cancelled: bool = False,
+    ) -> list[CoachOccurrenceForDate]:
         occurrences = await self._occurrences.list_for_coach_on_date(
             coach_id=coach_id,
             on_date=on_date,
+            include_cancelled=include_cancelled,
         )
 
         return await self._narrow(occurrences, on_date)
 
-    async def execute_for_academy(self, on_date: date) -> list[CoachOccurrenceForDate]:
+    async def execute_for_academy(
+        self, on_date: date, *, include_cancelled: bool = False
+    ) -> list[CoachOccurrenceForDate]:
         """Every occurrence in the academy on ``on_date`` (coach supervisors)."""
-        occurrences = await self._occurrences.list_on_date(on_date=on_date)
+        occurrences = await self._occurrences.list_on_date(
+            on_date=on_date, include_cancelled=include_cancelled
+        )
         return await self._narrow(occurrences, on_date)
 
     async def _narrow(
@@ -139,6 +157,8 @@ async def _hydrate_occurrences(
                 start_at=occurrence.start_at,
                 end_at=occurrence.end_at,
                 coach_id=getattr(session, "coach_id", None) if session else None,
+                status=occurrence.status,
+                cancellation_reason=occurrence.cancellation_reason,
             )
         )
     return rows

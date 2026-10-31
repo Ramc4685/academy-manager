@@ -6,6 +6,7 @@ content assembly. Both use fakes — no Mongo, no Sentry, no Resend.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from datetime import UTC, datetime, timedelta, timezone
@@ -88,6 +89,50 @@ def test_job_error_logs_and_reports_to_sentry(
     assert record.job_id == "process_dunning_retries"
     assert record.scheduled_run_time == "2026-08-27T03:00:00+00:00"
     assert record.exc_info is not None
+
+
+def test_job_cancelled_at_shutdown_is_not_reported_as_an_error(
+    sentry: _SentrySpy, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Issue #752: a deploy cancels in-flight jobs; that is not a failure.
+
+    Fly replaces the machine mid-tick, APScheduler cancels the job's task and
+    the resulting ``CancelledError`` arrives here as an EVENT_JOB_ERROR. Paging
+    on it buried the real failures of the same job.
+    """
+    cancelled = asyncio.CancelledError()
+    event = _FakeJobEvent(
+        job_id="reconcile_stripe_payment_intents",
+        code=2**7,
+        exception=cancelled,
+        scheduled_run_time=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+    )
+
+    with caplog.at_level(logging.INFO):
+        ops_alerts.handle_scheduler_job_event(event)
+
+    assert sentry.exceptions == []
+    assert sentry.messages == []
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+    record = next(r for r in caplog.records if "scheduler_job_cancelled" in r.getMessage())
+    assert record.job_id == "reconcile_stripe_payment_intents"
+
+
+def test_other_errors_during_shutdown_are_still_reported(
+    sentry: _SentrySpy, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The #752 exemption is scoped to cancellation, not to shutdown at large."""
+    boom = RuntimeError("connection reset mid-shutdown")
+    event = _FakeJobEvent(job_id="reconcile_stripe_payment_intents", code=2**7, exception=boom)
+
+    with caplog.at_level(logging.INFO):
+        ops_alerts.handle_scheduler_job_event(event)
+
+    assert sentry.exceptions == [boom]
+    assert any(
+        r.levelno == logging.ERROR and "scheduler_job_error" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_job_missed_has_no_exception_so_reports_a_warning_message(
@@ -531,21 +576,27 @@ def test_invoice_job_records_a_heartbeat_only_when_nothing_was_generated() -> No
     tick that emailed or failed to email must also store its counts, or a
     month-long email outage would be invisible on the 29 days that generated
     nothing. A tick that did neither still writes a heartbeat only.
+
+    Settings Phase 4: the counts are summed per ops-digest cycle
+    (``accumulate_job_run``) because academies now generate on separate hourly
+    ticks; the gate in front of that write is unchanged.
     """
     from backend.v2.main import _lifespan
 
     body = inspect.getsource(_lifespan).split("_generate_monthly_invoices_body", 2)[2]
-    call = body.split("record_job_run(", 1)[1].split("        )", 1)[0]
+    body = body.split("async def _send_ops_digest", 1)[0]
+    gate, write = body.split("if not (", 1)[1].split("accumulate_job_run(", 1)
 
-    assert 'totals["academy_count"]' in call
-    assert 'totals["invoices_emailed"]' in call
-    assert 'totals["invoice_emails_failed"]' in call
-    # Still gated: an idle tick must not overwrite the last real run's counts.
-    assert "meaningful=bool(" in call
-    assert "meaningful=True" not in call
+    assert 'totals["academy_count"]' in gate
+    assert 'totals["invoices_emailed"]' in gate
+    assert 'totals["invoice_emails_failed"]' in gate
+    # Still gated: an idle tick returns before writing any counts.
+    assert gate.split("):", 1)[1].strip().startswith("return")
+    assert "record_job_run(" not in body
+    assert "cycle=ops_digest_cycle(" in write
     # The stored record must use #440's `created_count` naming so the email and
     # the structured log line agree.
-    assert 'record["created_count"] = totals["created"]' in body
+    assert 'counts["created_count"] = totals["created"]' in body
 
 
 # ---------------------------------------------------------------------------
@@ -715,7 +766,7 @@ def test_a_stale_job_alone_raises_the_attention_flag() -> None:
     assert subject == "Ops digest 2026-08-27 — attention needed"
     assert "Scheduled jobs NOT ticking (1)" in body
     assert "<strong>generate_monthly_invoices</strong>" in body
-    assert "expected within 26h" in body
+    assert "expected within 3h" in body
     assert "2026-08-26T04:00:00+00:00" in body
     assert "(27h ago)" in body
     assert "Nothing new needs attention" not in body
@@ -838,9 +889,35 @@ class _CronsSpy:
         return kwargs.get("check_in_id") or "chk-1"
 
 
+class _TransactionSpy:
+    def __init__(self) -> None:
+        self.entered = False
+        self.exited = False
+
+    def __enter__(self) -> _TransactionSpy:
+        self.entered = True
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        self.exited = True
+
+
+class _StartTransactionSpy:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.transactions: list[_TransactionSpy] = []
+
+    def __call__(self, **kwargs: Any) -> _TransactionSpy:
+        self.calls.append(kwargs)
+        transaction = _TransactionSpy()
+        self.transactions.append(transaction)
+        return transaction
+
+
 class _CronSentry:
     def __init__(self, *, fail: bool = False) -> None:
         self.crons = _CronsSpy(fail=fail)
+        self.start_transaction = _StartTransactionSpy()
 
 
 class _CronSettings:
@@ -902,6 +979,25 @@ async def test_cron_checkin_records_in_progress_then_ok(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_cron_checkin_opens_a_scheduler_job_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentry = _CronSentry()
+    monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: sentry)
+
+    async with ops_alerts.cron_checkin(
+        "generate_monthly_invoices", schedule=SCHEDULE, settings=_CronSettings()
+    ):
+        transaction = sentry.start_transaction.transactions[0]
+        assert transaction.entered is True
+
+    assert sentry.start_transaction.calls == [
+        {"op": "scheduler.job", "name": "generate_monthly_invoices"}
+    ]
+    assert sentry.start_transaction.transactions[0].exited is True
+
+
+@pytest.mark.asyncio
 async def test_cron_checkin_records_error_and_re_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     sentry = _CronSentry()
     monkeypatch.setattr(ops_alerts, "_active_sentry", lambda: sentry)
@@ -941,7 +1037,12 @@ def test_sentry_cron_jobs_setting_parses_a_comma_separated_list(
 
     monkeypatch.delenv("V2_SENTRY_CRON_JOBS", raising=False)
     monkeypatch.delenv("SENTRY_CRON_JOBS", raising=False)
-    assert Settings().sentry_cron_jobs == ("generate_monthly_invoices",)
+    # Issue #774: the past-due reminder sweep checks in too — a silent stop
+    # means nobody chases an overdue family at all.
+    assert Settings().sentry_cron_jobs == (
+        "generate_monthly_invoices",
+        "send_past_due_reminders",
+    )
 
     monkeypatch.setenv("SENTRY_CRON_JOBS", "generate_monthly_invoices, send_ops_digest,")
     assert Settings().sentry_cron_jobs == ("generate_monthly_invoices", "send_ops_digest")

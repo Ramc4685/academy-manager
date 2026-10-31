@@ -1,4 +1,8 @@
-"""Admin session-type billing routes."""
+"""Admin session-type billing routes.
+
+The session types are the academy price list, so every write is owner-only
+(Settings overhaul Phase 1 PR 5); listing them stays admin.
+"""
 
 from __future__ import annotations
 
@@ -56,7 +60,7 @@ async def list_session_types(
 )
 async def create_session_type(
     body: CreateSessionTypeRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> SessionTypeView:
     row = await use_cases.create_session_type.execute(  # type: ignore[union-attr]
@@ -69,7 +73,7 @@ async def create_session_type(
 async def update_session_type(
     session_type_id: str,
     body: UpdateSessionTypeRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> SessionTypeView:
     row = await use_cases.update_session_type.execute(  # type: ignore[union-attr]
@@ -88,7 +92,7 @@ async def update_session_type(
 )
 async def delete_session_type(
     session_type_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> None:
     await use_cases.soft_delete_session_type.execute(session_type_id)  # type: ignore[union-attr]

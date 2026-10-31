@@ -10,6 +10,8 @@ import { apiFetch } from "./client";
 import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
+  coachSkillMasteredPath,
+  coachStudentSkillMasteredPath,
   coachSessionSkillsPath,
   coachSkillNotePath,
   coachSkillNotesPath,
@@ -28,6 +30,8 @@ export type EnrollmentStatus =
   | "reclaim_pending"
   | "cancelled";
 export type AttendanceStatus = "present" | "absent" | "late";
+/** People CRM L3a: what happened at an approved trial. */
+export type TrialOutcome = "came" | "no_show";
 
 export interface CoachRosterEntry {
   student_id: string;
@@ -43,6 +47,16 @@ export interface CoachRosterEntry {
   expected_absence?: boolean;
   /** "enrollment" for regular roster rows; "makeup"/"trial" for one-time entries. */
   entry_source?: "enrollment" | "makeup" | "trial";
+  /** People CRM L3a: on a trial row, the trial request to record Came / Didn't come against. */
+  trial_request_id?: string | null;
+  /** People CRM L3a: the outcome already recorded for that trial, or null. */
+  trial_outcome?: TrialOutcome | null;
+  /**
+   * Issue #774: the family's overdue balance for this student, in integer
+   * cents, or null when nothing is overdue. The ONLY money fact a coach
+   * sees — the per-row billing drawer was removed in the same change.
+   */
+  payment_due_cents?: number | null;
 }
 
 export interface CoachSession {
@@ -57,6 +71,12 @@ export interface CoachSession {
   /** Primary coach of the session. Name is resolved only for admin/owner supervisors (#632). */
   coach_id?: string | null;
   coach_name?: string | null;
+  /**
+   * Issue #777: cancelled classes stay on the coach's day instead of silently
+   * disappearing, so nobody drives to a called-off class.
+   */
+  status?: "scheduled" | "cancelled" | "completed";
+  cancellation_reason?: string | null;
 }
 
 export interface CoachTodayResponse {
@@ -288,6 +308,40 @@ export async function bulkUpdateCoachSessionSkillStatus(
   });
 }
 
+export type SkillMasteredOutcome = "mastered" | "already_mastered" | "not_on_level" | "not_placed";
+
+export interface SkillMasteredResult {
+  student_id: string;
+  outcome: SkillMasteredOutcome;
+  level_up_queued: boolean;
+}
+
+/** Tap = got it: passes the skill for each student; the last skill of a level queues the level-up. */
+export async function markCoachSkillMastered(
+  occurrenceId: string,
+  skillId: string,
+  payload: { program_id: string; student_ids: string[] },
+  date?: string,
+): Promise<{ results: SkillMasteredResult[] }> {
+  return apiFetch<{ results: SkillMasteredResult[] }>(
+    coachSkillMasteredPath(occurrenceId, skillId, date),
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** Undo a tap; also withdraws a level-up still waiting for the evening run. */
+export async function unmarkCoachSkillMastered(
+  occurrenceId: string,
+  studentId: string,
+  skillId: string,
+  options: { programId: string; date?: string },
+): Promise<{ status: string; withdrawn_rec_ids: string[] }> {
+  return apiFetch<{ status: string; withdrawn_rec_ids: string[] }>(
+    coachStudentSkillMasteredPath(occurrenceId, studentId, skillId, options),
+    { method: "DELETE" },
+  );
+}
+
 export async function getCoachDashboard(): Promise<CoachDashboardResponse> {
   return apiFetch<CoachDashboardResponse>("/coach/dashboard", {
     method: "GET",
@@ -329,6 +383,23 @@ export async function correctAttendance(
   return apiFetch<CorrectAttendanceResponse>(
     `/coach/occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,
     { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export interface CoachTrialOutcomeResponse {
+  request_id: string;
+  status: string;
+  outcome: TrialOutcome | null;
+}
+
+/** People CRM L3a: Came / Didn't come on a trial row of the coach's day. */
+export async function recordCoachTrialOutcome(
+  requestId: string,
+  outcome: TrialOutcome,
+): Promise<CoachTrialOutcomeResponse> {
+  return apiFetch<CoachTrialOutcomeResponse>(
+    `/coach/trials/${encodeURIComponent(requestId)}/outcome`,
+    { method: "POST", body: JSON.stringify({ outcome }) },
   );
 }
 
@@ -642,4 +713,18 @@ export async function previewCoachBillingMove(
     `/coach/billing-enrollments/${encodeURIComponent(enrollmentId)}/move/preview?${query.toString()}`,
     { method: "GET" },
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Academy mark (row 14): name/logo/brand colour only.
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface CoachAcademy {
+  name: string;
+  logo_url: string | null;
+  brand_color: string | null;
+}
+
+export function getCoachAcademy(): Promise<CoachAcademy> {
+  return apiFetch<CoachAcademy>("/coach/academy", { method: "GET" });
 }

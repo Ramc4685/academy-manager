@@ -55,6 +55,43 @@ export const Icon: Record<string, IconFactory> = {
       s,
       c,
     ),
+  // #839: Students, Users and Families all rendered `user`, so the three
+  // People destinations were indistinguishable in the sidebar. `user` stays
+  // the one person (a student); these two are the group and the household.
+  users: (s = 16, c = "currentColor") =>
+    stroke(
+      <>
+        <circle cx="9" cy="8" r="3.4" />
+        <path d="M2.5 20c0-3.3 3-5.6 6.5-5.6s6.5 2.3 6.5 5.6" />
+        <path d="M16.5 5.2a3.4 3.4 0 0 1 0 6.4M18 14.8c2.1.8 3.5 2.6 3.5 5.2" />
+      </>,
+      s,
+      c,
+    ),
+  family: (s = 16, c = "currentColor") =>
+    stroke(
+      <>
+        <path d="M3 10.5 12 3l9 7.5" />
+        <path d="M5 9.8V21h14V9.8" />
+        <circle cx="12" cy="13" r="2" />
+        <path d="M8.5 21c0-2 1.6-3.4 3.5-3.4s3.5 1.4 3.5 3.4" />
+      </>,
+      s,
+      c,
+    ),
+  // A lanyard badge: the staff who work here, as opposed to the families
+  // they serve (sidebar regroup spec §2.2 row 7).
+  badge: (s = 16, c = "currentColor") =>
+    stroke(
+      <>
+        <rect x="5" y="7" width="14" height="14" rx="2" />
+        <path d="M10 7V4.5A1.5 1.5 0 0 1 11.5 3h1A1.5 1.5 0 0 1 14 4.5V7" />
+        <circle cx="12" cy="12.5" r="2" />
+        <path d="M8.5 18c0-1.7 1.6-2.8 3.5-2.8s3.5 1.1 3.5 2.8" />
+      </>,
+      s,
+      c,
+    ),
   filter: (s = 16, c = "currentColor") =>
     stroke(<path d="M3 5h18M6 12h12M10 19h4" />, s, c),
   dl: (s = 16, c = "currentColor") =>

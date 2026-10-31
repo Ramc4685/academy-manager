@@ -69,6 +69,10 @@ class Payment(BaseModel):
     subscription_id: str | None = None
     stripe_payment_intent_id: str | None = None
     stripe_checkout_session_id: str | None = None
+    #: The connected Stripe account the charge lives on (a DIRECT charge on a
+    #: non-house academy's account). None = the platform account: the house
+    #: academy, and every legacy destination charge. Refunds go to this account.
+    stripe_account_id: str | None = None
     calculation_snapshot_id: str | None = None
     amount_cents: int = Field(ge=0)
     currency: str = Field(default="usd", min_length=3, max_length=3)
@@ -112,6 +116,12 @@ class CreditLedgerEntry(BaseModel):
     source_type: str | None = None
     source_id: str | None = None
     calculation_snapshot_id: str | None = None
+    #: The class and billing month (``YYYY-MM``) a credit was priced for, when
+    #: it was priced from that month's class fee (a class-cancellation credit).
+    #: A scheduled plan price change reads these so it is never cancelled, or
+    #: a class moved on or off it, after a month was credited at its price.
+    session_id: str | None = None
+    billing_period: str | None = None
     approved_by: str | None = None
     approved_at: datetime | None = None
     expires_at: datetime | None = None

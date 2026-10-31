@@ -91,6 +91,19 @@ class _Calculation:
         self.unpaid_occurrences = unpaid_occurrences or []
 
 
+class CollectingAudit:
+    """In-memory ``PayoutAuditLog`` — #787 made the trail mandatory."""
+
+    def __init__(self) -> None:
+        self.entries: list[object] = []
+
+    async def append(self, entry) -> None:
+        self.entries.append(entry)
+
+    async def list_for_period(self, period_id: str) -> list[object]:
+        return [e for e in self.entries if e.period_id == period_id]
+
+
 class FakeCalculator:
     def __init__(self, result: _Calculation) -> None:
         self._result = result
@@ -363,6 +376,7 @@ async def test_generate_persists_a_draft_period() -> None:
     use_case = GeneratePayoutPeriod(
         calculator=FakeCalculator(calc),
         repository=repo,
+        audit=CollectingAudit(),
         clock=lambda: _dt("2026-06-01T00:00:00"),
         id_factory=lambda: "pp-generated",
     )
@@ -398,6 +412,7 @@ async def test_generate_is_idempotent_on_natural_key() -> None:
     use_case = GeneratePayoutPeriod(
         calculator=calculator,
         repository=repo,
+        audit=CollectingAudit(),
         clock=lambda: _dt("2026-06-01T00:00:00"),
         id_factory=lambda: "pp-generated",
     )
@@ -436,6 +451,7 @@ async def test_generate_rejects_window_overlapping_existing_period() -> None:
     use_case = GeneratePayoutPeriod(
         calculator=calculator,
         repository=repo,
+        audit=CollectingAudit(),
         clock=lambda: _dt("2026-08-01T00:00:00"),
         id_factory=lambda: "pp-month",
     )
@@ -472,6 +488,7 @@ async def test_generate_allows_adjacent_non_overlapping_window() -> None:
     use_case = GeneratePayoutPeriod(
         calculator=FakeCalculator(calc),
         repository=repo,
+        audit=CollectingAudit(),
         clock=lambda: _dt("2026-09-01T00:00:00"),
         id_factory=lambda: next(ids),
     )
@@ -504,6 +521,7 @@ async def test_generate_rejects_inverted_window() -> None:
             )
         ),
         repository=repo,
+        audit=CollectingAudit(),
     )
     with pytest.raises(ValueError, match="period_end must be after"):
         await use_case.execute(
@@ -524,7 +542,9 @@ async def test_approve_use_case_persists_transition() -> None:
     repo = FakeRepo()
     period = _draft_period()
     await repo.save(period)
-    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    uc = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
     approved = await uc.execute(period_id="pp-1")
     assert approved.status == "approved"
     assert approved.approved_at == _dt("2026-06-02T12:00:00")
@@ -535,7 +555,9 @@ async def test_approve_use_case_persists_transition() -> None:
 async def test_approve_use_case_blocks_unresolved_payout_warnings() -> None:
     repo = FakeRepo()
     await repo.save(_draft_period(payout_warnings=[_warning()]))
-    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    uc = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
     with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
         await uc.execute(period_id="pp-1")
 
@@ -545,7 +567,9 @@ async def test_approve_use_case_is_idempotent() -> None:
     repo = FakeRepo()
     period = _draft_period()
     await repo.save(period)
-    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    uc = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
     await uc.execute(period_id="pp-1")
     await uc.execute(period_id="pp-1")
     # Only the first call writes.
@@ -562,7 +586,9 @@ async def test_approve_use_case_blocks_unresolved_unpaid_occurrences() -> None:
         }
     )
     await repo.save(period)
-    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    uc = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
 
     with pytest.raises(PayoutPeriodStateError, match="unresolved unpaid"):
         await uc.execute(period_id="pp-1")
@@ -574,7 +600,9 @@ async def test_approve_use_case_blocks_unresolved_unpaid_occurrences() -> None:
 async def test_mark_paid_use_case_requires_approval_first() -> None:
     repo = FakeRepo()
     await repo.save(_draft_period())
-    uc = MarkPayoutPaid(repository=repo, clock=lambda: _dt("2026-06-03T12:00:00"))
+    uc = MarkPayoutPaid(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-03T12:00:00")
+    )
     with pytest.raises(PayoutPeriodStateError):
         await uc.execute(period_id="pp-1")
 
@@ -583,8 +611,12 @@ async def test_mark_paid_use_case_requires_approval_first() -> None:
 async def test_mark_paid_use_case_full_flow() -> None:
     repo = FakeRepo()
     await repo.save(_draft_period())
-    approver = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
-    payer = MarkPayoutPaid(repository=repo, clock=lambda: _dt("2026-06-03T12:00:00"))
+    approver = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
+    payer = MarkPayoutPaid(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-03T12:00:00")
+    )
     await approver.execute(period_id="pp-1")
     paid = await payer.execute(
         MarkPayoutPaidCommand(
@@ -607,8 +639,12 @@ async def test_mark_paid_use_case_full_flow() -> None:
 async def test_mark_paid_use_case_blocks_unresolved_payout_warnings() -> None:
     repo = FakeRepo()
     await repo.save(_draft_period())
-    approver = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
-    payer = MarkPayoutPaid(repository=repo, clock=lambda: _dt("2026-06-03T12:00:00"))
+    approver = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
+    payer = MarkPayoutPaid(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-03T12:00:00")
+    )
     approved = await approver.execute(period_id="pp-1")
     await repo.replace(approved.model_copy(update={"payout_warnings": [_warning()]}))
 
@@ -628,8 +664,12 @@ async def test_mark_paid_use_case_blocks_unresolved_payout_warnings() -> None:
 async def test_mark_paid_use_case_is_idempotent_and_preserves_payment_metadata() -> None:
     repo = FakeRepo()
     await repo.save(_draft_period())
-    approver = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
-    payer = MarkPayoutPaid(repository=repo, clock=lambda: _dt("2026-06-03T12:00:00"))
+    approver = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
+    payer = MarkPayoutPaid(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-03T12:00:00")
+    )
     await approver.execute(period_id="pp-1")
     first = await payer.execute(
         MarkPayoutPaidCommand(
@@ -660,7 +700,7 @@ async def test_mark_paid_use_case_is_idempotent_and_preserves_payment_metadata()
 @pytest.mark.asyncio
 async def test_approve_use_case_raises_when_period_missing() -> None:
     repo = FakeRepo()
-    uc = ApprovePayoutPeriod(repository=repo)
+    uc = ApprovePayoutPeriod(repository=repo, audit=CollectingAudit())
     with pytest.raises(LookupError):
         await uc.execute(period_id="missing")
 
@@ -692,6 +732,7 @@ async def test_generated_period_persists_replaced_occurrence_rows() -> None:
     period = await GeneratePayoutPeriod(
         calculator=FakeCalculator(calc),
         repository=repo,
+        audit=CollectingAudit(),
         clock=lambda: _dt("2026-06-01T00:00:00"),
         id_factory=lambda: "pp-generated",
     ).execute(
@@ -714,7 +755,9 @@ async def test_replaced_occurrence_does_not_block_approval() -> None:
     """A substitution is a legitimate outcome, not a repair item."""
     repo = FakeRepo()
     await repo.save(_draft_period().model_copy(update={"unpaid_occurrences": [_replaced()]}))
-    uc = ApprovePayoutPeriod(repository=repo, clock=lambda: _dt("2026-06-02T12:00:00"))
+    uc = ApprovePayoutPeriod(
+        repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-02T12:00:00")
+    )
 
     approved = await uc.execute(period_id="pp-1")
 

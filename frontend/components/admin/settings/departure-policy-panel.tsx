@@ -15,6 +15,8 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { OwnerOnlyHint, useIsOwner } from "@/components/admin/owner-context";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
+import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
 
 // Structurally mirrors self-service-panel.tsx (PolicyForm -> normalize() ->
 // isDirty() -> mutation payload -> inputs), but is its OWN card with its OWN
@@ -45,7 +47,7 @@ export function DeparturePolicyPanel() {
   const isOwner = useIsOwner();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<PolicyForm>(() => normalize(null));
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const query = useQuery({
     queryKey: queryKeys.admin.departurePolicy(),
     queryFn: getDeparturePolicy,
@@ -57,6 +59,7 @@ export function DeparturePolicyPanel() {
   }, [query.data]);
 
   const dirty = isDirty(original, form);
+  useReportSettingsDirty("departure-policy", dirty);
   const mutation = useMutation({
     mutationFn: () =>
       updateDeparturePolicy({
@@ -66,9 +69,8 @@ export function DeparturePolicyPanel() {
         delete_enrollment_requires_owner: form.delete_enrollment_requires_owner,
       }),
     onSuccess: () => {
-      setSaved(true);
+      setSavedAt(savedAtNow());
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.departurePolicy() });
-      window.setTimeout(() => setSaved(false), 2000);
     },
   });
 
@@ -119,24 +121,11 @@ export function DeparturePolicyPanel() {
               </select>
             </label>
           </div>
-          <label className="mt-4 grid gap-1.5 text-sm font-medium text-rally-ink">
-            Default Drop outcome
-            <select
-              disabled={disabled}
-              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500 disabled:opacity-60"
-              value={form.drop_default_outcome}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  drop_default_outcome: e.target.value as DropDefaultOutcome,
-                }))
-              }
-            >
-              <option value="no_credit_mid_month">No credit, mid-month (default)</option>
-              <option value="credit_mid_month">Prorated credit, mid-month</option>
-              <option value="no_credit_end_of_period">No credit, end of period</option>
-            </select>
-          </label>
+          {/* Default drop outcome moved to Billing rules' "Leaving and
+              pausing" card (Settings overhaul Phase 3 PR 10), same pattern
+              #1002 used for the cancellation fee/notice. `form` still tracks
+              it (untouched) so a save here echoes the stored value back
+              instead of omitting it. */}
           <label className="mt-4 flex items-center gap-2 text-sm font-medium text-rally-ink">
             <input
               type="checkbox"
@@ -158,7 +147,7 @@ export function DeparturePolicyPanel() {
             >
               {mutation.isPending ? "Saving..." : "Save changes"}
             </Button>
-            {saved && <p className="text-sm font-medium text-emerald-700">Saved.</p>}
+            <SavedNote at={savedAt} />
             {mutation.isError && (
               <p className="text-sm font-medium text-red-700">{mutation.error.message}</p>
             )}

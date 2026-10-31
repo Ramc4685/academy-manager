@@ -111,7 +111,7 @@ export default function CoachProfilePage() {
                 Pay information lives here, separate from Coach Home.
               </p>
               <p className="mt-3 rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800">
-                Statement downloads are not available in this workspace yet.
+                Statement downloads are not available yet.
               </p>
             </section>
           )}
@@ -154,7 +154,7 @@ export default function CoachProfilePage() {
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="e.g. 309-531-0000"
+                placeholder="e.g. 555-555-0100"
                 className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900"
               />
             </div>

@@ -90,6 +90,44 @@ class CannotRemoveLastRole(DomainError):
     status_code = 409
 
 
+class CannotRemoveLastOwner(DomainError):
+    """Raised when a change would leave the academy with no active owner (#553).
+
+    Only an owner can grant or revoke owner, billing, front desk and admin, so
+    an academy without one could never manage roles or money again.
+    """
+
+    code = "Identity.CannotRemoveLastOwner"
+    status_code = 409
+
+
+class CoachHasFutureSessions(DomainError):
+    """Raised when a coaching role is removed while future work is assigned.
+
+    Dropping ``coach``/``assistant_coach`` only rewrote ``users.roles``; the
+    sessions and occurrences naming that user kept naming them, so the roster
+    rendered ``coach_name: None`` and nobody was accountable for the class
+    (#785). Removal now has to be preceded by a reassignment.
+    """
+
+    code = "Identity.CoachHasFutureSessions"
+    status_code = 409
+
+
+class ParentHasLiveChildren(DomainError):
+    """Raised when a parent account is disabled while a child is still enrolled.
+
+    The disable cascade (#785) suspends the membership and the Firebase
+    account, which is exactly the problem for a payer: the enrollments keep
+    running, invoices keep being raised against them, and the only person who
+    could see or pay them can no longer sign in. The academy has to withdraw
+    or transfer the live enrollments first.
+    """
+
+    code = "Identity.ParentHasLiveChildren"
+    status_code = 409
+
+
 class MagicLinkInvalid(DomainError):
     """The one-time magic-link token is unknown, already used, or tenant-mismatched.
 
@@ -156,3 +194,18 @@ class MagicLinkExpired(DomainError):
 
     code = "Identity.MagicLinkExpired"
     status_code = 410
+
+
+class InvalidPublicPageSettings(DomainError):
+    """A public-page settings update failed validation (unknown key, wrong
+    type, unknown price period, a non-http(s) privacy link)."""
+
+    code = "Identity.InvalidPublicPageSettings"
+    status_code = 422
+
+
+class InvalidManualPaymentMethods(DomainError):
+    """An offline payment methods update named an unknown method or none."""
+
+    code = "Identity.InvalidManualPaymentMethods"
+    status_code = 422

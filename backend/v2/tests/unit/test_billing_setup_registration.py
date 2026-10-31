@@ -325,3 +325,44 @@ async def test_direct_parent_lookup_is_not_limited_by_page_position():
     page = await use_case.execute(academy_id=ACADEMY_ID, parent_id="p10004", limit=1)
 
     assert [row.parent_id for row in page.rows] == ["p10004"]
+
+
+@pytest.mark.asyncio
+async def test_grouped_row_reads_students_card_balance_and_autopay_under_any_alias():
+    """Lane A verify #2: one row per canonical parent. Data filed under an
+    alias (here the firebase uid) belongs to the grouped row."""
+    use_case = _make_use_case(
+        parents=[
+            ParentRosterEntry(
+                parent_id="u-fake", parent_name="Fakeparent Grouped", aliases=("fb-fake",)
+            )
+        ],
+        students={
+            "u-fake": [BillingSetupStudent(student_id="s-1", full_name="Kiddo One")],
+            "fb-fake": [BillingSetupStudent(student_id="s-2", full_name="Kiddo Two")],
+        },
+        customers=[ParentBillingCustomerSnapshot(parent_id="fb-fake", card_last4="4242")],
+        autopay=[
+            EnrollmentAutopaySnapshot(
+                enrollment_id="enrollment-u-fake",
+                parent_id="u-fake",
+                autopay_enrollment_status="active",
+            ),
+            EnrollmentAutopaySnapshot(
+                enrollment_id="e-2", parent_id="fb-fake", autopay_enrollment_status="active"
+            ),
+        ],
+        balances={"u-fake": 3000, "fb-fake": 1500},
+    )
+    page = await use_case.execute(academy_id=ACADEMY_ID)
+    assert len(page.rows) == 1
+    row = page.rows[0]
+    assert row.parent_id == "u-fake"
+    assert [s.student_id for s in row.students] == ["s-1", "s-2"]
+    assert row.registration_state == "card_on_file"
+    assert row.card_last4 == "4242"
+    assert row.autopay_active_count == 2
+    assert row.outstanding_balance_cents == 4500
+    assert row.charge_invoice_id == "inv-u-fake"
+    assert row.charge_amount_cents == 3000
+    assert page.summary.families_total == 1

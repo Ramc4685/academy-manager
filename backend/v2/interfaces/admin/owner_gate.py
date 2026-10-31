@@ -12,6 +12,10 @@ split from:
 * :func:`ensure_can_assign_role` — the action-level rule inside the (still
   admin-reachable) role-management routes: granting or revoking ``admin`` or
   ``owner`` needs the caller to hold ``owner``.
+* :func:`ensure_can_manage_user` — the rank rule inside every route that
+  changes an existing user (X3, 2026-09-25 audit): profile, email, status,
+  roles and set-password invites. A caller may only change a user they
+  outrank; an owner may change anyone else, including another owner.
 * :func:`ensure_owner_for_withdrawal_credit` — the action-level rule inside
   ``POST /enrollments/{id}/withdraw`` (issue #670): the ``credit`` outcome
   issues an account credit, which was owner-only when it had its own route
@@ -29,6 +33,27 @@ split from:
   Every other void stays owner-only, which is why this route is conditional
   and therefore not in ``OWNER_ONLY_ROUTE_PATHS``.
 
+* :func:`ensure_owner_for_price_change` and
+  :func:`ensure_owner_for_timezone_change` — the field-level rules inside the
+  mixed forms (Settings overhaul Phase 1 PR 5, "money is owner-only"):
+  ``POST /sessions`` and ``PATCH /sessions/{id}`` (the class monthly fee) and
+  ``PATCH /academy`` (timezone and currency). Called only when the request
+  actually changes one of those values, so an admin resubmitting the whole
+  form with them untouched still saves. The routes' other fields stay admin
+  work, which is why they are not in ``OWNER_ONLY_ROUTE_PATHS``. The late
+  cancellation fee and notice are no longer writable from
+  ``PUT /self-service/policy`` at all; ``PUT /billing/rules`` is their only
+  write path.
+
+* :func:`ensure_owner_for_payment_instructions` — the action-level rule
+  inside ``PUT /self-service/policy`` (Lane C parent self-service switches,
+  2026-09-29 owner decision): the offline-payment instructions shown to
+  parents are owner-only content, same tier as prices and fees.
+  Only refused when the request would actually change the stored text, so a
+  plain admin saving the other self-service switches with the instructions
+  untouched is not blocked. Not in ``OWNER_ONLY_ROUTE_PATHS`` for the same
+  reason as the mixed-form rules above.
+
 Decisions (spec ``2026-09-04-role-model-and-screens-design.md``): admins keep
 recording manual payments and seeing balances, expenses, the payments list
 and dues; refunds, credits, pricing, payouts/payroll, financial reports,
@@ -39,23 +64,23 @@ already inside an authorized admin route and the message is the point.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Final
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
 if TYPE_CHECKING:
     from backend.v2.shared.auth.claims import AuthClaims
 
 _ADMIN = "/api/v2/admin"
 
-#: Roles only an owner may grant or revoke.
-GOVERNANCE_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner"})
+#: Roles only an owner may grant or revoke. The staff tiers of #553
+#: (``billing``, ``front_desk``) are role management too: granting ``billing``
+#: hands out money visibility and payment recording, so only the owner may.
+GOVERNANCE_ROLES: Final[frozenset[str]] = frozenset({"admin", "owner", "billing", "front_desk"})
 
 OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
-        # billing_routes.py — money governance
-        ("PUT", f"{_ADMIN}/billing/settings/platform-fallback"),
-        ("PUT", f"{_ADMIN}/billing/settings/invoice-schedule"),
         # billing_rules_routes.py — the merged Settings panel write
         # (GET /billing/rules stays admin).
         ("PUT", f"{_ADMIN}/billing/rules"),
@@ -78,6 +103,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # unsent draft is owner-gated per action by
         # `ensure_owner_for_invoice_void` — issue #726.)
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/refund"),
+        # Card charges (#928): an off-session charge on the family's saved card
+        # moves money, owner-only per the 2026-09-22 staff tiers (roadmap
+        # section 6 item 2). The use case refuses a non-owner as well.
+        ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/charge-autopay"),
+        # billing_setup_routes.py — the Family "Fix something" charge confirm
+        ("POST", f"{_ADMIN}/billing/setup/{{parent_id}}/charge"),
         # billing_health_routes.py — Stripe plumbing is governance, the same
         # tier as Reports and Payouts (spec 2026-09-07 §2). Admins who could
         # open Billing Health before this change now get a 404.
@@ -123,18 +154,37 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("GET", f"{_ADMIN}/reports/{{report_name}}.csv"),
         # audit_routes.py
         ("GET", f"{_ADMIN}/audit-logs"),
-        # academy_routes.py — fees and the Stripe gateway (reads stay admin;
-        # the Stripe callback carries no auth dependency at all)
-        ("PATCH", f"{_ADMIN}/academy/fees"),
+        # academy_routes.py — the Stripe gateway (reads stay admin; the
+        # Stripe callback carries no auth dependency at all)
+        # payment_methods_routes.py — which offline methods the payment
+        # dialogs offer (Settings -> Billing rules -> Offline payments)
+        ("PUT", f"{_ADMIN}/academy/payment-methods"),
         ("POST", f"{_ADMIN}/academy/gateway/stripe/connect-link"),
         ("DELETE", f"{_ADMIN}/academy/gateway/stripe/connect"),
         # session_type_routes.py — per-enrollment price override
         ("POST", f"{_ADMIN}/billing-enrollments/{{enrollment_id}}/override"),
+        # session_type_routes.py — the price list (Settings -> Session types).
+        # GET stays admin; every write sets what families are charged
+        # (Settings overhaul Phase 1 PR 5).
+        ("POST", f"{_ADMIN}/session-types"),
+        ("PATCH", f"{_ADMIN}/session-types/{{session_type_id}}"),
+        ("DELETE", f"{_ADMIN}/session-types/{{session_type_id}}"),
         # sessions_routes.py — ad-hoc enrollment fee
         ("POST", f"{_ADMIN}/enrollments/{{enrollment_id}}/fee"),
         # departure_policy_routes.py — governs delete_enrollment_requires_owner
         # and the drop/reclaim defaults (issue #697 design contract §1.1(2)).
         ("PUT", f"{_ADMIN}/enrollment/departure-policy"),
+        # pricing_routes.py — the Pricing page (Settings overhaul PR 11b).
+        # Every route, reads included; guarded by require_owner_or_403 so a
+        # plain admin gets a plain 403 the page can explain.
+        ("GET", f"{_ADMIN}/pricing"),
+        ("PUT", f"{_ADMIN}/pricing/classes/{{session_id}}/plan"),
+        ("POST", f"{_ADMIN}/pricing/link-matching-classes"),
+        # Change a plan price (Settings overhaul PR 26). The admin-readable
+        # GET /pricing/scheduled-class-fees is deliberately NOT here.
+        ("GET", f"{_ADMIN}/pricing/price-changes/preview"),
+        ("POST", f"{_ADMIN}/pricing/price-changes"),
+        ("DELETE", f"{_ADMIN}/pricing/price-changes/{{change_id}}"),
         # departures_routes.py — the leaving report is a financial report,
         # same tier as every other route under /reports/* (issue #698).
         ("GET", f"{_ADMIN}/reports/leaving"),
@@ -143,10 +193,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
 
 
 def ensure_can_assign_role(claims: AuthClaims, role: str) -> None:
-    """Refuse to grant or revoke ``admin``/``owner`` unless the caller is an owner.
+    """Refuse to grant or revoke a governance role unless the caller is an owner.
 
-    Called from every role-changing admin route (`create_user`, `add_user_role`,
-    `remove_user_role`, `update_user_role`). Any other role (coach, parent) is
+    Governance roles are ``admin``, ``owner`` and the staff tiers ``billing``
+    and ``front_desk`` (#553). Called from every role-changing admin route
+    (`create_user`, `add_user_role`, `remove_user_role`, `update_user_role`).
+    Any other role (coach, parent) is
     ordinary operations work and stays open to admins. 403, not 404: the caller
     already passed the admin guard, so nothing is leaked and the message is
     what the UI needs to show.
@@ -155,7 +207,55 @@ def ensure_can_assign_role(claims: AuthClaims, role: str) -> None:
     if role in GOVERNANCE_ROLES and "owner" not in claims.roles:
         raise HTTPException(
             status_code=403,
-            detail="Only the academy owner can grant or revoke admin and owner roles",
+            detail="Only the academy owner can grant or revoke admin, owner and staff roles",
+        )
+
+
+def staff_rank(roles: Iterable[str]) -> int:
+    """Rank for user management: owner 2, admin 1, everyone else 0.
+
+    Roles are additive and the highest one wins, so an admin who is also a
+    parent ranks as an admin. ``billing`` and ``front_desk`` rank with
+    coaches and parents: they are granted by the owner (``GOVERNANCE_ROLES``)
+    but hold no user-management power of their own.
+    """
+
+    held = set(roles)
+    if "owner" in held:
+        return 2
+    if "admin" in held:
+        return 1
+    return 0
+
+
+def ensure_can_manage_user(
+    claims: AuthClaims, target_user_id: str, target_roles: Iterable[str]
+) -> None:
+    """Refuse to change a user the caller does not outrank (X3).
+
+    Before this, a plain admin could ``PATCH /users/{id}`` an owner's email,
+    which moved the owner's Firebase login and mailed a set-password link to
+    the new address: an account takeover. The rule, applied to every route
+    that changes an existing user's profile, email, status, roles or sends
+    them a set-password link:
+
+    * an owner may change anyone, including another owner;
+    * anyone else may only change a user of strictly lower rank, so a plain
+      admin cannot touch an owner **or a peer admin** (owner policy: admins
+      do not disable or re-home each other; the owner does);
+    * a caller acting on their own account is not ranked here: the self
+      rules (no self-disable, no self role change) live in the routes.
+
+    403, like :func:`ensure_can_assign_role`: the caller already passed the
+    admin guard and can see the user in the directory, so nothing leaks.
+    """
+
+    if target_user_id == claims.user_id or "owner" in claims.roles:
+        return
+    if staff_rank(target_roles) >= staff_rank(claims.roles):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the academy owner can change an owner's or admin's account",
         )
 
 
@@ -206,3 +306,90 @@ def ensure_owner_for_invoice_void(claims: AuthClaims, *, is_unsent_draft: bool) 
 
     if not is_unsent_draft and "owner" not in claims.roles:
         raise HTTPException(status_code=404, detail="Not found")
+
+
+PRICING_FORBIDDEN: Final[str] = "Only the academy owner can see and change pricing."
+
+
+def require_owner_or_403() -> Callable[..., Awaitable[AuthClaims]]:
+    """Owner gate for the Pricing page routes (Settings overhaul PR 11b).
+
+    Like :func:`backend.v2.shared.http.require_owner` (the name keeps it in
+    the ``OWNER_ONLY_ROUTE_PATHS`` walk), except that an academy admin
+    without ``owner`` gets a **403** with a plain sentence rather than a 404:
+    the Pricing page is advertised in the owner's sidebar, the admin already
+    knows it exists, and the message is what the page shows. Anyone who is
+    not an admin still gets the persona guard's 404.
+    """
+
+    from backend.v2.shared.auth.claims import get_auth_claims
+
+    async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
+        if "owner" in claims.roles:
+            return claims
+        if "admin" in claims.roles:
+            raise HTTPException(status_code=403, detail=PRICING_FORBIDDEN)
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return _dep
+
+
+#: 403 messages for the field-level money rules. The Settings and class forms
+#: show them verbatim, so they are plain sentences.
+PRICE_CHANGE_FORBIDDEN: Final[str] = "Only the academy owner can change prices and fees."
+TIMEZONE_CHANGE_FORBIDDEN: Final[str] = "Only the academy owner can change the timezone."
+CURRENCY_CHANGE_FORBIDDEN: Final[str] = "Only the academy owner can change the currency."
+
+
+def ensure_owner_for_price_change(claims: AuthClaims) -> None:
+    """Only an owner may change what families are charged (Phase 1 PR 5).
+
+    Called only when a request actually changes a price field from its
+    stored value (or, on create, sets one), so a full-form resubmit with the
+    fee untouched is not refused. 403, not 404, like
+    :func:`ensure_can_assign_role`: the caller is inside an admin route whose
+    form shows the field, and the message is what the form needs to show.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(status_code=403, detail=PRICE_CHANGE_FORBIDDEN)
+
+
+def ensure_owner_for_timezone_change(claims: AuthClaims) -> None:
+    """Only an owner may change the academy timezone (Phase 1 PR 5).
+
+    The timezone decides the local midnight each billing month, due date and
+    late fee is counted from, so it is a money setting. Same 403 contract as
+    :func:`ensure_owner_for_price_change`.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(status_code=403, detail=TIMEZONE_CHANGE_FORBIDDEN)
+
+
+def ensure_owner_for_currency_change(claims: AuthClaims) -> None:
+    """Only an owner may change the academy currency (Phase 1 PR 5).
+
+    Every price is stored in minor units of this currency, so changing it
+    changes what every family is charged. Same 403 contract as
+    :func:`ensure_owner_for_price_change`.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(status_code=403, detail=CURRENCY_CHANGE_FORBIDDEN)
+
+
+def ensure_owner_for_payment_instructions(claims: AuthClaims) -> None:
+    """Only an owner may change the offline-payment instructions shown to parents.
+
+    Called only when the request actually changes the stored text, so an
+    admin saving the other self-service switches with the instructions
+    untouched is not refused. Same 403 contract as
+    :func:`ensure_owner_for_price_change`.
+    """
+
+    if "owner" not in claims.roles:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the academy owner can change payment instructions.",
+        )

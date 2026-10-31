@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
-import unicodedata
 from datetime import date, datetime
 from typing import Literal, Protocol
 
@@ -13,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.ports import EnrollmentAutopayLookup
 from backend.v2.contexts.enrollment.domain.lifecycle import PersonLifecycle
+from backend.v2.shared.names import full_name_key as full_name_key  # re-export
 
 DuesStatus = Literal["current", "due", "overdue"]
 WaiverStatus = Literal["signed", "missing", "unknown"]
@@ -132,6 +131,12 @@ class AdminStudentRecentAttendance(BaseModel):
     date: str | None = None
     status: str
     marked_at: datetime | None = None
+    #: The dated occurrence the mark belongs to: the key an admin correction
+    #: (``PATCH /admin/session-occurrences/{id}/attendance/{student_id}``) takes.
+    occurrence_id: str | None = None
+    #: Set once the mark has been corrected (#517): what it replaced and when.
+    previous_status: str | None = None
+    corrected_at: datetime | None = None
 
 
 class AdminStudentDetail(AdminStudentSummary):
@@ -204,7 +209,13 @@ class AdminStudentParentChangeResult(BaseModel):
     parent: AdminStudentParentSummary
     previous_parent_id: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    #: Rows still keyed to the previous parent AFTER the cascade ran — the
+    #: settled history that deliberately stays with whoever paid or signed it.
     impact_counts: dict[str, int] = Field(default_factory=dict)
+    #: What the change actually moved to the new parent (#785): open invoices,
+    #: spendable credit, live waitlist requests and the per-enrollment autopay
+    #: rows the dunning worker bills from.
+    rehomed_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class AdminStudentPage(BaseModel):
@@ -217,13 +228,6 @@ class AdminStudentPage(BaseModel):
     # tiles used to count the 25 rows the client happened to have, so
     # "Paused" reported 0 for an academy with paused students.
     lifecycle_counts: dict[str, int] = Field(default_factory=dict)
-
-
-def full_name_key(value: str) -> str:
-    """Return the stable sort/search key shared by admin student cursors."""
-    normalized = unicodedata.normalize("NFKD", value)
-    ascii_folded = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    return re.sub(r"\s+", " ", ascii_folded.lower()).strip()
 
 
 def encode_student_cursor(full_name_key_value: str, student_id: str) -> str:

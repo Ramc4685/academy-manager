@@ -1,4 +1,5 @@
 import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
+import type { ParentEmailPreferences } from "@/lib/parent/notification-preferences";
 
 import { apiFetch } from "./client";
 import type { SkillStatus } from "./curriculum";
@@ -35,6 +36,8 @@ export interface OnboardingApplication {
   child_profile: ChildProfile;
   selected_session_id: string | null;
   waiver_accepted: boolean;
+  /** True when a waiver is assigned to a program: the stepper asks for the class first. */
+  waiver_class_first?: boolean;
   expires_at: string;
 }
 
@@ -125,6 +128,12 @@ export interface ParentEnrollment {
   pending_cancellation_at?: string | null;
   /** Issue #740: ISO calendar date a hold is expected to end; null unless status is "held". */
   hold_return_on?: string | null;
+  /** Issue #775: a terminal row kept for history — never a seat and never money. */
+  departed?: boolean;
+  /** Instant the enrollment ended; null when the row was never dated. */
+  left_on?: string | null;
+  /** Free-text reason recorded when the child left, when there is one. */
+  departure_reason?: string | null;
   payment_mode: string | null;
   /** @deprecated Not populated by the v2 BFF; autopay state lives in autopay_enrollment_status. Do not read. */
   subscription_status: string | null;
@@ -172,7 +181,10 @@ export interface ParentAttendanceRecord {
   student_name: string;
   session_id: string;
   session_title: string;
+  /** "voided" (#554) means the academy annulled the mark after the fact. */
   status: string;
+  /** What a voided mark used to say, so the change is visible, not silent. */
+  previous_status?: string | null;
   marked_at: string;
   coach_name: string | null;
 }
@@ -217,6 +229,29 @@ export interface ParentScheduleEntry {
   end_at: string;
   status: string;
   coach_name: string | null;
+  /**
+   * #1038: "regular" for a standing enrollment, "makeup" / "trial" for a
+   * one-time approved attendance. Optional for responses that predate it.
+   */
+  source?: ParentScheduleSource;
+}
+
+export type ParentScheduleSource = "regular" | "makeup" | "trial";
+
+/**
+ * #1038: the class an approved make-up / trial puts the child in, resolved
+ * by the backend (never just a raw occurrence id). `start_at`/`end_at` are
+ * UTC instants; render them in `timezone` (the academy's IANA zone).
+ */
+export interface AssignedClassView {
+  occurrence_id: string;
+  session_id: string;
+  session_title: string;
+  location: string | null;
+  start_at: string;
+  end_at: string;
+  timezone: string | null;
+  status: string;
 }
 
 export interface ParentScheduleResponse {
@@ -241,14 +276,26 @@ export interface ParentPauseRequest {
   decided_by: string | null;
 }
 
+export interface RegistrationWaiverItem {
+  waiver_template_id: string;
+  title: string | null;
+  version: string;
+  body: string;
+}
+
 export interface RegistrationWaiver {
   configured: boolean;
   version: string | null;
   body: string | null;
+  /** Every waiver to sign for the chosen class; the flat fields above are the first. */
+  waivers?: RegistrationWaiverItem[];
+  /** True when a waiver is assigned to a program: ask for the class first. */
+  class_first?: boolean;
 }
 
-export function getRegistrationWaiver(): Promise<RegistrationWaiver> {
-  return apiFetch("/parent/onboarding/waiver", { method: "GET" });
+export function getRegistrationWaiver(sessionId?: string | null): Promise<RegistrationWaiver> {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  return apiFetch(`/parent/onboarding/waiver${query}`, { method: "GET" });
 }
 
 export function startOnboarding(): Promise<OnboardingApplication> {
@@ -442,6 +489,26 @@ export function getChildSchedule(
   );
 }
 
+export interface ParentSelfServiceSwitches {
+  can_report_absence: boolean;
+  can_request_makeup: boolean;
+  can_request_pause: boolean;
+  can_request_cancel: boolean;
+  can_claim_waitlist_offer: boolean;
+  // Reflects the Public page "Accept free trial requests" toggle, not a
+  // duplicate switch — see backend/v2/interfaces/parent/views.py.
+  can_request_trial: boolean;
+}
+
+export const DEFAULT_PARENT_SELF_SERVICE_SWITCHES: ParentSelfServiceSwitches = {
+  can_report_absence: true,
+  can_request_makeup: true,
+  can_request_pause: true,
+  can_request_cancel: true,
+  can_claim_waitlist_offer: true,
+  can_request_trial: true,
+};
+
 export interface ParentAcademy {
   display_name: string;
   timezone: string | null;
@@ -450,6 +517,10 @@ export interface ParentAcademy {
   hours_text: string | null;
   address: string | null;
   logo_url: string | null;
+  brand_color: string | null;
+  self_service?: ParentSelfServiceSwitches;
+  // Owner-edited plain text for manual payers; null/empty = nothing shown.
+  payment_instructions?: string | null;
 }
 
 export function getParentAcademy(): Promise<ParentAcademy> {
@@ -486,6 +557,14 @@ export interface ParentWaiverStudentView {
   waiver_version: string | null;
 }
 
+export interface ParentWaiverItemView {
+  waiver_template_id: string;
+  title: string | null;
+  version: string | null;
+  body: string | null;
+  students: ParentWaiverStudentView[];
+}
+
 export interface ParentWaiverCurrentView {
   required: boolean;
   waiver_template_id: string | null;
@@ -493,6 +572,8 @@ export interface ParentWaiverCurrentView {
   version: string | null;
   body: string | null;
   students: ParentWaiverStudentView[];
+  /** Every waiver this parent's children must sign; the flat fields above are the first. */
+  waivers?: ParentWaiverItemView[];
 }
 
 export function getParentCurrentWaiver(): Promise<ParentWaiverCurrentView> {
@@ -546,6 +627,8 @@ export interface MakeupRequestView {
   decided_at: string | null;
   approved_target_occurrence_id: string | null;
   created_at: string;
+  /** #1038: set only while the approval stands. */
+  assigned_class?: AssignedClassView | null;
 }
 
 export function listParentMakeups(): Promise<{ makeups: MakeupRequestView[] }> {
@@ -603,10 +686,53 @@ export interface TrialRequestView {
   decided_by: string | null;
   decided_at: string | null;
   created_at: string;
+  /** #1038: set only while the approval stands (also for prospective children). */
+  assigned_class?: AssignedClassView | null;
 }
 
 export function listParentTrialRequests(): Promise<{ trials: TrialRequestView[] }> {
   return apiFetch("/parent/trial-requests", { method: "GET" });
+}
+
+// --- Waitlist offers (#828, X2) ---
+//
+// A freed seat is held for the family for a few days and they are emailed;
+// the email lands on /parent/requests, which lists these and confirms or
+// declines. `offer_expires_at` is set while `status === "offered"`.
+
+export type ParentWaitlistStatus = "waiting" | "offered" | "expired";
+
+export interface ParentWaitlistEntry {
+  waitlist_id: string;
+  session_id: string;
+  session_title: string;
+  schedule_label: string | null;
+  location: string | null;
+  student_id: string;
+  student_name: string;
+  status: ParentWaitlistStatus;
+  joined_at: string;
+  offer_expires_at: string | null;
+}
+
+export function listParentWaitlist(): Promise<{ entries: ParentWaitlistEntry[] }> {
+  return apiFetch("/parent/waitlist", { method: "GET" });
+}
+
+export function confirmWaitlistOffer(
+  waitlistId: string,
+): Promise<{ waitlist_id: string; enrollment_id: string }> {
+  return apiFetch(`/parent/waitlist/${encodeURIComponent(waitlistId)}/confirm`, {
+    method: "POST",
+  });
+}
+
+export function declineWaitlistOffer(
+  waitlistId: string,
+): Promise<{ waitlist_id: string; status: "removed" }> {
+  return apiFetch(`/parent/waitlist/${encodeURIComponent(waitlistId)}/decline`, {
+    method: "POST",
+  });
 }
 
 export function submitTrialRequest(payload: {
@@ -711,6 +837,28 @@ export function updateParentProfile(payload: {
 
 export function confirmParentEmail(): Promise<ParentSelfProfile> {
   return apiFetch("/parent/profile/confirm-email", { method: "POST" });
+}
+
+/**
+ * Email opt-outs for the signed-in parent (#778). The PUT body forbids
+ * unknown keys server-side, so send exactly the three flags back — never the
+ * whole response object.
+ */
+export function getParentEmailPreferences(): Promise<ParentEmailPreferences> {
+  return apiFetch("/parent/email-preferences", { method: "GET" });
+}
+
+export function updateParentEmailPreferences(
+  payload: ParentEmailPreferences,
+): Promise<ParentEmailPreferences> {
+  return apiFetch("/parent/email-preferences", {
+    method: "PUT",
+    body: JSON.stringify({
+      campaigns_opted_out: payload.campaigns_opted_out,
+      digests_opted_out: payload.digests_opted_out,
+      notifications_opted_out: payload.notifications_opted_out ?? false,
+    }),
+  });
 }
 
 export function updateParentChild(

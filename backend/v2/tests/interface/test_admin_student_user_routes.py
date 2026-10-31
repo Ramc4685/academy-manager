@@ -317,8 +317,10 @@ def test_role_change_uses_explicit_audit_context(admin_client):
     stub = RoleChangeStub()
     admin_client.use_cases.change_user_role = stub  # type: ignore[attr-defined]
 
+    # A known target: the route reads the target's held roles first and
+    # refuses an unknown user (X3), rather than treating it as unranked.
     response = admin_client.patch(
-        "/api/v2/admin/users/user-1/role",
+        "/api/v2/admin/users/coach-1/role",
         json={"role": "coach", "reason": "Coach onboarding"},
     )
 

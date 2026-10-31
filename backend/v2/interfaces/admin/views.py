@@ -7,29 +7,52 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+from backend.v2.contexts.enrollment.application.use_cases.departure_reasons import (
+    DepartureReasonCode,
+)
 from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
     PersonLifecycle,
 )
+from backend.v2.contexts.identity.application.update_academy_use_case import validate_https_url
+from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
+from backend.v2.shared.comms.colour import _HEX as _HEX_COLOR_RE
+from backend.v2.shared.comms.sender_identity import (
+    validate_reply_to,
+    validate_sender_name,
+    validate_support_email,
+)
 from backend.v2.shared.security.external_url import InvalidExternalUrl, validate_external_url
 
 # --- Directory ---
 
 
 class AdminUserView(BaseModel):
+    """One row of the admin user directory.
+
+    ``role``/``roles`` are typed as the full domain ``Role`` (which includes
+    ``student``) rather than the narrower set an admin may *assign*. A
+    ``users`` doc can legitimately hold ``student`` next to ``parent`` or a
+    staff role (a former student who later registered as a parent goes through
+    ``ensure_parent_user`` and ends up with ``roles=["parent", "student"]``),
+    and one such row must not 500 the whole list. The assignable set stays on
+    the request models and query params below.
+    """
+
     user_id: str
     email: EmailStr
     display_name: str
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Role
     status: str
+    roles: list[Role] = []
 
 
 class AdminUserDetailView(AdminUserView):
     phone: str | None = None
-    roles: list[Literal["admin", "coach", "assistant_coach", "parent", "owner"]] = []
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None
@@ -58,7 +81,7 @@ class AdminUserList(BaseModel):
 
 
 class ModifyUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner", "billing", "front_desk"]
     reason: str = Field(default="Admin role change", min_length=1, max_length=500)
 
 
@@ -150,6 +173,9 @@ class AdminStudentRecentAttendanceView(BaseModel):
     date: str | None = None
     status: str
     marked_at: datetime | None = None
+    occurrence_id: str | None = None
+    previous_status: str | None = None
+    corrected_at: datetime | None = None
 
 
 class AdminStudentDetailView(AdminStudentView):
@@ -215,6 +241,7 @@ class AdminStudentParentChangeView(BaseModel):
     previous_parent_id: str | None = None
     warnings: list[str] = []
     impact_counts: dict[str, int] = {}
+    rehomed_counts: dict[str, int] = {}
 
 
 class UpdateAdminUserRequest(BaseModel):
@@ -226,12 +253,12 @@ class UpdateAdminUserRequest(BaseModel):
 
 
 class UpdateAdminUserRoleRequest(BaseModel):
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner", "billing", "front_desk"]
     reason: str = Field(default="admin role change", min_length=1, max_length=500)
 
 
 class CreateAdminUserRequest(BaseModel):
-    role: Literal["admin", "coach", "assistant_coach", "parent", "owner"]
+    role: Literal["admin", "coach", "assistant_coach", "parent", "owner", "billing", "front_desk"]
     display_name: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=1, max_length=254)
     phone: str | None = Field(default=None, max_length=40)
@@ -285,6 +312,9 @@ class SessionTypeView(BaseModel):
     billing_period: Literal["monthly", "per_session"]
     overage_rate_cents: int | None = None
     is_active: bool
+    # Pricing page (Settings overhaul PR 11b). "monthly" = 4 classes per
+    # weekly slot, 5th date free (today's rule, and every stored plan).
+    plan_type: Literal["monthly", "per_session"] = "monthly"
     created_at: datetime
     updated_at: datetime
 
@@ -299,6 +329,8 @@ class CreateSessionTypeRequest(BaseModel):
     price_cents: int = Field(ge=0)
     billing_period: Literal["monthly", "per_session"] = "monthly"
     overage_rate_cents: int | None = Field(default=None, ge=0)
+    # Only "monthly" for now: "per_session" plans are a later phase.
+    plan_type: Literal["monthly"] = "monthly"
 
 
 class UpdateSessionTypeRequest(BaseModel):
@@ -308,6 +340,8 @@ class UpdateSessionTypeRequest(BaseModel):
     billing_period: Literal["monthly", "per_session"] | None = None
     overage_rate_cents: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
+    # Only "monthly" for now: "per_session" plans are a later phase.
+    plan_type: Literal["monthly"] | None = None
 
 
 class StudentBillingEnrollmentView(BaseModel):
@@ -442,6 +476,9 @@ class UpdateOccurrenceCoachAttendanceRequest(BaseModel):
     role: Literal["lead", "assistant"] = "lead"
     rate_override_minor: int | None = Field(default=None, ge=0)
     note: str = ""
+    override_reason: str | None = None
+    """Force the edit through an approved or paid payout period (#821). Honoured
+    only for owners; the reason is written to the coach-attendance audit log."""
 
 
 class CorrectStudentAttendanceRequest(BaseModel):
@@ -449,15 +486,40 @@ class CorrectStudentAttendanceRequest(BaseModel):
     reason: str | None = None
 
 
+class VoidStudentAttendanceRequest(BaseModel):
+    """Void a recorded mark (#554). A reason is mandatory — the void hides the
+    class from every report, so the explanation is the only trace a human
+    reading the audit trail later has."""
+
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("a reason is required to void an attendance mark")
+        return cleaned
+
+
 class AdminStudentAttendanceView(BaseModel):
     attendance_id: str
     occurrence_id: str
     session_id: str
     student_id: str
-    status: Literal["present", "absent", "late"]
-    previous_status: Literal["present", "absent", "late"] | None = None
+    # "voided" (#554) is a read-only outcome of the void route; the correct
+    # route still only accepts the three real marks.
+    status: Literal["present", "absent", "late", "voided"]
+    previous_status: Literal["present", "absent", "late", "voided"] | None = None
     corrected_by: str | None = None
     corrected_at: datetime | None = None
+    correction_reason: str | None = None
+    marked_by: str | None = None
+    marked_at: datetime | None = None
+
+
+class AdminStudentAttendanceList(BaseModel):
+    attendance: list[AdminStudentAttendanceView]
 
 
 def _validated_group_link(value: str | None) -> str | None:
@@ -524,6 +586,13 @@ class EditSessionRequest(CommunicationPackFields):
     # None = unchanged; [] = clear every assistant.
     assistant_coach_ids: list[str] | None = None
     reason: str | None = None
+
+
+class WelcomeEmailPreviewView(BaseModel):
+    """``GET /admin/sessions/{id}/welcome-email-preview``: the real email, unsent."""
+
+    subject: str
+    html: str
 
 
 class SetSessionAssistantsRequest(BaseModel):
@@ -635,6 +704,16 @@ class WithdrawEnrollmentRequest(BaseModel):
     effective_date: date
     outcome: Literal["credit", "refund", "adjustment"] = "credit"
     reason: str = Field(min_length=1, max_length=500)
+    #: Issue #775: the structured "why". Optional so an older client (or a
+    #: script) can still drop a student with a note alone.
+    reason_code: DepartureReasonCode | None = None
+    #: Issue #820: the academy's ``no_credit_end_of_period`` departure policy.
+    #: When true the drop is SCHEDULED for the end of the academy-local month
+    #: instead of taking effect now, and ``effective_date`` is ignored — the
+    #: period end is computed server-side so it can never disagree with the
+    #: month billing charges for. Default false keeps every existing client
+    #: (and the other two policy values) on the immediate path.
+    defer_to_period_end: bool = False
 
 
 class RemoveEnrollmentRequest(BaseModel):
@@ -650,11 +729,20 @@ class AdminWaitlistEntry(BaseModel):
     session_id: str
     student_id: str
     parent_id: str
+    # #860: the queue rendered `parent_id` verbatim. The read joins the
+    # parent's display name; null when the user doc no longer resolves.
+    parent_name: str | None = None
     joined_at: datetime
     full_name: str = "(unknown)"
     position: int = 0
     added_at: datetime | None = None
     status: str
+    # X2: set while ``status == "offered"`` — the seat is held for this
+    # family until then, then the hourly sweep offers it onward.
+    offer_expires_at: datetime | None = None
+    # X2: False = the class was full of holds; a hold is reclaimed only if
+    # this family confirms (no seat is held for them meanwhile).
+    offer_holds_seat: bool = True
 
 
 class AdminWaitlistList(BaseModel):
@@ -670,11 +758,14 @@ class AdminGlobalWaitlistSessionView(BaseModel):
     capacity: int
     enrolled_count: int = 0
     waitlist_count: int = 0
+    # X2: seats held for a family that has not answered yet.
+    offered_count: int = 0
     entries: list[AdminWaitlistEntry]
 
 
 class AdminGlobalWaitlistList(BaseModel):
     total_waitlisted: int
+    total_offered: int = 0
     sessions: list[AdminGlobalWaitlistSessionView]
 
 
@@ -822,6 +913,7 @@ class GenerateMonthlyPaymentsResponse(BaseModel):
     skipped_no_charge: int = 0
     skipped_autopay: int = 0
     skipped_paused: int = 0
+    skipped_reviewed: int = 0
     repaired_orphan_keys: int = 0
     repaired_partial_invoices: int = 0
     failed_repair: int = 0
@@ -1238,6 +1330,10 @@ class BulkPayrollResultView(BaseModel):
 
 class ReopenPayoutPeriodRequest(BaseModel):
     reason: str = Field(min_length=1)
+    acknowledge_paid_clawback: bool = False
+    """Required to reopen a period already marked paid (#787): the money is
+    out, so reopening it means clawing the payment back or netting it off a
+    later period. Ignored for an approved (unpaid) period."""
 
 
 class OverridePayoutLineRequest(BaseModel):
@@ -1386,6 +1482,11 @@ class AdminTuitionDiscountSummaryResponse(BaseModel):
 class AdminAuditLogView(BaseModel):
     audit_id: str
     actor_id: str | None = None
+    # Resolved at read time by joining `users` + this academy's memberships
+    # (#468). Optional so a row whose actor no longer exists still renders.
+    actor_type: str | None = None
+    actor_role: str | None = None
+    actor_name: str | None = None
     action: str
     entity_type: str | None = None
     entity_id: str | None = None
@@ -1424,10 +1525,23 @@ class AdminMessageView(BaseModel):
     scope_label: str | None = None
     recipient_count: int | None = None
     delivery_status: str | None = None
+    #: The other party in a DM, from the reading admin's point of view (#864).
+    #: ``recipient_id`` is the admin on everything a family sends in, so it is
+    #: the wrong key to group a conversation by; this is the right one. ``None``
+    #: on an announcement, which has no counterparty.
+    counterparty_id: str | None = None
+    #: ``False`` only for a DM someone else sent this admin that they have not
+    #: opened yet. Broadcasts and the admin's own sends are never unread, so
+    #: the default is the safe one for any view that does not compute it.
+    is_read: bool = True
 
 
 class AdminMessageList(BaseModel):
     messages: list[AdminMessageView]
+
+
+class AdminMarkMessageReadResponse(BaseModel):
+    status: Literal["ok"] = "ok"
 
 
 AdminWaiverStatus = Literal["signed", "pending", "expiring", "outdated"]
@@ -1473,16 +1587,49 @@ class AdminWaiverStudentView(BaseModel):
     share_status: str = "unavailable"
 
 
+class AdminWaiverLineageView(BaseModel):
+    """One live waiver: its own counts and the students it applies to."""
+
+    lineage_key: str
+    waiver: AdminWaiverDocumentView
+    # Who must sign it (an unassigned live waiver applies to nobody).
+    required: bool = False
+    scope: Literal["all", "programs"] = "all"
+    program_ids: list[str] = []
+    summary: AdminWaiverSummaryView
+    waivers: list[AdminWaiverStudentView] = []
+
+
 class AdminWaiverList(BaseModel):
+    # ``summary``, ``current_waiver`` and ``waivers`` are the primary waiver's
+    # (the first of ``lineages``), so a single-waiver academy reads as before.
     summary: AdminWaiverSummaryView
     current_waiver: AdminWaiverDocumentView | None = None
     waivers: list[AdminWaiverStudentView] = []
+    # One entry per live waiver; only students it applies to are counted.
+    lineages: list[AdminWaiverLineageView] = []
 
 
 class AdminWaiverTemplateCreateRequest(BaseModel):
     title: str
     body: str | None = None
     content: str | None = None
+    # Draft a new version of this waiver instead of a new waiver.
+    based_on_waiver_template_id: str | None = None
+
+
+class AdminWaiverAssignRequest(BaseModel):
+    required: bool
+    scope: Literal["all", "programs"] = "all"
+    program_ids: list[str] = []
+
+
+class AdminWaiverProgramView(BaseModel):
+    program_id: str
+    name: str
+    # An archived program a waiver is still assigned to: listed so the admin
+    # can take it off, never offered as a new choice.
+    archived: bool = False
 
 
 class AdminWaiverTemplateManagementView(BaseModel):
@@ -1497,10 +1644,34 @@ class AdminWaiverTemplateManagementView(BaseModel):
     assigned_to_registration: bool = False
     assigned_at: datetime | None = None
     updated_at: datetime
+    # One key per waiver, shared by all its versions.
+    lineage_key: str | None = None
+    # Who must sign: not required, all families, or the listed programs.
+    required: bool = False
+    scope: Literal["all", "programs"] = "all"
+    program_ids: list[str] = []
 
 
 class AdminWaiverTemplateManagementList(BaseModel):
     templates: list[AdminWaiverTemplateManagementView] = []
+    # The academy's programs, for the Assign control and "Required for" labels.
+    programs: list[AdminWaiverProgramView] = []
+
+
+class AdminStudentWaiverRowView(BaseModel):
+    waiver_template_id: str
+    lineage_key: str
+    title: str
+    version: str | None = None
+    status: Literal["signed", "older_version", "unsigned"]
+    signed_version: str | None = None
+    signed_at: datetime | None = None
+    signature_id: str | None = None
+
+
+class AdminStudentWaiverStatusView(BaseModel):
+    student_id: str
+    waivers: list[AdminStudentWaiverRowView] = []
 
 
 class AdminWaiverTemplateDetailView(BaseModel):
@@ -1518,6 +1689,12 @@ class AdminWaiverTemplateDetailView(BaseModel):
     gap_note: str
 
 
+class AdminUnsignedWaiverView(BaseModel):
+    waiver_template_id: str
+    title: str
+    version: str | None = None
+
+
 class AdminRegistrationRowView(BaseModel):
     application_id: str
     status: str
@@ -1525,9 +1702,15 @@ class AdminRegistrationRowView(BaseModel):
     parent_name: str | None = None
     student_name: str | None = None
     selected_session_id: str | None = None
+    # Issue #891: the class the family asked for, on the list row itself.
+    session_title: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
+    # Required waivers not yet signed: a warning to staff, never a block.
+    unsigned_waivers: list[AdminUnsignedWaiverView] = []
     zero_quote_period: str | None = None
+    # Issue #776: when the waitlist/decline email actually reached the family.
+    family_notified_at: datetime | None = None
     updated_at: datetime
 
 
@@ -1544,7 +1727,6 @@ class AdminRegistrationDetailView(AdminRegistrationRowView):
     student_id: str | None = None
     enrollment_id: str | None = None
     waitlist_id: str | None = None
-    session_title: str | None = None
     session_capacity: int | None = None
     waiver_template_id: str | None = None
     waiver_title: str | None = None
@@ -1586,7 +1768,14 @@ class AdminWaiverSignatureDetailView(BaseModel):
 
 AdminAttentionSeverity = Literal["high", "medium", "low"]
 AdminAttentionKind = Literal[
+    # Issue #776: an application waiting for a decision. Listed first because
+    # the family has usually already paid by the time it lands here.
+    "pending_registrations",
     "overdue_dues",
+    # Issue #774: the two autopay signals that previously only ever
+    # reached the parent — a decline mid-ladder, and a ladder that gave up.
+    "autopay_failure",
+    "dunning_exhaustion",
     "pause_requests",
     "scheduled_resume_blocked",
     "scheduled_action_failed",
@@ -1696,6 +1885,51 @@ class AdminAcademyView(BaseModel):
     logo_url: str | None = None
     brand_color: str | None = None
     currency: str = "USD"
+    email_sender_name: str | None = None
+    email_reply_to: str | None = None
+    # Read-only (#1014): the reply-to a send uses, from the same resolver.
+    effective_reply_to: str | None = None
+    effective_reply_to_source: Literal["reply_to", "support_email"] | None = None
+    # Settings overhaul Phase 4 PR 13. ``support_email`` is the parents' contact
+    # (default reply-to, public footer); ``terms_url``/``refund_policy_url`` are
+    # https links; ``privacy_notice_url`` is a view of the SAME value stored at
+    # ``public_page.privacy_notice_url`` (never a second copy).
+    support_email: str | None = None
+    terms_url: str | None = None
+    refund_policy_url: str | None = None
+    privacy_notice_url: str | None = None
+    # Read-only here: set per academy by the platform (derived from the slug
+    # at creation, locked after the first numbered invoice). Settings overhaul
+    # Phase 1 PR 2. Deliberately absent from UpdateAdminAcademyRequest.
+    invoice_prefix: str | None = None
+    # Read-only: the calling code a bare national phone number gets in a
+    # WhatsApp link, derived from the academy's country (unset -> "1").
+    phone_country_code: str = "1"
+    # Read-only here: platform-set at bootstrap. No academy edits its own
+    # sport today. Absent from UpdateAdminAcademyRequest by design.
+    sport: str = "badminton"
+    # Class defaults (Settings overhaul Phase 3 PR 9). Admin-editable, filled
+    # at read time: an academy doc with none of these stored reads as 10 /
+    # 45 / empty, so BLNO sees exactly today's create-class defaults.
+    default_class_size: int = 10
+    default_class_length_minutes: int = 45
+    default_venue_address: str | None = None
+    default_parking_note: str | None = None
+    default_what_to_bring: str | None = None
+    default_arrival_minutes_before: int | None = None
+    default_coach_contact_policy: str | None = None
+
+
+class AdminAcademyMediaView(BaseModel):
+    """Result of ``POST /admin/academy/media``: the stored image's public URL.
+
+    A logo is saved by the caller through ``PATCH /admin/academy``; a hero,
+    gallery or coach photo through ``PATCH /admin/academy/public-page``
+    (single writers). ``url`` is always set; ``logo_url`` only for a logo."""
+
+    logo_url: str | None = None
+    url: str
+    purpose: str = "logo"
 
 
 class UpdateAdminAcademyRequest(BaseModel):
@@ -1707,7 +1941,96 @@ class UpdateAdminAcademyRequest(BaseModel):
     address: str | None = None
     logo_url: str | None = None
     brand_color: str | None = None
+    # Currency is locked to USD (owner decision, Settings overhaul Phase 1
+    # PR 3): omitted or "USD" is accepted and a no-op, anything else is a 422.
+    # This never rewrites stored data for academies with a different value.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    #: Display name on outbound email (``"<name>" <SENDER_EMAIL>``). The From
+    #: address itself is platform-owned and cannot be set here (L9a).
+    email_sender_name: str | None = None
+    email_reply_to: str | None = None
+    # Settings overhaul Phase 4 PR 13. Blank clears each one.
+    support_email: str | None = None
+    terms_url: str | None = None
+    refund_policy_url: str | None = None
+    privacy_notice_url: str | None = None
+    # Class defaults (Settings overhaul Phase 3 PR 9). Admin-editable (not
+    # owner-gated: these change what a class starts from, not what it
+    # charges or where money lands).
+    default_class_size: int | None = Field(default=None, ge=1, le=200)
+    default_class_length_minutes: int | None = Field(default=None, ge=1, le=600)
+    default_venue_address: str | None = Field(default=None, max_length=500)
+    default_parking_note: str | None = Field(default=None, max_length=500)
+    default_what_to_bring: str | None = Field(default=None, max_length=500)
+    default_arrival_minutes_before: int | None = Field(default=None, ge=0, le=180)
+    default_coach_contact_policy: str | None = Field(default=None, max_length=500)
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value: str | None) -> str | None:
+        if value is not None and value.upper() != "USD":
+            raise ValueError("Currency is locked to USD.")
+        return value
+
+    @field_validator("logo_url")
+    @classmethod
+    def _check_logo_url(cls, value: str | None) -> str | None:
+        # Blank clears the logo. Anything else must be an absolute https URL:
+        # emails only render https images, and a plain-http image would be
+        # blocked as mixed content on the parent app and public page.
+        if value is None or not value.strip():
+            return value
+        text = value.strip()
+        parsed = urlsplit(text)
+        if parsed.scheme != "https" or not parsed.netloc or len(text) > 2048:
+            raise ValueError("Logo link must start with https://")
+        return text
+
+    @field_validator("brand_color")
+    @classmethod
+    def _check_brand_color(cls, value: str | None) -> str | None:
+        # Blank clears the override; Class defaults' "Brand" card validates
+        # as hex before this ever reaches Settings overhaul (Phase 3 PR 9).
+        if value is None or not value.strip():
+            return value
+        if not _HEX_COLOR_RE.match(value.strip()):
+            raise ValueError("Brand colour must be a hex value like #2563EB.")
+        return value.strip()
+
+    @field_validator("email_sender_name")
+    @classmethod
+    def _check_sender_name(cls, value: str | None) -> str | None:
+        # Blank clears the override; the validator raises ValueError (422).
+        return validate_sender_name(value)
+
+    @field_validator("email_reply_to")
+    @classmethod
+    def _check_reply_to(cls, value: str | None) -> str | None:
+        return validate_reply_to(value)
+
+    @field_validator("support_email")
+    @classmethod
+    def _check_support_email(cls, value: str | None) -> str | None:
+        return validate_support_email(value)
+
+    @field_validator("terms_url")
+    @classmethod
+    def _check_terms_url(cls, value: str | None) -> str | None:
+        return validate_https_url(value, field_label="terms of service link")
+
+    @field_validator("refund_policy_url")
+    @classmethod
+    def _check_refund_url(cls, value: str | None) -> str | None:
+        return validate_https_url(value, field_label="refund policy link")
+
+    @field_validator("privacy_notice_url")
+    @classmethod
+    def _check_privacy_url(cls, value: str | None) -> str | None:
+        # Same rule as the Public page setting it replaces (http or https).
+        try:
+            return validate_external_url(value, field_label="privacy notice link")
+        except InvalidExternalUrl as exc:
+            raise ValueError(exc.message) from exc
 
 
 class AdminFeesView(BaseModel):
@@ -1721,23 +2044,21 @@ class UpdateAdminFeesRequest(BaseModel):
 
 
 class AdminNotificationsView(BaseModel):
-    dues_reminders: bool = False
-    attendance_alerts: bool = False
     daily_digest_to_admin: bool = False
     coach_digest_enabled: bool = False
     coach_digest_hour: int = 6
     parent_digest_enabled: bool = False
     parent_digest_hour: int = 6
+    win_back_enabled: bool = True
 
 
 class UpdateAdminNotificationsRequest(BaseModel):
-    dues_reminders: bool | None = None
-    attendance_alerts: bool | None = None
     daily_digest_to_admin: bool | None = None
     coach_digest_enabled: bool | None = None
     coach_digest_hour: int | None = Field(default=None, ge=0, le=23)
     parent_digest_enabled: bool | None = None
     parent_digest_hour: int | None = Field(default=None, ge=0, le=23)
+    win_back_enabled: bool | None = None
 
 
 class CoachDigestTestSendRequest(BaseModel):
@@ -2023,6 +2344,7 @@ class CoachUtilizationPointView(BaseModel):
     hours: float
     payout_minor: int
     utilization_rate: float
+    compliance_within_24h_rate: float | None = None
 
 
 class CoachUtilizationResponse(BaseModel):
@@ -2049,6 +2371,7 @@ class EnrollmentEventDto(BaseModel):
 class EnrollmentEventsResponse(BaseModel):
     enrollment_id: str
     events: list[EnrollmentEventDto]
+    next_cursor: str | None = None
 
 
 # --- Email Campaigns ---

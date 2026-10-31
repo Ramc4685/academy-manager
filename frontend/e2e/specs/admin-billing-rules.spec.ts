@@ -64,16 +64,43 @@ async function stubShell(page: Page, me: typeof OWNER_ME) {
 }
 
 /** Returns a getter for the last PUT body seen on /admin/billing/rules. */
-function stubBillingRules(page: Page, opts: { error?: { status: number; body: unknown } } = {}) {
+function stubBillingRules(
+  page: Page,
+  opts: { error?: { status: number; body: unknown }; initial?: Record<string, number> } = {},
+) {
   const seen: { put: unknown } = { put: null };
+  let ach = { enabled: false, percent: 0 };
   void page.route("**/api/v2/admin/billing/rules", (route) => {
     const request = route.request();
-    if (request.method() === "GET") return fulfillJson(route, billingRulesFixture());
+    if (request.method() === "GET") {
+      return fulfillJson(route, billingRulesFixture(opts.initial, ach));
+    }
     if (request.method() === "PUT") {
       seen.put = request.postDataJSON();
       if (opts.error) return fulfillJson(route, opts.error.body, opts.error.status);
-      const body = request.postDataJSON() as Record<string, number>;
-      return fulfillJson(route, billingRulesFixture(body));
+      const { ach_discount, ...numbers } = request.postDataJSON() as Record<string, unknown> & {
+        ach_discount?: { enabled?: boolean; percent?: number };
+      };
+      if (ach_discount) ach = { ...ach, ...ach_discount };
+      return fulfillJson(route, billingRulesFixture(numbers as Record<string, number>, ach));
+    }
+    return route.fallback();
+  });
+  return seen;
+}
+
+const ALL_SIX_METHODS = ["cash", "check", "zelle", "venmo", "bank_transfer", "other"];
+
+/** Row 22: Offline payments card. Returns the last PUT body seen. */
+function stubPaymentMethods(page: Page, initial: string[] = ALL_SIX_METHODS) {
+  const seen: { put: unknown } = { put: null };
+  void page.route("**/api/v2/admin/academy/payment-methods", (route) => {
+    const request = route.request();
+    if (request.method() === "GET") return fulfillJson(route, { manual_methods: initial });
+    if (request.method() === "PUT") {
+      seen.put = request.postDataJSON();
+      const body = request.postDataJSON() as { manual_methods: string[] };
+      return fulfillJson(route, { manual_methods: body.manual_methods });
     }
     return route.fallback();
   });
@@ -109,9 +136,9 @@ test.describe("admin settings → billing rules", () => {
       "09:00 academy time on the due date",
     );
 
-    // The honest caveat, above the two late-fee inputs.
+    // What the hourly late-fee pass does, above the two late-fee inputs.
     const note = page.getByTestId("billing-rules-note-late_payments");
-    await expect(note).toContainText("Not applied automatically yet");
+    await expect(note).toContainText("Applied automatically");
     const noteBox = await note.boundingBox();
     const inputBox = await page.getByTestId("billing-rules-input-late_fee_cents").boundingBox();
     expect(noteBox && inputBox && noteBox.y < inputBox.y).toBe(true);
@@ -131,6 +158,51 @@ test.describe("admin settings → billing rules", () => {
 
     await expect.poll(() => seen.put).toEqual({ late_fee_cents: 1750 });
     await expect(page.getByTestId("billing-rules-saved")).toBeVisible();
+  });
+
+  test("the Bank (ACH) discount saves on/off and percent as one audited change", async ({ page }) => {
+    await stubShell(page, OWNER_ME);
+    const seen = stubBillingRules(page);
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    const ach = page.getByTestId("billing-rules-ach");
+    await expect(ach).toContainText("Bank (ACH) discount");
+    await expect(ach).toContainText("Autopay only");
+    await expect(ach).toContainText("taken after any tuition discount");
+    await expect(page.getByTestId("billing-rules-input-ach_discount-enabled")).not.toBeChecked();
+
+    // Over the platform ceiling: inline error, Save stays off.
+    await page.getByTestId("billing-rules-input-ach_discount-enabled").check();
+    await page.getByTestId("billing-rules-input-ach_discount-percent").fill("5");
+    await expect(page.getByTestId("billing-rules-error-ach_discount")).toBeVisible();
+    await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
+
+    await page.getByTestId("billing-rules-input-ach_discount-percent").fill("2.5");
+    await expect(page.getByTestId("billing-rules-save")).toContainText("Save Bank (ACH) discount");
+    await page.getByTestId("billing-rules-save").click();
+    await expect
+      .poll(() => seen.put)
+      .toEqual({ ach_discount: { enabled: true, percent: 2.5 } });
+    await expect(page.getByTestId("billing-rules-saved")).toBeVisible();
+    await expect(page.getByTestId("billing-rules-input-ach_discount-enabled")).toBeChecked();
+  });
+
+  test("turning a late fee on needs an acknowledgement of what it charges", async ({ page }) => {
+    // Money audit X4: the next hourly run starts charging parents.
+    await stubShell(page, OWNER_ME);
+    const seen = stubBillingRules(page, { initial: { late_fee_cents: 0 } });
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    await expect(page.getByTestId("billing-rules-late-fee-warning")).toHaveCount(0);
+    await page.getByTestId("billing-rules-input-late_fee_cents").fill("15.00");
+
+    const warning = page.getByTestId("billing-rules-late-fee-warning");
+    await expect(warning).toContainText("already overdue are not charged");
+    await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
+
+    await page.getByTestId("billing-rules-late-fee-ack").check();
+    await page.getByTestId("billing-rules-save").click();
+    await expect.poll(() => seen.put).toEqual({ late_fee_cents: 1500 });
   });
 
   test("a bound violation renders inline against the offending field", async ({ page }) => {
@@ -162,6 +234,45 @@ test.describe("admin settings → billing rules", () => {
     await expect(page.getByTestId("billing-rules-error-late_fee_cents")).toContainText(
       "must be between 0 and 100000",
     );
+  });
+
+  test("offline payments: all six ticked by default, and the owner saves a narrower list", async ({
+    page,
+  }) => {
+    await stubShell(page, OWNER_ME);
+    stubBillingRules(page);
+    const seen = stubPaymentMethods(page);
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    const card = page.getByTestId("offline-payments-card");
+    await expect(card).toBeVisible();
+    for (const method of ALL_SIX_METHODS) {
+      await expect(page.getByTestId(`offline-payments-method-${method}`)).toBeChecked();
+    }
+    await expect(page.getByTestId("offline-payments-save")).toBeDisabled();
+
+    await page.getByTestId("offline-payments-method-venmo").uncheck();
+    await page.getByTestId("offline-payments-save").click();
+
+    await expect
+      .poll(() => seen.put)
+      .toEqual({ manual_methods: ["cash", "check", "zelle", "bank_transfer", "other"] });
+    await expect(page.getByTestId("offline-payments-saved")).toBeVisible();
+  });
+
+  test("offline payments: at least one method must stay ticked", async ({ page }) => {
+    await stubShell(page, OWNER_ME);
+    stubBillingRules(page);
+    const seen = stubPaymentMethods(page, ["cash"]);
+    await page.goto("/admin/settings?panel=billing-rules");
+
+    await expect(page.getByTestId("offline-payments-method-cash")).toBeChecked();
+    await expect(page.getByTestId("offline-payments-method-zelle")).not.toBeChecked();
+    await page.getByTestId("offline-payments-method-cash").uncheck();
+
+    await expect(page.getByTestId("offline-payments-empty")).toBeVisible();
+    await expect(page.getByTestId("offline-payments-save")).toBeDisabled();
+    expect(seen.put).toBeNull();
   });
 
   test("?panel=fees still lands on Billing rules", async ({ page }) => {

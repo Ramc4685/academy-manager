@@ -83,6 +83,82 @@ test.describe("SaaS v2 — parent registration", () => {
   });
 });
 
+test.describe("SaaS v2 — several waivers to sign", () => {
+  test("parent waivers page lists every waiver for the children and one button signs them", async ({
+    page,
+  }) => {
+    const guard = installTenantGuard(page);
+    const errors = collectConsoleErrors(page);
+    await stubMe(page, {
+      user_id: "user-parent-w6",
+      email: "parent@example.com",
+      academy_id: ACADEMY_A,
+      roles: ["parent"],
+    });
+    await stubParentProfile(page, { user_id: "user-parent-w6" });
+    await stubParentMessages(page);
+    await stubParentAcademy(page);
+
+    const students = (photo: "pending" | "signed") => ({
+      liability: [
+        { student_id: "st-1", student_name: "Asha Rao", status: photo, signed_at: null, waiver_version: null },
+        { student_id: "st-2", student_name: "Dev Rao", status: photo, signed_at: null, waiver_version: null },
+      ],
+      photo: [
+        { student_id: "st-1", student_name: "Asha Rao", status: photo, signed_at: null, waiver_version: null },
+      ],
+    });
+    const payload = (state: "pending" | "signed") => ({
+      required: true,
+      waiver_template_id: "wt-liability",
+      title: "Liability waiver",
+      version: "3",
+      body: "Liability text",
+      students: students(state).liability,
+      waivers: [
+        {
+          waiver_template_id: "wt-liability",
+          title: "Liability waiver",
+          version: "3",
+          body: "Liability text",
+          students: students(state).liability,
+        },
+        {
+          waiver_template_id: "wt-photo",
+          title: "Photo consent",
+          version: "1",
+          body: "Photo consent text",
+          students: students(state).photo,
+        },
+      ],
+    });
+    let accepted = false;
+    await page.route("**/api/v2/parent/waivers/current", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, payload(accepted ? "signed" : "pending"));
+    });
+    await page.route("**/api/v2/parent/waivers/accept", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      accepted = true;
+      return fulfillJson(route, payload("signed"));
+    });
+
+    await page.goto("/parent/waivers");
+
+    await expect(page.getByRole("heading", { name: "Required waivers" })).toBeVisible();
+    await expect(page.getByTestId("parent-waiver-wt-liability")).toContainText("Liability text");
+    await expect(page.getByTestId("parent-waiver-wt-liability")).toContainText("Dev Rao");
+    // The photo waiver applies only to the child in that program.
+    await expect(page.getByTestId("parent-waiver-wt-photo")).toContainText("Photo consent text");
+    await expect(page.getByTestId("parent-waiver-wt-photo")).not.toContainText("Dev Rao");
+    await page.getByRole("button", { name: "Accept waivers for Asha Rao and Dev Rao" }).click();
+    await expect(page.getByText("Current waivers are signed for all active children.")).toBeVisible();
+
+    guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+});
+
 test.describe("SaaS v2 — waiver template versioning", () => {
   test("admin waiver row surfaces the correct template version for a signed parent waiver", async ({
     page,
@@ -100,6 +176,11 @@ test.describe("SaaS v2 — waiver template versioning", () => {
     await stubMemberships(page, [
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
     ]);
+    // Issue #842: AdminLayout now feeds the Inbox nav badge from this
+    // endpoint on every admin page, so every shell stub must cover it.
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
 
     const TEMPLATE_VERSION = "v4.2";
 
@@ -146,6 +227,36 @@ test.describe("SaaS v2 — waiver template versioning", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { templates: [] });
     });
+    // Settings overhaul Phase 3 PR 10: waiver management now embeds in
+    // Settings -> Family policies, alongside the self-service policy and
+    // Holds cards — both need a stub so the tab doesn't hang loading them.
+    await page.route("**/api/v2/admin/self-service/policy", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        absence_notice_min_hours: 2,
+        makeup_expiry_days: 30,
+        makeup_requires_notice: true,
+        cancellation_minimum_notice_days: 7,
+        cancellation_fee_cents: 0,
+        cancellation_effective_timing: "end_of_period",
+        can_report_absence: true,
+        can_request_makeup: true,
+        can_request_pause: true,
+        can_request_cancel: true,
+        can_claim_waitlist_offer: true,
+        payment_instructions: "",
+        welcome_email_absence_policy_default: "",
+      });
+    });
+    await page.route("**/api/v2/admin/enrollment/departure-policy", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        max_hold_days: 60,
+        hold_reclaim_policy: "longest_held",
+        drop_default_outcome: "no_credit_mid_month",
+        delete_enrollment_requires_owner: true,
+      });
+    });
     await page.route("**/api/v2/admin/waivers/wt-current", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
@@ -164,7 +275,7 @@ test.describe("SaaS v2 — waiver template versioning", () => {
       });
     });
 
-    await page.goto("/admin/waivers");
+    await page.goto("/admin/settings?panel=family-policies");
     const row = page.getByTestId("admin-waivers-row-waiver-w5-signed");
     await expect(row).toContainText("Asha Iyer");
     await expect(row).toContainText("Meera Iyer");

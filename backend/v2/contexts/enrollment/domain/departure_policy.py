@@ -19,11 +19,34 @@ Pure domain model. No infra imports.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
 from backend.v2.shared.http.errors import DomainError
+
+#: Issue #775: why a family left, as a closed vocabulary.
+#:
+#: Drop and Stop-all-classes collected a free-text note and nothing else, so
+#: "why do families leave" could only be answered by reading every note. The
+#: list is drafted from the reasons admins actually typed into those dialogs;
+#: it rides ALONGSIDE the note (which stays required), never instead of it,
+#: because a code cannot carry "Dad took a job in Austin". ``other`` is the
+#: deliberate escape hatch: a vocabulary with no way out gets mis-coded.
+DepartureReasonCode = Literal[
+    "moved_away",
+    "schedule_conflict",
+    "cost",
+    "lost_interest",
+    "injury_or_health",
+    "switched_academy",
+    "coaching_fit",
+    "season_break",
+    "non_payment",
+    "other",
+]
+
+DEPARTURE_REASON_CODES: tuple[str, ...] = get_args(DepartureReasonCode)
 
 
 class EnrollmentDeparturePolicy(BaseModel):

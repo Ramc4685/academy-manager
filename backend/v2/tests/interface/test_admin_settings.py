@@ -5,12 +5,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from backend.v2.contexts.billing.domain.errors import ConnectOnboardingFailed
+import pytest
+
+from backend.v2.contexts.billing.domain.errors import (
+    ConnectOnboardingFailed,
+    UnsupportedConnectAccountRegion,
+)
 from backend.v2.contexts.identity.application.change_user_role_use_case import (
     ChangeUserRoleCommand,
-)
-from backend.v2.contexts.identity.application.get_academy_fees_use_case import (
-    GetAcademyFeesOutput,
 )
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
     GetAcademyGatewayOutput,
@@ -48,8 +50,115 @@ def test_get_academy_contract(admin_client):
         "logo_url": "https://cdn.example.com/logo.png",
         "brand_color": "#2563eb",
         "currency": "USD",
+        "email_sender_name": None,
+        "email_reply_to": None,
+        "effective_reply_to": None,
+        "effective_reply_to_source": None,
+        "support_email": None,
+        "terms_url": None,
+        "refund_policy_url": None,
+        "privacy_notice_url": None,
+        "invoice_prefix": None,
+        "phone_country_code": "1",
+        "sport": "badminton",
+        "default_class_size": 10,
+        "default_class_length_minutes": 45,
+        "default_venue_address": None,
+        "default_parking_note": None,
+        "default_what_to_bring": None,
+        "default_coach_contact_policy": None,
+        "default_arrival_minutes_before": None,
     }
     admin_client.use_cases.get_academy_use_case.execute.assert_awaited_once_with("acad")
+
+
+def test_get_academy_shows_stored_sport(admin_client):
+    admin_client.use_cases.get_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Ace Tennis", timezone=None, sport="tennis"
+    )
+
+    r = admin_client.get("/api/v2/admin/academy")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sport"] == "tennis"
+
+
+def test_get_academy_shows_the_platform_set_invoice_prefix(admin_client, monkeypatch):
+    # Read-only for the academy: set by the platform (Settings overhaul P1 PR 2).
+    admin_client.use_cases.get_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None
+    )
+    prefix_reader = AsyncMock()
+    prefix_reader.execute.return_value = "BLNO"
+    monkeypatch.setattr(admin_client.use_cases, "get_invoice_prefix", prefix_reader)
+
+    r = admin_client.get("/api/v2/admin/academy")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["invoice_prefix"] == "BLNO"
+    prefix_reader.execute.assert_awaited_once_with()
+
+
+def test_patch_academy_cannot_set_the_invoice_prefix(admin_client):
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"invoice_prefix": "EVIL"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with("acad", {})
+
+
+def test_patch_academy_cannot_set_sport(admin_client):
+    # Read-only: set by the platform at bootstrap (row 13).
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None, sport="badminton"
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"sport": "tennis"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with("acad", {})
+    assert r.json()["sport"] == "badminton"
+
+
+def test_patch_academy_accepts_usd_currency(admin_client):
+    # Settings overhaul Phase 1 PR 3: currency is locked to USD. Sending the
+    # locked value explicitly is a no-op, not an error.
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None, currency="USD"
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"currency": "USD"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"currency": "USD"}
+    )
+
+
+@pytest.mark.parametrize("currency", ["CAD", "eur", "gbp", "usd "])
+def test_patch_academy_rejects_non_usd_currency(admin_client, currency):
+    r = admin_client.patch("/api/v2/admin/academy", json={"currency": currency})
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_patch_academy_omitted_currency_is_a_no_op(admin_client):
+    # BLNO (and every other academy) must behave exactly as today when the
+    # currency field is simply not sent.
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad", display_name="Court 7", timezone=None
+    )
+
+    r = admin_client.patch("/api/v2/admin/academy", json={"display_name": "Court 7"})
+
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"display_name": "Court 7"}
+    )
 
 
 def test_patch_academy_contract(admin_client):
@@ -72,54 +181,151 @@ def test_patch_academy_contract(admin_client):
     )
 
 
-def test_get_and_patch_fees_contract(admin_client):
-    admin_client.use_cases.get_academy_fees_use_case.execute.return_value = GetAcademyFeesOutput(
-        late_fee_cents=1500,
-        grace_days=5,
-    )
-    admin_client.use_cases.update_academy_fees_use_case.execute.return_value = GetAcademyFeesOutput(
-        late_fee_cents=2000, grace_days=5
+@pytest.mark.parametrize("brand_color", ["not-a-color", "2563eb", "#12", "#1234567"])
+def test_patch_academy_rejects_non_hex_brand_color(admin_client, brand_color):
+    r = admin_client.patch("/api/v2/admin/academy", json={"brand_color": brand_color})
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_patch_academy_class_defaults_contract(admin_client):
+    """Settings overhaul Phase 3 PR 9: Class defaults are admin-editable,
+    not owner-gated, and pass straight through to the use case."""
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone=None,
+        default_class_size=8,
+        default_class_length_minutes=60,
+        default_venue_address="12 Court Lane",
+        default_parking_note="Free lot behind",
+        default_what_to_bring="Racquet and water",
+        default_arrival_minutes_before=15,
+        default_coach_contact_policy="Message on WhatsApp only",
     )
 
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={
+            "default_class_size": 8,
+            "default_class_length_minutes": 60,
+            "default_venue_address": "12 Court Lane",
+            "default_parking_note": "Free lot behind",
+            "default_what_to_bring": "Racquet and water",
+            "default_arrival_minutes_before": 15,
+            "default_coach_contact_policy": "Message on WhatsApp only",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["default_coach_contact_policy"] == "Message on WhatsApp only"
+    assert r.json()["default_class_size"] == 8
+    assert r.json()["default_class_length_minutes"] == 60
+    assert r.json()["default_venue_address"] == "12 Court Lane"
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad",
+        {
+            "default_class_size": 8,
+            "default_class_length_minutes": 60,
+            "default_venue_address": "12 Court Lane",
+            "default_parking_note": "Free lot behind",
+            "default_what_to_bring": "Racquet and water",
+            "default_arrival_minutes_before": 15,
+            "default_coach_contact_policy": "Message on WhatsApp only",
+        },
+    )
+
+
+def test_patch_academy_sender_identity_is_validated_and_normalised(admin_client):
+    """L9a: sender name + reply-to are stored trimmed; blank clears."""
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone="UTC",
+        email_sender_name="Court 7 Front Desk",
+        email_reply_to="desk@example.com",
+    )
+
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={"email_sender_name": "  Court 7 Front Desk ", "email_reply_to": "desk@example.com"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["email_sender_name"] == "Court 7 Front Desk"
+    assert r.json()["email_reply_to"] == "desk@example.com"
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"email_sender_name": "Court 7 Front Desk", "email_reply_to": "desk@example.com"}
+    )
+
+    admin_client.use_cases.update_academy_use_case.execute.reset_mock()
+    r = admin_client.patch(
+        "/api/v2/admin/academy", json={"email_sender_name": "   ", "email_reply_to": ""}
+    )
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad", {"email_sender_name": None, "email_reply_to": None}
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"email_sender_name": "Court 7\r\nBcc: attacker@example.com"},
+        {"email_sender_name": "Court 7\nX-Injected: 1"},
+        {"email_sender_name": "Court 7 <attacker@example.com>"},
+        {"email_sender_name": "x" * 81},
+        {"email_reply_to": "not-an-email"},
+        {"email_reply_to": "desk@example.com\r\nBcc: attacker@example.com"},
+    ],
+)
+def test_patch_academy_rejects_unsafe_sender_identity(admin_client, body):
+    r = admin_client.patch("/api/v2/admin/academy", json=body)
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_patch_academy_sender_identity_requires_admin(coach_on_admin_client):
+    r = coach_on_admin_client.patch("/api/v2/admin/academy", json={"email_sender_name": "Court 7"})
+
+    # Admin routes answer non-admin personas with 404 (not 403) by design.
+    assert r.status_code == 404, r.text
+
+
+def test_fees_route_retired(admin_client):
+    """Settings overhaul Lane D: ``GET``/``PATCH /academy/fees`` are gone.
+
+    Nothing called them any more — the Billing rules panel writes through
+    ``POST /admin/billing/rules`` instead, reusing the same use cases.
+    """
     get_response = admin_client.get("/api/v2/admin/academy/fees")
     patch_response = admin_client.patch("/api/v2/admin/academy/fees", json={"late_fee_cents": 2000})
 
-    assert get_response.status_code == 200, get_response.text
-    assert get_response.json() == {
-        "late_fee_cents": 1500,
-        "grace_days": 5,
-    }
-    assert patch_response.status_code == 200, patch_response.text
-    admin_client.use_cases.update_academy_fees_use_case.execute.assert_awaited_once_with(
-        "acad", {"late_fee_cents": 2000}
-    )
+    assert get_response.status_code == 404, get_response.text
+    assert patch_response.status_code == 404, patch_response.text
 
 
 def test_get_and_patch_notifications_contract(admin_client):
     admin_client.use_cases.get_academy_notifications_use_case.execute.return_value = (
         GetAcademyNotificationsOutput(
-            dues_reminders=True,
-            attendance_alerts=False,
             daily_digest_to_admin=True,
         )
     )
     admin_client.use_cases.update_academy_notifications_use_case.execute.return_value = (
         GetAcademyNotificationsOutput(
-            dues_reminders=True,
-            attendance_alerts=True,
             daily_digest_to_admin=True,
         )
     )
 
     get_response = admin_client.get("/api/v2/admin/academy/notifications")
     patch_response = admin_client.patch(
-        "/api/v2/admin/academy/notifications", json={"attendance_alerts": True}
+        "/api/v2/admin/academy/notifications", json={"daily_digest_to_admin": True}
     )
 
     assert get_response.status_code == 200, get_response.text
     assert get_response.json() == {
-        "dues_reminders": True,
-        "attendance_alerts": False,
         "daily_digest_to_admin": True,
         # New per-academy coach-digest fields default off / hour 6.
         "coach_digest_enabled": False,
@@ -127,18 +333,18 @@ def test_get_and_patch_notifications_contract(admin_client):
         # New per-academy parent-digest fields default off / hour 6.
         "parent_digest_enabled": False,
         "parent_digest_hour": 6,
+        # Row 10: win-back emails default on (unchanged for BLNO).
+        "win_back_enabled": True,
     }
     assert patch_response.status_code == 200, patch_response.text
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
-        "acad", {"attendance_alerts": True}
+        "acad", {"daily_digest_to_admin": True}
     )
 
 
 def test_get_notifications_includes_coach_digest_override(admin_client):
     admin_client.use_cases.get_academy_notifications_use_case.execute.return_value = (
         GetAcademyNotificationsOutput(
-            dues_reminders=False,
-            attendance_alerts=False,
             daily_digest_to_admin=False,
             coach_digest_enabled=True,
             coach_digest_hour=18,
@@ -170,6 +376,31 @@ def test_patch_notifications_passes_coach_digest_fields(admin_client):
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
         "acad", {"coach_digest_enabled": True, "coach_digest_hour": 7}
     )
+
+
+def test_patch_notifications_passes_win_back_switch(admin_client):
+    admin_client.use_cases.update_academy_notifications_use_case.execute.return_value = (
+        GetAcademyNotificationsOutput(win_back_enabled=False)
+    )
+
+    response = admin_client.patch(
+        "/api/v2/admin/academy/notifications", json={"win_back_enabled": False}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["win_back_enabled"] is False
+    admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
+        "acad", {"win_back_enabled": False}
+    )
+
+
+def test_patch_notifications_rejects_non_boolean_win_back(admin_client):
+    response = admin_client.patch(
+        "/api/v2/admin/academy/notifications", json={"win_back_enabled": "sometimes"}
+    )
+
+    assert response.status_code == 422
+    admin_client.use_cases.update_academy_notifications_use_case.execute.assert_not_awaited()
 
 
 def test_patch_notifications_rejects_out_of_range_hour(admin_client):
@@ -257,6 +488,27 @@ def test_start_stripe_connect_returns_clean_provider_error(admin_client):
     }
 
 
+def test_start_stripe_connect_refuses_unsupported_region_with_409(admin_client):
+    message = (
+        "Stripe accounts can only be created for academies in the US billing in USD "
+        "today (academy has country=CA, currency=CAD)"
+    )
+    admin_client.use_cases.start_connect_onboarding_use_case = SimpleNamespace(
+        start=AsyncMock(side_effect=UnsupportedConnectAccountRegion(message))
+    )
+
+    response = admin_client.post("/api/v2/admin/academy/gateway/stripe/connect-link")
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "error": {
+            "code": "Billing.UnsupportedConnectAccountRegion",
+            "message": message,
+            "details": {},
+        }
+    }
+
+
 def test_patch_user_role_contract(admin_client):
     admin_client.use_cases.change_user_role.execute.return_value = AdminUserSummary(
         user_id="coach-1",
@@ -286,3 +538,175 @@ def test_patch_user_role_forbids_self_lockout(admin_client):
 
     assert response.status_code == 400, response.text
     admin_client.use_cases.change_user_role.execute.assert_not_awaited()
+
+
+# --- Row 9: Connect return links land on the academy's own host ---------------
+
+_BLNO_HOST = "https://blno-academy.courtmastr.com"
+
+
+def _per_academy_base_url(seen: list[str]):
+    async def base_url(academy_id: str) -> str:
+        seen.append(academy_id)
+        return _BLNO_HOST if academy_id == "acad_blno_badminton" else "https://x.courtmastr.com"
+
+    return base_url
+
+
+def test_start_stripe_connect_returns_to_the_academy_host(admin_client):
+    seen: list[str] = []
+    admin_client.use_cases.academy_frontend_base_url = _per_academy_base_url(seen)
+    admin_client.use_cases.start_connect_onboarding_use_case = SimpleNamespace(
+        start=AsyncMock(return_value={"onboarding_url": "https://connect.stripe.com/setup/a"})
+    )
+
+    # A spoofed Host header must not steer the return link anywhere.
+    response = admin_client.post(
+        "/api/v2/admin/academy/gateway/stripe/connect-link",
+        headers={"Host": "evil.example.com", "X-Forwarded-Host": "evil.example.com"},
+    )
+
+    assert response.status_code == 200, response.text
+    kwargs = admin_client.use_cases.start_connect_onboarding_use_case.start.await_args.kwargs
+    # The claims' academy (fixture "acad"), never a request-supplied one.
+    assert seen == ["acad"]
+    assert kwargs["return_url"] == (
+        "https://x.courtmastr.com/admin/settings?panel=gateway&stripe=connected"
+    )
+    assert (
+        kwargs["refresh_url"]
+        == "https://x.courtmastr.com/admin/settings?panel=gateway&stripe=error"
+    )
+    assert "evil" not in kwargs["return_url"] + kwargs["refresh_url"]
+
+
+def test_stripe_connect_callback_redirects_to_the_verified_academy_host(admin_client):
+    seen: list[str] = []
+    admin_client.use_cases.academy_frontend_base_url = _per_academy_base_url(seen)
+    admin_client.use_cases.complete_stripe_connect_use_case = SimpleNamespace(
+        execute=AsyncMock(return_value="acad_blno_badminton")
+    )
+
+    response = admin_client.get(
+        "/api/v2/admin/academy/gateway/stripe/callback?code=c&state=signed",
+        headers={"Host": "evil.example.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == (
+        f"{_BLNO_HOST}/admin/settings?panel=gateway&stripe=connected"
+    )
+    # The academy comes from the HMAC-verified state, not from the request.
+    assert seen == ["acad_blno_badminton"]
+
+
+def test_stripe_connect_callback_error_stays_on_the_platform_host(admin_client, monkeypatch):
+    seen: list[str] = []
+    admin_client.use_cases.academy_frontend_base_url = _per_academy_base_url(seen)
+    admin_client.use_cases.complete_stripe_connect_use_case = SimpleNamespace(
+        execute=AsyncMock(side_effect=ValueError("bad state"))
+    )
+
+    response = admin_client.get(
+        "/api/v2/admin/academy/gateway/stripe/callback?code=c&state=forged",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"].endswith("/admin/settings?panel=gateway&stripe=error")
+    assert seen == []
+
+
+def test_patch_academy_support_email_and_legal_links_are_normalised(admin_client):
+    admin_client.use_cases.update_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone="UTC",
+        support_email="help@example.com",
+        terms_url="https://example.com/terms",
+        refund_policy_url="https://example.com/refunds",
+        privacy_notice_url="https://example.com/privacy",
+    )
+
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={
+            "support_email": " help@example.com ",
+            "terms_url": " https://example.com/terms ",
+            "refund_policy_url": "https://example.com/refunds",
+            "privacy_notice_url": "https://example.com/privacy",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["support_email"] == "help@example.com"
+    assert body["privacy_notice_url"] == "https://example.com/privacy"
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad",
+        {
+            "support_email": "help@example.com",
+            "terms_url": "https://example.com/terms",
+            "refund_policy_url": "https://example.com/refunds",
+            "privacy_notice_url": "https://example.com/privacy",
+        },
+    )
+
+    admin_client.use_cases.update_academy_use_case.execute.reset_mock()
+    r = admin_client.patch(
+        "/api/v2/admin/academy",
+        json={
+            "support_email": "",
+            "terms_url": "  ",
+            "refund_policy_url": "",
+            "privacy_notice_url": "",
+        },
+    )
+    assert r.status_code == 200, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_awaited_once_with(
+        "acad",
+        {
+            "support_email": None,
+            "terms_url": None,
+            "refund_policy_url": None,
+            "privacy_notice_url": None,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"support_email": "not-an-email"},
+        {"support_email": "help@example.com\r\nBcc: attacker@example.com"},
+        {"terms_url": "javascript:alert(1)"},
+        {"terms_url": "http://example.com/terms"},
+        {"terms_url": "example.com/terms"},
+        {"terms_url": "data:text/html,hi"},
+        {"terms_url": "https://exa mple.com/x"},
+        {"refund_policy_url": "http://example.com/refunds"},
+        {"refund_policy_url": "ftp://example.com/refunds"},
+        {"privacy_notice_url": "javascript:alert(1)"},
+        {"privacy_notice_url": "not a url"},
+    ],
+)
+def test_patch_academy_rejects_bad_support_email_and_legal_links(admin_client, body):
+    r = admin_client.patch("/api/v2/admin/academy", json=body)
+
+    assert r.status_code == 422, r.text
+    admin_client.use_cases.update_academy_use_case.execute.assert_not_awaited()
+
+
+def test_get_academy_returns_a_non_null_effective_reply_to(admin_client):
+    admin_client.use_cases.get_academy_use_case.execute.return_value = GetAcademyOutput(
+        academy_id="acad",
+        display_name="Court 7",
+        timezone="UTC",
+        support_email="help@example.com",
+        effective_reply_to="help@example.com",
+        effective_reply_to_source="support_email",
+    )
+    body = admin_client.get("/api/v2/admin/academy").json()
+    assert body["effective_reply_to"] == "help@example.com"
+    assert body["effective_reply_to_source"] == "support_email"

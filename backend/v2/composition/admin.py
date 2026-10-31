@@ -6,6 +6,7 @@ import collections
 import csv
 import io
 import logging
+from collections.abc import Collection
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -15,19 +16,23 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
+from backend.v2.composition.academy_links import academy_frontend_base_url_lookup
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
-    RegistrationDeclineRefunds,
+    compose_registration_decline_refunds,
 )
 from backend.v2.composition.admin_session_staff import (
     attach_session_staff_names,
+    compose_assistant_eligibility_check,
     compose_set_session_assistants,
 )
+from backend.v2.composition.attendance_corrections import compose_attendance_corrections
 from backend.v2.composition.autopay_comms import (
     autopay_active_enrollment_ids,
     build_dunning_worker,
     build_send_autopay_notice,
 )
+from backend.v2.composition.billing_setup_roster import BillingSetupRosterAdapter
 from backend.v2.composition.connected_account_adapters import (
     ConnectedAccountGatewayDisabler,
     ConnectedAccountGatewayReader,
@@ -39,14 +44,22 @@ from backend.v2.composition.digests import (
     compose_send_coach_digest_test,
     is_real_email_sender,
 )
+from backend.v2.composition.dispute_notices import build_dispute_notifier
+from backend.v2.composition.dues_reminders import compose_dues_reminders
 from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
-    DuesReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
 )
-from backend.v2.composition.event_handlers import install_dunning_notifier
-from backend.v2.composition.invoice_naming import build_invoice_naming_resolver
+from backend.v2.composition.event_handlers import (
+    install_dispute_notifier,
+    install_dunning_notifier,
+)
+from backend.v2.composition.invoice_contact_copies import build_invoice_contact_copies
+from backend.v2.composition.invoice_naming import (
+    build_invoice_naming_resolver,
+    find_invoice_by_id_or_number,
+)
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     build_void_billing_invoice,
@@ -60,8 +73,15 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.payment_student_resolver import resolve_student_names
+from backend.v2.composition.payout_input_lock import PayoutInputLock
+from backend.v2.composition.replacement_payout_snapshots import (
+    draft_payout_periods_for_occurrence,
+    recompute_draft_payout_periods,
+)
 from backend.v2.composition.roster_notifications import compose_enrollment_notifiers
 from backend.v2.composition.scheduled_cancellations import (
+    compose_admin_period_end_drops,
     compose_list_stuck_scheduled_actions,
     compose_process_scheduled_cancellation_actions,
 )
@@ -87,18 +107,19 @@ from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
 from backend.v2.contexts.billing.application.manual_payment_idempotency import (
-    check_manual_payment_idempotency,
-    manual_payment_keys,
-    store_manual_payment_idempotency,
+    record_manual_payment_once,
 )
 from backend.v2.contexts.billing.application.ports import (
-    BillingSetupStudent,
     EnrollmentAutopaySnapshot,
     ParentBalanceSnapshot,
     ParentBillingCustomerSnapshot,
     ParentContact,
-    ParentRosterEntry,
     StripeGateway,
+)
+from backend.v2.contexts.billing.application.refund_idempotency import (
+    refund_keys,
+    remember,
+    replay_or_reject,
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
@@ -108,7 +129,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
     MarkPaymentPaid,
-    SendDuesReminders,
     UndoPaymentPaid,
 )
 from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period import (
@@ -119,7 +139,6 @@ from backend.v2.contexts.billing.application.use_cases.billing_settings_admin im
     GetInvoiceScheduleSettings,
     GetPlatformChargeFallback,
     SetInvoiceScheduleSettings,
-    SetPlatformChargeFallback,
 )
 from backend.v2.contexts.billing.application.use_cases.billing_setup_registration import (
     ListBillingSetup,
@@ -138,17 +157,19 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     MongoTuitionDiscountSummaryQuery,
     RecordExpense,
 )
+from backend.v2.contexts.billing.application.use_cases.invoice_prefix import (
+    ReadAcademyInvoicePrefix,
+)
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
     IssueRefundCommand,
 )
+from backend.v2.contexts.billing.application.use_cases.money_setting_audit import (
+    RecordMoneySettingChange,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
-)
-from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
-    RecordManualPayment,
-    RecordManualPaymentCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
     RemoveInvoiceLine,
@@ -191,6 +212,9 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_revenue_by_category_report,
     make_session_economics_report,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
+    MongoAcademyBillingRegionReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
     MongoBillingAuditLogRepository,
 )
@@ -221,6 +245,10 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    MongoClassFeeResolver,
+    MongoProjectedClassFees,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
     MongoProductRepository,
 )
@@ -239,9 +267,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo impo
 from backend.v2.contexts.coaching.application.use_cases.compute_payout import (
     ComputeCoachPayout,
 )
-from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
-    CorrectAttendance,
-)
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
@@ -254,7 +279,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_coach_attendance im
     MarkCoachAttendance,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
-    MongoAttendanceRepository,
+    MongoCoachAttendanceAuditLogRepository,
     MongoCoachAttendanceRepository,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
@@ -397,6 +422,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo impo
 from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
     MongoWaitlistRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.occurrence_dependents import (
+    occurrence_dependency_filters,
+)
 from backend.v2.contexts.finance.application.payout_calculator import (
     FinancePayoutCalculator,
 )
@@ -438,12 +466,14 @@ from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader
 from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
     MongoCoachPayoutSnapshotReader,
 )
+from backend.v2.contexts.finance.infrastructure.mongo_compliance_reader import MongoComplianceReader
 from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
     MongoPayoutAuditLogRepository,
 )
 from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
     MongoPayoutPeriodRepository,
 )
+from backend.v2.contexts.identity.application.academy_media import UploadAcademyLogo
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
@@ -484,6 +514,7 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
 )
+from backend.v2.contexts.identity.domain.audit_actors import audit_actor_fields
 from backend.v2.contexts.identity.domain.errors import (
     StudentAlreadyLinked,
     StudentNotFound,
@@ -492,11 +523,23 @@ from backend.v2.contexts.identity.domain.errors import (
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
+from backend.v2.contexts.identity.infrastructure.firebase_storage_media_store import (
+    FirebaseStorageMediaStore,
+)
+from backend.v2.contexts.identity.infrastructure.logo_image import process_logo_image
+from backend.v2.contexts.identity.infrastructure.mongo_academy_media_repo import (
+    MongoAcademyMediaRepository,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.infrastructure.mongo_audit_actors import MongoAuditActorDirectory
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_user_governance_audit import (
+    MongoUserGovernanceAudit,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.contexts.identity.infrastructure.photo_image import process_photo_image
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     ManageAdminWaiverTemplates,
 )
@@ -512,6 +555,9 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import
 from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo import (
     MongoParentWaiverRepository,
 )
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_program_lookup import (
+    MongoWaiverProgramLookup,
+)
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     MongoWaiverTemplateRepository,
 )
@@ -526,6 +572,8 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
+from backend.v2.shared.comms.email_brand import AcademyEmailBrands
+from backend.v2.shared.comms.phone_country import academy_calling_code_lookup
 from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
@@ -538,7 +586,11 @@ from backend.v2.shared.tenancy import (
     current_tenant_origins,
 )
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
-from backend.v2.shared.time import ensure_utc, request_scoped_academy_timezone
+from backend.v2.shared.time import (
+    ensure_utc,
+    request_scoped_academy_timezone,
+    resolve_session_timezone,
+)
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 
@@ -670,6 +722,7 @@ def compose_admin(
     sessions_r = MongoSessionRepository(db)
     occurrences_r = MongoSessionOccurrenceRepository(db)
     coach_attendance_repo = MongoCoachAttendanceRepository(db)
+    coach_attendance_audit_repo = MongoCoachAttendanceAuditLogRepository(db)
     enrollments_w = MongoEnrollmentWriter(db)
     enrollments_r = MongoEnrollmentRepository(db)
     enrollment_events = MongoEnrollmentEventRepository(db)
@@ -691,7 +744,7 @@ def compose_admin(
     )
     # Issue #651: every attendance-stopping transition must reach billing.
     enrollment_billing_sync = compose_enrollment_billing_sync(
-        db, autopay=student_billing_enrollment_repo
+        db, autopay=student_billing_enrollment_repo, stripe=stripe
     )
     curriculum = compose_curriculum(db)
     student_progress = compose_student_progress(db, outbox, idempotency_store=idempotency_store)
@@ -712,9 +765,16 @@ def compose_admin(
 
     session_tz = request_scoped_academy_timezone(db, request_academy_id)
     create_session = CreateSession(
-        sessions=sessions_w, academy_id=academy_id, get_academy_timezone=session_tz
+        sessions=sessions_w, academy_id=request_academy_id, get_academy_timezone=session_tz
     )
-    edit_session = EditSession(sessions=sessions_w, get_academy_timezone=session_tz)
+    edit_session = EditSession(
+        sessions=sessions_w,
+        get_academy_timezone=session_tz,
+        # #783: the capacity guard counts the roster, not the seat counter.
+        enrollments=enrollments_w,
+        # #785: the PATCH route runs SetSessionAssistants' own vetting too.
+        assistant_eligibility=compose_assistant_eligibility_check(db, users_r, request_academy_id),
+    )
     # #613 welcome email + #612 roster alerts (composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
     cancel_session = CancelSession(
@@ -722,7 +782,7 @@ def compose_admin(
         enrollments_query=enrollments_r,
         enrollments_writer=enrollments_w,
         outbox=outbox,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
         billing_sync=enrollment_billing_sync,
@@ -739,7 +799,7 @@ def compose_admin(
         billing_sync=enrollment_billing_sync,
         occurrence_roster=occurrence_roster_repo,
         scheduled_actions=scheduled_actions,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
 
     async def resend_stale_move_notice(invoice_id: str) -> None:
@@ -803,7 +863,7 @@ def compose_admin(
     join_waitlist = JoinWaitlist(
         waitlist=waitlist,
         enrollment_events=enrollment_events,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
@@ -812,6 +872,8 @@ def compose_admin(
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=notifiers.roster,
+        # #828: the family's "a seat opened — confirm by <date>" mail.
+        offer_notifier=notifiers.roster,
         # A paused student at the head of the queue resumes (#651), one path.
         resume=resume_enrollment,
         academy_id=request_academy_id,
@@ -826,7 +888,7 @@ def compose_admin(
         billing_deferrals=billing_deferrals,
         autopay_status=enrollment_autopay_status_gateway,
         billing_sync=enrollment_billing_sync,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     decline_pause_request = DeclinePauseRequest(
         pause_requests=pause_requests, notifier=notifiers.roster
@@ -843,6 +905,7 @@ def compose_admin(
         enrollment_events=enrollment_events,
         billing_sync=enrollment_billing_sync,
         occurrence_roster=occurrence_roster_repo,
+        billing_deferrals=billing_deferrals,
         roster_notifier=notifiers.roster,
         enrollments=enrollments_w,
         sessions=sessions_w,
@@ -863,6 +926,8 @@ def compose_admin(
     list_makeup_requests_for_admin = ListMakeupRequestsForAdmin(
         makeups=makeup_requests_repo,
         students=students_r,
+        occurrences=occurrences_r,
+        sessions=sessions_r,
     )
     approve_makeup_request = ApproveMakeupRequest(
         makeups=makeup_requests_repo,
@@ -880,6 +945,10 @@ def compose_admin(
     list_absences_for_admin = ListAbsencesForAdmin(
         notices=absence_notices_repo,
         students=students_r,
+        # #860: same tenant-scoped occurrence/session ports the makeup queue
+        # already uses, so an absence row names the class and date.
+        occurrences=occurrences_r,
+        sessions=sessions_r,
     )
     record_absence_notice_for_student = RecordAbsenceNoticeForStudent(
         students=students_r,
@@ -890,7 +959,12 @@ def compose_admin(
     )
     expire_makeup_requests = ExpireMakeupRequests(makeups=makeup_requests_repo)
     trial_requests_repo = MongoTrialRequestRepository(db)
-    list_trial_requests_for_admin = ListTrialRequestsForAdmin(trials=trial_requests_repo)
+    list_trial_requests_for_admin = ListTrialRequestsForAdmin(
+        trials=trial_requests_repo,
+        sessions=sessions_r,
+        occurrences=occurrences_r,
+        students=students_r,
+    )
     approve_trial_request = ApproveTrialRequest(
         trials=trial_requests_repo,
         occurrences=occurrences_r,
@@ -914,7 +988,7 @@ def compose_admin(
     session_type_repo = MongoSessionTypeRepository(db)
     create_session_type = CreateSessionType(
         session_types=session_type_repo,
-        academy_id=academy_id,
+        academy_id=request_academy_id,
     )
     list_session_types = ListSessionTypes(session_types=session_type_repo)
     update_session_type = UpdateSessionType(session_types=session_type_repo)
@@ -976,6 +1050,25 @@ def compose_admin(
         occurrence_roster=occurrence_roster_repo,
         # #682: a withdraw clears any pending end-of-period cancellation.
         scheduled_actions=scheduled_actions,
+        # #782: and closes the pause/hold deferral it ended inside.
+        billing_deferrals=billing_deferrals,
+    )
+    # Issue #820: "drop at end of period" — schedule, undo, and the worker
+    # that replays the drop above at the academy-local month end (the same
+    # boundary billing's ``period_of`` uses).
+    _drop_timezone_lookup = academy_timezone_lookup(db)
+
+    async def _admin_drop_academy_timezone() -> str | None:
+        return await _drop_timezone_lookup(current_academy_id())
+
+    admin_period_end_drops = compose_admin_period_end_drops(
+        db,
+        scheduled_actions=scheduled_actions,
+        withdraw_enrollment=withdraw_enrollment,
+        enrollment_events=enrollment_events,
+        roster_notifier=notifiers.roster,
+        academy_timezone=_admin_drop_academy_timezone,
+        enrollments=enrollments_w,
     )
 
     # Finance (# FINANCE)
@@ -984,17 +1077,26 @@ def compose_admin(
     payout_periods_repo = MongoPayoutPeriodRepository(db)
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
-            occurrences=MongoPayableOccurrenceQuery(db),
+            occurrences=MongoPayableOccurrenceQuery(db, class_fees=MongoProjectedClassFees(db)),
             rates=MongoCoachRateLookup(db),
         )
     )
+    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    # #787: generation, approval and payment are money-moving transitions and
+    # each writes its own audit entry, like the corrections below.
     generate_payout_period = GeneratePayoutPeriod(
         calculator=coach_payout_calculator,
         repository=payout_periods_repo,
+        audit=payout_audit_log,
     )
-    approve_payout_period = ApprovePayoutPeriod(repository=payout_periods_repo)
-    mark_payout_paid = MarkPayoutPaid(repository=payout_periods_repo)
-    payout_audit_log = MongoPayoutAuditLogRepository(db)
+    approve_payout_period = ApprovePayoutPeriod(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
+    mark_payout_paid = MarkPayoutPaid(
+        repository=payout_periods_repo,
+        audit=payout_audit_log,
+    )
     billing_audit_log = MongoBillingAuditLogRepository(db)
     recompute_payout_period = RecomputePayoutPeriod(
         calculator=coach_payout_calculator,
@@ -1011,15 +1113,13 @@ def compose_admin(
     )
     list_payout_audit_entries = ListPayoutAuditEntries(audit=payout_audit_log)
     get_platform_charge_fallback = GetPlatformChargeFallback(settings=billing_settings_repo)
-    set_platform_charge_fallback = SetPlatformChargeFallback(
-        settings=billing_settings_repo,
-        audit=billing_audit_log,
-    )
     get_invoice_schedule = GetInvoiceScheduleSettings(settings=billing_settings_repo)
+    get_invoice_prefix = ReadAcademyInvoicePrefix(settings=billing_settings_repo)
     set_invoice_schedule = SetInvoiceScheduleSettings(
         settings=billing_settings_repo,
         audit=billing_audit_log,
     )
+    record_money_setting_change = RecordMoneySettingChange(audit=billing_audit_log)
 
     async def _describe_payout_occurrences(
         occurrence_ids: list[str],
@@ -1068,14 +1168,14 @@ def compose_admin(
         rates=coach_rates_repo,
         audit=coach_rate_audit,
     )
-    record_expense = RecordExpense(expenses=expenses_repo, academy_id=academy_id)
+    record_expense = RecordExpense(expenses=expenses_repo, academy_id=request_academy_id)
     edit_expense = EditExpense(expenses=expenses_repo)
     delete_expense = DeleteExpense(expenses=expenses_repo)
     revenue_query = AdminEffectiveRevenueQuery(db)
     tuition_discount_summary = MongoTuitionDiscountSummaryQuery(db)
 
     # Comms
-    comms = CommsService(messages=MongoMessageRepository(db), academy_id=academy_id)
+    comms = CommsService(messages=MongoMessageRepository(db), academy_id=request_academy_id)
 
     # Real delivery needs email_delivery_enabled + resend_api_key AND an
     # approved environment (staging/prod). The gate lives in exactly one place,
@@ -1138,6 +1238,8 @@ def compose_admin(
                 billing_counters=billing_counters_repo,
                 billing_settings=billing_settings_repo,
             ),
+            self_service_policies=self_service_policy_repo,
+            contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
@@ -1150,7 +1252,7 @@ def compose_admin(
         invoice_stripe = stripe if hasattr(stripe, "create_invoice_checkout_session") else None
         result = await SendInvoice(
             ledger=billing_ledger_repo,
-            stripe=invoice_stripe,  # type: ignore[arg-type]
+            stripe=invoice_stripe,
             email=_invoice_email_port(),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
@@ -1203,10 +1305,11 @@ def compose_admin(
             raise RuntimeError("Stripe autopay not configured")
         result = await ChargeInvoiceViaAutopay(
             ledger=billing_ledger_repo,
-            stripe=stripe,  # type: ignore[arg-type]
+            stripe=stripe,
             enrollment_autopay=student_billing_enrollment_repo,
             settings=billing_settings_repo,
             connected_accounts=connected_accounts_repo,
+            parent_customers=parent_customers_repo,
         ).execute(
             invoice_id,
             source=source,
@@ -1234,7 +1337,12 @@ def compose_admin(
     _admin_charge_attempts = _AdminChargeAttempts()
 
     async def charge_invoice_as_admin_action(
-        *, invoice_id: str, actor_id: str, reason: str, request_id: str
+        *,
+        invoice_id: str,
+        actor_id: str,
+        actor_roles: Collection[str],
+        reason: str,
+        request_id: str,
     ) -> dict[str, Any]:
         """Admin pressed "Charge card now" on a list or the Family page.
 
@@ -1259,6 +1367,7 @@ def compose_admin(
             parent_id=invoice.parent_id,
             invoice_id=invoice_id,
             actor_id=actor_id,
+            actor_roles=actor_roles,
             request_id=request_id,
             reason=reason,
             source="admin_manual",
@@ -1273,6 +1382,7 @@ def compose_admin(
         expected_amount_cents: int,
         request_id: str,
         actor_id: str,
+        actor_roles: Collection[str],
     ) -> dict[str, Any]:
         """Charge the exact invoice and amount confirmed by the admin.
 
@@ -1292,6 +1402,7 @@ def compose_admin(
             parent_id=parent_id,
             invoice_id=invoice_id,
             actor_id=actor_id,
+            actor_roles=actor_roles,
             request_id=request_id,
             reason="Billing Setup charge now",
             source="admin_billing_setup",
@@ -1377,6 +1488,7 @@ def compose_admin(
         enrollment_autopay=student_billing_enrollment_repo,
         settings=billing_settings_repo,
         connected_accounts=connected_accounts_repo,
+        parent_customers=parent_customers_repo,
         email_port=_invoice_email_port,
         outbox=outbox,
     )
@@ -1462,8 +1574,13 @@ def compose_admin(
             RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
         )
 
+    # #784: a void hands applied credit back, closes the Stripe twin, audits.
     void_billing_invoice = build_void_billing_invoice(
-        ledger=billing_ledger_repo, dunning=dunning_state_repo
+        ledger=billing_ledger_repo,
+        dunning=dunning_state_repo,
+        credits=credits_repo,
+        stripe=stripe,
+        audit=billing_audit_log,
     )
 
     async def void_payment(*, payment_id: str, reason: str, actor_id: str | None) -> None:
@@ -1509,68 +1626,21 @@ def compose_admin(
         actor_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # Idempotency boundary (issue #511) — policy lives in the billing context
-        # (manual_payment_idempotency): keyed retries replay, key reuse with a
-        # different payload rejects (422), keyless payload-identical repeats
-        # conflict (409) instead of silently replaying.
-        manual_idem_key, payload_key, payload_fingerprint = manual_payment_keys(
+        # Idempotency, concurrency and audit policy (issue #511, A5) live in the
+        # billing context; the request tenant scopes the keys and the audit row.
+        return await record_manual_payment_once(
+            store=idempotency_store,
+            ledger=billing_ledger_repo,
+            audit=billing_audit_log,
+            academy_id=request_academy_id(),
             invoice_id=invoice_id,
             amount_cents=amount_cents,
             payment_method=payment_method,
             reference_number=reference_number,
             notes=notes,
+            actor_id=actor_id,
             idempotency_key=idempotency_key,
         )
-        cached_payload = await check_manual_payment_idempotency(
-            idempotency_store,
-            storage_key=manual_idem_key,
-            payload_fingerprint=payload_fingerprint,
-            keyed=bool(idempotency_key),
-        )
-        if cached_payload is not None:
-            return cached_payload
-        result = await RecordManualPayment(ledger=billing_ledger_repo).execute(
-            RecordManualPaymentCommand(
-                invoice_id=invoice_id,
-                amount_cents=amount_cents,
-                payment_method=payment_method,
-                reference_number=reference_number,
-                notes=notes,
-            )
-        )
-        payload = result.model_dump(mode="python")
-        # Record the idempotency result right after the durable money movement and BEFORE
-        # the audit append, so an audit failure cannot drive a retry into a second payment.
-        await store_manual_payment_idempotency(
-            idempotency_store,
-            storage_key=manual_idem_key,
-            payload_key=payload_key,
-            payload_fingerprint=payload_fingerprint,
-            payload=payload,
-            keyed=bool(idempotency_key),
-        )
-        # P0-4: append-only audit of who recorded the manual payment (money movement),
-        # mirroring the refund audit. Overpayment that became an account credit is captured
-        # in `after` so the trail explains where the excess went.
-        await billing_audit_log.append(
-            BillingAuditEntry(
-                audit_id=f"baud-{new_ulid()}",
-                academy_id=academy_id,
-                action="manual_payment_recorded",
-                actor_id=actor_id or "system",
-                at=datetime.now(UTC),
-                invoice_id=invoice_id,
-                payment_id=result.payment_id,
-                reason=payment_method,
-                after={
-                    "amount_cents": amount_cents,
-                    "invoice_status": result.invoice_status,
-                    "balance_due_cents": result.balance_due_cents,
-                    "overpayment_credit_cents": result.overpayment_credit_cents,
-                },
-            )
-        )
-        return payload
 
     async def issue_invoice_refund(
         *,
@@ -1578,19 +1648,27 @@ def compose_admin(
         amount_cents: int | None,
         reason: str,
         actor_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        # Idempotency boundary for the WHOLE operation. `issue_refund.execute` is
-        # itself idempotent, but the invoice-level claim `apply_invoice_refund` below
-        # is an unconditional increment — without this boundary, a retry would replay
-        # the cached Stripe refund yet re-claim the invoice projection, double-counting
-        # `refunded_cents`. Keyed on the logical request (invoice + amount + reason).
-        refund_idem_key = f"invoice_refund:{invoice_id}:{amount_cents}:{reason}"
-        cached = await idempotency_store.get(refund_idem_key)
-        if cached is not None:
-            return cached["payload"]
+        # Idempotency boundary for the WHOLE operation (the invoice claim below is
+        # an unconditional increment), keyed per refund REQUEST (#930): policy in
+        # billing/application/refund_idempotency.py. The request tenant, not the
+        # boot academy (C4): the allocation lookup, the keys (#544) and the audit row.
+        academy_id = request_academy_id()
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
+        refund_idem = refund_keys(
+            kind="invoice_refund",
+            academy_id=academy_id,
+            target_id=invoice_id,
+            amount_cents=amount_cents,
+            reason=reason,
+            idempotency_key=idempotency_key,
+        )
+        cached = await replay_or_reject(idempotency_store, refund_idem)
+        if cached is not None:
+            return cached
         before_refunded = invoice.refunded_cents
         allocation_cursor = db["payment_allocations"].find(
             {
@@ -1639,6 +1717,7 @@ def compose_admin(
                     payment_id=selected_payment_id,
                     amount_cents=selected_amount_cents,
                     reason=reason,
+                    idempotency_key=f"invoice:{invoice_id}:{refund_idem.request_digest}",
                 )
             )
         except Exception:
@@ -1650,11 +1729,9 @@ def compose_admin(
             raise
         payload = result.model_dump(mode="python")
         payload["invoice_id"] = invoice_id
-        # Record the idempotency result immediately after the durable money movement
-        # (claim + Stripe refund) and BEFORE the audit append. If the audit append
-        # fails, a retry then short-circuits at the top and returns this cached
-        # payload rather than re-claiming `apply_invoice_refund` a second time.
-        await idempotency_store.put(refund_idem_key, {"payload": payload})
+        # Cache right after the money moved and BEFORE the audit append, so an
+        # audit failure cannot drive a retry into re-claiming the invoice.
+        payload = await remember(idempotency_store, refund_idem, payload)
         # P0-4: append-only audit of who issued the refund.
         await billing_audit_log.append(
             BillingAuditEntry(
@@ -1762,7 +1839,9 @@ def compose_admin(
     waivers_repo = MongoAdminWaiverRepository(db)
     list_admin_waivers = ListAdminWaivers(waivers_repo)
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
-    manage_admin_waiver_templates = ManageAdminWaiverTemplates(waiver_templates_repo)
+    manage_admin_waiver_templates = ManageAdminWaiverTemplates(
+        waiver_templates_repo, programs=MongoWaiverProgramLookup(db)
+    )
     admin_registration_review = AdminRegistrationReview(
         apps=MongoApplicationRepository(db),
         sessions=sessions_w,
@@ -1774,13 +1853,11 @@ def compose_admin(
         enrollment_events=enrollment_events,
         trial_conversion=link_trial_conversion,
         student_registrations=students_r,
-        refunds=RegistrationDeclineRefunds(
-            payments=payments_repo,
-            refunds=_RegistrationRefundExecutor(issue_refund),
-        ),
+        refunds=compose_registration_decline_refunds(payments_repo, issue_refund),
         paid_period_resolver=CheckoutPaidPeriodResolver(payments_repo),
         welcome_notifier=notifiers.welcome,
         roster_notifier=notifiers.roster,
+        decision_notifier=notifiers.decision,
         academy_id=None,
     )
     # Identity / Settings
@@ -1794,6 +1871,16 @@ def compose_admin(
 
     get_academy_use_case = GetAcademyUseCase(academy_repo)
     update_academy_use_case = UpdateAcademyUseCase(academy_repo)
+    upload_academy_logo = (
+        UploadAcademyLogo(
+            store=FirebaseStorageMediaStore(settings.media_storage_bucket),
+            media_repo=MongoAcademyMediaRepository(db),
+            process_image=process_logo_image,
+            process_photo=process_photo_image,
+        )
+        if settings.media_storage_bucket
+        else None
+    )
     get_academy_fees_use_case = GetAcademyFeesUseCase(academy_repo)
     update_academy_fees_use_case = UpdateAcademyFeesUseCase(academy_repo)
     get_academy_notifications_use_case = GetAcademyNotificationsUseCase(
@@ -1817,6 +1904,7 @@ def compose_admin(
     start_connect_onboarding_use_case = StartConnectOnboarding(
         stripe=stripe,
         connected_accounts=connected_accounts_repo,
+        academy_regions=MongoAcademyBillingRegionReader(db),
         # Callable: evaluated per call so an admin onboarding Stripe from their
         # academy's own host is allowlisted. Tenant origins are rebuilt from
         # stored slug/verified domains, never from the request Host header.
@@ -1824,6 +1912,7 @@ def compose_admin(
             *settings.cors_allowed_origins(),
             *current_tenant_origins(),
         ),
+        house_academy_id=settings.house_academy_id,
     )
     _connect_callback_uri = settings.stripe_connect_callback_uri or ""
     # Fail closed (#547): the Connect OAuth callback is unauthenticated, so the
@@ -1886,9 +1975,10 @@ def compose_admin(
     send_login_invite = SendLoginInvite(
         users=_MembershipAwareLoginInviteRecorder(),
         links=get_firebase_admin_adapter(),
-        sender=LoginInviteEmailAdapter(sender=_email_sender),
+        sender=LoginInviteEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
         portals=_AcademyPortalUrlAdapter(),
+        brands=AcademyEmailBrands(academy_repo),
     )
     # #436: an admin email edit clears Firebase's `email_verified`, so the
     # edit must carry a fresh set-password invite or the user is locked out
@@ -1907,104 +1997,6 @@ def compose_admin(
     add_user_role = AddUserRole(users_r)
     remove_user_role = RemoveUserRole(users_r)
     list_admin_students = ListAdminStudents(students_r)
-
-    class _BillingSetupRosterAdapter:
-        """Bridges enrollment's paginated admin student directory into the
-        parent roster the Billing Setup page needs. Composition may bridge
-        billing + enrollment; the billing context itself must not import
-        enrollment directly (see ``billing_setup_registration.py``)."""
-
-        def __init__(self, list_students: ListAdminStudents) -> None:
-            self._list_students = list_students
-
-        async def _all_students(self) -> list[Any]:
-            students: list[Any] = []
-            cursor: str | None = None
-            for _ in range(1000):  # safety cap against a runaway pagination loop
-                page = await self._list_students.execute(limit=200, cursor=cursor)
-                students.extend(page.students)
-                if not page.next_cursor:
-                    break
-                cursor = page.next_cursor
-            return students
-
-        async def list_parents(self, *, academy_id: str) -> list[ParentRosterEntry]:
-            seen: dict[str, ParentRosterEntry] = {}
-            for student in await self._all_students():
-                if student.parent_id not in seen:
-                    seen[student.parent_id] = ParentRosterEntry(
-                        parent_id=student.parent_id,
-                        parent_name=student.parent_name or student.parent_id,
-                        parent_email=student.parent_email,
-                    )
-            return list(seen.values())
-
-        async def students_for_parents(
-            self, parent_ids: list[str], *, academy_id: str
-        ) -> dict[str, list[BillingSetupStudent]]:
-            wanted = set(parent_ids)
-            result: dict[str, list[BillingSetupStudent]] = {}
-            for student in await self._all_students():
-                if student.parent_id in wanted:
-                    result.setdefault(student.parent_id, []).append(
-                        BillingSetupStudent(
-                            student_id=student.student_id, full_name=student.full_name
-                        )
-                    )
-            return result
-
-        async def _direct_student_docs(self, parent_id: str) -> list[dict[str, Any]]:
-            from backend.v2.shared.tenancy import current_academy_id
-
-            cursor = db["students"].find(
-                {
-                    "academy_id": current_academy_id(),
-                    "$or": [
-                        {"parent_id": parent_id},
-                        {"parent_user_id": parent_id},
-                    ],
-                }
-            )
-            return [doc async for doc in cursor]
-
-        async def get_parent(self, parent_id: str, *, academy_id: str) -> ParentRosterEntry | None:
-            docs = await self._direct_student_docs(parent_id)
-            if not docs:
-                return None
-            user = await users_r.get_billing_setup_parent(parent_id, academy_id=academy_id)
-            if user is None:
-                # The scoped student row authorizes use of the global roster
-                # contact before a membership/login has been provisioned.
-                user = await users_r.get_by_id(parent_id)
-            first = docs[0]
-            fallback_name = str(first.get("parent_name") or first.get("guardian_name") or parent_id)
-            fallback_email = first.get("parent_email") or first.get("guardian_email")
-            return ParentRosterEntry(
-                parent_id=parent_id,
-                parent_name=user.display_name if user else fallback_name,
-                parent_email=str(user.email)
-                if user
-                else (str(fallback_email) if fallback_email else None),
-            )
-
-        async def students_for_parent(
-            self, parent_id: str, *, academy_id: str
-        ) -> list[BillingSetupStudent]:
-            rows: list[BillingSetupStudent] = []
-            for doc in await self._direct_student_docs(parent_id):
-                full_name = str(
-                    doc.get("full_name")
-                    or f"{doc.get('first_name', '')} {doc.get('last_name', '')}".strip()
-                    or doc.get("name")
-                    or "Student"
-                )
-                rows.append(
-                    BillingSetupStudent(
-                        student_id=str(doc.get("student_id") or doc["_id"]),
-                        full_name=full_name,
-                    )
-                )
-            return rows
 
     class _BillingSetupLoginAccountAdapter:
         def __init__(self, users: MongoUserRepository) -> None:
@@ -2127,7 +2119,7 @@ def compose_admin(
             )
 
     list_billing_setup = ListBillingSetup(
-        roster=_BillingSetupRosterAdapter(list_admin_students),
+        roster=BillingSetupRosterAdapter(list_admin_students, db=db, users=users_r),
         login_accounts=_BillingSetupLoginAccountAdapter(users_r),
         customers=_BillingSetupCustomerAdapter(parent_customers_repo),
         autopay=_BillingSetupAutopayAdapter(student_billing_enrollment_repo),
@@ -2158,15 +2150,20 @@ def compose_admin(
             # records consent before any off-session charge is allowed.
             return return_url
 
-    _billing_setup_return_url = (
-        f"{(settings.frontend_url or 'https://app.example.com').rstrip('/')}/parent/payments"
+    academy_base_url = academy_frontend_base_url_lookup(
+        db, frontend_url=settings.frontend_url, default="https://app.example.com"
     )
+
+    async def _billing_setup_return_url(academy_id: str) -> str:
+        return f"{await academy_base_url(academy_id)}/parent/payments"
+
     send_add_card_reminder = SendAddCardReminder(
         contacts=_BillingSetupParentContactAdapter(users_r),
         links=_BillingSetupCardSetupLinkAdapter(),
         sender=AddCardReminderEmailAdapter(sender=_email_sender),
         academies=academy_repo,
-        return_url=_billing_setup_return_url,
+        return_url_for=_billing_setup_return_url,
+        brands=AcademyEmailBrands(academy_repo),
     )
     get_admin_student = compose_get_admin_student(db, students_r)
     update_admin_student = UpdateAdminStudent(students_r)
@@ -2267,12 +2264,17 @@ def compose_admin(
     def _recurring_template_filter() -> dict[str, Any]:
         return {"days_of_week": {"$exists": True}, **_NOT_CANCELLED_SESSION}
 
-    def _series_occurrence_candidates(session) -> list[dict[str, Any]]:
+    async def _session_zone(session: Any) -> str:
+        # Session zone, else this tenant's zone, else the legacy constant (row 7).
+        if session.timezone:
+            return str(session.timezone)
+        return resolve_session_timezone(None, await session_tz(request_academy_id()))
+
+    def _series_occurrence_candidates(session, timezone_name: str) -> list[dict[str, Any]]:
         if not session.days_of_week or not session.start_time or not session.end_time:
             return []
         if session.status == "cancelled":
             return []
-        timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         target_days = {
             WEEKDAY_INDEX[str(day).casefold()]
@@ -2316,10 +2318,10 @@ def compose_admin(
     def _series_occurrence_candidate_for_date(
         session,
         occurrence_date: date,
+        timezone_name: str,
     ) -> dict[str, Any]:
         if session.status == "cancelled":
             raise ValueError("Replacement cannot be added to a cancelled session")
-        timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         target_days = {
             WEEKDAY_INDEX[str(day).casefold()]
@@ -2360,12 +2362,12 @@ def compose_admin(
     def _dated_occurrence_candidate_for_date(
         session,
         occurrence_date: date,
+        timezone_name: str,
         *,
         matched_session_doc: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if session.status == "cancelled":
             raise ValueError("Replacement cannot be added to a cancelled session")
-        timezone_name = session.timezone or "America/Chicago"
         tz = ZoneInfo(timezone_name)
         starts_at = ensure_utc(session.start_at)
         ends_at = ensure_utc(session.end_at)
@@ -2432,8 +2434,7 @@ def compose_admin(
         target_signature = session_series_signature(_session_domain_row(session), session.timezone)
         if target_signature is None:
             return None
-        timezone_name = session.timezone or "America/Chicago"
-        tz = ZoneInfo(timezone_name)
+        tz = ZoneInfo(await _session_zone(session))
         cursor = sessions_r._find_many(
             {
                 "coach_id": session.coach_id,
@@ -2491,18 +2492,29 @@ def compose_admin(
         session,
         occurrence_date: date,
     ) -> dict[str, Any]:
+        timezone_name = await _session_zone(session)
         if session.days_of_week and session.start_time and session.end_time:
-            return _series_occurrence_candidate_for_date(session, occurrence_date)
+            return _series_occurrence_candidate_for_date(session, occurrence_date, timezone_name)
         matched_doc = await _matching_dated_series_session_doc(session, occurrence_date)
         if matched_doc is None:
             raise ValueError("Replacement date must match a scheduled session date")
         return _dated_occurrence_candidate_for_date(
             session,
             occurrence_date,
+            timezone_name,
             matched_session_doc=matched_doc,
         )
 
-    async def _is_clean_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+    async def _is_unsettled_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        """Is this a future class that has not happened and has not been paid?
+
+        The "already acted on" guard for a session cancel (#589/#593/#694):
+        a past, attended, coach-marked or payroll-carrying occurrence is
+        history and a cancel never rewrites it. A make-up, trial, absence
+        notice or feedback row pointing at it does NOT make it history — the
+        class is still not going to run, and a soft-cancel keeps every one of
+        those foreign keys resolvable.
+        """
         starts_at = doc.get("start_at")
         if starts_at is None or ensure_utc(starts_at) < now:
             return False
@@ -2512,24 +2524,60 @@ def compose_admin(
             return False
         academy_id = str(doc.get("academy_id") or "")
         occurrence_id = str(doc.get("occurrence_id") or "")
-        if await db["attendance"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
-        if await db["coach_attendance"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
-        if await db["payout_period_lines"].count_documents(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
-        ):
-            return False
+        for collection in ("attendance", "coach_attendance", "payout_period_lines"):
+            if await db[collection].count_documents(
+                {"academy_id": academy_id, "occurrence_id": occurrence_id}, limit=1
+            ):
+                return False
         return True
+
+    async def _is_clean_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        """Is it safe to hard-delete this row? Stricter than "unsettled" (#783):
+        anything still referencing the occurrence_id makes it dirty."""
+        if not await _is_unsettled_future_occurrence(doc, now=now):
+            return False
+        academy_id = str(doc.get("academy_id") or "")
+        occurrence_id = str(doc.get("occurrence_id") or "")
+        for collection, match in occurrence_dependency_filters(
+            academy_id=academy_id, occurrence_id=occurrence_id
+        ):
+            if await db[collection].count_documents(match, limit=1):
+                return False
+        return True
+
+    def _is_live_future_occurrence(doc: dict[str, Any], *, now: datetime) -> bool:
+        """Would this row still show up as an upcoming class?
+
+        Narrower than :func:`_is_clean_future_occurrence`: it asks only about
+        the schedule and the status, never about dependents. A row that is
+        still ``scheduled`` in the future keeps appearing on coach/parent
+        calendars and keeps accruing attendance and payout, so it cannot be
+        left alone once the session stops claiming that slot (#783).
+        """
+
+        starts_at = doc.get("start_at")
+        if starts_at is None or ensure_utc(starts_at) < now:
+            return False
+        return str(doc.get("status") or "scheduled") == "scheduled"
+
+    async def _soft_cancel_occurrence(
+        academy_id: str, occurrence_id: str, *, reason: str, now: datetime
+    ) -> None:
+        await db["session_occurrences"].update_one(
+            {"academy_id": academy_id, "occurrence_id": occurrence_id},
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancellation_reason": reason,
+                    "updated_at": now,
+                }
+            },
+        )
 
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
 
-        candidates = _series_occurrence_candidates(session)
+        candidates = _series_occurrence_candidates(session, await _session_zone(session))
         session_is_cancelled = session.status == "cancelled"
         if not candidates and not session_is_cancelled:
             return
@@ -2557,27 +2605,50 @@ def compose_admin(
         for occurrence_id, doc in existing.items():
             if occurrence_id in candidate_ids:
                 continue
-            if not await _is_clean_future_occurrence(doc, now=now):
-                # Past / attended / already-paid occurrences are history: the
-                # class really happened and the coach must still be paid.
-                continue
             if session_is_cancelled:
+                if not await _is_unsettled_future_occurrence(doc, now=now):
+                    # Past / attended / already-paid occurrences are history:
+                    # the class really happened and the coach must still be
+                    # paid (#589/#593). A cancel never rewrites them.
+                    continue
                 # Soft-cancel, matching the parent session. Never delete: the
                 # occurrence is the audit trail for a class that was scheduled.
-                await db["session_occurrences"].update_one(
-                    {"academy_id": academy_id, "occurrence_id": occurrence_id},
-                    {
-                        "$set": {
-                            "status": "cancelled",
-                            "cancellation_reason": "session_cancelled",
-                            "updated_at": now,
-                        }
-                    },
+                await _soft_cancel_occurrence(
+                    academy_id, occurrence_id, reason="session_cancelled", now=now
+                )
+                # Issue #694: a make-up/trial row keyed to this occurrence
+                # has no other pruning path once the occurrence is cancelled
+                # here — it would otherwise render on the coach roster
+                # forever unmarkable.
+                await db["occurrence_roster_entries"].delete_many(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
                 )
                 continue
-            await db["session_occurrences"].delete_one(
-                {"academy_id": academy_id, "occurrence_id": occurrence_id}
+            if await _is_clean_future_occurrence(doc, now=now):
+                await db["session_occurrences"].delete_one(
+                    {"academy_id": academy_id, "occurrence_id": occurrence_id}
+                )
+                continue
+            if not _is_live_future_occurrence(doc, now=now):
+                # Already cancelled, or in the past: nothing to take off the
+                # calendar.
+                continue
+            # #783: a dirty row (roster entry, absence notice, make-up, trial,
+            # feedback...) must not be deleted — but skipping it left a live
+            # "scheduled" class under the OLD occurrence_id while the new
+            # weekday was materialised alongside it. The class then ran twice a
+            # week forever: coaches could be marked present and paid for a slot
+            # the admin moved away from, and nobody was told. Soft-cancelling
+            # keeps every dependent's foreign key resolvable AND takes the
+            # stale class off the calendar.
+            await _soft_cancel_occurrence(
+                academy_id, occurrence_id, reason="schedule_changed", now=now
             )
+            # Deliberately NOT pruning occurrence_roster_entries here (unlike
+            # the session-cancel branch, #694): the row survives precisely
+            # because something depends on it, and #783 keeps that dependent
+            # resolvable. GetOccurrenceRoster already hides one-time rows
+            # whose occurrence is cancelled, so nothing renders unmarkable.
 
         for row in candidates:
             existing_doc = existing.get(str(row["occurrence_id"]))
@@ -2882,43 +2953,6 @@ def compose_admin(
         )
         return None if occurrence is None else await _occurrence_row(occurrence)
 
-    async def _clear_or_reject_replacement_payout_snapshots(
-        *,
-        academy_id: str,
-        occurrence_id: str,
-    ) -> None:
-        payout_line_cursor = db["payout_period_lines"].find(
-            {"academy_id": academy_id, "occurrence_id": occurrence_id},
-            {"period_id": 1},
-        )
-        payout_period_ids = sorted(
-            {str(row["period_id"]) async for row in payout_line_cursor if row.get("period_id")}
-        )
-        if not payout_period_ids:
-            return
-        period_cursor = db["payout_periods"].find(
-            {
-                "academy_id": academy_id,
-                "period_id": {"$in": payout_period_ids},
-            },
-            {"period_id": 1, "status": 1},
-        )
-        draft_period_ids: list[str] = []
-        async for period in period_cursor:
-            status = str(period.get("status") or "draft")
-            if status in {"approved", "paid"}:
-                raise ValueError(
-                    "Replacement coach cannot be changed after payout is approved or paid"
-                )
-            draft_period_ids.append(str(period["period_id"]))
-        if draft_period_ids:
-            await db["payout_period_lines"].delete_many(
-                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
-            )
-            await db["payout_periods"].delete_many(
-                {"academy_id": academy_id, "period_id": {"$in": draft_period_ids}}
-            )
-
     async def update_session_occurrence_replacement(
         *,
         occurrence_id: str,
@@ -2929,9 +2963,8 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         academy_id = current_academy_id()
-        await _clear_or_reject_replacement_payout_snapshots(
-            academy_id=academy_id,
-            occurrence_id=occurrence_id,
+        draft_period_ids = await draft_payout_periods_for_occurrence(
+            db, academy_id=academy_id, occurrence_id=occurrence_id
         )
 
         update_fields: dict[str, Any] = {
@@ -2947,6 +2980,10 @@ def compose_admin(
         )
         if result.matched_count == 0:
             return None
+        # Recompute AFTER the coach change so the refreshed snapshot reflects it.
+        await recompute_draft_payout_periods(
+            recompute_payout_period, period_ids=draft_period_ids, actor_id=actor_id
+        )
         occurrence = await occurrences_r.get(occurrence_id)
         return None if occurrence is None else await _occurrence_row(occurrence)
 
@@ -3002,12 +3039,16 @@ def compose_admin(
 
     mark_coach_attendance = MarkCoachAttendance(
         coach_attendance=coach_attendance_repo,
+        coach_attendance_audit=coach_attendance_audit_repo,
         occurrence_lookup=_AdminOccurrenceLookup(),
-        academy_id=academy_id,
+        academy_id=request_academy_id,
+        # #787: attendance status and rate overrides are payroll inputs; a
+        # frozen payout period will never re-read them.
+        payout_lock=PayoutInputLock(payout_periods_repo),
     )
 
-    correct_attendance = CorrectAttendance(
-        attendance_repo=MongoAttendanceRepository(db),
+    attendance_corrections = compose_attendance_corrections(
+        db,
         occurrence_lookup=_AdminOccurrenceLookup(),
         outbox=outbox,
         academy_id=request_academy_id,
@@ -3033,11 +3074,15 @@ def compose_admin(
                     "joined_at": entry.joined_at,
                     "added_at": entry.joined_at,
                     "status": entry.status,
+                    "offer_expires_at": entry.offer_expires_at,
+                    "offer_holds_seat": entry.offer_holds_seat,
                     "position": idx,
                     "full_name": student.full_name if student else "(unknown)",
                 }
             )
-        return rows
+        # #860: the waitlist row printed the raw parent id. Same batched,
+        # tenant-scoped join the dunning reads already use.
+        return await _enrich_parent_names(rows)
 
     async def list_payments_recent(fetch_cap: int = 200, *, include_voided: bool = False):
         from backend.v2.shared.tenancy import current_academy_id
@@ -3089,29 +3134,6 @@ def compose_admin(
         # Stripe ids). settle_matching_rows does that and ignores non-money statuses.
         def _settle_invoice_rows(keys: set[str], payment_doc: dict[str, Any]) -> bool:
             return settle_matching_rows(invoice_row_by_key, keys, payment_doc) > 0
-
-        invoice_student_ids = [
-            str(row["student_id"])
-            for row in invoice_rows
-            if isinstance(row.get("student_id"), str) and row.get("student_id")
-        ]
-        if invoice_student_ids:
-            student_names: dict[str, str] = {}
-            async for student in db["students"].find(
-                {
-                    "academy_id": request_academy_id,
-                    "student_id": {"$in": list(dict.fromkeys(invoice_student_ids))},
-                },
-                {"student_id": 1, "full_name": 1},
-            ):
-                student_id = str(student.get("student_id") or "")
-                full_name = str(student.get("full_name") or "").strip()
-                if student_id and full_name:
-                    student_names[student_id] = full_name
-            for row in invoice_rows:
-                student_id = row.get("student_id")
-                if isinstance(student_id, str) and student_id in student_names:
-                    row["student_name"] = student_names[student_id]
 
         legacy = await payments_repo.list_recent_admin(limit=fetch_cap)
         legacy_payment_ids = {
@@ -3294,6 +3316,8 @@ def compose_admin(
                 continue
             deduped_legacy.append(row)
         combined = attempt_rows + invoice_rows + ledger_rows + deduped_legacy
+        # #618: every row, not just the invoice ones, gets a student to show.
+        await resolve_student_names(db, request_academy_id, combined)
         combined.sort(
             key=lambda r: (
                 (r.get("created_at") if isinstance(r, dict) else None)
@@ -3657,6 +3681,8 @@ def compose_admin(
         sessions=payments_repo,
         snapshots=payments_repo,
         occurrences=payments_repo,
+        academy_timezone=academy_timezone_lookup(db),
+        class_fees=MongoClassFeeResolver(db),
     )
 
     async def quote_enrollment(
@@ -3672,7 +3698,7 @@ def compose_admin(
             )
         )
 
-    async def list_audit_logs():
+    async def list_audit_logs(actor_type: str | None = None):
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
@@ -3694,7 +3720,15 @@ def compose_admin(
                     "created_at": doc.get("created_at") or datetime.now(UTC),
                 }
             )
-        return rows
+
+        actors = await MongoAuditActorDirectory(db).resolve(
+            {str(row["actor_id"]) for row in rows if row["actor_id"]},
+            academy_id=request_academy_id,
+        )
+        wanted = (actor_type or "").strip().lower()
+        for row in rows:
+            row.update(audit_actor_fields(row["actor_id"], actors))
+        return [row for row in rows if not wanted or row["actor_type"] == wanted]
 
     async def _parent_payments_link(request_academy_id: str) -> tuple[str | None, str]:
         """Resolve one academy's parent-payments URL and display name.
@@ -3840,6 +3874,7 @@ def compose_admin(
             # One lookup for the whole page: every row shares the same academy,
             # so the pay link and academy name are resolved once, not per row.
             pay_url, academy_name = await _parent_payments_link(request_academy_id)
+            calling_code = await academy_calling_code_lookup(db)(request_academy_id)
             for followup in rows:
                 followup["whatsapp_url"] = whatsapp_deep_link(
                     phone=followup["phone"],
@@ -3851,6 +3886,7 @@ def compose_admin(
                         pay_url=pay_url,
                         academy_name=academy_name,
                     ),
+                    default_country_code=calling_code,
                 )
         return rows
 
@@ -3876,12 +3912,7 @@ def compose_admin(
             return payload
 
         request_academy_id = current_academy_id()
-        invoice = await db["invoices"].find_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            }
-        )
+        invoice = await find_invoice_by_id_or_number(db, request_academy_id, invoice_id)
         if invoice is not None:
             inv_id = str(invoice.get("invoice_id") or invoice_id)
             lines = [
@@ -3988,12 +4019,8 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         request_academy_id = current_academy_id()
-        owned_invoice = await db["invoices"].find_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            },
-            {"_id": 1},
+        owned_invoice = await find_invoice_by_id_or_number(
+            db, request_academy_id, invoice_id, {"_id": 1}
         )
         owned_payment = await db["payments"].find_one(
             {
@@ -4018,13 +4045,11 @@ def compose_admin(
             }
         )
         field = "receipt_artifact_id" if artifact_type == "receipt" else "invoice_pdf_artifact_id"
-        await db["invoices"].update_one(
-            {
-                "academy_id": request_academy_id,
-                "$or": [{"invoice_id": invoice_id}, {"invoice_number": invoice_id}],
-            },
-            {"$set": {field: artifact_id, "updated_at": now}},
-        )
+        if owned_invoice is not None:
+            await db["invoices"].update_one(
+                {"academy_id": request_academy_id, "_id": owned_invoice["_id"]},
+                {"$set": {field: artifact_id, "updated_at": now}},
+            )
         await db["payments"].update_one(
             {
                 "academy_id": request_academy_id,
@@ -4034,108 +4059,25 @@ def compose_admin(
         )
         return {"artifact_id": artifact_id, "artifact_type": artifact_type, "status": "generated"}
 
-    _dues_reminder_email = DuesReminderEmailAdapter(academies=academy_repo, sender=_email_sender)
-
-    class _DuesReminderSender:
-        async def send_dues_reminders(
-            self,
-            *,
-            parent_ids: list[str] | None,
-            generate_invoice_artifacts: bool,
-        ) -> dict[str, object]:
-            from backend.v2.shared.tenancy import current_academy_id
-
-            request_academy_id = current_academy_id()
-            rows = await list_dues_followup()
-            if parent_ids is not None:
-                selected = set(parent_ids)
-                rows = [row for row in rows if str(row["parent_id"]) in selected]
-            generated = 0
-            if generate_invoice_artifacts:
-                for row in rows:
-                    invoice_cursor = (
-                        db["invoices"]
-                        .find(
-                            {
-                                "academy_id": request_academy_id,
-                                "status": {"$in": ["open", "partially_paid", "draft"]},
-                                "balance_due_cents": {"$gt": 0},
-                                "$or": [
-                                    {"parent_id": row["parent_id"]},
-                                    {"parent_user_id": row["parent_id"]},
-                                ],
-                                "is_deleted": {"$ne": True},
-                            }
-                        )
-                        .sort([("created_at", -1)])
-                    )
-                    async for invoice in invoice_cursor:
-                        await generate_billing_invoice_artifact(
-                            str(invoice.get("invoice_id") or invoice.get("invoice_number")),
-                            "invoice_pdf",
-                        )
-                        generated += 1
-
-            if not _email_sender_is_real:
-                return {
-                    "sent": 0,
-                    "blocked": True,
-                    "reason": (
-                        f"Local/test safety block: {len(rows)} reminder(s) were not sent "
-                        "(email delivery is not enabled for this environment)."
-                    ),
-                    "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
-                    "generated_invoice_artifacts": generated,
-                }
-
-            pay_url, _academy_name = await _parent_payments_link(request_academy_id)
-            membership_repo = MongoMembershipRepository(db)
-            sent = 0
-            skipped = 0
-            for row in rows:
-                parent_id = str(row["parent_id"])
-                membership = await membership_repo.get_membership(request_academy_id, parent_id)
-                if (
-                    membership is None
-                    or not membership.is_active()
-                    or "parent" not in membership.roles
-                ):
-                    skipped += 1
-                    continue
-                user = await users_r.get_by_id(parent_id)
-                email = str(user.email if user else "").strip()
-                if not email:
-                    skipped += 1
-                    continue
-                ok = await _dues_reminder_email.send_reminder(
-                    parent_id=parent_id,
-                    email=email,
-                    display_name=str(user.display_name if user else "") or None,
-                    total_due_cents=int(row["total_due_cents"]),
-                    pending_count=int(row["pending_count"]),
-                    currency="usd",
-                    pay_url=pay_url,
-                )
-                if ok:
-                    sent += 1
-                else:
-                    skipped += 1
-
-            reason = (
-                f"{skipped} parent(s) skipped (no active membership, no email on file, "
-                "or delivery failed)."
-                if skipped
-                else None
-            )
-            return {
-                "sent": sent,
-                "blocked": False,
-                "reason": reason,
-                "selected_parent_ids": parent_ids or [str(row["parent_id"]) for row in rows],
-                "generated_invoice_artifacts": generated,
-            }
-
-    send_dues_reminders = SendDuesReminders(sender=_DuesReminderSender())
+    # Every reminder pathway — the admin's manual send, the automated due+N
+    # sweep (#774) and the owner's autopay attention counts — is wired in
+    # composition/dues_reminders.py. admin.py is at its wiring line budget.
+    dues = compose_dues_reminders(
+        db,
+        academies=academy_repo,
+        users=users_r,
+        email_sender=_email_sender,
+        email_sender_is_real=_email_sender_is_real,
+        ledger=billing_ledger_repo,
+        billing_counters=billing_counters_repo,
+        billing_settings=billing_settings_repo,
+        parent_payments_link=_parent_payments_link,
+        list_dues_followup=list_dues_followup,
+        generate_invoice_artifact=generate_billing_invoice_artifact,
+    )
+    send_dues_reminders = dues.send_dues_reminders
+    send_past_due_reminders = dues.send_past_due_reminders
+    count_dunning_alerts = dues.count_dunning_alerts
 
     get_refunds_report = make_refunds_report(db)
     get_revenue_by_category_report = make_revenue_by_category_report(db)
@@ -4222,6 +4164,9 @@ def compose_admin(
         decline_pause_request=decline_pause_request,
         process_scheduled_resume_actions=process_scheduled_resume_actions,
         process_scheduled_cancellation_actions=process_scheduled_cancellation_actions,
+        schedule_admin_drop_at_period_end=admin_period_end_drops.schedule,
+        cancel_scheduled_admin_drop=admin_period_end_drops.cancel,
+        process_scheduled_admin_drop_actions=admin_period_end_drops.process,
         issue_refund=issue_refund,
         quote_enrollment=quote_enrollment,
         preview_withdrawal_credit=preview_withdrawal_credit,
@@ -4252,6 +4197,8 @@ def compose_admin(
         record_manual_payment=record_manual_payment,
         issue_invoice_refund=issue_invoice_refund,
         list_billing_audit=list_billing_audit,
+        record_money_setting_change=record_money_setting_change,
+        upload_academy_logo=upload_academy_logo,
         create_student_invoice=create_student_invoice,
         bill_enrollment_period=bill_enrollment_period,
         list_billing_products=list_billing_products,
@@ -4271,8 +4218,8 @@ def compose_admin(
         deny_trial_request=deny_trial_request,
         list_self_cancellations_for_admin=list_self_cancellations_for_admin,
         get_platform_charge_fallback=get_platform_charge_fallback,
-        set_platform_charge_fallback=set_platform_charge_fallback,
         get_invoice_schedule=get_invoice_schedule,
+        get_invoice_prefix=get_invoice_prefix,
         set_invoice_schedule=set_invoice_schedule,
         generate_monthly_payments=generate_monthly_payments,
         mark_payment_paid=mark_payment_paid,
@@ -4318,6 +4265,7 @@ def compose_admin(
         list_admin_sessions=list_admin_sessions,
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,
+        preview_welcome_email=notifiers.welcome.preview,
         set_session_assistants=compose_set_session_assistants(
             sessions=sessions_w,
             occurrences=occurrences_r,
@@ -4334,13 +4282,17 @@ def compose_admin(
         add_session_replacement=add_session_replacement,
         update_session_occurrence_replacement=update_session_occurrence_replacement,
         mark_coach_attendance=mark_coach_attendance,
-        correct_attendance=correct_attendance,
+        correct_attendance=attendance_corrections.correct,
+        void_attendance=attendance_corrections.void,
+        list_occurrence_attendance=attendance_corrections.list_for_occurrence,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
+        send_past_due_reminders=send_past_due_reminders,
+        count_dunning_alerts=count_dunning_alerts,
         export_report_csv=export_report_csv,
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,
@@ -4365,6 +4317,9 @@ def compose_admin(
         get_academy_gateway_use_case=get_academy_gateway_use_case,
         start_stripe_connect_use_case=start_stripe_connect_use_case,
         start_connect_onboarding_use_case=start_connect_onboarding_use_case,
+        academy_frontend_base_url=academy_frontend_base_url_lookup(
+            db, frontend_url=settings.frontend_url
+        ),
         complete_stripe_connect_use_case=complete_stripe_connect_use_case,
         disconnect_stripe_use_case=disconnect_stripe_use_case,
         change_user_role=change_user_role,
@@ -4374,6 +4329,7 @@ def compose_admin(
         provision_parent_login=provision_parent_login,
         provision_student_login=provision_student_login,
         send_login_invite=send_login_invite,
+        user_governance_audit=MongoUserGovernanceAudit(db),
         add_user_role=add_user_role,
         remove_user_role=remove_user_role,
         get_admin_student=get_admin_student,
@@ -4414,6 +4370,7 @@ def compose_admin(
 
         return await GetCoachUtilization(
             snapshot_repo=MongoCoachPayoutSnapshotReader(db),
+            compliance_reader=MongoComplianceReader(db),
             academy_id=current_academy_id(),
         ).execute(periods)
 
@@ -4431,21 +4388,17 @@ def compose_admin(
     # Must come after every repo above is bound — `_invoice_email_port` closes
     # over `academy_repo`.
     install_dunning_notifier(_invoice_email_port())
+    install_dispute_notifier(
+        build_dispute_notifier(
+            db,
+            sender=_email_sender,
+            users=MongoUserRepository(db, default_academy_id=academy_id),
+            academies=academy_repo,
+            enabled=bool(settings.email_delivery_enabled and settings.resend_api_key),
+        )
+    )
 
     return admin
-
-
-class _RegistrationRefundExecutor:
-    """`RefundExecutor` adapter over Billing's ``IssueRefund`` use case
-    (issue #514): refund the full remaining captured amount."""
-
-    def __init__(self, issue_refund: IssueRefund) -> None:
-        self._issue_refund = issue_refund
-
-    async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
-        await self._issue_refund.execute(
-            IssueRefundCommand(payment_id=payment_id, amount_cents=None, reason=reason)
-        )
 
 
 class _SessionTypeChangedEventSink:

@@ -160,8 +160,9 @@ export async function stubParentMessages(
 }
 
 /**
- * Five parent pages — onboarding, dashboard, children and requests — read the
- * academy profile through `getParentAcademy`, so any spec that lands on one of
+ * The parent shell (for the academy mark) and five parent pages — onboarding,
+ * dashboard, children and requests — read the academy profile through
+ * `getParentAcademy`, so any spec that lands on one of
  * them needs this the same way it needs `stubParentProfile`. Unstubbed the call
  * 500s against the dev server and trips the clean-console assertion on a page
  * unrelated to what the spec is testing.
@@ -177,6 +178,15 @@ export async function stubParentAcademy(page: Page): Promise<void> {
       hours_text: null,
       address: null,
       logo_url: null,
+      self_service: {
+        can_report_absence: true,
+        can_request_makeup: true,
+        can_request_pause: true,
+        can_request_cancel: true,
+        can_claim_waitlist_offer: true,
+        can_request_trial: true,
+      },
+      payment_instructions: null,
     });
   });
 }
@@ -188,6 +198,17 @@ export async function stubCoachMessages(
   await page.route("**/api/v2/coach/messages", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { messages });
+  });
+}
+
+/**
+ * The coach shell reads the academy name, logo and colour for its header mark
+ * on every /coach page. Unstubbed the call 502s and trips clean-console specs.
+ */
+export async function stubCoachAcademy(page: Page): Promise<void> {
+  await page.route("**/api/v2/coach/academy", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { name: "Aces Academy", logo_url: null, brand_color: null });
   });
 }
 

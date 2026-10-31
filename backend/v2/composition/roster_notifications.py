@@ -35,6 +35,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from backend.v2.composition.digests import (
@@ -49,6 +50,10 @@ from backend.v2.composition.email_adapters import (
 from backend.v2.composition.enrollment_welcome_email import (
     EnrollmentWelcomeEmailAdapter,
     format_session_when,
+)
+from backend.v2.composition.registration_decision_email import (
+    RegistrationDecisionEmailAdapter,
+    compose_registration_decision_notifier,
 )
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
@@ -71,9 +76,15 @@ from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver i
     MongoAudienceResolver,
 )
 from backend.v2.contexts.enrollment.application.ports import RosterChangeKind
+from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
+    GetSelfServicePolicy,
+)
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+    MongoSelfServicePolicyRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
@@ -84,6 +95,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
@@ -378,6 +390,98 @@ def render_seat_opened_email(
     )
 
 
+def render_waitlist_offer_email(
+    *,
+    session: Session,
+    academy_name: str,
+    student_name: str,
+    portal_url: str | None,
+    offer_expires_at: datetime | None,
+    academy_timezone: str | None = None,
+    can_claim: bool = True,
+) -> tuple[str, str]:
+    """The family's "a seat opened — claim it by <date>" mail, and the "it
+    went to the next family" mail when the window closes (#828).
+
+    One renderer for both because they are the same story told twice, and a
+    family that gets the second without ever seeing the first should still be
+    able to tell what happened.
+    """
+    safe_student = html.escape(student_name)
+    safe_session = html.escape(session.title)
+    if offer_expires_at is None:
+        parts = [
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+            f"The seat in {safe_session} has been offered to another family</h2>",
+            _para(
+                f"We held a place in {safe_session} for {safe_student} and did not "
+                f"hear back before the deadline, so it has gone to the next family "
+                f"on the waitlist."
+            ),
+            # X2: this used to promise "still on the waitlist — we will write
+            # again". An expired entry is closed and is never offered again,
+            # so the honest next step is to ask the academy.
+            _para(
+                f"{safe_student} is no longer on the waitlist for this class. If you "
+                f"would still like a place, please contact {html.escape(academy_name)}."
+            ),
+        ]
+        if portal_url:
+            parts.append(_branded_button(label="View your requests", url=portal_url))
+        return (
+            f"The seat in {session.title} went to the next family",
+            _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
+        )
+
+    deadline = format_deadline(offer_expires_at, academy_timezone=academy_timezone)
+    hold_sentence = (
+        f"{safe_student} is next on the waitlist. We are holding the seat until "
+        f"<strong>{html.escape(deadline)}</strong> — confirm by then to claim it."
+        if can_claim
+        else (
+            f"{safe_student} is next on the waitlist. We are holding the seat until "
+            f"<strong>{html.escape(deadline)}</strong> — contact "
+            f"{html.escape(academy_name)} by then to claim it."
+        )
+    )
+    parts = [
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        f"A seat opened in {safe_session} for {safe_student}</h2>",
+        _para(hold_sentence),
+        _para(
+            f"<strong>When:</strong> "
+            f"{html.escape(format_session_schedule(session, academy_timezone=academy_timezone))}"
+        ),
+    ]
+    if session.location:
+        parts.append(_para(f"<strong>Where:</strong> {html.escape(session.location)}"))
+    parts.append(
+        _para(
+            "If we do not hear from you by then, the seat goes to the next family on the list. "
+            "In the rare case the class fills up again before you confirm, you stay first on "
+            "the waitlist."
+        )
+    )
+    if portal_url:
+        parts.append(_branded_button(label="Confirm the seat", url=portal_url))
+    return (
+        f"A seat opened for {student_name} in {session.title} — confirm by {deadline}",
+        _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
+    )
+
+
+def format_deadline(when: datetime, *, academy_timezone: str | None = None) -> str:
+    """The confirmation deadline in the academy's own zone — a family reading
+    "17 Sep, 12:00" must read it as their own clock, not UTC."""
+    local = when
+    if academy_timezone:
+        try:
+            local = when.astimezone(ZoneInfo(academy_timezone))
+        except Exception:  # pragma: no cover - defensive, bad tz on the academy
+            local = when
+    return local.strftime("%a %-d %b, %-I:%M %p")
+
+
 class RosterAlertAdapter:
     """Implements enrollment's ``RosterChangeNotifier``.
 
@@ -397,6 +501,7 @@ class RosterAlertAdapter:
         audiences: AudienceResolver,
         sender: EmailSendPort,
         unsubscribe_links: UnsubscribeLinkBuilder | None = None,
+        self_service_policies: Any | None = None,
     ) -> None:
         self._sessions = sessions
         self._enrollments = enrollments
@@ -405,6 +510,11 @@ class RosterAlertAdapter:
         self._audiences = audiences
         self._sender = sender
         self._unsubscribe_links = unsubscribe_links or UnsubscribeLinkBuilder()
+        # Settings overhaul Phase 1 Lane C: when the waitlist-claim switch is
+        # off, the offer email must not carry a claim link (item 4). Optional
+        # so existing constructions/tests keep working; real composition
+        # always sets it.
+        self._self_service_policies = self_service_policies
 
     async def roster_changed(
         self,
@@ -834,6 +944,125 @@ class RosterAlertAdapter:
             context={"change": "promoted", "session_id": session.session_id},
         )
 
+    # --- waitlist offer window (issue #828) -----------------------------
+
+    async def waitlist_offer_made(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+        offer_expires_at: datetime,
+    ) -> None:
+        """ "A seat opened — claim it by <date>". TRANSACTIONAL: the family has
+        three days and a digest opt-out must not cost them the seat."""
+        await self._send_offer_email(
+            waitlist_id=waitlist_id,
+            session_id=session_id,
+            student_id=student_id,
+            parent_user_id=parent_user_id,
+            offer_expires_at=offer_expires_at,
+        )
+
+    async def waitlist_offer_expired(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+    ) -> None:
+        """The window closed unanswered and the seat moved down the list."""
+        await self._send_offer_email(
+            waitlist_id=waitlist_id,
+            session_id=session_id,
+            student_id=student_id,
+            parent_user_id=parent_user_id,
+            offer_expires_at=None,
+        )
+
+    async def _send_offer_email(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+        offer_expires_at: datetime | None,
+    ) -> None:
+        session = await self._sessions.get(session_id)
+        if session is None:
+            logger.warning(
+                "enrollment.waitlist_offer_session_missing",
+                extra={"session_id": session_id, "waitlist_id": waitlist_id},
+            )
+            return
+        parent = await self._resolve_users([parent_user_id])
+        recipient = parent[0] if parent else None
+        if recipient is None or not recipient.email:
+            logger.warning(
+                "enrollment.waitlist_offer_no_recipient",
+                extra={"session_id": session_id, "parent_user_id": parent_user_id},
+            )
+            return
+        academy_id = current_academy_id()
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = str(academy_doc.get("display_name") or academy_doc.get("name") or "") or (
+            "Your academy"
+        )
+        academy_timezone = str(academy_doc.get("timezone") or "") or None
+        academy_slug = str(academy_doc.get("slug") or "") or None
+        # The academy's own subdomain (ADR-0007): a link on the deployment's
+        # generic frontend_url resolves to no tenant at all.
+        base = academy_frontend_url(
+            frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
+        )
+        # Item 4: when the academy has switched off claiming waitlist offers
+        # in the app, the email must not carry a claim link — parents cannot
+        # act on it in-app, so a link that 403s is worse than none. This
+        # applies only to the "seat opened, claim it" email; the "offer
+        # expired" email's portal_url is a read-only "view your requests"
+        # link and is unaffected.
+        can_claim = True
+        if offer_expires_at is not None and self._self_service_policies is not None:
+            try:
+                policy = await self._self_service_policies.get_or_default()
+                can_claim = bool(policy.can_claim_waitlist_offer)
+            except Exception:
+                logger.warning(
+                    "enrollment.waitlist_offer_policy_unresolved",
+                    extra={"waitlist_id": waitlist_id},
+                    exc_info=True,
+                )
+        subject, body = render_waitlist_offer_email(
+            session=session,
+            academy_name=academy_name,
+            student_name=await self._student_name(student_id) or "Your child",
+            # The Requests page shows the family's offers (X2); the id lets it
+            # scroll to and highlight this one. None when the app-claim
+            # switch is off (item 4).
+            portal_url=(
+                f"{base.rstrip('/')}/parent/requests?offer={quote(waitlist_id)}"
+                if base and can_claim
+                else None
+            ),
+            offer_expires_at=offer_expires_at,
+            academy_timezone=academy_timezone,
+            can_claim=can_claim,
+        )
+        await self._send_one(
+            recipient=recipient,
+            subject=subject,
+            body=body,  # no unsubscribe footer: transactional
+            category=EmailCategory.TRANSACTIONAL,
+            context={
+                "change": "waitlist_offer" if offer_expires_at else "waitlist_offer_expired",
+                "session_id": session_id,
+                "waitlist_id": waitlist_id,
+            },
+        )
+
     async def _send_one(
         self,
         *,
@@ -849,11 +1078,14 @@ class RosterAlertAdapter:
         audience their alert, and must not reach the enrollment write.
         """
         try:
+            identity = await sender_identity_for_current_academy(self._academies)
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
                 body=body,
                 category=category,
+                reply_to=identity.reply_to,
+                sender_name=identity.sender_name,
             )
         except Exception:
             logger.exception(
@@ -957,6 +1189,10 @@ class EnrollmentNotifiers:
 
     welcome: EnrollmentWelcomeEmailAdapter
     roster: RosterAlertAdapter
+    #: Issue #776 — the waitlisted/declined family emails and the new-application
+    #: staff alert. Built here with its siblings so ``composition/admin.py``
+    #: stays one line per concern under its wiring line budget.
+    decision: RegistrationDecisionEmailAdapter
 
 
 def compose_enrollment_notifiers(
@@ -985,8 +1221,13 @@ def compose_enrollment_notifiers(
             # and that id comes off the tenant-scoped session document.
             audiences=MongoAudienceResolver(db=db),
             sender=sender,
+            # Settings overhaul Phase 3 PR 10: the academy-level "Absences and
+            # make-ups" fallback text, read from the same store Family
+            # policies writes.
+            self_service_policy=GetSelfServicePolicy(policies=MongoSelfServicePolicyRepository(db)),
         ),
         roster=compose_roster_notifier(db, settings, sessions=sessions, academies=academies),
+        decision=compose_registration_decision_notifier(db, settings),
     )
 
 
@@ -1003,6 +1244,10 @@ def compose_roster_notifier(
     the waitlist promotion that follows it) and has no welcome adapter to
     build, so it takes this rather than the pair.
     """
+    from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
+        MongoSelfServicePolicyRepository,
+    )
+
     return RosterAlertAdapter(
         sessions=sessions or MongoSessionRepository(db),
         enrollments=MongoEnrollmentRepository(db),
@@ -1011,4 +1256,7 @@ def compose_roster_notifier(
         audiences=MongoAudienceResolver(db=db),
         sender=_build_email_sender(settings, db),
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        # Item 4: the "seat opened, claim it" email must not carry a claim
+        # link when the waitlist-claim switch is off.
+        self_service_policies=MongoSelfServicePolicyRepository(db),
     )

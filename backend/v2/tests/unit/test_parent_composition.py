@@ -17,13 +17,14 @@ from backend.v2.contexts.billing.application.ports import (
 )
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
 from backend.v2.contexts.billing.domain.errors import (
-    CheckoutCreationFailed,
+    BillingPortalNotReady,
     InvoicePayLinkUnavailable,
     QuoteExpired,
 )
 from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
 from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
     GetChildSchedule,
+    StudentNotOwnedByParent,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
@@ -63,7 +64,8 @@ class _FakeCollection:
         self.docs = docs or []
         self.updates: list[dict[str, Any]] = []
 
-    async def find_one(self, query: dict[str, Any], **_: Any) -> dict[str, Any] | None:
+    async def find_one(self, query: dict[str, Any], *_: Any, **__: Any) -> dict[str, Any] | None:
+        # Like Motor, a projection may be passed positionally (it is ignored).
         for doc in self.docs:
             if _matches(doc, query):
                 return doc
@@ -142,6 +144,12 @@ def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
         elif isinstance(expected, dict) and "$in" in expected:
             if doc.get(key) not in expected["$in"]:
                 return False
+        elif isinstance(expected, dict) and "$ne" in expected:
+            # Mongo's $ne matches documents where the field is ABSENT too —
+            # a fake that only compared present values would silently drop
+            # every row a real query returns.
+            if doc.get(key) == expected["$ne"]:
+                return False
         elif doc.get(key) != expected:
             return False
     return True
@@ -195,6 +203,8 @@ def _enrollment_doc(
 
 def _connected_account_doc(*, ready: bool = True) -> dict[str, Any]:
     account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad",
         stripe_account_id="acct_ready",
     )
@@ -318,7 +328,8 @@ async def test_parent_single_invoice_payment_routes_checkout_to_ready_connected_
         "invoice_id": "inv-1",
         "checkout_url": "https://checkout.stripe.test/balance",
     }
-    assert stripe.invoice_checkout_calls[0]["connected_account_id"] == "acct_ready"
+    assert stripe.invoice_checkout_calls[0]["stripe_account"] == "acct_ready"
+    assert "connected_account_id" not in stripe.invoice_checkout_calls[0]
 
 
 @pytest.mark.asyncio
@@ -399,7 +410,8 @@ async def test_parent_balance_payment_routes_checkout_to_ready_connected_account
     assert stripe.invoice_checkout_calls
     call = stripe.invoice_checkout_calls[0]
     assert call["amount_cents"] == 12_000
-    assert call["connected_account_id"] == "acct_ready"
+    assert call["stripe_account"] == "acct_ready"
+    assert str(call["idempotency_key"]).endswith(":acct:acct_ready")
     assert call["metadata"]["invoice_ids"] == "inv-earlier,inv-later"
     assert call["metadata"]["type"] == "balance_payment"
 
@@ -438,7 +450,7 @@ async def test_parent_single_invoice_payment_with_enroll_autopay_forwards_flag(
     call = stripe.invoice_checkout_calls[0]
     assert call["save_payment_method_for_autopay"] is True
     assert call["autopay_enrollment_ids"] == ["enroll-a"]
-    assert call["connected_account_id"] == "acct_ready"
+    assert call["stripe_account"] == "acct_ready"
     # Opted-in redirects must carry a checkout_session_id placeholder so the
     # parent app's checkout-status poll fires on return (not just the
     # webhook) — Stripe substitutes {CHECKOUT_SESSION_ID} at redirect time.
@@ -582,7 +594,7 @@ async def test_parent_balance_payment_with_enroll_autopay_collects_distinct_enro
     assert call["autopay_enrollment_ids"] == ["enroll-a", "enroll-b"]
     # A distinct idempotency key so an earlier one-time balance session is not
     # replayed without the saved-payment-method params.
-    assert str(call["idempotency_key"]).endswith(":autopay-optin")
+    assert str(call["idempotency_key"]).endswith(":autopay-optin:acct:acct_ready")
     # Same checkout_session_id placeholder requirement as the single-invoice
     # path (see test above) — the balance payment path builds its own Stripe
     # call directly rather than delegating to SendInvoice.
@@ -713,7 +725,12 @@ async def test_parent_balance_payment_falls_back_to_platform_when_flag_on(
         )
 
     assert result == {"redirect_url": "https://checkout.stripe.test/balance"}
-    assert stripe.invoice_checkout_calls[0]["connected_account_id"] is None
+    # House academy: the platform call, byte-identical (no account kwarg, and
+    # the historical idempotency key).
+    call = stripe.invoice_checkout_calls[0]
+    assert "stripe_account" not in call
+    assert "connected_account_id" not in call
+    assert ":acct:" not in str(call["idempotency_key"])
 
 
 @pytest.mark.asyncio
@@ -748,7 +765,7 @@ async def test_parent_balance_payment_provider_failure_returns_unavailable(
                 cancel_url="https://app.example.com/parent/payments?invoice=cancelled",
             )
 
-    assert stripe.invoice_checkout_calls[0]["connected_account_id"] == "acct_ready"
+    assert stripe.invoice_checkout_calls[0]["stripe_account"] == "acct_ready"
     # The parent portal's primary CTA blew up: loud, attributed, and recorded
     # once per invoice behind the link (issue #426).
     assert exc.value.details.get("reason") == "checkout_creation_failed"
@@ -983,7 +1000,7 @@ async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup
 
         with (
             tenant_scope("acad"),
-            pytest.raises(CheckoutCreationFailed, match="missing stored stripe customer"),
+            pytest.raises(BillingPortalNotReady, match="autopay setup"),
         ):
             await parent.open_billing_portal(
                 parent_id="parent-1",
@@ -991,13 +1008,9 @@ async def test_billing_portal_does_not_fall_back_to_global_email_customer_lookup
             )
 
         assert not hasattr(stripe, "find_customer_id_by_email")
-        assert stripe.portal_calls == [
-            {
-                "parent_id": "parent-1",
-                "return_url": "https://app.example.com/parent/payments",
-                "stripe_customer_id": None,
-            }
-        ]
+        # No stored customer for this parent: the use case stops there (issue
+        # #595) instead of asking any gateway — real or fake — to invent one.
+        assert stripe.portal_calls == []
     finally:
         get_settings.cache_clear()
 
@@ -1016,14 +1029,14 @@ class _AutopaySetupStripe(_PortalStripe):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
-        connected_account_id: str | None = None,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         self.autopay_setup_checkouts.append(
             {
                 "parent_id": parent_id,
                 "enrollment_id": enrollment_id,
                 "session_id": session_id,
-                "connected_account_id": connected_account_id,
+                "stripe_account": stripe_account,
                 "metadata": metadata,
             }
         )
@@ -1097,7 +1110,7 @@ async def test_start_autopay_does_not_stamp_dangling_subscription_fields(
         )
 
     assert result.redirect_url == "https://checkout.stripe.test/autopay"
-    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+    assert stripe.autopay_setup_checkouts[0]["stripe_account"] == "acct_ready"
 
     enrollment_updates = db["enrollments"].updates
     assert len(enrollment_updates) == 1
@@ -1613,13 +1626,17 @@ async def test_restarting_checkout_repoints_the_application_at_the_new_payment(
         def __init__(self) -> None:
             self.calls: list[dict[str, Any]] = []
             self.expired: list[str] = []
+            self.expired_on: list[str | None] = []
 
         async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
             self.calls.append(kwargs)
             return "cs_second", "https://checkout.stripe.test/second"
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.expired.append(checkout_session_id)
+            self.expired_on.append(stripe_account)
 
     stripe = _Stripe()
     parent = compose_parent(
@@ -1649,6 +1666,9 @@ async def test_restarting_checkout_repoints_the_application_at_the_new_payment(
     # its pending Payment parked, so the parent cannot be charged twice for the
     # same enrollment by going back to the old tab.
     assert stripe.expired == ["cs_first"]
+    # A direct-charge session lives on the academy's connected account and is
+    # expired there.
+    assert stripe.expired_on == ["acct_ready"]
     first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
     assert first_payment["status"] == "expired"
 
@@ -1737,7 +1757,9 @@ async def test_retiring_an_already_paid_checkout_does_not_corrupt_state(
         async def create_checkout_session(self, **_: Any) -> tuple[str, str]:
             return "cs_second", "https://checkout.stripe.test/second"
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.expire_attempts.append(checkout_session_id)
             raise StripeCheckoutSessionNotExpirable("You may only expire an open Checkout Session.")
 
@@ -1797,7 +1819,9 @@ class _RecordingStripe:
         self.created.append(kwargs)
         return self.checkout_session_id, "https://checkout.stripe.test/new"
 
-    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+    async def expire_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> None:
         self.expired.append(checkout_session_id)
 
 
@@ -1937,7 +1961,9 @@ async def test_retiring_the_same_checkout_attempt_twice_is_harmless(
         def __init__(self) -> None:
             self.expired: list[str] = []
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.expired.append(checkout_session_id)
             if len(self.expired) > 1:
                 raise StripeCheckoutSessionNotExpirable(
@@ -2616,7 +2642,9 @@ async def test_a_transient_stripe_failure_parks_the_session_for_reconciliation(
     await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
 
     class _UnreachableStripe:
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             raise stripe_lib.APIConnectionError(
                 "Unexpected error communicating with Stripe: connection reset"
             )
@@ -2669,7 +2697,9 @@ async def test_an_already_terminal_stripe_session_is_not_parked_for_reconciliati
     await db["ledger_payments"].insert_one(_pending_ledger_payment("pay-1", "cs_1"))
 
     class _AlreadyCompleteStripe:
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             raise StripeCheckoutSessionNotExpirable("You may only expire an open Checkout Session.")
 
     retirement = _StripeCheckoutAttemptRetirement(
@@ -2710,7 +2740,9 @@ async def test_a_later_successful_retirement_clears_the_worklist_entry(
         def __init__(self) -> None:
             self.attempts = 0
 
-        async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        async def expire_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> None:
             self.attempts += 1
             if self.attempts == 1:
                 raise stripe_lib.APIConnectionError("connection reset")
@@ -2822,8 +2854,13 @@ async def test_zero_quote_period_is_stamped_in_the_session_timezone(
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["zero-quote-period-tz"]
 
+    # Seed the application's own clock at the same pinned instant the checkout
+    # call prices against (issue #537 TTL enforcement) — using the real wall
+    # clock here would put `expires_at` in 2026 while the checkout call is
+    # pinned a year ahead in 2027, which is a genuinely expired application,
+    # not the session-timezone case this test targets.
     await db["onboarding_applications"].insert_one(
-        _checkout_ready_application(datetime.now(UTC), status="DRAFT")
+        _checkout_ready_application(_MONTH_END_EVENING_CHICAGO, status="DRAFT")
     )
     await db["sessions"].insert_one(_catalog_session_meeting_soon())
 
@@ -3433,6 +3470,7 @@ async def test_parent_home_next_session_is_the_next_upcoming_occurrence() -> Non
         "end_at": now + timedelta(days=1, hours=1),
         # Always None today (decision 12) — kept for shape parity.
         "coach_name": None,
+        "source": "regular",
     }
     # st-2 has no enrollment, so no upcoming session.
     assert home["children"][1]["next_session"] is None
@@ -3477,7 +3515,9 @@ async def test_parent_home_degrades_per_child_when_one_schedule_leg_raises(
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["parent-home-isolation"]
     await _seed_home_db(db)
-    now = datetime.now(UTC).replace(microsecond=0)
+    # Pinned: the attendance seed is September 2026, so a wall clock makes
+    # the month total 0 from 1 October on.
+    now = _HOME_NOW
     await _seed_home_schedule(db, now)
     parent = _compose_home_parent(db, now=now)
 
@@ -3543,3 +3583,246 @@ async def _seed_home_schedule(db: Any, now: datetime) -> None:
             },
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_parent_enrollments_include_the_latest_terminal_row_per_student() -> None:
+    """Issue #775: a family that left was a dead end.
+
+    ``list_enrollments_for_parent`` filtered to active/paused/held, so a
+    dropped child's card rendered empty — no history, and nothing to click
+    to come back. The departed row rides alongside the live ones, tagged
+    ``departed`` so no live-money reader can mistake it for a seat.
+    """
+    from datetime import UTC, datetime
+
+    older = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+    newer = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    db = _FakeDb(
+        {
+            "students": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "student_id": "student-1",
+                        "parent_id": "parent-1",
+                        "full_name": "Alice Smith",
+                    }
+                ]
+            ),
+            "enrollments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-old",
+                        "student_id": "student-1",
+                        "session_id": "sess-1",
+                        "status": "withdrawn",
+                        "cancelled_at": older,
+                        "cancellation_reason": "conflict",
+                        "created_at": older,
+                    },
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-new",
+                        "student_id": "student-1",
+                        "session_id": "sess-2",
+                        "status": "cancelled",
+                        "cancelled_at": newer,
+                        "cancellation_reason": "move out of town",
+                        "created_at": newer,
+                    },
+                ]
+            ),
+            "sessions": _FakeCollection(
+                [
+                    {"academy_id": "acad", "session_id": "sess-1", "title": "Morning Squad"},
+                    {"academy_id": "acad", "session_id": "sess-2", "title": "Evening Squad"},
+                ]
+            ),
+        }
+    )
+    parent = compose_parent(
+        db,  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        rows = await parent.list_enrollments_for_parent("parent-1")
+
+    # Only the most recent departure per student, so a long-lived family with
+    # many past drops cannot turn the children card into a changelog.
+    assert [row["enrollment_id"] for row in rows] == ["enr-new"]
+    departed = rows[0]
+    assert departed["departed"] is True
+    # Canonical (#699) spelling, so the card reads a legacy "cancelled" row
+    # and a freshly written "deleted" one identically.
+    assert departed["status"] == "deleted"
+    assert departed["session_title"] == "Evening Squad"
+    assert departed["left_on"] == newer
+    assert departed["departure_reason"] == "move out of town"
+    # A departed row carries no live money: nothing here may arm the parent
+    # home's "payment failed" banner or offer an autopay control.
+    assert departed["autopay_enrollment_status"] is None
+    assert departed["last_attempt_outcome"] is None
+
+    # The row has to survive SERIALIZATION, not just composition: the endpoint
+    # builds ParentEnrollmentView(**row), and pydantic's default
+    # extra="ignore" silently drops any key the model does not declare. Asserting
+    # on the raw dict alone would pass while the HTTP response carried no
+    # departure at all.
+    from backend.v2.interfaces.parent.views import ParentEnrollmentView
+
+    view = ParentEnrollmentView(**departed).model_dump()
+    assert view["departed"] is True
+    assert view["left_on"] == newer
+    assert view["departure_reason"] == "move out of town"
+
+
+# --- #1038: approved make-up / trial attendance on parent surfaces -----------
+
+
+async def _seed_one_time_class(db: Any, now: datetime) -> None:
+    """Class B, where no child is enrolled, with a make-up date before the
+    regular class and a later trial date."""
+    await db["sessions"].insert_one(
+        {
+            "academy_id": "acad",
+            "session_id": "sess-b",
+            "title": "Squad B",
+            "location": "Court 7",
+            "coach_id": "coach-2",
+            "start_at": now,
+            "end_at": now + timedelta(hours=1),
+            "capacity": 12,
+        }
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-makeup",
+                "session_id": "sess-b",
+                "start_at": now + timedelta(hours=5),
+                "end_at": now + timedelta(hours=6),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-2",
+            },
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-trial",
+                "session_id": "sess-b",
+                "start_at": now + timedelta(days=2),
+                "end_at": now + timedelta(days=2, hours=1),
+                "status": "scheduled",
+                "scheduled_coach_id": "coach-2",
+            },
+        ]
+    )
+    await db["occurrence_roster_entries"].insert_many(
+        [
+            {
+                "entry_id": "ore-1",
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-makeup",
+                "student_id": "st-1",
+                "source": "makeup",
+                "origin_request_id": "mk-1",
+                "created_at": now - timedelta(days=1),
+            },
+            {
+                # st-2 has no enrollment at all — only this trial.
+                "entry_id": "ore-2",
+                "academy_id": "acad",
+                "occurrence_id": "occ-b-trial",
+                "student_id": "st-2",
+                "source": "trial",
+                "origin_request_id": "tr-1",
+                "created_at": now - timedelta(days=1),
+            },
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_parent_home_next_session_picks_the_earliest_across_regular_and_one_time() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-one-time"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    await _seed_one_time_class(db, now)
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    asha, dev = home["children"]
+    # The make-up (in 5h) beats the regular class (tomorrow).
+    assert asha["next_session"]["occurrence_id"] == "occ-b-makeup"
+    assert asha["next_session"]["source"] == "makeup"
+    assert asha["next_session"]["session_title"] == "Squad B"
+    assert asha["next_session"]["location"] == "Court 7"
+    # A child with no regular enrollment still gets their approved trial.
+    assert dev["next_session"]["occurrence_id"] == "occ-b-trial"
+    assert dev["next_session"]["source"] == "trial"
+
+
+@pytest.mark.asyncio
+async def test_parent_child_schedule_ignores_another_tenants_roster_rows() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-schedule-one-time-tenant"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    await _seed_one_time_class(db, now)
+    # Same student id, same occurrence id, different academy: must not leak.
+    await db["occurrence_roster_entries"].insert_one(
+        {
+            "entry_id": "ore-foreign",
+            "academy_id": "other-acad",
+            "occurrence_id": "occ-b-trial",
+            "student_id": "st-1",
+            "source": "trial",
+            "origin_request_id": "tr-foreign",
+            "created_at": now,
+        }
+    )
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        entries, total = await parent.get_child_schedule(parent_id="parent-1", student_id="st-1")
+        # Another family cannot read this child's schedule at all.
+        with pytest.raises(StudentNotOwnedByParent):
+            await parent.get_child_schedule(parent_id="parent-9", student_id="st-1")
+
+    by_id = {e.occurrence_id: e.source for e in entries}
+    assert by_id == {"occ-b-makeup": "makeup", "occ-next": "regular"}
+    assert total == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_assigned_classes_returns_class_facts_in_academy_timezone() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-assigned-classes"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_one_time_class(db, now)
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        resolved = await parent.resolve_assigned_classes(["occ-b-trial", "missing"])
+    with tenant_scope("other-acad"):
+        foreign = await parent.resolve_assigned_classes(["occ-b-trial"])
+
+    assert set(resolved) == {"occ-b-trial"}
+    details = resolved["occ-b-trial"]
+    assert details["session_title"] == "Squad B"
+    assert details["location"] == "Court 7"
+    assert details["timezone"] == "America/Chicago"
+    assert details["status"] == "scheduled"
+    assert details["start_at"] == now + timedelta(days=2)
+    assert foreign == {}

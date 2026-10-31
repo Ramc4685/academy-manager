@@ -152,9 +152,12 @@ from backend.v2.contexts.student_progress.application.use_cases.get_teaching_foc
     GetTeachingFocus,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand, format_money
+from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.config import get_settings
+from backend.v2.shared.config.settings import resolve_sender_address
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
+from backend.v2.shared.time.academy_timezone import academy_clock_timezone
 
 log = logging.getLogger(__name__)
 
@@ -185,8 +188,8 @@ def resolve_digest_schedule(
     to the env default, preserving the original behaviour for any deployment
     that has not yet saved per-academy values.
 
-    Note: ``hour`` is interpreted in the *scheduler* timezone, not the academy's
-    local timezone — interpreting it per-academy is explicit future work.
+    ``hour`` is the academy's LOCAL hour (``academies.timezone``, else
+    ``LEGACY_FALLBACK_TIMEZONE``); see ``digest_due_date``.
     """
     enabled = env_enabled if academy_enabled is None else academy_enabled
     hour = env_hour if academy_hour is None else academy_hour
@@ -223,6 +226,23 @@ def digest_window_open(schedule: ResolvedDigestSchedule, current_hour: int) -> b
     closes it.
     """
     return schedule.enabled and current_hour >= schedule.hour
+
+
+def digest_due_date(
+    schedule: ResolvedDigestSchedule, now: datetime, academy_zone: str
+) -> date | None:
+    """The academy-local date to send this tick's digest for, or None.
+
+    Settings Phase 4: the digest hour and ``digest_date`` are both read on the
+    academy's own clock (``academy_zone``, from ``academy_clock_timezone``),
+    not the scheduler's. ``digest_date`` is what the claim rows and the CRM
+    Messages thread key on, so it must be the academy-local calendar date.
+    For an academy on the scheduler's zone (BLNO) nothing moves.
+    """
+    local_now = now.astimezone(ZoneInfo(academy_zone))
+    if not digest_window_open(schedule, local_now.hour):
+        return None
+    return local_now.date()
 
 
 #: The unique claim indexes from migrations 0125 and 0148, by collection.
@@ -319,12 +339,15 @@ class _AcademyBrandLookup:
         doc = await self._academies.find_by_id(academy_id)
         if not doc:
             return None
+        identity = resolve_sender(doc)
         return EmailBrand(
             academy_name=str(doc.get("display_name") or academy_id),
             brand_color=doc.get("brand_color") or None,
             logo_url=doc.get("logo_url") or None,
             contact_email=doc.get("contact_email") or None,
             contact_phone=doc.get("contact_phone") or None,
+            sender_name=identity.sender_name,
+            reply_to=identity.reply_to,
         )
 
 
@@ -482,10 +505,10 @@ def compose_get_digest_delivery_log(db: AsyncIOMotorDatabase[Any]) -> GetDigestD
 
 
 def _day_bounds_utc(on_date: date, tz_name: str) -> tuple[datetime, datetime]:
-    """UTC bounds for the *scheduler-local* calendar day.
+    """UTC bounds for the *academy-local* calendar day.
 
-    ``on_date`` is the local date the digest is being built for (per the hourly
-    scheduler in ``main.py``, which ticks in ``settings.scheduler_tz``). Session
+    ``on_date`` is the academy-local date the digest is being built for (see
+    ``digest_due_date``), so ``tz_name`` is the academy's clock zone. Session
     occurrences are stored as aware UTC, so an evening local session can fall on
     the *next* UTC calendar day — bounding by naive UTC midnight would drop it.
     """
@@ -542,6 +565,16 @@ class _ParentDigestProvider:
         self._autopay_consents = autopay_consents
         self._academies = academies
         self._issue_magic_link = issue_magic_link
+        # Per-run memoization (#531): academy_id is fixed for the whole send
+        # run, so academy/program resolution and "today's" occurrences are
+        # fetched once per (academy_id[, on_date]) and reused across every
+        # parent's build_view call on this provider instance, instead of
+        # being re-fetched/re-queried per parent (or per enrollment, for
+        # occurrences).
+        self._academy_and_program_cache: dict[str, tuple[dict[str, Any] | None, str, str]] = {}
+        # Keyed by (academy_id, on_date), not on_date alone — see
+        # `_occurrences_for_run`'s docstring for why.
+        self._occurrences_by_session_cache: dict[tuple[str, date], dict[str, list[Any]]] = {}
 
     async def build_view(self, parent_id: str, on_date: date) -> ParentDigestView | None:
         children_students = await self._list_children(parent_id)
@@ -549,11 +582,8 @@ class _ParentDigestProvider:
             return None
 
         settings = get_settings()
-        try:
-            academy_doc = await self._academies.find_by_id(current_academy_id())
-            academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
-        except Exception:
-            academy_slug = ""
+        academy_doc, program_id, program_name = await self._academy_and_program_for_run()
+        academy_slug = str(academy_doc.get("slug") or "") if academy_doc else ""
         frontend = academy_frontend_url(
             frontend_url=settings.frontend_url, academy_slug=academy_slug
         )
@@ -562,8 +592,6 @@ class _ParentDigestProvider:
         # only populated when there is a portal to land on.
         user_doc = await self._parent_user_doc(parent_id)
         on_portal = self._is_on_portal(user_doc)
-
-        program_id, program_name = await self._resolve_program()
 
         children: list[ChildDigestView] = []
         for student in children_students:
@@ -602,7 +630,7 @@ class _ParentDigestProvider:
         dues = await self._dues(parent_id, frontend)
         whatsapp_groups = await self._whatsapp_groups(children_students)
         autopay_enabled = await self._autopay_enabled(parent_id)
-        reply_to = await self._reply_to(settings.sender_email)
+        reply_to = self._reply_to(settings.sender_email, academy_doc)
         activate_url = await self._activate_url(
             frontend=frontend,
             user_doc=user_doc,
@@ -681,21 +709,77 @@ class _ParentDigestProvider:
             name = ""
         return program_id, name
 
+    async def _academy_and_program_for_run(self) -> tuple[dict[str, Any] | None, str, str]:
+        """Academy doc + default program, resolved once per (academy_id) and
+        reused for every parent processed on this provider instance (#531).
+
+        ``compose_send_parent_daily_digest`` builds a fresh provider per
+        db-scoped call and ``current_academy_id()`` is fixed by tenant scope
+        for the whole run, so caching on the instance is safe.
+        """
+        academy_id = current_academy_id()
+        cached = self._academy_and_program_cache.get(academy_id)
+        if cached is not None:
+            return cached
+        try:
+            academy_doc = await self._academies.find_by_id(academy_id)
+        except Exception:
+            academy_doc = None
+        program_id, program_name = await self._resolve_program()
+        result = (academy_doc, program_id, program_name)
+        self._academy_and_program_cache[academy_id] = result
+        return result
+
+    async def _occurrences_for_run(self, on_date: date) -> dict[str, list[Any]]:
+        """Every non-cancelled occurrence on ``on_date``, grouped by both
+        ``session_id`` and ``template_session_id`` (mirroring the ``$or`` in
+        ``list_for_session_between``), fetched once per (academy, ``on_date``)
+        and reused for every enrollment across the run instead of one query
+        per enrollment (#531).
+
+        Keyed by ``(current_academy_id(), on_date)``, NOT ``on_date`` alone:
+        the scheduler processes every academy on the same tick, so a key of
+        just ``on_date`` would let academy B's ``build_view`` calls hit an
+        entry populated by academy A's query for the same date — academy A's
+        session times/locations leaking into academy B's parent emails. This
+        provider is meant to be composed fresh per academy per run (see
+        ``compose_send_parent_daily_digest`` and its call site), but the cache
+        key is scoped defensively in case that invariant is ever broken.
+        """
+        cache_key = (current_academy_id(), on_date)
+        cached = self._occurrences_by_session_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        # The day is the academy's own day: ``on_date`` came from
+        # ``digest_due_date`` on this academy's clock (Settings Phase 4).
+        academy_doc, _program_id, _program_name = await self._academy_and_program_for_run()
+        start, end = _day_bounds_utc(
+            on_date, academy_clock_timezone((academy_doc or {}).get("timezone"))
+        )
+        try:
+            occurrences = await self._occurrences.list_between(start_at=start, end_at=end)
+        except Exception:
+            occurrences = []
+        by_session: dict[str, list[Any]] = {}
+        for occurrence in occurrences:
+            session_id = str(getattr(occurrence, "session_id", "") or "")
+            if session_id:
+                by_session.setdefault(session_id, []).append(occurrence)
+            template_id = getattr(occurrence, "template_session_id", None)
+            if template_id:
+                by_session.setdefault(str(template_id), []).append(occurrence)
+        self._occurrences_by_session_cache[cache_key] = by_session
+        return by_session
+
     async def _session_today(self, student_id: str, on_date: date) -> tuple[str, str, str] | None:
         try:
             enrollments = await self._enrollments.active_for_student(student_id)
         except Exception:
             return None
-        scheduler_tz = getattr(get_settings(), "scheduler_tz", None) or "UTC"
-        start, end = _day_bounds_utc(on_date, scheduler_tz)
+        occurrences_by_session = await self._occurrences_for_run(on_date)
         best: tuple[datetime, str, Any] | None = None
         for enrollment in enrollments:
-            try:
-                occurrences = await self._occurrences.list_for_session_between(
-                    session_id=enrollment.session_id, start_at=start, end_at=end
-                )
-            except Exception:
-                occurrences = []
+            occurrences = occurrences_by_session.get(enrollment.session_id, [])
             for occurrence in occurrences:
                 if str(getattr(occurrence, "status", "")) == "cancelled":
                     continue
@@ -843,13 +927,19 @@ class _ParentDigestProvider:
             return True
         return len(consents) > 0
 
-    async def _reply_to(self, fallback: str | None) -> str | None:
+    @staticmethod
+    def _reply_to(fallback: str | None, academy_doc: dict[str, Any] | None) -> str | None:
+        # Uses the academy doc already resolved (and cached) once per run by
+        # ``_academy_and_program_for_run`` — no separate lookup here (#531).
         try:
-            academy_id = current_academy_id()
-            doc = await self._academies.find_by_id(academy_id)
-            if doc:
+            if academy_doc:
+                # The academy's explicit reply-to (Settings, L9a) wins over
+                # the contact-address chain the digest has always used.
+                explicit = resolve_sender(academy_doc).reply_to
+                if explicit:
+                    return explicit
                 for key in ("contact_email", "owner_email", "email"):
-                    value = doc.get(key)
+                    value = academy_doc.get(key)
                     if value:
                         return str(value)
         except Exception:
@@ -968,15 +1058,25 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
     email from local/test environments." A dev or test deployment that has
     inherited delivery flags and Resend credentials must still fall back to the
     stub.
+
+    The From address comes from ``resolve_sender_address`` (``SENDER_EMAIL``,
+    else ``noreply@<FRONTEND_URL host>``). There is no hardcoded fallback any
+    more: the old ``noreply@academy.app`` was not a domain we own. If the real
+    adapter would be wired and nothing resolves, this raises rather than send
+    from a made-up address (prod settings validation already refuses to boot in
+    that state). The stub carries no From address, so dev/test need none.
     """
-    from_address = settings.sender_email or (
-        f"noreply@{settings.frontend_url.replace('https://', '').replace('http://', '').split('/')[0]}"
-        if settings.frontend_url
-        else "noreply@academy.app"
-    )
     env = str(getattr(settings, "env", "") or "").lower()
     inner: Any
     if settings.email_delivery_enabled and settings.resend_api_key and env in _REAL_EMAIL_ENVS:
+        from_address = resolve_sender_address(
+            getattr(settings, "sender_email", None), getattr(settings, "frontend_url", None)
+        )
+        if not from_address:
+            raise RuntimeError(
+                "Email delivery is enabled but no sender address resolves: set "
+                "SENDER_EMAIL (or V2_SENDER_EMAIL) or FRONTEND_URL."
+            )
         inner = ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
     else:
         inner = StubEmailSendPort()
@@ -1132,6 +1232,7 @@ def compose_send_campaign(
         sender=sender,
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
     )
 
 

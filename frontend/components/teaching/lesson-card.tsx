@@ -51,7 +51,7 @@ export function LessonCardView({
       <header className="flex items-start gap-3">
         <span
           aria-hidden="true"
-          className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-rally-base/10 text-sm font-bold text-rally-base"
+          className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-rally-cobalt-50 text-sm font-bold text-rally-cobalt-700"
         >
           {card.lesson_number}
         </span>
@@ -70,7 +70,7 @@ export function LessonCardView({
 
       {hasDetails && (
         <details className="group mt-3" open>
-          <summary className="flex min-h-touch cursor-pointer list-none items-center gap-1 text-sm font-medium text-rally-base">
+          <summary className="flex min-h-touch cursor-pointer list-none items-center gap-1 text-sm font-medium text-rally-cobalt-700 dark:text-rally-cobalt-100">
             <span className="transition-transform group-open:rotate-90">›</span>
             Lesson details
           </summary>

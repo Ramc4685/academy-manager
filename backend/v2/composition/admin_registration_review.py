@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefundCommand
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
     EnrollmentWelcomeNotifier,
@@ -23,7 +24,12 @@ from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
     EnrollmentLifecycleEventType,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
+from backend.v2.contexts.enrollment.domain.models import (
+    NON_TERMINAL,
+    Enrollment,
+    Session,
+    Student,
+)
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.onboarding.application.ports import ApplicationRepository
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
@@ -33,7 +39,6 @@ from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     ApplicationNotFound,
     IncompleteApplication,
-    WaiverNotAccepted,
 )
 from backend.v2.contexts.onboarding.domain.models import Application, WaiverSignature
 from backend.v2.shared.ids import new_ulid, stable_ulid
@@ -42,9 +47,15 @@ from backend.v2.shared.tenancy import current_academy_id
 logger = logging.getLogger(__name__)
 REVIEW_CLAIM_TTL = timedelta(minutes=15)
 
+# Sentinel distinguishing "no templates argument given" (fetch them) from an
+# explicit `templates=[]` (no waiver required) in `_row`.
+_UNSET = object()
+
 
 class RegistrationWaiverTemplateQuery(Protocol):
-    async def get_registration_template(self) -> AdminWaiverTemplateRecord | None: ...
+    async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]: ...
+
+    async def program_id_for_session(self, session_id: str | None) -> str | None: ...
 
 
 class RegistrationWaiverSignatureWriter(Protocol):
@@ -96,9 +107,51 @@ class RegistrationRefundIssuer(Protocol):
     """Port for refunding a registration payment when the application is
     declined (issue #514). Implementations must be safe to call for payments
     that are not refundable (missing, never captured, already refunded) —
-    those calls are a no-op, so declining an unpaid application still works."""
+    those calls are a no-op, so declining an unpaid application still works.
 
-    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None: ...
+    Returns ``True`` only when money was actually sent back, so the decline
+    email (#776) can tell the family the truth instead of inferring a refund
+    from the fact that a refund port happened to be wired."""
+
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> bool: ...
+
+
+class RegistrationDecisionNotifier(Protocol):
+    """Tells a family what their registration decision was (issue #776).
+
+    Approval already had a channel (the #613 welcome email); the two outcomes
+    that leave the family with nothing to do next — waitlisted, and declined
+    with a refund on the way — had none, so a parent who had paid could be
+    refunded in silence.
+
+    Sibling of ``EnrollmentWelcomeNotifier``/``RosterChangeNotifier`` and held
+    to the same contract: implementations are best-effort and are called AFTER
+    the decision is committed, so a mail outage can never roll a decision back.
+    """
+
+    async def registration_waitlisted(
+        self,
+        *,
+        application_id: str,
+        parent_user_id: str,
+        parent_email: str | None,
+        parent_name: str | None,
+        student_name: str,
+        session_id: str,
+        reason: str | None,
+    ) -> None: ...
+
+    async def registration_declined(
+        self,
+        *,
+        application_id: str,
+        parent_user_id: str,
+        parent_email: str | None,
+        parent_name: str | None,
+        student_name: str,
+        reason: str,
+        refund_issued: bool,
+    ) -> None: ...
 
 
 class TrialConversionLinker(Protocol):
@@ -132,6 +185,14 @@ class PaidPeriodResolver(Protocol):
     async def paid_period_for_payment(self, payment_id: str) -> str | None: ...
 
 
+class UnsignedWaiver(BaseModel):
+    model_config = {"frozen": True}
+
+    waiver_template_id: str
+    title: str
+    version: str | None = None
+
+
 class AdminRegistrationRow(BaseModel):
     model_config = {"frozen": True}
 
@@ -141,9 +202,16 @@ class AdminRegistrationRow(BaseModel):
     parent_name: str | None = None
     student_name: str | None = None
     selected_session_id: str | None = None
+    # Issue #891: the class this family asked for, so the queue row answers
+    # "who wants which class" without opening the application.
+    session_title: str | None = None
     waiver_required: bool = False
     waiver_satisfied: bool = False
+    # Required waivers this application has not signed. An unsigned waiver
+    # WARNS staff and never blocks approval (Settings overhaul decision 9).
+    unsigned_waivers: list[UnsignedWaiver] = Field(default_factory=list)
     zero_quote_period: str | None = None
+    family_notified_at: datetime | None = None
     updated_at: datetime
 
 
@@ -156,7 +224,6 @@ class AdminRegistrationDetail(AdminRegistrationRow):
     student_id: str | None = None
     enrollment_id: str | None = None
     waitlist_id: str | None = None
-    session_title: str | None = None
     session_capacity: int | None = None
     waiver_template_id: str | None = None
     waiver_title: str | None = None
@@ -209,6 +276,7 @@ class AdminRegistrationReview:
         paid_period_resolver: PaidPeriodResolver | None = None,
         welcome_notifier: EnrollmentWelcomeNotifier | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
+        decision_notifier: RegistrationDecisionNotifier | None = None,
         seat_broker: SeatBroker | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -227,6 +295,7 @@ class AdminRegistrationReview:
         self._paid_period_resolver = paid_period_resolver
         self._welcome_notifier = welcome_notifier
         self._roster_notifier = roster_notifier
+        self._decision_notifier = decision_notifier
         # Departures design contract §3.1: every caller that needs a seat
         # routes through SeatBroker.acquire so a class that is full only
         # because held enrollments occupy it reclaims the longest-held hold
@@ -244,20 +313,56 @@ class AdminRegistrationReview:
         apps = await self._apps.list_by_status(
             ["PENDING_APPROVAL", "APPROVING", "WAITLISTING", "DECLINING"]
         )
+        # Fetch the required waivers once for the whole page instead of once
+        # per row: the live set does not vary per application, only which of
+        # them a row's class asks for.
+        templates = await self._required_templates()
+        # Issue #891: class titles are Mongo reads too, and a page of
+        # applications usually points at a handful of classes -- resolve each
+        # distinct one once for the whole page, not once per row.
+        titles: dict[str, str | None] = {}
+        programs: dict[str, str | None] = {}
         rows: list[AdminRegistrationRow] = []
         for app in apps:
             if app.status != "PENDING_APPROVAL" and not self._review_claim_is_stale(app):
                 continue
+            session_title = await self._cached_session_title(app.selected_session_id, titles)
             try:
                 existing_student_id = await self._active_existing_student_id(app)
             except ApplicationNotEditable:
                 # Keep ambiguous legacy identities visible to academy staff
                 # without guessing which child record should be changed.
-                rows.append((await self._row(app)).model_copy(update={"status": "MANUAL_REVIEW"}))
+                rows.append(
+                    (
+                        await self._row(
+                            app,
+                            templates=templates,
+                            session_title=session_title,
+                            program_cache=programs,
+                        )
+                    ).model_copy(update={"status": "MANUAL_REVIEW"})
+                )
                 continue
             if existing_student_id is None:
-                rows.append(await self._row(app))
+                rows.append(
+                    await self._row(
+                        app,
+                        templates=templates,
+                        session_title=session_title,
+                        program_cache=programs,
+                    )
+                )
         return rows
+
+    async def _cached_session_title(
+        self, session_id: str | None, cache: dict[str, str | None]
+    ) -> str | None:
+        if not session_id:
+            return None
+        if session_id not in cache:
+            session = await self._sessions.get(session_id)
+            cache[session_id] = session.title if session else None
+        return cache[session_id]
 
     async def detail(self, application_id: str) -> AdminRegistrationDetail:
         app = await self._get(application_id)
@@ -275,7 +380,9 @@ class AdminRegistrationReview:
             raise ApplicationNotEditable(
                 "Registration session changed; update the parent application before approval"
             )
-        await self._assert_waiver_ready(app, command.waiver_override_reason)
+        # Decision 9: an unsigned required waiver warns staff (the queue row and
+        # detail show it) and never blocks enrollment, so approval does not look
+        # at it. The optional reason is still recorded on the decision.
 
         now = self._now()
         app = await self._claim_review(app, "APPROVING", now)
@@ -299,11 +406,19 @@ class AdminRegistrationReview:
             )
             await self._assert_no_other_active_enrollment(student_id, expected_enrollment_id)
             existing = await self._enrollments.find_for_session_student(session_id, student_id)
-            # issue #651: only a live (active / paused) enrollment is a
-            # conflict. A cancelled or withdrawn row from an earlier stint in
+            # Issue #651: a cancelled or withdrawn row from an earlier stint in
             # the same session is history and must not permanently block a
             # fresh registration for that child; it gets a new enrollment.
-            if existing is not None and existing.status not in {"active", "paused"}:
+            #
+            # Issue #782: the set used to be the literal {"active", "paused"},
+            # written before `held` existed (#697). A child on hold in this
+            # session therefore read as "no conflict" and approval minted a
+            # SECOND active row — whose seat SeatBroker could satisfy by
+            # reclaiming the longest-held hold in the session, i.e. the very
+            # hold being duplicated. `NON_TERMINAL` is the domain's name for
+            # LIVE plus the in-flight `reclaim_pending`: everything that has
+            # not ended, which is exactly what "already enrolled here" means.
+            if existing is not None and existing.status not in NON_TERMINAL:
                 existing = None
             if existing is not None and (
                 existing.enrollment_id != expected_enrollment_id
@@ -565,6 +680,21 @@ class AdminRegistrationReview:
                 }
             )
             await self._complete_review(decided, app)
+            # Issue #776. After `_complete_review`, never before: the family is
+            # told about a decision that is already durable, and a mail failure
+            # cannot unwind it.
+            decided = await self._notify_family(
+                decided,
+                lambda notifier, target: notifier.registration_waitlisted(
+                    application_id=target.application_id,
+                    parent_user_id=target.parent_user_id,
+                    parent_email=str(target.parent_email) or None,
+                    parent_name=self._parent_name(target) or None,
+                    student_name=self._student_name(target),
+                    session_id=session_id,
+                    reason=command.reason,
+                ),
+            )
             return await self._detail(decided)
         except Exception:
             if student_id is not None:
@@ -603,8 +733,9 @@ class AdminRegistrationReview:
             # payment being silently retained. The refund itself is idempotent
             # (and a no-op for unpaid / already-refunded payments), so retrying
             # the decline after a transient failure is safe.
+            refund_issued = False
             if self._refunds is not None and app.payment_id:
-                await self._refunds.refund_registration_payment(
+                refund_issued = await self._refunds.refund_registration_payment(
                     payment_id=app.payment_id,
                     reason="registration_declined",
                 )
@@ -617,7 +748,56 @@ class AdminRegistrationReview:
                 updated_at=self._now(),
             )
             raise
+        # Issue #776. Strictly outside the try/except above: that block's job is
+        # to release the review when the refund or the write fails, and a
+        # decline email must never be what triggers a release of an application
+        # whose money has already gone back.
+        decided = await self._notify_family(
+            decided,
+            lambda notifier, target: notifier.registration_declined(
+                application_id=target.application_id,
+                parent_user_id=target.parent_user_id,
+                parent_email=str(target.parent_email) or None,
+                parent_name=self._parent_name(target) or None,
+                student_name=self._student_name(target),
+                reason=command.reason,
+                refund_issued=refund_issued,
+            ),
+        )
         return await self._detail(decided)
+
+    async def _notify_family(
+        self,
+        decided: Application,
+        send: Callable[[RegistrationDecisionNotifier, Application], Awaitable[None]],
+    ) -> Application:
+        """Best-effort decision email, stamped only when it actually went.
+
+        Returns the application to render: the stamped copy on success, the
+        unchanged one otherwise, so ``family_notified_at`` is evidence rather
+        than an intention — an admin looking at the queue can tell a family
+        that was told from one that still needs a phone call.
+        """
+        if self._decision_notifier is None:
+            return decided
+        try:
+            await send(self._decision_notifier, decided)
+        except Exception:
+            logger.exception(
+                "registration_decision_notification_failed",
+                extra={"application_id": decided.application_id, "status": decided.status},
+            )
+            return decided
+        stamped = decided.model_copy(update={"family_notified_at": self._now()})
+        try:
+            await self._apps.save(stamped)
+        except Exception:
+            logger.exception(
+                "registration_decision_notified_stamp_failed",
+                extra={"application_id": decided.application_id},
+            )
+            return decided
+        return stamped
 
     async def _get(self, application_id: str) -> Application:
         app = await self._apps.get(application_id)
@@ -647,51 +827,90 @@ class AdminRegistrationReview:
         if app.status != "PENDING_APPROVAL":
             raise ApplicationNotEditable("registration is not pending admin approval")
 
-    async def _registration_template(self) -> AdminWaiverTemplateRecord | None:
+    async def _required_templates(self) -> list[AdminWaiverTemplateRecord]:
         if self._waiver_templates is None:
-            return None
-        return await self._waiver_templates.get_registration_template()
+            return []
+        return await self._waiver_templates.list_required_templates()
 
-    async def _assert_waiver_ready(
-        self, app: Application, waiver_override_reason: str | None
-    ) -> None:
-        template = await self._registration_template()
-        if template is None:
-            return
-        if app.waiver_acceptance is not None:
-            return
-        if waiver_override_reason and waiver_override_reason.strip():
-            return
-        raise WaiverNotAccepted("Required registration waiver is not signed")
+    async def _required_for(
+        self,
+        app: Application,
+        templates: list[AdminWaiverTemplateRecord],
+        program_cache: dict[str, str | None] | None = None,
+    ) -> list[AdminWaiverTemplateRecord]:
+        """The live waivers this application's class asks the family to sign."""
+        if not templates or self._waiver_templates is None:
+            return []
+        session_id = app.selected_session_id
+        cache = program_cache if program_cache is not None else {}
+        program_id: str | None = None
+        if session_id:
+            if session_id not in cache:
+                cache[session_id] = await self._waiver_templates.program_id_for_session(session_id)
+            program_id = cache[session_id]
+        chosen = [
+            template
+            for template in templates
+            if template.assignment.for_all_families or template.assignment.applies_to([program_id])
+        ]
+        chosen.sort(key=lambda template: 0 if template.assignment.for_all_families else 1)
+        return chosen
+
+    @staticmethod
+    def _unsigned(
+        app: Application, required: list[AdminWaiverTemplateRecord]
+    ) -> list[AdminWaiverTemplateRecord]:
+        accepted_lineages = {item.lineage_key or "legacy" for item in app.all_waiver_acceptances}
+        accepted_ids = {
+            item.waiver_template_id
+            for item in app.all_waiver_acceptances
+            if item.waiver_template_id
+        }
+        return [
+            template
+            for template in required
+            if template.lineage not in accepted_lineages
+            and template.waiver_template_id not in accepted_ids
+        ]
 
     async def _record_registration_waiver_signature(
         self, app: Application, student_id: str
     ) -> None:
-        if self._waiver_signatures is None or app.waiver_acceptance is None:
-            return
-        acceptance = app.waiver_acceptance
-        if not acceptance.waiver_template_id:
+        if self._waiver_signatures is None:
             return
         signer_name = self._parent_name(app) or str(app.parent_email)
-        await self._waiver_signatures.save_signature(
-            WaiverSignature(
-                waiver_signature_id=(
-                    "ws_registration_"
-                    f"{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
-                ),
-                academy_id=self._request_academy_id(),
-                waiver_template_id=acceptance.waiver_template_id,
-                student_id=student_id,
-                parent_user_id=app.parent_user_id,
-                signed_at=acceptance.accepted_at,
-                signer_name=signer_name,
-                signer_email=app.parent_email,
-                content_hash=acceptance.content_hash,
+        for acceptance in app.all_waiver_acceptances:
+            if not acceptance.waiver_template_id:
+                continue
+            await self._waiver_signatures.save_signature(
+                WaiverSignature(
+                    waiver_signature_id=(
+                        "ws_registration_"
+                        f"{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
+                    ),
+                    academy_id=self._request_academy_id(),
+                    waiver_template_id=acceptance.waiver_template_id,
+                    student_id=student_id,
+                    parent_user_id=app.parent_user_id,
+                    signed_at=acceptance.accepted_at,
+                    signer_name=signer_name,
+                    signer_email=app.parent_email,
+                    content_hash=acceptance.content_hash,
+                )
             )
-        )
 
-    async def _row(self, app: Application) -> AdminRegistrationRow:
-        template = await self._registration_template()
+    async def _row(
+        self,
+        app: Application,
+        *,
+        templates: list[AdminWaiverTemplateRecord] = _UNSET,  # type: ignore[assignment]
+        session_title: str | None = None,
+        program_cache: dict[str, str | None] | None = None,
+    ) -> AdminRegistrationRow:
+        if templates is _UNSET:
+            templates = await self._required_templates()
+        required = await self._required_for(app, templates, program_cache)
+        unsigned = self._unsigned(app, required)
         return AdminRegistrationRow(
             application_id=app.application_id,
             status=app.status,
@@ -699,9 +918,19 @@ class AdminRegistrationReview:
             parent_name=self._parent_name(app) or None,
             student_name=self._student_name(app) or None,
             selected_session_id=app.selected_session_id,
-            waiver_required=template is not None,
-            waiver_satisfied=template is None or app.waiver_acceptance is not None,
+            session_title=session_title,
+            waiver_required=bool(required),
+            waiver_satisfied=not unsigned,
+            unsigned_waivers=[
+                UnsignedWaiver(
+                    waiver_template_id=template.waiver_template_id,
+                    title=template.title,
+                    version=template.version,
+                )
+                for template in unsigned
+            ],
             zero_quote_period=app.zero_quote_period,
+            family_notified_at=app.family_notified_at,
             updated_at=app.updated_at,
         )
 
@@ -712,11 +941,17 @@ class AdminRegistrationReview:
                 await self._registration_student_id(app)
             except ApplicationNotEditable:
                 display_app = app.model_copy(update={"status": "MANUAL_REVIEW"})
-        row = await self._row(display_app)
-        template = await self._registration_template()
+        templates = await self._required_templates()
+        required = await self._required_for(app, templates)
+        template = required[0] if required else None
         session: Session | None = None
         if app.selected_session_id:
             session = await self._sessions.get(app.selected_session_id)
+        row = await self._row(
+            display_app,
+            templates=templates,
+            session_title=session.title if session else None,
+        )
         return AdminRegistrationDetail(
             **row.model_dump(),
             parent_user_id=app.parent_user_id,
@@ -727,7 +962,6 @@ class AdminRegistrationReview:
             student_id=app.student_id,
             enrollment_id=app.enrollment_id,
             waitlist_id=app.waitlist_id,
-            session_title=session.title if session else None,
             session_capacity=session.capacity if session else None,
             waiver_template_id=template.waiver_template_id if template else None,
             waiver_title=template.title if template else None,
@@ -1036,16 +1270,44 @@ class RegistrationDeclineRefunds:
         self._payments = payments
         self._refunds = refunds
 
-    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None:
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> bool:
         payment = await self._payments.get(payment_id)
         if payment is None:
             logger.info(
                 "Declining registration with payment_id=%s but no payment record; skipping refund",
                 payment_id,
             )
-            return
+            return False
         if payment.status not in _REFUNDABLE_PAYMENT_STATUSES:
-            return
+            return False
         if payment.amount_cents <= 0 or payment.refunded_cents >= payment.amount_cents:
-            return
+            return False
         await self._refunds.refund_remaining(payment_id=payment_id, reason=reason)
+        return True
+
+
+def compose_registration_decline_refunds(
+    payments: RegistrationPaymentQuery,
+    issue_refund: Any,
+) -> RegistrationDeclineRefunds:
+    """Wire the #514 decline refund over Billing's ``IssueRefund`` use case.
+
+    Lives here rather than in ``composition/admin.py`` so that module stays one
+    line per concern under the wiring line budget enforced by
+    ``tests/structural/test_composition_is_wiring.py``.
+    """
+
+    class _RefundExecutor:
+        async def refund_remaining(self, *, payment_id: str, reason: str) -> None:
+            await issue_refund.execute(
+                IssueRefundCommand(
+                    payment_id=payment_id,
+                    amount_cents=None,
+                    reason=reason,
+                    # One decline refund per payment: a retried decline replays
+                    # it instead of tripping the keyless-duplicate 409 (#930).
+                    idempotency_key="registration_declined",
+                )
+            )
+
+    return RegistrationDeclineRefunds(payments=payments, refunds=_RefundExecutor())

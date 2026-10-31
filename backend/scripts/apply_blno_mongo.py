@@ -24,9 +24,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BUNDLE = REPO_ROOT / ".local" / "blno" / "mongo_documents" / "_mongo_import_bundle.json"
 LOCAL_MONGO_HOSTS = {"127.0.0.1", "localhost", "::1", "mongo"}
 
+# Collections whose id alone identifies a row. Anything whose id is unique only
+# per academy (migration 0189) belongs in COMPOSITE_FILTERS with academy_id,
+# or the selector resolves across tenants (#881).
 IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     "academies": ("academy_id",),
-    "academy_settings": ("settings_id",),
     "billing_policies": ("policy_id",),
     # `email` is unique in both local and prod Mongo. Importing by user_id can
     # collide with an existing admin/parent account for the same email.
@@ -40,13 +42,15 @@ IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     "payment_events": ("event_id",),
     "attendance": ("attendance_id",),
     "move_log": ("move_id",),
-    "expenses": ("expense_id",),
     "coach_rates": ("rate_id",),
-    "waiver_templates": ("template_id",),
     "dues_snapshots": ("dues_snapshot_id",),
 }
 
 COMPOSITE_FILTERS: dict[str, tuple[str, ...]] = {
+    "academy_settings": ("academy_id", "settings_id"),
+    "expenses": ("academy_id", "expense_id"),
+    # v2 waiver templates carry ``waiver_template_id``, not ``template_id``.
+    "waiver_templates": ("academy_id", "waiver_template_id"),
     "platform_roles": ("user_id", "role"),
     "payout_rules": ("academy_id", "coach_id", "rule_type"),
     "waiver_versions": ("academy_id", "version"),

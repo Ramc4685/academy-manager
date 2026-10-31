@@ -1,5 +1,99 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
+from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
+
+
+def test_events_route_pages_with_limit_and_cursor(admin_client):
+    created = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    enrollment_id = created.json()["enrollment_id"]
+
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    seed = admin_client.seed["enrollment_events"]
+    seed.rows = [
+        row
+        for row in seed.rows
+        if row.enrollment_id != enrollment_id  # drop the create-time event for a clean fixture
+    ]
+    for i in range(5):
+        seed.rows.append(
+            EnrollmentLifecycleEvent(
+                event_id=f"evt-{i}",
+                academy_id="acad-1",
+                event_type="created",
+                enrollment_id=enrollment_id,
+                student_id="st-1",
+                effective_at=base + timedelta(days=i),
+                occurred_at=base + timedelta(days=i),
+            )
+        )
+
+    first_page = admin_client.get(f"/api/v2/admin/enrollments/{enrollment_id}/events?limit=2")
+    assert first_page.status_code == 200, first_page.text
+    body = first_page.json()
+    assert [e["event_id"] for e in body["events"]] == ["evt-4", "evt-3"]
+    assert body["next_cursor"] is not None
+
+    second_page = admin_client.get(
+        f"/api/v2/admin/enrollments/{enrollment_id}/events",
+        params={"limit": 2, "cursor": body["next_cursor"]},
+    )
+    assert second_page.status_code == 200, second_page.text
+    body2 = second_page.json()
+    assert [e["event_id"] for e in body2["events"]] == ["evt-2", "evt-1"]
+    assert body2["next_cursor"] is not None
+
+    third_page = admin_client.get(
+        f"/api/v2/admin/enrollments/{enrollment_id}/events",
+        params={"limit": 2, "cursor": body2["next_cursor"]},
+    )
+    body3 = third_page.json()
+    assert [e["event_id"] for e in body3["events"]] == ["evt-0"]
+    assert body3["next_cursor"] is None
+
+
+def test_events_route_rejects_limit_over_500(admin_client):
+    created = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    enrollment_id = created.json()["enrollment_id"]
+
+    response = admin_client.get(f"/api/v2/admin/enrollments/{enrollment_id}/events?limit=1000")
+    assert response.status_code == 422
+
+
+def test_events_route_rejects_a_malformed_cursor(admin_client):
+    created = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    )
+    enrollment_id = created.json()["enrollment_id"]
+
+    response = admin_client.get(
+        f"/api/v2/admin/enrollments/{enrollment_id}/events?cursor=not-a-cursor"
+    )
+    assert response.status_code == 400
+
 
 def test_pause_route_rejects_missing_resume_or_review_date(admin_client):
     created = admin_client.post(

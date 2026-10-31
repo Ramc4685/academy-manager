@@ -207,6 +207,44 @@ async def test_apply_cancels_only_the_clean_future_occurrences(db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_prunes_one_time_roster_rows_for_soft_cancelled_occurrences(db) -> None:
+    """Issue #694: make-up/trial rows keyed to an occurrence that this
+    cascade soft-cancels must not survive it — otherwise they render on
+    the coach roster unmarkable forever (the occurrence never comes back)."""
+    await _seed(db)
+    await db.occurrence_roster_entries.insert_many(
+        [
+            {
+                "entry_id": "ore-clean",
+                "academy_id": ACADEMY,
+                "occurrence_id": "occ-clean",
+                "student_id": "student-makeup",
+                "source": "makeup",
+                "origin_request_id": "req-1",
+                "created_at": NOW,
+            },
+            {
+                "entry_id": "ore-attended",
+                "academy_id": ACADEMY,
+                "occurrence_id": "occ-attended",
+                "student_id": "student-trial",
+                "source": "trial",
+                "origin_request_id": "req-2",
+                "created_at": NOW,
+            },
+        ]
+    )
+
+    result = await recancel_half_cancelled_sessions(db, apply=True, now=NOW)
+    assert result["occurrences_cancelled"] == 2
+
+    # Swept: its occurrence was just soft-cancelled by this run.
+    assert await db.occurrence_roster_entries.find_one({"entry_id": "ore-clean"}) is None
+    # Untouched: occ-attended was never cancelled (already-acted-on guard).
+    assert await db.occurrence_roster_entries.find_one({"entry_id": "ore-attended"}) is not None
+
+
+@pytest.mark.asyncio
 async def test_second_apply_run_is_a_no_op(db) -> None:
     await _seed(db)
 

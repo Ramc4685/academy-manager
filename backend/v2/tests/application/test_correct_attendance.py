@@ -1,6 +1,6 @@
 """Use-case tests for CorrectAttendance (#517).
 
-Coach corrections are allowed inside the 48h grace window on an occurrence
+Coach corrections are allowed inside the 24h grace window on an occurrence
 they are assigned to; admin corrections are allowed any time. Every real
 correction stamps the audit trail and emits Coaching.AttendanceCorrected.
 """
@@ -141,11 +141,40 @@ async def test_coach_corrects_within_window_with_audit_trail_and_event() -> None
 
 @pytest.mark.asyncio
 async def test_coach_outside_window_rejected() -> None:
+    # Owner decision 2026-09-12 (#554): the coach self-correction window is
+    # 24h, not the 48h #517 shipped with.
     repo = FakeAttendanceRepo()
     repo.saved.append(_mark("present"))
-    uc = _build(now=MARKED_AT + timedelta(hours=49), repo=repo)
+    uc = _build(now=MARKED_AT + timedelta(hours=25), repo=repo)
     with pytest.raises(CorrectionWindowExpired):
         await uc.execute(_cmd("absent"), actor_id="coach-1", actor_role="coach")
+
+
+@pytest.mark.asyncio
+async def test_coach_just_inside_24h_window_allowed() -> None:
+    repo = FakeAttendanceRepo()
+    repo.saved.append(_mark("present"))
+    uc = _build(now=MARKED_AT + timedelta(hours=23, minutes=59), repo=repo)
+
+    result = await uc.execute(_cmd("absent"), actor_id="coach-1", actor_role="coach")
+
+    assert result.status == "absent"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_correct_a_voided_mark_back_to_a_real_status() -> None:
+    """Un-voiding is an ordinary correction; the audit trail keeps "voided"
+    as the previous status (#554)."""
+    repo = FakeAttendanceRepo()
+    repo.saved.append(_mark("voided"))
+    outbox = FakeOutbox()
+    uc = _build(now=MARKED_AT + timedelta(days=3), repo=repo, outbox=outbox)
+
+    result = await uc.execute(_cmd("present"), actor_id="admin-1", actor_role="admin")
+
+    assert result.status == "present"
+    assert result.previous_status == "voided"
+    assert outbox.appended[0].payload.previous_status == "voided"
 
 
 @pytest.mark.asyncio

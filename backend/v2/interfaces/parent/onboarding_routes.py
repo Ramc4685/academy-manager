@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     PatchApplicationCommand,
@@ -14,6 +14,7 @@ from backend.v2.interfaces.parent.views import (
     ChildProfileView,
     ParentProfileView,
     PatchApplicationRequest,
+    RegistrationWaiverItemView,
     RegistrationWaiverView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -22,7 +23,18 @@ from backend.v2.shared.http import require_persona
 router = APIRouter(tags=["parent.onboarding"])
 
 
-def _view(app) -> ApplicationView:
+async def _class_first(use_cases: ParentUseCases) -> bool:
+    get_waivers = getattr(use_cases, "get_registration_waivers", None)
+    if not get_waivers:
+        return False
+    try:
+        _waivers, class_first = await get_waivers(None)
+    except Exception:
+        return False
+    return bool(class_first)
+
+
+def _view(app, *, class_first: bool = False) -> ApplicationView:
     return ApplicationView(
         application_id=app.application_id,
         status=app.status,
@@ -30,6 +42,7 @@ def _view(app) -> ApplicationView:
         child_profile=ChildProfileView(**app.child_profile.model_dump()),
         selected_session_id=app.selected_session_id,
         waiver_accepted=app.waiver_acceptance is not None,
+        waiver_class_first=class_first,
         expires_at=app.expires_at,
     )
 
@@ -40,15 +53,31 @@ def _view(app) -> ApplicationView:
     summary="Get the active registration waiver content for the current tenant",
 )
 async def get_registration_waiver(
+    session_id: str | None = Query(default=None, max_length=128),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> RegistrationWaiverView:
-    if not use_cases.get_registration_waiver:
-        return RegistrationWaiverView(configured=False)
-    waiver = await use_cases.get_registration_waiver()
-    if waiver is None:
-        return RegistrationWaiverView(configured=False)
-    return RegistrationWaiverView(configured=True, version=waiver.version, body=waiver.text)
+    if use_cases.get_registration_waivers:
+        waivers, class_first = await use_cases.get_registration_waivers(session_id)
+        if not waivers:
+            return RegistrationWaiverView(configured=False, class_first=class_first)
+        first = waivers[0]
+        return RegistrationWaiverView(
+            configured=True,
+            version=first.version,
+            body=first.text,
+            class_first=class_first,
+            waivers=[
+                RegistrationWaiverItemView(
+                    waiver_template_id=waiver.waiver_id,
+                    title=waiver.title,
+                    version=waiver.version,
+                    body=waiver.text,
+                )
+                for waiver in waivers
+            ],
+        )
+    return RegistrationWaiverView(configured=False)
 
 
 @router.post(
@@ -67,7 +96,7 @@ async def start(
             parent_email=claims.email,
         )
     )
-    return _view(app)
+    return _view(app, class_first=await _class_first(use_cases))
 
 
 @router.patch(
@@ -91,7 +120,7 @@ async def patch(
             accept_waiver=body.accept_waiver,
         )
     )
-    return _view(app)
+    return _view(app, class_first=await _class_first(use_cases))
 
 
 @router.get(
@@ -107,4 +136,4 @@ async def status_route(
     app = await use_cases.get_application_status.execute(
         application_id, caller_user_id=claims.user_id
     )
-    return _view(app)
+    return _view(app, class_first=await _class_first(use_cases))

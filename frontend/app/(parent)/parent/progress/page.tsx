@@ -19,9 +19,9 @@ import {
   getParentProgressSummary,
   type SkillPassportEntry,
   type SkillCertificate,
-  type SkillStatus,
   type StudentProgressOverview,
 } from "@/lib/api/curriculum";
+import { SkillStatusChip, skillStatusToneClasses } from "@/components/skills/SkillStatusChip";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -29,7 +29,9 @@ const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW 
 // dynamic, so these stay as literal color stops (no single token pair
 // covers a rotating 6-way palette). Mirrors the per-child avatar gradient
 // exception in children/page.tsx.
-const ACCENTS = ["#2563eb", "#059669", "#7c3aed", "#d97706", "#0891b2", "#db2777"];
+// #843: the purple and pink stops were the only colours here with no token
+// behind them; the rotation is now Rally cobalt / slate plus DS status hues.
+const ACCENTS = ["#2563eb", "#059669", "#475569", "#d97706", "#0891b2", "#1e3a8a"];
 function noteAccent(id: string) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffffffff;
@@ -180,34 +182,6 @@ function NotesList({ notes }: { notes: NoteEntry[] }) {
 /* -------------------------------------------------------------------------
  * Skill Progress section — new feature
  * ---------------------------------------------------------------------- */
-
-const SKILL_STATUS_FRIENDLY: Record<SkillStatus, string> = {
-  NOT_STARTED: "Not started",
-  INTRODUCED: "Introduced",
-  LEARNING: "Learning",
-  PRACTICING: "Practicing",
-  TEST_READY: "Almost there",
-  PASSED: "Mastered",
-  NEEDS_REVIEW: "Needs review",
-};
-
-// Enum-driven color map collapsed onto token class bundles — mirrors the
-// dashboard's metric-tone/action-kind conversion in PR #330.
-function skillStatusClasses(status: SkillStatus): string {
-  switch (status) {
-    case "PASSED":
-      return "bg-status-green-50 text-status-green-800";
-    case "TEST_READY":
-      return "bg-rally-cobalt-100 text-rally-cobalt-700";
-    case "LEARNING":
-    case "PRACTICING":
-      return "bg-status-amber-50 text-status-amber-800";
-    case "NEEDS_REVIEW":
-      return "bg-status-red-50 text-status-red-800";
-    default:
-      return "bg-status-slate-100 text-status-slate-600";
-  }
-}
 
 function SkillProgressSection() {
   const { data: childrenData } = useQuery({
@@ -368,7 +342,7 @@ function ParentProgressSummaryCard({
         />
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-        <SummaryMetric label="Mastered" value={overview.total_skills_passed} />
+        <SummaryMetric label="Passed" value={overview.total_skills_passed} />
         <SummaryMetric label="Learning" value={overview.in_progress_count} />
         <SummaryMetric label="Ready" value={overview.test_ready_count} />
       </div>
@@ -434,7 +408,7 @@ function ChildPassportView({
               {studentName}
             </p>
             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-rally-cobalt-50 text-rally-cobalt-600">
-              {passedCount}/{skills.length} mastered
+              {passedCount}/{skills.length} passed
             </span>
           </div>
           <div className="h-2 rounded-full overflow-hidden bg-rally-line">
@@ -537,9 +511,8 @@ function RecentSkillUpdatesTimeline({
 }
 
 function SkillItem({ entry }: { entry: SkillPassportEntry }) {
-  const label = SKILL_STATUS_FRIENDLY[entry.status];
   const checkmark = entry.status === "PASSED";
-  const classes = skillStatusClasses(entry.status);
+  const classes = skillStatusToneClasses(entry.status);
 
   return (
     <li className="flex items-center gap-3 rounded-xl px-3 py-2.5 bg-white border border-rally-line animate-fade-in-up">
@@ -551,22 +524,8 @@ function SkillItem({ entry }: { entry: SkillPassportEntry }) {
           {entry.skill_name}
         </p>
       </div>
-      <SkillStatusChip status={entry.status} label={label} />
+      <SkillStatusChip status={entry.status} />
     </li>
-  );
-}
-
-function SkillStatusChip({
-  status,
-  label = SKILL_STATUS_FRIENDLY[status],
-}: {
-  status: SkillStatus;
-  label?: string;
-}) {
-  return (
-    <span className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${skillStatusClasses(status)}`}>
-      {label}
-    </span>
   );
 }
 

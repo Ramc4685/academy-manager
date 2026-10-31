@@ -37,6 +37,9 @@ from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment imp
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     AdminWaiverTemplateRecord,
@@ -335,26 +338,59 @@ class FakeWaitlist:
         )
 
     async def next_waiting(self, session_id: str):
+        return self.entry if self.entry.status == "waiting" else None
+
+    async def get(self, waitlist_id: str):
         return self.entry
 
     async def update_status(self, waitlist_id: str, status: str) -> None:
-        pass
+        self.entry = self.entry.model_copy(update={"status": status})
+
+    async def mark_offered(self, waitlist_id: str, *, offer_expires_at, holds_seat=True) -> None:
+        self.entry = self.entry.model_copy(
+            update={
+                "status": "offered",
+                "offer_expires_at": offer_expires_at,
+                "offer_holds_seat": holds_seat,
+            }
+        )
+
+    async def count_seatless_offers(self, session_id: str) -> int:
+        return int(self.entry.status == "offered" and not self.entry.offer_holds_seat)
+
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        if self.entry.status != expected:
+            return False
+        self.entry = self.entry.model_copy(update={"status": to})
+        return True
 
 
 @pytest.mark.asyncio
 async def test_promote_from_waitlist_writes_land_in_request_tenant() -> None:
+    """#828 split the promotion in two, so BOTH halves have to read the tenant
+    at request time: the offer (PromoteFromWaitlist) and the enrollment the
+    family's confirmation creates (ConfirmWaitlistOffer)."""
     enrollments = FakeEnrollmentWriter()
+    waitlist = FakeWaitlist()
     uc = PromoteFromWaitlist(
-        waitlist=FakeWaitlist(),
+        waitlist=waitlist,
         sessions=FakeSessionWriter(),
         enrollments=enrollments,
         outbox=FakeOutbox(),
         academy_id=_boot_fallback_provider(),
         clock=lambda: FIXED_NOW,
     )
+    confirm = ConfirmWaitlistOffer(
+        waitlist=waitlist,
+        enrollments=enrollments,
+        outbox=FakeOutbox(),
+        academy_id=_boot_fallback_provider(),
+        clock=lambda: FIXED_NOW,
+    )
     with tenant_scope(REQUEST):
-        promoted = await uc.execute("sess-1")
-    assert promoted == "wl-1"
+        offered = await uc.execute("sess-1")
+        await confirm.execute("wl-1", parent_id="par-1")
+    assert offered == "wl-1"
     assert enrollments.created[0].academy_id == REQUEST
 
 
@@ -368,11 +404,18 @@ class FakeParentWaivers:
             status="active",
             version="v1",
             content_hash="hash-1",
+            required=True,
             updated_at=FIXED_NOW,
         )
 
-    async def get_required_template(self):
-        return self.template
+    async def list_required_templates(self):
+        return [self.template]
+
+    async def program_ids_for_students(self, student_ids):
+        return {}
+
+    async def signatures_for_students(self, student_ids):
+        return {}
 
     async def list_active_students_for_parent(self, parent_id: str):
         return [ParentWaiverStudent(student_id="st-1", student_name="Kid One")]

@@ -55,6 +55,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
 from backend.v2.shared.comms import CommsService, Message
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,7 @@ class SessionAnnouncementService:
             body=message.body,
         )
 
+        identity = await sender_identity_for_current_academy(self._academies)
         sent = failed = 0
         for recipient in recipients:
             outcome = await self._sender.send(
@@ -268,6 +270,8 @@ class SessionAnnouncementService:
                 subject=subject,
                 body=body,
                 category=EmailCategory.TRANSACTIONAL,
+                reply_to=identity.reply_to,
+                sender_name=identity.sender_name,
             )
             if outcome.ok:
                 sent += 1

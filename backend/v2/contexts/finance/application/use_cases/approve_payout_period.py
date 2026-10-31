@@ -9,6 +9,11 @@ Both are idempotent. Calling approve on an already-approved period
 returns it unchanged. Calling mark-paid on an already-paid period
 returns it unchanged. Illegal transitions raise
 ``PayoutPeriodStateError``.
+
+Both are also audited (#787): approving and paying are the two moments
+payroll money is committed, so each writes one ``PayoutAuditEntry``. A
+no-op (re-approving, re-paying) writes nothing — the trail records
+transitions, not requests.
 """
 
 from __future__ import annotations
@@ -18,7 +23,11 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
+from backend.v2.contexts.finance.application.payout_audit_recorder import PayoutAuditRecorder
+from backend.v2.contexts.finance.application.ports import (
+    PayoutAuditLog,
+    PayoutPeriodRepository,
+)
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     approve,
@@ -39,10 +48,13 @@ class _BaseTransition:
         self,
         *,
         repository: PayoutPeriodRepository,
+        audit: PayoutAuditLog,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._repo = repository
         self._clock = clock
+        self._audit = PayoutAuditRecorder(audit=audit, clock=clock, id_factory=id_factory)
 
     async def _load(self, period_id: str) -> PayoutPeriod:
         period = await self._repo.find_by_id(period_id)
@@ -52,12 +64,20 @@ class _BaseTransition:
 
 
 class ApprovePayoutPeriod(_BaseTransition):
-    async def execute(self, *, period_id: str) -> PayoutPeriod:
+    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
         period = await self._load(period_id)
         approved = approve(period, at=self._clock())
         if approved is period:
             return period
-        return await self._repo.replace(approved)
+        stored = await self._repo.replace(approved)
+        await self._audit.record(
+            stored,
+            action="approved",
+            actor_id=actor_id,
+            before={"status": period.status},
+            after={"status": stored.status, "total_minor": stored.total_minor},
+        )
+        return stored
 
 
 class MarkPayoutPaid(_BaseTransition):
@@ -66,6 +86,7 @@ class MarkPayoutPaid(_BaseTransition):
         command: MarkPayoutPaidCommand | None = None,
         *,
         period_id: str | None = None,
+        actor_id: str = "system",
     ) -> PayoutPeriod:
         if command is None:
             if period_id is None:
@@ -90,4 +111,17 @@ class MarkPayoutPaid(_BaseTransition):
         )
         if paid is period:
             return period
-        return await self._repo.replace(paid)
+        stored = await self._repo.replace(paid)
+        await self._audit.record(
+            stored,
+            action="marked_paid",
+            actor_id=actor_id,
+            before={"status": period.status},
+            after={
+                "status": stored.status,
+                "paid_amount_minor": stored.paid_amount_minor,
+                "paid_method": stored.paid_method,
+                "paid_reference": stored.paid_reference,
+            },
+        )
+        return stored

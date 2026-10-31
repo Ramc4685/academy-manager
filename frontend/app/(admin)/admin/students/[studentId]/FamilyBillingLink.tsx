@@ -24,7 +24,7 @@ export function FamilyBillingLink({
         sibling.
       </p>
       {parentId ? (
-        <Link href={`/admin/families/${encodeURIComponent(parentId)}`} className="mt-3 inline-block">
+        <Link href={`/admin/families/${encodeURIComponent(parentId)}?tab=billing`} className="mt-3 inline-block">
           <Button size="sm" variant="primary">
             Open family billing{parentName ? ` · ${parentName}` : ""}
           </Button>

@@ -7,7 +7,7 @@
  * production cutover canary (W1A-20) is the integration gate.
  */
 
-import { test as base, type Page, type Route } from "@playwright/test";
+import { test as base, expect, type Page, type Route } from "@playwright/test";
 
 export interface MockState {
   /**
@@ -33,11 +33,20 @@ export interface MockState {
       roster: Array<{
         student_id: string;
         full_name: string;
-        enrollment_status: "active" | "paused" | "cancelled";
+        enrollment_status:
+          | "active"
+          | "paused"
+          | "held"
+          | "reclaim_pending"
+          | "cancelled";
         /** Seed a server-saved mark (hydrates the row as already marked). */
         attendance_status?: "present" | "absent" | "late" | null;
         /** "makeup" / "trial" renders the one-time chip (#672). */
         entry_source?: "enrollment" | "makeup" | "trial";
+        /** #773: the date a hold ends, rendered in the ON HOLD chip. */
+        hold_return_on?: string | null;
+        /** #866: a parent filed an absence notice for this occurrence. */
+        expected_absence?: boolean;
       }>;
     }>;
   };
@@ -46,6 +55,7 @@ export interface MockState {
   correctionCalls: Array<Record<string, unknown>>;
   bulkAttendanceCalls: Array<Record<string, unknown>>;
   bulkSkillCalls: Array<Record<string, unknown>>;
+  masteredCalls: Array<{ method: string; url: string; body: Record<string, unknown> }>;
   skillStatusCalls: Array<Record<string, unknown>>;
   attendanceResponder?: (body: Record<string, unknown>) => {
     status: number;
@@ -91,6 +101,13 @@ export interface MockState {
   skillNotes: MockSkillNote[];
   skillNoteCalls: Array<Record<string, unknown>>;
   skillNoteVisibilityCalls: Array<{ note_id: string; visibility: string }>;
+  /**
+   * Pathnames of every `/api/v2/**` request that hit the catch-all below
+   * because no specific route claimed it. Specs can assert this stays empty
+   * (see `expectNoUnstubbedRequests`) to prove they aren't quietly falling
+   * through to the dead e2e backend.
+   */
+  unstubbed: string[];
 }
 
 export interface MockProgressNote {
@@ -212,6 +229,7 @@ export const test = base.extend<{
       correctionCalls: [],
       bulkAttendanceCalls: [],
       bulkSkillCalls: [],
+      masteredCalls: [],
       skillStatusCalls: [],
       statusCalls: [],
       testCalls: [],
@@ -223,6 +241,7 @@ export const test = base.extend<{
       skillNotes: [],
       skillNoteCalls: [],
       skillNoteVisibilityCalls: [],
+      unstubbed: [],
       teachingPlan: {
         date: new Date().toISOString().slice(0, 10),
         program_id: "prog-badminton",
@@ -387,6 +406,22 @@ export const test = base.extend<{
       })),
     };
 
+    // Terminal catch-all: registered FIRST so every later, more specific
+    // page.route() below still wins (Playwright resolves overlapping
+    // patterns last-registered-first). Anything left over is a request no
+    // spec stubbed — instead of falling through to the dead e2e backend
+    // (ECONNREFUSED 127.0.0.1:8001, see #540), fulfil it fast with a
+    // distinctive 404 and record the path so specs can assert on it.
+    await page.route("**/api/v2/**", async (route: Route) => {
+      const path = new URL(route.request().url()).pathname;
+      state.unstubbed.push(path);
+      return route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "e2e_unstubbed", message: path } }),
+      });
+    });
+
     await page.route("**/api/v2/me", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
       // Read at request time so a spec can swap persona before navigating.
@@ -394,6 +429,16 @@ export const test = base.extend<{
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(state.me),
+      });
+    });
+
+    // The coach shell reads the academy name/logo/colour for its header mark.
+    await page.route("**/api/v2/coach/academy", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ name: "Aces Academy", logo_url: null, brand_color: null }),
       });
     });
 
@@ -414,6 +459,25 @@ export const test = base.extend<{
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ ...dayHub, date }),
+      });
+    });
+
+    // Tap-to-master: POST marks students, DELETE undoes one tap.
+    await page.route("**/api/v2/coach/sessions/*/**/mastered**", async (route: Route) => {
+      const request = route.request();
+      const body = JSON.parse(request.postData() ?? "{}");
+      state.masteredCalls.push({ method: request.method(), url: request.url(), body });
+      const results = (body.student_ids ?? []).map((student_id: string) => ({
+        student_id,
+        outcome: "mastered",
+        level_up_queued: false,
+      }));
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          request.method() === "DELETE" ? { status: "PRACTICING", withdrawn_rec_ids: [] } : { results },
+        ),
       });
     });
 
@@ -841,7 +905,15 @@ export const test = base.extend<{
   },
 });
 
-export { expect } from "@playwright/test";
+export { expect };
+
+/** Assert nothing hit the catch-all route — i.e. every request the spec triggered was stubbed. */
+export function expectNoUnstubbedRequests(mock: MockState): void {
+  expect(
+    mock.unstubbed,
+    `unexpected unstubbed /api/v2 requests: ${mock.unstubbed.join(", ")}`,
+  ).toEqual([]);
+}
 
 export async function bypassAuth(page: Page): Promise<void> {
   // For pages that gate on Firebase, we navigate directly to coach surfaces

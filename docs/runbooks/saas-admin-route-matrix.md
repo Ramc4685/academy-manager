@@ -35,11 +35,48 @@ as a known gap.
 | Check | Expected result | Pass/fail notes |
 | --- | --- | --- |
 | Internal IDs hidden in normal UI | Admin screens do not show Mongo IDs, Firebase UIDs, raw recipient user IDs, payout IDs, or raw student IDs except in intentional support/audit contexts. | |
-| Tenant isolation | Every list and detail page shows only BLNO tenant data. | |
+| Tenant isolation | Every list and detail page shows only BLNO tenant data. The API-level proof is automated, see [Automated two-tenant isolation proof](#automated-two-tenant-isolation-proof); a manual pass here only checks what the browser renders. | |
 | Persona restrictions | Coach and parent accounts cannot open admin pages by direct URL. | |
 | Legacy route safety | Normal admin workflows use `/api/v2` paths in SaaS mode, and legacy `/api/*` is blocked by the SaaS guard. | |
 | Unknown tenant safety | Unknown tenant host is rejected before admin data renders. | |
 | Error states | Missing data, unavailable routes, and blocked workflows show user-facing states without stack traces or architecture terms. | |
+
+## Automated two-tenant isolation proof
+
+The two-tenant isolation proof no longer needs a manual run. It is
+`backend/v2/tests/contract/test_two_tenant_isolation.py`, which runs in the
+backend CI job against the job's real `mongod`.
+
+- It boots the real v2 app in SaaS mode (only the Firebase token check is
+  replaced) on a throwaway database with every migration applied, and seeds two
+  academies, each with an admin, a coach, a parent, a student, a class with
+  occurrences, an enrollment, an invoice with a line and a payment, an expense,
+  a waitlist entry and a program. All ids and names are synthetic and distinct.
+- It reads the admin, coach and parent routes from the app's router, so a new
+  route is covered as soon as it is added. It needs no hand-kept list.
+- For every route with a path parameter, academy A's actor for that persona
+  calls it on A's host with academy B's ids. The route must not crash, must
+  return none of B's data, and must leave B's stored documents unchanged.
+  403/404 is the expected answer. Other outcomes are counted and reported.
+- Every GET route without a path parameter is called as A, and its body must
+  hold none of B's ids or names.
+- For GET routes, B's own actor calls the same ids first. A 2xx there shows the
+  seed created a real resource, so A's refusal comes from isolation and not
+  from a missing row.
+- Each actor's token is refused on the other academy's host.
+- Platform routes (`/api/v2/platform/*`) are cross-tenant by design and are
+  not in scope. Reviewed exceptions live in `CROSS_TENANT_ALLOWLIST` in the
+  test, each with a reason. A confirmed leak goes into `KNOWN_LEAKS` as a strict
+  xfail with its GitHub issue number.
+
+Run it locally with a `mongod` on 27017 (or set `V2_MONGO_URL`):
+
+```bash
+cd backend && pytest v2/tests/contract/test_two_tenant_isolation.py -q
+```
+
+The route coverage count and the per-outcome counts appear in the warnings
+summary. Frontend (browser) isolation is not covered by this test.
 
 ## Manual Notes
 

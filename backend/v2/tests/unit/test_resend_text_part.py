@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
+import httpx
 import pytest
-import resend
 
 from backend.v2.contexts.communications.application.ports import ResolvedRecipient
 from backend.v2.contexts.communications.infrastructure.resend_send_port import (
@@ -12,15 +14,16 @@ from backend.v2.contexts.communications.infrastructure.resend_send_port import (
 
 
 @pytest.mark.asyncio
-async def test_send_includes_plain_text_twin(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_send_includes_plain_text_twin() -> None:
     captured: dict = {}
 
-    def fake_send(params):
-        captured.update(params)
-        return {"id": "m1"}
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"id": "m1"})
 
-    monkeypatch.setattr(resend.Emails, "send", fake_send)
-    port = ResendEmailSendPort(api_key="k", from_address="a@b.test")
+    port = ResendEmailSendPort(
+        api_key="k", from_address="a@b.test", transport=httpx.MockTransport(handler)
+    )
     await port.send(
         recipient=ResolvedRecipient(user_id="u", email="p@x.test", display_name=None),
         subject="s",

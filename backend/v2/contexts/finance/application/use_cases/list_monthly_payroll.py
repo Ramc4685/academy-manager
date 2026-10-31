@@ -25,6 +25,18 @@ class MonthlyPayrollRow:
     warning_status: str = "clear"  # "clear" | "unresolved"
 
 
+@dataclass(frozen=True)
+class _DepartedCoach:
+    """A coach with a persisted period in the window but no occurrences in it.
+
+    Same shape the occurrence reader returns, so the row loop below needs no
+    branch for them.
+    """
+
+    coach_id: str
+    session_count: int = 0
+
+
 class ListMonthlyPayroll:
     def __init__(
         self,
@@ -49,6 +61,18 @@ class ListMonthlyPayroll:
                 academy_id=academy_id, period_start=period_start, period_end=period_end
             )
         }
+        # #785: enumeration used to start and end at "coaches with occurrences
+        # in this window". A coach who left the academy mid-period has none, so
+        # their already-generated — and possibly still unpaid — period dropped
+        # off the payroll screen entirely and the money was never paid out. A
+        # persisted period in this window is itself a row, with a session_count
+        # of 0 because there is no occurrence scan to count; the period carries
+        # the real figures.
+        seen = {c.coach_id for c in coaches}
+        coaches = [
+            *coaches,
+            *(_DepartedCoach(coach_id=coach_id) for coach_id in sorted(set(existing) - seen)),
+        ]
         # One batched preview computation for every coach lacking a persisted
         # period — the underlying academy-month occurrence scan is shared
         # instead of repeated per coach (#529).

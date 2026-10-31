@@ -4,33 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getMyProgress } from "@/lib/api/student";
 import { queryKeys } from "@/lib/query/keys";
-import type { SkillPassportEntry, SkillStatus } from "@/lib/api/curriculum";
-
-const SKILL_STATUS_FRIENDLY: Record<SkillStatus, string> = {
-  NOT_STARTED: "Not started",
-  INTRODUCED: "Introduced",
-  LEARNING: "Learning",
-  PRACTICING: "Practicing",
-  TEST_READY: "Almost there",
-  PASSED: "Mastered",
-  NEEDS_REVIEW: "Needs review",
-};
-
-function skillStatusClasses(status: SkillStatus): string {
-  switch (status) {
-    case "PASSED":
-      return "bg-status-green-50 text-status-green-800";
-    case "TEST_READY":
-      return "bg-rally-cobalt-100 text-rally-cobalt-700";
-    case "LEARNING":
-    case "PRACTICING":
-      return "bg-status-amber-50 text-status-amber-800";
-    case "NEEDS_REVIEW":
-      return "bg-status-red-50 text-status-red-800";
-    default:
-      return "bg-status-slate-100 text-status-slate-600";
-  }
-}
+import type { SkillPassportEntry } from "@/lib/api/curriculum";
+import { SkillStatusChip, skillStatusToneClasses } from "@/components/skills/SkillStatusChip";
 
 export default function StudentProgressPage() {
   const { data, isLoading, isError } = useQuery({
@@ -65,7 +40,7 @@ export default function StudentProgressPage() {
           <div className="rounded-2xl p-4 bg-white border border-rally-line mb-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-bold text-rally-ink">
-                {passedCount}/{skills.length} mastered
+                {passedCount}/{skills.length} passed
               </p>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-rally-cobalt-50 text-rally-cobalt-600">
                 {skills.length > 0 ? Math.round((passedCount / skills.length) * 100) : 0}%
@@ -90,9 +65,8 @@ export default function StudentProgressPage() {
 }
 
 function SkillItem({ entry }: { entry: SkillPassportEntry }) {
-  const label = SKILL_STATUS_FRIENDLY[entry.status];
   const checkmark = entry.status === "PASSED";
-  const classes = skillStatusClasses(entry.status);
+  const classes = skillStatusToneClasses(entry.status);
 
   return (
     <li className="flex items-center gap-3 rounded-xl px-3 py-2.5 bg-white border border-rally-line animate-fade-in-up">
@@ -102,7 +76,7 @@ function SkillItem({ entry }: { entry: SkillPassportEntry }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate text-rally-ink">{entry.skill_name}</p>
       </div>
-      <span className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full ${classes}`}>{label}</span>
+      <SkillStatusChip status={entry.status} />
     </li>
   );
 }

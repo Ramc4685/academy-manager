@@ -89,7 +89,7 @@ REQUIRED_INDEXES = {
     },
     "academy_settings": {
         "academy_settings_academy_unique",
-        "academy_settings_id_unique",
+        "academy_settings_id_per_academy_uq",
     },
     "invoices": {
         "academy_invoice_unique",

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import { getCoachSchedule, type CoachScheduleEntry } from "@/lib/api/coach";
+import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
 import { queryKeys } from "@/lib/query/keys";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
+import { RetryButton } from "@/components/coach/RetryButton";
 
 export default function CoachSessionsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -32,12 +34,7 @@ export default function CoachSessionsPage() {
           className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
         >
           <p>Couldn&apos;t load sessions.</p>
-          <button
-            onClick={() => void refetch()}
-            className="mt-2 min-h-touch rounded-md border border-red-200 px-3 dark:border-red-800"
-          >
-            Retry
-          </button>
+          <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 
@@ -48,7 +45,7 @@ export default function CoachSessionsPage() {
       <div className="space-y-6">
         {grouped.map(({ label, sessions: daySessions }) => (
           <div key={label}>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-400">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-rally-muted">
               {label}
             </h2>
             <ul className="space-y-3">
@@ -56,11 +53,9 @@ export default function CoachSessionsPage() {
                 <li key={session.occurrence_id}>
                   <Link
                     href={
-                      // Raw UTC date matches backend _day_bounds_utc; sessionDateKey
-                      // is only for grouping headers (evening sessions cross UTC midnight).
-                      `/coach/sessions/${encodeURIComponent(session.occurrence_id)}?date=${session.start_at.slice(0, 10)}` as Parameters<
-                        typeof Link
-                      >[0]["href"]
+                      // #1045: the class's LOCAL date, same as the header above
+                      // and the Calendar/Today links — never the UTC date.
+                      coachScheduleEntryHref(session) as Parameters<typeof Link>[0]["href"]
                     }
                     className="block rounded-lg border border-neutral-200 bg-white p-3 hover:border-blue-400 dark:border-neutral-800 dark:bg-neutral-900"
                   >

@@ -21,15 +21,19 @@ from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 
 OWNER_ACADEMY_ROLE: Role = "admin"
+#: Body of the placeholder waiver every bootstrapped academy starts with. The
+#: admin setup checklist (roadmap L7) treats a waiver still carrying exactly
+#: this text as "not done yet", so keep it the single source.
+DEFAULT_WAIVER_BODY = (
+    "Default academy participation waiver. Replace this template before "
+    "accepting student registrations."
+)
+
 DEFAULT_RECORDS = (
     "academy",
     "owner_user",
     "owner_membership",
-    "academy_settings",
-    "billing_policy",
     "waiver_template",
-    "roles",
-    "feature_flags",
 )
 
 
@@ -56,13 +60,18 @@ class TenantBootstrapStore(Protocol):
     async def create_academy(self, academy: dict[str, Any]) -> dict[str, Any]: ...
     async def ensure_owner_user(self, user: dict[str, Any]) -> dict[str, Any]: ...
     async def ensure_owner_membership(self, membership: dict[str, Any]) -> dict[str, Any]: ...
-    async def ensure_academy_settings(self, settings: dict[str, Any]) -> dict[str, Any]: ...
-    async def ensure_billing_policy(self, policy: dict[str, Any]) -> dict[str, Any]: ...
     async def ensure_waiver_template(self, waiver: dict[str, Any]) -> dict[str, Any]: ...
-    async def ensure_default_roles(
-        self, academy_id: str, roles: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]: ...
-    async def ensure_feature_flags(self, flags: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class InvoicePrefixAssigner(Protocol):
+    """Gives a new academy its invoice-number prefix (billing owns the rules).
+
+    Wired in composition to billing's ``AssignInvoicePrefix``, which derives
+    the prefix from the slug (``ace-badminton`` -> ``ACE``), keeps it unique
+    across academies, and returns the existing one on a re-bootstrap.
+    """
+
+    async def execute(self, *, academy_id: str, slug: str) -> str: ...
 
 
 class BootstrapAcademyCommand(BaseModel):
@@ -75,8 +84,11 @@ class BootstrapAcademyCommand(BaseModel):
     # makes every downstream 'resolve the timezone from the tenant' lookup
     # faithfully return the wrong answer.
     timezone: str = Field(min_length=1)
+    # Platform-set, not tenant-editable. Every academy bootstrapped so far
+    # (including BLNO) is badminton, so the default is today's behaviour.
+    sport: str = Field(default="badminton", min_length=1)
 
-    @field_validator("display_name", "owner_display_name", "timezone")
+    @field_validator("display_name", "owner_display_name", "timezone", "sport")
     @classmethod
     def _strip_required_text(cls, value: str) -> str:
         return value.strip()
@@ -123,6 +135,8 @@ class BootstrapAcademyResult(BaseModel):
     owner_role: Role
     created: bool
     default_records: tuple[str, ...] = DEFAULT_RECORDS
+    #: ``None`` only when no assigner is wired (tests, legacy fixtures).
+    invoice_prefix: str | None = None
 
 
 class BootstrapAcademy:
@@ -132,8 +146,10 @@ class BootstrapAcademy:
         store: TenantBootstrapStore,
         id_factory: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        invoice_prefix_assigner: InvoicePrefixAssigner | None = None,
     ) -> None:
         self._store = store
+        self._invoice_prefix_assigner = invoice_prefix_assigner
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -152,6 +168,7 @@ class BootstrapAcademy:
             "primary_domain": command.primary_domain,
             "display_name": command.display_name,
             "timezone": command.timezone,
+            "sport": command.sport,
             "status": "active",
             "owner_email": str(command.owner_email),
             "created_at": now,
@@ -215,42 +232,13 @@ class BootstrapAcademy:
                 "updated_at": now,
             }
         )
-        await self._store.ensure_academy_settings(
-            {
-                "settings_id": self._id_factory("settings_"),
-                "academy_id": academy_id,
-                "display_name": command.display_name,
-                "timezone": command.timezone,
-                "locale": "en-US",
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-        await self._store.ensure_billing_policy(
-            {
-                "policy_id": self._id_factory("policy_"),
-                "academy_id": academy_id,
-                "currency": "usd",
-                "invoice_day": 1,
-                "grace_period_days": 5,
-                "auto_charge_enabled": False,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
         await self._store.ensure_waiver_template(_default_waiver(academy_id, now, self._id_factory))
-        await self._store.ensure_default_roles(academy_id, _default_roles(academy_id, now))
-        await self._store.ensure_feature_flags(
-            {
-                "feature_flags_id": self._id_factory("flags_"),
-                "academy_id": academy_id,
-                "saas_v2_enabled": True,
-                "billing_enabled": False,
-                "messaging_enabled": False,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
+
+        invoice_prefix = None
+        if self._invoice_prefix_assigner is not None:
+            invoice_prefix = await self._invoice_prefix_assigner.execute(
+                academy_id=academy_id, slug=str(academy["slug"])
+            )
 
         return BootstrapAcademyResult(
             academy_id=academy_id,
@@ -260,6 +248,7 @@ class BootstrapAcademy:
             membership_id=str(membership["membership_id"]),
             owner_role=OWNER_ACADEMY_ROLE,
             created=created,
+            invoice_prefix=invoice_prefix,
         )
 
 
@@ -268,10 +257,7 @@ def _default_waiver(
     now: datetime,
     id_factory: Callable[[str], str],
 ) -> dict[str, Any]:
-    text = (
-        "Default academy participation waiver. Replace this template before "
-        "accepting student registrations."
-    )
+    text = DEFAULT_WAIVER_BODY
     return {
         "waiver_template_id": id_factory("wt_"),
         "academy_id": academy_id,
@@ -288,32 +274,3 @@ def _default_waiver(
         "created_at": now,
         "updated_at": now,
     }
-
-
-def _default_roles(academy_id: str, now: datetime) -> list[dict[str, Any]]:
-    return [
-        {
-            "academy_id": academy_id,
-            "role": "admin",
-            "display_name": "Admin",
-            "permissions": ["academy.manage", "billing.manage", "members.manage"],
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "academy_id": academy_id,
-            "role": "coach",
-            "display_name": "Coach",
-            "permissions": ["sessions.coach", "attendance.write"],
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "academy_id": academy_id,
-            "role": "parent",
-            "display_name": "Parent",
-            "permissions": ["children.read", "payments.read"],
-            "created_at": now,
-            "updated_at": now,
-        },
-    ]

@@ -40,6 +40,13 @@ Outcomes per action:
   Mongo blip must heal itself, and a permanent failure must reach a human,
   because a stuck row leaves the family enrolled, seated and invoiced while
   ``_not_cancellable_reason`` refuses to let them cancel again.
+
+Not here yet: the "your last class is <date>" reminder #828 asks for. It cannot
+be another branch of ``_run_one`` — that runs AT ``run_at``, by which time the
+last class has already been and gone. It needs a pass over actions still
+pending some days ahead plus a per-action "reminded" marker, so the hourly tick
+sends it exactly once. Carved out with the rest of #828's notice half; see
+``docs/tickets/enrollment-lifecycle-notices-828-followup.md``.
 """
 
 from __future__ import annotations
@@ -57,20 +64,21 @@ from backend.v2.contexts.enrollment.application.ports import (
     OccurrenceRosterCleanup,
     RosterChangeNotifier,
 )
+from backend.v2.contexts.enrollment.application.terminal_dependents import (
+    TerminalDependents,
+    close_terminal_enrollment_dependents,
+)
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     _billing_result,
-    _drop_future_occurrence_roster,
-    _notify_roster_change,
     _record_lifecycle_event,
     _sync_billing,
+)
+from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
+    BillingDeferralRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.scheduled_actions import (
     ScheduledEnrollmentAction,
     ScheduledEnrollmentActionRepository,
-)
-from backend.v2.contexts.enrollment.domain.events import (
-    EnrollmentCancelled,
-    EnrollmentCancelledPayload,
 )
 from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Enrollment
 from backend.v2.shared.events import Outbox
@@ -129,6 +137,7 @@ class ProcessScheduledCancellationActions:
         enrollment_events: EnrollmentEventRepository | None = None,
         billing_sync: EnrollmentBillingSync | None = None,
         occurrence_roster: OccurrenceRosterCleanup | None = None,
+        billing_deferrals: BillingDeferralRepository | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -139,6 +148,7 @@ class ProcessScheduledCancellationActions:
         self._enrollment_events = enrollment_events
         self._billing_sync = billing_sync
         self._occurrence_roster = occurrence_roster
+        self._billing_deferrals = billing_deferrals
         self._roster_notifier = roster_notifier
         self._now = clock
 
@@ -216,12 +226,6 @@ class ProcessScheduledCancellationActions:
         # because nothing later re-derives ``reserved_seats``.
         if before.status in _SEATED_STATUSES:
             await self._sessions.release_seat(before.session_id)
-        await _drop_future_occurrence_roster(
-            self._occurrence_roster,
-            session_id=before.session_id,
-            student_id=before.student_id,
-            after=cancelled_at,
-        )
         billing = await _sync_billing(
             self._billing_sync,
             enrollment_id=before.enrollment_id,
@@ -244,25 +248,28 @@ class ProcessScheduledCancellationActions:
             billing_policy="current_period_payable_future_voided",
             billing_result=_billing_result(billing),
         )
-        await self._outbox.append(
-            EnrollmentCancelled(
-                aggregate_id=before.enrollment_id,
-                academy_id=before.academy_id,
-                payload=EnrollmentCancelledPayload(
-                    enrollment_id=before.enrollment_id,
-                    session_id=before.session_id,
-                    student_id=before.student_id,
-                    reason="parent_cancel",
-                ),
-            )
-        )
-        await _notify_roster_change(
-            self._roster_notifier,
-            change="cancelled",
-            session_id=before.session_id,
-            student_id=before.student_id,
-            enrollment_id=before.enrollment_id,
+        # Issue #782: the same post-terminal bundle WithdrawEnrollment and
+        # seat_broker.finalize_reclaim run — future occurrence-roster rows, the
+        # EnrollmentCancelled that offers the seat to the waitlist, the staff
+        # alert. `scheduled_actions` is deliberately NOT passed: this path IS a
+        # scheduled action and retiring the queue here would cancel the very
+        # row `mark_succeeded` is about to close below. `billing_deferrals` IS
+        # passed: a paused/held row keeps its pending cancellation, so this
+        # worker can be the transition that ends a still-deferred enrollment
+        # and must close that deferral or it warns admins forever.
+        await close_terminal_enrollment_dependents(
+            before,
+            effective_at=cancelled_at,
+            reason=before.cancellation_reason or "parent_cancel",
             actor_id="system",
+            roster_change="cancelled",
+            outbox_reason="parent_cancel",
+            dependents=TerminalDependents(
+                occurrence_roster=self._occurrence_roster,
+                billing_deferrals=self._billing_deferrals,
+                outbox=self._outbox,
+                roster_notifier=self._roster_notifier,
+            ),
         )
         await self._scheduled_actions.mark_succeeded(action.action_id, attempted_at=attempted_at)
         return "succeeded"

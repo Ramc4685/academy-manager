@@ -42,6 +42,10 @@ const config: Config = {
           "night-card": "#0b1220",
           bright: "#cbd5e1",
           cobalt: {
+            // Bare `rally-cobalt` (no shade) was used in ~23 places but had no
+            // DEFAULT, so those classes emitted nothing: invisible links and
+            // missing focus/hover borders. DESIGN.md cobalt = 600.
+            DEFAULT: "#2563eb",
             50: "#eff6ff",
             100: "#dbeafe",
             500: "#3b82f6",
@@ -65,7 +69,7 @@ const config: Config = {
           amber: { 50: "#fffbeb", 500: "#f59e0b", 800: "#92400e" },
           red: { 50: "#fef2f2", 200: "#fecaca", 500: "#ef4444", 600: "#dc2626", 800: "#991b1b" },
           yellow: { 50: "#fefce8", 800: "#854d0e" },
-          blue: { 400: "#60a5fa", 800: "#1e40af" },
+          blue: { 50: "#eff6ff", 400: "#60a5fa", 800: "#1e40af" },
           slate: { 100: "#f1f5f9", 600: "#475569", 700: "#334155" },
         },
       },

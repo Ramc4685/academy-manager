@@ -16,7 +16,7 @@ test.describe("local authenticated QA defect coverage", () => {
     "Set LOCAL_AUTH_E2E=1 and run against approved local SaaS staging seed data.",
   );
 
-  test("seeded parent exercises onboarding controls, billing portal redirect, and wrong-role redirects", async ({
+  test("seeded parent exercises onboarding controls and wrong-role redirects", async ({
     page,
   }) => {
     await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
@@ -38,13 +38,6 @@ test.describe("local authenticated QA defect coverage", () => {
     await page.getByRole("radio", { name: "Beginner" }).click();
     await expect(page.getByRole("radio", { name: "Beginner" })).toBeChecked();
 
-    await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Billing portal" }).click();
-    await expect(page.getByTestId("billing-portal-error")).toContainText(
-      "Start autopay for an enrollment first",
-    );
-    await expect(page.getByTestId("billing-portal-error")).not.toContainText("Request failed");
-
     await page.goto("/admin");
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);
     await expect(page.getByTestId("persona-access-denied")).toContainText("admin access");
@@ -52,6 +45,25 @@ test.describe("local authenticated QA defect coverage", () => {
     await page.goto("/coach/sessions");
     await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/);
     await expect(page.getByTestId("persona-access-denied")).toContainText("coach access");
+  });
+
+  test("seeded parent billing portal reports the autopay prerequisite", async ({ page }) => {
+    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+
+    await page.goto("/parent/payments");
+    await page.getByRole("button", { name: "Billing portal" }).click();
+    const portalError = page.getByTestId("billing-portal-error");
+    // A seeded parent has never completed autopay, so there is no Stripe
+    // customer and therefore no portal. The backend decides that before it
+    // touches any Stripe gateway (Billing.BillingPortalNotReady), so this is
+    // the same on a stack with Stripe test keys and on a default seeded stack
+    // running the fake gateway — issue #595, which used to redirect to a dead
+    // fake.stripe.com URL here instead of rendering a banner.
+    await expect(portalError).toContainText("Start autopay for an enrollment first");
+    // Raw backend detail must never reach the banner.
+    await expect(portalError).not.toContainText("Request failed");
+    await expect(portalError).not.toContainText("Stripe");
+    await expect(page).toHaveURL(/\/parent\/payments/);
   });
 
   test("seeded admin can load the protected admin workspace", async ({ page }) => {
@@ -91,9 +103,6 @@ test.describe("local authenticated QA defect coverage", () => {
   }) => {
     test.slow();
     await signIn(page, COACH_EMAIL, COACH_PASSWORD, /\/coach\/today/);
-    await page.goto("/coach/dashboard");
-    await expect(page.getByTestId("coach-day-hub")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Coach Day Hub" })).toBeVisible();
     await page.goto("/coach/today");
     await expect(page.getByTestId("coach-today")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();

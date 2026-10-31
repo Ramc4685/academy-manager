@@ -26,6 +26,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     MakeupRequest,
     MakeupWindowExpired,
     OccurrenceRosterEntry,
+    ParentActionDisabled,
     ParentSelfServicePolicy,
     StudentNotEnrolledInSession,
 )
@@ -223,6 +224,41 @@ async def test_submit_makeup_request_with_requested_target() -> None:
     )
 
     assert result.requested_target_occurrence_id == "occ-target"
+
+
+@pytest.mark.asyncio
+async def test_submit_makeup_request_rejected_when_switch_off() -> None:
+    off_policy = ParentSelfServicePolicy.default("acad").model_copy(
+        update={"can_request_makeup": False}
+    )
+    use_case, makeups = _make_use_case(policy=off_policy)
+
+    with pytest.raises(ParentActionDisabled) as exc_info:
+        await use_case.execute(
+            SubmitMakeupRequestCommand(
+                parent_id="parent-1",
+                student_id="student-1",
+                missed_occurrence_id="occ-missed",
+            )
+        )
+
+    assert exc_info.value.code == "parent_action_disabled"
+    assert makeups.added == []
+
+
+@pytest.mark.asyncio
+async def test_submit_makeup_request_allowed_when_switch_on() -> None:
+    use_case, makeups = _make_use_case()  # default -> can_request_makeup=True
+
+    result = await use_case.execute(
+        SubmitMakeupRequestCommand(
+            parent_id="parent-1",
+            student_id="student-1",
+            missed_occurrence_id="occ-missed",
+        )
+    )
+
+    assert makeups.added == [result]
 
 
 @pytest.mark.asyncio

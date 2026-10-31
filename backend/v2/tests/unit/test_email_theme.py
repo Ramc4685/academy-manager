@@ -31,6 +31,20 @@ def test_shell_uses_logo_when_present() -> None:
     assert 'alt="Acme"' in out
 
 
+def test_shell_renders_a_firebase_token_logo_url_intact() -> None:
+    # The uploaded-logo URL has an encoded path and a query string; the
+    # attribute is HTML-escaped (&amp;), which every email client decodes.
+    url = (
+        "https://firebasestorage.googleapis.com/v0/b/b/o/academies%2Fa%2Flogo%2Fx.png"
+        "?alt=media&token=abc-123"
+    )
+    out = t.shell(brand=t.EmailBrand(academy_name="Acme", logo_url=url), inner_html="")
+    assert (
+        'src="https://firebasestorage.googleapis.com/v0/b/b/o/academies%2Fa%2Flogo%2Fx.png'
+        '?alt=media&amp;token=abc-123"' in out
+    )
+
+
 def test_button_variants() -> None:
     primary = t.button("Pay <now>", "https://x.test/?a=1&b=2")
     assert "Pay &lt;now&gt;" in primary
@@ -40,6 +54,44 @@ def test_button_variants() -> None:
     assert "background:#ffffff" in secondary
     custom = t.button("Go", "https://x.test", accent="#abcdef")
     assert "background:#abcdef" in custom
+    # Light blue: white text fails AA (1.65:1), so the button switches to ink.
+    assert f"color:{t.INK}" in custom
+    assert "color:#ffffff" not in custom
+
+
+def test_primary_button_text_colour_meets_aa_on_brand_colour() -> None:
+    light = {"#FFD400": "#ffd400", "#F5F5F5": "#f5f5f5", t.VOLT: t.VOLT}
+    for accent, background in light.items():
+        out = t.button("Go", "https://x.test", accent=accent)
+        assert f"background:{background};color:{t.INK};border:1px solid {background};" in out
+    dark = {"#1F2937": "#1f2937", "#000000": "#000000", t.COBALT: t.COBALT}
+    for accent, background in dark.items():
+        out = t.button("Go", "https://x.test", accent=accent)
+        assert f"background:{background};color:#ffffff;border:1px solid {background};" in out
+    # Mid-tones that pass with one of the two text colours keep their fill.
+    assert f"background:#3b82f6;color:{t.INK};" in t.button(
+        "Go", "https://x.test", accent="#3B82F6"
+    )
+    assert "background:#e11d48;color:#ffffff;" in t.button("Go", "https://x.test", accent="#E11D48")
+
+
+def test_primary_button_darkens_fill_when_neither_text_colour_passes() -> None:
+    out = t.button("Go", "https://x.test", accent="#7a7a7a")
+    assert "background:#7a7a7a" not in out
+    assert "background:#767677;color:#ffffff;border:1px solid #767677;" in out
+
+
+def test_primary_button_falls_back_to_cobalt_for_junk_accent() -> None:
+    # A caller that skips EmailBrand.accent() must still get a readable button,
+    # never a ValueError at send time and never an unstyled link.
+    for junk in ("red", "", "ffd400", "#ggg"):
+        out = t.button("Go", "https://x.test", accent=junk)
+        assert f"background:{t.COBALT};color:#ffffff;" in out
+
+
+def test_secondary_button_ignores_accent() -> None:
+    out = t.button("Join", "https://x.test", accent="#FFD400", variant="secondary")
+    assert f"background:#ffffff;color:{t.INK};" in out
 
 
 def test_format_money() -> None:

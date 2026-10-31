@@ -80,6 +80,7 @@ def build_dunning_worker(
     connected_accounts: Any,
     email_port: Callable[[], InvoiceEmailAdapter | None],
     outbox: Any,
+    parent_customers: Any = None,
 ) -> Callable[[], ProcessDunningRetries]:
     def _dunning_worker() -> ProcessDunningRetries:
         required = ("get_default_payment_method", "create_off_session_payment_intent")
@@ -93,6 +94,7 @@ def build_dunning_worker(
                 enrollment_autopay=enrollment_autopay,
                 settings=settings,
                 connected_accounts=connected_accounts,
+                parent_customers=parent_customers,
             ),
             notifier=email_port(),
             enrollment_autopay=enrollment_autopay,

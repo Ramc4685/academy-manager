@@ -56,13 +56,20 @@ class CoachRosterEntry(BaseModel):
     ) = None
     # Already-recorded mark for this occurrence, so the client can hydrate
     # attendance state after a reload instead of treating everyone as unmarked.
-    attendance_status: Literal["present", "absent", "late"] | None = None
+    # "voided" (#554) is a live row state an admin can set at any time; it
+    # must be accepted here or one voided mark fails validation for the
+    # coach's whole day (same failure shape as #732).
+    attendance_status: Literal["present", "absent", "late", "voided"] | None = None
     # True when a parent submitted an AbsenceNotice (R1) for this student on
     # this occurrence.
     expected_absence: bool = False
     # "enrollment" for regular roster rows; "makeup" / "trial" for one-time
     # entries (Tasks 5/7) added just for this occurrence.
     entry_source: Literal["enrollment", "makeup", "trial"] = "enrollment"
+    # People CRM L3a: on a trial row, the trial request id the coach records
+    # Came / Didn't come against, and the outcome already recorded.
+    trial_request_id: str | None = None
+    trial_outcome: Literal["came", "no_show"] | None = None
     # Issue #675: set while a parent's end-of-period cancel is pending — the
     # student still attends; the UI may show "ends <date>".
     pending_cancellation_at: datetime | None = None
@@ -71,6 +78,12 @@ class CoachRosterEntry(BaseModel):
     # A calendar date, never an instant: it must read as the same day for the
     # coach, the parent and the admin.
     hold_return_on: date | None = None
+    # Issue #774: the family's overdue balance for THIS student, in integer
+    # cents, or None when nothing is overdue. The single money fact a coach
+    # sees — enough to say "there's a payment due" to the parent at the court,
+    # and deliberately nothing else: the billing drawer and the coach billing
+    # routes were deleted in the same change.
+    payment_due_cents: int | None = None
 
 
 class CoachSession(BaseModel):
@@ -87,6 +100,11 @@ class CoachSession(BaseModel):
     # their own id and a null name.
     coach_id: str | None = None
     coach_name: str | None = None
+    # Issue #777: a cancelled class stays on the coach's day instead of
+    # vanishing, so the coach learns the class is off (and why) from the same
+    # screen they'd otherwise show up for.
+    status: Literal["scheduled", "cancelled", "completed"] = "scheduled"
+    cancellation_reason: str | None = None
 
 
 class CoachTodayResponse(BaseModel):
@@ -132,7 +150,9 @@ class CorrectAttendanceResponse(BaseModel):
     session_id: str
     student_id: str
     status: Literal["present", "absent", "late"]
-    previous_status: Literal["present", "absent", "late"] | None = None
+    # Correcting a voided mark un-voids it (#554), so the replaced status may
+    # be "voided" even though nothing can be corrected *to* it.
+    previous_status: Literal["present", "absent", "late", "voided"] | None = None
     corrected_by: str | None = None
     corrected_at: datetime | None = None
 
@@ -378,3 +398,14 @@ class CoachMessagesResponse(BaseModel):
 
 class CoachMarkMessageReadResponse(BaseModel):
     status: Literal["ok"] = "ok"
+
+
+class CoachAcademyView(BaseModel):
+    """Row 14: the coach shell's academy mark. Deliberately minimal — a coach
+    never sees the rest of the academy profile, so this is not
+    ``ParentAcademyView``/``AdminAcademyView`` with fields dropped, it is its
+    own narrow DTO."""
+
+    name: str
+    logo_url: str | None = None
+    brand_color: str | None = None

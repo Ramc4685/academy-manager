@@ -4,8 +4,11 @@ Tests a standalone mini FastAPI app that wires fake in-memory repos directly
 to the curriculum use cases. No Mongo, no real auth.
 
 Routes covered:
-- POST  /api/v2/admin/programs             → 201, returns program
-- GET   /api/v2/admin/programs             → 200, list
+- POST  /api/v2/admin/curriculum/programs  → 201, returns program
+- GET   /api/v2/admin/curriculum/programs  → 200, list
+
+Skill programs are NOT at ``/admin/programs``: the public page owns that path
+(see ``structural/test_no_duplicate_routes.py``).
 - POST  /api/v2/admin/programs/{id}/seed-badminton  → 200, idempotent
 - GET   /api/v2/admin/programs/{id}/pathway → 200
 """
@@ -197,7 +200,7 @@ def _build_app(*, academy_id: str = "test-academy") -> FastAPI:
         roles=("admin",),
     )
 
-    @app.post("/api/v2/admin/programs", status_code=201)
+    @app.post("/api/v2/admin/curriculum/programs", status_code=201)
     async def create_program(body: dict, request: Request) -> dict:
         state: _PathwayState = request.app.state.pathway
         from datetime import UTC, datetime
@@ -217,7 +220,7 @@ def _build_app(*, academy_id: str = "test-academy") -> FastAPI:
         await state.programs.save(program)
         return program.model_dump(mode="json")
 
-    @app.get("/api/v2/admin/programs")
+    @app.get("/api/v2/admin/curriculum/programs")
     async def list_programs(request: Request) -> dict:
         state: _PathwayState = request.app.state.pathway
         progs = await state.programs.list_active()
@@ -257,7 +260,7 @@ def test_create_program_returns_201():
     app = _build_app()
     client = TestClient(app)
     r = client.post(
-        "/api/v2/admin/programs",
+        "/api/v2/admin/curriculum/programs",
         json={"sport": "badminton", "name": "Test Pathway", "description": "desc"},
     )
     assert r.status_code == 201, r.text
@@ -272,10 +275,10 @@ def test_list_programs_returns_200():
     client = TestClient(app)
     # seed one first
     client.post(
-        "/api/v2/admin/programs",
+        "/api/v2/admin/curriculum/programs",
         json={"sport": "badminton", "name": "Badminton Pathway"},
     )
-    r = client.get("/api/v2/admin/programs")
+    r = client.get("/api/v2/admin/curriculum/programs")
     assert r.status_code == 200, r.text
     body = r.json()
     assert "programs" in body
@@ -351,11 +354,12 @@ def _make_lesson_card(*, lesson_number: int = 1, title: str = "Card") -> LessonC
     )
 
 
-def _build_real_router_app(*, curriculum: Any) -> FastAPI:
+def _build_real_router_app(*, curriculum: Any, get_academy_use_case: Any = None) -> FastAPI:
     """Mount the real pathway router with a stub AdminUseCases.
 
-    Only ``curriculum`` is wired; the lesson-card route is the only thing
-    under test. ``curriculum=None`` exercises the 503 guard.
+    ``curriculum`` and (when given) ``get_academy_use_case`` are wired; the
+    lesson-card and seed-badminton routes are the only things under test.
+    ``curriculum=None`` exercises the 503 guard.
     """
     app = FastAPI()
     app.include_router(pathway_router, prefix="/api/v2/admin")
@@ -365,8 +369,16 @@ def _build_real_router_app(*, curriculum: Any) -> FastAPI:
         academy_id="test-academy",
         roles=("admin",),
     )
-    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(curriculum=curriculum)
+    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(
+        curriculum=curriculum, get_academy_use_case=get_academy_use_case
+    )
     return app
+
+
+def _academy_use_case(sport: str) -> Any:
+    """A stub ``GetAcademyUseCase`` returning only the ``sport`` field used
+    by the seed-badminton gate."""
+    return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(sport=sport)))
 
 
 def test_list_lesson_cards_returns_summary_shape():
@@ -446,3 +458,199 @@ def test_list_lesson_cards_returns_503_when_curriculum_unconfigured():
 
     r = client.get("/api/v2/admin/programs/prog-1/lesson-cards")
     assert r.status_code == 503, r.text
+
+
+# ---------------------------------------------------------------------------
+# Real router: skill-program list/create and Add Skill validation
+# ---------------------------------------------------------------------------
+
+
+def _make_program(name: str = "Badminton Skill Pathway") -> Program:
+    now = datetime.now(UTC)
+    return Program(
+        program_id="prog-1",
+        academy_id="test-academy",
+        sport="badminton",
+        name=name,
+        description="",
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+        created_by="admin-1",
+    )
+
+
+def test_real_router_lists_skill_programs_under_curriculum_path():
+    curriculum = SimpleNamespace(
+        list_programs=SimpleNamespace(execute=AsyncMock(return_value=[_make_program()]))
+    )
+    client = TestClient(_build_real_router_app(curriculum=curriculum))
+
+    r = client.get("/api/v2/admin/curriculum/programs")
+
+    assert r.status_code == 200, r.text
+    assert [p["program_id"] for p in r.json()["programs"]] == ["prog-1"]
+    assert r.json()["programs"][0]["is_active"] is True
+
+
+def test_real_router_creates_skill_program_with_sport_and_description():
+    create = SimpleNamespace(execute=AsyncMock(return_value=_make_program("Juniors")))
+    client = TestClient(_build_real_router_app(curriculum=SimpleNamespace(create_program=create)))
+
+    r = client.post(
+        "/api/v2/admin/curriculum/programs",
+        json={"name": "Juniors", "sport": "badminton", "description": "U12"},
+    )
+
+    assert r.status_code == 201, r.text
+    cmd = create.execute.await_args.args[0]
+    assert (cmd.name, cmd.sport, cmd.description) == ("Juniors", "badminton", "U12")
+
+
+def test_real_router_does_not_serve_skill_programs_at_bare_programs_path():
+    client = TestClient(_build_real_router_app(curriculum=SimpleNamespace()))
+    assert client.get("/api/v2/admin/programs").status_code in (404, 405)
+
+
+def _make_skill(**overrides: Any) -> Skill:
+    now = datetime.now(UTC)
+    fields: dict[str, Any] = {
+        "skill_id": "skill-1",
+        "level_id": "level-1",
+        "program_id": "prog-1",
+        "academy_id": "test-academy",
+        "sequence": 3,
+        "name": "Forehand clear",
+        "description": "",
+        "is_required": True,
+        "scoring_type": "ATTEMPT_BASED",
+        "pass_threshold_pct": 70.0,
+        "coach_override_allowed": False,
+        "is_active": True,
+        "created_at": now,
+        "updated_at": now,
+        "created_by": "admin-1",
+    }
+    fields.update(overrides)
+    return Skill(**fields)
+
+
+def test_add_skill_accepts_the_payload_the_admin_ui_sends():
+    create = SimpleNamespace(execute=AsyncMock(return_value=_make_skill()))
+    client = TestClient(_build_real_router_app(curriculum=SimpleNamespace(create_skill=create)))
+
+    r = client.post(
+        "/api/v2/admin/levels/level-1/skills",
+        json={
+            "program_id": "prog-1",
+            "sequence": 3,
+            "name": "Forehand clear",
+            "description": "",
+            "is_required": True,
+            "scoring_type": "COACH_APPROVAL",
+        },
+    )
+
+    assert r.status_code == 201, r.text
+    cmd = create.execute.await_args.args[0]
+    assert (cmd.level_id, cmd.program_id, cmd.sequence) == ("level-1", "prog-1", 3)
+    assert cmd.scoring_type == "COACH_APPROVAL"
+
+
+def test_add_skill_without_program_id_and_sequence_is_422():
+    create = SimpleNamespace(execute=AsyncMock())
+    client = TestClient(_build_real_router_app(curriculum=SimpleNamespace(create_skill=create)))
+
+    r = client.post(
+        "/api/v2/admin/levels/level-1/skills",
+        json={"name": "Forehand clear", "is_required": True, "scoring_type": "ATTEMPT_BASED"},
+    )
+
+    assert r.status_code == 422, r.text
+    missing = {tuple(e["loc"]) for e in r.json()["detail"]}
+    assert ("body", "program_id") in missing
+    assert ("body", "sequence") in missing
+    create.execute.assert_not_awaited()
+
+
+def test_add_skill_rejects_unknown_scoring_type_with_422_not_500():
+    create = SimpleNamespace(execute=AsyncMock())
+    client = TestClient(_build_real_router_app(curriculum=SimpleNamespace(create_skill=create)))
+
+    r = client.post(
+        "/api/v2/admin/levels/level-1/skills",
+        json={"program_id": "prog-1", "sequence": 1, "name": "X", "scoring_type": "binary"},
+    )
+
+    assert r.status_code == 422, r.text
+    create.execute.assert_not_awaited()
+
+
+def test_real_router_create_program_returns_409_when_one_is_active():
+    from backend.v2.contexts.curriculum.application.errors import ActiveProgramExists
+    from backend.v2.shared.http.errors import register_exception_handlers
+
+    create = SimpleNamespace(
+        execute=AsyncMock(side_effect=ActiveProgramExists("already active", program_id="prog-1"))
+    )
+    app = _build_real_router_app(curriculum=SimpleNamespace(create_program=create))
+    register_exception_handlers(app)
+
+    r = TestClient(app).post(
+        "/api/v2/admin/curriculum/programs",
+        json={"name": "Juniors", "sport": "badminton", "description": ""},
+    )
+
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "Curriculum.ActiveProgramExists"
+
+
+# ---------------------------------------------------------------------------
+# POST /programs/{id}/seed-badminton — sport gating (row 13)
+# ---------------------------------------------------------------------------
+
+
+def test_real_router_seed_badminton_allowed_for_badminton_academy():
+    seed = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(program_id="prog-1", name="Badminton"))
+    )
+    app = _build_real_router_app(
+        curriculum=SimpleNamespace(seed_badminton=seed),
+        get_academy_use_case=_academy_use_case("badminton"),
+    )
+
+    r = TestClient(app).post("/api/v2/admin/programs/any-id/seed-badminton")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"program_id": "prog-1", "name": "Badminton"}
+    seed.execute.assert_awaited_once_with(created_by="admin-1")
+
+
+def test_real_router_seed_badminton_allowed_when_sport_field_is_absent():
+    # A doc without the `sport` field (every academy today, BLNO included)
+    # reads as badminton at the use-case layer, so this is unchanged.
+    seed = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(program_id="prog-1", name="Badminton"))
+    )
+    app = _build_real_router_app(
+        curriculum=SimpleNamespace(seed_badminton=seed),
+        get_academy_use_case=_academy_use_case("badminton"),
+    )
+
+    r = TestClient(app).post("/api/v2/admin/programs/any-id/seed-badminton")
+
+    assert r.status_code == 200, r.text
+
+
+def test_real_router_seed_badminton_409s_for_non_badminton_academy():
+    seed = SimpleNamespace(execute=AsyncMock())
+    app = _build_real_router_app(
+        curriculum=SimpleNamespace(seed_badminton=seed),
+        get_academy_use_case=_academy_use_case("tennis"),
+    )
+
+    r = TestClient(app).post("/api/v2/admin/programs/any-id/seed-badminton")
+
+    assert r.status_code == 409, r.text
+    assert "badminton" in r.json()["detail"].lower()
+    seed.execute.assert_not_awaited()

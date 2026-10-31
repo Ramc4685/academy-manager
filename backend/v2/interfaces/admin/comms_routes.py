@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -22,6 +22,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminMarkMessageReadResponse,
     AdminMessageList,
     AdminMessageView,
     BroadcastRequest,
@@ -35,19 +36,28 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.comms import Message
-from backend.v2.shared.config import get_settings
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.time.academy_timezone import (
+    LEGACY_FALLBACK_TIMEZONE,
+    resolve_academy_clock_timezone,
+)
 
 router = APIRouter(tags=["admin.comms"])
 
 
-def _scheduler_today() -> date:
-    settings = get_settings()
-    try:
-        scheduler_tz = ZoneInfo(settings.scheduler_tz)
-    except ZoneInfoNotFoundError:
-        scheduler_tz = UTC
-    return datetime.now(UTC).astimezone(scheduler_tz).date()
+async def _academy_today(use_cases: AdminUseCases, academy_id: str) -> date:
+    """Today on the academy's own clock, the date the scheduled digest uses.
+
+    Settings Phase 4: the scheduled digest keys ``digest_date`` on the
+    academy-local date, so a test send without an explicit date must too.
+    """
+    reader = getattr(use_cases, "get_academy_timezone", None)
+    zone = (
+        await resolve_academy_clock_timezone(reader, academy_id)
+        if reader is not None
+        else LEGACY_FALLBACK_TIMEZONE
+    )
+    return datetime.now(UTC).astimezone(ZoneInfo(zone)).date()
 
 
 @router.get("/messages", response_model=AdminMessageList)
@@ -56,7 +66,23 @@ async def list_messages(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminMessageList:
     msgs = await use_cases.comms.list_for(claims.user_id)
-    return AdminMessageList(messages=[_message_view(m) for m in msgs])
+    return AdminMessageList(messages=[_message_view(m, claims.user_id) for m in msgs])
+
+
+@router.post("/messages/{message_id}/read", response_model=AdminMarkMessageReadResponse)
+async def mark_message_read(
+    message_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminMarkMessageReadResponse:
+    """Clear the unread marker on one DM (#864).
+
+    The same shape as the parent and coach endpoints, and the same write: the
+    store scopes the update to what this viewer may actually see, so an id
+    that is not theirs is a silent no-op rather than an existence oracle.
+    """
+    await use_cases.comms.mark_read_for_admin(message_id, claims.user_id)
+    return AdminMarkMessageReadResponse()
 
 
 @router.post("/messages/broadcast", response_model=AdminMessageView)
@@ -71,7 +97,7 @@ async def broadcast(
         scope_type=body.scope_type,
         scope_label=body.scope_label,
     )
-    return _message_view(m)
+    return _message_view(m, claims.user_id)
 
 
 @router.post("/messages/dm", response_model=AdminMessageView)
@@ -86,7 +112,7 @@ async def dm(
         recipient_id=body.recipient_id,
         body=body.body,
     )
-    return _message_view(m)
+    return _message_view(m, claims.user_id)
 
 
 @router.post("/campaigns", response_model=SendCampaignResponse, status_code=201)
@@ -148,7 +174,7 @@ async def send_coach_digest_test(
             SendCoachDigestTestCommand(
                 academy_id=claims.academy_id,
                 target_user_id=target_user_id,
-                on_date=payload.on_date or _scheduler_today(),
+                on_date=payload.on_date or await _academy_today(use_cases, claims.academy_id),
             )
         )
     except CoachDigestTargetNotFound as exc:
@@ -191,7 +217,11 @@ async def get_coach_digest_log(
     )
 
 
-def _message_view(m: Message) -> AdminMessageView:
+def _message_view(m: Message, viewer_id: str) -> AdminMessageView:
+    # An inbound DM is one this admin did not send. It is the only thing that
+    # can be unread, and the only thing whose `recipient_id` is the admin
+    # themselves — so the thread it belongs to is keyed by its *sender*.
+    inbound = m.kind == "dm" and m.sender_id != viewer_id
     return AdminMessageView(
         message_id=m.message_id,
         kind=m.kind,
@@ -208,4 +238,8 @@ def _message_view(m: Message) -> AdminMessageView:
         ),
         recipient_count=m.recipient_count,
         delivery_status=m.delivery_status or "recorded",
+        counterparty_id=(
+            None if m.kind == "announcement" else (m.sender_id if inbound else m.recipient_id)
+        ),
+        is_read=(not inbound) or viewer_id in m.read_by,
     )

@@ -16,8 +16,9 @@ from pathlib import Path
 
 INTERFACES = Path(__file__).resolve().parents[2] / "interfaces"
 
-#: ``Depends(require_owner)`` / ``Depends(require_persona)`` with no call.
-BARE_GATE = re.compile(r"Depends\(\s*(require_owner|require_persona)\s*[,)]")
+#: ``Depends(require_owner)`` / ``Depends(require_persona)`` /
+#: ``Depends(require_staff_tier)`` with no call.
+BARE_GATE = re.compile(r"Depends\(\s*(require_owner|require_persona|require_staff_tier)\s*[,)]")
 
 
 def test_no_persona_gate_is_passed_to_depends_uncalled() -> None:

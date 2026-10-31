@@ -9,7 +9,9 @@ Three mutations, all draft-gated and all audited:
   override's ``original_amount_minor``).
 - ``ReopenPayoutPeriod`` — approved/paid back to draft, reason required.
   Paid metadata is cleared on the period but preserved in the audit
-  entry's ``before`` snapshot.
+  entry's ``before`` snapshot. Reopening a *paid* period additionally
+  needs ``acknowledge_paid_clawback`` (#787): the money is already out,
+  so someone has to own clawing it back.
 - ``OverridePayoutLine`` — set (or clear) a manual amount on one line,
   reason required. The period total is rebuilt from the lines.
 
@@ -160,11 +162,18 @@ class RecomputePayoutPeriod(_Audited):
 
 
 class ReopenPayoutPeriod(_Audited):
-    async def execute(self, *, period_id: str, actor_id: str, reason: str) -> PayoutPeriod:
+    async def execute(
+        self,
+        *,
+        period_id: str,
+        actor_id: str,
+        reason: str,
+        acknowledge_paid_clawback: bool = False,
+    ) -> PayoutPeriod:
         if not reason.strip():
             raise ValueError("reason is required to reopen a payout period")
         period = await self._load(period_id)
-        reopened = reopen(period)
+        reopened = reopen(period, acknowledge_paid_clawback=acknowledge_paid_clawback)
         stored = await self._repo.replace(reopened)
         await self._record(
             stored,
@@ -179,7 +188,12 @@ class ReopenPayoutPeriod(_Audited):
                 "paid_amount_minor": period.paid_amount_minor,
                 "paid_reference": period.paid_reference,
             },
-            after={"status": stored.status},
+            after={
+                "status": stored.status,
+                "paid_clawback_acknowledged": (
+                    acknowledge_paid_clawback if period.status == "paid" else False
+                ),
+            },
         )
         return stored
 

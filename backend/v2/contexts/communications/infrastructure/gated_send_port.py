@@ -47,6 +47,7 @@ class GatedEmailSendPort(EmailSendPort):
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         if recipient.email:
             for gate in (self.suppressions, self.preferences):
@@ -72,4 +73,5 @@ class GatedEmailSendPort(EmailSendPort):
             bcc=bcc,
             reply_to=reply_to,
             category=category,
+            sender_name=sender_name,
         )

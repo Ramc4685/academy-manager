@@ -117,11 +117,12 @@ class Settings(BaseSettings):
     )
 
     sentry_cron_jobs: Annotated[tuple[str, ...], NoDecode] = Field(
-        default=("generate_monthly_invoices",),
+        default=("generate_monthly_invoices", "send_past_due_reminders"),
         description=(
             "APScheduler job ids that send Sentry Crons check-ins (comma-separated). "
-            "Opt-in per job: the free plan includes one monitor, and the monthly "
-            "invoice run is the one job whose silent failure costs money."
+            "Opt-in per job: the monthly invoice run is the job whose silent failure "
+            "costs money, and the past-due reminder sweep (#774) is the one whose "
+            "silent failure means nobody chases it."
         ),
     )
 
@@ -138,7 +139,27 @@ class Settings(BaseSettings):
     stripe_connect_client_id: str | None = Field(default=None)
     stripe_connect_callback_uri: str | None = Field(default=None)
     stripe_connect_state_secret: str | None = Field(default=None)
+    house_academy_id: str | None = Field(
+        default=None,
+        description=(
+            "The one academy whose parent charges settle on the PLATFORM Stripe "
+            "account (BLNO, which is also the platform owner). Every other academy "
+            "must charge through its own connected account. Set in fly.toml so a "
+            "change is a reviewed commit plus an approved deploy. Unset keeps the "
+            "legacy per-academy billing_settings flag (local/staging only)."
+        ),
+    )
     firebase_project_id: str | None = Field(default=None)
+    media_storage_bucket: str | None = Field(
+        default=None,
+        description=(
+            "Firebase Storage bucket for academy media (logo upload). Deliberately "
+            "NOT derived from the project id: projects created before Oct 2024 use "
+            "<project>.appspot.com and newer ones <project>.firebasestorage.app, so "
+            "guessing would point uploads at a bucket that may not exist. Unset => "
+            "POST /admin/academy/media answers 503 and the logo URL field still works."
+        ),
+    )
     cors_origins: str = Field(default="")
     frontend_url: str | None = Field(default=None)
     scheduler_tz: str = Field(default="UTC")
@@ -171,6 +192,15 @@ class Settings(BaseSettings):
         description=(
             "Owner address for the daily ops digest (issue #428). Unset ⇒ the digest "
             "job logs and skips; nothing is sent."
+        ),
+    )
+    owner_brief_email: str | None = Field(
+        default=None,
+        description=(
+            "Owner address for the daily academy brief (issue #776). Falls back to "
+            "ops_alert_email; unset both ⇒ the brief job logs and skips. Deliberately "
+            "separate from the engineering ops digest: same cadence, different audience "
+            "and content."
         ),
     )
     coach_digest_enabled: bool = Field(
@@ -244,6 +274,10 @@ class Settings(BaseSettings):
                 "STRIPE_CONNECT_WEBHOOK_SECRET",
                 self.stripe_connect_webhook_secret,
             )
+        if "V2_HOUSE_ACADEMY_ID" not in os.environ:
+            self.house_academy_id = (
+                os.environ.get("HOUSE_ACADEMY_ID", self.house_academy_id or "") or ""
+            ).strip() or None
         if "V2_TENANCY_MODE" not in os.environ and os.environ.get("APP_TENANCY_MODE"):
             self.tenancy_mode = os.environ["APP_TENANCY_MODE"].strip().lower()  # type: ignore[assignment]
         if "V2_PRIMARY_ACADEMY_ID" not in os.environ:
@@ -274,6 +308,16 @@ class Settings(BaseSettings):
             )
         if "V2_SENTRY_DSN" not in os.environ:
             self.sentry_dsn = os.environ.get("SENTRY_DSN", self.sentry_dsn)
+        if (
+            "V2_SENTRY_TRACES_SAMPLE_RATE" not in os.environ
+            and "SENTRY_TRACES_SAMPLE_RATE" not in os.environ
+            and self.env == "prod"
+        ):
+            # #749: nothing in the repo set this secret, so prod tracing was
+            # silently 0.0 forever. Default it on in prod only; test/dev/CI
+            # keep the errors-first 0.0 default, and an explicit env var
+            # (either name) still wins over this.
+            self.sentry_traces_sample_rate = 0.1
         if "V2_SENTRY_LOGS_ENABLED" not in os.environ and "SENTRY_LOGS_ENABLED" in os.environ:
             self.sentry_logs_enabled = os.environ["SENTRY_LOGS_ENABLED"].strip().lower() in {
                 "1",
@@ -300,6 +344,8 @@ class Settings(BaseSettings):
             self.sender_email = os.environ.get("SENDER_EMAIL", self.sender_email)
         if "V2_OPS_ALERT_EMAIL" not in os.environ:
             self.ops_alert_email = os.environ.get("OPS_ALERT_EMAIL", self.ops_alert_email)
+        if "V2_OWNER_BRIEF_EMAIL" not in os.environ:
+            self.owner_brief_email = os.environ.get("OWNER_BRIEF_EMAIL", self.owner_brief_email)
         if "V2_EMAIL_DELIVERY_ENABLED" not in os.environ:
             self.email_delivery_enabled = _env_bool(
                 "EMAIL_DELIVERY_ENABLED",
@@ -307,6 +353,7 @@ class Settings(BaseSettings):
             )
         self._validate_launch_settings()
         self._validate_production_settings()
+        self._validate_production_tenancy()
         return self
 
     def cors_allowed_origins(self) -> list[str]:
@@ -320,6 +367,13 @@ class Settings(BaseSettings):
                 unique.append(origin)
                 seen.add(origin)
         return unique
+
+    def resolved_sender_email(self) -> str | None:
+        """The platform From address for outbound email, or ``None``.
+
+        See :func:`resolve_sender_address` — the one place this is decided.
+        """
+        return resolve_sender_address(self.sender_email, self.frontend_url)
 
     def _validate_production_settings(self) -> None:
         if self.env != "prod":
@@ -338,6 +392,10 @@ class Settings(BaseSettings):
             missing.append("stripe_webhook_secret")
         if "*" in self.cors_allowed_origins():
             missing.append("cors_origins_without_wildcard")
+        if self.email_delivery_enabled and not self.resolved_sender_email():
+            # With delivery on and no address, mail would go out From an
+            # address that is not ours (or not at all). Refuse to boot instead.
+            missing.append("sender_email_or_frontend_url")
 
         if missing:
             missing_text = ", ".join(missing)
@@ -362,6 +420,61 @@ class Settings(BaseSettings):
             # The owner rollup spans academies; single_academy mode exists to
             # refuse every tenant but primary_academy_id.
             raise ValueError("enable_owner_role requires tenancy_mode=multi_academy")
+
+    def _validate_production_tenancy(self) -> None:
+        """Refuse half-switched multi-academy configs in production.
+
+        Runs after ``_validate_production_settings`` so a missing secret is
+        still the first thing an operator sees.
+        """
+        if self.env == "prod" and self.tenancy_mode == "multi_academy" and not self.saas_mode:
+            # Without saas_mode the request resolver maps EVERY request to
+            # default_academy_id ("default-academy"), so BLNO's users stop
+            # matching and nobody else is served either. Switching on a second
+            # academy is the pair of flags, never one of them
+            # (docs/runbooks/enable-multi-academy.md).
+            raise ValueError(
+                "tenancy_mode=multi_academy in production requires saas_mode=true "
+                "(V2_SAAS_MODE); see docs/runbooks/enable-multi-academy.md"
+            )
+        if self.env == "prod" and self.saas_mode and self.tenancy_mode == "multi_academy":
+            # SaaS mode takes the tenant from the request host. Without a base
+            # domain any "<slug>.<anything>" host resolves by its first label,
+            # and without the proxy secret a client-supplied x-forwarded-host
+            # picks the tenant. In single_academy mode the middleware refuses
+            # every tenant but the primary, so a spoofed host cannot pick one;
+            # prod runs that way today with V2_SAAS_MODE set.
+            missing = [
+                name
+                for name, value in (
+                    ("platform_base_domain", self.platform_base_domain),
+                    ("proxy_shared_secret", self.proxy_shared_secret),
+                )
+                if not (value and value.strip())
+            ]
+            if missing:
+                raise ValueError("saas_mode in production requires " + ", ".join(missing))
+
+
+def resolve_sender_address(sender_email: str | None, frontend_url: str | None) -> str | None:
+    """Platform From address: ``sender_email``, else ``noreply@<frontend host>``.
+
+    Returns ``None`` when neither resolves; callers decide whether that is
+    fatal (prod settings validation, the real Resend sender) or harmless (the
+    dev/test stub). The host derivation is kept exactly as it was in
+    ``composition.digests._build_email_sender`` so production's resolved
+    address does not move (``FRONTEND_URL=https://academy.courtmastr.com`` ->
+    ``noreply@academy.courtmastr.com``).
+
+    A plain function (not only a ``Settings`` method) because composition is
+    also handed settings-shaped objects in tests.
+    """
+    if sender_email:
+        return sender_email
+    if not frontend_url:
+        return None
+    host = frontend_url.replace("https://", "").replace("http://", "").split("/")[0]
+    return f"noreply@{host}" if host else None
 
 
 def _explicit_env_value(*names: str) -> str | None:

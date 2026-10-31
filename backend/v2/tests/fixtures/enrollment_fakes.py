@@ -270,6 +270,15 @@ class FakeHoldRepository:
     enrollments: FakeEnrollmentWriter
     claimed_ids: list[str] = field(default_factory=list)
 
+    async def count_reclaimable(self, session_id: str) -> int:
+        return sum(
+            1
+            for e in self.enrollments.rows.values()
+            if e.session_id == session_id
+            and e.status == "held"
+            and e.hold_reclaim_claimed_at is None
+        )
+
     async def claim_longest_held(
         self, *, session_id: str, now: datetime, requested_by: str
     ) -> Enrollment | None:
@@ -501,13 +510,16 @@ class FakeHoldNoticeSendRepo:
             return dict(existing)
         return None
 
-    async def mark_sent(self, send_id: str) -> None:
-        for row in self.sends.values():
-            if row["send_id"] == send_id:
+    async def mark_sent(self, academy_id: str, send_id: str) -> None:
+        # (academy_id, send_id) filter, as the Mongo repo (#880 pattern).
+        for (row_academy, _e, _k), row in self.sends.items():
+            if row_academy == academy_id and row["send_id"] == send_id:
                 row["status"] = "sent"
 
-    async def mark_failed(self, send_id: str, reason: str, *, retryable: bool = True) -> None:
-        for row in self.sends.values():
-            if row["send_id"] == send_id:
+    async def mark_failed(
+        self, academy_id: str, send_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
+        for (row_academy, _e, _k), row in self.sends.items():
+            if row_academy == academy_id and row["send_id"] == send_id:
                 row["status"] = "failed"
                 row["retryable"] = retryable

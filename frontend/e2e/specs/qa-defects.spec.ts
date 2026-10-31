@@ -399,10 +399,45 @@ test.describe("QA defect regressions", () => {
     expect(enrollmentReads).toBeGreaterThan(1);
   });
 
+  // #843: pausing moved off the Payments page onto Children, where the class
+  // lives. Same endpoint, same contract — only the entry point changed.
   test("parent pause request sends resume date contract", async ({ page }) => {
     await stubParentShell(page);
     await page.route("**/api/v2/parent/payments", (route) =>
       fulfillJson(route, { payments: [] }),
+    );
+    await page.route("**/api/v2/parent/children", (route) =>
+      fulfillJson(route, {
+        children: [
+          {
+            student_id: "student-qa-1",
+            full_name: "Nila Rao",
+            lifecycle: "active",
+            lifecycle_as_of: null,
+            active_session_count: 1,
+            held_session_count: 0,
+            attended_count: 0,
+            absent_count: 0,
+          },
+        ],
+      }),
+    );
+    await page.route("**/api/v2/parent/children/*/schedule", (route) =>
+      fulfillJson(route, { entries: [] }),
+    );
+    await page.route("**/api/v2/parent/attendance", (route) =>
+      fulfillJson(route, { records: [] }),
+    );
+    await page.route("**/api/v2/parent/academy", (route) =>
+      fulfillJson(route, {
+        display_name: "Academy A",
+        timezone: "America/Chicago",
+        contact_email: null,
+        contact_phone: null,
+        hours_text: null,
+        address: null,
+        logo_url: null,
+      }),
     );
     await page.route("**/api/v2/parent/enrollments", (route) =>
       fulfillJson(route, {
@@ -446,8 +481,8 @@ test.describe("QA defect regressions", () => {
 
     const resumeOn = futureDateInput(14);
 
-    await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Pause enrollment", exact: true }).click();
+    await page.goto("/parent/children");
+    await page.getByTestId("enrollment-pause-enr-qa-1").click();
     await page.getByLabel("Resume date").fill(resumeOn);
     await page.getByLabel("Reason").fill("Summer travel");
 

@@ -32,6 +32,8 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             source_type=doc.get("source_type"),
             source_id=doc.get("source_id"),
             calculation_snapshot_id=doc.get("calculation_snapshot_id"),
+            session_id=doc.get("session_id"),
+            billing_period=doc.get("billing_period"),
             approved_by=doc.get("approved_by"),
             approved_at=doc.get("approved_at"),
             expires_at=doc.get("expires_at"),
@@ -61,6 +63,32 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
         except DuplicateKeyError:
             return False
         return True
+
+    async def resize_unapplied(
+        self, credit_id: str, *, from_cents: int, to_cents: int, now: datetime
+    ) -> bool:
+        """Re-size a credit nothing has drawn on yet, compare-and-set on its amount.
+
+        ``False`` when the credit was applied (even partly), voided or re-sized
+        since it was read: money already moved on the old amount is never
+        rewritten here.
+        """
+        result = await self._update_one(
+            {
+                "credit_id": credit_id,
+                "status": "APPROVED",
+                "amount_cents": from_cents,
+                "remaining_amount_cents": from_cents,
+            },
+            {
+                "$set": {
+                    "amount_cents": to_cents,
+                    "remaining_amount_cents": to_cents,
+                    "updated_at": now,
+                }
+            },
+        )
+        return bool(result.modified_count == 1)
 
     async def find_by_source(self, *, source_type: str, source_id: str) -> CreditLedgerEntry | None:
         doc = await self._find_one({"source_type": source_type, "source_id": source_id})
@@ -162,7 +190,11 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
 
         audit_by_credit: dict[str, int] = {}
         async for row in self._db["credit_applications"].find(
-            {"academy_id": academy_id, "invoice_id": invoice_id}
+            # ``reversed_at: None`` also matches rows written before the field
+            # existed. A reversed row (issue #784) describes credit that has
+            # been handed BACK, so it must not count as still applied — the
+            # "reverse drift" rescue below would otherwise resurrect it.
+            {"academy_id": academy_id, "invoice_id": invoice_id, "reversed_at": None}
         ):
             audit_by_credit[str(row.get("credit_id") or "")] = int(row.get("amount_cents") or 0)
 
@@ -424,3 +456,92 @@ class MongoCreditLedgerRepository(TenantScopedRepository):
             total_applied += amount
             remaining_due -= amount
         return total_applied
+
+    async def unapply_credits(
+        self, *, invoice_id: str, reason: str, now: datetime | None = None
+    ) -> int:
+        """Give back every account credit ``invoice_id`` consumed (issue #784).
+
+        The exact inverse of :meth:`apply_available_credits`: a voided invoice
+        owes nothing, so the credit it spent belongs back on the family's
+        balance. Returns the total cents restored.
+
+        Safety properties this method MUST keep — it moves real money:
+
+        * **Never restores more than this invoice took.** The amount comes from
+          the credit document's own embedded ``applications`` record (the same
+          atomic write as the decrement), and the update is filtered on that
+          record still being present, so a concurrent reversal loses the race
+          and restores nothing rather than double-crediting.
+        * **Walks every matching credit document.** FIFO application spreads one
+          invoice across several credits; stopping at the first would strand the
+          rest.
+        * **Idempotent.** A rerun finds no ``applications.invoice_id`` match and
+          is a no-op returning 0 — the resumable-write convention this repo uses
+          throughout.
+        """
+        academy_id = current_academy_id()
+        stamp = now or datetime.now(UTC)
+        restored = 0
+        async for credit in self.collection.find(
+            {"academy_id": academy_id, "applications.invoice_id": invoice_id}
+        ):
+            credit_id = str(credit.get("credit_id") or "")
+            amount = self._embedded_application_amount(credit, invoice_id)
+            if not credit_id or amount is None or amount <= 0:
+                continue
+            # Single atomic op, mirroring the application: put the balance back
+            # and drop the application record in one document write, guarded on
+            # the record still being there.
+            updated = await self.collection.find_one_and_update(
+                {
+                    "academy_id": academy_id,
+                    "credit_id": credit_id,
+                    "applications.invoice_id": invoice_id,
+                },
+                {
+                    "$inc": {"remaining_amount_cents": amount},
+                    "$pull": {
+                        "applied_invoice_ids": invoice_id,
+                        "applications": {"invoice_id": invoice_id},
+                    },
+                    "$set": {"updated_at": stamp},
+                },
+            )
+            if updated is None:
+                continue  # a concurrent reversal already restored this credit
+            restored += amount
+            await self._retire_applied_projections(
+                credit_id=credit_id, invoice_id=invoice_id, reason=reason, now=stamp
+            )
+        return restored
+
+    async def _retire_applied_projections(
+        self, *, credit_id: str, invoice_id: str, reason: str, now: datetime
+    ) -> None:
+        """Stop the two application projections counting a reversed application.
+
+        Nothing is deleted: the ``CREDIT_APPLIED`` entry is marked ``VOIDED``
+        and the ``credit_applications`` row gains ``reversed_at``, so the trail
+        of what was applied and then handed back survives while
+        :meth:`applied_credit_state` stops reading it as money still spent.
+        """
+        academy_id = current_academy_id()
+        await self.collection.update_many(
+            {
+                "academy_id": academy_id,
+                "invoice_id": invoice_id,
+                "type": "CREDIT_APPLIED",
+                "status": "APPLIED",
+                "$or": [
+                    {"source_id": self._applied_projection_source_id(credit_id, invoice_id)},
+                    # Entries written before source_type/source_id were stamped.
+                    {"reason": f"Applied credit {credit_id} to invoice {invoice_id}"},
+                ],
+            },
+            {"$set": {"status": "VOIDED", "updated_at": now, "reversal_reason": reason}},
+        )
+        await self._db["credit_applications"].update_many(
+            {"academy_id": academy_id, "credit_id": credit_id, "invoice_id": invoice_id},
+            {"$set": {"reversed_at": now, "reversal_reason": reason}},
+        )

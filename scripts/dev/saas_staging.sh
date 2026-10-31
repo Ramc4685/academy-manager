@@ -12,7 +12,9 @@
 #   scripts/dev/saas_staging.sh seed       # seed tenant + Firebase test user
 #   scripts/dev/saas_staging.sh status     # show containers + URLs + creds
 #   scripts/dev/saas_staging.sh smoke      # run the SaaS readiness smoke
-#   scripts/dev/saas_staging.sh audit blno # run launch-readiness audit for a tenant
+#   scripts/dev/saas_staging.sh launch-audit blno
+#                                          # strict launch-readiness audit (non-zero on findings)
+#   scripts/dev/saas_staging.sh audit blno # alias of launch-audit
 #
 # Rebuild individual services without restarting the whole stack:
 #   scripts/dev/saas_staging.sh rebuild-ui  # rebuild + restart frontend only (staging build)
@@ -442,7 +444,16 @@ cmd_blno_seed() {
   fi
   log "Seeding BLno Badminton Academy (parents, students, sessions, invoice ledger, pathway)..."
   SAAS_STAGING_MONGO_URL="$(compose_mongo_url)" "${VENV_PYTHON}" "${BLNO_SEED_SCRIPT}" "$@"
-  launch_audit blno
+  # The audit runs for visibility only (#594). It reports on the whole stack —
+  # env flags, indexes, validators, ledger consistency — so a finding that has
+  # nothing to do with the seed used to abort this command under `set -e` and
+  # make a perfectly good seed look broken. Print the report, keep going, and
+  # leave the strict pass/fail run to `launch-audit`.
+  log "Seed complete. Running launch-readiness audit for visibility (findings do not fail the seed)..."
+  if ! launch_audit blno; then
+    warn "Launch-readiness audit reported findings above; the seed itself succeeded."
+    warn "For a strict pass/fail run:  scripts/dev/saas_staging.sh launch-audit blno"
+  fi
 }
 
 cmd_scale() {
@@ -733,7 +744,9 @@ cmd_rebuild_api() {
 }
 
 usage() {
-  sed -n '3,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # Print the whole leading comment block (line 3 to the first non-comment
+  # line) so newly documented commands never fall off the end of a fixed range.
+  awk 'NR < 3 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 main() {
@@ -760,7 +773,7 @@ main() {
     urls)   cmd_urls "$@" ;;
     token)  cmd_token "$@" ;;
     smoke)  cmd_smoke "$@" ;;
-    audit)  cmd_audit "$@" ;;
+    audit|launch-audit) cmd_audit "$@" ;;
     stripe-listen) cmd_stripe_listen "$@" ;;
     logs)   cmd_logs "$@" ;;
     ps)     cmd_ps "$@" ;;
@@ -771,4 +784,8 @@ main() {
   esac
 }
 
-main "$@"
+# Guarded so tests (scripts/dev/saas_staging_test.sh) can source this file and
+# exercise individual commands without running one.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

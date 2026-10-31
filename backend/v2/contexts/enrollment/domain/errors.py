@@ -15,6 +15,19 @@ class SessionCancelled(DomainError):
     status_code = 409
 
 
+class PayoutPeriodFrozen(DomainError):
+    """The coach's payout period covering this date is approved or paid (#787).
+
+    Cancelling the date clears ``is_payable``, which is a payroll input the
+    frozen snapshot will never re-read — the coach stays paid for a class
+    the academy now says did not happen, with nothing flagging the
+    mismatch. The owner reopens the payout period first.
+    """
+
+    code = "Enrollment.PayoutPeriodFrozen"
+    status_code = 409
+
+
 class DuplicateSessionSeries(DomainError):
     code = "Enrollment.DuplicateSessionSeries"
     status_code = 409
@@ -62,6 +75,22 @@ class StudentParentInactive(DomainError):
 
 class StudentParentInvalidRole(DomainError):
     code = "Enrollment.StudentParentInvalidRole"
+    status_code = 409
+
+
+class StudentParentChangeBlocked(DomainError):
+    """The child's live money cannot follow them to the new parent (#785).
+
+    Raised before anything is written, so a refusal never leaves the family
+    half-moved. The two blockers are the cases where rewriting ``parent_id`` in
+    Mongo would silently diverge from money already in flight under the old
+    parent's Stripe customer: an open invoice with a Stripe twin, and an
+    enrollment still on active autopay (the saved card belongs to the old
+    parent and must never be re-pointed at someone else). The admin settles or
+    stops those first; the message names the blocking ids.
+    """
+
+    code = "Enrollment.StudentParentChangeBlocked"
     status_code = 409
 
 
@@ -174,3 +203,66 @@ class OccurrenceNotCancellable(DomainError):
 
     code = "Enrollment.OccurrenceNotCancellable"
     status_code = 409
+
+
+class WaitlistOfferNotFound(DomainError):
+    """No offer with that id belongs to this family (issue #828).
+
+    Deliberately the same answer for "no such entry" and "somebody else's
+    entry": a confirm link is a guessable id, and a 403 on a stranger's offer
+    would confirm that the entry exists.
+    """
+
+    code = "Enrollment.WaitlistOfferNotFound"
+    status_code = 404
+
+
+class WaitlistOfferExpired(DomainError):
+    """The three-day confirmation window closed; the seat went to the next
+    family on the list (issue #828)."""
+
+    code = "Enrollment.WaitlistOfferExpired"
+    status_code = 409
+
+
+class WaitlistOfferNotOpen(DomainError):
+    """The entry is not an open offer — still waiting, skipped or removed."""
+
+    code = "Enrollment.WaitlistOfferNotOpen"
+    status_code = 409
+
+
+class WaitlistOfferSeatUnavailable(DomainError):
+    """A seatless offer (X2) could not get its seat at confirm time: the held
+    family came back, or the policy changed. The family goes back to the head
+    of the waitlist rather than losing their place."""
+
+    code = "Enrollment.WaitlistOfferSeatUnavailable"
+    status_code = 409
+
+
+class ProgramNotFound(DomainError):
+    """No program with that id in the caller's academy (Lane B1).
+
+    Same answer for "no such program" and "another academy's program", so a
+    guessed id never confirms that a row exists elsewhere.
+    """
+
+    code = "Enrollment.ProgramNotFound"
+    status_code = 404
+
+
+class InvalidProgram(DomainError):
+    """Program input failed server-side validation (blank name, over a size
+    cap, an age band whose minimum is above its maximum)."""
+
+    code = "Enrollment.InvalidProgram"
+    status_code = 422
+
+
+class InvalidClassPublicFields(DomainError):
+    """Per-class public-page fields failed validation (unknown price period
+    or coach display option, over a size cap, a bad age band)."""
+
+    code = "Enrollment.InvalidClassPublicFields"
+    status_code = 422

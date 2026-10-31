@@ -7,21 +7,22 @@
  * fields. No raw internal ids are rendered in normal UI.
  */
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   ArrowLeft,
   CalendarCheck,
   FileCheck,
+  MoreVertical,
   ShieldCheck,
   UserRound,
   Wallet,
 } from "lucide-react";
 
-import { listAdminUsers } from "@/lib/api/admin";
+import { getAdminStudentWaivers, listAdminUsers } from "@/lib/api/admin";
 import { getAdminStudent, type AdminStudentDetail } from "@/lib/api/v2/students";
 import { getActiveAcademyId } from "@/lib/api/client";
 import { getStudentProgress, listPrograms } from "@/lib/api/curriculum";
@@ -33,33 +34,54 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
+import { useUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Chip } from "@/components/ds/chip";
+import { ContactLinks } from "@/components/ds/contact-links";
+import { OverflowMenu } from "@/components/ds/menu";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
+import {
+  STUDENT_TABS,
+  resolveStudentTab,
+  studentDocumentTitle,
+  type StudentTab,
+} from "@/lib/admin/student-tabs";
 
 import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { DetailList } from "./DetailList";
 import { FamilyBillingLink } from "./FamilyBillingLink";
 import { formatCurrencyCents, formatDate, formatDateTime, formatDateUtc } from "./format";
 import { SessionsPanel } from "./SessionsPanel";
+import { StudentWaiversPanel, StudentWaiverWarning } from "./StudentWaivers";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
 import { ChangeParentPanel, StudentEditForm } from "./StudentEditForm";
-
-type StudentTab = "overview" | "training" | "sessions" | "billing" | "family";
-
-const STUDENT_TABS: Array<{ id: StudentTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "training", label: "Training" },
-  { id: "sessions", label: "Sessions" },
-  { id: "billing", label: "Billing" },
-  { id: "family", label: "Family & Compliance" },
-];
 
 export default function AdminStudentDetailPage() {
   const params = useParams<{ studentId: string }>();
   const studentId = params?.studentId ?? "";
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<StudentTab>("overview");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // #839: the tab is in the URL, so a link to a student's Billing is a link
+  // to their Billing and a reload does not drop back to Overview.
+  const activeTab = resolveStudentTab(searchParams.get("tab"));
   const [stopAllClassesOpen, setStopAllClassesOpen] = useState(false);
+  const { requestLeave } = useUnsavedChanges();
+
+  // UI-2: only the active tab's panel is mounted, so switching tabs unmounts
+  // the form holding a draft. The tabs are buttons, not links, so the shell
+  // guard's link listener never sees them; ask it explicitly instead.
+  function selectTab(next: StudentTab) {
+    if (next === activeTab) return;
+    requestLeave(() => setActiveTab(next));
+  }
+
+  function setActiveTab(next: StudentTab) {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    if (next === "overview") nextParams.delete("tab");
+    else nextParams.set("tab", next);
+    const query = nextParams.toString();
+    router.replace(query ? `?${query}` : "?", { scroll: false });
+  }
 
   const departurePolicyQuery = useQuery({
     queryKey: queryKeys.admin.departurePolicy(),
@@ -72,11 +94,30 @@ export default function AdminStudentDetailPage() {
     enabled: Boolean(studentId),
     retry: false,
   });
+  // One row per waiver that applies through the student's classes. Failing to
+  // load it never hides the page: it is a warning surface, not a gate.
+  const waiversQuery = useQuery({
+    queryKey: queryKeys.admin.studentWaivers(studentId),
+    queryFn: () => getAdminStudentWaivers(studentId),
+    enabled: Boolean(studentId),
+    retry: false,
+  });
   const parentsQuery = useQuery({
     queryKey: queryKeys.admin.users("parent"),
     queryFn: () => listAdminUsers("parent"),
     enabled: Boolean(studentId),
   });
+
+  // #839: every open student tab said "Students", so a row of them was
+  // unreadable. The shell title is static, so the page names itself.
+  const studentName = studentQuery.data?.full_name ?? null;
+  useEffect(() => {
+    const previous = document.title;
+    document.title = studentDocumentTitle(studentName);
+    return () => {
+      document.title = previous;
+    };
+  }, [studentName]);
 
   if (!studentId) {
     return (
@@ -153,7 +194,11 @@ export default function AdminStudentDetailPage() {
         />
       )}
       <StudentSummaryStrip student={student} />
-      <StudentTabs activeTab={activeTab} onChange={setActiveTab} />
+      <StudentTabs activeTab={activeTab} onChange={selectTab} />
+      {/* #1046: below the tabs, not above. Above them it pushed the tablist
+          off a 390x664 phone screen (#897 keeps the tabs on the first
+          screen); here it still shows on every tab. */}
+      <StudentWaiverWarning rows={waiversQuery.data?.waivers ?? []} />
 
       {activeTab === "overview" && (
         <TabPanel id="overview">
@@ -248,6 +293,11 @@ export default function AdminStudentDetailPage() {
                 <Overline>Family & compliance</Overline>
               </div>
               <ComplianceSummary student={student} />
+              <StudentWaiversPanel
+                rows={waiversQuery.data?.waivers ?? []}
+                loading={waiversQuery.isPending}
+                error={waiversQuery.isError}
+              />
               <StudentEditForm
                 mode="family"
                 student={student}
@@ -305,8 +355,11 @@ function StudentSummaryStrip({ student }: { student: AdminStudentDetail }) {
       : `${Math.round(Math.max(0, Math.min(student.attendance_rate, 1)) * 100)}%`;
 
   return (
+    // #897: below `sm` this was one column, so four ~110px cards stacked
+    // between the header and the tabs and pushed the tabs off a 400x860
+    // first screen. Two-up on a phone, unchanged from `sm` up.
     <div
-      className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+      className="grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4"
       data-testid="admin-student-summary-strip"
     >
       <SummaryMetric
@@ -357,14 +410,16 @@ function SummaryMetric({
   detail: string;
 }) {
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4">
+    <div className="rounded-lg border border-neutral-200 bg-white p-3 sm:p-4">
       <div className="flex items-center gap-2 text-rally-muted">
         {icon}
         <span className="font-mono text-[10px] font-bold uppercase tracking-overline">
           {label}
         </span>
       </div>
-      <div className="mt-3 font-mono text-2xl font-semibold tabular-nums text-rally-ink">
+      {/* #896: the figure is a display numeral (Outfit), not a code token —
+          only the label above it stays mono, as an Overline caption. */}
+      <div className="mt-2 font-display text-2xl font-semibold tabular-nums text-rally-ink sm:mt-3">
         {value}
       </div>
       <div className="mt-1 truncate text-xs text-rally-muted">{detail}</div>
@@ -383,6 +438,7 @@ function StudentTabs({
     <div
       role="tablist"
       aria-label="Student record sections"
+      data-testid="admin-student-tabs"
       className="flex gap-1 overflow-x-auto border-b border-neutral-200"
     >
       {STUDENT_TABS.map((tab) => {
@@ -397,7 +453,7 @@ function StudentTabs({
             id={`student-tab-${tab.id}`}
             className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 ${
               selected
-                ? "border-rally-blue text-rally-ink"
+                ? "border-rally-cobalt-600 text-rally-ink"
                 : "border-transparent text-rally-muted hover:text-rally-ink"
             }`}
             onClick={() => onChange(tab.id)}
@@ -623,50 +679,76 @@ function Header({
 }) {
   return (
     <Card p={20}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4 min-w-0">
-          <Avatar name={student.full_name} size={56} />
-          <div className="min-w-0">
-            <h2 className="font-display text-xl font-semibold tracking-[-0.01em] text-rally-ink truncate">
-              {student.full_name}
-            </h2>
-            <div className="mt-1 flex items-center gap-2">
-              {/* Issue #773: the derived lifecycle, with its date. */}
-              {lifecycleLabel(student.lifecycle, student.lifecycle_as_of) && (
-                <Chip
-                  variant={lifecycleVariant(student.lifecycle)}
-                  label={lifecycleLabel(student.lifecycle, student.lifecycle_as_of)}
-                />
-              )}
+      {/* #897: on a phone "Stop all classes" sat directly beside the parent's
+          tel:/mailto: links, one mis-tap from ending every enrollment. It is
+          now an actions menu pinned to the card's top-right; the dialog and
+          everything it does are unchanged.
+          On a phone the menu shares the name row and the parent's contacts
+          take the card's full width: beside the menu they wrapped WhatsApp
+          onto a third 44px row at 390px (iPhone 14), which pushed the tabs
+          below the fold. From `sm` up it is one row, as before. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-4 sm:flex sm:items-center">
+          <div className="flex min-w-0 items-center gap-4">
+            <Avatar name={student.full_name} size={56} />
+            <div className="min-w-0">
+              <h2 className="truncate font-display text-xl font-semibold tracking-[-0.01em] text-rally-ink">
+                {student.full_name}
+              </h2>
+              <div className="mt-1 flex items-center gap-2">
+                {/* Issue #773: the derived lifecycle, with its date. */}
+                {lifecycleLabel(student.lifecycle, student.lifecycle_as_of) && (
+                  <Chip
+                    variant={lifecycleVariant(student.lifecycle)}
+                    label={lifecycleLabel(student.lifecycle, student.lifecycle_as_of)}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
-        <div className="flex items-start gap-4">
-          <Button size="sm" variant="ghost" onClick={onStopAllClasses}>
-            Stop all classes
-          </Button>
-          <div className="text-sm text-rally-muted">
-            <div className="font-medium text-rally-ink">
-              {student.parent_name ?? student.parent_email ?? "Parent on file"}
-            </div>
-            {student.parent_email && (
-              <a
-                href={`mailto:${student.parent_email}`}
-                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
+          <div className="col-span-2 text-sm text-rally-muted sm:ml-auto">
+            {/* #839: the parent was plain text here, so the family — and every
+                invoice on it — was two clicks away via the Billing tab. */}
+            {student.parent_id ? (
+              <Link
+                href={`/admin/families/${encodeURIComponent(student.parent_id)}`}
+                className="block rounded font-medium text-rally-ink hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                data-testid="admin-student-parent-link"
               >
-                {student.parent_email}
-              </a>
+                {student.parent_name ?? student.parent_email ?? "Parent on file"}
+              </Link>
+            ) : (
+              <div className="font-medium text-rally-ink">
+                {student.parent_name ?? student.parent_email ?? "Parent on file"}
+              </div>
             )}
-            {student.parent_phone && (
-              <a
-                href={`tel:${student.parent_phone}`}
-                className="block hover:underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600 rounded"
-              >
-                {student.parent_phone}
-              </a>
-            )}
+            {/* #865: the one place that already had a `tel:`, now through the
+                shared component — so it gains WhatsApp with everywhere else. */}
+            <ContactLinks
+              data-testid="admin-student-parent-contacts"
+              name={student.parent_name ?? undefined}
+              email={student.parent_email}
+              phone={student.parent_phone}
+            />
           </div>
-        </div>
+        <OverflowMenu
+          className="col-start-2 row-start-1 shrink-0 sm:self-start"
+          triggerLabel={`Actions for ${student.full_name}`}
+          triggerTestId="admin-student-actions"
+          items={[
+            {
+              key: "stop-all-classes",
+              label: "Stop all classes",
+              description: "Ends every enrollment on the date you pick.",
+              danger: true,
+              onSelect: onStopAllClasses,
+            },
+          ]}
+          trigger={
+            <span className="flex min-h-touch min-w-touch items-center justify-center rounded-md text-rally-muted hover:bg-rally-paper">
+              <MoreVertical className="size-5" aria-hidden="true" />
+            </span>
+          }
+        />
       </div>
     </Card>
   );

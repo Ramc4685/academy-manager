@@ -16,6 +16,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Avatar } from "@/components/ds/avatar";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Th } from "@/components/ds/dialog-chrome";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { useIsOwner } from "@/components/admin/owner-context";
 import {
   DepartureActions,
@@ -65,6 +67,18 @@ const ROSTER_ACTIVE_STATUSES: ReadonlySet<EnrollmentStatus> = new Set<Enrollment
   "active",
   "held",
   "reclaim_pending",
+]);
+
+// Issue #827: the statuses that mean the student has LEFT this class —
+// "cancelled"/"deleted" and "withdrawn"/"dropped" being the two spellings of
+// the same pair (see ENROLL_CHIP). Deliberately not the complement of
+// ROSTER_ACTIVE_STATUSES: "paused" is in neither, because a paused row is
+// still somebody's enrollment and already has Resume.
+const TERMINAL_STATUSES: ReadonlySet<EnrollmentStatus> = new Set<EnrollmentStatus>([
+  "cancelled",
+  "deleted",
+  "withdrawn",
+  "dropped",
 ]);
 
 /** Splits a roster into the Active and Past tab contents (#712, #735). */
@@ -169,6 +183,7 @@ export function RosterTable({
   sessionId,
   pathwayLevels,
   updatingPlacementStudentId,
+  pendingPlacement,
   onPathwayLevelChange,
   onDelete,
   onHold,
@@ -177,6 +192,8 @@ export function RosterTable({
   onReturn,
   onTransfer,
   onWithdraw,
+  onUndoScheduledDrop,
+  onReEnroll,
   academyTimezone,
 }: {
   enrollments: AdminEnrollmentView[];
@@ -187,6 +204,11 @@ export function RosterTable({
   academyTimezone: string | null;
   pathwayLevels: Level[];
   updatingPlacementStudentId: string | null;
+  /** #859: a pathway-level change waiting out its undo window. Overrides the
+   * displayed value for that one student's row so the select shows the pick
+   * the admin just made instead of snapping back to the server value while
+   * the change is held (see `lib/admin/pathway-placement-undo.ts`). */
+  pendingPlacement?: { studentId: string; levelId: string } | null;
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onHold: (enrollment: AdminEnrollmentView) => void;
@@ -195,6 +217,9 @@ export function RosterTable({
   onReturn: (enrollment: AdminEnrollmentView) => void;
   onTransfer: (enrollment: AdminEnrollmentView) => void;
   onWithdraw: (enrollment: AdminEnrollmentView) => void;
+  onUndoScheduledDrop: (enrollment: AdminEnrollmentView) => void;
+  /** #827: put a departed student back into this class (opens Add to roster). */
+  onReEnroll: (enrollment: AdminEnrollmentView) => void;
 }) {
   const isOwner = useIsOwner();
   // Issue #741: Delete is owner-only only when the academy's departure policy
@@ -207,6 +232,133 @@ export function RosterTable({
     queryFn: getDeparturePolicy,
   });
   const deleteRequiresOwner = departurePolicyQuery.data?.delete_enrollment_requires_owner;
+  const isPhone = useIsPhone();
+
+  /**
+   * The row's actions, identical on both layouts (#857). Reusing
+   * `DepartureActions layout="menu"` rather than rebuilding the list as
+   * `PhoneListRow`'s own `actions` keeps `departure-actions-<id>` and "More
+   * actions for <name>" resolving at every width, so the roster specs need no
+   * viewport branch — and keeps #741's owner gating in one place.
+   */
+  function rowActions(e: AdminEnrollmentView) {
+    return (
+      <DepartureActions
+        leadingLink={{
+          key: "pathway",
+          label: "Pathway",
+          href: buildStudentProgressHref({
+            studentId: e.student_id,
+            programId: e.pathway_program_id,
+            returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
+            returnLabel: "Back to session",
+          }) as Parameters<typeof Link>[0]["href"],
+        }}
+        enrollmentId={e.enrollment_id}
+        studentName={e.full_name}
+        status={e.status}
+        layout="menu"
+        isOwner={isOwner}
+        deleteRequiresOwner={deleteRequiresOwner}
+        actions={rosterActionsFor(e.status, {
+          dropScheduled: Boolean(e.pending_cancellation_at),
+        })}
+        onAction={(action, enrollmentId) =>
+          dispatchRosterAction(action, enrollmentId, e, {
+            onDelete,
+            onHold,
+            onPause,
+            onResume,
+            onReturn,
+            onTransfer,
+            onWithdraw,
+            onUndoScheduledDrop,
+            onReEnroll,
+          })
+        }
+      />
+    );
+  }
+
+  if (isPhone) {
+    /* #857: six columns over an 840px minimum, and the action column is
+       `sticky right-0` — so on a phone Status and Fees, the two things that
+       decide what to do about a student, were the first to slide off. */
+    return (
+      <PhoneList aria-label="Roster" data-testid="admin-roster-phone-list">
+        {enrollments.map((e) => {
+          const chip = ENROLL_CHIP[e.status];
+          return (
+            <PhoneListRow
+              key={e.enrollment_id}
+              data-testid={`enrollment-row-${e.enrollment_id}`}
+              leading={<Avatar name={e.full_name} size={28} />}
+              title={e.full_name}
+              primary={
+                <div className="flex items-center gap-2">
+                  <DuesChip status={e.dues_status ?? "current"} />
+                  {rowActions(e)}
+                </div>
+              }
+              secondary={
+                <>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Chip variant={chip.variant} label={chip.label} />
+                    {e.pending_cancellation_at && (
+                      <Chip
+                        variant="pending"
+                        label={
+                          pendingCancellationLabel(e.pending_cancellation_at, academyTimezone) ??
+                          "ENDING"
+                        }
+                      />
+                    )}
+                  </div>
+                  <LevelSelect
+                    value={
+                      pendingPlacement && pendingPlacement.studentId === e.student_id
+                        ? pendingPlacement.levelId
+                        : (e.pathway_level_id ?? "")
+                    }
+                    levels={pathwayLevels}
+                    disabled={
+                      updatingPlacementStudentId === e.student_id ||
+                      !e.pathway_program_id ||
+                      pathwayLevels.length === 0
+                    }
+                    onChange={(levelId) => onPathwayLevelChange(e, levelId)}
+                  />
+                  <div>
+                    {e.pathway_level_name ? (
+                      <Link
+                        href={
+                          `/admin/sessions/${sessionId}/skill-board${
+                            e.pathway_program_id
+                              ? `?program_id=${encodeURIComponent(e.pathway_program_id)}`
+                              : ""
+                          }` as Parameters<typeof Link>[0]["href"]
+                        }
+                        className="text-blue-600 underline-offset-2 hover:underline"
+                      >
+                        {e.pathway_skills_completed ?? 0}/{e.pathway_skills_total ?? 0} skills
+                      </Link>
+                    ) : (
+                      "Placement needed"
+                    )}
+                  </div>
+                  <div className="font-mono text-[11px]">
+                    {formatEnrollmentDate(e.enrolled_at)}
+                    <EnrollmentHistory enrollmentId={e.enrollment_id} />
+                  </div>
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[840px] text-sm">
@@ -245,7 +397,11 @@ export function RosterTable({
                 </td>
                 <td className="px-4 py-3">
                   <LevelSelect
-                    value={e.pathway_level_id ?? ""}
+                    value={
+                      pendingPlacement && pendingPlacement.studentId === e.student_id
+                        ? pendingPlacement.levelId
+                        : (e.pathway_level_id ?? "")
+                    }
                     levels={pathwayLevels}
                     disabled={
                       updatingPlacementStudentId === e.student_id ||
@@ -296,38 +452,7 @@ export function RosterTable({
                   {formatEnrollmentDate(e.enrolled_at)}
                   <EnrollmentHistory enrollmentId={e.enrollment_id} />
                 </td>
-                <td className={`${actionCellClass} ${rowToneClass}`}>
-                  <DepartureActions
-                    leadingLink={{
-                      key: "pathway",
-                      label: "Pathway",
-                      href: buildStudentProgressHref({
-                        studentId: e.student_id,
-                        programId: e.pathway_program_id,
-                        returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
-                        returnLabel: "Back to session",
-                      }) as Parameters<typeof Link>[0]["href"],
-                    }}
-                    enrollmentId={e.enrollment_id}
-                    studentName={e.full_name}
-                    status={e.status}
-                    layout="menu"
-                    isOwner={isOwner}
-                    deleteRequiresOwner={deleteRequiresOwner}
-                    actions={rosterActionsFor(e.status)}
-                    onAction={(action, enrollmentId) =>
-                      dispatchRosterAction(action, enrollmentId, e, {
-                        onDelete,
-                        onHold,
-                        onPause,
-                        onResume,
-                        onReturn,
-                        onTransfer,
-                        onWithdraw,
-                      })
-                    }
-                  />
-                </td>
+                <td className={`${actionCellClass} ${rowToneClass}`}>{rowActions(e)}</td>
               </tr>
             );
           })}
@@ -347,12 +472,23 @@ export function RosterTable({
  * it comes from the shared `holdActionsFor`, so the roster and the student
  * profile Sessions panel offer it on exactly the same statuses.
  */
-export function rosterActionsFor(status: EnrollmentStatus): DepartureAction[] {
+export function rosterActionsFor(
+  status: EnrollmentStatus,
+  { dropScheduled = false }: { dropScheduled?: boolean } = {},
+): DepartureAction[] {
   const actions: DepartureAction[] = [];
+  // Issue #820: a row with a pending end-of-period drop can be called off.
+  // Offered alongside Drop, not instead of it — an admin may still want the
+  // student gone today, and the immediate Drop retires the queued action.
+  if (dropScheduled) actions.push("undo_scheduled_drop");
   if (status === "active") actions.push("pause");
   if (status === "paused") actions.push("resume");
   // #697's seat-safe pair, beside the transitional pause/resume group.
   actions.push(...holdActionsFor(status));
+  // Issue #827: a row that already ended has no seat to hold, pause or drop —
+  // the only thing left to offer is putting the student back. Additive: the
+  // rest of a departed row's menu is unchanged.
+  if (TERMINAL_STATUSES.has(status)) actions.push("re_enroll");
   actions.push("transfer");
   if (status === "active" || status === "paused" || status === "held") actions.push("drop");
   actions.push("delete");
@@ -371,6 +507,8 @@ function dispatchRosterAction(
     onReturn: (enrollment: AdminEnrollmentView) => void;
     onTransfer: (enrollment: AdminEnrollmentView) => void;
     onWithdraw: (enrollment: AdminEnrollmentView) => void;
+    onUndoScheduledDrop: (enrollment: AdminEnrollmentView) => void;
+    onReEnroll: (enrollment: AdminEnrollmentView) => void;
   },
 ): void {
   switch (action) {
@@ -394,6 +532,12 @@ function dispatchRosterAction(
       break;
     case "delete":
       handlers.onDelete(enrollment);
+      break;
+    case "undo_scheduled_drop":
+      handlers.onUndoScheduledDrop(enrollment);
+      break;
+    case "re_enroll":
+      handlers.onReEnroll(enrollment);
       break;
     default:
       // stop_all_classes is not offered on this roster row (#698); reaching
@@ -442,11 +586,13 @@ export function DuesChip({ status }: { status: "current" | "due" | "overdue" }) 
 export function EnrollmentHistory({ enrollmentId }: { enrollmentId: string }) {
   const eventsQuery = useQuery({
     queryKey: ["admin", "enrollment-events", enrollmentId],
-    queryFn: () => listEnrollmentEvents(enrollmentId),
+    queryFn: () => listEnrollmentEvents(enrollmentId, { limit: 1 }),
     staleTime: 30_000,
   });
   const events = eventsQuery.data?.events ?? [];
-  const latest = events.at(-1);
+  // Events now come back most-recent-first (see #748), so the latest event
+  // is the first row rather than the last.
+  const latest = events[0];
   if (!latest) {
     return null;
   }

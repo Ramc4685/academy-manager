@@ -15,6 +15,11 @@ import { isOwner as holdsOwnerScope } from "@/lib/auth/coach-supervisor";
 import { onAuthChange } from "@/lib/auth/firebase";
 import { loginPathForError } from "@/lib/auth/login-error";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
+import {
+  clearPersonaHintCookie,
+  setPersonaHintCookie,
+} from "@/lib/auth/persona-hint-cookie";
+import { setSentryUser } from "@/lib/observability/sentry";
 
 export type PersonaAuthState =
   | { checked: false; authorized: false; user: null; unavailable?: false }
@@ -70,6 +75,10 @@ export function usePersonaAuth(
     const unsubscribe = onAuthChange((firebaseUser) => {
       if (!firebaseUser) {
         if (!cancelled) {
+          // Drop the identity before the redirect: on a shared device the
+          // previous user's id must not ride along on the next session (#750).
+          setSentryUser(null);
+          clearPersonaHintCookie();
           setState({ checked: true, authorized: false, user: null });
           replaceLocation(router, "/login");
         }
@@ -79,8 +88,16 @@ export function usePersonaAuth(
       void withTransientRetry(getCurrentUser)
         .then((currentUser) => {
           if (cancelled) return;
+          // Re-stamp the edge gate's persona hint (#451) on every resolved
+          // /me so a drifted or missing hint heals itself.
+          setPersonaHintCookie(currentUser.roles, hasPlatformAccess(currentUser));
           if (allowedKey.split(",").some((role) => currentUser.roles.includes(role as UserRole))) {
             setState({ checked: true, authorized: true, user: currentUser });
+            setSentryUser({
+              id: currentUser.user_id,
+              segment: requiredRole,
+              academyId: currentUser.academy_id,
+            });
             return;
           }
           setState({ checked: true, authorized: false, user: null });
@@ -95,7 +112,11 @@ export function usePersonaAuth(
           if (cancelled) return;
           if (isAuthRejection(err)) {
             // 401/403: the session really is dead — bounce to /login with
-            // the backend's reason code.
+            // the backend's reason code. Drop the identity too: the Firebase
+            // client session may still be present, so without this the dead
+            // session's user would stay attached to later events (#750).
+            setSentryUser(null);
+            clearPersonaHintCookie();
             setState({ checked: true, authorized: false, user: null });
             replaceLocation(router, loginPathForError(err));
             return;
@@ -183,6 +204,8 @@ export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
     const unsubscribe = onAuthChange((firebaseUser) => {
       if (!firebaseUser) {
         if (!cancelled) {
+          setSentryUser(null);
+          clearPersonaHintCookie();
           setState({ checked: true, authorized: false, user: null, isAdmin: false });
           replaceLocation(router, "/login");
         }
@@ -192,12 +215,18 @@ export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
       void withTransientRetry(getCurrentUser)
         .then((currentUser) => {
           if (cancelled) return;
+          setPersonaHintCookie(currentUser.roles, hasPlatformAccess(currentUser));
           if (hasPlatformAccess(currentUser)) {
             setState({
               checked: true,
               authorized: true,
               user: currentUser,
               isAdmin: isPlatformAdmin(currentUser),
+            });
+            setSentryUser({
+              id: currentUser.user_id,
+              segment: "platform",
+              academyId: currentUser.academy_id,
             });
             return;
           }
@@ -212,6 +241,10 @@ export function usePlatformAuth(): PlatformAuthState & { retry: () => void } {
         .catch((err: unknown) => {
           if (cancelled) return;
           if (isAuthRejection(err)) {
+            // Same as the persona hook: a rejected backend session must clear
+            // the Sentry identity even though Firebase still has a user (#750).
+            setSentryUser(null);
+            clearPersonaHintCookie();
             setState({
               checked: true,
               authorized: false,

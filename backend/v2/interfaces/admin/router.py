@@ -20,43 +20,63 @@ from .departures_routes import router as departures_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
 from .families_routes import router as families_router
+from .family_crm_routes import router as family_crm_router
+from .family_index_routes import router as family_index_router
+from .family_record_routes import router as family_record_router
 from .hold_routes import router as hold_router
+from .inbox_routes import router as inbox_router
 from .month_close_routes import router as month_close_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
+from .payment_methods_routes import router as payment_methods_router
 from .payout_period_routes import router as payout_period_router
 from .payroll_routes import router as payroll_router
+from .people_reports_routes import router as people_reports_router
+from .pipeline_routes import router as pipeline_router
+from .pricing_routes import router as pricing_router
 from .progress_routes import router as progress_router
+from .public_page_routes import router as public_page_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
 from .self_service_policy_routes import router as self_service_policy_router
 from .self_service_request_routes import router as self_service_request_router
 from .session_type_routes import router as session_type_router
 from .sessions_routes import router as sessions_router
+from .setup_checklist_routes import router as setup_checklist_router
 from .teaching_plan_routes import router as teaching_plan_router
+from .trial_outcome_routes import router as trial_outcome_router
 from .waitlist_routes import router as waitlist_router
 from .waiver_routes import router as waiver_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(audit_router)
 router.include_router(dashboard_router)
+router.include_router(setup_checklist_router)
+router.include_router(inbox_router)
 router.include_router(directory_router)
 router.include_router(pause_router)
 router.include_router(registration_router)
 router.include_router(dues_router)
+router.include_router(people_reports_router)
 router.include_router(reports_router)
 router.include_router(month_close_router)
 router.include_router(sessions_router)
+router.include_router(public_page_router)
 router.include_router(teaching_plan_router)
 router.include_router(session_type_router)
 router.include_router(waitlist_router)
 router.include_router(collections_router)
+router.include_router(family_index_router)
 router.include_router(families_router)
+router.include_router(family_record_router)
+router.include_router(family_crm_router)
 router.include_router(billing_health_router)
 router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
 router.include_router(billing_rules_router)
+router.include_router(payment_methods_router)
+router.include_router(pricing_router)
 router.include_router(payout_period_router)
 router.include_router(payroll_router)
 router.include_router(coach_pay_rate_router)
@@ -67,6 +87,8 @@ router.include_router(pathway_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
 router.include_router(self_service_request_router)
+router.include_router(trial_outcome_router)
+router.include_router(pipeline_router)
 router.include_router(departure_policy_router)
 router.include_router(hold_router)
 router.include_router(departures_router)

@@ -20,14 +20,23 @@ class DeparturePolicyRepo(Protocol):
 
 
 class UpdateEnrollmentDeparturePolicyCommand(BaseModel):
-    """The four mutable fields of EnrollmentDeparturePolicy."""
+    """The Holds card's three mutable fields, plus ``drop_default_outcome``.
 
-    max_hold_days: int = Field(ge=1, le=365)
-    hold_reclaim_policy: Literal["longest_held", "never"]
-    drop_default_outcome: Literal[
-        "no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"
-    ]
-    delete_enrollment_requires_owner: bool
+    ``drop_default_outcome`` moved to Settings -> Billing rules (Settings
+    overhaul Phase 3 PR 10, same pattern PR #1002 used for the cancellation
+    fee/notice): it is optional here and written only by the Billing rules
+    adapter in ``composition/billing_rules.py``. The Holds route
+    (``interfaces/admin/departure_policy_routes.py``) never passes it, so a
+    save from the Holds card cannot put back a stale drop-outcome value.
+    Every field is optional so either caller can send a partial update.
+    """
+
+    max_hold_days: int | None = Field(default=None, ge=1, le=365)
+    hold_reclaim_policy: Literal["longest_held", "never"] | None = None
+    drop_default_outcome: (
+        Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
+    ) = None
+    delete_enrollment_requires_owner: bool | None = None
 
 
 class GetEnrollmentDeparturePolicy:
@@ -46,13 +55,9 @@ class UpdateEnrollmentDeparturePolicy:
         self, cmd: UpdateEnrollmentDeparturePolicyCommand
     ) -> EnrollmentDeparturePolicy:
         current = await self._policies.get_or_default()
-        updated = current.model_copy(
-            update={
-                "max_hold_days": cmd.max_hold_days,
-                "hold_reclaim_policy": cmd.hold_reclaim_policy,
-                "drop_default_outcome": cmd.drop_default_outcome,
-                "delete_enrollment_requires_owner": cmd.delete_enrollment_requires_owner,
-            }
-        )
+        updates = cmd.model_dump(exclude_none=True)
+        if not updates:
+            return current
+        updated = current.model_copy(update=updates)
         await self._policies.save(updated)
         return updated

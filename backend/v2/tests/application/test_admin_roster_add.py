@@ -347,6 +347,35 @@ async def test_duplicate_key_from_enrollment_create_releases_the_seat_and_409s()
     assert sessions.reserved["sess-1"] == 0
 
 
+@pytest.mark.asyncio
+async def test_duplicate_key_is_logged_with_the_violated_index(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Issue #836: the arm used to swallow the E11000 without a trace.
+
+    A prod-only unique index (#835) blocked re-adding a dropped student, and
+    because nothing was logged neither Sentry nor the Fly logs could say which
+    index fired. The 409 stays; the index name must reach the log.
+    """
+    sessions, enrollments, students = _seeded()
+    enrollments.create_raises = DuplicateKeyError(
+        "E11000 duplicate key error collection: db.enrollments index: "
+        'session_id_1_student_id_1 dup key: { session_id: "sess-1" }',
+        11000,
+        {"keyPattern": {"session_id": 1, "student_id": 1}},
+    )
+    uc = _use_case(sessions, enrollments, students)
+
+    with caplog.at_level("WARNING"), pytest.raises(StudentAlreadyOnRoster):
+        await uc.execute(_cmd())
+
+    records = [r for r in caplog.records if r.message == "enrollment.roster_add_duplicate_key"]
+    assert len(records) == 1
+    assert records[0].key_pattern == {"session_id": 1, "student_id": 1}
+    assert "session_id_1_student_id_1" in records[0].mongo_error
+    assert records[0].student_id == "st-1"
+
+
 # --- (b) a write failure after reserve -> seat released ---------------------
 
 

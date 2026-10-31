@@ -3,9 +3,16 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 import { billingRulesFixture } from "../fixtures/billing-rules";
 import { openAdminNav } from "../helpers/nav";
 import {
+  clickRowAction,
+  expectRowActionAvailable,
+  rowActionControl,
+} from "../helpers/row-actions";
+import {
+  stubCoachAcademy,
   stubCoachMessages,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
+import { stubFamilyIndex } from "../fixtures/family-index";
 
 // Every pre-split admin was granted `owner` by migration 0165, so the default
 // admin fixture is an owner: it exercises the full shell (money nav, revenue,
@@ -130,11 +137,13 @@ const ADMIN_ROUTES = [
   { href: "/admin/sessions", testid: "admin-sessions" },
   { href: "/admin/students", testid: "admin-students" },
   { href: "/admin/users", testid: "admin-users" },
-  { href: "/admin/registrations", testid: "admin-registrations" },
-  { href: "/admin/registrations?tab=waitlist", testid: "admin-waitlist-tab" },
-  { href: "/admin/registrations?tab=level-ups", testid: "admin-level-up-queue-tab" },
-  { href: "/admin/requests?tab=pauses", testid: "admin-pause-requests" },
+  { href: "/admin/inbox", testid: "admin-inbox" },
+  { href: "/admin/inbox?tab=registrations", testid: "admin-registrations-tab" },
+  { href: "/admin/inbox?tab=waitlist", testid: "admin-waitlist-tab" },
+  { href: "/admin/inbox?tab=level-ups", testid: "admin-level-up-queue-tab" },
+  { href: "/admin/inbox?tab=pauses", testid: "admin-pause-requests" },
   { href: "/admin/payments", testid: "admin-payments" },
+  { href: "/admin/pricing", testid: "admin-pricing" },
   { href: "/admin/reports/session-economics", testid: "admin-session-economics" },
   { href: "/admin/reports", testid: "admin-month-close" },
   { href: "/admin/coach-payslip", testid: "admin-coach-payslip" },
@@ -142,23 +151,59 @@ const ADMIN_ROUTES = [
   { href: "/admin/payouts", testid: "admin-payouts" },
   { href: "/admin/audit-logs", testid: "admin-audit-logs" },
   { href: "/admin/messages", testid: "admin-messages" },
-  { href: "/admin/waivers", testid: "admin-waivers" },
+  // Waivers moved into Settings -> Family policies (Settings overhaul Phase
+  // 3 PR 10); /admin/waivers now redirects there instead of rendering its
+  // own testid, so it is no longer a route in this generic nav sweep.
 ] as const;
 
 const SETTINGS_PANELS = [
-  { key: "academy", label: "Academy", testid: "admin-settings-academy" },
+  { key: "academy", label: "Academy profile", testid: "admin-settings-academy" },
   { key: "billing-rules", label: "Billing rules", testid: "admin-settings-billing-rules" },
-  { key: "gateway", label: "Gateway", testid: "admin-settings-gateway" },
-  { key: "notify", label: "Notify", testid: "admin-settings-notify" },
-  { key: "roles", label: "Roles", testid: "admin-settings-roles" },
-  { key: "branding", label: "Branding", testid: "admin-settings-branding" },
-  { key: "data", label: "Data", testid: "admin-settings-data" },
-  {
-    key: "session-types",
-    label: "Session types",
-    testid: "admin-settings-session-types",
-  },
+  { key: "integrations", label: "Integrations", testid: "admin-settings-gateway" },
+  { key: "notifications", label: "Notifications", testid: "admin-settings-notify" },
+  // Session types left Settings for the Pricing page (Settings overhaul PR 11b).
+  { key: "public-page", label: "Public page", testid: "admin-settings-public-page" },
 ] as const;
+
+/** GET /admin/pricing for the Pricing page (owner only, PR 11b). */
+const PRICING_E2E = {
+  plans: [
+    {
+      plan_id: "st-e2e",
+      name: "Monthly Unlimited",
+      description: "All weekday squads",
+      price_cents: 12000,
+      plan_type: "monthly",
+      is_active: true,
+      linked_classes: 1,
+      updated_at: "2026-07-01T00:00:00Z",
+    },
+  ],
+  classes: [
+    {
+      session_id: "sess-linked",
+      title: "Juniors Tue/Thu",
+      charged_cents: 12000,
+      fee_set: true,
+      students: 14,
+      plan_id: "st-e2e",
+      matching_plan_ids: ["st-e2e"],
+      stale_link: false,
+    },
+    {
+      session_id: "sess-custom",
+      title: "Competitive squad",
+      charged_cents: 18000,
+      fee_set: true,
+      students: 6,
+      plan_id: null,
+      matching_plan_ids: [],
+      stale_link: false,
+    },
+  ],
+  saved_overrides: [],
+  auto_linkable: 0,
+} as const;
 
 const SESSION_TYPE_E2E = {
   session_type_id: "st-e2e",
@@ -245,6 +290,28 @@ function collectConsoleErrors(page: Page): string[] {
     }
   });
   return errors;
+}
+
+/**
+ * The Families view reads the family index (`/admin/families` and its
+ * summary) and, for the bulk invite, `/admin/billing/setup`; the catch-all
+ * `{}` stub has neither `families` nor `rows`. The redirect specs that land
+ * on Families stub an empty index explicitly.
+ */
+async function stubEmptyFamilies(page: Page) {
+  await stubFamilyIndex(page, { families: [] });
+  await page.route("**/api/v2/admin/billing/setup*", (route) =>
+    fulfillJson(route, {
+      rows: [],
+      summary: {
+        families_total: 0,
+        families_registered: 0,
+        families_no_card: 0,
+        outstanding_total_cents: 0,
+      },
+      next_cursor: null,
+    }),
+  );
 }
 
 function fulfillJson(route: Route, body: unknown) {
@@ -356,6 +423,14 @@ async function stubAdminBff(
       ],
     });
   });
+  await page.route("**/api/v2/admin/pricing", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, PRICING_E2E);
+  });
+  // The class editor reads scheduled plan price changes (PR 26).
+  await page.route("**/api/v2/admin/pricing/scheduled-class-fees", (route) =>
+    fulfillJson(route, []),
+  );
   await page.route("**/api/v2/admin/session-types*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     // Mirrors the backend: archived rows only when include_archived is set.
@@ -369,6 +444,9 @@ async function stubAdminBff(
   });
   await page.route("**/api/v2/admin/students*", (route) =>
     fulfillJson(route, { students: [] }),
+  );
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
   );
   await page.route("**/api/v2/admin/registrations*", (route) =>
     fulfillJson(route, { registrations: [] }),
@@ -408,7 +486,7 @@ async function stubAdminBff(
           title: "Waivers need review",
           detail: "2 pending, 1 outdated.",
           severity: "medium",
-          href: "/admin/waivers",
+          href: "/admin/settings?panel=family-policies",
           count: 3,
         },
       ],
@@ -471,11 +549,16 @@ async function stubAdminBff(
   await page.route("**/api/v2/admin/reports/coach-utilization*", (route) =>
     fulfillJson(route, { coaches: [], periods: [], total_payout_minor: 0 }),
   );
+  await page.route(/\/api\/v2\/admin\/academy\/payment-methods(?:\?.*)?$/, (route) =>
+    fulfillJson(route, {
+      manual_methods: ["cash", "check", "zelle", "venmo", "bank_transfer", "other"],
+    }),
+  );
   await page.route(/\/api\/v2\/admin\/academy\/gateway(?:\?.*)?$/, (route) =>
     fulfillJson(route, {
       stripe_connected: false,
       stripe_account_id_masked: null,
-      manual_methods: ["cash", "check"],
+      manual_methods: ["cash", "check", "zelle", "venmo", "bank_transfer", "other"],
     }),
   );
   await page.route(/\/api\/v2\/admin\/academy\/fees(?:\?.*)?$/, (route) =>
@@ -491,8 +574,6 @@ async function stubAdminBff(
     /\/api\/v2\/admin\/academy\/notifications(?:\?.*)?$/,
     (route) =>
       fulfillJson(route, {
-        dues_reminders: false,
-        attendance_alerts: false,
         daily_digest_to_admin: false,
       }),
   );
@@ -512,6 +593,7 @@ async function stubAdminBff(
 async function stubCoachBff(page: Page) {
   await stubMe(page, COACH_ME);
   await stubCoachMessages(page);
+  await stubCoachAcademy(page);
   await page.route("**/api/v2/coach/today*", (route) =>
     fulfillJson(route, { date: "2026-05-20", sessions: [] }),
   );
@@ -707,12 +789,13 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
     const nav = await openAdminNav(page);
-    await expect(nav.getByText("WORK", { exact: true })).toBeVisible();
-    await expect(nav.getByText("MONEY", { exact: true })).toBeVisible();
-    await expect(
-      nav.getByText("COMMS · OPS", { exact: true }),
-    ).toBeVisible();
-    await expect(nav.getByRole("link", { name: /waivers/i })).toBeVisible();
+    // Six groups (sidebar regroup spec §2.1), in sidebar order.
+    for (const group of ["TODAY", "CLASSES", "PEOPLE", "REACH", "MONEY", "ACADEMY"]) {
+      await expect(nav.getByText(group, { exact: true })).toBeVisible();
+    }
+    // Waivers moved into Settings -> Family policies (Settings overhaul
+    // Phase 3 PR 10); the sidebar has no standalone Waivers item any more.
+    await expect(nav.getByRole("link", { name: /^waivers$/i })).toHaveCount(0);
     // Only the mobile drawer has a close affordance — the desktop sidebar
     // is always visible and has nothing to close.
     const closeButton = page.getByLabel("Close menu");
@@ -732,11 +815,78 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-dashboard-attention")).toBeVisible();
     await expect(
       page.getByRole("link", { name: /Waivers need review/i }),
-    ).toHaveAttribute("href", "/admin/waivers");
+    ).toHaveAttribute("href", "/admin/settings?panel=family-policies");
     expect(
       errors,
       `App console errors on dashboard attention: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("dashboard leads with Needs your attention, above the KPI strip", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const attention = page.getByTestId("admin-dashboard-attention");
+    await expect(attention).toBeVisible();
+    const sessionsTile = page.getByTestId("dashboard-tile-sessions");
+    await expect(sessionsTile).toBeVisible();
+    const attentionBox = await attention.boundingBox();
+    const sessionsBox = await sessionsTile.boundingBox();
+    expect(attentionBox).not.toBeNull();
+    expect(sessionsBox).not.toBeNull();
+    // The attention card must sit above (smaller y) the KPI strip — today the
+    // KPI grid renders first, so this fails on unfixed code.
+    expect(attentionBox!.y).toBeLessThan(sessionsBox!.y);
+  });
+
+  test("Sessions today tile links to /admin/sessions", async ({ page }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const link = page.locator('a[data-testid="dashboard-tile-sessions"]');
+    await expect(link).toHaveAttribute("href", "/admin/sessions");
+  });
+
+  test("Inbox nav row shows the pending count from the queue endpoint", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: { registrations: 4, waitlist: 3 }, total: 7 }),
+    );
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-inbox")).toContainText("7");
+  });
+
+  test("Inbox nav row hides the badge when the queue is empty", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-inbox")).not.toContainText("0");
+  });
+
+  test("all nav groups are visible at 1280x900 without scrolling the sidebar", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+    const lastRow = page.getByTestId("admin-nav-audit-logs");
+    await expect(lastRow).toBeVisible();
+    const box = await lastRow.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(900);
+    const nav = page.locator('aside[aria-label="Admin navigation"] nav').first();
+    const overflow = await nav.evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(overflow).toBeLessThanOrEqual(1);
   });
 
   for (const route of ADMIN_ROUTES) {
@@ -786,6 +936,8 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-audit-logs")).toHaveCount(0);
       // Stripe plumbing became owner-only with the Billing Health trim.
       await expect(nav.getByTestId("admin-nav-billing-health")).toHaveCount(0);
+      // The Pricing page is owner-only (Settings overhaul PR 11b).
+      await expect(nav.getByTestId("admin-nav-pricing")).toHaveCount(0);
       await expect(nav.getByText("Admin", { exact: true })).toBeVisible();
       await expect(nav.getByText("Owner", { exact: true })).toHaveCount(0);
 
@@ -850,6 +1002,7 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-billing-health")).toBeVisible();
+      await expect(nav.getByTestId("admin-nav-pricing")).toBeVisible();
 
       await page.goto("/admin/reports");
       await expect(page.getByTestId("admin-month-close")).toBeVisible({ timeout: 30_000 });
@@ -884,10 +1037,213 @@ test.describe("Rally admin shell", () => {
       const roleSelect = page.getByTestId("new-user-role");
       await expect(roleSelect).toBeVisible();
       const options = await roleSelect.locator("option").allTextContents();
-      expect(options.sort()).toEqual(["Admin", "Assistant coach", "Coach", "Owner", "Parent"]);
+      expect(options.sort()).toEqual([
+        "Admin",
+        "Assistant coach",
+        "Billing",
+        "Coach",
+        "Front desk",
+        "Owner",
+        "Parent",
+      ]);
     });
 
-    test("admin without the owner scope sees no Billing rules or Gateway settings", async ({
+    test("owner assigns the billing staff tier on the Staff page and it is sent with the reason", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page);
+      const coach = {
+        user_id: "coach-e2e",
+        email: "coach@example.com",
+        display_name: "Coach E2E",
+        role: "coach",
+        status: "active",
+        phone: null,
+        roles: ["coach"],
+        linked_student_count: 0,
+        session_count: 0,
+      };
+      const grants: Array<{ role: string; reason: string }> = [];
+      await page.route("**/api/v2/admin/users/coach-e2e/roles", async (route) => {
+        const body = route.request().postDataJSON() as { role: string; reason: string };
+        grants.push(body);
+        await fulfillJson(route, { ...coach, roles: ["coach", body.role] });
+      });
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) => fulfillJson(route, coach));
+
+      await page.goto("/admin/users/coach-e2e");
+      const form = page.getByTestId("admin-user-role-form");
+      await expect(form).toBeVisible();
+      await expect(form.getByTestId("role-checkbox-front_desk")).toBeVisible();
+      await expect(form).toContainText("never an amount");
+
+      await form.getByTestId("role-checkbox-billing").check();
+      await form.getByLabel("Reason").fill("Handles family payments");
+      await form.getByRole("button", { name: "Save roles" }).click();
+
+      await expect.poll(() => grants).toEqual([
+        { role: "billing", reason: "Handles family payments" },
+      ]);
+      expect(
+        errors,
+        `App console errors on Staff role assignment: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("admin without the owner scope sees a read-only note on a coach's pay rate, not an error (Settings overhaul Phase 2 PR 8)", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "coach-e2e",
+          email: "coach@example.com",
+          display_name: "Coach E2E",
+          role: "coach",
+          status: "active",
+          phone: null,
+          roles: ["coach"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+      // Pay rates are owner-only (owner_gate.py): if the admin UI ever calls
+      // this route for a plain admin it 404s, so failing the test on any hit
+      // pins the fix at the network layer, not just the rendered text.
+      await page.route("**/api/v2/admin/coaches/coach-e2e/pay-rates", (route) =>
+        route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
+      );
+
+      await page.goto("/admin/users/coach-e2e");
+      const panel = page.getByTestId("admin-coach-pay-rate-owner-managed");
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText("Only the academy owner can view or change coach pay rates");
+      await expect(page.getByTestId("admin-coach-pay-rate")).toHaveCount(0);
+      await expect(page.getByTestId("coach-pay-rate-save")).toHaveCount(0);
+      expect(
+        errors,
+        `App console errors on admin coach pay-rate read-only view: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("owner still sees and can set the coach pay rate on the Staff page (unchanged)", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page);
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "coach-e2e",
+          email: "coach@example.com",
+          display_name: "Coach E2E",
+          role: "coach",
+          status: "active",
+          phone: null,
+          roles: ["coach"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+      await page.route("**/api/v2/admin/coaches/coach-e2e/pay-rates", (route) =>
+        fulfillJson(route, { rates: [], diagnostics: { coach_id: "coach-e2e", has_blocking_issues: false, issues: [] } }),
+      );
+
+      await page.goto("/admin/users/coach-e2e");
+      await expect(page.getByTestId("admin-coach-pay-rate")).toBeVisible();
+      await expect(page.getByTestId("admin-coach-pay-rate-owner-managed")).toHaveCount(0);
+      await expect(page.getByTestId("coach-pay-rate-save")).toBeVisible();
+      expect(
+        errors,
+        `App console errors on owner coach pay-rate view: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("admin without the owner scope sees no staff tier checkboxes on the Staff page", async ({
+      page,
+    }) => {
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.route("**/api/v2/admin/users/coach-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "coach-e2e",
+          email: "coach@example.com",
+          display_name: "Coach E2E",
+          role: "coach",
+          status: "active",
+          phone: null,
+          roles: ["coach", "billing"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+
+      await page.goto("/admin/users/coach-e2e");
+      const form = page.getByTestId("admin-user-role-form");
+      await expect(form).toBeVisible();
+      await expect(form.getByTestId("role-checkbox-billing")).toHaveCount(0);
+      await expect(form.getByTestId("role-checkbox-front_desk")).toHaveCount(0);
+      await expect(form.getByTestId("admin-user-locked-roles")).toContainText("Billing");
+    });
+
+    test("admin without the owner scope sees prices and the timezone read-only (Settings PR 5)", async ({
+      page,
+    }) => {
+      const errors = collectConsoleErrors(page);
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+
+      await page.goto("/admin/settings?panel=academy");
+      const academy = page.getByTestId("admin-settings-academy");
+      await expect(academy).toBeVisible();
+      await expect(academy.getByLabel("Timezone")).toBeDisabled();
+      // Currency is a read-only USD field for everyone (#1001), so only the
+      // timezone carries the owner-only note.
+      await expect(academy.getByTestId("academy-currency")).toHaveValue("USD");
+      await expect(academy.getByLabel("Display name")).toBeEnabled();
+      await expect(academy.getByTestId("owner-only-field-note")).toHaveCount(1);
+
+      // The price list moved to the owner-only Pricing page (PR 11b): the old
+      // Settings link lands there, and a plain admin sees the owner-only panel
+      // and no Pricing item in the sidebar.
+      await page.goto("/admin/settings?panel=session-types");
+      await expect(page).toHaveURL(/\/admin\/pricing$/);
+      await expect(page.getByTestId("owner-only-panel")).toBeVisible();
+      await expect(page.getByTestId("pricing-plans")).toHaveCount(0);
+      await expect(page.getByTestId("admin-nav-pricing")).toHaveCount(0);
+      expect(
+        errors,
+        `App console errors on owner-only money fields: ${errors.join("\n")}`,
+      ).toEqual([]);
+    });
+
+    test("admin without the owner scope sees an owner's Staff page read-only (X3)", async ({
+      page,
+    }) => {
+      await stubAdminBff(page, SINGLE_MEMBERSHIP, ADMIN_ONLY_ME);
+      await page.route("**/api/v2/admin/users/owner-e2e", (route) =>
+        fulfillJson(route, {
+          user_id: "owner-e2e",
+          email: "owner@example.com",
+          display_name: "Owner E2E",
+          role: "owner",
+          status: "active",
+          phone: null,
+          roles: ["owner", "admin"],
+          linked_student_count: 0,
+          session_count: 0,
+        }),
+      );
+
+      await page.goto("/admin/users/owner-e2e");
+      await expect(page.getByTestId("admin-user-owner-managed")).toBeVisible();
+      const form = page.getByTestId("admin-user-edit-form");
+      await expect(form.locator("#user-email")).toBeDisabled();
+      await expect(form.locator("#user-status")).toBeDisabled();
+      await expect(page.getByTestId("admin-user-role-form").getByRole("button", { name: "Save roles" })).toBeDisabled();
+      await expect(page.getByTestId("send-login-invite")).toHaveCount(0);
+    });
+
+    test("admin without the owner scope sees no Billing rules or Integrations settings", async ({
       page,
     }) => {
       const errors = collectConsoleErrors(page);
@@ -895,8 +1251,8 @@ test.describe("Rally admin shell", () => {
       await page.goto("/admin/settings");
       await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
       await expect(page.getByRole("link", { name: "Billing rules", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "Gateway", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "Notify", exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Integrations", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Notifications", exact: true })).toBeVisible();
 
       // A deep link to an owner-only panel shows the notice, not the form.
       // A retired deep link (?panel=fees) resolves to Billing rules, which is
@@ -915,7 +1271,7 @@ test.describe("Rally admin shell", () => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
     await page.goto("/admin/coach-payslip");
-    await expect(page).toHaveURL(/\/admin\/payouts\?tab=payslips/);
+    await expect(page).toHaveURL(/\/admin\/payouts\?tab=payslips/, { timeout: 30_000 });
     await expect(page.getByTestId("admin-payouts")).toBeVisible();
     await expect(page.getByTestId("admin-coach-payslip")).toBeVisible();
     expect(
@@ -943,6 +1299,29 @@ test.describe("Rally admin shell", () => {
     expect(
       errors,
       `App console errors on dues redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  // #827: the old people bookmarks. Same #689 shape as the dues pair — they
+  // used to render the `(admin)` layout just to throw the redirect signal.
+  // Sidebar regroup PR 3: parents left the Staff list, so /admin/parents now
+  // lands on Families; /admin/coaches still opens the Coaches pill.
+  test("the parents and coaches bookmarks redirect to Families and Staff", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await stubEmptyFamilies(page);
+    for (const [bookmark, landing] of [
+      ["/admin/parents", /\/admin\/families\?view=families$/],
+      ["/admin/coaches", /\/admin\/users\?role=coach$/],
+    ] as const) {
+      await page.goto(bookmark);
+      await expect(page).toHaveURL(landing, { timeout: 30_000 });
+    }
+    expect(
+      errors,
+      `App console errors on people redirects: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
@@ -983,23 +1362,121 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("/admin/parents redirects into the Users directory on the parent tab", async ({
+  test("/admin/parents redirects to Families (sidebar regroup PR 3)", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
     await stubAdminBff(page);
+    await stubEmptyFamilies(page);
     // Arm before navigating: the redirect fires during load and can abort
     // `page.goto` itself, and the 5s expect default is shorter than a cold
     // compile — the same race #683 armed for the other bookmark redirects.
-    const landed = page.waitForURL(/\/admin\/users\?role=parent$/, { timeout: 30_000 });
+    const landed = page.waitForURL(/\/admin\/families\?view=families$/, {
+      timeout: 30_000,
+    });
     await page.goto("/admin/parents", { waitUntil: "commit" }).catch(() => undefined);
     await landed;
-    await expect(page.getByTestId("admin-users")).toBeVisible();
-    // Parent tab must NOT show the coach-only engagement strip.
-    await expect(page.getByTestId("coach-engagement-stats")).toHaveCount(0);
+    await expect(page.getByTestId("admin-families")).toBeVisible();
+    await expect(page.getByTestId("admin-users")).toHaveCount(0);
     expect(
       errors,
       `App console errors on /admin/parents redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  // A browser that cached the old 308 still lands on `/admin/users?role=parent`;
+  // nothing server-side can clear that, so the URL stays a working parent list
+  // with a banner pointing at Families and no pill selected (spec §3.1).
+  test("/admin/users?role=parent still lists parents behind a Families banner", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const seen: string[] = [];
+    await page.route("**/api/v2/admin/users?*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const url = new URL(route.request().url());
+      seen.push(url.search);
+      return fulfillJson(route, {
+        users:
+          url.searchParams.get("role") === "parent"
+            ? [
+                {
+                  user_id: "parent-e2e",
+                  email: "parent@example.com",
+                  display_name: "Parent E2E",
+                  role: "parent",
+                  roles: ["parent"],
+                  status: "active",
+                },
+              ]
+            : [],
+      });
+    });
+    await page.goto("/admin/users?role=parent");
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    await expect(page.getByTestId("admin-users-parents-banner")).toContainText("Families");
+    await expect(page.getByTestId("admin-users-row-parent-e2e")).toBeVisible();
+    // The banner replaces a pill: no Parents pill exists any more.
+    await expect(page.getByTestId("admin-users-filter-parent")).toHaveCount(0);
+    for (const pill of ["all", "coach", "assistant_coach", "admin"]) {
+      await expect(page.getByTestId(`admin-users-filter-${pill}`)).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+    }
+    // The parent list is asked for as-is, never with the staff exclusion.
+    expect(seen.some((q) => q.includes("role=parent"))).toBe(true);
+    expect(seen.some((q) => q.includes("exclude_role"))).toBe(false);
+    expect(
+      errors,
+      `App console errors on /admin/users?role=parent: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("Staff lists coaches and admins only, and keeps a coach who is also a parent", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const STAFF = [
+      { user_id: "coach-e2e", email: "coach@example.com", display_name: "Coach E2E", role: "coach", roles: ["coach"], status: "active" },
+      { user_id: "coach-parent-e2e", email: "both@example.com", display_name: "Coach And Parent", role: "parent", roles: ["parent", "coach"], status: "active" },
+      { user_id: "parent-e2e", email: "parent@example.com", display_name: "Parent Only", role: "parent", roles: ["parent"], status: "active" },
+    ];
+    const queries: string[] = [];
+    await page.route("**/api/v2/admin/users?*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const url = new URL(route.request().url());
+      queries.push(url.search);
+      // Mirror the BFF (#918): exclude_role=parent drops parent-only accounts.
+      const excludeParentOnly = url.searchParams.get("exclude_role") === "parent";
+      return fulfillJson(route, {
+        users: excludeParentOnly
+          ? STAFF.filter((user) => user.roles.some((r) => r !== "parent"))
+          : STAFF,
+      });
+    });
+    await page.goto("/admin/users");
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    await expect(page.getByTestId("admin-users-filter-all")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("admin-users-filter-all")).toContainText("All staff");
+    await expect(page.getByTestId("admin-users-row-coach-e2e")).toBeVisible();
+    await expect(page.getByTestId("admin-users-row-coach-parent-e2e")).toBeVisible();
+    await expect(page.getByTestId("admin-users-row-parent-e2e")).toHaveCount(0);
+    await expect(page.getByTestId("admin-users-parents-link")).toHaveAttribute(
+      "href",
+      "/admin/families",
+    );
+    await expect(page.getByTestId("admin-users-parents-banner")).toHaveCount(0);
+    expect(queries.some((q) => q.includes("exclude_role=parent"))).toBe(true);
+    // The nav row is relabelled but keeps its id, so the testid survives.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-users")).toContainText("Staff");
+    await expect(nav.getByTestId("admin-nav-users")).not.toContainText("Users");
+    expect(
+      errors,
+      `App console errors on /admin/users: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
@@ -1035,9 +1512,10 @@ test.describe("Rally admin shell", () => {
       }),
     );
 
-    // Old URL now redirects into Requests → Pauses tab (UIC2); bookmarks keep working.
+    // Old URL now redirects into Inbox → Pauses tab (#776 merged Admissions +
+    // Requests into one Inbox); bookmarks keep working.
     await page.goto("/admin/pause-requests");
-    await expect(page).toHaveURL(/\/admin\/requests\?tab=pauses/);
+    await expect(page).toHaveURL(/\/admin\/inbox\?tab=pauses/, { timeout: 30_000 });
     const row = page.getByTestId("admin-pause-requests-row-pause-1");
     await expect(row).toContainText("Abhishek Ajithkumar");
     await expect(row).toContainText("Student: Aadhya Abhishek");
@@ -1045,10 +1523,98 @@ test.describe("Rally admin shell", () => {
     await expect(row).toContainText("Court 2");
     await expect(row).toContainText("Resume Jul 15, 2026");
     await expect(row).toContainText("Summer travel");
+    // #860: every decision fact is on the row — and the enrollment id is not.
+    // On a phone the sticky action cell used to cover the session, dates and
+    // reason; Decline/Approve now live behind the row's 44px actions menu,
+    // which `rowActionControl` finds on either layout.
+    await expect(row).not.toContainText("enr-1");
+    const approve = await rowActionControl(page, {
+      rowTestId: "admin-pause-requests-row-pause-1",
+      actionsTestId: "admin-pause-requests-actions-pause-1",
+      label: "Approve",
+    });
+    await expect(approve).toBeVisible();
     expect(
       errors,
       `App console errors on pause requests details: ${errors.join("\n")}`,
     ).toEqual([]);
+  });
+
+  test("waitlist rows name the parent instead of printing a parent id", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/waitlist", (route) =>
+      fulfillJson(route, {
+        total_waitlisted: 1,
+        sessions: [
+          {
+            session_id: "session-1",
+            title: "Junior Foundations",
+            location: "Court 2",
+            start_at: "2026-06-04T23:00:00Z",
+            capacity: 8,
+            enrolled_count: 8,
+            waitlist_count: 1,
+            entries: [
+              {
+                waitlist_id: "wait-1",
+                session_id: "session-1",
+                student_id: "student-1",
+                parent_id: "68b0f2c1a0b1c2d3e4f50011",
+                parent_name: "Abhishek Ajithkumar",
+                full_name: "Aadhya Abhishek",
+                status: "waiting",
+                position: 1,
+                joined_at: "2026-06-01T10:00:00Z",
+                added_at: "2026-06-01T10:00:00Z",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    await page.goto("/admin/inbox?tab=waitlist");
+    const row = page.getByTestId("admin-waitlist-row-wait-1");
+    await expect(row).toContainText("Aadhya Abhishek");
+    await expect(row).toContainText("Abhishek Ajithkumar");
+    // #860: the raw Mongo id an admin can do nothing with.
+    await expect(row).not.toContainText("68b0f2c1a0b1c2d3e4f50011");
+    expect(errors, `App console errors on waitlist: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("absence rows say which class and date was missed", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/self-service/absences*", (route) =>
+      fulfillJson(route, {
+        absences: [
+          {
+            notice_id: "notice-1",
+            student_id: "student-1",
+            occurrence_id: "occ-7f3a9c",
+            session_id: "session-1",
+            submitted_by: "parent-1",
+            submitted_at: "2026-06-01T10:00:00Z",
+            notice_window_met: true,
+            student_full_name: "Aadhya Abhishek",
+            recorded_by_admin: false,
+            occurrence_session_title: "Junior Foundations",
+            occurrence_start_at: "2026-06-04T23:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    await page.goto("/admin/inbox?tab=absences");
+    const row = page.getByTestId("admin-absences-row-notice-1");
+    await expect(row).toContainText("Aadhya Abhishek");
+    // #860: the row carried only an occurrence id before, so it showed neither.
+    await expect(row).toContainText("Junior Foundations");
+    await expect(row).not.toContainText("occ-7f3a9c");
+    expect(errors, `App console errors on absences: ${errors.join("\n")}`).toEqual([]);
   });
 
   test("payments renders legacy paid and waived statuses without crashing", async ({
@@ -1113,7 +1679,10 @@ test.describe("Rally admin shell", () => {
 
     await expect(page.getByTestId("payment-row-legacy-paid")).toBeVisible();
     await expect(
-      page.getByTestId("payment-row-legacy-paid").getByText("PAID"),
+      // Exact, like the VOID assertion below: `getByText` matches a
+      // case-insensitive SUBSTRING, so a loose "PAID" also matches the phone
+      // row's "· paid $120.00" line (#857).
+      page.getByTestId("payment-row-legacy-paid").getByText("PAID", { exact: true }),
     ).toBeVisible();
     await expect(page.getByTestId("payment-row-legacy-waived")).toBeVisible();
     await expect(
@@ -1155,7 +1724,387 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("session types panel lists the catalog and posts a new type", async ({
+  test("settings warns before a tab switch discards unsaved edits", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=academy");
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+
+    const displayName = page.getByLabel("Display name");
+    // Wait for the loaded value first: filling before the academy read
+    // resolves races the panel's seed and leaves a merged value (flaked in CI).
+    await expect(displayName).toHaveValue("Academy E2E");
+    await displayName.fill("Rally Academy Edited");
+
+    // #893: the guard is the Rally dialog now, not `window.confirm`, so a
+    // native dialog arriving here would be a regression, not the prompt.
+    const nativeDialogs: string[] = [];
+    page.on("dialog", async (dialog) => {
+      nativeDialogs.push(dialog.message());
+      await dialog.dismiss();
+    });
+    const guard = page.getByTestId("confirm-action-dialog");
+
+    const notifyTab = page.getByRole("link", { name: "Notifications", exact: true });
+    await notifyTab.click();
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+
+    // Stay: the panel stays put and the typed value survives.
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).toHaveURL(/panel=academy/);
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+    await expect(displayName).toHaveValue("Rally Academy Edited");
+
+    await notifyTab.click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/panel=notifications/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
+    await expect(page.getByTestId("admin-settings-notify")).toBeVisible();
+    expect(nativeDialogs).toEqual([]);
+    expect(
+      errors,
+      `App console errors on the settings dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("settings warns before the shell nav discards unsaved edits", async ({
+    page,
+  }) => {
+    // #893: #863's guard only intercepted the tab strip's own links, so
+    // leaving through the sidebar (or the phone drawer) dropped the draft
+    // with no prompt at all.
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=academy");
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+
+    const displayName = page.getByLabel("Display name");
+    // Wait for the loaded value before typing (see the tab-switch test).
+    await expect(displayName).toHaveValue("Academy E2E");
+    await displayName.fill("Rally Academy Edited");
+
+    const drawer = page.getByTestId("admin-mobile-drawer");
+    // The drawer closes itself on a nav click, so re-open it when the shell
+    // is the phone one; on desktop the sidebar is always there.
+    async function shellNav() {
+      if (await drawer.isVisible()) return drawer;
+      return openAdminNav(page);
+    }
+
+    const guard = page.getByTestId("confirm-action-dialog");
+    await (await shellNav()).getByTestId("admin-nav-students").click();
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+
+    // Stay: still on settings, with the edit intact.
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/settings\?panel=academy$/);
+    await expect(page.getByTestId("admin-settings-academy")).toBeVisible();
+    await expect(displayName).toHaveValue("Rally Academy Edited");
+    expect(
+      errors,
+      `App console errors on the shell dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+
+    // Leaving on purpose still takes one confirm, not a fight.
+    await (await shellNav()).getByTestId("admin-nav-students").click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/admin\/students/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
+  });
+
+  test("?panel=roles redirects to the Staff page", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=roles");
+    await page.waitForURL(/\/admin\/users/);
+    expect(
+      errors,
+      `App console errors on the roles redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("?panel=data redirects to Reports for an owner", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=data");
+    await page.waitForURL(/\/admin\/reports/);
+    expect(
+      errors,
+      `App console errors on the data redirect: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("student detail warns before a tab switch or a link discards an unsaved edit", async ({
+    page,
+  }) => {
+    // UI-2: only Settings reported dirty state, so a typed student edit was
+    // dropped by a tab switch (the tabs are buttons, not links) or any link.
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/waivers/students/*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { student_id: "student", waivers: [] });
+    });
+    await page.route("**/api/v2/admin/students/student-guard-e2e", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        student_id: "student-guard-e2e",
+        full_name: "Guard Student E2E",
+        parent_id: "parent-guard-e2e",
+        parent_name: "Guard Parent E2E",
+        parent_email: "guard-parent@example.com",
+        parent_phone: null,
+        lifecycle: "active",
+        active_session_count: 0,
+        last_seen_at: null,
+        attendance_rate: null,
+        dues_status: "paid",
+        date_of_birth: "2015-04-10",
+        level: "beginner",
+        notes: "",
+        parent_details: null,
+        previous_experience: "",
+        medical_notes: "",
+        emergency_contact_name: "",
+        emergency_contact_phone: "",
+        t_shirt_size: "",
+        waiver_status: "signed",
+        waiver_signed_at: null,
+        waiver_version: null,
+        recent_attendance: [],
+        enrolled_sessions: [],
+        past_enrollments: [],
+        payment_history: [],
+        current_payment: null,
+      });
+    });
+    // The Training tab's skill pathway reads the program catalog; the shell
+    // catch-all's `{}` has no `programs` key.
+    await page.route("**/api/v2/admin/curriculum/programs*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, { programs: [] });
+    });
+    await page.route("**/api/v2/admin/enrollment/departure-policy", (route) =>
+      fulfillJson(route, {
+        max_hold_days: 30,
+        hold_reclaim_policy: "longest_held",
+        drop_default_outcome: "no_credit_mid_month",
+        delete_enrollment_requires_owner: true,
+      }),
+    );
+    const nativeDialogs: string[] = [];
+    page.on("dialog", async (dialog) => {
+      nativeDialogs.push(dialog.message());
+      await dialog.dismiss();
+    });
+
+    await page.goto("/admin/students/student-guard-e2e");
+    const fullName = page.getByLabel("Full name");
+    await expect(fullName).toHaveValue("Guard Student E2E");
+
+    // A clean form switches tabs with no prompt.
+    const guard = page.getByTestId("confirm-action-dialog");
+    const trainingTab = page.getByRole("tab", { name: "Training" });
+    await trainingTab.click();
+    await expect(page).toHaveURL(/tab=training/);
+    await expect(guard).toHaveCount(0);
+    await page.getByRole("tab", { name: "Overview" }).click();
+    await expect(fullName).toHaveValue("Guard Student E2E");
+
+    // The race the nightly WebKit job hit: a leave that lands in the same
+    // task as the keystroke. The edit's dirty report used to reach the guard
+    // a render late, so this switched tabs with no dialog and dropped the
+    // edit. Typing and clicking in one evaluate makes it deterministic.
+    await page.evaluate(() => {
+      const input = [...document.querySelectorAll("label")]
+        .find((label) => label.textContent?.trim() === "Full name")
+        ?.control as HTMLInputElement | null | undefined;
+      if (!input) throw new Error("Full name input not found");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "Guard Student Edited",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const tab = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+        (el) => el.textContent?.trim() === "Training",
+      );
+      if (!tab) throw new Error("Training tab not found");
+      tab.click();
+    });
+    await expect(guard).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).not.toHaveURL(/tab=training/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
+    await fullName.fill("Guard Student Edited");
+
+    // Keyboard: the tab is reachable and Enter opens the guard, focus moves
+    // into the dialog, and Escape stays and hands focus back to the tab.
+    await trainingTab.focus();
+    await page.keyboard.press("Enter");
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+    await expect
+      .poll(() => guard.evaluate((el) => el.contains(document.activeElement)))
+      .toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(guard).toHaveCount(0);
+    await expect(trainingTab).toBeFocused();
+    await expect(page).not.toHaveURL(/tab=training/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
+    // Stay keeps the tab and the typed value.
+    await trainingTab.click();
+    await expect(guard).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).not.toHaveURL(/tab=training/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
+    // An in-app link is guarded too.
+    await page.getByRole("link", { name: "All students" }).click();
+    await expect(guard).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(page).toHaveURL(/\/admin\/students\/student-guard-e2e/);
+    await expect(fullName).toHaveValue("Guard Student Edited");
+
+    // Leaving on purpose takes one confirm.
+    await trainingTab.click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/tab=training/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
+    await expect(page.getByTestId("admin-student-training-tab")).toBeVisible();
+
+    // Nothing is dirty any more: the next switch is immediate.
+    await page.getByRole("tab", { name: "Overview" }).click();
+    await expect(fullName).toHaveValue("Guard Student E2E");
+    await expect(guard).toHaveCount(0);
+    expect(nativeDialogs).toEqual([]);
+    expect(
+      errors,
+      `App console errors on the student dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("user detail warns before a link discards an unsaved profile edit", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    let saved: Record<string, unknown> | null = null;
+    const staff = {
+      user_id: "staff-guard-e2e",
+      email: "staff-guard@example.com",
+      display_name: "Guard Staff E2E",
+      role: "admin",
+      status: "active",
+      roles: ["admin"],
+      phone: null,
+    };
+    await page.route("**/api/v2/admin/users/staff-guard-e2e", (route) => {
+      const method = route.request().method();
+      if (method === "PATCH") {
+        saved = route.request().postDataJSON() as Record<string, unknown>;
+        return fulfillJson(route, { ...staff, ...saved });
+      }
+      if (method !== "GET") return route.fallback();
+      return fulfillJson(route, staff);
+    });
+
+    await page.goto("/admin/users/staff-guard-e2e");
+    const displayName = page.getByLabel("Display name");
+    await expect(displayName).toHaveValue("Guard Staff E2E");
+    await displayName.fill("Guard Staff Edited");
+
+    const guard = page.getByTestId("confirm-action-dialog");
+    const back = page.getByRole("link", { name: "All users" });
+    await back.click();
+    await expect(guard).toBeVisible();
+    await expect(page.getByTestId("unsaved-changes-warning")).toBeVisible();
+    await guard.getByRole("button", { name: "Stay on this page" }).click();
+    await expect(guard).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/users\/staff-guard-e2e$/);
+    await expect(displayName).toHaveValue("Guard Staff Edited");
+
+    // A successful save is clean at once, even though the refetch still
+    // returns the old name: the link leaves with no prompt.
+    await page
+      .getByTestId("admin-user-edit-form")
+      .getByRole("button", { name: /^save changes$/i })
+      .click();
+    await expect.poll(() => saved).toMatchObject({ display_name: "Guard Staff Edited" });
+    await expect(
+      page.getByTestId("admin-user-edit-form").getByText("Saved", { exact: false }),
+    ).toBeVisible();
+    await Promise.all([page.waitForURL(/\/admin\/users$/), back.click()]);
+    await expect(guard).toHaveCount(0);
+    // The URL flips before the soft navigation's RSC payload and chunks land.
+    // Wait for the list to render: a page.goto while that fetch is in flight
+    // aborts it, and WebKit surfaces the abort as `TypeError: Load failed`
+    // through the root error boundary's console.error.
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+
+    // Edit again and leave on purpose through the confirm.
+    await page.goto("/admin/users/staff-guard-e2e");
+    await expect(displayName).toHaveValue("Guard Staff E2E");
+    await displayName.fill("Guard Staff Again");
+    await back.click();
+    await expect(guard).toBeVisible();
+    await Promise.all([
+      page.waitForURL(/\/admin\/users$/),
+      guard.getByTestId("confirm-action-submit").click(),
+    ]);
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+    expect(
+      errors,
+      `App console errors on the user dirty guard: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("settings tabs keep 44px targets and the active tab in view at 400px", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await page.setViewportSize({ width: 400, height: 800 });
+    await stubAdminBff(page);
+    await page.goto("/admin/settings?panel=public-page");
+    await expect(page.getByTestId("admin-settings-public-page")).toBeVisible();
+
+    for (const panel of SETTINGS_PANELS) {
+      const tab = page.getByRole("link", { name: panel.label, exact: true });
+      const box = await tab.boundingBox();
+      if (!box) throw new Error(`no bounding box for the ${panel.label} tab`);
+      expect(box.height, `${panel.label} tap target height`).toBeGreaterThanOrEqual(44);
+    }
+
+    // Deep-linked: the strip scrolls the active tab into view by itself, with
+    // no scrollIntoView() from the test.
+    const active = page.getByRole("link", { name: "Public page", exact: true });
+    await expect(active).toHaveAttribute("aria-current", "page");
+    const activeBox = await active.boundingBox();
+    if (!activeBox) throw new Error("no bounding box for the active tab");
+    expect(activeBox.x, "active tab left edge").toBeGreaterThanOrEqual(0);
+    expect(activeBox.x + activeBox.width, "active tab right edge").toBeLessThanOrEqual(400);
+    expect(
+      errors,
+      `App console errors on the settings tab strip: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("pricing page lists plans, class prices and posts a new monthly plan", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
@@ -1171,32 +2120,138 @@ test.describe("Rally admin shell", () => {
       });
     });
 
+    // The old Settings link redirects to the Pricing page (PR 11b).
     await page.goto("/admin/settings?panel=session-types");
-    await expect(page.getByTestId("admin-settings-session-types")).toBeVisible();
-    await expect(page.getByTestId("session-type-row")).toHaveCount(1);
-    // price_cents 12000 / overage 1500 must render as dollars, not raw cents.
-    await expect(page.getByText("$120.00")).toBeVisible();
-    await expect(page.getByText("$15.00")).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/pricing$/);
+    const plans = page.getByTestId("pricing-plans");
+    await expect(plans).toBeVisible();
+    // Sidebar on desktop, drawer on phones.
+    const nav = await openAdminNav(page);
+    await expect(nav.getByTestId("admin-nav-pricing")).toBeVisible();
+    const drawer = page.getByTestId("admin-mobile-drawer");
+    if (await drawer.isVisible()) {
+      await drawer.getByRole("button", { name: "Close menu" }).click();
+      await expect(drawer).toBeHidden();
+    }
+    await expect(plans.getByTestId("session-type-row")).toHaveCount(1);
+    // price_cents 12000 must render as dollars, not raw cents.
+    await expect(plans.getByText("$120.00")).toBeVisible();
+    await expect(plans.getByTestId("plan-type")).toHaveText("Monthly · 4 classes, 5th free");
+    await expect(plans.getByTestId("plan-linked-classes")).toHaveText("1");
 
-    await page.getByTestId("session-type-new").click();
+    // Where each class's price comes from: the class fee, linked or Custom.
+    const classes = page.getByTestId("pricing-class-row");
+    await expect(classes).toHaveCount(2);
+    await expect(classes.nth(0).getByTestId("pricing-class-charged")).toHaveText("$120.00");
+    await expect(classes.nth(0).getByTestId("pricing-class-plan")).toHaveValue("st-e2e");
+    await expect(classes.nth(1).getByTestId("pricing-class-plan")).toHaveValue("");
+    await expect(classes.nth(1).getByText("No plan has this price.")).toBeVisible();
+    await expect(page.getByTestId("pricing-saved-overrides-empty")).toBeVisible();
+
+    await plans.getByTestId("session-type-new").click();
     await page.locator("#st-name").fill("Drop-in");
     await page.locator("#st-price").fill("25.50");
-    await page.locator("#st-period").selectOption("per_session");
+    // Per session is a later phase: shown, not selectable.
+    await expect(page.locator("#st-plan-type option[value=per_session]")).toBeDisabled();
     await page.getByTestId("session-type-save").click();
 
     await expect.poll(() => created.length).toBe(1);
     expect(created[0]).toMatchObject({
       name: "Drop-in",
       price_cents: 2550,
-      billing_period: "per_session",
+      plan_type: "monthly",
     });
     expect(
       errors,
-      `App console errors on session types: ${errors.join("\n")}`,
+      `App console errors on the pricing page: ${errors.join("\n")}`,
     ).toEqual([]);
   });
 
-  test("session types show-archived toggle lists archived rows and reactivates one", async ({
+  test("change a plan price previews the classes and applies from a future month", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubAdminBff(page);
+    const scheduled: Array<Record<string, unknown>> = [];
+    await page.route("**/api/v2/admin/pricing/price-changes/preview*", (route) => {
+      const url = new URL(route.request().url());
+      return fulfillJson(route, {
+        plan_id: "st-e2e",
+        plan_name: "Monthly Unlimited",
+        old_cents: 12000,
+        new_cents: Number(url.searchParams.get("new_price_cents")),
+        effective_period: url.searchParams.get("effective_period") ?? "2026-11",
+        earliest_period: "2026-11",
+        classes: [
+          {
+            session_id: "sess-linked",
+            title: "Juniors Tue/Thu",
+            students: 14,
+            old_cents: 12000,
+            new_cents: 13000,
+          },
+        ],
+        not_affected: [
+          {
+            session_id: "sess-custom",
+            title: "Competitive squad",
+            charged_cents: 12000,
+            students: 6,
+          },
+        ],
+        total_classes: 1,
+        total_students: 14,
+        old_monthly_cents: 168000,
+        new_monthly_cents: 182000,
+      });
+    });
+    await page.route("**/api/v2/admin/pricing/price-changes", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      scheduled.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        change_id: "ppc-e2e",
+        plan_id: "st-e2e",
+        plan_name: "Monthly Unlimited",
+        old_cents: 12000,
+        new_cents: 13000,
+        effective_period: "2026-12",
+        session_ids: ["sess-linked"],
+        status: "scheduled",
+        created_by: "admin-e2e",
+        created_at: "2026-09-29T00:00:00Z",
+      });
+    });
+
+    await page.goto("/admin/pricing");
+    const card = page.getByTestId("pricing-change-price");
+    await expect(card).toBeVisible();
+    await card.getByTestId("pricing-price-change-plan").selectOption("st-e2e");
+    await card.getByTestId("pricing-price-change-price").fill("130");
+    await expect(card.getByTestId("pricing-price-change-summary")).toContainText(
+      "1 class, 14 students affected, from the November invoice",
+    );
+    await expect(card.getByTestId("pricing-price-change-not-affected")).toContainText(
+      "Competitive squad",
+    );
+    await card.getByTestId("pricing-price-change-month").selectOption("2026-12");
+    await expect(card.getByTestId("pricing-price-change-apply")).toHaveText(
+      "Apply from December",
+    );
+    await card.getByTestId("pricing-price-change-apply").click();
+
+    await expect.poll(() => scheduled.length).toBe(1);
+    expect(scheduled[0]).toEqual({
+      plan_id: "st-e2e",
+      new_price_cents: 13000,
+      effective_period: "2026-12",
+    });
+    expect(
+      errors,
+      `App console errors on change a plan price: ${errors.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  test("pricing plans show-archived toggle lists archived rows and reactivates one", async ({
     page,
   }) => {
     const errors = collectConsoleErrors(page);
@@ -1211,7 +2266,7 @@ test.describe("Rally admin shell", () => {
       return fulfillJson(route, { ...ARCHIVED_SESSION_TYPE_E2E, is_active: true });
     });
 
-    await page.goto("/admin/settings?panel=session-types");
+    await page.goto("/admin/pricing");
     // Archived rows are hidden by default.
     await expect(page.getByTestId("session-type-row")).toHaveCount(1);
     await expect(page.getByText("Retired Saturday Squad")).toHaveCount(0);
@@ -1237,11 +2292,11 @@ test.describe("Rally admin shell", () => {
     ).toEqual([]);
   });
 
-  test("session types archive confirm warns that enrollments keep billing", async ({
+  test("pricing plan archive confirm warns that enrollments keep billing", async ({
     page,
   }) => {
     await stubAdminBff(page);
-    await page.goto("/admin/settings?panel=session-types");
+    await page.goto("/admin/pricing");
     await expect(page.getByTestId("session-type-row")).toHaveCount(1);
 
     await page.getByRole("button", { name: "Archive", exact: true }).click();
@@ -1582,11 +2637,17 @@ test.describe("Rally admin shell", () => {
             },
       );
     });
-    page.on("dialog", (dialog) => void dialog.accept());
-
     await page.goto("/admin/sessions");
     await expect(page.getByTestId("admin-sessions")).toBeVisible();
-    await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+    // #838: the native confirm is gone; the Rally dialog's confirm is what
+    // actually fires the DELETE. #847: on phone this button lives behind the
+    // row's actions menu, so `clickRowAction` opens that first.
+    await clickRowAction(page, {
+      rowTitle: "Cancelable Session",
+      directLabel: "Cancel session Cancelable Session",
+      menuItemLabel: "Cancel session",
+    });
+    await page.getByTestId("confirm-action-submit").click();
 
     const banner = page.getByTestId("admin-sessions-cancel-error");
     await expect(banner).toBeVisible();
@@ -1600,15 +2661,22 @@ test.describe("Rally admin shell", () => {
     // The cancel FAILED, so the row must still be there. Without this, a future
     // optimistic update that removed the row and showed the error would pass.
     await expect(page.getByText("Cancelable Session")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Cancel session Cancelable Session" }),
-    ).toBeVisible();
+    await expectRowActionAvailable(page, {
+      rowTitle: "Cancelable Session",
+      directLabel: "Cancel session Cancelable Session",
+      menuItemLabel: "Cancel session",
+    });
 
     // Blank-message failure: exactly one "Could not cancel session".
     await banner.getByRole("button", { name: "Dismiss" }).click();
     await expect(banner).toBeHidden();
     failureMode = "blank";
-    await page.getByRole("button", { name: "Cancel session Cancelable Session" }).click();
+    await clickRowAction(page, {
+      rowTitle: "Cancelable Session",
+      directLabel: "Cancel session Cancelable Session",
+      menuItemLabel: "Cancel session",
+    });
+    await page.getByTestId("confirm-action-submit").click();
     await expect(banner.locator("p")).toHaveText("Could not cancel session.");
   });
 
@@ -1636,11 +2704,12 @@ test.describe("Rally admin shell", () => {
             },
       );
     });
-    page.on("dialog", (dialog) => void dialog.accept());
-
     await page.goto("/admin/sessions/some-session-id");
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
+    // #838: the page button opens the dialog; its confirm fires the DELETE.
+    // The dialog's confirm shares the label, so it is reached by test id.
     await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByTestId("confirm-action-submit").click();
 
     const banner = page.getByTestId("admin-session-cancel-error");
     await expect(banner).toBeVisible();
@@ -1654,6 +2723,7 @@ test.describe("Rally admin shell", () => {
     await expect(banner).toBeHidden();
     failureMode = "blank";
     await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByTestId("confirm-action-submit").click();
     await expect(banner.locator("p")).toHaveText("Could not cancel session.");
   });
 
@@ -1687,7 +2757,12 @@ test.describe("Rally admin shell", () => {
 
     await page.goto("/admin/sessions");
     await expect(page.getByTestId("admin-sessions")).toBeVisible();
-    await page.getByRole("button", { name: "Edit session Legacy No Days" }).click();
+    // #847: on phone Edit lives behind the row's actions menu.
+    await clickRowAction(page, {
+      rowTitle: "Legacy No Days",
+      directLabel: "Edit session Legacy No Days",
+      menuItemLabel: "Edit",
+    });
 
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
@@ -1787,6 +2862,47 @@ test.describe("Rally admin shell", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
     await expect(page.getByTestId("shell-back-button")).toHaveCount(0);
+  });
+
+  /**
+   * Issue #896: `NavRow` is the row of BOTH nav surfaces, so the fix
+   * (`min-h-touch lg:min-h-0`) has to be measured on both — a phone drawer
+   * row must clear the 44px touch minimum, and the desktop sidebar must keep
+   * the denser row #842 introduced to fit 17 rows above the 1280x900 fold.
+   * The spec branches on which surface is actually on screen, exactly as
+   * `openAdminNav` does, so it asserts the right thing in either project.
+   */
+  test("nav rows are touch-sized in the phone drawer and dense on desktop", async ({
+    page,
+  }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin");
+    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
+
+    const onPhone = await page.getByTestId("admin-open-drawer").isVisible();
+    const nav = await openAdminNav(page);
+    const rows = nav.locator('[data-testid^="admin-nav-"]');
+    await expect(rows.first()).toBeVisible();
+    const count = await rows.count();
+    expect(count).toBeGreaterThan(0);
+
+    // Counts are stubbed empty, so no badge arrives later to change a row's
+    // height; still settle on the first row's measured height before the
+    // loop rather than measuring mid-layout.
+    await expect
+      .poll(async () => (await rows.first().boundingBox())?.height ?? 0)
+      .toBeGreaterThan(0);
+
+    for (let index = 0; index < count; index += 1) {
+      const box = await rows.nth(index).boundingBox();
+      expect(box, `nav row ${index} has no box`).not.toBeNull();
+      const height = box?.height ?? 0;
+      if (onPhone) {
+        expect(height, `drawer row ${index} is under the 44px minimum`).toBeGreaterThanOrEqual(44);
+      } else {
+        expect(height, `sidebar row ${index} lost #842's density`).toBeLessThan(44);
+      }
+    }
   });
 
   test("admin, coach, and parent shells expose logout", async ({ context }) => {

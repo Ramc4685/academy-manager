@@ -28,11 +28,20 @@ supervisors only.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from fastapi import Depends, HTTPException
 
-from backend.v2.shared.auth.claims import AuthClaims, Role, get_auth_claims
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # Imported lazily on purpose: ``shared.auth.claims`` imports
+    # ``shared.http.errors``, which initialises this package. A module-scope
+    # import here closes that loop and breaks any process that touches
+    # ``shared.auth`` first (see #607). Every use below is an annotation, and
+    # this module has ``from __future__ import annotations``, so nothing needs
+    # these names at runtime. ``get_auth_claims`` *is* a runtime value, so the
+    # factories below import it locally when they are called — by which time
+    # ``shared.auth.claims`` is always fully initialised.
+    from backend.v2.shared.auth.claims import AuthClaims, Role
 
 Persona = Literal["coach", "parent", "admin", "student"]
 
@@ -78,6 +87,8 @@ def require_persona(persona: Persona) -> Callable[..., AuthClaims]:
     Returns the AuthClaims on success; raises 404 on persona mismatch.
     """
 
+    from backend.v2.shared.auth.claims import get_auth_claims
+
     async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
         if persona not in claims.roles:
             # 404, not 403: do not leak route existence.
@@ -97,6 +108,8 @@ def require_owner() -> Callable[..., Awaitable[AuthClaims]]:
     ``backend.v2.interfaces.admin.owner_gate.OWNER_ONLY_ROUTE_PATHS``.
     """
 
+    from backend.v2.shared.auth.claims import get_auth_claims
+
     async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
         if "owner" not in claims.roles:
             raise HTTPException(status_code=404, detail="Not found")
@@ -115,6 +128,8 @@ def require_coach_surface() -> Callable[..., Awaitable[AuthClaims]]:
     assigned) call :func:`is_coach_supervisor` on the returned claims.
     """
 
+    from backend.v2.shared.auth.claims import get_auth_claims
+
     async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
         if not any(role in claims.roles for role in COACH_SURFACE_ROLES):
             raise HTTPException(status_code=404, detail="Not found")
@@ -131,6 +146,8 @@ def require_coach_lead_surface() -> Callable[..., Awaitable[AuthClaims]]:
     lesson-plan authoring, roster edits, billing-enrollment moves, messages,
     announcements and feedback.
     """
+
+    from backend.v2.shared.auth.claims import get_auth_claims
 
     async def _dep(claims: AuthClaims = Depends(get_auth_claims)) -> AuthClaims:
         if "coach" not in claims.roles and not is_coach_supervisor(claims):

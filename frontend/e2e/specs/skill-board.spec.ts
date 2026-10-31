@@ -57,6 +57,27 @@ test.describe("coach skill board (mobile)", () => {
     await expect(editor).toHaveCount(0);
   });
 
+  test("a status legend names every state, so the board reads without colour", async ({
+    page,
+    mock,
+  }) => {
+    void mock;
+    await page.goto("/coach/sessions/s-today-1/progress");
+    const legend = page.getByTestId("skill-board-legend");
+    await expect(legend).toBeVisible();
+    for (const label of [
+      "Not started",
+      "Introduced",
+      "Learning",
+      "Practicing",
+      "Test ready",
+      "Passed",
+      "Needs review",
+    ]) {
+      await expect(legend).toContainText(label);
+    }
+  });
+
   test("by-skill mode lists students and opens the cell editor", async ({ page, mock }) => {
     void mock;
     await page.goto("/coach/sessions/s-today-1/progress");

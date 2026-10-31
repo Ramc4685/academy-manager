@@ -59,9 +59,11 @@ The two editable rows keep their current validation, endpoint and audit entry.
 | Grace days after due | editable | `academies.fees.grace_days` |
 | Late fee | editable, dollars | `academies.fees.late_fee_cents` |
 
-Both carry one shared note: **"Not applied automatically yet — these values are stored for
-when late fees ship."** This is the honest description of today's behaviour, and it is
-the whole reason the box does not silently lie.
+Both carry one shared note. It originally read "Not applied automatically yet". That became
+false when the hourly late-fee pass shipped (#803), and the note was corrected on 2026-09-25
+(money audit X4). It now says the fee is applied automatically, once per invoice, and that
+turning a fee on does not back-charge invoices already overdue. The source of truth for the
+wording is `LATE_FEE_NOTE` in `billing_rules.py`.
 
 ### Leaving and pausing
 

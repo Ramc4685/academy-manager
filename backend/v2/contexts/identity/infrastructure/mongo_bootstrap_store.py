@@ -58,54 +58,10 @@ class MongoTenantBootstrapStore:
         )
         return doc
 
-    async def ensure_academy_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        doc = await self._db.academy_settings.find_one_and_update(
-            {"academy_id": settings["academy_id"]},
-            {"$setOnInsert": settings},
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        return doc
-
-    async def ensure_billing_policy(self, policy: dict[str, Any]) -> dict[str, Any]:
-        doc = await self._db.billing_policies.find_one_and_update(
-            {"academy_id": policy["academy_id"]},
-            {"$setOnInsert": policy},
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        return doc
-
     async def ensure_waiver_template(self, waiver: dict[str, Any]) -> dict[str, Any]:
         doc = await self._db.waiver_templates.find_one_and_update(
             {"academy_id": waiver["academy_id"]},
             {"$setOnInsert": waiver},
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        return doc
-
-    async def ensure_default_roles(
-        self, academy_id: str, roles: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        # Tenant-owned collection name is `academy_roles` (see
-        # tests/test_no_raw_tenant_mongo_access.py canonical list).
-        result = []
-        for role in roles:
-            doc = await self._db.academy_roles.find_one_and_update(
-                {"academy_id": academy_id, "role": role["role"]},
-                {"$setOnInsert": role},
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
-            )
-            result.append(doc)
-        return result
-
-    async def ensure_feature_flags(self, flags: dict[str, Any]) -> dict[str, Any]:
-        # Tenant-owned collection name is `academy_feature_flags`.
-        doc = await self._db.academy_feature_flags.find_one_and_update(
-            {"academy_id": flags["academy_id"]},
-            {"$setOnInsert": flags},
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )

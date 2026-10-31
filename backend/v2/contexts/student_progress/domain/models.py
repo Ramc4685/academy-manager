@@ -25,12 +25,15 @@ LevelUpStatus = Literal[
     # RECOMMENDED -> APPROVING/REJECTING before running any side effect, so a
     # second reviewer with the opposite decision loses the claim instead of
     # racing past a half-applied approval. Both are transient: the reviewer
-    # moves them on to APPROVED/REJECTED, or releases them back to
+    # moves them on to COMPLETED/REJECTED, or releases them back to
     # RECOMMENDED. They still count as an active recommendation everywhere
     # RECOMMENDED does. Any change here must be mirrored in the
     # ``level_up_recommendations`` status enum (migration 0176).
     "APPROVING",
     "REJECTING",
+    # Issue #786: kept as a legal value for historical rows written before
+    # the fix (the review use case writes "COMPLETED" on approve now); no
+    # code path writes "APPROVED" going forward.
     "APPROVED",
     "REJECTED",
     "COMPLETED",
@@ -41,9 +44,13 @@ LevelUpStatus = Literal[
 #: expires (see ``LevelUpRecommendationRepository.claim``).
 CLAIMABLE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING"})
 
-#: Statuses that hold a student's recommendation slot: a pending review, a
-#: claim in flight, or an approval already recorded.
-ACTIVE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING", "APPROVED"})
+#: Statuses that hold a student's recommendation slot: a pending review or a
+#: claim in flight. ``APPROVED`` is deliberately excluded (issue #786): the
+#: review use case now writes ``COMPLETED`` on approve, so a row never lands
+#: in ``APPROVED`` going forward. ``APPROVED`` stays a legal historical value
+#: (for any pre-existing rows) but must not block a student's next level-up
+#: forever, so it is not treated as active here.
+ACTIVE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING"})
 
 LevelProgressStatus = Literal["active", "completed", "withdrawn"]
 

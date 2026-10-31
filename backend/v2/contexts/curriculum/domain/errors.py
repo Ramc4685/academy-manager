@@ -20,6 +20,17 @@ class MultipleActivePrograms(DomainError):
     status_code = 409
 
 
+class ActiveProgramExists(DomainError):
+    """Only one active skill program per tenant is supported (#968).
+
+    Coach, digest and student surfaces resolve "the" program via
+    ``ResolveDefaultActiveProgram``, which fails on a second active one.
+    """
+
+    code = "Curriculum.ActiveProgramExists"
+    status_code = 409
+
+
 class LevelNotFound(DomainError):
     code = "Curriculum.LevelNotFound"
     status_code = 404

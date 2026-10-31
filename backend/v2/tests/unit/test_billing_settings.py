@@ -19,7 +19,9 @@ def test_default_is_fail_safe_all_discounts_off() -> None:
     assert settings.disclosure_text is None
     assert settings.disclosure_version is None
     assert settings.effective_at is None
-    assert settings.invoice_number_prefix == "BLNO"
+    # No hardcoded prefix: an academy with no prefix set must never mint a
+    # BLNO- number (Settings overhaul Phase 1 PR 2).
+    assert settings.invoice_number_prefix is None
 
 
 def test_requires_academy_id() -> None:

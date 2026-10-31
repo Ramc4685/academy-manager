@@ -46,6 +46,28 @@ class TenantScopedRepository:
         scoped["academy_id"] = current_academy_id()
         return scoped
 
+    @staticmethod
+    def _scope_update(update: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Re-stamp any ``academy_id`` an update body tries to write.
+
+        ``_insert_one`` already overwrites a document's ``academy_id`` with the
+        tenant in scope; an upsert's ``$setOnInsert`` (or a ``$set``) body is
+        the same write by another route. Repositories often dump a whole domain
+        object into it, and a domain object built from a boot-time academy id
+        would otherwise land the row in the wrong tenant (P1 hardcoded #1: the
+        scheduled pause-resume row). Pipeline updates (lists) pass through.
+        """
+        if not isinstance(update, Mapping):
+            return update
+        scoped: dict[str, Any] = dict(update)
+        for operator in ("$set", "$setOnInsert"):
+            body = scoped.get(operator)
+            if isinstance(body, Mapping) and "academy_id" in body:
+                stamped = dict(body)
+                stamped["academy_id"] = current_academy_id()
+                scoped[operator] = stamped
+        return scoped
+
     # --- query helpers ---
 
     async def _find_one(
@@ -117,7 +139,7 @@ class TenantScopedRepository:
         session: AsyncIOMotorClientSession | None = None,
     ):
         return await self.collection.update_one(
-            self._scoped(filter_), update, upsert=upsert, session=session
+            self._scoped(filter_), self._scope_update(update), upsert=upsert, session=session
         )
 
     async def _find_one_and_update(
@@ -133,7 +155,7 @@ class TenantScopedRepository:
 
         return await self.collection.find_one_and_update(
             self._scoped(filter_),
-            update,
+            self._scope_update(update),
             upsert=upsert,
             return_document=(
                 ReturnDocument.AFTER if return_document_after else ReturnDocument.BEFORE

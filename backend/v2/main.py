@@ -11,17 +11,19 @@ Run standalone::
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 import logging
 import os
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
@@ -43,16 +45,31 @@ from backend.v2.composition.digests import (
     compose_release_email_suppression,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
-    digest_window_open,
+    digest_due_date,
     missing_digest_claim_indexes,
     resolve_digest_schedule,
 )
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
 from backend.v2.composition.families import compose_admin_families
+from backend.v2.composition.families_crm import compose_admin_family_index
+from backend.v2.composition.family_record import compose_admin_family_record
+from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
 from backend.v2.composition.owner import compose_owner
+from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
+from backend.v2.composition.payment_methods import compose_admin_payment_methods
+from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
+from backend.v2.composition.pricing import compose_admin_pricing
+from backend.v2.composition.public_page_admin import compose_admin_public_page
+from backend.v2.composition.public_page_read import compose_public_page_read
+from backend.v2.composition.public_trial_requests import compose_public_trial_requests
 from backend.v2.composition.student import compose_student
+from backend.v2.composition.waitlist_offers import (
+    compose_decline_waitlist_offer,
+    compose_sweep_expired_waitlist_offers,
+)
+from backend.v2.composition.waiver_assignment import compose_admin_student_waivers
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsCommand,
@@ -64,6 +81,10 @@ from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_
     ReconcileStripePaymentIntents,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.infrastructure.house_academy import configure_house_academy
+from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
+    MongoAcademyBillingRegionReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -121,6 +142,10 @@ from backend.v2.contexts.identity.domain.models import (
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
+from backend.v2.contexts.identity.infrastructure.firebase_storage_media_store import (
+    FirebaseStorageMediaStore,
+    firebase_url_base,
+)
 from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import (
     FirebaseTokenVerifier,
 )
@@ -129,6 +154,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_login_audit_recorder import (
+    MongoLoginAuditRecorder,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
     MongoMagicLinkRepository,
@@ -164,6 +192,7 @@ from backend.v2.contexts.platform.governance.infrastructure.mongo_governance_sto
 from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
     MongoTenantLifecycleRepository,
 )
+from backend.v2.interfaces.admin.progress_routes import resolve_certificate_display
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
@@ -172,12 +201,14 @@ from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.interfaces.platform.router import router as platform_router
+from backend.v2.interfaces.public.router import router as public_router
 from backend.v2.interfaces.registration_routes import router as registration_router
 from backend.v2.interfaces.student.router import router as student_router
 from backend.v2.interfaces.unsubscribe_routes import router as unsubscribe_router
 from backend.v2.migrations import run_pending_migrations
 from backend.v2.shared.auth.middleware import LoadTenantOriginsCallable, TenancyMiddleware
 from backend.v2.shared.caching import TTLCache
+from backend.v2.shared.comms.email_brand import AcademyEmailBrands
 from backend.v2.shared.config import Settings, get_settings
 from backend.v2.shared.events import EventDispatcher, MongoOutbox
 from backend.v2.shared.http import (
@@ -195,25 +226,45 @@ from backend.v2.shared.observability import (
 )
 from backend.v2.shared.observability.health import build_health_report
 from backend.v2.shared.observability.ops_alerts import (
+    capture_exception,
     capture_message,
     cron_checkin,
     handle_scheduler_job_event,
+    warn_if_ops_alert_email_missing,
 )
 from backend.v2.shared.observability.ops_digest import (
     INVOICE_GENERATION_JOB,
     JOB_STALE_AFTER,
+    OPS_DIGEST_HOUR,
+    accumulate_job_run,
     collect_ops_digest,
+    ops_digest_cycle,
     record_job_run,
     render_ops_digest,
     seed_job_heartbeats,
 )
 from backend.v2.shared.scheduling import job_lease
+from backend.v2.shared.scheduling.local_clock import (
+    MAX_ATTEMPTS as LOCAL_CLOCK_MAX_ATTEMPTS,
+)
+from backend.v2.shared.scheduling.local_clock import (
+    LocalDailyRunSummary,
+    LocalDailyTime,
+    run_daily_at_local_time,
+    seed_markers_from_legacy_heartbeats,
+)
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
 from backend.v2.shared.tenancy.origins import TenantOriginsResolver
 from backend.v2.shared.tenancy.resolver import (
+    PROXY_AUTH_HEADER,
     TenantResolutionError,
     TenantResolver,
+)
+from backend.v2.shared.time.academy_timezone import (
+    academy_clock_timezone,
+    academy_timezone_lookup,
+    resolve_academy_clock_timezone,
 )
 
 log = logging.getLogger(__name__)
@@ -224,9 +275,89 @@ log = logging.getLogger(__name__)
 #: ``max_runtime`` are minutes. Only the ids in ``settings.sentry_cron_jobs``
 #: actually check in — the rest are covered by the ops digest's stale-job
 #: section, whose thresholds live in ``ops_digest.JOB_STALE_AFTER``.
+#: The ``LOCAL_DAILY_JOBS`` entries are hourly crontabs (Settings Phase 4):
+#: they check in on every tick, including the ticks where no academy is due,
+#: so a monitor never expects a once-a-day check-in and never reports a miss
+#: for an hour that had nothing to do.
+#: Academy-local hour the past-due reminder sweep runs (issue #774). Morning,
+#: not midnight: a reminder that lands at 9am local is read the same day.
+_PAST_DUE_REMINDER_LOCAL_HOUR = 9
+
+#: Settings Phase 4 (HARDCODED #8): the daily jobs that run at a fixed
+#: wall-clock time, now on EACH ACADEMY's clock (``academies.timezone``, else
+#: ``LEGACY_FALLBACK_TIMEZONE``). Each ticks hourly at the minute below and
+#: runs once per academy-local date once the local time reaches the target
+#: (``shared/scheduling/local_clock.py``). The times are the old
+#: scheduler-zone cron times, so an academy on the production scheduler zone
+#: (BLNO) fires exactly when it did before. The hourly ``minute=`` in
+#: ``_lifespan`` must equal each target's minute.
+LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
+    "process_scheduled_resume_actions": LocalDailyTime(2, 0),
+    "expire_makeup_requests": LocalDailyTime(2, 30),
+    "expire_due_holds": LocalDailyTime(2, 45),
+    "generate_monthly_invoices": LocalDailyTime(3, 0),
+    "send_hold_reminders": LocalDailyTime(4, 0),
+    "send_win_back_notices": LocalDailyTime(4, 30),
+    "create_trial_follow_ups": LocalDailyTime(4, 50),
+    "send_owner_daily_brief": LocalDailyTime(7, 30),
+    "send_past_due_reminders": LocalDailyTime(_PAST_DUE_REMINDER_LOCAL_HOUR, 20),
+    # Evening, so a coach's mistaken tap can be undone the same day.
+    "auto_approve_level_ups": LocalDailyTime(18, 30),
+}
+
+#: Per-local-day claim budget for the jobs whose body is NOT safe to repeat
+#: (default ``local_clock.MAX_ATTEMPTS``). The owner brief records no
+#: per-recipient send, so a re-run after a failure, a crash or a deploy that
+#: cancels it mid-send would mail the owners already sent: it gets one claim
+#: per academy-local day, and a failed day is reported, not retried.
+LOCAL_DAILY_JOB_MAX_ATTEMPTS: dict[str, int] = {"send_owner_daily_brief": 1}
+
+#: Local daily jobs whose OLD cron ticked every hour (doing its work at one
+#: hour), so an old heartbeat proves "old code was alive", not "it ran":
+#: the cutover seed only trusts one at or after the local target.
+LEGACY_HOURLY_LOCAL_JOBS: frozenset[str] = frozenset({"send_past_due_reminders"})
+
+
+async def run_local_daily_job(
+    db: Any,
+    job: str,
+    *,
+    academy_ids: Sequence[str],
+    zone_for: Callable[[str], Awaitable[str]],
+    run: Callable[[str, datetime], Awaitable[None]],
+    now: datetime,
+    worker_id: str,
+) -> LocalDailyRunSummary:
+    """One hourly tick of a ``LOCAL_DAILY_JOBS`` job across ``academy_ids``.
+
+    First marks today done for any academy the OLD fixed-hour cron already
+    covered today (a rolling deploy can leave an old machine running the job
+    after this one booted), then runs the job per academy on its own clock.
+    """
+    await seed_markers_from_legacy_heartbeats(
+        db,
+        schedules={job: LOCAL_DAILY_JOBS[job]},
+        academy_ids=academy_ids,
+        zone_for=zone_for,
+        now=now,
+        legacy_hourly_jobs=LEGACY_HOURLY_LOCAL_JOBS,
+    )
+    return await run_daily_at_local_time(
+        db=db,
+        job=job,
+        at=LOCAL_DAILY_JOBS[job],
+        academy_ids=academy_ids,
+        zone_for=zone_for,
+        run=run,
+        now=now,
+        worker_id=worker_id,
+        max_attempts=LOCAL_DAILY_JOB_MAX_ATTEMPTS.get(job, LOCAL_CLOCK_MAX_ATTEMPTS),
+    )
+
+
 SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     "process_scheduled_resume_actions": {
-        "schedule": {"type": "crontab", "value": "0 2 * * *"},
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -236,7 +367,16 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "max_runtime": 30,
     },
     "expire_makeup_requests": {
-        "schedule": {"type": "crontab", "value": "30 2 * * *"},
+        "schedule": {"type": "crontab", "value": "30 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # Issue #828: releases waitlist offers nobody confirmed inside the
+    # three-day window and hands the seat to the next family. Hourly and
+    # offset from the cancellation sweep at :15, so the seats that sweep
+    # frees are already on the waitlist when this one runs.
+    "sweep_expired_waitlist_offers": {
+        "schedule": {"type": "crontab", "value": "35 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -250,13 +390,18 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 10,
         "max_runtime": 10,
     },
+    "send_past_due_reminders": {
+        "schedule": {"type": "crontab", "value": "20 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
     "process_dunning_retries": {
         "schedule": {"type": "interval", "value": 60, "unit": "minute"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
     "generate_monthly_invoices": {
-        "schedule": {"type": "crontab", "value": "0 3 * * *"},
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
         "checkin_margin": 60,
         "max_runtime": 60,
     },
@@ -275,18 +420,26 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 60,
         "max_runtime": 30,
     },
+    # Issue #776: the owner's daily brief. Registered here (and in
+    # ``ops_digest.JOB_STALE_AFTER``) so a brief that silently stops firing is
+    # reported; add the id to ``SENTRY_CRON_JOBS`` to also check in to Sentry.
+    "send_owner_daily_brief": {
+        "schedule": {"type": "crontab", "value": "30 * * * *"},
+        "checkin_margin": 60,
+        "max_runtime": 30,
+    },
     # Issue #697 — departures design contract §3.9/§4.3: the hold reminder
     # MUST run daily (not monthly — a monthly cron that misses a tick skips
     # a whole month), and expiry alongside it. Timed after the makeup-request
     # sweep so a fresh day's admin actions (Return, Drop) have a chance to
     # settle before the sweep claims anything.
     "expire_due_holds": {
-        "schedule": {"type": "crontab", "value": "45 2 * * *"},
+        "schedule": {"type": "crontab", "value": "45 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
     "send_hold_reminders": {
-        "schedule": {"type": "crontab", "value": "0 4 * * *"},
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -299,8 +452,33 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 10,
         "max_runtime": 10,
     },
+    # Issue #778: win-back outreach at 30/60/90 days after departure. Daily,
+    # like the hold reminders above — a monthly cron would miss a family
+    # whose milestone fell on a day it didn't run, and idempotency is per
+    # (student, milestone) rather than per calendar tick, so an extra run
+    # never double-sends.
+    "send_win_back_notices": {
+        "schedule": {"type": "crontab", "value": "30 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # Roadmap L3c: one "Trial passed, no registration" follow-up per trial
+    # marked Came whose class was 7+ days ago. Daily; idempotent per trial
+    # (unique source_key, migration 0201), so an extra run creates nothing.
+    "create_trial_follow_ups": {
+        "schedule": {"type": "crontab", "value": "50 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },  # Tap-to-master: queued level-ups on levels without owner approval land
+    # once a day. Idempotent: an approved recommendation is never pending again.
+    "auto_approve_level_ups": {
+        "schedule": {"type": "crontab", "value": "30 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
 }
 assert SCHEDULED_JOB_MONITORS.keys() == JOB_STALE_AFTER.keys()
+assert set(LOCAL_DAILY_JOBS) <= SCHEDULED_JOB_MONITORS.keys()
 
 
 async def _verify_email_credentials(sender: Any) -> bool | None:
@@ -334,11 +512,51 @@ async def _verify_email_credentials(sender: Any) -> bool | None:
     return ok
 
 
+# Issue #752: how long shutdown lets an in-flight scheduled job finish before
+# the scheduler cancels it. Must stay comfortably under backend/fly.toml's
+# kill_timeout (30s), which also has to cover request draining.
+SCHEDULER_DRAIN_TIMEOUT_SECONDS = 10.0
+
+
+async def _drain_scheduler(scheduler: Any, *, drain_seconds: float) -> None:
+    """Let in-flight scheduled jobs finish before the scheduler tears them down.
+
+    Fly replaces the machine on every deploy, and a deploy that overlaps the
+    10-minute Stripe reconcile used to cut the job off mid-flight. APScheduler's
+    ``AsyncIOExecutor.shutdown`` ignores its ``wait`` argument (it cancels every
+    pending future unconditionally), so ``shutdown(wait=True)`` would change
+    nothing — the wait has to happen here, before shutdown.
+
+    Bounded by ``drain_seconds`` so a stuck job cannot hold the machine past Fly's
+    kill timeout, and never raises: this runs in the lifespan's ``finally``,
+    where an exception would strand the Mongo client and the outbox dispatcher.
+    """
+    try:
+        scheduler.pause()
+        pending = {
+            future
+            for executor in getattr(scheduler, "_executors", {}).values()
+            for future in set(getattr(executor, "_pending_futures", ()))
+            if not future.done()
+        }
+        if not pending:
+            return
+        log.info("scheduler_drain_started", extra={"in_flight": len(pending)})
+        _, still_running = await asyncio.wait(pending, timeout=drain_seconds)
+        if still_running:
+            # Left to shutdown's cancellation below; the resulting
+            # CancelledError is no longer reported as a job failure.
+            log.warning("scheduler_drain_timed_out", extra={"in_flight": len(still_running)})
+    except Exception:
+        log.warning("scheduler_drain_failed", exc_info=True)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging()
     log.info("Starting v2 app in env=%s", settings.env)
+    warn_if_ops_alert_email_missing(settings)
 
     client = AsyncIOMotorClient(settings.mongo_url)
     db = client[settings.mongo_db]
@@ -359,6 +577,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.idempotency_store = idempotency_store
 
     runtime_academy_id = _runtime_academy_id(settings)
+    # Scheduler loops walk the real academies; only single_academy mode adds
+    # its primary as a fallback (row 24: no phantom "default-academy").
+    scheduler_fallback_academy_id = _scheduler_fallback_academy_id(settings)
 
     # Identity wiring — needed by TenancyMiddleware for token verification
     # and membership validation (ADR-0007).
@@ -387,6 +608,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         users=users_repo,
         memberships=membership_repo,
         platform_roles=platform_role_repo,
+        # Real sign-ins on the audit trail (#468); deduped per token so one
+        # session is one row, not one row per request.
+        login_audit=MongoLoginAuditRecorder(db),
     )
     app.state.load_auth_claims = load_claims
     app.state.list_my_memberships = ListMyMembershipsUseCase(
@@ -414,9 +638,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         ),
         academies=MongoAcademyRepository(db),
         cooldown=MongoVerificationEmailCooldown(db),
+        brands=AcademyEmailBrands(MongoAcademyRepository(db)),
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
+        invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
     )
     # Public parent magic-link consume. Tenant is resolved per-request from the
     # host; the use case itself checks the token's academy binding against it.
@@ -476,6 +702,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tenancy_mode = settings.tenancy_mode
     app.state.primary_academy_id = settings.primary_academy_id
     app.state.default_academy_id = settings.default_academy_id
+    app.state.proxy_shared_secret = settings.proxy_shared_secret
     # Platform audit + governance services (issues #78, #79).
     # Constructed before TenantLifecycleService so the lifecycle service can
     # receive a recorder callable that emits one platform_audit_events row
@@ -499,6 +726,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tenant_lifecycle = TenantLifecycleService(
         tenants=MongoTenantLifecycleRepository(db),
         audit_recorder=_record_lifecycle_audit,
+        invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
     )
     app.state.platform_billing = build_platform_billing_use_cases(db)
 
@@ -534,6 +762,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.platform_connect_onboarding = StartConnectOnboarding(
         stripe=stripe_gw,
         connected_accounts=MongoConnectedAccountRepository(db),
+        academy_regions=MongoAcademyBillingRegionReader(db),
         # Callable, not a frozen list: an admin onboarding Stripe from their own
         # tenant host needs that host allowlisted too (same defect as parent
         # checkout). Tenant origins come from stored records, never the Host.
@@ -541,21 +770,57 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             *settings.cors_allowed_origins(),
             *current_tenant_origins(),
         ),
+        house_academy_id=settings.house_academy_id,
+    )
+
+    # Per-academy platform application fee (roadmap L9b) — platform BFF only.
+    from backend.v2.composition.platform_application_fee import (
+        compose_platform_application_fee,
+    )
+
+    app.state.platform_application_fee = compose_platform_application_fee(db)
+
+    # Per-academy invoice prefix (Settings overhaul P1 PR 2) — platform BFF only.
+    from backend.v2.composition.platform_billing_identity import (
+        compose_platform_billing_identity,
+    )
+
+    app.state.platform_billing_identity = compose_platform_billing_identity(db)
+
+    # Tenant data export + purge dry-run (roadmap L9d) — platform BFF only.
+    from backend.v2.composition.tenant_data_offboarding import (
+        compose_tenant_data_offboarding,
+    )
+
+    app.state.tenant_data_offboarding = compose_tenant_data_offboarding(
+        db, app.state.platform_audit
     )
 
     # Admin BFF wiring (Wave 3).
     app.state.admin = compose_admin(db, outbox, idempotency_store, stripe_gw)
+    # Coach-digest test send defaults to the academy-local date (Phase 4).
+    app.state.admin.get_academy_timezone = academy_timezone_lookup(db)
     # Departures / holds (issue #697; composition/admin.py is at its line
     # budget, so this attaches onto the already-built object rather than
     # being wired inside compose_admin).
     from backend.v2.composition.enrollment_holds import compose_enrollment_holds
 
-    _holds = compose_enrollment_holds(db, settings)
+    _holds = compose_enrollment_holds(db, settings, stripe=stripe_gw)
     app.state.admin.departure_policy = _holds.departure_policy
     app.state.admin.update_departure_policy = _holds.update_departure_policy
     app.state.admin.hold_enrollment = _holds.hold_enrollment
     app.state.admin.return_from_hold = _holds.return_from_hold
     app.state.enrollment_holds = _holds
+    # Issue #778: win-back outreach. Composed the same way — attached onto
+    # app.state rather than folded into compose_admin/compose_enrollment_holds,
+    # both of which are at their own wiring line budget.
+    from backend.v2.composition.win_back import compose_win_back
+
+    app.state.win_back = compose_win_back(db, settings)
+    # Roadmap L3c: the trial follow-up job's use case (composition/trial_follow_ups.py).
+    from backend.v2.composition.trial_follow_ups import compose_trial_follow_ups
+
+    app.state.trial_follow_ups = compose_trial_follow_ups(db)
     # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
     # which cannot see `_holds.hold_notifier` (built here, after
     # compose_admin runs) and is at its own wiring line-budget cap. Attach
@@ -584,10 +849,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ordinary cancel/drop and must reclaim a hold exactly like the route
     # does, so it needs the same broker.
     app.state.parent.promote_from_waitlist.set_seat_broker(_holds.seat_broker)
+    # Issue #782: and the ResumeEnrollment that promotion routes a paused
+    # head-of-queue student through — it reserves a seat of its own, so
+    # without this a class full only of holds refuses the resume instead of
+    # reclaiming one.
+    app.state.parent.promote_resume_enrollment.set_seat_broker(_holds.seat_broker)
     # ConfirmEnrollment (Billing.PaymentSucceeded -> new checkout enrollment)
     # is the same shape of seat demand as the routes above: a class full only
     # because of holds must reclaim, not force an auto-refund.
     app.state.parent.confirm_enrollment.set_seat_broker(_holds.seat_broker)
+    # X2 (owner decision 2026-09-25): a waitlist OFFER never reclaims a hold;
+    # a seatless offer takes its seat when the family confirms, through the
+    # broker, so the held family is only dropped for a family that said yes.
+    app.state.parent.confirm_waitlist_offer.set_seat_broker(_holds.seat_broker)
     # Issue #704 (second-review correction): the coach roster-add path
     # delegates to its own EditRosterAdd instance (composition/coach.py) —
     # a sixth try_reserve_seat call site the original structural wiring test
@@ -602,13 +876,47 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
+    # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back
+    # (and re-offer it); a bare status write leaked the seat. Same promote
+    # instance as the admin route and the sweep, so the SeatBroker applies.
+    app.state.admin.withdraw_waitlist_offer = compose_decline_waitlist_offer(
+        db, promote=app.state.admin.promote_from_waitlist
+    )
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
+    app.state.admin_payment_methods = compose_admin_payment_methods(db)
+    # Pricing page under Money (Settings overhaul PR 11b).
+    app.state.admin_pricing = compose_admin_pricing(db)
     app.state.admin_families = compose_admin_families(db)
+    # People CRM family index (spec §7 Phase 2; outside admin.py's budget).
+    app.state.admin_family_index = compose_admin_family_index(db)
+    app.state.admin_family_record = compose_admin_family_record(db)
+    # Public tenant page programs + publish switches (Lane B1).
+    app.state.admin_public_page = compose_admin_public_page(
+        db,
+        media_url_base=(
+            firebase_url_base(settings.media_storage_bucket)
+            if settings.media_storage_bucket
+            else None
+        ),
+        media_store=(
+            FirebaseStorageMediaStore(settings.media_storage_bucket)
+            if settings.media_storage_bucket
+            else None
+        ),
+    )
+    # Per-waiver status on the admin student page (Settings Phase 6).
+    app.state.admin_student_waivers = compose_admin_student_waivers(db)
+    # Anonymous public tenant page read (Lane B2), GET /api/v2/public/academy.
+    app.state.public_page = compose_public_page_read(db)
+    # Anonymous public trial request (Lane B4), POST /api/v2/public/trial-requests.
+    app.state.public_trial_requests = compose_public_trial_requests(db, settings)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)
+    # Automated late fees, driven from the dunning tick below (#552).
+    app.state.apply_late_fees = compose_apply_late_fees(db)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.
@@ -639,7 +947,37 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 return
             async with cron_checkin(name, schedule=SCHEDULED_JOB_MONITORS[name], settings=settings):
                 await body()
-            await record_job_run(db, name, {}, meaningful=False)
+            await record_job_run(
+                db, name, {}, meaningful=False, local_clock=name in LOCAL_DAILY_JOBS
+            )
+
+    # Settings Phase 4: the academy clock every per-academy daily job and
+    # digest runs on — ``academies.timezone``, else LEGACY_FALLBACK_TIMEZONE.
+    academy_zone_reader = academy_timezone_lookup(db)
+
+    async def _academy_clock(academy_id: str) -> str:
+        return await resolve_academy_clock_timezone(academy_zone_reader, academy_id)
+
+    async def _run_local_daily(
+        job: str, run: Callable[[str, datetime], Awaitable[None]]
+    ) -> LocalDailyRunSummary:
+        """One hourly tick of a ``LOCAL_DAILY_JOBS`` job across every academy.
+
+        ``run(academy_id, local_now)`` is called inside the academy's
+        ``tenant_scope``, at most once per academy-local date; one academy
+        raising is logged and reported and never stops the rest.
+        """
+        return await run_local_daily_job(
+            db,
+            job,
+            academy_ids=await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id
+            ),
+            zone_for=_academy_clock,
+            run=run,
+            now=datetime.now(UTC),
+            worker_id=scheduler_worker_id,
+        )
 
     async def _process_scheduled_resumes() -> None:
         await _run_leased_job(
@@ -656,19 +994,45 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "failed": 0,
             "academy_count": 0,
         }
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            runtime_academy_id,
-        ):
-            with tenant_scope(academy_id):
-                result = await app.state.admin.process_scheduled_resume_actions.execute(limit=100)
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            result = await app.state.admin.process_scheduled_resume_actions.execute(limit=100)
             totals["academy_count"] += 1
             totals["processed"] += result.processed
             totals["succeeded"] += result.succeeded
             totals["blocked_capacity"] += result.blocked_capacity
             totals["failed"] += result.failed
+
+        await _run_local_daily("process_scheduled_resume_actions", _for_academy)
         if totals["processed"]:
             log.info("scheduled_resume_actions_processed", extra=totals)
+
+    async def _sweep_expired_waitlist_offers() -> None:
+        await _run_leased_job(
+            "sweep_expired_waitlist_offers",
+            timedelta(minutes=5),
+            _sweep_expired_waitlist_offers_body,
+        )
+
+    async def _sweep_expired_waitlist_offers_body() -> None:
+        # Issue #828. A held seat that nobody claims is a seat the class runs
+        # short, so this is hourly rather than daily: the longest an expired
+        # offer can sit on a seat is one tick.
+        totals = {"expired": 0, "released": 0, "reoffered": 0, "academy_count": 0}
+        sweep = compose_sweep_expired_waitlist_offers(
+            db, settings, promote=app.state.admin.promote_from_waitlist
+        )
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db),
+            scheduler_fallback_academy_id,
+        ):
+            with tenant_scope(academy_id):
+                result = await sweep.execute()
+            totals["academy_count"] += 1
+            for key in ("expired", "released", "reoffered"):
+                totals[key] += result[key]
+        if totals["expired"]:
+            log.info("waitlist_offers_swept", extra=totals)
 
     async def _process_scheduled_cancellations() -> None:
         await _run_leased_job(
@@ -678,8 +1042,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     async def _process_scheduled_cancellations_body() -> None:
-        # Issue #675: month-end parent self-cancels. Hourly, so the flip lands
-        # within the hour after the academy-local month ends.
+        # Issue #675: month-end parent self-cancels, and #820's admin drops.
+        # Hourly, so the flip lands within the hour after the academy-local
+        # month ends.
         totals = {
             "processed": 0,
             "succeeded": 0,
@@ -689,17 +1054,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await app.state.admin.process_scheduled_cancellation_actions.execute(
                     limit=100
                 )
+                # Issue #820: the admin "drop at end of period" queue rides
+                # the SAME hourly tick and lease — it is the same month-end
+                # boundary, and a second cron job would be a second stale-job
+                # alert to wire for identical work. The two workers each filter
+                # strictly on their own `action_type`, so neither can retire
+                # the other's rows (the #675 worker contract).
+                admin_drops = app.state.admin.process_scheduled_admin_drop_actions
+                drops = await admin_drops.execute(limit=100) if admin_drops else None
             totals["academy_count"] += 1
-            totals["processed"] += result.processed
-            totals["succeeded"] += result.succeeded
-            totals["skipped_already_ended"] += result.skipped_already_ended
-            totals["failed"] += result.failed
+            totals["processed"] += result.processed + (drops.processed if drops else 0)
+            totals["succeeded"] += result.succeeded + (drops.succeeded if drops else 0)
+            totals["skipped_already_ended"] += result.skipped_already_ended + (
+                drops.skipped_already_ended if drops else 0
+            )
+            totals["failed"] += result.failed + (drops.failed if drops else 0)
         if totals["processed"]:
             log.info("scheduled_cancellation_actions_processed", extra=totals)
 
@@ -710,17 +1085,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async def _expire_makeup_requests_body() -> None:
         totals = {"academy_count": 0, "expired": 0}
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            runtime_academy_id,
-        ):
-            with tenant_scope(academy_id):
-                worker = getattr(app.state.admin, "expire_makeup_requests", None)
-                if worker is None:
-                    continue
-                expired = await worker.execute()
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            worker = getattr(app.state.admin, "expire_makeup_requests", None)
+            if worker is None:
+                return
+            expired = await worker.execute()
             totals["academy_count"] += 1
             totals["expired"] += expired
+
+        await _run_local_daily("expire_makeup_requests", _for_academy)
         if totals["expired"]:
             log.info("makeup_requests_expired", extra=totals)
 
@@ -735,16 +1109,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async def _expire_due_holds_body() -> None:
         totals = {"academy_count": 0, "processed": 0, "expired": 0, "failed": 0}
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            runtime_academy_id,
-        ):
-            with tenant_scope(academy_id):
-                result = await app.state.enrollment_holds.expire_due_holds.execute()
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            result = await app.state.enrollment_holds.expire_due_holds.execute()
             totals["academy_count"] += 1
             totals["processed"] += result.processed
             totals["expired"] += result.expired
             totals["failed"] += result.failed
+
+        await _run_local_daily("expire_due_holds", _for_academy)
         if totals["processed"]:
             log.info("enrollment_holds_expired", extra=totals)
 
@@ -759,7 +1132,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"academy_count": 0, "finalized": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 finalized = await app.state.enrollment_holds.process_stalled_reclaims.execute()
@@ -779,16 +1152,82 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # and skip a whole month for any hold whose anniversary fell on a
         # day the job did not run.
         totals = {"academy_count": 0, "sent": 0}
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            runtime_academy_id,
-        ):
-            with tenant_scope(academy_id):
-                sent = await app.state.enrollment_holds.send_hold_reminders.execute()
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            sent = await app.state.enrollment_holds.send_hold_reminders.execute()
             totals["academy_count"] += 1
             totals["sent"] += sent
+
+        await _run_local_daily("send_hold_reminders", _for_academy)
         if totals["sent"]:
             log.info("hold_reminders_sent", extra=totals)
+
+    async def _send_win_back_notices() -> None:
+        await _run_leased_job(
+            "send_win_back_notices", timedelta(minutes=5), _send_win_back_notices_body
+        )
+
+    async def _send_win_back_notices_body() -> None:
+        # Issue #778: daily, 30/60/90-day milestones — a monthly cron would
+        # send every family's outreach on the same calendar day and skip a
+        # whole month for any departure whose milestone anniversary fell on
+        # a day the job did not run (same reasoning as `send_hold_reminders`).
+        totals = {"academy_count": 0, "sent": 0}
+
+        async def _for_academy(academy_id: str, _local_now: datetime) -> None:
+            sent = await app.state.win_back.send_win_back_notices.execute(academy_id=academy_id)
+            totals["academy_count"] += 1
+            totals["sent"] += sent
+
+        await _run_local_daily("send_win_back_notices", _for_academy)
+        if totals["sent"]:
+            log.info("win_back_notices_sent", extra=totals)
+
+    async def _create_trial_follow_ups() -> None:
+        await _run_leased_job(
+            "create_trial_follow_ups", timedelta(minutes=5), _create_trial_follow_ups_body
+        )
+
+    async def _create_trial_follow_ups_body() -> None:
+        # Roadmap L3c. One academy failing never stops the others (the
+        # local-clock runner isolates, logs and reports each academy).
+        totals = {"academy_count": 0, "created": 0, "failed": 0}
+
+        async def _for_academy(academy_id: str, _local_now: datetime) -> None:
+            run = await app.state.trial_follow_ups.execute(academy_id=academy_id)
+            totals["academy_count"] += 1
+            totals["created"] += run.created
+
+        summary = await _run_local_daily("create_trial_follow_ups", _for_academy)
+        totals["failed"] = len(summary.failed)
+        if totals["created"] or totals["failed"]:
+            log.info("trial_follow_ups_created", extra=totals)
+
+    async def _auto_approve_level_ups() -> None:
+        await _run_leased_job(
+            "auto_approve_level_ups", timedelta(minutes=5), _auto_approve_level_ups_body
+        )
+
+    async def _auto_approve_level_ups_body() -> None:
+        totals = {"academy_count": 0, "approved": 0, "needs_owner": 0, "skipped": 0, "failed": 0}
+        admin = app.state.admin
+        if admin.student_progress is None:
+            return
+
+        async def _display_for(rec_id: str) -> dict[str, object]:
+            return await resolve_certificate_display(rec_id, admin)
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            run = await admin.student_progress.auto_approve_level_ups.execute(_display_for)
+            totals["academy_count"] += 1
+            totals["approved"] += run.approved
+            totals["needs_owner"] += run.needs_owner
+            totals["skipped"] += run.skipped
+
+        summary = await _run_local_daily("auto_approve_level_ups", _for_academy)
+        totals["failed"] = len(summary.failed)
+        if totals["approved"] or totals["failed"]:
+            log.info("auto_level_ups_approved", extra=totals)
 
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
@@ -806,7 +1245,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals = {"processed": 0, "failed": 0, "quarantined": 0}
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             processor = stripe_webhook_processors.get(academy_id)
             if processor is None:
@@ -850,7 +1289,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
                 result = await ReconcileStripePaymentIntents(
@@ -886,12 +1325,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "notifications_sent": 0,
             "notifications_failed": 0,
             "autopay_disabled": 0,
+            "late_fees_applied": 0,
         }
         for academy_id in await _scheduler_academy_ids(
             MongoAcademyRepository(db),
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
             with tenant_scope(academy_id):
+                # Late fees run BEFORE the retries: the fee raises
+                # balance_due_cents, so the dunning notice this same tick may
+                # send quotes the new total (#552). Failures are logged, never
+                # fatal — a late fee must not cost an academy its retries.
+                late_fees = getattr(app.state, "apply_late_fees", None)
+                if late_fees is not None:
+                    try:
+                        fee_result = await late_fees.execute(academy_id=academy_id)
+                    except Exception:
+                        log.exception("late_fee_pass_failed", extra={"academy_id": academy_id})
+                    else:
+                        totals["late_fees_applied"] += int(fee_result.applied)
                 worker = getattr(app.state.admin, "process_dunning_retries", None)
                 if worker is None:
                     log.warning(
@@ -917,8 +1369,49 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "autopay_disabled",
             ):
                 totals[key] += int(getattr(result, key, 0) or 0)
-        if totals["processed"] or totals["dunned"] or totals["autopay_disabled"]:
+        if (
+            totals["processed"]
+            or totals["dunned"]
+            or totals["autopay_disabled"]
+            or totals["late_fees_applied"]
+        ):
             log.info("dunning_retries_processed", extra=totals)
+
+    async def _send_past_due_reminders() -> None:
+        await _run_leased_job(
+            "send_past_due_reminders", timedelta(minutes=10), _send_past_due_reminders_body
+        )
+
+    async def _send_past_due_reminders_body() -> None:
+        """Issue #774: the due+N reminder sweep, one academy-local day at a time.
+
+        Hourly tick rather than a single fixed-hour cron, and the calendar date
+        comes from EACH ACADEMY's timezone: the acceptance criteria say
+        "academy timezone", and a scheduler-timezone cron would mail an academy
+        on the other side of the date line on the wrong local day. The sweep
+        runs once per academy-local day, from the first tick at or after
+        ``_PAST_DUE_REMINDER_LOCAL_HOUR``:20 local (Settings Phase 4: a missed
+        09:20 tick now catches up later that day instead of losing it, and one
+        academy failing no longer stops the rest). The offsets themselves come
+        from Settings -> Billing rules, and an empty list sends nothing.
+        """
+        totals = {"academy_count": 0, "considered": 0, "sent": 0, "already_sent": 0, "failed": 0}
+
+        async def _for_academy(_academy_id: str, local_now: datetime) -> None:
+            billing_settings = await MongoBillingSettingsRepository(db).get()
+            result = await app.state.admin.send_past_due_reminders.execute(
+                today=local_now.date(),
+                reminder_days=billing_settings.reminder_days,
+            )
+            totals["academy_count"] += 1
+            totals["considered"] += result.considered
+            totals["sent"] += result.sent
+            totals["already_sent"] += result.already_sent
+            totals["failed"] += result.failed
+
+        await _run_local_daily("send_past_due_reminders", _for_academy)
+        if totals["sent"] or totals["failed"]:
+            log.info("past_due_reminders_processed", extra=totals)
 
     async def _generate_monthly_invoices() -> None:
         # 30-minute TTL: a full generation run walks every active enrollment in
@@ -929,17 +1422,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     async def _generate_monthly_invoices_body() -> None:
-        # Daily tick. The per-academy gate and catch-up rules live in
-        # _run_monthly_invoice_generation (module level, directly testable).
-        #
-        # NOTE: billing_day is interpreted in the scheduler timezone
-        # (settings.scheduler_tz), NOT each academy's local timezone — same
-        # tradeoff as the coach/parent digest hour above.
-        now = datetime.now(scheduler.timezone)  # type: ignore[union-attr]
-        academy_ids = await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            runtime_academy_id,
-        )
+        # Hourly tick; each academy generates once per academy-local day from
+        # 03:00 local (LOCAL_DAILY_JOBS). The per-academy gate and catch-up
+        # rules live in _run_monthly_invoice_generation (module level,
+        # directly testable). Settings Phase 4: it is handed the ACADEMY-LOCAL
+        # now, so billing_day and the period are read on the academy's own
+        # calendar, not the scheduler zone's.
 
         async def _get_billing_settings() -> Any:
             return await MongoBillingSettingsRepository(db).get()
@@ -954,14 +1442,39 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # did before and nothing is emailed.
         send_invoices = getattr(app.state.admin, "send_generated_invoices", None)
 
-        totals = await _run_monthly_invoice_generation(
-            db=db,
-            academy_ids=academy_ids,
-            get_billing_settings=_get_billing_settings,
-            generate=_generate,
-            now=now,
-            send_invoices=send_invoices,
-        )
+        totals: dict[str, int] = {}
+        periods: list[str] = []
+
+        async def _for_academy(academy_id: str, local_now: datetime) -> None:
+            # Settings overhaul PR 26: once a scheduled plan price change's
+            # month has started, move the linked class fees and the plan price
+            # together (links stay current, the class editor shows the fee
+            # charged). Charges do not depend on it (every charge path already
+            # reads the month's price), so a failure is logged and never
+            # blocks generation.
+            try:
+                await app.state.admin_pricing.apply_due_price_changes.execute(
+                    academy_id=academy_id, period=local_now.strftime("%Y-%m")
+                )
+            except Exception:
+                log.exception("plan_price_changes_apply_failed academy=%s", academy_id)
+            academy_totals = await _run_monthly_invoice_generation(
+                db=db,
+                academy_ids=[academy_id],
+                get_billing_settings=_get_billing_settings,
+                generate=_generate,
+                now=local_now,
+                send_invoices=send_invoices,
+            )
+            for key, value in academy_totals.items():
+                totals[key] = totals.get(key, 0) + value
+            periods.append(local_now.strftime("%Y-%m"))
+
+        await _run_local_daily("generate_monthly_invoices", _for_academy)
+        if not periods:
+            # No academy reached its local 03:00 on this tick: the leased
+            # wrapper's heartbeat is the whole record.
+            return
         # Job-level record for the daily ops digest (issue #428), kept here in
         # the job wrapper rather than inside _run_monthly_invoice_generation so
         # that helper stays a pure, injectable unit. It is complementary to the
@@ -971,27 +1484,33 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         #
         # `academy_count` counts only academies that actually attempted
         # generation this tick, which is exactly the "meaningful" bar: on the
-        # ~29 days a month when nothing is due, record a heartbeat only
-        # (`meaningful=False`) instead of overwriting the last real run's counts
-        # with zeros — those counts are the signal the digest exists to surface.
-        record: dict[str, Any] = {key: value for key, value in totals.items() if key != "created"}
+        # ~29 days a month when nothing is due, record nothing here (the leased
+        # wrapper writes the heartbeat) instead of overwriting the last real
+        # run's counts with zeros — those counts are the signal the digest
+        # exists to surface. A tick that only emailed (issue #430's retry path:
+        # generation was already recorded, but invoices were still undelivered)
+        # is meaningful too — otherwise a month-long email outage would be
+        # invisible in the digest on all 29 days that did not generate.
+        if not (
+            totals["academy_count"]
+            or totals["invoices_emailed"]
+            or totals["invoice_autopay_notices_sent"]
+            or totals["invoice_emails_failed"]
+        ):
+            return
+        counts = {key: value for key, value in totals.items() if key != "created"}
         # Match the log line's `created_count` naming (#440) so the email and
         # the structured log read the same.
-        record["created_count"] = totals["created"]
-        record["period"] = now.strftime("%Y-%m")
-        # A tick that only emailed (issue #430's retry path: generation was
-        # already recorded, but invoices were still undelivered) is meaningful
-        # too — otherwise a month-long email outage would be invisible in the
-        # digest on all 29 days that did not generate.
-        await record_job_run(
+        counts["created_count"] = totals["created"]
+        # Settings Phase 4: academies generate on separate hourly ticks, so
+        # the counts are summed over the ops-digest cycle rather than replaced
+        # per tick (a later academy's tick must not hide BLNO's generation).
+        await accumulate_job_run(
             db,
             INVOICE_GENERATION_JOB,
-            record,
-            meaningful=bool(
-                totals["academy_count"]
-                or totals["invoices_emailed"]
-                or totals["invoice_emails_failed"]
-            ),
+            counts,
+            cycle=ops_digest_cycle(datetime.now(scheduler.timezone)),  # type: ignore[union-attr]
+            period=max(periods),
         )
 
     async def _send_ops_digest() -> None:
@@ -1042,6 +1561,51 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.error("ops_digest_send_failed", extra=extra)
             capture_message(f"Ops digest send failed: {extra['failed_reason']}")
 
+    async def _send_owner_daily_brief() -> None:
+        await _run_leased_job(
+            "send_owner_daily_brief", timedelta(minutes=30), _send_owner_daily_brief_body
+        )
+
+    async def _send_owner_daily_brief_body() -> None:
+        # Issue #776: the academy-owner counterpart to the engineering ops
+        # digest above. Deliberately a second job rather than extra sections on
+        # the ops digest — different audience, different content, and the
+        # channel that reports "email is broken" keeps its own recipient.
+        #
+        # One brief per academy, scoped to that academy's rows and sent to its
+        # active owners (composition/owner_brief.py). The house academy (BLNO)
+        # keeps OWNER_BRIEF_EMAIL / OPS_ALERT_EMAIL as its recipient when set;
+        # no other academy's brief ever goes to those addresses.
+        #
+        # The 30-minute lease plus the once-per-local-day run marker are what
+        # stop the 2026-09-02 hourly-resend class of bug: two app instances,
+        # or two hourly ticks, send one brief per academy per day, not two.
+        # Settings Phase 4: each academy's brief goes out at 07:30 on ITS
+        # clock, stamped with its local now (the subject's date label). It
+        # gets ONE claim per academy-local day (LOCAL_DAILY_JOB_MAX_ATTEMPTS):
+        # a brief that failed, crashed or was cancelled by a deploy mid-send
+        # is reported and not retried, since a retry could re-send to owners
+        # already sent.
+        totals = dict.fromkeys(
+            ("academies", "sent", "send_failed", "skipped_no_recipient", "failed"), 0
+        )
+
+        async def _for_academy(academy_id: str, local_now: datetime) -> None:
+            summary = await send_owner_daily_briefs(
+                db,
+                sender=app.state.ops_digest_sender,
+                academy_ids=[academy_id],
+                house_academy_id=settings.house_academy_id or runtime_academy_id,
+                override_email=settings.owner_brief_email or settings.ops_alert_email,
+                now=local_now,
+            )
+            for key in totals:
+                totals[key] += int(getattr(summary, key, 0) or 0)
+
+        await _run_local_daily("send_owner_daily_brief", _for_academy)
+        if totals["academies"]:
+            log.info("owner_briefs_run", extra=totals)
+
     async def _send_coach_daily_digests() -> None:
         await _run_leased_job(
             "send_coach_daily_digests", timedelta(minutes=10), _send_coach_daily_digests_body
@@ -1049,19 +1613,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async def _send_coach_daily_digests_body() -> None:
         # Hourly tick. The job runs every hour and only sends for academies whose
-        # *effective* digest hour matches the current scheduler-TZ hour. The env
-        # vars (settings.coach_digest_enabled/hour) are now deprecated defaults:
-        # they only apply until an admin saves per-academy values, so existing
-        # deployments keep their original single daily send with no behaviour
-        # change. Idempotency is preserved by the existing per-(academy, coach,
-        # date) try_claim — re-running the same hour sends nothing.
+        # *effective* digest hour has been reached on the academy's own clock.
+        # The env vars (settings.coach_digest_enabled/hour) are deprecated
+        # defaults: they only apply until an admin saves per-academy values, so
+        # existing deployments keep their original single daily send with no
+        # behaviour change. Idempotency is preserved by the existing
+        # per-(academy, coach, date) try_claim — re-running the same hour sends
+        # nothing.
         #
-        # NOTE: ``coach_digest_hour`` is interpreted in the scheduler timezone
-        # (settings.scheduler_tz), NOT each academy's local timezone. Honouring
-        # the academy's own TZ is explicit future work.
-        now = datetime.now(scheduler.timezone)
-        current_hour = now.hour
-        on_date = now.date()
+        # Settings Phase 4: ``coach_digest_hour`` and ``digest_date`` are read
+        # on EACH ACADEMY's clock (``academies.timezone``, else
+        # LEGACY_FALLBACK_TIMEZONE), see ``digest_due_date``; one academy
+        # failing is reported and never stops the rest.
+        now = datetime.now(UTC)
         academy_repo = MongoAcademyRepository(db)
         totals = {
             "academy_count": 0,
@@ -1070,52 +1634,55 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "skipped_empty": 0,
             "failed": 0,
             "already_claimed": 0,
+            "failed_academies": 0,
         }
         for academy_id in await _scheduler_academy_ids(
             academy_repo,
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
-            # Read the raw notifications subdoc so an *unset* override falls back
-            # to the env default (key present but False is a deliberate opt-out).
-            doc = await academy_repo.find_by_id(academy_id)
-            notifs = (doc or {}).get("notifications") or {}
-            schedule = resolve_digest_schedule(
-                academy_enabled=notifs.get("coach_digest_enabled"),
-                academy_hour=notifs.get("coach_digest_hour"),
-                env_enabled=settings.coach_digest_enabled,
-                env_hour=settings.coach_digest_hour,
-            )
-            # `>=`, not `==`: the digest hour OPENS the window rather than
-            # being the only chance. With an exact match each academy got one
-            # tick a day, so a Resend outage or a deploy spanning that single
-            # hour lost the whole day's digest and the retry ladder added by
-            # #435/PR #489 could never fire — there was no later tick to fire
-            # on (issue #542). Later ticks are cheap: `try_claim` runs BEFORE
-            # plan generation, so an already-sent recipient costs one lookup.
-            # The claim is guarded by that pre-insert lookup
-            # (`digest_claim.claim_digest_send`) as well as by the unique index,
-            # so a `sent` row can never be re-claimed even when the index is
-            # missing — which it was on 2026-09-02, when this `>=` window
-            # re-sent every digest hourly (migrations 0125/0148 never ran in
-            # prod). The window closes on its own at midnight, when
-            # `digest_date` rolls over.
-            if not digest_window_open(schedule, current_hour):
-                continue
-            with tenant_scope(academy_id):
-                result = await app.state.coach_digest.execute(
-                    SendCoachDailyDigestCommand(
-                        academy_id=academy_id,
-                        digest_date=on_date,
-                        admin_cc_enabled=bool(notifs.get("daily_digest_to_admin", False)),
-                    )
+            try:
+                # Read the raw notifications subdoc so an *unset* override falls
+                # back to the env default (key present but False is a deliberate
+                # opt-out).
+                doc = await academy_repo.find_by_id(academy_id)
+                notifs = (doc or {}).get("notifications") or {}
+                schedule = resolve_digest_schedule(
+                    academy_enabled=notifs.get("coach_digest_enabled"),
+                    academy_hour=notifs.get("coach_digest_hour"),
+                    env_enabled=settings.coach_digest_enabled,
+                    env_hour=settings.coach_digest_hour,
                 )
+                # `>=`, not `==` (``digest_window_open``): the digest hour OPENS
+                # the window rather than being the only chance, so a Resend
+                # outage or a deploy spanning that hour does not lose the day
+                # (issue #542). A `sent` claim is never re-claimed, even with
+                # the unique index missing (the 2026-09-02 hourly resend). The
+                # window closes at local midnight, when `digest_date` rolls.
+                on_date = digest_due_date(
+                    schedule, now, academy_clock_timezone((doc or {}).get("timezone"))
+                )
+                if on_date is None:
+                    continue
+                with tenant_scope(academy_id):
+                    result = await app.state.coach_digest.execute(
+                        SendCoachDailyDigestCommand(
+                            academy_id=academy_id,
+                            digest_date=on_date,
+                            admin_cc_enabled=bool(notifs.get("daily_digest_to_admin", False)),
+                        )
+                    )
+            except Exception as exc:
+                totals["failed_academies"] += 1
+                log.exception("coach_daily_digest_academy_failed academy=%s", academy_id)
+                capture_exception(exc)
+                continue
             totals["academy_count"] += 1
             totals["coaches"] += result.total_coaches
             totals["sent"] += result.sent
             totals["skipped_empty"] += result.skipped_empty
             totals["failed"] += result.failed
             totals["already_claimed"] += result.already_claimed
-        if totals["coaches"]:
+        if totals["coaches"] or totals["failed_academies"]:
             log.info("coach_daily_digests_processed", extra=totals)
 
     async def _send_parent_daily_digests() -> None:
@@ -1125,17 +1692,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async def _send_parent_daily_digests_body() -> None:
         # Hourly tick, mirroring _send_coach_daily_digests: only sends for
-        # academies whose *effective* parent-digest hour matches the current
-        # scheduler-TZ hour. The env vars (settings.parent_digest_enabled/hour)
-        # are deprecated defaults that apply only until an admin saves per-academy
-        # values. Idempotency is the per-(academy, parent, date) try_claim, so a
-        # re-run within the same hour sends nothing.
-        #
-        # NOTE: ``parent_digest_hour`` is interpreted in the scheduler timezone
-        # (settings.scheduler_tz), NOT each academy's local timezone.
-        now = datetime.now(scheduler.timezone)  # type: ignore[union-attr]
-        current_hour = now.hour
-        on_date = now.date()
+        # academies whose *effective* parent-digest hour has been reached on
+        # the academy's own clock (Settings Phase 4, ``digest_due_date``). The
+        # env vars (settings.parent_digest_enabled/hour) are deprecated defaults
+        # that apply only until an admin saves per-academy values. Idempotency
+        # is the per-(academy, parent, date) try_claim, so a re-run within the
+        # same day sends nothing. ``digest_date`` is the academy-local date the
+        # CRM Messages thread reads (parent_digest_sends.digest_date).
+        now = datetime.now(UTC)
         academy_repo = MongoAcademyRepository(db)
         totals = {
             "academy_count": 0,
@@ -1144,51 +1708,63 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "skipped_empty": 0,
             "failed": 0,
             "already_claimed": 0,
+            "failed_academies": 0,
         }
         for academy_id in await _scheduler_academy_ids(
             academy_repo,
-            runtime_academy_id,
+            scheduler_fallback_academy_id,
         ):
-            doc = await academy_repo.find_by_id(academy_id)
-            notifs = (doc or {}).get("notifications") or {}
-            schedule = resolve_digest_schedule(
-                academy_enabled=notifs.get("parent_digest_enabled"),
-                academy_hour=notifs.get("parent_digest_hour"),
-                env_enabled=settings.parent_digest_enabled,
-                env_hour=settings.parent_digest_hour,
-            )
-            # `>=`, not `==`: the digest hour OPENS the window rather than
-            # being the only chance. With an exact match each academy got one
-            # tick a day, so a Resend outage or a deploy spanning that single
-            # hour lost the whole day's digest and the retry ladder added by
-            # #435/PR #489 could never fire — there was no later tick to fire
-            # on (issue #542). Later ticks are cheap: `try_claim` runs BEFORE
-            # plan generation, so an already-sent recipient costs one lookup.
-            # The claim is guarded by that pre-insert lookup
-            # (`digest_claim.claim_digest_send`) as well as by the unique index,
-            # so a `sent` row can never be re-claimed even when the index is
-            # missing — which it was on 2026-09-02, when this `>=` window
-            # re-sent every digest hourly (migrations 0125/0148 never ran in
-            # prod). The window closes on its own at midnight, when
-            # `digest_date` rolls over.
-            if not digest_window_open(schedule, current_hour):
-                continue
-            with tenant_scope(academy_id):
-                result = await app.state.parent_digest.execute(
-                    SendParentDailyDigestCommand(
-                        academy_id=academy_id,
-                        digest_date=on_date,
-                    )
+            try:
+                doc = await academy_repo.find_by_id(academy_id)
+                notifs = (doc or {}).get("notifications") or {}
+                schedule = resolve_digest_schedule(
+                    academy_enabled=notifs.get("parent_digest_enabled"),
+                    academy_hour=notifs.get("parent_digest_hour"),
+                    env_enabled=settings.parent_digest_enabled,
+                    env_hour=settings.parent_digest_hour,
                 )
+                # Same `>=` window as the coach digest above (issue #542).
+                on_date = digest_due_date(
+                    schedule, now, academy_clock_timezone((doc or {}).get("timezone"))
+                )
+                if on_date is None:
+                    continue
+                # A fresh use case (and its provider) per academy per tick — NOT
+                # ``app.state.parent_digest`` — because ``_ParentDigestProvider``
+                # memoizes academy/program lookups and "today's" occurrences on
+                # itself (#531) for the lifetime of the instance it is called
+                # on. A process-lifetime singleton reused across every academy
+                # in this loop would leak academy A's cached occurrences/academy
+                # doc into academy B's run on the same tick (cross-tenant data
+                # in a parent's email) and would never notice an admin's later
+                # edit to the academy doc or default program. Composing here
+                # scopes the provider to one run, for one academy.
+                with tenant_scope(academy_id):
+                    result = await compose_send_parent_daily_digest(db).execute(
+                        SendParentDailyDigestCommand(
+                            academy_id=academy_id,
+                            digest_date=on_date,
+                        )
+                    )
+            except Exception as exc:
+                totals["failed_academies"] += 1
+                log.exception("parent_daily_digest_academy_failed academy=%s", academy_id)
+                capture_exception(exc)
+                continue
             totals["academy_count"] += 1
             totals["parents"] += result.total_parents
             totals["sent"] += result.sent
             totals["skipped_empty"] += result.skipped_empty
             totals["failed"] += result.failed
             totals["already_claimed"] += result.already_claimed
-        if totals["parents"]:
+        if totals["parents"] or totals["failed_academies"]:
             log.info("parent_daily_digests_processed", extra=totals)
 
+    # settings.scheduler_tz is now only the trigger zone for the jobs that are
+    # genuinely platform-wide: the engineering ops digest (one cross-academy
+    # email to the operator at 07:00). Every per-academy daily job in
+    # LOCAL_DAILY_JOBS ticks hourly in UTC and decides per academy on the
+    # academy's own clock; the interval jobs have no wall-clock time at all.
     scheduler = AsyncIOScheduler(
         timezone=settings.scheduler_tz,
         # APScheduler's default misfire_grace_time is 1 second, so any event-loop
@@ -1201,8 +1777,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.add_job(
         _process_scheduled_resumes,
         "cron",
-        hour=2,
-        minute=0,
+        minute=LOCAL_DAILY_JOBS["process_scheduled_resume_actions"].minute,
+        timezone=UTC,
         id="process_scheduled_resume_actions",
         replace_existing=True,
         # Parity with the other jobs: prevent a slow run from overlapping the
@@ -1219,10 +1795,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_instances=1,
     )
     scheduler.add_job(
+        _sweep_expired_waitlist_offers,
+        "cron",
+        minute=35,
+        id="sweep_expired_waitlist_offers",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
         _expire_makeup_requests,
         "cron",
-        hour=2,
-        minute=30,
+        minute=LOCAL_DAILY_JOBS["expire_makeup_requests"].minute,
+        timezone=UTC,
         id="expire_makeup_requests",
         replace_existing=True,
         max_instances=1,
@@ -1236,8 +1820,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.add_job(
         _expire_due_holds,
         "cron",
-        hour=2,
-        minute=45,
+        minute=LOCAL_DAILY_JOBS["expire_due_holds"].minute,
+        timezone=UTC,
         id="expire_due_holds",
         replace_existing=True,
         max_instances=1,
@@ -1245,8 +1829,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.add_job(
         _send_hold_reminders,
         "cron",
-        hour=4,
-        minute=0,
+        minute=LOCAL_DAILY_JOBS["send_hold_reminders"].minute,
+        timezone=UTC,
         id="send_hold_reminders",
         replace_existing=True,
         max_instances=1,
@@ -1256,6 +1840,44 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "interval",
         minutes=15,
         id="process_stalled_hold_reclaims",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_win_back_notices,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_win_back_notices"].minute,
+        timezone=UTC,
+        id="send_win_back_notices",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _create_trial_follow_ups,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["create_trial_follow_ups"].minute,
+        timezone=UTC,
+        id="create_trial_follow_ups",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _auto_approve_level_ups,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["auto_approve_level_ups"].minute,
+        timezone=UTC,
+        id="auto_approve_level_ups",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Issue #774: hourly tick; each academy's sweep runs once per local day
+    # from 09:20 local (LOCAL_DAILY_JOBS), so one cron serves every timezone.
+    scheduler.add_job(
+        _send_past_due_reminders,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_past_due_reminders"].minute,
+        timezone=UTC,
+        id="send_past_due_reminders",
         replace_existing=True,
         max_instances=1,
     )
@@ -1283,8 +1905,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
-    # Automated monthly invoice generation (issue #288). Runs daily; each tick
-    # generates for any academy with an unfinished period — its billing_day has
+    # Automated monthly invoice generation (issue #288). Ticks hourly and runs
+    # once per academy-local day from 03:00 local (Settings Phase 4); each run
+    # generates for an academy with an unfinished period — its billing_day has
     # passed and no successful run is recorded yet, so a failed run self-heals
     # on the next tick (issue #431). The first autopay charge is NOT scheduled
     # here — it is already the attempt-0 rung of the
@@ -1294,8 +1917,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.add_job(
         _generate_monthly_invoices,
         "cron",
-        hour=3,
-        minute=0,
+        minute=LOCAL_DAILY_JOBS["generate_monthly_invoices"].minute,
+        timezone=UTC,
         id="generate_monthly_invoices",
         replace_existing=True,
         max_instances=1,
@@ -1305,8 +1928,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # env flag; the composed sender is still the stub unless email delivery is
     # explicitly on. The cron is now ALWAYS hourly: each tick the job resolves
     # the effective per-academy schedule and only sends for academies whose
-    # effective hour matches the current scheduler-TZ hour (env flag = deprecated
-    # default — ZERO behaviour change until an admin saves per-academy values).
+    # effective hour has been reached on the academy's own clock (env flag =
+    # deprecated default — ZERO behaviour change until an admin saves
+    # per-academy values).
     app.state.coach_digest = compose_send_coach_daily_digest(db)
     scheduler.add_job(
         _send_coach_daily_digests,
@@ -1318,10 +1942,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_instances=1,
     )
     # Parent daily digest — same hourly-tick + per-academy-effective-hour model as
-    # the coach digest above. Composed unconditionally so the per-academy override
-    # works regardless of the env flag; the composed sender is still the stub
-    # unless email delivery is explicitly on.
-    app.state.parent_digest = compose_send_parent_daily_digest(db)
+    # the coach digest above; composed fresh per academy per tick inside
+    # ``_send_parent_daily_digests_body`` (not stashed on ``app.state`` like the
+    # coach digest) because ``_ParentDigestProvider`` memoizes per-run state on
+    # itself and must not be shared across academies or across ticks (#531).
     scheduler.add_job(
         _send_parent_daily_digests,
         "cron",
@@ -1362,15 +1986,47 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.add_job(
         _send_ops_digest,
         "cron",
-        hour=7,
+        hour=OPS_DIGEST_HOUR,
         minute=0,
         id="send_ops_digest",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Issue #776: the owners' briefs, half an hour behind the ops digest so the
+    # two never contend for the same send window. Same gated send port; one
+    # brief per academy to its owners (the house academy keeps
+    # OWNER_BRIEF_EMAIL / OPS_ALERT_EMAIL when set).
+    scheduler.add_job(
+        _send_owner_daily_brief,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_owner_daily_brief"].minute,
+        timezone=UTC,
+        id="send_owner_daily_brief",
         replace_existing=True,
         max_instances=1,
     )
     # Job crashes and misfires previously died in APScheduler's own logger and
     # never reached Sentry (only the request path was instrumented).
     scheduler.add_listener(handle_scheduler_job_event, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
+    # Cutover to the academy-clock scheduler (Settings Phase 4): where the
+    # old fixed-hour cron already ran today, mark today done so a deploy after
+    # 07:30 does not send a second owner brief (and so on). Every tick repeats
+    # this check (run_local_daily_job) for an old machine still running during
+    # a rolling deploy; seed_job_heartbeats' boot stamp is marked as ours and
+    # never reads as "the old cron ran today".
+    try:
+        await seed_markers_from_legacy_heartbeats(
+            db,
+            schedules=LOCAL_DAILY_JOBS,
+            academy_ids=await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id
+            ),
+            zone_for=_academy_clock,
+            now=datetime.now(UTC),
+            legacy_hourly_jobs=LEGACY_HOURLY_LOCAL_JOBS,
+        )
+    except Exception:
+        log.warning("scheduler_run_marker_seed_failed", exc_info=True)
     # Boot-time heartbeat for every job without one, so the first ops digest
     # after a deploy (or in a fresh database) does not list every job whose
     # first tick is still ahead — itself included — as "never recorded".
@@ -1380,12 +2036,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
+        invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
     )
 
     try:
         yield
     finally:
         if scheduler is not None:
+            await _drain_scheduler(scheduler, drain_seconds=SCHEDULER_DRAIN_TIMEOUT_SECONDS)
             scheduler.shutdown(wait=False)
         await dispatcher.stop()
         client.close()
@@ -1570,9 +2228,11 @@ async def _run_monthly_invoice_generation(
         "repaired_orphan_keys": 0,
         "repaired_partial_invoices": 0,
         "failed_repair": 0,
+        "skipped_reviewed": 0,
         "invoices_emailed": 0,
         "invoice_emails_failed": 0,
         "invoice_emails_skipped_autopay": 0,
+        "invoice_autopay_notices_sent": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -1658,6 +2318,7 @@ async def _run_monthly_invoice_generation(
                     "repaired_orphan_keys",
                     "repaired_partial_invoices",
                     "failed_repair",
+                    "skipped_reviewed",
                 ):
                     totals[key] += int(getattr(result, key, 0) or 0)
             if ran_any:
@@ -1722,6 +2383,9 @@ async def _email_generated_invoices(
         ("invoices_emailed", "emailed"),
         ("invoice_emails_failed", "email_failed"),
         ("invoice_emails_skipped_autopay", "skipped_autopay"),
+        # Autopay parents get a pre-charge notice, not an invoice email; without
+        # this the digest showed "0 emailed" for a fully notified run.
+        ("invoice_autopay_notices_sent", "autopay_notified"),
     ):
         totals[total_key] += int(_outcome_count(outcome, outcome_key))
 
@@ -1781,11 +2445,12 @@ async def _scheduler_academy_ids(
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
-        title="Academy Manager API",
+        title="CourtMastr API",
         version="2.0.0",
         lifespan=_lifespan,
     )
     configure_error_tracking(settings)
+    configure_house_academy(settings.house_academy_id)
     configure_tracing(app)
     register_exception_handlers(app)
 
@@ -1834,6 +2499,8 @@ def create_app() -> FastAPI:
     app.include_router(magic_link_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
     app.include_router(email_webhook_router, prefix="/api/v2")
+    # Anonymous, host-resolved, rate limited (interfaces/public/__init__.py).
+    app.include_router(public_router, prefix="/api/v2")
     if settings.enable_platform_routes:
         app.include_router(platform_router, prefix="/api/v2")
     app.include_router(coach_router, prefix="/api/v2")
@@ -1848,6 +2515,18 @@ def create_app() -> FastAPI:
         app.include_router(owner_router, prefix="/api/v2")
 
     return app
+
+
+def _scheduler_fallback_academy_id(settings: Settings) -> str:
+    """The academy a scheduler loop runs even when ``academies`` lists none.
+
+    single_academy: the configured primary, so BLNO's jobs run exactly as
+    before. multi_academy: none; ``default_academy_id`` is a placeholder, not
+    a tenant, and looping it ran every job for a phantom academy (row 24).
+    """
+    if settings.tenancy_mode == "single_academy":
+        return _runtime_academy_id(settings)
+    return ""
 
 
 def _runtime_academy_id(settings: Settings) -> str:
@@ -1944,10 +2623,24 @@ def _build_request_tenant_resolver(app: FastAPI):
     primary_academy_id = getattr(app.state, "primary_academy_id", None)
     default_academy_id = getattr(app.state, "default_academy_id", None)
     resolver = getattr(app.state, "tenant_resolver", None)
+    proxy_secret = getattr(app.state, "proxy_shared_secret", None)
+
+    def _request_host(request: Request) -> str:
+        # The BFF proxy forwards the tenant's host in x-forwarded-host. With a
+        # proxy secret configured (required for production SaaS mode), only a
+        # request that presents it may choose the host that way; anyone
+        # calling the API directly is resolved by its real Host header, so a
+        # forged x-forwarded-host cannot pick another academy.
+        forwarded = request.headers.get("x-forwarded-host")
+        if forwarded and proxy_secret:
+            presented = request.headers.get(PROXY_AUTH_HEADER)
+            if presented is None or not hmac.compare_digest(presented, proxy_secret):
+                forwarded = None
+        return str(forwarded or request.headers.get("host", ""))
 
     async def _resolve(request):
         if saas_mode and resolver is not None:
-            host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+            host = _request_host(request)
             headers = dict(request.headers)
             try:
                 result = await resolver.resolve(host=host, headers=headers)

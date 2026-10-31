@@ -17,6 +17,9 @@ from backend.v2.composition.admin_registration_review import (
 from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, Student
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
+    AdminWaiverTemplateRecord,
+)
 from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     IncompleteApplication,
@@ -154,8 +157,10 @@ class InMemorySessions:
         self.sessions = {session.session_id: session for session in sessions}
         self.reserve_calls = 0
         self.release_calls = 0
+        self.get_calls = 0
 
     async def get(self, session_id: str) -> Session | None:
+        self.get_calls += 1
         return self.sessions.get(session_id)
 
     async def try_reserve_seat(self, session_id: str) -> bool:
@@ -681,6 +686,114 @@ async def test_pending_list_routes_ambiguous_legacy_child_to_manual_review() -> 
     assert rows[0].status == "MANUAL_REVIEW"
     detail = await review.detail("app-1")
     assert detail.status == "MANUAL_REVIEW"
+
+
+class CountingWaiverTemplateQuery:
+    """Spies on how many times the required waivers are fetched.
+
+    Real waiver-template lookups are Mongo reads; `list_pending()` must fetch
+    them once for the whole page, not once per application row.
+    """
+
+    def __init__(
+        self,
+        templates: AdminWaiverTemplateRecord | list[AdminWaiverTemplateRecord] | None,
+        *,
+        session_programs: dict[str, str] | None = None,
+    ) -> None:
+        if templates is None:
+            templates = []
+        self._templates = templates if isinstance(templates, list) else [templates]
+        self._session_programs = session_programs or {}
+        self.calls = 0
+
+    async def list_required_templates(self) -> list[AdminWaiverTemplateRecord]:
+        self.calls += 1
+        return self._templates
+
+    async def program_id_for_session(self, session_id: str | None) -> str | None:
+        return self._session_programs.get(session_id or "")
+
+
+@pytest.mark.asyncio
+async def test_pending_list_fetches_waiver_template_once_for_whole_page() -> None:
+    apps = [
+        _application(application_id="app-1", student_id=None),
+        _application(application_id="app-2", student_id=None),
+        _application(application_id="app-3", student_id=None),
+    ]
+    template = AdminWaiverTemplateRecord(
+        waiver_template_id="wt-1",
+        title="Registration Waiver",
+        body="...",
+        status="active",
+        required=True,
+        updated_at=NOW,
+    )
+    waiver_templates = CountingWaiverTemplateQuery(template)
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(apps),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        waiver_templates=waiver_templates,
+        clock=lambda: NOW,
+    )
+
+    rows = await review.list_pending()
+
+    assert len(rows) == 3
+    assert all(row.waiver_required for row in rows)
+    assert waiver_templates.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_list_names_the_requested_class_once_per_session() -> None:
+    """Issue #891: the queue row carries the class the family asked for.
+
+    Sessions are Mongo reads, so a page of applications that all want the same
+    class must resolve that class once, the way the waiver template already is.
+    """
+    apps = [
+        _application(application_id="app-1", student_id=None),
+        _application(application_id="app-2", student_id=None),
+        _application(application_id="app-3", session_id="sess-2", student_id=None),
+    ]
+    sessions = InMemorySessions([_session(), _second_session()])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(apps),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    rows = await review.list_pending()
+
+    assert [row.session_title for row in rows] == ["Junior A", "Junior A", "Junior B"]
+    assert sessions.get_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_pending_list_names_no_class_when_the_session_is_gone() -> None:
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(session_id="sess-missing", student_id=None)),
+        sessions=InMemorySessions([]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    rows = await review.list_pending()
+
+    assert len(rows) == 1
+    assert rows[0].session_title is None
 
 
 @pytest.mark.asyncio
@@ -1242,14 +1355,21 @@ async def test_approve_idempotent_replay_does_not_call_trial_conversion_again() 
 
 
 class RecordingRefunds:
-    def __init__(self, *, fail: bool = False) -> None:
+    """Mirrors the real adapter: it records the attempt either way, but only
+    reports ``True`` when money actually went back. ``issued=False`` models the
+    documented no-op branches (payment still pending/failed, already fully
+    refunded, zero-amount), which must not produce a "you were refunded" email."""
+
+    def __init__(self, *, fail: bool = False, issued: bool = True) -> None:
         self.calls: list[tuple[str, str]] = []
         self.fail = fail
+        self.issued = issued
 
-    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> None:
+    async def refund_registration_payment(self, *, payment_id: str, reason: str) -> bool:
         if self.fail:
             raise RuntimeError("stripe unavailable")
         self.calls.append((payment_id, reason))
+        return self.issued
 
 
 def _review_with_refunds(
@@ -1372,9 +1492,14 @@ async def test_registration_decline_refunds_only_refundable_payments(
     executor = _RecordingExecutor()
     adapter = RegistrationDeclineRefunds(payments=_StubPayments(payment), refunds=executor)
 
-    await adapter.refund_registration_payment(payment_id="pay-1", reason="registration_declined")
+    issued = await adapter.refund_registration_payment(
+        payment_id="pay-1", reason="registration_declined"
+    )
 
     assert executor.calls == ([("pay-1", "registration_declined")] if expect_refund else [])
+    # The return value is what the decline email believes, so it must track the
+    # real outcome rather than merely "a refund port was wired".
+    assert issued is expect_refund
 
 
 class _FakePaidPeriodResolver:
@@ -1531,7 +1656,8 @@ async def test_approval_survives_a_failing_welcome_email() -> None:
 class EnrollmentsKeyedById(InMemoryEnrollments):
     """Mirror Mongo: ``create_if_absent`` is keyed by enrollment_id, and a
     session/student pair may hold historical (cancelled) rows next to a live
-    one. ``find_for_session_student`` prefers the live row, like the writer."""
+    one. ``find_for_session_student`` prefers the live row, like the writer —
+    including ``held`` / ``reclaim_pending`` since #782."""
 
     def __init__(self, existing: list[Enrollment] | None = None) -> None:
         super().__init__()
@@ -1554,7 +1680,7 @@ class EnrollmentsKeyedById(InMemoryEnrollments):
         matches = [
             row for row in self.rows if (row.session_id, row.student_id) == (session_id, student_id)
         ]
-        for status in ("active", "paused"):
+        for status in ("active", "paused", "held", "reclaim_pending"):
             for row in matches:
                 if row.status == status:
                     return row
@@ -1633,6 +1759,91 @@ async def test_approve_still_rejects_when_a_paused_enrollment_exists_in_the_sess
 
     assert sessions.reserve_calls == 0
     assert enrollments.created == []
+
+
+@pytest.mark.parametrize("status", ["held", "reclaim_pending"])
+@pytest.mark.asyncio
+async def test_approve_rejects_when_a_held_enrollment_exists_in_the_session(
+    status: str,
+) -> None:
+    """Issue #782: a child on hold in this session is already enrolled in it.
+
+    The conflict set was the literal ``{"active", "paused"}``, which predates
+    ``held`` (#697) entirely — so a held row read as "no conflict" and approval
+    minted a SECOND active row for the same child in the same class. Worse, the
+    seat it reserved came through ``SeatBroker``, whose reclaim-on-demand takes
+    the longest-held hold in the session: the very hold being duplicated. The
+    child was dropped from their own seat to be seated in it again.
+
+    ``reclaim_pending`` is the same answer for a different reason — the row is
+    mid-reclaim and no admin surface may race a write against it (#697).
+    """
+    app = _application(student_id="student-1", application_id="app-2")
+    sessions = InMemorySessions([_session()])
+    held = Enrollment(
+        enrollment_id="enr-held",
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="student-1",
+        status=status,
+        registration_application_id="app-1",
+    )
+    enrollments = EnrollmentsKeyedById([held])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled"):
+        await review.approve(ApproveRegistrationCommand(application_id="app-2", actor_id="admin-1"))
+
+    # No second row, and above all no seat acquisition — an acquire here is
+    # what reclaims the child's own hold.
+    assert enrollments.created == []
+    assert sessions.reserve_calls == 0
+    assert [row.status for row in enrollments.rows] == [status]
+
+
+@pytest.mark.asyncio
+async def test_approve_returns_the_applications_own_held_row_from_hold() -> None:
+    """The same application's row went on hold, then approval was retried.
+
+    That is a return from hold, not a conflict: the row is reused in place and
+    no new seat is taken (it still holds one).
+    """
+    app = _application(student_id="student-1", application_id="app-1")
+    sessions = InMemorySessions([_session()])
+    held = Enrollment(
+        enrollment_id=stable_ulid("registration-enrollment", "app-1", "student-1", "sess-1"),
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="student-1",
+        status="held",
+        registration_application_id="app-1",
+    )
+    enrollments = EnrollmentsKeyedById([held])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.enrollment_id == held.enrollment_id
+    assert enrollments.created == []
+    assert sessions.reserve_calls == 0
 
 
 class _FullSessions(InMemorySessions):
@@ -1737,3 +1948,290 @@ async def test_approve_without_a_seat_broker_still_reports_the_session_full() ->
 
     with pytest.raises(ApplicationNotEditable, match="Selected session is full"):
         await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+
+# ---------------------------------------------------------------------------
+# Issue #776 — the family hears about the decision
+#
+# Approval already sent a welcome email (#613). Waitlisting and declining sent
+# nothing at all, and a decline moves money (the #514 refund), so the two
+# outcomes that most need explaining were the two that were silent.
+# ---------------------------------------------------------------------------
+
+
+class RecordingDecisionNotifier:
+    def __init__(self, fail: bool = False) -> None:
+        self.waitlisted: list[dict[str, object]] = []
+        self.declined: list[dict[str, object]] = []
+        self._fail = fail
+
+    async def registration_waitlisted(self, **kwargs: object) -> None:
+        if self._fail:
+            raise RuntimeError("mail provider down")
+        self.waitlisted.append(kwargs)
+
+    async def registration_declined(self, **kwargs: object) -> None:
+        if self._fail:
+            raise RuntimeError("mail provider down")
+        self.declined.append(kwargs)
+
+
+def _review_with_notifier(
+    apps: InMemoryApplications,
+    notifier: RecordingDecisionNotifier | None,
+    *,
+    refunds: RecordingRefunds | None = None,
+) -> AdminRegistrationReview:
+    return AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        refunds=refunds,
+        decision_notifier=notifier,
+        clock=lambda: NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_waitlist_emails_the_family_and_stamps_when_it_was_notified() -> None:
+    apps = InMemoryApplications(_application())
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier)
+
+    detail = await review.waitlist(
+        WaitlistRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="class full")
+    )
+
+    assert detail.status == "WAITLISTED"
+    assert len(notifier.waitlisted) == 1
+    sent = notifier.waitlisted[0]
+    assert sent["parent_email"] == "parent@example.com"
+    assert sent["session_id"] == "sess-1"
+    assert sent["student_name"] == "Sam Student"
+    assert apps.apps["app-1"].family_notified_at == NOW
+    assert detail.family_notified_at == NOW
+
+
+@pytest.mark.asyncio
+async def test_reject_emails_the_family_with_the_refund_note() -> None:
+    app = _application().model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier, refunds=RecordingRefunds())
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="too young")
+    )
+
+    assert detail.status == "DECLINED"
+    assert len(notifier.declined) == 1
+    sent = notifier.declined[0]
+    assert sent["reason"] == "too young"
+    # The parent paid at checkout, so the decline email must say the money is
+    # coming back — a bare "declined" after a charge reads as a lost payment.
+    assert sent["refund_issued"] is True
+    assert apps.apps["app-1"].family_notified_at == NOW
+
+
+@pytest.mark.asyncio
+async def test_reject_without_payment_says_no_refund_is_coming() -> None:
+    apps = InMemoryApplications(_application())
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier, refunds=RecordingRefunds())
+
+    await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="duplicate")
+    )
+
+    assert notifier.declined[0]["refund_issued"] is False
+
+
+@pytest.mark.asyncio
+async def test_reject_does_not_promise_a_refund_that_was_a_no_op() -> None:
+    """A payment that never captured (or was already fully refunded) makes the
+    refund port a documented no-op. The family must not be told their money is
+    on its way back — that would be a false statement about money."""
+    app = _application().model_copy(update={"payment_id": "pay-1"})
+    apps = InMemoryApplications(app)
+    notifier = RecordingDecisionNotifier()
+    review = _review_with_notifier(apps, notifier, refunds=RecordingRefunds(issued=False))
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="too young")
+    )
+
+    assert detail.status == "DECLINED"
+    assert notifier.declined[0]["refund_issued"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_family_email_never_undoes_the_decision() -> None:
+    """Best-effort, exactly like the #613 welcome and #612 roster alerts.
+
+    The decision is already committed when the email is attempted; a decline
+    that reported failure because Resend blipped would be retried against an
+    already-declined, already-refunded application.
+    """
+    apps = InMemoryApplications(_application().model_copy(update={"payment_id": "pay-1"}))
+    review = _review_with_notifier(
+        apps, RecordingDecisionNotifier(fail=True), refunds=RecordingRefunds()
+    )
+
+    detail = await review.reject(
+        RejectRegistrationCommand(application_id="app-1", actor_id="admin-1", reason="full")
+    )
+
+    assert detail.status == "DECLINED"
+    assert apps.apps["app-1"].status == "DECLINED"
+    # Nothing was sent, so nothing is stamped: the registrations tab must not
+    # claim the family was told when it was not.
+    assert apps.apps["app-1"].family_notified_at is None
+
+
+@pytest.mark.asyncio
+async def test_decisions_still_work_without_a_notifier_wired() -> None:
+    apps = InMemoryApplications(_application())
+    review = _review_with_notifier(apps, None)
+
+    detail = await review.waitlist(
+        WaitlistRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "WAITLISTED"
+    assert apps.apps["app-1"].family_notified_at is None
+
+
+def _waiver(template_id: str, title: str, **overrides: object) -> AdminWaiverTemplateRecord:
+    fields: dict[str, object] = {
+        "waiver_template_id": template_id,
+        "title": title,
+        "body": "...",
+        "status": "active",
+        "version": "1",
+        "required": True,
+        "updated_at": NOW,
+        "lineage_key": template_id,
+    }
+    fields.update(overrides)
+    return AdminWaiverTemplateRecord(**fields)  # type: ignore[arg-type]
+
+
+def _review_with_waivers(
+    apps: InMemoryApplications, waiver_templates: CountingWaiverTemplateQuery
+) -> AdminRegistrationReview:
+    return AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        waiver_templates=waiver_templates,
+        waiver_signatures=InMemoryWaiverSignatures(),
+        clock=lambda: NOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_with_unsigned_required_waiver_warns_and_does_not_block() -> None:
+    """Decision 9: staff approval never rejects over a missing waiver."""
+    app = _application(student_id="student-1")
+    queries = CountingWaiverTemplateQuery(_waiver("wt-liability", "Liability waiver"))
+    review = _review_with_waivers(InMemoryApplications(app), queries)
+
+    before = await review.detail("app-1")
+    assert before.waiver_required is True
+    assert before.waiver_satisfied is False
+    assert [w.title for w in before.unsigned_waivers] == ["Liability waiver"]
+
+    approved = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert approved.status == "APPROVED"
+    # The warning is still on the record after approval.
+    assert [w.title for w in approved.unsigned_waivers] == ["Liability waiver"]
+
+
+@pytest.mark.asyncio
+async def test_program_waiver_applies_only_to_a_class_in_that_program() -> None:
+    liability = _waiver("wt-liability", "Liability waiver")
+    photo = _waiver("wt-photo", "Photo consent", scope="programs", program_ids=["prog-juniors"])
+    app = _application(student_id="student-1")
+    in_program = CountingWaiverTemplateQuery(
+        [liability, photo], session_programs={"sess-1": "prog-juniors"}
+    )
+    other_program = CountingWaiverTemplateQuery(
+        [liability, photo], session_programs={"sess-1": "prog-adults"}
+    )
+    no_program = CountingWaiverTemplateQuery([liability, photo])
+
+    juniors = await _review_with_waivers(InMemoryApplications(app), in_program).detail("app-1")
+    adults = await _review_with_waivers(InMemoryApplications(app), other_program).detail("app-1")
+    ungrouped = await _review_with_waivers(InMemoryApplications(app), no_program).detail("app-1")
+
+    assert [w.title for w in juniors.unsigned_waivers] == ["Liability waiver", "Photo consent"]
+    assert [w.title for w in adults.unsigned_waivers] == ["Liability waiver"]
+    assert [w.title for w in ungrouped.unsigned_waivers] == ["Liability waiver"]
+
+
+@pytest.mark.asyncio
+async def test_waiver_is_satisfied_per_waiver_and_every_acceptance_becomes_a_signature() -> None:
+    liability = _waiver("wt-liability", "Liability waiver")
+    photo = _waiver("wt-photo", "Photo consent", scope="programs", program_ids=["prog-juniors"])
+    accepted_liability = WaiverAcceptance(
+        waiver_template_id="wt-liability",
+        waiver_version="1",
+        content_hash="h-l",
+        accepted_at=NOW,
+        lineage_key="wt-liability",
+    )
+    accepted_photo = WaiverAcceptance(
+        waiver_template_id="wt-photo",
+        waiver_version="1",
+        content_hash="h-p",
+        accepted_at=NOW,
+        lineage_key="wt-photo",
+    )
+    only_first = _application(student_id="student-1").model_copy(
+        update={"waiver_acceptance": accepted_liability}
+    )
+    both = _application(student_id="student-1").model_copy(
+        update={
+            "waiver_acceptance": accepted_liability,
+            "additional_waiver_acceptances": [accepted_photo],
+        }
+    )
+    queries = CountingWaiverTemplateQuery(
+        [liability, photo], session_programs={"sess-1": "prog-juniors"}
+    )
+
+    partial = await _review_with_waivers(InMemoryApplications(only_first), queries).detail("app-1")
+    assert [w.title for w in partial.unsigned_waivers] == ["Photo consent"]
+    assert partial.waiver_satisfied is False
+
+    signatures = InMemoryWaiverSignatures()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(both),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        waiver_templates=queries,
+        waiver_signatures=signatures,
+        clock=lambda: NOW,
+    )
+    approved = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert approved.waiver_satisfied is True
+    assert approved.unsigned_waivers == []
+    assert sorted(sig.waiver_template_id for sig in signatures.saved) == [
+        "wt-liability",
+        "wt-photo",
+    ]

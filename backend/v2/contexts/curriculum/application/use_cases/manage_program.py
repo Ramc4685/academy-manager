@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.curriculum.application.ports import ProgramRepository
 from backend.v2.contexts.curriculum.domain.errors import (
+    ActiveProgramExists,
     MultipleActivePrograms,
     NoActiveProgram,
 )
@@ -28,6 +29,14 @@ class CreateProgram:
         self._programs = programs
 
     async def execute(self, cmd: CreateProgramCommand) -> Program:
+        # One active program per tenant until the coach/digest/student
+        # surfaces take an explicit program_id (#968).
+        active = await self._programs.list_active()
+        if active:
+            raise ActiveProgramExists(
+                "This academy already has an active skill program",
+                program_id=active[0].program_id,
+            )
         now = datetime.now(UTC)
         program = Program(
             program_id=str(new_ulid()),

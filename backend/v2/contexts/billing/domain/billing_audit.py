@@ -49,6 +49,44 @@ BillingAuditAction = Literal[
     # (UpdateAcademyFeesUseCase writes no entry), so this is the trail for
     # them (spec 2026-09-07-billing-rules-design SS4.1).
     "billing_rules_changed",
+    # Unattended: the late-fee policy charged an overdue invoice the academy's
+    # configured fee (#552). Nobody clicked anything, so the trail is the only
+    # place the parent's extra charge can be explained from.
+    "late_fee_applied",
+    # Platform config, not money movement: a PLATFORM admin changed this
+    # academy's application fee (roadmap L9b), which changes how much of every
+    # future destination charge the platform keeps. Same actor/before/after
+    # trail as the other charge-routing settings.
+    "application_fee_changed",
+    # Platform config, not money movement: a PLATFORM admin changed this
+    # academy's invoice-number prefix (Settings overhaul Phase 1 PR 2). Only
+    # possible before the academy's first numbered invoice; the trail shows
+    # who chose the prefix parents see on every invoice.
+    "invoice_prefix_changed",
+    # Settings -> Billing rules -> Offline payments: the owner changed which
+    # offline methods (cash, check, Zelle...) the payment dialogs offer.
+    "payment_methods_changed",
+    # Settings overhaul Phase 1 PR 5 (money is owner-only): the owner changed
+    # one class's monthly fee. Every family on that class is charged the new
+    # amount from the next invoice, so the trail shows who changed it.
+    "session_fee_changed",
+    # Same PR: the owner changed the academy timezone, which moves the local
+    # midnight every billing month and due date is counted from.
+    "academy_timezone_changed",
+    # Pricing page (Settings overhaul PR 11b): the owner linked one class to
+    # a plan or marked it custom. A label, never an amount: the class fee is
+    # unchanged, but the trail shows who decided which plan a class uses.
+    "class_plan_link_changed",
+    # Same page: the owner ran "Link matching classes", which linked every
+    # undecided class to the one plan at its exact fee. One entry per run.
+    "class_plan_links_matched",
+    # Pricing page, change a plan price (Settings overhaul PR 26): the owner
+    # scheduled a new plan price from a future month, cancelled one before it
+    # started, or the scheduler moved the linked class fees and the plan price
+    # once the month began.
+    "plan_price_change_scheduled",
+    "plan_price_change_cancelled",
+    "plan_price_change_applied",
 ]
 
 

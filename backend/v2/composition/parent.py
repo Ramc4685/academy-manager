@@ -16,24 +16,41 @@ from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
-from backend.v2.composition.lifecycle_billing import compose_enrollment_billing_sync
+from backend.v2.composition.lifecycle_billing import (
+    build_autopay_status_gateway,
+    compose_enrollment_billing_sync,
+)
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.registration_decision_email import (
+    compose_registration_decision_notifier,
+)
 from backend.v2.composition.roster_notifications import compose_roster_notifier
+from backend.v2.composition.waitlist_offers import (
+    compose_confirm_waitlist_offer,
+    compose_decline_waitlist_offer,
+    compose_list_parent_waitlist,
+)
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
+    ConnectedAccountDirectory,
     StripeCheckoutSessionNotExpirable,
     StripeGateway,
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
     AddInvoiceLineCommand,
+)
+from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    application_fee_kwargs,
+    idempotency_key_with_fee,
 )
 from backend.v2.contexts.billing.application.use_cases.enroll_child_in_session_type import (
     CancelBillingEnrollment,
@@ -52,6 +69,11 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     StartSubscriptionCheckoutCommand,
     _success_url_with_checkout_session_placeholder,
 )
+from backend.v2.contexts.billing.application.use_cases.parent_invoices import (
+    GetParentInvoice,
+    ListParentInvoices,
+    parent_owns_invoice,
+)
 from backend.v2.contexts.billing.application.use_cases.quote_enrollment import (
     QuoteEnrollment,
     QuoteEnrollmentCommand,
@@ -67,8 +89,13 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import (
     StartCheckoutCommand,
     StartCheckoutResult,
 )
-from backend.v2.contexts.billing.domain.errors import InvoicePayLinkUnavailable, QuoteExpired
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine
+from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+from backend.v2.contexts.billing.domain.errors import (
+    AutopayClassUnpriced,
+    InvoicePayLinkUnavailable,
+    QuoteExpired,
+)
+from backend.v2.contexts.billing.domain.plan_price_change import next_period
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
 )
@@ -81,6 +108,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_connected_account_directory import (
+    MongoConnectedAccountDirectory,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
 )
@@ -89,9 +119,17 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    stored_stripe_account,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
+    MongoPaymentDisputeRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
+    MongoClassFeeResolver,
+    class_fee_cents_for_period,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_session_type_repo import (
     MongoSessionTypeRepository,
@@ -117,6 +155,12 @@ from backend.v2.contexts.enrollment.application.use_cases.absence_notices import
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     UpdateAdminStudentCommand,
+)
+from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    ResumeEnrollment,
+)
+from backend.v2.contexts.enrollment.application.use_cases.assigned_occurrences import (
+    ResolveAssignedOccurrences,
 )
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
     ConfirmEnrollment,
@@ -148,14 +192,26 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     ListParentTrialRequests,
     SubmitTrialRequest,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+    DeclineWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
 from backend.v2.contexts.enrollment.domain.lifecycle import (
     LifecycleEnrollment,
     PersonLifecycleState,
     derive_lifecycle,
 )
+from backend.v2.contexts.enrollment.domain.models import (
+    DROPPED_SPELLINGS,
+    TERMINAL,
+    canonical_status,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_billing_deferral_repo import (
+    MongoBillingDeferralRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
@@ -205,6 +261,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_waitlist_repo import (
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
+from backend.v2.contexts.identity.domain.public_page import PUBLIC_PAGE_FIELD, PublicPageSettings
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -221,6 +278,7 @@ from backend.v2.contexts.onboarding.domain.errors import (
     IncompleteApplication,
     MissingSelectedSession,
 )
+from backend.v2.contexts.onboarding.domain.models import Waiver
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
@@ -247,7 +305,10 @@ from backend.v2.shared.tenancy import (
     current_tenant_origins,
     tenant_scope,
 )
-from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
+from backend.v2.shared.time.academy_timezone import (
+    academy_timezone_lookup,
+    resolve_session_timezone,
+)
 
 from .event_handlers import HandlerDeps, install_handlers
 
@@ -295,6 +356,12 @@ class ParentComposition:
     # a route. It must be exposed here so main.py can reach it after
     # compose_enrollment_holds runs.
     promote_from_waitlist: PromoteFromWaitlist
+    #: Issue #782: the ``ResumeEnrollment`` instance the promotion above routes
+    #: a paused head-of-queue student through. Exposed for the same reason
+    #: ``promote_from_waitlist`` is — it reserves a seat, so main.py must hand
+    #: it the SeatBroker once ``compose_enrollment_holds`` has run, or a class
+    #: full only of holds refuses the resume instead of reclaiming one.
+    promote_resume_enrollment: ResumeEnrollment
     # Issue #704: ConfirmEnrollment (Billing.PaymentSucceeded -> new checkout
     # enrollment) is a sixth un-brokered seat-reservation site, same reason
     # as promote_from_waitlist above — exposed so main.py can wire the
@@ -323,6 +390,11 @@ class ParentComposition:
     start_balance_payment_for_parent: object
     get_child_schedule: object
     get_parent_home: object  # callable
+    # #828: claiming a held seat inside the three-day offer window.
+    confirm_waitlist_offer: ConfirmWaitlistOffer
+    # X2: the family's own offers (the email's landing page) and "no thanks".
+    decline_waitlist_offer: DeclineWaitlistOffer
+    list_parent_waitlist: object  # callable(parent_id)
     enroll_child: object
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
@@ -340,6 +412,12 @@ class ParentComposition:
     # cannot place a non-default field after a defaulted one.
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
+    # Waivers to sign for a chosen class + whether any is program-scoped
+    # (Settings Phase 6): callable(session_id | None) -> (list[Waiver], bool).
+    get_registration_waivers: object = None
+    # #1038: approved make-up / trial target ids -> class facts + academy
+    # timezone, for the parent Requests screen.
+    resolve_assigned_classes: object = None
 
 
 class _MongoTransactionRunner:
@@ -410,10 +488,15 @@ class _StripeCheckoutAttemptRetirement:
         payments: Any,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         unretired: Any = None,
+        stripe_account: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
         self._stripe = stripe
         self._payments = payments
         self._now = clock
+        # The Stripe account the academy's checkouts run on (None = platform).
+        # A direct-charge session lives on the connected account and can only
+        # be expired there. Unset -> the platform, as before.
+        self._stripe_account = stripe_account
         # Worklist for sessions that stayed payable because Stripe could not be
         # reached. Optional so the older two-argument construction in tests
         # keeps working; when it is None the failure is still logged loudly.
@@ -444,7 +527,8 @@ class _StripeCheckoutAttemptRetirement:
         # away as another benign "already paid" expiry failure.
         expire = self._stripe.expire_checkout_session
         try:
-            await expire(checkout_session_id)
+            account = await self._stripe_account() if self._stripe_account else None
+            await expire(checkout_session_id, **({"stripe_account": account} if account else {}))
         except StripeCheckoutSessionNotExpirable as exc:
             # The ONLY benign failure: Stripe will not expire a session that is
             # already complete or expired, which is precisely the race this call
@@ -600,7 +684,12 @@ def compose_parent_webhook_handler(
         transaction_runner=transaction_runner,
         enrollment_identity=_EnrollmentBillingIdentity(),
         invoice_processing=invoice_processing,
-        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            connected_accounts_repo,
+            academy_id,
+            directory=MongoConnectedAccountDirectory(db),
+        ),
+        payment_disputes=MongoPaymentDisputeRepository(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -608,6 +697,7 @@ def compose_parent_webhook_handler(
         else False
         if settings.env == "test"
         else None,
+        tenancy_mode=settings.tenancy_mode,
     )
 
 
@@ -743,6 +833,8 @@ def compose_parent(
         outbox=outbox,
         transaction_runner=transaction_runner,
         academy_id=request_academy_id,
+        connected_accounts=connected_accounts_repo,
+        settings=billing_settings_repo,
     )
 
     handle_webhook = HandleWebhookEvent(
@@ -760,7 +852,12 @@ def compose_parent(
         transaction_runner=transaction_runner,
         enrollment_identity=enrollment_identity,
         invoice_processing=invoice_processing,
-        connected_accounts=_ConnectAccountResolver(connected_accounts_repo, academy_id),
+        connected_accounts=_ConnectAccountResolver(
+            connected_accounts_repo,
+            academy_id,
+            directory=MongoConnectedAccountDirectory(db),
+        ),
+        payment_disputes=MongoPaymentDisputeRepository(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -768,12 +865,15 @@ def compose_parent(
         else False
         if settings.env == "test"
         else None,
+        tenancy_mode=settings.tenancy_mode,
     )
     quote_enrollment_uc = QuoteEnrollment(
         sessions=payments_repo,
         snapshots=payments_repo,
         occurrences=payments_repo,
         clock=clock,
+        academy_timezone=academy_timezone_lookup(db),
+        class_fees=MongoClassFeeResolver(db),
     )
 
     # Enrollment
@@ -803,6 +903,13 @@ def compose_parent(
         occurrences=occurrences_query,
         sessions=sessions_query,
         students=students_query,
+        # #1038: approved make-up / trial attendance (one-time roster rows).
+        occurrence_roster=occurrence_roster_repo,
+        one_time_occurrences=occurrences_query,
+    )
+    resolve_assigned_occurrences_uc = ResolveAssignedOccurrences(
+        occurrences=occurrences_query,
+        sessions=sessions_query,
     )
 
     submit_absence_notice = SubmitAbsenceNotice(
@@ -833,10 +940,21 @@ def compose_parent(
         occurrence_roster=occurrence_roster_repo,
         policies=self_service_policies_repo,
     )
+
+    class _TrialsOpenGate:
+        """Reads the academy's Public page "Accept free trial requests"
+        toggle at request time (Settings overhaul Phase 1 Lane C: parent
+        trial requests reuse this switch rather than a duplicate one)."""
+
+        async def trials_open(self) -> bool:
+            doc = await db["academies"].find_one({"academy_id": current_academy_id()})
+            return PublicPageSettings.from_stored((doc or {}).get(PUBLIC_PAGE_FIELD)).trials_open
+
     submit_trial_request = SubmitTrialRequest(
         students=students_query,
         sessions=sessions_query,
         trials=trial_requests_repo,
+        trials_open=_TrialsOpenGate(),
     )
     list_parent_trial_requests = ListParentTrialRequests(trials=trial_requests_repo)
 
@@ -876,7 +994,12 @@ def compose_parent(
             # 8:30pm Chicago on Nov 30 had the fee attached to — or a fresh
             # invoice opened for — December.
             session = await sessions_query.get(enrollment.session_id)
-            timezone_name = (session.timezone if session is not None else None) or "America/Chicago"
+            # Zoneless legacy session: the tenant's zone, then the legacy one.
+            timezone_name = (
+                session.timezone if session is not None else None
+            ) or resolve_session_timezone(
+                None, await academy_timezone_lookup(db)(current_academy_id())
+            )
             period = _local_period_label(clock(), timezone_name)
 
             existing_invoice = await billing_ledger_repo.get_open_invoice_for_student(
@@ -949,7 +1072,7 @@ def compose_parent(
         outbox=outbox,
         billing=_SelfCancelFeeBillingPort(),
         # Issue #651: void later-month invoices + disable autopay on self-cancel.
-        billing_sync=compose_enrollment_billing_sync(db),
+        billing_sync=compose_enrollment_billing_sync(db, stripe=stripe),
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
         # Issue #675: end_of_period enqueues a month-end cancel instead of
@@ -968,6 +1091,23 @@ def compose_parent(
         enrollment_events=enrollment_events,
         academy_id=request_academy_id,
     )
+    # Issue #782: the outbox handler that promotes off a freed seat runs THIS
+    # instance, not composition/admin.py's — so a paused head-of-queue student
+    # promoted by a drop was flipped active by a bare `update_status` here,
+    # leaving autopay paused, the pause deferral open and monthly invoicing
+    # skipping a child who was back in class. Same `resume=` wiring as
+    # composition/admin.py's promote: one resume path, not two.
+    promote_resume = ResumeEnrollment(
+        enrollments=enrollments_writer,
+        sessions=sessions_writer,
+        students=students_query,
+        waitlist=waitlist,
+        enrollment_events=enrollment_events,
+        billing_deferrals=MongoBillingDeferralRepository(db),
+        autopay_status=build_autopay_status_gateway(MongoStudentBillingEnrollmentRepository(db)),
+        billing_sync=compose_enrollment_billing_sync(db, stripe=stripe),
+        roster_notifier=roster_notifier,
+    )
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
         sessions=sessions_writer,
@@ -975,6 +1115,9 @@ def compose_parent(
         outbox=outbox,
         enrollment_events=enrollment_events,
         roster_notifier=roster_notifier,
+        # #828: the family's "a seat opened — confirm by <date>" mail.
+        offer_notifier=roster_notifier,
+        resume=promote_resume,
         academy_id=request_academy_id,
     )
 
@@ -984,11 +1127,21 @@ def compose_parent(
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
     accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=request_academy_id)
+
+    async def _checkout_stripe_account() -> str | None:
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context="checkout_retirement",
+        )
+        return route.connected_account_id
+
     checkout_retirement = _StripeCheckoutAttemptRetirement(
         stripe=stripe,
         payments=payments_repo,
         clock=clock,
         unretired=MongoUnretiredCheckoutSessionRepository(db),
+        stripe_account=_checkout_stripe_account,
     )
     start_app = StartApplication(
         apps=apps_repo,
@@ -1007,10 +1160,18 @@ def compose_parent(
         student_registrations=students_query,
         clock=clock,
         checkout_retirement=checkout_retirement,
+        # Issue #776: the moment an application becomes reviewable, staff hear
+        # about it — otherwise a 22:00 registration waits for whoever next
+        # happens to open the queue.
+        submitted_notifier=compose_registration_decision_notifier(db, settings),
     )
     list_available_sessions = ListParentAvailableSessions(sessions=sessions_query)
     # Issue #616: a request nobody is told about sits PENDING for months.
-    request_pause = RequestEnrollmentPause(pause_requests=pause_requests, notifier=roster_notifier)
+    request_pause = RequestEnrollmentPause(
+        pause_requests=pause_requests,
+        notifier=roster_notifier,
+        policies=self_service_policies_repo,
+    )
     list_parent_pause_requests = ListParentPauseRequests(pause_requests=pause_requests)
 
     # Cross-context handlers register themselves at import time via @handler.
@@ -1431,7 +1592,105 @@ def compose_parent(
                     "autopay_setup_status": autopay_setup_status,
                 }
             )
+        rows.extend(await _departed_enrollment_rows(academy_id, by_id))
         return rows
+
+    async def _departed_enrollment_rows(
+        academy_id: str, students_by_id: dict[str, dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Issue #775: the most recent departure per child, as history.
+
+        A family that left was a dead end: the read above filters to
+        active/paused/held, so a dropped child's card rendered empty — no
+        record that they ever came, and nothing to click to come back. These
+        rows exist to be *read*, never to be billed, so every autopay and
+        attempt field is pinned to ``None`` rather than joined from
+        ``student_billing_enrollments``: a stale declined attempt on a
+        long-dead enrollment must not arm the parent home's payment banner.
+
+        Capped at one row per student — the latest ending — because a
+        long-lived family with many past drops would otherwise turn the
+        children card into a changelog.
+        """
+        cursor = db["enrollments"].find(
+            {
+                "academy_id": academy_id,
+                "student_id": {"$in": list(students_by_id)},
+                "status": {"$in": sorted(TERMINAL)},
+                # Mirrors the admin past-enrollments reader (#674): a
+                # soft-deleted row is not a departure the family should see.
+                "is_deleted": {"$ne": True},
+            }
+        )
+        latest: dict[str, tuple[datetime | None, dict[str, Any]]] = {}
+        async for enrollment in cursor:
+            student_id = str(enrollment["student_id"])
+            status = canonical_status(str(enrollment.get("status") or ""))
+            # Issue #699: a withdrawal dates from withdrawal_date, a removal
+            # from cancelled_at; fall back across both so a legacy row that
+            # only stamped one of them still carries a date.
+            withdrawal_date = enrollment.get("withdrawal_date")
+            cancelled_at = enrollment.get("cancelled_at")
+            left_on = withdrawal_date if status in DROPPED_SPELLINGS else cancelled_at
+            left_on = left_on or cancelled_at or withdrawal_date
+            previous = latest.get(student_id)
+            if previous is not None:
+                previous_left_on = previous[0]
+                # An undated row never displaces a dated one; between two
+                # undated rows the first seen wins, deterministically.
+                if previous_left_on is not None and (
+                    left_on is None or left_on <= previous_left_on
+                ):
+                    continue
+                if previous_left_on is None and left_on is None:
+                    continue
+            latest[student_id] = (left_on, enrollment)
+
+        departed: list[dict[str, Any]] = []
+        for student_id, (left_on, enrollment) in latest.items():
+            session = await db["sessions"].find_one(
+                {"academy_id": academy_id, "session_id": enrollment["session_id"]}
+            )
+            departed.append(
+                {
+                    "enrollment_id": str(enrollment.get("enrollment_id") or enrollment["_id"]),
+                    "student_id": student_id,
+                    "student_name": str(
+                        students_by_id[student_id].get("full_name") or "Unnamed student"
+                    ),
+                    "session_id": str(enrollment["session_id"]),
+                    "session_title": str(session.get("title") if session else "Session"),
+                    "status": canonical_status(str(enrollment.get("status") or "")),
+                    #: The flag every reader keys off. Status alone is not
+                    #: enough: the live list already carries four spellings.
+                    "departed": True,
+                    "left_on": left_on,
+                    "departure_reason": (
+                        str(enrollment["cancellation_reason"])
+                        if enrollment.get("cancellation_reason")
+                        else None
+                    ),
+                    "pending_cancellation_at": None,
+                    "hold_return_on": None,
+                    "payment_mode": enrollment.get("payment_mode"),
+                    "subscription_status": None,
+                    "autopay_enrollment_status": None,
+                    "last_attempt_outcome": None,
+                    "last_attempt_at": None,
+                    "last_failure_code": None,
+                    "autopay_payment_method_type": None,
+                    "autopay_payment_method_label": None,
+                    "autopay_payment_method_last4": None,
+                    "autopay_setup_status": None,
+                }
+            )
+        departed.sort(
+            key=lambda row: (
+                -(row["left_on"].timestamp() if row["left_on"] else float("-inf")),
+                row["enrollment_id"],
+            )
+        )
+        return departed
 
     async def _resolve_coach_name(coach_id: str | None) -> str | None:
         if not coach_id:
@@ -1520,6 +1779,11 @@ def compose_parent(
                     "session_id": str(attendance["session_id"]),
                     "session_title": str((session or {}).get("title") or "Session"),
                     "status": str(attendance["status"]),
+                    "previous_status": (
+                        str(attendance["previous_status"])
+                        if attendance.get("previous_status")
+                        else None
+                    ),
                     "marked_at": attendance["marked_at"],
                     "coach_name": coach_name,
                 }
@@ -1623,19 +1887,19 @@ def compose_parent(
         page = rows[offset : offset + limit]
         return page, total
 
+    # #932: both reads key on every id the parent answers to (identity's
+    # per-field alias lookup), inside the tenant-scoped ledger.
+    _list_parent_invoices = ListParentInvoices(identity=users_query, ledger=billing_ledger_repo)
+    _get_parent_invoice = GetParentInvoice(identity=users_query, ledger=billing_ledger_repo)
+
     async def list_invoices_for_parent(parent_id: str):
-        return await billing_ledger_repo.list_invoices_for_parent(parent_id)
+        return await _list_parent_invoices.execute(parent_id)
 
     async def get_invoice_for_parent(*, parent_id: str, invoice_id: str):
-        academy_id = current_academy_id()  # request-time tenant (C4)
-        invoice = await billing_ledger_repo.get_invoice(invoice_id)
-        if invoice is None or invoice.parent_id != parent_id:
+        detail = await _get_parent_invoice.execute(parent_id=parent_id, invoice_id=invoice_id)
+        if detail is None:
             return None
-        lines_cursor = db["invoice_lines"].find(
-            {"academy_id": academy_id, "invoice_id": invoice_id}
-        )
-        lines = [InvoiceLine(**doc) async for doc in lines_cursor]
-        return {"invoice": invoice, "lines": lines}
+        return {"invoice": detail.invoice, "lines": detail.lines}
 
     def _validate_checkout_redirect_urls(*urls: str) -> None:
         # Static env-var origins PLUS the request's resolved tenant origins
@@ -1678,8 +1942,10 @@ def compose_parent(
         enroll_autopay: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
+        # Tenant-scoped fetch first, then ownership against every id the
+        # parent answers to: the same set the list/detail reads show (#932).
         invoice = await billing_ledger_repo.get_invoice(invoice_id)
-        if invoice is None or invoice.parent_id != parent_id:
+        if invoice is None or not await parent_owns_invoice(users_query, parent_id, invoice):
             return None
         if invoice.status not in {"open", "partially_paid"} or invoice.balance_due_cents <= 0:
             raise ValueError("invoice is not payable")
@@ -1705,7 +1971,7 @@ def compose_parent(
         redirect_success_url = _success_url_with_checkout_session_placeholder(success_url)
         result = await SendInvoice(
             ledger=billing_ledger_repo,
-            stripe=invoice_stripe,  # type: ignore[arg-type]
+            stripe=invoice_stripe,
             email=None,
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
@@ -1733,7 +1999,9 @@ def compose_parent(
     ):
         academy_id = current_academy_id()  # request-time tenant (C4)
         _validate_checkout_redirect_urls(success_url, cancel_url)
-        all_invoices = await billing_ledger_repo.list_invoices_for_parent(parent_id)
+        # Same alias-aware set the home banner and invoice list show (#932),
+        # so the Pay button never offers money no pay path can take.
+        all_invoices = await _list_parent_invoices.execute(parent_id)
         payable = [
             inv
             for inv in all_invoices
@@ -1757,56 +2025,42 @@ def compose_parent(
             # No Stripe wiring at all — nothing is broken, this academy just
             # does not collect online. Same 409, no failure recorded.
             raise InvoicePayLinkUnavailable("balance payment unavailable")
-        # Destination-charge routing (Slice I posture): funds must settle to the
-        # academy's connected account; refuse a platform charge if not ready
-        # unless the temporary allow_platform_charge_fallback escape hatch is on.
-        account = await connected_accounts_repo.get_for_academy()
-        connected_account_stripe_id: str | None = None
-        if account is not None and account.is_ready_for_charges():
-            connected_account_stripe_id = account.stripe_account_id
-        else:
-            fallback_enabled = False
-            try:
-                fallback_enabled = (
-                    await billing_settings_repo.get()
-                ).allow_platform_charge_fallback
-            except Exception as exc:
-                log.warning(
-                    "start_balance_payment: billing settings lookup failed; keeping "
-                    "fail-closed connected-account requirement parent=%s err=%s",
+        # One routing rule (billing/application/charge_route.py): the house
+        # academy charges on the platform; any other academy needs a
+        # charge-ready connected account or the pay link is refused.
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context=f"start_balance_payment parent={parent_id}",
+        )
+        if route.refused:
+            # Same split as SendInvoice (issue #426): an academy with no
+            # Connect account at all has simply never onboarded online
+            # payments — nothing is broken, so record nothing. An account
+            # that EXISTS but cannot charge is a real, operator-visible
+            # failure.
+            account_exists = route.kind != "no_account"
+            if account_exists:
+                log.error(
+                    "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
+                    "— connected account not ready",
                     parent_id,
-                    exc,
+                    len(payable),
                 )
-            if not fallback_enabled:
-                # Same split as SendInvoice (issue #426): an academy with no
-                # Connect account at all has simply never onboarded online
-                # payments — nothing is broken, so record nothing. An account
-                # that EXISTS but cannot charge is a real, operator-visible
-                # failure.
-                if account is not None:
-                    log.error(
-                        "start_balance_payment: refusing pay link parent=%s invoice_count=%d "
-                        "— connected account not ready",
-                        parent_id,
-                        len(payable),
-                    )
-                    await record_checkout_mint_failure(
-                        billing_ledger_repo,
-                        invoices=payable,
-                        failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
-                        failure_message=(
-                            "Academy Stripe connected account exists but is not ready for "
-                            "charges, and platform-charge fallback is off."
-                        ),
-                    )
-                raise InvoicePayLinkUnavailable(
-                    "balance payment unavailable",
-                    reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account is not None else None),
+                await record_checkout_mint_failure(
+                    billing_ledger_repo,
+                    invoices=payable,
+                    failure_code=CHECKOUT_FAILURE_ACCOUNT_NOT_READY,
+                    failure_message=(
+                        route.refusal_message
+                        if route.kind == "account_platform_liable" and route.refusal_message
+                        else "Academy Stripe connected account exists but is not ready for "
+                        "charges, and platform-charge fallback is off."
+                    ),
                 )
-            log.warning(
-                "start_balance_payment: connected account not ready — falling back to "
-                "PLATFORM charge (allow_platform_charge_fallback=on) parent=%s",
-                parent_id,
+            raise InvoicePayLinkUnavailable(
+                "balance payment unavailable",
+                reason=(CHECKOUT_FAILURE_ACCOUNT_NOT_READY if account_exists else None),
             )
         currencies = {inv.currency for inv in payable}
         if len(currencies) != 1:
@@ -1840,6 +2094,11 @@ def compose_parent(
                 "save_payment_method_for_autopay": True,
                 "autopay_enrollment_ids": active_ids,
             }
+        # Roadmap L9b: the academy's platform application fee (0 by default).
+        fee_cents = route.application_fee_cents(total_cents)
+        idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
+        # House: unchanged key. A direct charge scopes it to the academy account.
+        idempotency_key = route.idempotency_key(idempotency_key)
         # Same reasoning as the single-invoice path (issue #635): every return
         # needs a checkout_session_id so the settlement poll can run, and the
         # opted-in case also picks up autopay activation from it.
@@ -1859,8 +2118,11 @@ def compose_parent(
                     "type": "balance_payment",
                 },
                 idempotency_key=idempotency_key,
-                connected_account_id=connected_account_stripe_id,
+                # House: platform. Otherwise a DIRECT charge on the academy's
+                # own connected account.
+                **route.on_account_kwargs(),
                 **autopay_kwargs,
+                **application_fee_kwargs(fee_cents),
             )
         except Exception as exc:
             # Loud, and recorded per invoice (issue #426) — this is the parent
@@ -1950,7 +2212,11 @@ def compose_parent(
         # so without this guard a retry from, say, terminal CHECKOUT_EXPIRED
         # leaves a burnt quote and a dangling pending Payment row behind every
         # single time, on top of the 409 the parent already sees.
-        if app.status not in _CHECKOUT_STARTABLE_STATUSES:
+        if app.status not in _CHECKOUT_STARTABLE_STATUSES or app.is_expired(clock()):
+            # An expired DRAFT/CHECKOUT_PENDING is still nominally in a
+            # "startable" status, but the TTL means the parent's seat hold and
+            # quoted price are stale (issue #537) — reject it the same way as
+            # a terminal status, before any Stripe/Payment side effect below.
             raise ApplicationNotEditable(
                 "illegal application transition",
                 from_status=app.status,
@@ -2199,7 +2465,23 @@ def compose_parent(
         session_doc = await db["sessions"].find_one(
             {"academy_id": academy_id, "session_id": session.session_id}
         )
-        amount_cents = _session_amount_cents(session_doc or {})
+        # The fee the first autopay charge will collect: the next monthly
+        # invoice, i.e. the billing month after the current one on the
+        # session's own clock (the month the checkout quote calls "Starting
+        # next month"). Read through the same month-aware fee every charge path
+        # uses, so a scheduled plan price change is reflected here too.
+        timezone_name = session.timezone or resolve_session_timezone(
+            None, await academy_timezone_lookup(db)(academy_id)
+        )
+        autopay_period = next_period(_local_period_label(clock(), timezone_name))
+        amount_cents = await class_fee_cents_for_period(db, session_doc or {}, autopay_period)
+        if amount_cents <= 0:
+            # An unpriced class reads $0, exactly as checkout reads it (a $0
+            # quote skips payment): there is no monthly charge to automate.
+            # 409 with its own code so the parent portal can say why.
+            raise AutopayClassUnpriced(
+                "this class has no monthly fee, so there is nothing to put on autopay"
+            )
         result = await start_subscription_checkout.execute(
             StartSubscriptionCheckoutCommand(
                 parent_id=parent_id,
@@ -2233,14 +2515,15 @@ def compose_parent(
         # Request-time tenant (C4): re-scoping to the boot academy here would
         # look up another tenant's Stripe customer in multi-academy mode.
         with tenant_scope(request_academy_id()):
-            stripe_customer_id = await parent_customers_repo.get_stripe_customer_id(
-                parent_id=parent_id
-            )
+            customer_doc = await parent_customers_repo.get_academy_customer(parent_id=parent_id)
+        customer_doc = customer_doc or {}
         result = await create_portal.execute(
             CreateCustomerPortalSessionCommand(
                 parent_id=parent_id,
                 return_url=return_url,
-                stripe_customer_id=stripe_customer_id,
+                stripe_customer_id=str(customer_doc.get("stripe_customer_id") or "") or None,
+                # A direct-charge customer lives on the academy's account.
+                stripe_account_id=stored_stripe_account(customer_doc),
             )
         )
         return result.model_dump()
@@ -2269,8 +2552,29 @@ def compose_parent(
     async def get_registration_waiver():
         return await waivers_repo.get_active()
 
+    async def get_registration_waivers(session_id: str | None = None) -> tuple[list[Waiver], bool]:
+        return (
+            await waivers_repo.list_required(session_id),
+            await waivers_repo.has_program_scoped_waivers(),
+        )
+
     async def get_academy_info(*, academy_id: str) -> dict[str, Any]:
+        # Settings overhaul Phase 1 Lane C: the parent shell hides disabled
+        # self-service actions rather than only disabling them, so the
+        # switches ride along on the same academy payload it already loads.
+        policy = await self_service_policies_repo.get_or_default()
         doc = await db["academies"].find_one({"academy_id": academy_id})
+        # Free trial requests reuse the Public page "Accept free trial
+        # requests" toggle rather than a duplicate switch (see release note).
+        trials_open = PublicPageSettings.from_stored((doc or {}).get(PUBLIC_PAGE_FIELD)).trials_open
+        self_service = {
+            "can_report_absence": policy.can_report_absence,
+            "can_request_makeup": policy.can_request_makeup,
+            "can_request_pause": policy.can_request_pause,
+            "can_request_cancel": policy.can_request_cancel,
+            "can_claim_waitlist_offer": policy.can_claim_waitlist_offer,
+            "can_request_trial": trials_open,
+        }
         if not doc:
             return {
                 "display_name": "Academy",
@@ -2280,6 +2584,9 @@ def compose_parent(
                 "hours_text": None,
                 "address": None,
                 "logo_url": None,
+                "brand_color": None,
+                "self_service": self_service,
+                "payment_instructions": policy.payment_instructions or None,
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
@@ -2289,6 +2596,9 @@ def compose_parent(
             "hours_text": doc.get("hours_text"),
             "address": doc.get("address"),
             "logo_url": doc.get("logo_url"),
+            "brand_color": doc.get("brand_color"),
+            "self_service": self_service,
+            "payment_instructions": policy.payment_instructions or None,
         }
 
     async def get_child_schedule(
@@ -2308,6 +2618,22 @@ def compose_parent(
             limit=limit,
             offset=offset,
         )
+
+    async def resolve_assigned_classes(occurrence_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Class facts behind approved make-up / trial ids (issue #1038).
+
+        Tenant comes from the request (never a boot-time default); the
+        timezone is the academy's own so the client can render academy-local
+        date/time without guessing an offset.
+        """
+        resolved = await resolve_assigned_occurrences_uc.execute(occurrence_ids)
+        if not resolved:
+            return {}
+        timezone_name = await academy_timezone_lookup(db)(current_academy_id())
+        return {
+            occurrence_id: {**details.model_dump(), "timezone": timezone_name}
+            for occurrence_id, details in resolved.items()
+        }
 
     async def get_parent_home(*, parent_id: str) -> dict[str, Any]:
         """Everything the kid-first Home screen needs, in one read.
@@ -2366,6 +2692,7 @@ def compose_parent(
                     "end_at": _as_utc(entry.end_at) or start_at,
                     # Always None today — see ParentHomeNextSessionView.
                     "coach_name": entry.coach_name,
+                    "source": entry.source,
                 }
             return None
 
@@ -2549,7 +2876,11 @@ def compose_parent(
         # Source 1: the autopay attempt projection. A declined attempt that
         # never minted a payment row exists ONLY here.
         payment_failed = any(
-            str(row.get("last_attempt_outcome") or "") in _FAILED_ATTEMPT_OUTCOMES
+            # Issue #775: the enrollment list now carries departed rows for
+            # history. They are billed by nobody, so they may not arm this
+            # banner — belt-and-braces next to the None-pinned fields above.
+            not row.get("departed")
+            and str(row.get("last_attempt_outcome") or "") in _FAILED_ATTEMPT_OUTCOMES
             for row in enrollments
         )
         if not payment_failed:
@@ -2667,6 +2998,7 @@ def compose_parent(
         handle_webhook_event=handle_webhook,
         list_available_sessions=list_available_sessions,
         promote_from_waitlist=promote,
+        promote_resume_enrollment=promote_resume,
         confirm_enrollment=confirm_enrollment,
         list_payments_for_parent=list_payments_for_parent,
         list_credits_for_parent=list_credits_for_parent,
@@ -2691,12 +3023,18 @@ def compose_parent(
         start_balance_payment_for_parent=start_balance_payment_for_parent,
         get_child_schedule=get_child_schedule,
         get_parent_home=get_parent_home,
+        resolve_assigned_classes=resolve_assigned_classes,
+        # #828: claiming a held seat inside the three-day window.
+        confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
+        decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),
+        list_parent_waitlist=compose_list_parent_waitlist(db),
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,
         accept_parent_waiver=accept_waiver,
         get_academy_info=get_academy_info,
         get_registration_waiver=get_registration_waiver,
+        get_registration_waivers=get_registration_waivers,
         student_progress=sp_composition,
         curriculum=curriculum_composition,
         list_messages=list_messages,
@@ -2713,20 +3051,40 @@ class _StripeGatewayProto(Protocol):
 
 
 class _ConnectAccountResolver:
-    """Resolve a connected Stripe account id -> owning academy for the webhook
-    guard (Slice I). Bridges the repo method name (``get_by_stripe_account_id``)
-    to the resolver name the webhook handler expects (``academy_id_for_account``)
-    — the Slice-B name-mismatch lesson, covered by a port-drive test.
+    """Connected-account access for the webhook handler (Slice I).
+
+    ``academy_id_for_account`` answers which academy OWNS an account, across
+    every academy: direct charges deliver each academy's payment events as
+    Connect events to the one boot-academy endpoint, so ingest must attribute
+    an account it does not own, and the processing guard must be able to say
+    "this belongs to academy B" rather than "unknown". That lookup goes
+    through the platform-scoped ``ConnectedAccountDirectory``, never through
+    the tenant-scoped repo.
+
+    ``get_by_stripe_account_id`` / ``update_status`` stay tenant-scoped to the
+    handler's own academy: only the owner's processor may read or change the
+    account row. Bridges the repo method names to the resolver names the
+    handler expects — the Slice-B name-mismatch lesson, covered by a
+    port-drive test.
     """
 
-    def __init__(self, repo: MongoConnectedAccountRepository, academy_id: str) -> None:
+    def __init__(
+        self,
+        repo: MongoConnectedAccountRepository,
+        academy_id: str,
+        *,
+        directory: ConnectedAccountDirectory,
+    ) -> None:
         self._repo = repo
         self._academy_id = academy_id
+        self._directory = directory
 
     async def academy_id_for_account(self, stripe_account_id: str) -> str | None:
+        return await self._directory.owner_academy_id(stripe_account_id)
+
+    async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None:
         with tenant_scope(self._academy_id):
-            account = await self._repo.get_by_stripe_account_id(stripe_account_id)
-        return account.academy_id if account else None
+            return await self._repo.get_by_stripe_account_id(stripe_account_id)
 
     async def update_status(
         self,
@@ -2736,39 +3094,52 @@ class _ConnectAccountResolver:
         charges_enabled: bool | None,
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
-    ) -> None:
+        skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
+    ) -> bool:
         with tenant_scope(self._academy_id):
-            await self._repo.update_status(
+            return await self._repo.update_status(
                 stripe_account_id=stripe_account_id,
-                status=status,
+                status=status,  # type: ignore[arg-type]
                 charges_enabled=charges_enabled,
                 payouts_enabled=payouts_enabled,
                 capabilities=capabilities,
+                skip_if_disconnected=skip_if_disconnected,
+                liability=liability,
             )
 
 
-# Boot-frozen tenant wiring that intentionally survives in compose_parent
-# (issue #532). Everything on this list is either per-academy composed by the
-# scheduler, request-guarded upstream, or a read path still pending conversion
-# to the request_academy_id() pattern:
+# Boot-frozen tenant wiring (issue #532), re-audited 2026-09-28 (P1 hardcoded
+# #1). What is left, and why each item is safe:
 #
 # - HandleWebhookEvent / _EnrollmentBillingIdentity: per-academy BY DESIGN —
 #   the scheduler composes one processor per academy, ingest resolves the
 #   tenant from the event payload, and the handler's cross-academy guards
 #   quarantine mismatches.
-# - Parent read-path closures (payments/credits/children/enrollments/
-#   attendance/invoices/schedule listings): still close over the boot
-#   academy_id. Safe while only one academy is actually served; NOT safe once
-#   saas_mode serves multiple tenants — which is exactly what
-#   ensure_multi_academy_composable refuses.
+# - The parent read-path closures (payments/credits/children/enrollments/
+#   attendance/invoices/schedule) all re-read ``current_academy_id()`` at call
+#   time now; none of them uses the boot value.
+# - compose_admin / compose_coach: the cancellation, pause-approval, session,
+#   waitlist, expense, message and coach-attendance use cases take the
+#   request-tenant callable (tests/contract/test_boot_academy_cancellation_
+#   isolation.py), and TenantScopedRepository re-stamps academy_id in update
+#   bodies. ``MongoUserRepository(default_academy_id=...)`` still falls back to
+#   the boot academy for legacy ``users`` rows that carry no academy_id; the
+#   multi-academy pre-flight lists those rows.
+#
+# The guard below stays fail-closed: switching production to SaaS mode is an
+# owner decision taken after the pre-flight in
+# docs/runbooks/enable-multi-academy.md passes, and the acknowledgement flag is
+# how that decision is recorded in config.
 _STATIC_TENANT_WIRING_NOTE = (
-    "compose_parent still contains boot-frozen academy_id read paths "
-    "(see _STATIC_TENANT_WIRING_NOTE in backend/v2/composition/parent.py). "
     "Serving multiple academies (saas_mode=True with tenancy_mode=multi_academy) "
-    "would silently stamp/read the boot academy for other tenants (issue #532). "
-    "Either set APP_TENANCY_MODE=single_academy, finish converting the read "
-    "paths to request_academy_id(), or explicitly acknowledge the risk with "
-    "V2_ALLOW_STATIC_TENANT_PARENT_WIRING=true."
+    "is an explicit owner decision. Run the pre-flight in "
+    "docs/runbooks/enable-multi-academy.md "
+    "(python -m backend.scripts.multi_academy_preflight), then set "
+    "V2_ALLOW_STATIC_TENANT_PARENT_WIRING=true to acknowledge the remaining "
+    "boot-frozen academy_id fallback for legacy users rows without academy_id "
+    "(see _STATIC_TENANT_WIRING_NOTE in backend/v2/composition/parent.py, "
+    "issue #532). Otherwise keep APP_TENANCY_MODE=single_academy."
 )
 
 
@@ -2794,16 +3165,6 @@ def _require_academy_id(academy_id: str | None) -> str:
     if not academy_id:
         raise ValueError("academy_id is required for parent composition")
     return academy_id
-
-
-def _session_amount_cents(doc: dict[str, object]) -> int:
-    if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])
-    if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])
-    if doc.get("monthly_price") is not None:
-        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
-    return 2500
 
 
 # Invoice statuses where nothing more is owed and a failed attempt against the

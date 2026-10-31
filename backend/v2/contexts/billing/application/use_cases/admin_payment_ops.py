@@ -50,6 +50,8 @@ class GenerateMonthlyPaymentsResult(BaseModel):
     repaired_orphan_keys: int = 0
     repaired_partial_invoices: int = 0
     failed_repair: int = 0
+    # Keys an operator reviewed and accepted, which this run left alone (#599).
+    skipped_reviewed: int = 0
     skipped_details: list[MonthlyGenerationSkippedDetail] = Field(default_factory=list)
 
 

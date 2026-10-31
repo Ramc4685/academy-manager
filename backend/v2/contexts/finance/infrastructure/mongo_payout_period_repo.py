@@ -190,6 +190,24 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         doc = await self._find_one({"period_id": period_id})
         return await self._hydrate(doc) if doc else None
 
+    async def find_locked_status_for_coach(
+        self,
+        *,
+        coach_id: str,
+        at: datetime,
+    ) -> str | None:
+        # Status only — the caller is gating a write, not rendering a
+        # period, so the lines lookup in ``_hydrate`` would be wasted I/O.
+        doc = await self._find_one(
+            {
+                "coach_id": coach_id,
+                "status": {"$in": ["approved", "paid"]},
+                "period_start": {"$lte": at},
+                "period_end": {"$gt": at},
+            }
+        )
+        return None if doc is None else str(doc.get("status") or "approved")
+
     async def save(self, period: PayoutPeriod) -> PayoutPeriod:
         # Idempotent on natural key — if a period for this window already
         # exists, return it without overwriting. Callers wanting to

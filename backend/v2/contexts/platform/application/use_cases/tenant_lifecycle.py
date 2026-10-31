@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -13,6 +14,7 @@ from backend.v2.contexts.platform.audit.application.use_cases import (
     RecordPlatformAuditEventCommand,
 )
 from backend.v2.contexts.platform.domain.errors import (
+    TenantAgreementNotAccepted,
     TenantAlreadyExists,
     TenantInvalidTransition,
     TenantNotFound,
@@ -70,6 +72,42 @@ class UpdateTenantPlanCommand(BaseModel):
         return value.strip()
 
 
+class RecordAgreementAcceptanceCommand(BaseModel):
+    """A platform admin records that the academy accepted the platform agreement.
+
+    ``accepted_by`` names the academy-side signatory as free text (a name or
+    an email). It is deliberately not validated as an email: the signatory may
+    not hold an account, and only a platform admin can write it. Each call
+    replaces the acceptance on the tenant record; the previous one survives in
+    the audit row's ``before`` snapshot, and the platform UI asks for explicit
+    confirmation before replacing a recorded acceptance. ``actor_user_id`` is the platform admin who recorded it and lands
+    in ``updated_by`` and the audit trail. The agreement text itself is an
+    owner/legal input (docs/platform/platform-agreement.md), versioned by
+    ``agreement_version``.
+    """
+
+    agreement_version: str = Field(min_length=1, max_length=64)
+    accepted_by: str = Field(min_length=1, max_length=200)
+    actor_user_id: str = Field(min_length=1)
+
+    @field_validator("agreement_version", "accepted_by", "actor_user_id")
+    @classmethod
+    def _strip_required_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("field is required")
+        return stripped
+
+
+class InvoicePrefixAssigner(Protocol):
+    """Gives a new academy its invoice-number prefix (billing owns the rules).
+
+    Wired in composition to billing's ``AssignInvoicePrefix``.
+    """
+
+    async def execute(self, *, academy_id: str, slug: str) -> str: ...
+
+
 class TenantLifecycleService:
     """Application service for platform tenant lifecycle operations."""
 
@@ -80,8 +118,10 @@ class TenantLifecycleService:
         id_factory: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
         audit_recorder: AuditRecorder | None = None,
+        invoice_prefix_assigner: InvoicePrefixAssigner | None = None,
     ) -> None:
         self._tenants = tenants
+        self._invoice_prefix_assigner = invoice_prefix_assigner
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
         self._audit_recorder = audit_recorder
@@ -146,6 +186,10 @@ class TenantLifecycleService:
             updated_at=now,
         )
         created = await self._tenants.create(tenant)
+        if self._invoice_prefix_assigner is not None:
+            await self._invoice_prefix_assigner.execute(
+                academy_id=created.academy_id, slug=created.slug
+            )
         await self._emit_audit(
             actor_user_id=command.actor_user_id,
             academy_id=created.academy_id,
@@ -177,6 +221,11 @@ class TenantLifecycleService:
     async def activate_tenant(self, academy_id: str, *, actor_user_id: str) -> Tenant:
         tenant = await self.get_tenant(academy_id)
         self._require_status(tenant, {"provisioning"}, target_status="active")
+        if not tenant.has_accepted_platform_agreement():
+            raise TenantAgreementNotAccepted(
+                "tenant cannot be activated until the platform agreement acceptance is recorded",
+                academy_id=academy_id,
+            )
         now = self._clock()
         saved = await self._tenants.save(
             tenant.model_copy(
@@ -193,6 +242,46 @@ class TenantLifecycleService:
             actor_user_id=actor_user_id,
             academy_id=academy_id,
             action="tenant.activated",
+            entity_id=academy_id,
+            before=tenant,
+            after=saved,
+        )
+        return saved
+
+    async def record_agreement_acceptance(
+        self,
+        academy_id: str,
+        command: RecordAgreementAcceptanceCommand,
+    ) -> Tenant:
+        """Store who accepted which platform agreement version, and when.
+
+        Recording a newer version replaces the fields on the tenant; the
+        previous acceptance stays in the platform audit trail (before
+        snapshot). A cancelled tenant cannot take a new acceptance.
+        """
+        tenant = await self.get_tenant(academy_id)
+        if tenant.status == "cancelled":
+            raise TenantInvalidTransition(
+                "cannot record an agreement acceptance for a cancelled tenant",
+                academy_id=academy_id,
+                status=tenant.status,
+            )
+        now = self._clock()
+        saved = await self._tenants.save(
+            tenant.model_copy(
+                update={
+                    "platform_agreement_version": command.agreement_version,
+                    "platform_agreement_accepted_at": now,
+                    "platform_agreement_accepted_by": command.accepted_by,
+                    "updated_at": now,
+                    "updated_by": command.actor_user_id,
+                }
+            )
+        )
+        await self._emit_audit(
+            actor_user_id=command.actor_user_id,
+            academy_id=academy_id,
+            action="tenant.agreement_accepted",
             entity_id=academy_id,
             before=tenant,
             after=saved,

@@ -108,6 +108,21 @@ class PersonLifecycleState(BaseModel):
     as_of: date | None = None
 
 
+class StudentLifecycleSnapshot(BaseModel):
+    """One student's derived lifecycle plus the classes they hold a seat in.
+
+    The batch shape other contexts read (the People CRM family index rolls
+    these up per family and filters by class). ``live_session_ids`` are the
+    sessions of the student's SEAT_HOLDING enrollments, sorted.
+    """
+
+    model_config = {"frozen": True}
+
+    state: PersonLifecycle
+    as_of: date | None = None
+    live_session_ids: tuple[str, ...] = ()
+
+
 def _as_date(value: datetime | date | None) -> date | None:
     if value is None:
         return None

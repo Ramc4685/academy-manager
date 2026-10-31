@@ -34,6 +34,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
 from backend.v2.contexts.identity.domain.models import AcademyMembership, User
 from backend.v2.shared.tenancy import tenant_scope
 
+#: actor_id the void route forwarded, for the #784 attribution test.
+captured_void_actor: list[str | None] = []
+
 
 def _seed_payment(
     seed,
@@ -223,6 +226,9 @@ class _StubConnectedAccount:
     def is_ready_for_charges(self) -> bool:
         return self._ready
 
+    def supports_direct_charges(self) -> bool:
+        return True
+
 
 class _FakeConnectedAccounts:
     def __init__(self, account: _StubConnectedAccount | None) -> None:
@@ -340,7 +346,12 @@ def _override_ledger(admin_client, ledger: _FakeLedger) -> None:
             RemoveInvoiceLineCommand(invoice_id=invoice_id, line_id=line_id)
         )
 
-    async def void_billing_invoice(*, invoice_id: str, reason: str) -> None:
+    async def void_billing_invoice(
+        *, invoice_id: str, reason: str, actor_id: str | None = None
+    ) -> None:
+        # Mirrors the real builder's signature: the route forwards the
+        # acting user so the void can be audited (#784).
+        captured_void_actor.append(actor_id)
         invoice = await ledger.get_invoice(invoice_id)
         if invoice is None:
             raise ValueError("invoice not found")
@@ -648,6 +659,62 @@ def test_issue_refund_exceeds_amount_returns_400(admin_client):
     )
     assert r.status_code == 400, r.text
     assert r.json()["error"]["code"] == "Billing.RefundExceedsAmount"
+
+
+def test_issue_refund_same_idempotency_key_replays_one_refund(admin_client):
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    body = {"payment_id": "pay-1", "amount_cents": 5000, "reason": "admin_initiated"}
+    first = admin_client.post(
+        "/api/v2/admin/payments/refund", json=body, headers={"Idempotency-Key": "k-1"}
+    )
+    second = admin_client.post(
+        "/api/v2/admin/payments/refund", json=body, headers={"Idempotency-Key": "k-1"}
+    )
+    assert first.status_code == second.status_code == 200, (first.text, second.text)
+    assert second.json() == first.json()
+    assert len(admin_client.seed["stripe"].refunds) == 1
+
+
+def test_issue_refund_new_idempotency_key_is_a_second_refund(admin_client):
+    """#930: same amount and reason, new key -> a real second refund."""
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    body = {"payment_id": "pay-1", "amount_cents": 5000, "reason": "admin_initiated"}
+    for key in ("k-1", "k-2"):
+        r = admin_client.post(
+            "/api/v2/admin/payments/refund", json=body, headers={"Idempotency-Key": key}
+        )
+        assert r.status_code == 200, r.text
+    assert r.json()["total_refunded_cents"] == 10000
+    assert len(admin_client.seed["stripe"].refunds) == 2
+
+
+def test_issue_refund_keyless_identical_repeat_is_409(admin_client):
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    body = {"payment_id": "pay-1", "amount_cents": 5000, "reason": "admin_initiated"}
+    assert admin_client.post("/api/v2/admin/payments/refund", json=body).status_code == 200
+    r = admin_client.post("/api/v2/admin/payments/refund", json=body)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "Billing.RefundPossibleDuplicate"
+    assert len(admin_client.seed["stripe"].refunds) == 1
+
+
+def test_issue_refund_key_reused_for_other_amount_is_422(admin_client):
+    _seed_payment(admin_client.seed, "pay-1", 15000)
+    headers = {"Idempotency-Key": "k-1"}
+    ok = admin_client.post(
+        "/api/v2/admin/payments/refund",
+        json={"payment_id": "pay-1", "amount_cents": 5000},
+        headers=headers,
+    )
+    assert ok.status_code == 200, ok.text
+    r = admin_client.post(
+        "/api/v2/admin/payments/refund",
+        json={"payment_id": "pay-1", "amount_cents": 4000},
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "Billing.RefundIdempotencyKeyReused"
+    assert len(admin_client.seed["stripe"].refunds) == 1
 
 
 def test_issue_refund_wrong_persona_404(parent_on_admin_client):
@@ -1048,8 +1115,8 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
                 "academy_id": "acad",
                 "parent_id": "parent-1",
             },
-            "idempotency_key": "invoice-checkout:inv-1:7000",
-            "connected_account_id": "acct_ready_1",
+            "idempotency_key": "invoice-checkout:inv-1:7000:acct:acct_ready_1",
+            "stripe_account": "acct_ready_1",
         }
     ]
 
@@ -1072,7 +1139,7 @@ def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client
     body = response.json()
     assert body["checkout_url"] == "https://checkout.stripe.test/invoice"
     assert body["delivery_status"] == "sent"
-    assert stripe.calls[0]["connected_account_id"] == "acct_ready_1"
+    assert stripe.calls[0]["stripe_account"] == "acct_ready_1"
     assert email.calls == [
         {
             "parent_id": "parent-1",
@@ -1273,6 +1340,8 @@ def test_record_invoice_manual_payment_route(admin_client):
         "payment_id": "manual-1",
         "invoice_status": "partially_paid",
         "balance_due_cents": 4_500,
+        "previous_balance_applied_cents": 0,
+        "overpayment_credit_cents": 0,
     }
 
 
@@ -1307,6 +1376,8 @@ def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
         assert kwargs["amount_cents"] == 3_000
         assert kwargs["reason"] == "duplicate"
         assert kwargs["actor_id"]
+        # #930: the client's per-attempt key reaches the refund policy.
+        assert kwargs["idempotency_key"] == "k-inv-1"
         return {
             "invoice_id": "inv-1",
             "payment_id": "lp-1",
@@ -1320,6 +1391,7 @@ def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
     response = admin_client.post(
         "/api/v2/admin/billing/invoices/inv-1/refund",
         json={"amount_cents": 3_000, "reason": "duplicate"},
+        headers={"Idempotency-Key": "k-inv-1"},
     )
 
     assert response.status_code == 200, response.text
@@ -1434,6 +1506,20 @@ def test_void_invoice_rejects_recorded_payment_activity(admin_client):
     assert response.status_code == 409
     assert "recorded payments" in response.json()["detail"]
     assert ledger.invoices["inv-1"].status == "partially_paid"
+
+
+def test_void_invoice_forwards_the_acting_user(admin_client):
+    """Issue #784: the audit row needs to name who wrote the money off."""
+    ledger = _FakeLedger(invoices=[_invoice(status="open")])
+    _override_ledger(admin_client, ledger)
+    captured_void_actor.clear()
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/void", json={"reason": "duplicate"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert captured_void_actor and captured_void_actor[0]
 
 
 def test_void_invoice_uses_request_body_reason(admin_client, monkeypatch):

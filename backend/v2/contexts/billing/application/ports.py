@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from datetime import datetime
+from collections.abc import Awaitable, Callable, Hashable, Mapping, Sequence
+from datetime import date, datetime
 from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.domain.autopay_status import AutopayEnrollmentStatus
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.connect_region import ConnectAccountRegion
 from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
     ConnectedAccountStatus,
 )
+from backend.v2.contexts.billing.domain.events import PaymentDisputeNoticePayload
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -28,6 +30,7 @@ from backend.v2.contexts.billing.domain.models import (
     Payment,
     Subscription,
 )
+from backend.v2.contexts.billing.domain.payment_dispute import PaymentDispute
 from backend.v2.contexts.billing.domain.proration import (
     BillingCalculationSnapshot,
     BillingPeriod,
@@ -37,6 +40,7 @@ from backend.v2.contexts.billing.domain.session_type import (
     SessionType,
     StudentBillingEnrollment,
 )
+from backend.v2.shared.comms.email_theme import EmailBrand
 
 T = TypeVar("T")
 
@@ -74,6 +78,11 @@ class ParentRosterEntry(BaseModel):
     parent_id: str
     parent_name: str
     parent_email: str | None = None
+    #: Other stored references to the same parent (``firebase_uid``,
+    #: ``auth_uid``, users ``_id``) grouped into this row, so a family whose
+    #: students store different ids is one row, not two. Cards, balances and
+    #: autopay filed under any of them belong to this row.
+    aliases: tuple[str, ...] = ()
 
 
 class ParentBalanceSnapshot(BaseModel):
@@ -178,6 +187,23 @@ class AcademyNameLookup(Protocol):
     async def get_academy_name(self, academy_id: str) -> str | None: ...
 
 
+class AcademyBrandLookup(Protocol):
+    """The academy's full email brand (logo, colour, contact footer), or
+    ``None`` when none is on file. Composition implements it with
+    ``shared.comms.email_brand.AcademyEmailBrands``."""
+
+    async def get_academy_brand(self, academy_id: str) -> EmailBrand | None: ...
+
+
+class AcademyBillingRegionReader(Protocol):
+    """Reads the country / currency a new connected account is created in.
+
+    Absent academy or field -> US / USD (the academy record's own defaults).
+    """
+
+    async def get_region(self, academy_id: str) -> ConnectAccountRegion: ...
+
+
 class TransactionRunner(Protocol):
     async def run(self, work: Callable[[Any | None], Awaitable[T]]) -> T: ...
 
@@ -200,8 +226,22 @@ class SubscriptionRepository(Protocol):
 
 
 class ParentStripeCustomerRepository(Protocol):
+    """The parent's Stripe customer and saved payment methods.
+
+    ``stripe_account_id`` names the Stripe account those ids live on: None
+    (the default, and every house-academy call) is the PLATFORM; otherwise the
+    academy's connected account. Implementations must never let a customer or
+    payment method stored for one account be read back or promoted for another.
+    """
+
     async def get_stripe_customer_id(self, *, parent_id: str) -> str | None: ...
-    async def set_stripe_customer_id(self, *, parent_id: str, stripe_customer_id: str) -> None: ...
+    async def set_stripe_customer_id(
+        self,
+        *,
+        parent_id: str,
+        stripe_customer_id: str,
+        stripe_account_id: str | None = None,
+    ) -> None: ...
     async def set_default_payment_method(
         self,
         *,
@@ -222,6 +262,7 @@ class ParentStripeCustomerRepository(Protocol):
         payment_method_label: str | None = None,
         payment_method_last4: str | None = None,
         session: Any | None = None,
+        stripe_account_id: str | None = None,
     ) -> None: ...
     async def promote_payment_method_to_default(
         self,
@@ -232,7 +273,24 @@ class ParentStripeCustomerRepository(Protocol):
         stripe_mandate_id: str | None,
         payment_method_label: str | None = None,
         payment_method_last4: str | None = None,
+        stripe_account_id: str | None = None,
     ) -> None: ...
+
+
+class SavedPaymentMethodReader(Protocol):
+    """Reads the parent's stored chargeable card on one Stripe account.
+
+    Direct-charge autopay charges exactly the customer and payment method the
+    app stored for the academy's connected account — never a platform-wide
+    Customer search, which cannot see connected-account customers and could
+    surface a card from another account.
+    """
+
+    async def get_saved_payment_method(
+        self, *, parent_id: str, stripe_account_id: str | None
+    ) -> tuple[str, str] | None:
+        """(stripe_customer_id, payment_method_id) on ``stripe_account_id``, or None."""
+        ...
 
 
 class AutopayConsentRepository(Protocol):
@@ -383,6 +441,17 @@ class StripeTransientFailure(ValueError):
 
 
 class StripeGateway(Protocol):
+    """Stripe anti-corruption port.
+
+    Account dimension: every method touching Checkout Sessions, Customers,
+    PaymentIntents, SetupIntents, PaymentMethods or Refunds takes an optional
+    ``stripe_account``. ``None`` means the PLATFORM account (the house academy)
+    and must produce exactly the platform call; a connected account id sends
+    the Stripe-Account header, so the object is created on / read from that
+    account. Stripe objects are account-scoped: an id minted on one account is
+    ``resource_missing`` on every other account.
+    """
+
     async def create_checkout_session(
         self,
         *,
@@ -393,14 +462,22 @@ class StripeGateway(Protocol):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url).
 
-        When ``connected_account_id`` is set, the checkout's PaymentIntent is a
-        destination charge to the academy's connected account.
+        ``stripe_account`` makes it a DIRECT charge created ON the academy's
+        connected account, carrying ``application_fee_amount=application_fee_cents``
+        (the academy's platform fee, default 0; omitted when 0). Every charge
+        path uses this. ``connected_account_id`` (a platform destination charge)
+        is legacy and has no caller. A non-zero fee without an account, or one
+        larger than ``amount_cents``, raises ``ValueError``.
         """
 
-    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+    async def expire_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> None:
         """Expire an open Checkout Session so it can never be paid.
 
         Called when a newer session supersedes it: two live sessions for the
@@ -421,6 +498,7 @@ class StripeGateway(Protocol):
         success_url: str,
         cancel_url: str,
         metadata: dict[str, str],
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str]:
         """Returns (checkout_session_id, redirect_url, stripe_subscription_id)."""
 
@@ -434,11 +512,40 @@ class StripeGateway(Protocol):
         cancel_url: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        stripe_account: str | None = None,
     ) -> tuple[str, str]:
         """Returns (checkout_session_id, redirect_url) for saved-card setup.
 
-        When ``connected_account_id`` is set, the eventual off-session charges
-        route to that connected academy account (``setup_intent_data.on_behalf_of``).
+        ``stripe_account`` runs the setup ON the academy's connected account, so
+        the customer, SetupIntent and saved card all live there, where its
+        direct charges run. ``connected_account_id`` (``on_behalf_of``) is legacy
+        and has no caller.
+        """
+
+    async def create_invoice_checkout_session(
+        self,
+        *,
+        invoice_id: str,
+        amount_cents: int,
+        currency: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+        idempotency_key: str | None = None,
+        connected_account_id: str | None = None,
+        save_payment_method_for_autopay: bool = False,
+        autopay_enrollment_ids: list[str] | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
+    ) -> tuple[str, str]:
+        """Returns (checkout_session_id, redirect_url) for a ledger-invoice payment.
+
+        ``stripe_account`` makes it a DIRECT charge on the academy's connected
+        account (``application_fee_amount`` when non-zero); callers scope the
+        idempotency key to that account. ``connected_account_id`` (a destination
+        charge) is legacy and has no caller.
+        ``save_payment_method_for_autopay`` saves the payment method for
+        off-session autopay against an always-created customer.
         """
 
     async def create_customer_portal_session(
@@ -447,27 +554,46 @@ class StripeGateway(Protocol):
         parent_id: str,
         return_url: str,
         stripe_customer_id: str | None,
+        stripe_account: str | None = None,
     ) -> str:
         """Returns portal redirect URL."""
 
     def verify_webhook(self, payload: bytes, signature: str) -> dict[str, object]: ...
 
-    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+    async def retrieve_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe Checkout Session state for reconciliation."""
 
     async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
         """Fetch current Stripe invoice state for reconciliation."""
 
+    async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
+        """Void an open/draft Stripe Invoicing invoice (issue #784).
+
+        Called when the app voids a ledger invoice that Stripe also knows
+        about. Without it the family keeps getting Stripe's own reminders and
+        can still pay an invoice the academy has written off. Stripe refuses to
+        void an invoice that was already paid; the caller logs that rather than
+        rolling back the ledger-side void.
+        """
+
     async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
         """Fetch current Stripe subscription state for reconciliation."""
 
-    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+    async def retrieve_payment_intent(
+        self, stripe_payment_intent_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe PaymentIntent state for reconciliation."""
 
-    async def retrieve_setup_intent(self, stripe_setup_intent_id: str) -> dict[str, Any]:
+    async def retrieve_setup_intent(
+        self, stripe_setup_intent_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe SetupIntent state for saved-payment-method setup."""
 
-    async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict[str, Any]:
+    async def retrieve_payment_method(
+        self, stripe_payment_method_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe PaymentMethod state for saved-payment-method setup."""
 
     async def set_customer_default_payment_method(
@@ -476,6 +602,7 @@ class StripeGateway(Protocol):
         stripe_customer_id: str,
         stripe_payment_method_id: str,
         metadata: dict[str, str],
+        stripe_account: str | None = None,
     ) -> None:
         """Set the Customer default PM used by off-session autopay charges."""
 
@@ -490,7 +617,7 @@ class StripeGateway(Protocol):
         """
 
     async def list_charges_for_customer(
-        self, *, stripe_customer_id: str, limit: int = 100
+        self, *, stripe_customer_id: str, limit: int = 100, stripe_account: str | None = None
     ) -> list[dict[str, Any]]:
         """List a customer's recent succeeded charges (legacy invoice match candidates).
 
@@ -499,8 +626,19 @@ class StripeGateway(Protocol):
         review and confirm a charge ↔ invoice match by hand (issue #242 WI-3).
         """
 
-    async def issue_refund(self, payment_intent_id: str, amount_cents: int | None) -> str:
-        """Returns Stripe refund id."""
+    async def issue_refund(
+        self,
+        payment_intent_id: str,
+        amount_cents: int | None,
+        *,
+        idempotency_key: str | None = None,
+        stripe_account: str | None = None,
+    ) -> str:
+        """Returns Stripe refund id.
+
+        ``idempotency_key`` is forwarded as Stripe's ``Idempotency-Key``: a
+        repeat with the same key returns the original refund, never a second.
+        """
 
     async def cancel_subscription(
         self, stripe_subscription_id: str, *, at_period_end: bool
@@ -543,12 +681,19 @@ class StripeGateway(Protocol):
         display_name: str | None = None,
         contact_email: str | None = None,
         idempotency_key: str | None = None,
-    ) -> str:
-        """Create an Accounts v2 connected account and return its id.
+        country: str = "US",
+        currency: str = "USD",
+    ) -> dict[str, Any]:
+        """Create an Accounts v2 connected account and return it as a plain dict.
+
+        ``country`` (ISO 3166-1 alpha-2) and ``currency`` (ISO 4217) become
+        ``identity.country`` and ``defaults.currency``; case is not significant.
 
         Slice I: NEVER the legacy ``type: express/custom/standard`` or v1
-        ``controller`` shape. The platform accepts payment liability through
-        ``defaults.responsibilities``.
+        ``controller`` shape. Liability is set through
+        ``defaults.responsibilities``; the returned account carries ``id`` and
+        what Stripe recorded for ``dashboard`` / ``defaults.responsibilities``
+        (read with ``liability_from_stripe_account``).
         """
         ...
 
@@ -562,6 +707,12 @@ class StripeGateway(Protocol):
         """Create a hosted onboarding AccountLink for a connected account."""
         ...
 
+    async def retrieve_connected_account(self, stripe_account_id: str) -> dict[str, Any]:
+        """Return the connected account's current Stripe state (a v1 Account:
+        ``charges_enabled``, ``payouts_enabled``, ``capabilities``,
+        ``requirements.disabled_reason``). Raises ``ValueError`` on failure."""
+        ...
+
     async def create_off_session_payment_intent(
         self,
         *,
@@ -572,13 +723,27 @@ class StripeGateway(Protocol):
         idempotency_key: str,
         metadata: dict[str, str],
         connected_account_id: str | None = None,
+        application_fee_cents: int = 0,
+        stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         """Confirm an off-session autopay charge; returns (pi_id, status, decline_code).
 
-        When ``connected_account_id`` is set, this is a destination charge to the
-        connected academy account (``on_behalf_of`` + ``transfer_data.destination``,
-        ``application_fee_amount=0`` for now). Customers live on the platform.
+        ``stripe_account`` makes it a DIRECT charge on the academy's connected
+        account: ``customer_id`` and ``payment_method_id`` must live on that
+        account, and ``application_fee_amount=application_fee_cents`` (the
+        academy's platform fee, default 0, set by a platform admin) is sent when
+        non-zero. Without it the charge is on the platform (house academy).
+        ``connected_account_id`` (a destination charge) is legacy and has no
+        caller. A non-zero fee without an account, or one larger than
+        ``amount_cents``, raises ``ValueError``.
         """
+        ...
+
+    async def get_default_payment_method(
+        self, *, academy_id: str, parent_id: str, stripe_account: str | None = None
+    ) -> tuple[str, str] | None:
+        """(stripe_customer_id, default payment_method_id) for a parent's saved
+        card on ``stripe_account`` (platform when None), or None."""
         ...
 
 
@@ -660,6 +825,30 @@ class SnapshotWriter(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class ClassFeeForPeriod(Protocol):
+    """A class's monthly fee for one billing month (Settings overhaul PR 26).
+
+    The stored class fee, with any plan price change the owner scheduled for
+    that month applied. Every charge path reads the fee through this so they
+    agree on the price for a given month.
+    """
+
+    async def fee_cents_for_period(self, session_doc: Mapping[str, Any], period: str) -> int: ...
+
+    async def price_fence(self, session_id: str) -> Hashable:
+        """What the owner's plan price change edits have done to this class so far.
+
+        Raises ``PriceChangeInFlight`` while an edit holds a change covering
+        the class. Equal before and after a quote is stored means no edit
+        overlapped it.
+        """
+        ...
+
+    async def withdraw_quote(self, snapshot_id: str) -> None:
+        """Retire an OPEN quote that overlapped an edit; it can never be paid."""
+        ...
+
+
 class SessionTypeRepository(Protocol):
     async def save(self, session_type: SessionType) -> None: ...
     async def get(self, session_type_id: str) -> SessionType | None: ...
@@ -691,7 +880,24 @@ class BillingSettingsRepository(Protocol):
     """Port for academy-scoped billing configuration (Slice S0/D)."""
 
     async def get(self) -> BillingSettings: ...
-    async def upsert(self, settings: BillingSettings) -> None: ...
+
+    async def upsert(self, settings: BillingSettings) -> None:
+        """Persist academy-editable settings.
+
+        Never writes ``application_fee_bps`` or ``invoice_number_prefix``.
+        """
+        ...
+
+    async def set_application_fee_bps(self, fee_bps: int) -> None:
+        """Platform-admin only: set this academy's application fee (basis points)."""
+        ...
+
+    async def set_invoice_number_prefix(self, prefix: str) -> None:
+        """Platform only: set this academy's invoice prefix.
+
+        Raises ``InvoicePrefixTaken`` when another academy holds it.
+        """
+        ...
 
 
 class ConnectedAccountRepository(Protocol):
@@ -713,7 +919,49 @@ class ConnectedAccountRepository(Protocol):
         capabilities: dict[str, str] | None = None,
         charges_enabled: bool | None = None,
         payouts_enabled: bool | None = None,
-    ) -> None: ...
+        skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
+    ) -> bool: ...
+
+
+class ConnectedAccountDirectory(Protocol):
+    """PLATFORM-scoped port: which academy owns a Stripe connected account.
+
+    Unlike ``ConnectedAccountRepository`` this deliberately crosses tenants:
+    the webhook endpoint must attribute a Connect event (top-level
+    ``account``) to its owner before any tenant scope exists. Read-only, and
+    it answers only the owner's academy id (None when no academy owns it).
+    """
+
+    async def owner_academy_id(self, stripe_account_id: str) -> str | None: ...
+
+
+class PaymentDisputeRepository(Protocol):
+    """Tenant-scoped store of Stripe disputes (``payment_disputes``).
+
+    Record-keeping only: nothing here moves money or touches a payment's
+    amount, refund or allocation fields. A dispute is the academy's to answer
+    in its own Stripe dashboard; the app surfaces it and notifies the owner.
+    """
+
+    async def get(self, dispute_id: str) -> PaymentDispute | None: ...
+
+    async def save(self, dispute: PaymentDispute) -> None:
+        """Upsert by ``dispute_id`` within the request academy."""
+
+    async def stamp_payment(self, dispute: PaymentDispute) -> None:
+        """Mirror the dispute's id/status/reason/amount/outcome onto the
+        payment row(s) holding its PaymentIntent, in this academy only."""
+
+    async def list_open(self, *, limit: int = 20) -> list[PaymentDispute]: ...
+
+    async def count_open(self) -> int: ...
+
+
+class DisputeNoticePort(Protocol):
+    """Delivers the "a payment was disputed" e-mail to the academy owner."""
+
+    async def send_dispute_notice(self, *, payload: PaymentDisputeNoticePayload) -> None: ...
 
 
 class LedgerRepository(Protocol):
@@ -742,6 +990,26 @@ class LedgerRepository(Protocol):
     async def list_undelivered_invoices_for_period(
         self, period: str, *, limit: int = 100
     ) -> list[LedgerInvoice]: ...
+    async def list_overdue_invoices(
+        self,
+        *,
+        due_before: date,
+        due_on_or_after: date | None = None,
+        after: tuple[date, str] | None = None,
+        limit: int = 200,
+    ) -> list[LedgerInvoice]:
+        """Collectable invoices whose due date is strictly before ``due_before``.
+
+        Drives the automated late-fee pass (issue #552). ``due_before`` is
+        exclusive so the caller can express "the grace period has fully
+        elapsed" as ``today - grace_days`` without an off-by-one.
+        ``due_on_or_after`` is the inclusive floor for "only invoices that
+        became late after the fee was switched on". ``after`` is a keyset
+        cursor, the ``(due_date, invoice_id)`` of the last row of the previous
+        page, so a caller can walk past rows it has to skip.
+        """
+        ...
+
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None: ...
@@ -801,6 +1069,10 @@ class LedgerRepository(Protocol):
         idempotency_key: str,
     ) -> LedgerAllocationResult: ...
 
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: Sequence[str], *, limit: int = 100
+    ) -> list[LedgerInvoice]: ...
+
     async def reverse_payment_allocation(
         self,
         *,
@@ -855,3 +1127,34 @@ class AcademyFinancialSnapshotReader(Protocol):
     async def read(
         self, *, academy_id: str, months: tuple[str, ...] | None = None
     ) -> AcademyFinancialSnapshot: ...
+
+
+class ParentAliasSetView(Protocol):
+    """Identity: one users document and every id it may be referenced by."""
+
+    @property
+    def canonical_id(self) -> str: ...
+
+    @property
+    def aliases(self) -> frozenset[str]: ...
+
+
+class ParentIdentityAliases(Protocol):
+    """Identity: resolve a parent id to all of its aliases, one equality lookup
+    per identity field (never an ``$or`` across fields, #878/#894)."""
+
+    async def resolve_parent_aliases(
+        self, raw_ids: Sequence[str]
+    ) -> Mapping[str, ParentAliasSetView]: ...
+
+
+class ParentInvoiceLedger(Protocol):
+    """Tenant-scoped invoice reads for the parent portal (#932)."""
+
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: Sequence[str], *, limit: int = 100
+    ) -> list[LedgerInvoice]: ...
+
+    async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None: ...
+
+    async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]: ...

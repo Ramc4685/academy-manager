@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -33,8 +34,14 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
+from backend.v2.contexts.billing.application.use_cases.money_setting_audit import (
+    RecordMoneySettingChange,
+)
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
+)
+from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders import (
+    SendPastDueReminders,
 )
 from backend.v2.contexts.billing.application.use_cases.session_type_ops import (
     CreateSessionType,
@@ -122,6 +129,9 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_requests import 
     DenyTrialRequest,
     ListTrialRequestsForAdmin,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    DeclineWaitlistOffer,
+)
 from backend.v2.contexts.finance.application.ports import PayoutPeriodRepository
 from backend.v2.contexts.finance.application.use_cases.approve_payout_period import (
     ApprovePayoutPeriod,
@@ -143,6 +153,7 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
     RecomputePayoutPeriod,
     ReopenPayoutPeriod,
 )
+from backend.v2.contexts.identity.application.academy_media import UploadAcademyLogo
 from backend.v2.contexts.identity.application.change_user_role_use_case import ChangeUserRole
 from backend.v2.contexts.identity.application.get_academy_fees_use_case import GetAcademyFeesUseCase
 from backend.v2.contexts.identity.application.get_academy_gateway_use_case import (
@@ -152,6 +163,7 @@ from backend.v2.contexts.identity.application.get_academy_notifications_use_case
     GetAcademyNotificationsUseCase,
 )
 from backend.v2.contexts.identity.application.get_academy_use_case import GetAcademyUseCase
+from backend.v2.contexts.identity.application.ports import UserGovernanceAudit
 from backend.v2.contexts.identity.application.update_academy_fees_use_case import (
     UpdateAcademyFeesUseCase,
 )
@@ -260,7 +272,9 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
-    list_enrollment_events: object  # async (enrollment_id: str) -> list[dict]
+    list_enrollment_events: (
+        object  # async (enrollment_id, *, limit, cursor) -> (list[dict], cursor | None)
+    )
     list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
     comms: CommsService
@@ -291,6 +305,8 @@ class AdminUseCases:
     provision_parent_login: ProvisionParentLogin | None = None
     provision_student_login: ProvisionStudentLogin | None = None
     send_login_invite: SendLoginInvite | None = None
+    # X3: refused user changes and set-password sends (`audit_logs`).
+    user_governance_audit: UserGovernanceAudit | None = None
     add_user_role: AddUserRole | None = None
     remove_user_role: RemoveUserRole | None = None
     get_admin_student: GetAdminStudent | None = None
@@ -298,6 +314,8 @@ class AdminUseCases:
     change_admin_student_parent: ChangeAdminStudentParent | None = None
     get_admin_session: object | None = None  # async (session_id: str) -> dict | None
     maintain_session_occurrences: object | None = None  # async (session) -> None
+    # Read-only welcome email render: async (session_id) -> (subject, html) | None
+    preview_welcome_email: object | None = None
     # Assistant coaches editor (composition/admin_session_staff.py).
     set_session_assistants: object | None = None  # SetSessionAssistants
     add_session_replacement: object | None = None  # async (...) -> dict | None
@@ -329,9 +347,20 @@ class AdminUseCases:
     process_scheduled_resume_actions: ProcessScheduledResumeActions | None = None
     # Issue #675: month-end parent self-cancels (hourly scheduler job).
     process_scheduled_cancellation_actions: object | None = None
+    # Issue #820: the admin twin — "drop at end of period" schedules a drop
+    # and the same hourly tick replays it through WithdrawEnrollment.
+    schedule_admin_drop_at_period_end: object | None = None
+    cancel_scheduled_admin_drop: object | None = None
+    process_scheduled_admin_drop_actions: object | None = None
     #: Scheduled enrollment actions that stopped moving on their own:
     #: ``blocked_capacity`` resumes and ``failed`` month-end cancels (#675).
+    #: Issue #774: the automated due+N sweep the scheduler drives. Optional
+    #: so hand-built test bundles need not wire a job they never run.
+    send_past_due_reminders: SendPastDueReminders | None = None
     list_stuck_scheduled_actions: object | None = None
+    #: Issue #774: owner-facing counts of autopay failure and dunning
+    #: exhaustion for the admin home attention list.
+    count_dunning_alerts: object | None = None
     get_enrollment_funnel: object | None = (
         None  # async (period: str | None) -> EnrollmentFunnelResult
     )
@@ -363,6 +392,9 @@ class AdminUseCases:
     # Accounts-v2 Connect onboarding (Slice I) — supersedes the legacy OAuth
     # trio above for actually unblocking billing; see academy_routes.py.
     start_connect_onboarding_use_case: StartConnectOnboarding | None = None
+    # ``async (academy_id) -> base URL`` on that academy's own host, for
+    # Stripe return links (row 9). None (older fixtures) = settings.frontend_url.
+    academy_frontend_base_url: Callable[[str], Awaitable[str]] | None = None
     # Coach teaching-plan digest: test-send + delivery log (Stream 2 C/D).
     send_coach_digest_test: object | None = None  # SendCoachDigestTest
     get_digest_delivery_log: object | None = None  # GetDigestDeliveryLog
@@ -390,6 +422,15 @@ class AdminUseCases:
     record_manual_payment: object | None = None
     issue_invoice_refund: object | None = None
     list_billing_audit: object | None = None
+    # Reads ``academies.timezone`` for the coach-digest test send's default
+    # date (Settings Phase 4); wired in main.py. None -> legacy fallback zone.
+    get_academy_timezone: Callable[[str], Awaitable[str | None]] | None = None
+    # Owner changes to a class fee or the academy timezone (Settings overhaul
+    # Phase 1 PR 5), appended to the same billing audit log as Billing rules.
+    record_money_setting_change: RecordMoneySettingChange | None = None
+    # Logo upload (Settings overhaul Phase 4). None when no media bucket is
+    # configured: POST /academy/media then answers 503.
+    upload_academy_logo: UploadAcademyLogo | None = None
     create_student_invoice: object | None = None
     bill_enrollment_period: object | None = None
     list_billing_products: object | None = None
@@ -414,17 +455,23 @@ class AdminUseCases:
     deny_trial_request: DenyTrialRequest | None = None
     # Self-cancel audit list (R4, Task 8)
     list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
-    # Platform-charge fallback escape hatch (2026-07-04 incident follow-up):
-    # audited admin toggle for billing_settings.allow_platform_charge_fallback.
+    # Read-only view of billing_settings.allow_platform_charge_fallback, which
+    # is derived from the house-academy setting (no admin toggle).
     get_platform_charge_fallback: object | None = None  # GetPlatformChargeFallback
-    set_platform_charge_fallback: object | None = None  # SetPlatformChargeFallback
     # audited admin control for billing_settings.billing_day/invoice_due_days,
     # which drive the automated monthly invoice generation job.
     get_invoice_schedule: object | None = None  # GetInvoiceScheduleSettings
+    # Read-only view of billing_settings.invoice_number_prefix, which only the
+    # platform sets (Settings overhaul Phase 1 PR 2).
+    get_invoice_prefix: object | None = None  # ReadAcademyInvoicePrefix
     set_invoice_schedule: object | None = None  # SetInvoiceScheduleSettings
     # Student attendance correction (#517). Optional for fixtures that
     # predate it; real admin composition always sets it.
     correct_attendance: object | None = None  # CorrectAttendance
+    # Void a student mark + read the marks on one occurrence (#554). Optional
+    # for fixtures that predate them; real admin composition always sets both.
+    void_attendance: object | None = None  # VoidAttendance
+    list_occurrence_attendance: object | None = None  # (occurrence_id) -> list[Attendance]
     # Departures / holds (issue #697). Wired in composition/enrollment_holds.py
     # (never composition/admin.py — see that module's docstring) and attached
     # onto this already-built object in main.py, mirroring
@@ -437,6 +484,9 @@ class AdminUseCases:
     # composition/departures.py, same attach-after-the-fact pattern.
     stop_all_classes: StopAllClasses | None = None
     leaving_report: GetLeavingReport | None = None
+    # X2: closes an OFFERED waitlist row and releases its held seat; attached
+    # in main.py (composition/waitlist_offers.py), same pattern as above.
+    withdraw_waitlist_offer: DeclineWaitlistOffer | None = None
 
 
 def get_admin_use_cases(request: Request) -> AdminUseCases:

@@ -25,11 +25,12 @@ happens regardless of Sentry.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
-from typing import Any
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
+from typing import Any, cast
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +106,16 @@ def handle_scheduler_job_event(event: Any) -> None:
                 scheduled_run_time.isoformat() if scheduled_run_time is not None else None
             ),
         }
-        if exc is not None:
+        if isinstance(exc, asyncio.CancelledError):
+            # Issue #752: a deploy replaces the machine mid-tick, APScheduler
+            # cancels the in-flight job's task, and the CancelledError arrives
+            # here as a job *error*. It is shutdown noise, not a failure — and
+            # paging on it on every overlapping deploy buried the real failures
+            # of the same job. Logged at info so the cut-off run is still
+            # traceable. Scoped to cancellation only: any other exception
+            # raised during shutdown is still a genuine error below.
+            log.info("scheduler_job_cancelled job_id=%s", job_id, extra=extra)
+        elif exc is not None:
             log.error(
                 "scheduler_job_error job_id=%s",
                 job_id,
@@ -154,13 +164,33 @@ async def cron_checkin(
         yield
         return
     started = time.monotonic()
+    with _job_transaction(sentry_sdk, job_id):
+        try:
+            yield
+        except BaseException:
+            _checkin(sentry_sdk, job_id, check_in_id, "error", monitor_config, started)
+            raise
+        else:
+            _checkin(sentry_sdk, job_id, check_in_id, "ok", monitor_config, started)
+
+
+def _job_transaction(sentry_sdk: Any, job_id: str) -> AbstractContextManager[Any]:
+    """Performance transaction spanning a cron job's body (#749).
+
+    Without this, only HTTP requests ever produced a Sentry transaction — a
+    scheduler job could run for a non-zero ``sentry_traces_sample_rate`` and
+    never show up in Performance. Best-effort like the rest of this module:
+    any SDK error (including an older sentry-sdk without ``start_transaction``)
+    falls back to a no-op context manager so the job body is unaffected.
+    """
     try:
-        yield
-    except BaseException:
-        _checkin(sentry_sdk, job_id, check_in_id, "error", monitor_config, started)
-        raise
-    else:
-        _checkin(sentry_sdk, job_id, check_in_id, "ok", monitor_config, started)
+        return cast(
+            "AbstractContextManager[Any]",
+            sentry_sdk.start_transaction(op="scheduler.job", name=job_id),
+        )
+    except Exception:
+        log.debug("sentry_job_transaction_start_failed job_id=%s", job_id, exc_info=True)
+        return nullcontext()
 
 
 def _checkin(
@@ -184,3 +214,31 @@ def _checkin(
     except Exception:
         log.warning("sentry_cron_checkin_failed job_id=%s status=%s", job_id, status, exc_info=True)
         return None
+
+
+_ops_alert_email_warned = False
+
+
+def warn_if_ops_alert_email_missing(settings: Any) -> bool:
+    """Log one ``ops_alert_email_missing`` WARNING at startup when unset.
+
+    The daily ops digest (``send_ops_digest``) silently skips every cycle with
+    an INFO line when ``OPS_ALERT_EMAIL`` is empty, so an unconfigured
+    deployment looks healthy. This surfaces the gap once per process at boot,
+    at WARNING, with the environment name. It does not change the digest.
+
+    Returns ``True`` iff the warning was emitted by this call.
+    """
+    global _ops_alert_email_warned
+    if (getattr(settings, "ops_alert_email", None) or "").strip():
+        return False
+    if _ops_alert_email_warned:
+        return False
+    _ops_alert_email_warned = True
+    env = str(getattr(settings, "env", "") or "")
+    log.warning(
+        "ops_alert_email_missing: OPS_ALERT_EMAIL is not configured; the daily ops digest will be skipped (env=%s)",
+        env,
+        extra={"event": "ops_alert_email_missing", "env": env},
+    )
+    return True

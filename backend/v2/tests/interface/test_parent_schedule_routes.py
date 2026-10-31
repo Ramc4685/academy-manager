@@ -163,3 +163,21 @@ def test_date_range_query_params_accepted() -> None:
             "/api/v2/parent/children/student-1/schedule?from=2026-07-01&to=2026-07-31"
         )
     assert response.status_code == 200
+
+
+def test_schedule_exposes_the_one_time_source_label() -> None:
+    """#1038: approved make-up / trial rows are labelled so the UI can badge them."""
+    entries = [
+        _entry("occ-regular", 1),
+        _entry("occ-makeup", 2).model_copy(update={"source": "makeup"}),
+        _entry("occ-trial", 3).model_copy(update={"source": "trial"}),
+    ]
+    with _make_client(entries=entries) as client:
+        response = client.get("/api/v2/parent/children/student-1/schedule")
+
+    assert response.status_code == 200, response.text
+    assert [(e["occurrence_id"], e["source"]) for e in response.json()["entries"]] == [
+        ("occ-regular", "regular"),
+        ("occ-makeup", "makeup"),
+        ("occ-trial", "trial"),
+    ]

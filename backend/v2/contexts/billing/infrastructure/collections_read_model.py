@@ -36,12 +36,14 @@ from backend.v2.contexts.billing.application.collections_buckets import (
     build_collections_view_from_rows,
     classify_family,
 )
+from backend.v2.contexts.billing.domain.charge_route import decide_charge_route
 from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
     exclude_non_charge_attempts,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
 )
+from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -130,6 +132,7 @@ class MongoCollectionsReadModel:
         customers: Any,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         parent_payments_link: Callable[[str], Awaitable[tuple[str | None, str]]] | None = None,
+        phone_calling_code: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self._db = db
         self._academy_timezone = academy_timezone
@@ -141,6 +144,9 @@ class MongoCollectionsReadModel:
         # the WhatsApp reminder text (spec §7). Optional: without it the rows
         # simply carry no WhatsApp link.
         self._parent_payments_link = parent_payments_link
+        # The academy's calling code for bare national phone numbers. Optional:
+        # without it the link prefixes "1", as it always has.
+        self._phone_calling_code = phone_calling_code
 
     # ------------------------------------------------------------------ entry
 
@@ -316,7 +322,15 @@ class MongoCollectionsReadModel:
         except Exception:
             log.warning("collections read model: parent payments link lookup failed", exc_info=True)
             return None
-        return WhatsAppContext(pay_url=pay_url, academy_name=academy_name)
+        country_code = DEFAULT_CALLING_CODE
+        if self._phone_calling_code is not None:
+            try:
+                country_code = await self._phone_calling_code(academy_id)
+            except Exception:
+                log.warning("collections read model: calling code lookup failed", exc_info=True)
+        return WhatsAppContext(
+            pay_url=pay_url, academy_name=academy_name, country_code=country_code
+        )
 
     async def _resolve_timezone(self, academy_id: str) -> str:
         try:
@@ -355,6 +369,7 @@ class MongoCollectionsReadModel:
             due_date=due,
             delivery_status=str(inv.get("delivery_status") or "not_sent"),
             last_sent_at=_to_datetime(inv.get("last_sent_at")),
+            last_reminder_at=_to_datetime(inv.get("last_reminder_at")),
             enrollment_id=_opt_str(inv.get("enrollment_id")),
             student_id=_opt_str(inv.get("student_id")),
             autopay_enrollment_status=autopay_status,
@@ -412,6 +427,7 @@ class MongoCollectionsReadModel:
                 "due_date": 1,
                 "delivery_status": 1,
                 "last_sent_at": 1,
+                "last_reminder_at": 1,
             },
         )
         docs = [doc async for doc in cursor]
@@ -701,5 +717,8 @@ class MongoCollectionsReadModel:
         except Exception:
             log.warning("collections read model: connected-account lookup failed", exc_info=True)
             return None
-        ready = account is not None and account.is_ready_for_charges()
-        return bool(ready or getattr(settings, "allow_platform_charge_fallback", False))
+        # Same routing rule the charge paths use (domain/charge_route.py).
+        return decide_charge_route(
+            is_house_academy=bool(getattr(settings, "allow_platform_charge_fallback", False)),
+            account=account,
+        ).payments_possible
