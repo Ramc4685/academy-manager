@@ -66,6 +66,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_level_up_que
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassport,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_pathway_dashboard import (
+    GetPathwayDashboard,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_pathway_placement import (
     GetStudentPathwayPlacement,
 )
@@ -242,6 +245,7 @@ class StudentProgressComposition:
     mark_skill_mastered: MarkSkillMastered
     unmark_skill_mastered: UnmarkSkillMastered
     auto_approve_level_ups: AutoApproveLevelUps
+    get_pathway_dashboard: GetPathwayDashboard
 
 
 # ---------------------------------------------------------------------------
@@ -426,5 +430,12 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
             review_level_up=review_level_up,
+        ),
+        get_pathway_dashboard=GetPathwayDashboard(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            recommendations=recommendation_repo,
+            certificates=certificate_repo,
+            levels=skill_lookup,
         ),
     )

@@ -764,6 +764,41 @@
       ]
     },
     {
+      "route": "/admin/pathway/dashboard",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pathway/dashboard/page.tsx",
+      "workflows": [
+        "Review who is moving and who is stuck",
+        "Switch the level-up rule"
+      ],
+      "controls": {
+        "buttons": [
+          "Contact family",
+          "Offer a 1-on-1",
+          "All students"
+        ],
+        "inputs": [
+          "Level-up rule"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error state"
+      ],
+      "risk_edges": [
+        "Stuck list misses or wrongly flags a student",
+        "Rule change half-applied across levels"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Review who is moving and who is stuck\" completes for the admin route /admin/pathway/dashboard with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Switch the level-up rule\" completes for the admin route /admin/pathway/dashboard with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Stuck list misses or wrongly flags a student\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Rule change half-applied across levels\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/pathway/progress",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/pathway/progress/page.tsx",

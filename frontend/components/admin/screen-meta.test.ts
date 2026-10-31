@@ -250,17 +250,11 @@ describe("metaForPath", () => {
 });
 
 describe("Progress sidebar item (Settings overhaul Phase 3 PR 11)", () => {
-  it("hides the item when the progress overview flag is off", () => {
-    expect(ADMIN_NAV.flatMap((group) => group.items).some((entry) => entry.id === "progress")).toBe(false);
-  });
-
-  it("renames Pathway to Progress and points at the progress overview", async () => {
-    vi.stubEnv("NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW", "1");
-    vi.resetModules();
-    const { ADMIN_NAV, metaForPath } = await import("./screen-meta");
+  it("shows Progress without the overview flag and lands on the owner dashboard", () => {
     const item = ADMIN_NAV.flatMap((group) => group.items).find((entry) => entry.id === "progress");
-    expect(item).toMatchObject({ label: "Progress", href: "/admin/pathway/progress" });
+    expect(item).toMatchObject({ label: "Progress", href: "/admin/pathway/dashboard" });
     expect(item?.match("/admin/pathway/progress")).toBe(true);
+    expect(metaForPath("/admin/pathway/dashboard").title).toBe("Progress");
     expect(metaForPath("/admin/pathway/progress").title).toBe("Progress");
   });
 });
