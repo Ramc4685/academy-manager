@@ -25,6 +25,9 @@ class CurriculumSkillLookupAdapter:
     async def list_skills_for_level(self, level_id: str) -> list[Any]:
         return await self._skills.list_for_level(level_id)
 
+    async def list_levels_for_program(self, program_id: str) -> list[Any]:
+        return list(await self._levels.list_for_program(program_id))
+
     async def get_next_level(self, program_id: str, current_sequence: int) -> Any | None:
         all_levels = await self._levels.list_for_program(program_id)
         next_levels = [

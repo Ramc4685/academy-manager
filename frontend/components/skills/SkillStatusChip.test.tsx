@@ -109,7 +109,6 @@ describe("progress surfaces share the one chip", () => {
   const FRONTEND = join(__dirname, "..", "..");
   const CALL_SITES = [
     "app/(student)/student/progress/page.tsx",
-    "app/(parent)/parent/progress/page.tsx",
     "app/(coach)/coach/students/[studentId]/passport/page.tsx",
     "components/teaching/student-focus-row.tsx",
   ];
@@ -133,6 +132,19 @@ describe("progress surfaces share the one chip", () => {
       expect(source, `${file} still has ${retired}`).not.toContain(retired);
     }
   });
+
+  // The parent journey shows the BFF's three parent states (Got it / Working
+  // on it / Coming up) instead of raw statuses, so it renders no chip, but it
+  // must not grow its own status map either.
+  it.each(["app/(parent)/parent/progress/page.tsx", "app/(parent)/parent/progress/journey.tsx"])(
+    "%s hand-rolls no status chip",
+    (file) => {
+      const source = readFileSync(join(FRONTEND, file), "utf8");
+      for (const retired of RETIRED) {
+        expect(source, `${file} still has ${retired}`).not.toContain(retired);
+      }
+    },
+  );
 
   // The admin row edits status through a <select>, which already shows the
   // current status, so it takes the shared labels but renders no chip.

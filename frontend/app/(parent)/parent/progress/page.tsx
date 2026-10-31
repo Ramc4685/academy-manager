@@ -5,25 +5,23 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
+import { ErrorNotice } from "@/components/ds/error-notice";
 import {
   listParentProgress,
   listParentChildren,
-  listSkillUpdates,
-  listPracticeResources,
-  type ParentPracticeResource,
-  type ParentSkillUpdate,
+  getParentProgressJourney,
 } from "@/lib/api/parent";
+import { getParentStudentCertificates } from "@/lib/api/curriculum";
+import { queryKeys } from "@/lib/query/keys";
 import {
-  getParentStudentPassport,
-  getParentStudentCertificates,
-  getParentProgressSummary,
-  type SkillPassportEntry,
-  type SkillCertificate,
-  type StudentProgressOverview,
-} from "@/lib/api/curriculum";
-import { SkillStatusChip, skillStatusToneClasses } from "@/components/skills/SkillStatusChip";
-
-const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
+  CertificateList,
+  JourneySkeleton,
+  LevelRing,
+  LevelStrip,
+  PracticeDrillCard,
+  RecentWins,
+  SkillChecklist,
+} from "./journey";
 
 // Per-note left-border accents are derived from the note id hash — genuinely
 // dynamic, so these stay as literal color stops (no single token pair
@@ -48,13 +46,17 @@ export default function ParentProgressPage() {
 
   return (
     <section data-testid="parent-progress">
-      <div className="mb-4 animate-fade-in-up">
-        <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">
-          Progress
-        </h1>
-        <p className="text-sm mt-0.5 text-rally-muted">
-          Notes and feedback from coaches
-        </p>
+      <h1 className="sr-only">Progress</h1>
+
+      {/* The evening win email lands here, so the journey leads. */}
+      <Suspense fallback={null}>
+        <SkillProgressSection />
+      </Suspense>
+
+      <div className="mt-8 mb-4">
+        <h2 className="font-display text-xl font-bold tracking-tight text-rally-ink">
+          Notes from coaches
+        </h2>
       </div>
 
       {isError ? (
@@ -66,11 +68,6 @@ export default function ParentProgressPage() {
       ) : (
         <NotesList notes={notes as NoteEntry[]} />
       )}
-
-      {/* Skill Progress section */}
-      <Suspense fallback={null}>
-        <SkillProgressSection />
-      </Suspense>
     </section>
   );
 }
@@ -179,28 +176,28 @@ function NotesList({ notes }: { notes: NoteEntry[] }) {
   );
 }
 
+
 /* -------------------------------------------------------------------------
- * Skill Progress section — new feature
+ * Skill journey — "how far along" for the selected child
  * ---------------------------------------------------------------------- */
 
 function SkillProgressSection() {
   const { data: childrenData } = useQuery({
-    queryKey: ["parent", "children"],
+    queryKey: queryKeys.parent.children(),
     queryFn: listParentChildren,
   });
 
   const children = useMemo(() => childrenData?.children ?? [], [childrenData]);
 
-  // Home's child cards deep-link here as /parent/progress?child=<student_id>,
-  // so the tab strip opens on the child the parent tapped. The param only
-  // seeds the selection — the tabs stay the source of truth afterwards, and
-  // an absent or unknown id falls back to the first child.
+  // Home's child cards and the evening win email deep-link here as
+  // /parent/progress?child=<student_id>. The param only seeds the selection —
+  // the tabs stay the source of truth afterwards, and an absent or unknown id
+  // falls back to the first child.
   const requestedChildId = useSearchParams().get("child");
   const [activeChildIdx, setActiveChildIdx] = useState(0);
   // Seed once, after the roster arrives: re-applying it on every render would
   // yank the parent back to the deep-linked child whenever they tap a tab.
   const seededFromQuery = useRef(false);
-
   const sectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -210,55 +207,31 @@ function SkillProgressSection() {
     const idx = children.findIndex((child) => child.student_id === requestedChildId);
     if (idx < 0) return;
     setActiveChildIdx(idx);
-    // The `#skill-progress` fragment on Home's card cannot do this on its own:
-    // this section is not in the DOM when the router commits the navigation
-    // (the roster query is still in flight), so the browser scrolls to top and
-    // never retries. Jump — and move focus — once the child actually resolves.
-    const section = sectionRef.current;
-    if (section) {
-      section.scrollIntoView({ block: "start" });
-      section.focus({ preventScroll: true });
-    }
+    // The roster query is still in flight when the router commits the
+    // navigation, so move focus once the child actually resolves.
+    sectionRef.current?.focus({ preventScroll: true });
   }, [requestedChildId, children]);
 
   const activeChild = children[activeChildIdx];
-  const { data: overviewRows, isLoading: loadingOverview } = useQuery({
-    queryKey: ["parent", "progress-summary", "default"],
-    queryFn: () => getParentProgressSummary(),
-    enabled: progressOverviewEnabled,
-  });
-  const activeChildOverview =
-    activeChild && overviewRows
-      ? overviewRows.find((row) => row.student_id === activeChild.student_id)
-      : undefined;
-
-  if (children.length === 0) return null;
+  if (!activeChild) return null;
 
   return (
     <div
       id="skill-progress"
       ref={sectionRef}
       tabIndex={-1}
-      className="mt-8 space-y-4 animate-fade-in-up outline-none"
+      className="space-y-4 animate-fade-in-up outline-none"
     >
-      {/* Section heading */}
-      <div>
-        <h2 className="font-display text-xl font-bold tracking-tight text-rally-ink">
-          Skill Progress
-        </h2>
-        <p className="text-sm mt-0.5 text-rally-muted">
-          Level and skills overview for each child
-        </p>
-      </div>
-
-      {/* Child tabs */}
       {children.length > 1 && (
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap" role="tablist" aria-label="Choose a child">
           {children.map((child, idx) => (
             <button
               key={child.student_id}
+              type="button"
+              role="tab"
+              aria-selected={idx === activeChildIdx}
               onClick={() => setActiveChildIdx(idx)}
-              className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-all ${
+              className={`rounded-full px-3 min-h-[44px] text-sm font-semibold transition-all ${
                 idx === activeChildIdx
                   ? "bg-rally-cobalt-600 text-white"
                   : "bg-rally-cobalt-50 text-rally-cobalt-600"
@@ -270,357 +243,67 @@ function SkillProgressSection() {
         </div>
       )}
 
-      {activeChild && (
-        <>
-          {progressOverviewEnabled && (
-            <ParentProgressSummaryCard
-              overview={activeChildOverview}
-              isLoading={loadingOverview}
-              childName={activeChild.full_name}
-            />
-          )}
-          <ChildPassportView
-            studentId={activeChild.student_id}
-            studentName={activeChild.full_name}
-          />
-        </>
-      )}
+      <ChildJourney
+        key={activeChild.student_id}
+        studentId={activeChild.student_id}
+        childName={activeChild.full_name}
+      />
     </div>
   );
 }
 
-function ParentProgressSummaryCard({
-  overview,
-  isLoading,
-  childName,
-}: {
-  overview: StudentProgressOverview | undefined;
-  isLoading: boolean;
-  childName: string;
-}) {
-  if (isLoading) {
-    return <div className="h-28 animate-pulse rounded-2xl shimmer" />;
-  }
+function ChildJourney({ studentId, childName }: { studentId: string; childName: string }) {
+  const journeyQuery = useQuery({
+    queryKey: queryKeys.parent.progressJourney(studentId),
+    queryFn: () => getParentProgressJourney(studentId),
+  });
+  const { data: certs } = useQuery({
+    queryKey: ["parent", "certificates", studentId],
+    queryFn: () => getParentStudentCertificates(studentId),
+  });
+  const firstName = childName.split(" ")[0] || childName;
 
-  if (!overview) {
+  if (journeyQuery.isLoading) return <JourneySkeleton />;
+  if (journeyQuery.isError || !journeyQuery.data) {
     return (
-      <div className="rounded-2xl p-4 bg-white border border-rally-line">
-        <p className="text-sm font-bold text-rally-ink">
-          {childName}
-        </p>
-        <p className="mt-1 text-sm text-rally-muted">
-          No level placement found for this program.
-        </p>
-      </div>
+      <ErrorNotice
+        message={`Could not load ${firstName}'s progress.`}
+        onRetry={() => void journeyQuery.refetch()}
+        retrying={journeyQuery.isFetching}
+      />
     );
   }
 
-  const totalPct =
-    overview.total_skill_count > 0
-      ? Math.round((overview.total_skills_passed / overview.total_skill_count) * 100)
-      : 0;
+  const journey = journeyQuery.data;
+  const current = journey.current_level;
 
   return (
-    <div className="rounded-2xl p-4 bg-white border border-rally-line">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-bold truncate text-rally-ink">
-            {overview.student_name}
+    <div className="space-y-4" data-testid="parent-progress-journey">
+      {current ? (
+        <>
+          <LevelStrip firstName={firstName} journey={journey} />
+          <LevelRing current={current} />
+          <SkillChecklist skills={journey.skills} />
+        </>
+      ) : journey.pathway_complete ? (
+        <>
+          <LevelStrip firstName={firstName} journey={journey} />
+          <p className="rounded-2xl p-4 bg-white border border-rally-line text-sm text-rally-muted">
+            {firstName} has finished every level of this pathway. Their certificates are below.
           </p>
-          <p className="mt-0.5 text-xs truncate text-rally-muted">
-            {overview.current_level_name ?? "Not placed"} · {overview.program_name}
-          </p>
-        </div>
-        <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold bg-rally-cobalt-50 text-rally-cobalt-600">
-          {totalPct}%
-        </span>
-      </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-rally-line">
-        <div
-          className="h-full rounded-full bg-rally-cobalt-600 transition-all duration-500"
-          style={{ width: `${totalPct}%` }}
-        />
-      </div>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-        <SummaryMetric label="Passed" value={overview.total_skills_passed} />
-        <SummaryMetric label="Learning" value={overview.in_progress_count} />
-        <SummaryMetric label="Ready" value={overview.test_ready_count} />
-      </div>
-    </div>
-  );
-}
-
-function SummaryMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl px-2 py-2 bg-rally-paper">
-      <p className="text-sm font-bold text-rally-ink">
-        {value}
-      </p>
-      <p className="text-[11px] text-rally-muted">
-        {label}
-      </p>
-    </div>
-  );
-}
-
-function ChildPassportView({
-  studentId,
-  studentName,
-}: {
-  studentId: string;
-  studentName: string;
-}) {
-  const { data: passport, isLoading: loadingPassport } = useQuery({
-    queryKey: ["parent", "passport", studentId, "default"],
-    queryFn: () => getParentStudentPassport(studentId),
-    enabled: Boolean(studentId),
-  });
-
-  const { data: certs, isLoading: loadingCerts } = useQuery({
-    queryKey: ["parent", "certificates", studentId],
-    queryFn: () => getParentStudentCertificates(studentId),
-    enabled: Boolean(studentId),
-  });
-
-  const { data: updates, isLoading: loadingUpdates } = useQuery({
-    queryKey: ["parent", "skill-updates", studentId],
-    queryFn: () => listSkillUpdates(studentId),
-    enabled: Boolean(studentId),
-  });
-
-  const { data: practiceResources, isLoading: loadingPracticeResources } = useQuery({
-    queryKey: ["parent", "practice-resources", studentId],
-    queryFn: () => listPracticeResources(studentId),
-    enabled: Boolean(studentId),
-  });
-
-  const skills = passport ?? [];
-  const certList = certs ?? [];
-  const passedCount = skills.filter((s) => s.status === "PASSED").length;
-
-  return (
-    <div className="space-y-4">
-      {/* Summary card */}
-      {skills.length > 0 && (
-        <div className="rounded-2xl p-4 bg-white border border-rally-line">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-bold text-rally-ink">
-              {studentName}
-            </p>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-rally-cobalt-50 text-rally-cobalt-600">
-              {passedCount}/{skills.length} passed
-            </span>
-          </div>
-          <div className="h-2 rounded-full overflow-hidden bg-rally-line">
-            <div
-              className="h-full rounded-full bg-rally-cobalt-600 transition-all duration-500"
-              style={{
-                width: skills.length > 0 ? `${Math.round((passedCount / skills.length) * 100)}%` : "0%",
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      <RecentSkillUpdatesTimeline updates={updates ?? []} isLoading={loadingUpdates} />
-
-      {/* Skill list */}
-      {loadingPassport ? (
-        <SkillListSkeleton />
-      ) : skills.length === 0 ? (
-        <p className="text-sm text-rally-muted">
-          No skills found for this program.
-        </p>
+        </>
       ) : (
-        <ul className="space-y-2 stagger-children">
-          {skills.map((entry) => (
-            <SkillItem key={entry.skill_id} entry={entry} />
-          ))}
-        </ul>
-      )}
-
-      <PracticeResourcesCard
-        resources={practiceResources ?? []}
-        isLoading={loadingPracticeResources}
-      />
-
-      {/* Certificates */}
-      {!loadingCerts && certList.length > 0 && (
-        <div className="rounded-2xl overflow-hidden bg-white border border-rally-line animate-fade-in-up">
-          {/*
-            Certificate banner gradient sits outside the two-hue
-            (cobalt/volt) token system — same documented exception as the
-            dashboard's progress-hero gradient in PR #330.
-          */}
-          <div
-            className="px-4 py-3"
-            style={{ background: "linear-gradient(135deg,#0a0f1c 0%,#0f1d38 100%)" }}
-          >
-            <p className="text-[10px] font-bold uppercase tracking-widest text-white/50">
-              Certificates
-            </p>
-          </div>
-          <ul className="divide-y divide-rally-line">
-            {certList.map((cert) => (
-              <CertificateItem key={cert.cert_id} cert={cert} />
-            ))}
-          </ul>
+        <div className="rounded-2xl p-4 bg-white border border-rally-line">
+          <p className="text-sm font-bold text-rally-ink">{firstName}&apos;s badminton journey</p>
+          <p className="mt-1 text-sm text-rally-muted">
+            {firstName} hasn&apos;t been placed in a level yet. Their coach places them after
+            the first classes, and their skills will show up here.
+          </p>
         </div>
       )}
+      <RecentWins wins={journey.recent_wins} />
+      {journey.practice_drill && <PracticeDrillCard drill={journey.practice_drill} />}
+      {certs && certs.length > 0 && <CertificateList certs={certs} />}
     </div>
   );
-}
-
-function RecentSkillUpdatesTimeline({
-  updates,
-  isLoading,
-}: {
-  updates: ParentSkillUpdate[];
-  isLoading: boolean;
-}) {
-  if (isLoading) {
-    return <div className="h-28 animate-pulse rounded-2xl shimmer" />;
-  }
-
-  if (updates.length === 0) return null;
-
-  return (
-    <div className="rounded-2xl overflow-hidden bg-white border border-rally-line animate-fade-in-up">
-      <div className="px-4 py-3 border-b border-rally-line">
-        <p className="text-sm font-bold text-rally-ink">
-          Recent skill updates
-        </p>
-      </div>
-      <ol className="divide-y divide-rally-line">
-        {updates.map((update) => (
-          <li key={`${update.skill_id}-${update.updated_at}`} className="flex gap-3 px-4 py-3">
-            <time className="w-14 shrink-0 text-xs font-semibold text-rally-subtle">
-              {formatUpdateDate(update.updated_at)}
-            </time>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-rally-ink">
-                {update.skill_name}
-              </p>
-            </div>
-            <SkillStatusChip status={update.status} />
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-function SkillItem({ entry }: { entry: SkillPassportEntry }) {
-  const checkmark = entry.status === "PASSED";
-  const classes = skillStatusToneClasses(entry.status);
-
-  return (
-    <li className="flex items-center gap-3 rounded-xl px-3 py-2.5 bg-white border border-rally-line animate-fade-in-up">
-      <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 text-sm ${classes}`}>
-        {checkmark ? "✓" : entry.sequence}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate text-rally-ink">
-          {entry.skill_name}
-        </p>
-      </div>
-      <SkillStatusChip status={entry.status} />
-    </li>
-  );
-}
-
-function PracticeResourcesCard({
-  resources,
-  isLoading,
-}: {
-  resources: ParentPracticeResource[];
-  isLoading: boolean;
-}) {
-  if (isLoading) {
-    return <div className="h-24 animate-pulse rounded-2xl shimmer" />;
-  }
-
-  if (resources.length === 0) return null;
-
-  return (
-    <div className="rounded-2xl overflow-hidden bg-white border border-rally-line animate-fade-in-up">
-      <div className="px-4 py-3 border-b border-rally-line">
-        <p className="text-sm font-bold text-rally-ink">
-          Practice at home
-        </p>
-      </div>
-      <ul className="divide-y divide-rally-line">
-        {resources.map((resource) => (
-          <li key={resource.skill_id} className="px-4 py-3">
-            <p className="text-sm font-semibold text-rally-ink">
-              {resource.skill_name}
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {resource.resource_links.map((link) => (
-                <a
-                  key={`${resource.skill_id}-${link.url}`}
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold bg-rally-cobalt-50 text-rally-cobalt-600 transition-all hover:-translate-y-0.5"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                  <span className="truncate">{link.title}</span>
-                </a>
-              ))}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function CertificateItem({ cert }: { cert: SkillCertificate }) {
-  return (
-    <li className="flex items-center gap-3 px-4 py-3">
-      <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 text-lg bg-rally-volt-100">
-        🏅
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold truncate text-rally-ink">
-          {cert.level_name}
-        </p>
-        <p className="text-xs truncate text-rally-muted">
-          {cert.program_name}
-        </p>
-      </div>
-      <div className="shrink-0 text-right">
-        <p className="text-xs font-medium text-rally-ink">
-          {new Date(cert.completed_at).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </p>
-        <p className="text-[11px] text-rally-subtle">
-          #{cert.cert_number}
-        </p>
-      </div>
-    </li>
-  );
-}
-
-function SkillListSkeleton() {
-  return (
-    <div className="space-y-2">
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="h-11 animate-pulse rounded-xl shimmer" />
-      ))}
-    </div>
-  );
-}
-
-function formatUpdateDate(value: string) {
-  return new Date(value).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
 }

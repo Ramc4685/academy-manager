@@ -346,30 +346,57 @@ test.describe("parent home — Progress deep link", () => {
         absent_count: 0,
       })),
     });
-    await page.route("**/api/v2/parent/students/*/skill-progress*", async (route: Route) => {
+    await page.route("**/api/v2/parent/students/*/progress-journey*", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
       const forBo = route.request().url().includes("st-2");
       return json(route, {
-        passport: [
+        student_id: forBo ? "st-2" : "st-1",
+        program_id: "prog-1",
+        levels: [
+          { level_id: "l1", name: "Grip & Control", number: 1, state: "done" },
+          { level_id: "l2", name: "Net & Movement", number: 2, state: "current" },
+          { level_id: "l3", name: "Serve", number: 3, state: "upcoming" },
+        ],
+        current_level: {
+          level_id: "l2",
+          name: "Net & Movement",
+          number: 2,
+          skills_done: 1,
+          skills_total: 2,
+          skills_remaining: 1,
+          has_next_level: true,
+          pace_weeks: null,
+        },
+        skills: [
           {
             skill_id: forBo ? "sk-bo" : "sk-ava",
-            level_id: "l1",
-            program_id: "prog-1",
-            skill_name: forBo ? "Bo's overhead clear" : "Ava's short serve",
-            skill_description: "",
-            sequence: 1,
-            is_required: true,
-            status: "PASSED",
-            last_test_passed: true,
-            last_tested_at: "2026-09-01T00:00:00Z",
-            test_attempt_count: 1,
+            name: forBo ? "Bo's overhead clear" : "Ava's short serve",
+            state: "got_it",
+          },
+          { skill_id: "sk-next", name: "Net rally", state: "working_on_it" },
+        ],
+        recent_wins: [
+          {
+            kind: "skill",
+            at: "2026-09-01T00:00:00Z",
+            title: forBo ? "Bo's overhead clear" : "Ava's short serve",
+            cert_id: null,
+            cert_number: null,
           },
         ],
+        focus_skill_id: "sk-next",
+        focus_skill_name: "Net rally",
+        pathway_complete: false,
+        practice_drill: {
+          skill_id: "sk-next",
+          skill_name: "Net rally",
+          kind: "YOUTUBE",
+          title: "Net rally drill",
+          url: "https://youtu.be/net-rally",
+        },
       });
     });
     await stubGet(page, "**/api/v2/parent/students/*/certificates", { certificates: [] });
-    await stubGet(page, "**/api/v2/parent/students/*/skill-updates", { updates: [] });
-    await stubGet(page, "**/api/v2/parent/students/*/practice-resources", { resources: [] });
 
     await page.goto("/parent/dashboard");
     await page.getByTestId("parent-child-card-st-2").click();
@@ -377,6 +404,16 @@ test.describe("parent home — Progress deep link", () => {
     await expect(page).toHaveURL(/\/parent\/progress\?child=st-2/);
     await expect(page.getByTestId("parent-progress")).toBeVisible();
     // The tab strip opened on the child the parent tapped, not on the first.
-    await expect(page.getByText("Bo's overhead clear")).toBeVisible();
+    const journey = page.getByTestId("parent-progress-journey");
+    await expect(journey.getByText("Bo's badminton journey")).toBeVisible();
+    await expect(journey.getByText("Level 2 of 3")).toBeVisible();
+    await expect(journey.getByText("1 skill to Level 3")).toBeVisible();
+    // No pace line without enough recent passes to estimate one.
+    await expect(journey.getByText(/At this pace/)).toHaveCount(0);
+    await expect(journey.getByText("Mastered Bo's overhead clear")).toBeVisible();
+    await expect(journey.getByRole("link", { name: /Watch drill/ })).toHaveAttribute(
+      "href",
+      "https://youtu.be/net-rally",
+    );
   });
 });

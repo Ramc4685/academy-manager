@@ -575,17 +575,6 @@ export function recommendLevelUp(
 // Parent
 // ---------------------------------------------------------------------------
 
-export function getParentStudentPassport(
-  studentId: string,
-  programId?: string,
-): Promise<SkillPassportEntry[]> {
-  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ passport: SkillPassportEntry[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/skill-progress${q}`,
-    { method: "GET" },
-  ).then((d) => d.passport);
-}
-
 export function getParentStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/parent/students/${encodeURIComponent(studentId)}/certificates`,
