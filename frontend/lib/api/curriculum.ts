@@ -496,6 +496,56 @@ export function getAdminPathwayProgress(
   ).then((d) => d.rows);
 }
 
+export type LevelUpRule = "automatic" | "approve_first" | "mixed";
+
+export interface PathwayDashboard {
+  program_id: string;
+  program_name: string;
+  skills_mastered_this_week: number;
+  level_ups_this_month: number;
+  levels: {
+    level_id: string;
+    name: string;
+    sequence: number;
+    player_count: number;
+    requires_admin_approval: boolean;
+  }[];
+  level_up_rule: LevelUpRule;
+  almost_there: {
+    student_id: string;
+    student_name: string;
+    level_name: string;
+    level_sequence: number;
+    missing_skill_name: string;
+  }[];
+  stuck: {
+    student_id: string;
+    student_name: string;
+    level_name: string;
+    level_sequence: number;
+    skills_passed: number;
+    skills_total: number;
+    last_win_at: string | null;
+    level_started_at: string;
+  }[];
+  unplaced_count: number;
+  coaches: { coach_id: string; coach_name: string; skills_ticked: number }[];
+}
+
+export function getAdminPathwayDashboard(): Promise<PathwayDashboard> {
+  return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", { method: "GET" });
+}
+
+/** The level-up rule is each level's requires_admin_approval; set it on every level. */
+export async function setLevelUpRule(levelIds: string[], approveFirst: boolean): Promise<void> {
+  for (const levelId of levelIds) {
+    await apiFetch(`/admin/levels/${encodeURIComponent(levelId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ requires_admin_approval: approveFirst }),
+    });
+  }
+}
+
 export function getCoachSessionStudentsProgress(
   sessionId: string,
   programId?: string,

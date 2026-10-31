@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, model_validator
@@ -16,6 +17,10 @@ from backend.v2.contexts.student_progress.application.errors import (
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassportCommand,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_pathway_dashboard import (
+    PathwayDashboard,
+    PathwayDashboardRequest,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
@@ -40,6 +45,10 @@ from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.time.academy_timezone import (
+    LEGACY_FALLBACK_TIMEZONE,
+    resolve_academy_clock_timezone,
+)
 
 if TYPE_CHECKING:
     from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
@@ -109,6 +118,17 @@ class CoachEngagementStatsRow(BaseModel):
 
 class CoachEngagementStatsResponse(BaseModel):
     rows: list[CoachEngagementStatsRow]
+
+
+class DashboardCoachRow(BaseModel):
+    coach_id: str
+    coach_name: str
+    skills_ticked: int
+
+
+class PathwayDashboardResponse(PathwayDashboard):
+    program_name: str
+    coaches: list[DashboardCoachRow]
 
 
 def _field(row: object, name: str) -> object:
@@ -418,6 +438,76 @@ async def _admin_program_name(use_cases: AdminUseCases, program_id: str) -> str:
     if hasattr(program, "model_dump"):
         return str(program.model_dump().get("name") or program_id)
     return getattr(program, "name", None) or program_id
+
+
+@router.get("/pathway/dashboard", response_model=PathwayDashboardResponse)
+async def get_pathway_dashboard(
+    program_id: str | None = Query(default=None),
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PathwayDashboardResponse:
+    """Owner skill-pathway view: who is moving, who is stuck, who is logging."""
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    program_id = await _resolve_program_id(use_cases, program_id)
+    program_name = await _admin_program_name(use_cases, program_id)
+    reader = getattr(use_cases, "get_academy_timezone", None)
+    zone = (
+        await resolve_academy_clock_timezone(reader, claims.academy_id)
+        if reader is not None
+        else LEGACY_FALLBACK_TIMEZONE
+    )
+    now = datetime.now(UTC)
+    students = await _list_active_admin_students(use_cases)
+    dashboard, coaches = await asyncio.gather(
+        use_cases.student_progress.get_pathway_dashboard.execute(
+            PathwayDashboardRequest(
+                program_id=program_id,
+                students=[
+                    SkillBoardStudentRef(student_id=s.student_id, student_name=s.full_name)  # type: ignore[attr-defined]
+                    for s in students
+                ],
+                now=now,
+                timezone=zone,
+            )
+        ),
+        _coaches_logging_this_week(use_cases, claims.academy_id, now, zone),
+    )
+    return PathwayDashboardResponse(
+        **dashboard.model_dump(), program_name=program_name, coaches=coaches
+    )
+
+
+async def _coaches_logging_this_week(
+    use_cases: AdminUseCases, academy_id: str, now: datetime, zone: str
+) -> list[DashboardCoachRow]:
+    # shortcut: counts skills ticked per coach, not "classes with a tick of classes
+    # taught" (that needs the coach's schedule from the sessions context). The
+    # engagement use case reads its dates as UTC days, so this week can be a few
+    # hours off the academy-local week the KPI tiles use.
+    engagement = use_cases.get_coach_engagement_stats
+    today = now.astimezone(ZoneInfo(zone)).date()
+    ticks = (
+        {
+            str(_field(row, "coach_id")): int(_field(row, "outcomes_recorded"))  # type: ignore[call-overload]
+            for row in await engagement.execute(
+                start_date=today - timedelta(days=today.weekday()), end_date=today
+            )
+        }
+        if engagement is not None
+        else {}
+    )
+    coaches = await use_cases.list_admin_users.execute("coach", academy_id=academy_id)
+    rows = [
+        DashboardCoachRow(
+            coach_id=user.user_id,
+            coach_name=user.display_name,
+            skills_ticked=ticks.get(user.user_id, 0),
+        )
+        for user in coaches
+        if user.status == "active" or user.user_id in ticks
+    ]
+    return sorted(rows, key=lambda r: (-r.skills_ticked, r.coach_name))
 
 
 @router.get("/level-up-queue")

@@ -156,6 +156,7 @@ export const queryKeys = {
     scheduledClassFees: () => ["admin", "pricing-scheduled-class-fees"] as const,
     sessionTypesList: (includeArchived: boolean) =>
       ["admin", "session-types", { includeArchived }] as const,
+    pathwayDashboard: () => ["admin", "pathway", "dashboard"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,

@@ -132,6 +132,41 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def passed_stats_for_students(
+        self, student_ids: list[str], program_id: str, *, since: datetime
+    ) -> list[dict[str, object]]:
+        """Per student: when the last skill was PASSED, and how many since ``since``."""
+        if not student_ids:
+            return []
+        pipeline = [
+            {
+                "$match": self._scoped(
+                    {
+                        "student_id": {"$in": list(student_ids)},
+                        "program_id": program_id,
+                        "status": "PASSED",
+                    }
+                )
+            },
+            {
+                "$group": {
+                    "_id": "$student_id",
+                    "last_passed_at": {"$max": "$last_updated_at"},
+                    "passed_since": {
+                        "$sum": {"$cond": [{"$gte": ["$last_updated_at", since]}, 1, 0]}
+                    },
+                }
+            },
+        ]
+        return [
+            {
+                "student_id": str(doc["_id"]),
+                "last_passed_at": doc["last_passed_at"],
+                "passed_since": int(doc["passed_since"]),
+            }
+            async for doc in self.collection.aggregate(pipeline)
+        ]
+
     async def count_updates_by_coach(
         self, *, start_at: datetime, end_at: datetime
     ) -> list[dict[str, object]]:
