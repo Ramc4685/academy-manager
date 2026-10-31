@@ -1,6 +1,6 @@
 # owner-skill-pathway-dashboard
 
-PR: #TBD
+PR: #1102
 
 ## What changed
 The admin sidebar's Progress item now opens a skill-pathway dashboard (`/admin/pathway/dashboard`, API `GET /api/v2/admin/pathway/dashboard`): skills mastered this week, level-ups this month, players per level, students one skill from levelling up, students with no new skill in 6+ weeks (with skills done and last win), and skills ticked per coach this week. It also shows the level-up rule (Automatic vs I approve first), which reads and writes each level's existing `requires_admin_approval` setting.
