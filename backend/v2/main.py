@@ -1278,9 +1278,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["sent"] += run.sent
             totals["failed"] += run.failed
             if run.retryable_failed:
-                # Fail the local run so a later tick today re-claims the
-                # retryable sends; a suppression stays done.
-                raise RuntimeError(f"{run.retryable_failed} retryable send failures")
+                # Raising marks the academy's day failed, so a later hourly
+                # tick retries; families already sent keep their claims.
+                raise RuntimeError(
+                    f"{run.retryable_failed} evening win e-mail(s) failed; retrying next tick"
+                )
 
         await _run_local_daily("send_parent_evening_wins", _for_academy)
         if totals["families"]:
