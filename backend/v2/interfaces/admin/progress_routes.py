@@ -502,7 +502,7 @@ async def approve_level_up(
     # Resolve certificate display fields up front (the use case stays pure — it
     # receives the already-resolved names). The pending recommendation carries
     # the student/program/from-level ids we need to look those names up.
-    display = await _resolve_certificate_display(rec_id, use_cases)
+    display = await resolve_certificate_display(rec_id, use_cases)
 
     try:
         result = await use_cases.student_progress.review_level_up.execute(
@@ -525,7 +525,7 @@ async def approve_level_up(
     return result.model_dump()
 
 
-async def _resolve_certificate_display(rec_id: str, use_cases: AdminUseCases) -> dict[str, object]:
+async def resolve_certificate_display(rec_id: str, use_cases: AdminUseCases) -> dict[str, object]:
     """Best-effort lookup of certificate display fields for a pending rec.
 
     Uses only the existing admin composition surface. Falls back to blank
