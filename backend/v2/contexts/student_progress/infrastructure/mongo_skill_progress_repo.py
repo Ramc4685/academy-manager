@@ -95,6 +95,15 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_passed_between(
+        self, start: datetime, end: datetime
+    ) -> list[StudentSkillProgress]:
+        """Skills that reached PASSED in ``[start, end)`` -- the evening win email."""
+        cursor = self._find_many(
+            {"status": "PASSED", "last_updated_at": {"$gte": start, "$lt": end}},
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_recent_for_student(
         self, student_id: str, limit: int = 10
     ) -> list[StudentSkillProgress]:

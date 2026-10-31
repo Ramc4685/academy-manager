@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from backend.v2.contexts.student_progress.domain.models import SkillCertificate
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -57,4 +59,8 @@ class MongoSkillCertificateRepository(TenantScopedRepository):
             {"student_id": {"$in": student_ids}},
             sort=[("issued_at", 1)],
         )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_issued_between(self, start: datetime, end: datetime) -> list[SkillCertificate]:
+        cursor = self._find_many({"issued_at": {"$gte": start, "$lt": end}})
         return [self._to_domain(doc) async for doc in cursor]

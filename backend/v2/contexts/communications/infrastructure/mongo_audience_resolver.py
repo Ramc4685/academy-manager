@@ -90,6 +90,9 @@ class MongoAudienceResolver(AudienceResolver):
                 best[key] = doc
         return [self._user_to_recipient(doc) for doc in best.values()]
 
+    async def resolve_user_ids(self, user_ids: list[str]) -> list[ResolvedRecipient]:
+        return await self._resolve_users_for_ids(user_ids)
+
     async def resolve_academy_audience(self, audience: AcademyAudience) -> list[ResolvedRecipient]:
         membership_cursor = self.db["academy_memberships"].find(
             self._membership_role_filter(audience.role),

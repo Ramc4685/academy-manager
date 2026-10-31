@@ -71,9 +71,11 @@ OLD_CRON_TIMES = {
     "send_win_back_notices": (4, 30),
     "create_trial_follow_ups": (4, 50),
     "send_owner_daily_brief": (7, 30),
+    "send_parent_report_cards": (9, 0),
     # Hourly cron at :20 whose body only worked in the academy-local 9 o'clock.
     "send_past_due_reminders": (9, 20),
     "auto_approve_level_ups": (18, 30),
+    "send_parent_evening_wins": (19, 0),
 }
 
 #: The zone the OLD code used for each academy. Every fixed-hour cron ran in

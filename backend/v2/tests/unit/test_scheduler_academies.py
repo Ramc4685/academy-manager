@@ -118,7 +118,7 @@ def test_scheduler_job_tables_cover_every_registered_job() -> None:
     source = inspect.getsource(_lifespan)
     registered = set(re.findall(r'id="(\w+)"', source))
 
-    assert len(registered) == 19  # +auto_approve_level_ups (tap-to-master)
+    assert len(registered) == 21  # +level-ups, +evening wins, +report cards
     assert registered == set(JOB_STALE_AFTER)
     assert registered == set(SCHEDULED_JOB_MONITORS)
     # Every leased wrapper names a registered job, so a typo cannot leave a
