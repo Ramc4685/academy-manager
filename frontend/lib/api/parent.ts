@@ -201,23 +201,49 @@ export interface ParentProgressNote {
   created_at: string;
 }
 
-export interface ParentSkillUpdate {
-  skill_id: string;
-  skill_name: string;
-  status: SkillStatus;
-  updated_at: string;
-}
-
-export interface ParentPracticeResourceLink {
-  kind: "YOUTUBE";
-  title: string;
-  url: string;
-}
-
-export interface ParentPracticeResource {
-  skill_id: string;
-  skill_name: string;
-  resource_links: ParentPracticeResourceLink[];
+/** GET /parent/students/{id}/progress-journey — the "how far along" view. */
+export interface ParentProgressJourney {
+  student_id: string;
+  program_id: string;
+  levels: {
+    level_id: string;
+    name: string;
+    number: number;
+    state: "done" | "current" | "upcoming";
+  }[];
+  current_level: {
+    level_id: string;
+    name: string;
+    number: number;
+    skills_done: number;
+    skills_total: number;
+    skills_remaining: number;
+    has_next_level: boolean;
+    /** Omitted (null) when recent passes are too few to estimate honestly. */
+    pace_weeks: number | null;
+  } | null;
+  skills: {
+    skill_id: string;
+    name: string;
+    state: "got_it" | "working_on_it" | "coming_up";
+  }[];
+  recent_wins: {
+    kind: "skill" | "certificate";
+    at: string;
+    title: string;
+    coach_note: string | null;
+    cert_id: string | null;
+    cert_number: string | null;
+  }[];
+  focus_skill_id: string | null;
+  focus_skill_name: string | null;
+  practice_drill: {
+    skill_id: string;
+    skill_name: string | null;
+    kind: "YOUTUBE";
+    title: string;
+    url: string;
+  } | null;
 }
 
 export interface ParentScheduleEntry {
@@ -458,20 +484,13 @@ export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch("/parent/progress", { method: "GET" });
 }
 
-export function listSkillUpdates(studentId: string): Promise<ParentSkillUpdate[]> {
-  return apiFetch<{ updates: ParentSkillUpdate[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/skill-updates`,
-    { method: "GET" },
-  ).then((d) => d.updates);
-}
-
-export function listPracticeResources(
+export function getParentProgressJourney(
   studentId: string,
-): Promise<ParentPracticeResource[]> {
-  return apiFetch<{ resources: ParentPracticeResource[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/practice-resources`,
+): Promise<ParentProgressJourney> {
+  return apiFetch<ParentProgressJourney>(
+    `/parent/students/${encodeURIComponent(studentId)}/progress-journey`,
     { method: "GET" },
-  ).then((d) => d.resources);
+  );
 }
 
 export function listParentPauseRequests(): Promise<{

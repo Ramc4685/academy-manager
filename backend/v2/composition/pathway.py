@@ -63,6 +63,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_certificates
 from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
     GetLevelUpQueue,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_parent_journey import (
+    GetParentJourney,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassport,
 )
@@ -239,6 +242,7 @@ class StudentProgressComposition:
     get_teaching_focus: GetTeachingFocus
     get_recent_skill_updates: GetRecentSkillUpdates
     get_in_progress_skills: GetInProgressSkills
+    get_parent_journey: GetParentJourney
     mark_skill_mastered: MarkSkillMastered
     unmark_skill_mastered: UnmarkSkillMastered
     auto_approve_level_ups: AutoApproveLevelUps
@@ -406,6 +410,13 @@ def compose_student_progress(
         get_in_progress_skills=GetInProgressSkills(
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
+        ),
+        get_parent_journey=GetParentJourney(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
+            certificates=certificate_repo,
+            test_attempts=test_attempt_repo,
         ),
         mark_skill_mastered=MarkSkillMastered(
             level_progress=level_progress_repo,

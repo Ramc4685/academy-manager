@@ -181,6 +181,41 @@ async def get_practice_resources(
     return {"resources": resources}
 
 
+async def _focus_drill(
+    use_cases: ParentUseCases, skill_id: str | None, skill_name: str | None
+) -> dict[str, object] | None:
+    if skill_id is None or use_cases.curriculum is None:
+        return None
+    card = await use_cases.curriculum.get_lesson_card_for_skill.execute(skill_id)
+    if card is None:
+        return None
+    for link in _model_dict(card).get("resource_links", []):
+        if (public_link := _public_resource_link(link)) is not None:
+            return {"skill_id": skill_id, "skill_name": skill_name, **public_link}
+    return None
+
+
+@router.get("/students/{student_id}/progress-journey")
+async def get_progress_journey(
+    student_id: str,
+    program_id: str | None = Query(None),
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> object:
+    await _verify_child_ownership(claims.user_id, student_id, use_cases)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    resolved_program_id = await _resolve_program_id(use_cases, program_id)
+    journey = await use_cases.student_progress.get_parent_journey.execute(
+        student_id, resolved_program_id
+    )
+    data = journey.model_dump(mode="json")
+    data["practice_drill"] = await _focus_drill(
+        use_cases, journey.focus_skill_id, journey.focus_skill_name
+    )
+    return data
+
+
 @router.get("/students/{student_id}/certificates")
 async def get_certificates(
     student_id: str,

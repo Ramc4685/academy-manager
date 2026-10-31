@@ -404,6 +404,7 @@ def _build_real_parent_progress_app(
     recent_updates: list[object] | None = None,
     in_progress_skills: list[object] | None = None,
     lesson_card: object | None = None,
+    journey: object | None = None,
 ) -> tuple[FastAPI, SimpleNamespace]:
     list_children = _CallableSpy(children)
     get_program = _ExecuteSpy(
@@ -425,6 +426,7 @@ def _build_real_parent_progress_app(
     )
     get_recent_skill_updates = _ExecuteSpy(recent_updates or [])
     get_in_progress_skills = _ExecuteSpy(in_progress_skills or [])
+    get_parent_journey = _ExecuteSpy(journey)
     get_lesson_card_for_skill = _ExecuteSpy(
         lesson_card
         if lesson_card is not None
@@ -449,6 +451,7 @@ def _build_real_parent_progress_app(
             get_progress_summary=get_progress_summary,
             get_recent_skill_updates=get_recent_skill_updates,
             get_in_progress_skills=get_in_progress_skills,
+            get_parent_journey=get_parent_journey,
         ),
     )
 
@@ -465,6 +468,7 @@ def _build_real_parent_progress_app(
         get_recent_skill_updates=get_recent_skill_updates,
         get_in_progress_skills=get_in_progress_skills,
         get_lesson_card_for_skill=get_lesson_card_for_skill,
+        get_parent_journey=get_parent_journey,
     )
 
 
@@ -716,3 +720,66 @@ def test_parent_practice_resources_include_in_progress_skills_outside_recent_win
     assert spies.get_recent_skill_updates.calls == []
     assert spies.get_in_progress_skills.calls == [((OWN_STUDENT_ID,), {})]
     assert spies.get_lesson_card_for_skill.calls == [(("older-practice",), {})]
+
+
+class _Journey(_Dumpable):
+    def __init__(self, focus_skill_id: str | None) -> None:
+        super().__init__(
+            student_id=OWN_STUDENT_ID,
+            focus_skill_id=focus_skill_id,
+            focus_skill_name="Backhand net shot" if focus_skill_id else None,
+        )
+        self.focus_skill_id = focus_skill_id
+        self.focus_skill_name = self._values["focus_skill_name"]
+
+
+def test_parent_progress_journey_adds_the_focus_skill_drill_video() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        journey=_Journey("skill-net"),
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/progress-journey")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["student_id"] == OWN_STUDENT_ID
+    # Only the video link is surfaced; coach-only lesson card fields never are.
+    assert body["practice_drill"] == {
+        "skill_id": "skill-net",
+        "skill_name": "Backhand net shot",
+        "kind": "YOUTUBE",
+        "title": "Grip practice",
+        "url": "https://youtu.be/grip",
+    }
+    assert "teaching_points" not in str(body)
+    assert spies.get_parent_journey.calls == [((OWN_STUDENT_ID, PROGRAM_ID), {})]
+    assert spies.get_lesson_card_for_skill.calls == [(("skill-net",), {})]
+
+
+def test_parent_progress_journey_without_focus_has_no_drill() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        journey=_Journey(None),
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/progress-journey")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["practice_drill"] is None
+    assert spies.get_lesson_card_for_skill.calls == []
+
+
+def test_parent_progress_journey_other_child_returns_404() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        journey=_Journey(None),
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OTHER_STUDENT_ID}/progress-journey")
+
+    assert response.status_code == 404, response.text
+    assert spies.get_parent_journey.calls == []
