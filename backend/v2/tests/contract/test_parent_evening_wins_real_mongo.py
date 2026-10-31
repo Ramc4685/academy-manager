@@ -226,3 +226,30 @@ async def test_no_wins_today_sends_nothing(real_db: Any) -> None:
     assert result.families == 0
     assert stub.sent == []
     assert await real_db["parent_win_sends"].count_documents({}) == 0
+
+
+class _FlakySender(StubEmailSendPort):
+    """Fails Raj's first send like a Resend outage, then delivers."""
+
+    failed_once: bool = False
+
+    async def send(self, **kw: Any) -> Any:
+        from backend.v2.contexts.communications.application.ports import SendOutcome
+
+        if kw["recipient"].user_id == "p-raj" and not self.failed_once:
+            self.failed_once = True
+            return SendOutcome(ok=False, provider_message_id=None, failed_reason="503")
+        return await super().send(**kw)
+
+
+async def test_a_transient_failure_is_retried_without_resending_others(real_db: Any) -> None:
+    await _seed(real_db)
+    flaky = _FlakySender()
+    command = SendParentEveningWinsCommand(academy_id=ACADEMY, local_now=LOCAL_NOW)
+    with tenant_scope(ACADEMY):
+        first = await _use_case(real_db, flaky).execute(command)
+        retry = await _use_case(real_db, flaky).execute(command)
+
+    assert (first.sent, first.retryable_failed) == (1, 1)  # Lee sent, Raj failed
+    assert (retry.sent, retry.retryable_failed, retry.already_claimed) == (1, 0, 1)
+    assert sorted(m["user_id"] for m in flaky.sent) == ["p-lee", "p-raj"]

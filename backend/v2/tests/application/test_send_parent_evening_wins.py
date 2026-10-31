@@ -138,6 +138,7 @@ async def test_provider_error_and_missing_email_branches() -> None:
 
     assert provider.window == (local_now.replace(hour=0), local_now)
     assert (result.families, result.sent, result.failed) == (3, 0, 3)
+    assert result.retryable_failed == 1  # only the provider outage
     # A provider outage stays retryable; a missing address does not.
     assert ("p1", "503", True) in claims.failed
     assert ("p2", "no email address", False) in claims.failed

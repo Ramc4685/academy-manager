@@ -53,6 +53,9 @@ class SendParentEveningWinsResult:
     already_claimed: int
     sent: int
     failed: int
+    #: Failures a later attempt may fix (a provider error). The scheduler
+    #: retries the day when this is non-zero; sent families stay claimed.
+    retryable_failed: int = 0
 
 
 @dataclass
@@ -84,7 +87,7 @@ class SendParentEveningWins:
             brand = None
 
         win_date = command.local_now.date().isoformat()
-        already_claimed = sent = failed = 0
+        already_claimed = sent = failed = retryable_failed = 0
         for family in families:
             claim = await self.claims.try_claim(academy_id, family.parent_id, win_date)
             if claim is None:
@@ -132,7 +135,12 @@ class SendParentEveningWins:
                     retryable=not outcome.suppressed,
                 )
                 failed += 1
+                retryable_failed += not outcome.suppressed
 
         return SendParentEveningWinsResult(
-            families=len(families), already_claimed=already_claimed, sent=sent, failed=failed
+            families=len(families),
+            already_claimed=already_claimed,
+            sent=sent,
+            failed=failed,
+            retryable_failed=retryable_failed,
         )
