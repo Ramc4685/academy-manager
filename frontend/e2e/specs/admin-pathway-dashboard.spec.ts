@@ -135,7 +135,9 @@ test.describe("admin pathway dashboard", () => {
 
     const approveFirst = page.getByRole("radio", { name: /I approve first/ });
     await expect(page.getByRole("radio", { name: /Automatic/ })).toBeChecked();
-    await approveFirst.check();
+    // click(), not check(): the controlled radio only shows checked once the
+    // save re-renders, which check()'s immediate state read races under load.
+    await approveFirst.click();
 
     await expect.poll(() => puts.length).toBe(LEVELS.length);
     expect(puts.every((p) => p.endsWith("=true"))).toBe(true);
