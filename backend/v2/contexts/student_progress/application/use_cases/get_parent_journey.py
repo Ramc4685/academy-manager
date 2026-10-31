@@ -81,6 +81,8 @@ class ParentJourney(BaseModel):
     #: The skill the coach works on next; the BFF looks up its drill video.
     focus_skill_id: str | None
     focus_skill_name: str | None
+    #: Finished the program's last level: no active row, every level done.
+    pathway_complete: bool = False
 
 
 def _skill_state(status: SkillStatus) -> JourneySkillState:
@@ -118,22 +120,36 @@ class GetParentJourney:
         now = now or datetime.now(UTC)
         recent_wins = await self._recent_wins(student_id)
         active = await self._level_progress.get_active(student_id, program_id)
+        program_levels = sorted(
+            await self._skill_lookup.list_levels_for_program(program_id),
+            key=lambda lvl: getattr(lvl, "sequence", 0),
+        )
         if active is None:
+            # Approving the last level completes the active row without
+            # opening another, so "no active row" also means "finished".
+            complete = await self._finished_pathway(student_id, program_id, program_levels)
             return ParentJourney(
                 student_id=student_id,
                 program_id=program_id,
-                levels=[],
+                levels=[
+                    JourneyLevel(
+                        level_id=str(getattr(lvl, "level_id", "")),
+                        name=str(getattr(lvl, "name", "")),
+                        number=i + 1,
+                        state="done",
+                    )
+                    for i, lvl in enumerate(program_levels)
+                ]
+                if complete
+                else [],
                 current_level=None,
                 skills=[],
                 recent_wins=recent_wins,
                 focus_skill_id=None,
                 focus_skill_name=None,
+                pathway_complete=complete,
             )
 
-        program_levels = sorted(
-            await self._skill_lookup.list_levels_for_program(program_id),
-            key=lambda lvl: getattr(lvl, "sequence", 0),
-        )
         current_index = next(
             (
                 i
@@ -212,6 +228,21 @@ class GetParentJourney:
             focus_skill_id=str(getattr(focus, "skill_id", "")) if focus else None,
             focus_skill_name=str(getattr(focus, "name", "")) if focus else None,
         )
+
+    async def _finished_pathway(
+        self, student_id: str, program_id: str, program_levels: list[object]
+    ) -> bool:
+        if not program_levels:
+            return False
+        completed = [
+            r
+            for r in await self._level_progress.list_for_student(student_id)
+            if r.program_id == program_id and r.status == "completed" and r.completed_at
+        ]
+        if not completed:
+            return False
+        latest = max(completed, key=lambda r: _as_utc(r.completed_at or r.started_at))
+        return bool(latest.level_id == getattr(program_levels[-1], "level_id", None))
 
     async def _recent_wins(self, student_id: str) -> list[JourneyWin]:
         rows = await self._skill_progress.list_recent_for_student(

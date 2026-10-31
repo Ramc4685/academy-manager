@@ -8,14 +8,16 @@ type Journey = ParentProgressJourney;
 type JourneyWin = Journey["recent_wins"][number];
 
 export function LevelStrip({ firstName, journey }: { firstName: string; journey: Journey }) {
-  const current = journey.current_level!;
+  const current = journey.current_level;
   return (
     <div className="rounded-2xl px-4 pt-4 pb-3 bg-rally-ink text-white">
       <p className="text-xs font-bold uppercase tracking-chip text-rally-volt-300">
         {firstName}&apos;s badminton journey
       </p>
       <p className="font-display text-2xl font-bold">
-        Level {current.number} of {journey.levels.length}
+        {current
+          ? `Level ${current.number} of ${journey.levels.length}`
+          : `All ${journey.levels.length} levels done`}
       </p>
       <ol className="mt-4 flex" aria-label="Levels">
         {journey.levels.map((level, idx) => {

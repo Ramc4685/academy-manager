@@ -236,6 +236,8 @@ export interface ParentProgressJourney {
   }[];
   focus_skill_id: string | null;
   focus_skill_name: string | null;
+  /** Finished the last level: every level is done and current_level is null. */
+  pathway_complete: boolean;
   practice_drill: {
     skill_id: string;
     skill_name: string | null;

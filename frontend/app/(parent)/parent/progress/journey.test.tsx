@@ -75,6 +75,24 @@ describe("LevelStrip", () => {
   });
 });
 
+describe("LevelStrip after the last level", () => {
+  it("says every level is done instead of a current level", () => {
+    const journey = {
+      current_level: null,
+      pathway_complete: true,
+      levels: ["Grip", "Net"].map((name, i) => ({
+        level_id: `l${i + 1}`,
+        name,
+        number: i + 1,
+        state: "done" as const,
+      })),
+    } as unknown as ParentProgressJourney;
+    const html = renderToStaticMarkup(createElement(LevelStrip, { firstName: "Aarav", journey }));
+    expect(text(html)).toContain("All 2 levels done");
+    expect(html).not.toContain('aria-current="step"');
+  });
+});
+
 describe("SkillChecklist", () => {
   it("maps states to parent wording", () => {
     const out = text(

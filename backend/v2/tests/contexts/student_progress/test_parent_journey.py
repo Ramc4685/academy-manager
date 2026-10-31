@@ -193,9 +193,36 @@ class _Repos:
         return self.certs
 
 
-def _use_case(repos: _Repos) -> GetParentJourney:
+class _LevelRows:
+    """Level progress: the active row from ``_Repos`` plus finished rows."""
+
+    def __init__(self, repos: _Repos, completed: list[str]) -> None:
+        self._repos = repos
+        self._completed = completed
+
+    async def get_active(self, student_id: str, program_id: str) -> StudentLevelProgress | None:
+        return await self._repos.get_active(student_id, program_id)
+
+    async def list_for_student(self, student_id: str) -> list[StudentLevelProgress]:
+        return [
+            StudentLevelProgress(
+                progress_id=f"lp-{level_id}",
+                academy_id="a",
+                student_id=student_id,
+                program_id=PROGRAM,
+                level_id=level_id,
+                status="completed",
+                started_at=NOW - timedelta(days=60 - i),
+                completed_at=NOW - timedelta(days=30 - i),
+                created_at=NOW - timedelta(days=60 - i),
+            )
+            for i, level_id in enumerate(self._completed)
+        ]
+
+
+def _use_case(repos: _Repos, completed: list[str] | None = None) -> GetParentJourney:
     return GetParentJourney(
-        level_progress=repos,  # type: ignore[arg-type]
+        level_progress=_LevelRows(repos, completed or []),  # type: ignore[arg-type]
         skill_progress=repos,  # type: ignore[arg-type]
         skill_lookup=_Lookup(),  # type: ignore[arg-type]
         certificates=repos,  # type: ignore[arg-type]
@@ -250,3 +277,27 @@ async def test_unplaced_child_still_sees_wins_but_no_level() -> None:
     assert journey.skills == []
     assert journey.focus_skill_id is None
     assert len(journey.recent_wins) == 4
+
+
+async def test_finishing_the_last_level_is_not_reported_as_unplaced() -> None:
+    journey = await _use_case(_Repos(placed=False), completed=["L1", "L2", "L3"]).execute(
+        STUDENT, PROGRAM, now=NOW
+    )
+
+    assert journey.pathway_complete is True
+    assert journey.current_level is None
+    assert [(lv.number, lv.state) for lv in journey.levels] == [
+        (1, "done"),
+        (2, "done"),
+        (3, "done"),
+    ]
+
+
+async def test_completed_earlier_level_without_active_row_is_still_unplaced() -> None:
+    # Only the last level's completion means the pathway is finished.
+    journey = await _use_case(_Repos(placed=False), completed=["L1"]).execute(
+        STUDENT, PROGRAM, now=NOW
+    )
+
+    assert journey.pathway_complete is False
+    assert journey.levels == []

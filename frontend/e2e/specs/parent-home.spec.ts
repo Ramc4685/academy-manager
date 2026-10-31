@@ -386,6 +386,7 @@ test.describe("parent home — Progress deep link", () => {
         ],
         focus_skill_id: "sk-next",
         focus_skill_name: "Net rally",
+        pathway_complete: false,
         practice_drill: {
           skill_id: "sk-next",
           skill_name: "Net rally",
