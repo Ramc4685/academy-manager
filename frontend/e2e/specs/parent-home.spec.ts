@@ -380,7 +380,6 @@ test.describe("parent home — Progress deep link", () => {
             kind: "skill",
             at: "2026-09-01T00:00:00Z",
             title: forBo ? "Bo's overhead clear" : "Ava's short serve",
-            coach_note: "Much quicker to the net.",
             cert_id: null,
             cert_number: null,
           },
@@ -411,7 +410,6 @@ test.describe("parent home — Progress deep link", () => {
     // No pace line without enough recent passes to estimate one.
     await expect(journey.getByText(/At this pace/)).toHaveCount(0);
     await expect(journey.getByText("Mastered Bo's overhead clear")).toBeVisible();
-    await expect(journey.getByText("“Much quicker to the net.”")).toBeVisible();
     await expect(journey.getByRole("link", { name: /Watch drill/ })).toHaveAttribute(
       "href",
       "https://youtu.be/net-rally",

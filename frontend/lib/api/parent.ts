@@ -231,7 +231,6 @@ export interface ParentProgressJourney {
     kind: "skill" | "certificate";
     at: string;
     title: string;
-    coach_note: string | null;
     cert_id: string | null;
     cert_number: string | null;
   }[];

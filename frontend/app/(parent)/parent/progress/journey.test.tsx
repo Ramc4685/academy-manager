@@ -95,7 +95,7 @@ describe("SkillChecklist", () => {
 });
 
 describe("RecentWins", () => {
-  it("renders skill passes with the coach note and certificates with a view link", () => {
+  it("renders skill passes and certificates with a view link", () => {
     const html = renderToStaticMarkup(
       createElement(RecentWins, {
         wins: [
@@ -103,7 +103,6 @@ describe("RecentWins", () => {
             kind: "skill",
             at: "2026-10-29T18:00:00Z",
             title: "Forecourt movement",
-            coach_note: "Much quicker to the net.",
             cert_id: null,
             cert_number: null,
           },
@@ -111,7 +110,6 @@ describe("RecentWins", () => {
             kind: "certificate",
             at: "2026-10-17T18:00:00Z",
             title: "Grip & Control",
-            coach_note: null,
             cert_id: "c1",
             cert_number: "BLN-1",
           },
@@ -119,7 +117,6 @@ describe("RecentWins", () => {
       }),
     );
     expect(text(html)).toContain("Mastered Forecourt movement");
-    expect(text(html)).toContain("Much quicker to the net.");
     expect(text(html)).toContain("Certificate: Grip &amp; Control");
     expect(html).toContain('href="#certificate-c1"');
   });

@@ -23,9 +23,6 @@ from backend.v2.contexts.student_progress.application.ports import (
 from backend.v2.contexts.student_progress.application.use_cases.get_teaching_focus import (
     _pick_next_skill,
 )
-from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
-    MASTERED_NOTE,
-)
 from backend.v2.contexts.student_progress.domain.logic import estimate_weeks_to_next_level
 from backend.v2.contexts.student_progress.domain.models import SkillStatus
 
@@ -69,7 +66,6 @@ class JourneyWin(BaseModel):
     kind: Literal["skill", "certificate"]
     at: datetime
     title: str
-    coach_note: str | None = None
     cert_id: str | None = None
     cert_number: str | None = None
 
@@ -224,17 +220,17 @@ class GetParentJourney:
         wins: list[JourneyWin] = []
         for row in [r for r in rows if r.status == "PASSED"][:RECENT_WINS_LIMIT]:
             skill = await self._skill_lookup.get_skill(row.skill_id)
+            # Only the pass date comes from the attempt: its notes are
+            # coach-facing, with no parent visibility flag (unlike ProgressNote).
             attempts = await self._test_attempts.list_for_student_skill(student_id, row.skill_id)
             passing = max(
                 (a for a in attempts if a.passed), key=lambda a: a.tested_at, default=None
             )
-            note = passing.notes.strip() if passing else ""
             wins.append(
                 JourneyWin(
                     kind="skill",
                     at=_as_utc(passing.tested_at if passing else row.last_updated_at),
                     title=str(getattr(skill, "name", "")) or "A new skill",
-                    coach_note=note if note and note != MASTERED_NOTE else None,
                 )
             )
         for cert in await self._certs.list_for_student(student_id):

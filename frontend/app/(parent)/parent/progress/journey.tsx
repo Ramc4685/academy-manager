@@ -213,9 +213,6 @@ export function RecentWins({ wins }: { wins: JourneyWin[] }) {
             >
               <p className="text-xs text-rally-muted">{formatWinDate(win.at)}</p>
               <p className="text-sm font-bold text-rally-ink">Mastered {win.title}</p>
-              {win.coach_note && (
-                <p className="text-[13px] text-status-slate-700">“{win.coach_note}”</p>
-              )}
             </li>
           ),
         )}

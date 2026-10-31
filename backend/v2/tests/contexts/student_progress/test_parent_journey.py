@@ -10,9 +10,6 @@ import pytest
 from backend.v2.contexts.student_progress.application.use_cases.get_parent_journey import (
     GetParentJourney,
 )
-from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
-    MASTERED_NOTE,
-)
 from backend.v2.contexts.student_progress.domain.logic import estimate_weeks_to_next_level
 from backend.v2.contexts.student_progress.domain.models import (
     SkillCertificate,
@@ -144,7 +141,7 @@ class _Repos:
                 _attempt("lunge", NOW - timedelta(days=5), "Not yet", passed=False),
                 _attempt("lunge", NOW - timedelta(days=2), "  Much quicker to the net.  "),
             ],
-            "split": [_attempt("split", NOW - timedelta(days=9), MASTERED_NOTE)],
+            "split": [_attempt("split", NOW - timedelta(days=9), "Marked as mastered in class")],
         }
         self.certs = [
             SkillCertificate(
@@ -233,13 +230,14 @@ async def test_journey_shapes_levels_ring_checklist_and_focus() -> None:
 async def test_recent_wins_merge_passes_and_certificates_newest_first() -> None:
     journey = await _use_case(_Repos()).execute(STUDENT, PROGRAM, now=NOW)
 
-    assert [(w.kind, w.title, w.coach_note) for w in journey.recent_wins] == [
-        ("skill", "Lunge", "Much quicker to the net."),
-        # the tap-to-master placeholder note is not a coach note
-        ("skill", "Split step", None),
-        ("certificate", "Grip & Control", None),
-        ("skill", "Grip", None),
+    assert [(w.kind, w.title) for w in journey.recent_wins] == [
+        ("skill", "Lunge"),
+        ("skill", "Split step"),
+        ("certificate", "Grip & Control"),
+        ("skill", "Grip"),
     ]
+    # Test-attempt notes are coach-facing; none reach the parent payload.
+    assert "Much quicker" not in journey.model_dump_json()
     assert journey.recent_wins[0].at == NOW - timedelta(days=2)
     assert journey.recent_wins[2].cert_id == "cert-1"
 
