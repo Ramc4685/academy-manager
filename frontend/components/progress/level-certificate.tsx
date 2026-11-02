@@ -165,6 +165,38 @@ function LevelFeathers({
   );
 }
 
+/**
+ * The skill bullet: the shuttle "o" from the BLNo mark (logo kit
+ * blno-symbol-small.svg), its feathers in this level's colour.
+ * Multi-academy: this is BLNo's symbol drawn for every academy. Before a
+ * second academy goes live, swap it for a generic shuttle or the academy's
+ * own uploaded symbol.
+ */
+function ShuttleMark({ feathers }: { feathers: string }) {
+  // A white or pale level colour vanishes on paper: edge it in ink.
+  const edge = contrastRatio(feathers, "#ffffff") < 1.6;
+  return (
+    <svg
+      width="30"
+      height="25"
+      viewBox="33 45 212 174"
+      aria-hidden="true"
+      className="shrink-0"
+    >
+      <path
+        fillRule="evenodd"
+        fill="#0f172a"
+        d="M37,156 a59,59 0 1 0 118,0 a59,59 0 1 0 -118,0 Z M71,156 a25,25 0 1 0 50,0 a25,25 0 1 0 -50,0 Z"
+      />
+      <g fill={feathers} stroke={edge ? "#0f172a" : "none"} strokeWidth="8">
+        <path d="M137.79,101.61 L166.86,65.27 A16,16 0 0 0 139.14,49.27 L122.21,92.61 Z" />
+        <path d="M150.45,114.28 L203.48,71.15 A16,16 0 0 0 180.85,48.52 L137.72,101.55 Z" />
+        <path d="M159.39,129.79 L240.83,90.86 A16,16 0 0 0 224.83,63.14 L150.39,114.21 Z" />
+      </g>
+    </svg>
+  );
+}
+
 /** The printable certificate, laid out at its real Letter-landscape size. */
 export function LevelCertificate({
   detail,
@@ -233,23 +265,7 @@ export function LevelCertificate({
                   key={skill}
                   className="flex items-center gap-2.5 text-[15px] font-medium"
                 >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 20 20"
-                    aria-hidden="true"
-                    className="shrink-0"
-                  >
-                    <circle cx="10" cy="10" r="10" fill={VOLT} />
-                    <path
-                      d="M5.8 10.4l2.8 2.8 5.6-6.2"
-                      fill="none"
-                      stroke="#0f172a"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  <ShuttleMark feathers={band} />
                   {skill}
                 </li>
               ))}
