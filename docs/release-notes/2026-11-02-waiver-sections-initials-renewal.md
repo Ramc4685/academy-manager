@@ -1,6 +1,6 @@
 # waiver-sections-initials-renewal
 
-PR: #TBD
+PR: #1111
 
 ## What changed
 A waiver can now be written as a sectioned agreement. In the waiver body, a line such as `## Assumption of risk [initials]` starts a section; `[initials]` makes the signer initial it, `[adult]` marks the release a participant 18 or over signs, and `[minor]` the parent/guardian release. The child's date of birth on the signing day picks the path: under 18 signs the shared and `[minor]` sections, 18 or over the shared and `[adult]` sections. A waiver with age sections cannot be signed for a child without a date of birth (the Waivers page links to the profile; registration asks the parent to go back to the child step), and a minor-path signature stops counting once the participant turns 18. Initials and the signing path are stored on the signature and shown on the signed copy. Admins can now set how long a signature lasts when assigning a waiver: until the text changes (as before), renew every N months, or valid until a date. A lapsed signature shows as "Outdated" to the parent and "EXPIRED" to staff. Waivers without `##` headings behave exactly as before.
