@@ -8,10 +8,13 @@ import {
   setLevelUpRule,
   type PathwayDashboard,
 } from "@/lib/api/curriculum";
+import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Skeleton } from "@/components/ds/skeleton";
+
+import { almostThereDraft, composeHref, stuckDraft, weeksAgo } from "./pathway-drafts";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -83,8 +86,11 @@ function Dashboard({ data }: { data: PathwayDashboard }) {
                 </span>
                 <span className="block h-3.5 overflow-hidden rounded-full bg-status-slate-100">
                   <span
-                    className="block h-full rounded-full bg-rally-cobalt-600"
-                    style={{ width: `${Math.round((level.player_count / maxPlayers) * 100)}%` }}
+                    className="block h-full rounded-full ring-1 ring-inset ring-black/20"
+                    style={{
+                      width: `${Math.round((level.player_count / maxPlayers) * 100)}%`,
+                      background: levelSwatch(level.color).fill,
+                    }}
                   />
                 </span>
                 <span className="text-right text-sm font-bold text-rally-ink">
@@ -111,8 +117,10 @@ function Dashboard({ data }: { data: PathwayDashboard }) {
             id: a.student_id,
             name: a.student_name,
             detail: `Level ${a.level_sequence} · needs ${a.missing_skill_name}`,
-            href: `/admin/students/${encodeURIComponent(a.student_id)}`,
-            action: "Contact family",
+            href: a.parent_id
+              ? composeHref(a.parent_id, almostThereDraft(a, data.levels))
+              : `/admin/students/${encodeURIComponent(a.student_id)}`,
+            action: a.parent_id ? "Message parent" : "Contact family",
           }))}
         />
         <ListCard
@@ -127,7 +135,9 @@ function Dashboard({ data }: { data: PathwayDashboard }) {
             detail: `Level ${s.level_sequence} · ${s.skills_passed} of ${s.skills_total} skills · ${
               s.last_win_at ? `last win ${weeksAgo(s.last_win_at)}` : "no win yet"
             }`,
-            href: `/admin/students/${encodeURIComponent(s.student_id)}`,
+            href: s.parent_id
+              ? composeHref(s.parent_id, stuckDraft(s))
+              : `/admin/students/${encodeURIComponent(s.student_id)}`,
             action: "Offer a 1-on-1",
           }))}
         />
@@ -313,9 +323,4 @@ function ListCard({
       )}
     </Card>
   );
-}
-
-function weeksAgo(iso: string): string {
-  const weeks = Math.floor((Date.now() - new Date(iso).getTime()) / (7 * 24 * 60 * 60 * 1000));
-  return weeks <= 1 ? "a week ago" : `${weeks} weeks ago`;
 }

@@ -72,6 +72,22 @@ def test_names_are_escaped() -> None:
     assert "<b>x</b>" not in body and "<i>" not in body
 
 
+def test_coach_note_is_quoted_and_escaped() -> None:
+    win = SkillWins("Level 2", ("Lunge",), 3, 6, coach_notes=("<script>x</script> & 'hi'",))
+    _, body = render_parent_wins(FamilyWins("p1", (_child(skill_wins=(win,)),)))
+    assert "Coach: \u201c&lt;script&gt;x&lt;/script&gt; &amp; &#x27;hi&#x27;\u201d" in body
+    assert "<script>" not in body
+
+
+def test_a_win_without_a_note_renders_exactly_as_before() -> None:
+    family = FamilyWins("p1", (_child(skill_wins=(_skills(("Lunge",), 3),)),))
+    with_empty = FamilyWins(
+        "p1", (_child(skill_wins=(SkillWins("Level 2", ("Lunge",), 3, 6, coach_notes=()),)),)
+    )
+    assert render_parent_wins(family) == render_parent_wins(with_empty)
+    assert "Coach:" not in render_parent_wins(family)[1]
+
+
 @dataclass
 class _Claim:
     digest_id: str

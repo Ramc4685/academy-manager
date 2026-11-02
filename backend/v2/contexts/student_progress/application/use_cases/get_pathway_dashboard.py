@@ -66,11 +66,13 @@ class DashboardLevel(BaseModel):
     sequence: int
     player_count: int
     requires_admin_approval: bool
+    color: str | None = None
 
 
 class AlmostThereStudent(BaseModel):
     student_id: str
     student_name: str
+    parent_id: str | None = None
     level_name: str
     level_sequence: int
     missing_skill_name: str
@@ -79,6 +81,7 @@ class AlmostThereStudent(BaseModel):
 class StuckStudent(BaseModel):
     student_id: str
     student_name: str
+    parent_id: str | None = None
     level_name: str
     level_sequence: int
     skills_passed: int
@@ -123,6 +126,7 @@ class GetPathwayDashboard:
         stuck_before = req.now - STUCK_AFTER
 
         names = {s.student_id: s.student_name for s in req.students}
+        parents = {s.student_id: s.parent_id for s in req.students}
         student_ids = list(names)
         program_levels = sorted(
             await self._levels.list_levels_for_program(req.program_id),
@@ -184,6 +188,7 @@ class GetPathwayDashboard:
                     AlmostThereStudent(
                         student_id=row.student_id,
                         student_name=names[row.student_id],
+                        parent_id=parents[row.student_id],
                         level_name=level.name,  # type: ignore[attr-defined]
                         level_sequence=level.sequence,  # type: ignore[attr-defined]
                         missing_skill_name=missing[0].name,  # type: ignore[attr-defined]
@@ -197,6 +202,7 @@ class GetPathwayDashboard:
                     StuckStudent(
                         student_id=row.student_id,
                         student_name=names[row.student_id],
+                        parent_id=parents[row.student_id],
                         level_name=level.name,  # type: ignore[attr-defined]
                         level_sequence=level.sequence,  # type: ignore[attr-defined]
                         skills_passed=len(required) - len(missing),
@@ -224,6 +230,7 @@ class GetPathwayDashboard:
                     sequence=lv.sequence,  # type: ignore[attr-defined]
                     player_count=len(rows_by_level.get(lv.level_id, [])),  # type: ignore[attr-defined]
                     requires_admin_approval=bool(getattr(lv, "requires_admin_approval", False)),
+                    color=getattr(lv, "display_color", None),
                 )
                 for lv in program_levels
             ],

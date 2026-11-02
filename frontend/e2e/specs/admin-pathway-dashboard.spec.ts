@@ -3,7 +3,9 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 /**
  * Progress → owner skill-pathway dashboard against a mocked admin BFF: the
  * almost-there and stuck lists render, and switching the level-up rule
- * writes requires_admin_approval on every level of the program.
+ * writes requires_admin_approval on every level of the program. "Message
+ * parent" and "Offer a 1-on-1" open the admin DM composer addressed to that
+ * child's parent with an editable draft; nothing is sent.
  */
 
 const ADMIN_ME = {
@@ -14,6 +16,8 @@ const ADMIN_ME = {
 };
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+const COLORS = ["#FDE047", "#FB923C", "#16A34A", "#2563EB", "#5B21B6", "#111827"];
 
 const LEVELS = [
   ["Grip & Control", 14],
@@ -35,17 +39,19 @@ function dashboard(rule: string) {
       name,
       sequence: i + 1,
       player_count: count,
+      color: COLORS[i],
       requires_admin_approval: rule === "approve_first",
     })),
     level_up_rule: rule,
     almost_there: [
-      { student_id: "st-z", student_name: "Zara", level_name: "Net & Movement", level_sequence: 2, missing_skill_name: "Net rally" },
-      { student_id: "st-a", student_name: "Aarav", level_name: "Grip & Control", level_sequence: 1, missing_skill_name: "Basic rally" },
+      { student_id: "st-z", student_name: "Zara", parent_id: "par-z", level_name: "Net & Movement", level_sequence: 2, missing_skill_name: "Net rally" },
+      { student_id: "st-a", student_name: "Aarav", parent_id: "par-a", level_name: "Grip & Control", level_sequence: 1, missing_skill_name: "Basic rally" },
     ],
     stuck: [
       {
         student_id: "st-e",
         student_name: "Ethan",
+        parent_id: "par-e",
         level_name: "Net & Movement",
         level_sequence: 2,
         skills_passed: 2,
@@ -56,6 +62,7 @@ function dashboard(rule: string) {
       {
         student_id: "st-r",
         student_name: "Ria",
+        parent_id: "par-r",
         level_name: "Grip & Control",
         level_sequence: 1,
         skills_passed: 0,
@@ -112,6 +119,14 @@ async function stub(page: Page): Promise<string[]> {
     if (puts.length === LEVELS.length) rule = "approve_first";
     return fulfillJson(route, {});
   });
+  await page.route("**/api/v2/admin/users*", (route) =>
+    fulfillJson(route, {
+      users: [
+        { user_id: "par-z", display_name: "Nadia Khan", email: "nadia@example.com", roles: ["parent"] },
+        { user_id: "par-e", display_name: "Omar Lee", email: "omar@example.com", roles: ["parent"] },
+      ],
+    }),
+  );
   return puts;
 }
 
@@ -142,5 +157,41 @@ test.describe("admin pathway dashboard", () => {
     await expect.poll(() => puts.length).toBe(LEVELS.length);
     expect(puts.every((p) => p.endsWith("=true"))).toBe(true);
     await expect(approveFirst).toBeChecked();
+  });
+
+  test("Message parent and Offer a 1-on-1 open the composer for that parent with a draft", async ({
+    page,
+  }) => {
+    const sends: string[] = [];
+    await stub(page);
+    await page.route("**/api/v2/admin/messages**", (route) => {
+      if (route.request().method() !== "GET") sends.push(route.request().url());
+      return fulfillJson(route, { messages: [] });
+    });
+    await page.goto("/admin/pathway/dashboard");
+
+    const zara = page.getByTestId("pathway-almost-there").getByRole("listitem").filter({ hasText: "Zara" });
+    await zara.getByRole("link", { name: "Message parent" }).click();
+    await expect(page).toHaveURL(/\/admin\/messages\?dm=par-z&draft=/);
+    await expect(page.getByTestId("dm-new-conversation")).toContainText("Nadia Khan");
+    const body = page.getByLabel("DM message body");
+    await expect(body).toHaveValue(
+      /^Hi! Quick update on Zara: just one skill left to finish Level 2 \(Net & Movement\), and it's Net rally\. Once that clicks, Zara moves up to Level 3 \(Serve & Lift\)\./,
+    );
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: "test-results/pathway-message-parent.png" });
+
+    await page.goto("/admin/pathway/dashboard");
+    const ethan = page.getByTestId("pathway-stuck").getByRole("listitem").filter({ hasText: "Ethan" });
+    await ethan.getByRole("link", { name: "Offer a 1-on-1" }).click();
+    await expect(page).toHaveURL(/\/admin\/messages\?dm=par-e&draft=/);
+    await expect(page.getByTestId("dm-new-conversation")).toContainText("Omar Lee");
+    await expect(body).toHaveValue(
+      /Ethan has passed 2 of 6 skills in Level 2 \(Net & Movement\), and the last new skill was 7 weeks ago\..*offer Ethan a 1-on-1 session/,
+    );
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: "test-results/pathway-offer-1on1.png" });
+    // The owner reviews and sends; opening the composer sends nothing.
+    expect(sends).toEqual([]);
   });
 });

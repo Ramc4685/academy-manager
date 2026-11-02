@@ -25,6 +25,7 @@ from backend.v2.contexts.communications.application.use_cases.send_parent_report
     SendParentReportCards,
     month_names,
 )
+from backend.v2.contexts.curriculum.domain.models import level_label_color
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
@@ -83,7 +84,7 @@ class _ReportCardProvider:
             if not student.parent_id:
                 continue
             sid = student.student_id
-            badge = level_name = None
+            badge = level_name = color = ink = None
             focus = None
             active = [
                 p for p in await self._level_progress.list_for_student(sid) if p.status == "active"
@@ -93,6 +94,7 @@ class _ReportCardProvider:
                 level = await self._levels.get(current.level_id)
                 if level is not None:
                     badge, level_name = f"L{level.sequence}", level.name
+                    color, ink = level.display_color, level_label_color(level.display_color)
                 focus = await self._focus(sid, current.level_id)
             families[student.parent_id].append(
                 ChildReportCard(
@@ -103,6 +105,8 @@ class _ReportCardProvider:
                     classes_marked=marked[sid],
                     level_badge=badge,
                     level_name=level_name,
+                    level_color=color,
+                    level_ink=ink,
                     focus=focus,
                 )
             )

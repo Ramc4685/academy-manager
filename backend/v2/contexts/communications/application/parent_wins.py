@@ -25,6 +25,8 @@ class SkillWins:
     skill_names: tuple[str, ...]
     passed_in_level: int
     total_in_level: int
+    #: The coach's optional one-line notes on today's wins (plain text).
+    coach_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,7 @@ class LevelUp:
     program_name: str
     #: Deep link to the printable certificate; empty falls back to progress.
     certificate_url: str = ""
+    coach_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +91,14 @@ def _skill_line(first_name: str, wins: SkillWins) -> str:
     return f"{first_name} mastered {_join(wins.skill_names)} today. {tail}"
 
 
+def _quote(note: str) -> str:
+    return (
+        '<p style="margin:0 0 12px;padding:10px 12px;border-radius:10px;'
+        'background:#f1f5f9;color:#334155;font-style:italic;">'
+        f"Coach: \u201c{html.escape(note)}\u201d</p>"
+    )
+
+
 def _child_block(child: ChildWins, accent: str) -> str:
     esc = html.escape
     parts: list[str] = []
@@ -98,8 +109,10 @@ def _child_block(child: ChildWins, accent: str) -> str:
             f'<p style="margin:0 0 12px;">Every skill in {esc(up.level_name)} of '
             f"{esc(up.program_name)} is done, and the certificate is ready.</p>"
         )
+        parts.extend(_quote(note) for note in up.coach_notes)
     for wins in child.skill_wins:
         parts.append(f'<p style="margin:0 0 12px;">{esc(_skill_line(child.first_name, wins))}</p>')
+        parts.extend(_quote(note) for note in wins.coach_notes)
     label = "See the certificate" if child.level_ups else f"See {child.first_name}'s progress"
     url = (child.level_ups[-1].certificate_url if child.level_ups else "") or child.progress_url
     parts.append(f'<p style="margin:0 0 20px;">{button(label, url, accent=accent)}</p>')

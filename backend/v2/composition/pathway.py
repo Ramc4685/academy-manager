@@ -109,6 +109,9 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpRecommendation,
 )
+from backend.v2.contexts.student_progress.application.use_cases.set_mastery_note import (
+    SetMasteryNote,
+)
 from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
     UnmarkSkillMastered,
 )
@@ -252,6 +255,7 @@ class StudentProgressComposition:
     get_parent_journey: GetParentJourney
     mark_skill_mastered: MarkSkillMastered
     unmark_skill_mastered: UnmarkSkillMastered
+    set_mastery_note: SetMasteryNote
     auto_approve_level_ups: AutoApproveLevelUps
     get_pathway_dashboard: GetPathwayDashboard
 
@@ -443,6 +447,7 @@ def compose_student_progress(
             skill_lookup=skill_lookup,
             outbox=outbox,
         ),
+        set_mastery_note=SetMasteryNote(skill_progress=skill_progress_repo),
         auto_approve_level_ups=AutoApproveLevelUps(
             recommendations=recommendation_repo,
             skill_progress=skill_progress_repo,

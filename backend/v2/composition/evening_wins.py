@@ -75,9 +75,15 @@ class _ParentWinsProvider:
             )
         # Skills passed today in a level that is not finished today, by student.
         open_levels: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
-        for row in passed:
+        notes: dict[tuple[str, str], str] = {}
+        level_notes: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for row in sorted(passed, key=lambda r: r.skill_id):
             if row.level_id not in level_ups[row.student_id]:
                 open_levels[row.student_id][row.level_id].append(row.skill_id)
+                if row.coach_note:
+                    notes[(row.student_id, row.skill_id)] = row.coach_note
+            elif row.coach_note:
+                level_notes[(row.student_id, row.level_id)].append(row.coach_note)
         skills_by_level: dict[str, dict[str, Any]] = {}
         level_names: dict[str, str] = {}
         families: dict[str, list[ChildWins]] = defaultdict(list)
@@ -105,9 +111,22 @@ class _ParentWinsProvider:
                         skill_names=today,
                         passed_in_level=len({p.skill_id for p in done} & required),
                         total_in_level=len(required),
+                        coach_notes=tuple(
+                            notes[(student_id, sid)]
+                            for sid in sorted(skill_ids)
+                            if sid in skills and (student_id, sid) in notes
+                        ),
                     )
                 )
-            ups = tuple(level_ups[student_id].values())
+            ups = tuple(
+                LevelUp(
+                    level_name=up.level_name,
+                    program_name=up.program_name,
+                    certificate_url=up.certificate_url,
+                    coach_notes=tuple(level_notes[(student_id, level_id)]),
+                )
+                for level_id, up in level_ups[student_id].items()
+            )
             if not ups and not skill_wins:
                 continue
             families[student.parent_id].append(

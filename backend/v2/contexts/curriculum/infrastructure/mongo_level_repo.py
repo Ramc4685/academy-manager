@@ -22,6 +22,7 @@ class MongoLevelRepository(TenantScopedRepository):
             points_threshold=doc.get("points_threshold"),
             requires_coach_recommendation=bool(doc.get("requires_coach_recommendation", True)),
             requires_admin_approval=bool(doc.get("requires_admin_approval", False)),
+            color=doc.get("color") or None,
             is_active=bool(doc.get("is_active", True)),
             created_at=doc["created_at"],
             updated_at=doc["updated_at"],
@@ -40,6 +41,7 @@ class MongoLevelRepository(TenantScopedRepository):
                 "points_threshold": level.points_threshold,
                 "requires_coach_recommendation": level.requires_coach_recommendation,
                 "requires_admin_approval": level.requires_admin_approval,
+                "color": level.color,
                 "is_active": level.is_active,
                 "created_at": level.created_at,
                 "updated_at": level.updated_at,
@@ -57,6 +59,7 @@ class MongoLevelRepository(TenantScopedRepository):
                     "completion_rule": level.completion_rule,
                     "requires_coach_recommendation": level.requires_coach_recommendation,
                     "requires_admin_approval": level.requires_admin_approval,
+                    "color": level.color,
                     "is_active": level.is_active,
                     "updated_at": level.updated_at,
                 }

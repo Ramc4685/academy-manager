@@ -123,6 +123,7 @@ class UnmarkSkillMastered:
         updated = existing.model_copy(
             update={
                 "status": "PRACTICING",
+                "coach_note": None,
                 "last_updated_at": now,
                 "last_updated_by": cmd.updated_by,
             }

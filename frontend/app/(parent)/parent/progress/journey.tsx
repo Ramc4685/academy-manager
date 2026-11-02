@@ -2,6 +2,7 @@ import type { Route } from "next";
 import Link from "next/link";
 import type { ParentProgressJourney } from "@/lib/api/parent";
 import type { SkillCertificate } from "@/lib/api/curriculum";
+import { levelColorName, levelSwatch } from "@/lib/level-color";
 
 // Presentational pieces of the parent progress journey (design: owner canvas
 // "Parent · how far along"). Data shaping lives in the BFF; these only render.
@@ -23,14 +24,21 @@ export function LevelStrip({ firstName, journey }: { firstName: string; journey:
       </p>
       <p className="font-display text-2xl font-bold">
         {current
-          ? `Level ${current.number} of ${journey.levels.length}`
+          ? `Level ${current.number} of ${journey.levels.length}${
+              levelColorName(current.color) ? ` · ${levelColorName(current.color)}` : ""
+            }`
           : `All ${journey.levels.length} levels done`}
       </p>
       <ol className="mt-4 flex" aria-label="Levels">
         {journey.levels.map((level, idx) => {
           const isLast = idx === journey.levels.length - 1;
           const label =
-            level.state === "done" ? "done" : level.state === "current" ? "current level" : "coming up";
+            level.state === "done"
+              ? "done"
+              : level.state === "current"
+                ? "current level"
+                : "coming up";
+          const swatch = levelSwatch(level.color);
           return (
             <li
               key={level.level_id}
@@ -46,18 +54,17 @@ export function LevelStrip({ firstName, journey }: { firstName: string; journey:
                 />
               )}
               <span
+                style={{ background: swatch.fill, color: swatch.on }}
                 className={`relative z-10 flex items-center justify-center rounded-full font-display font-bold ${
-                  level.state === "done"
-                    ? "h-[26px] w-[26px] mt-[2px] text-xs bg-status-green-500 text-white"
-                    : level.state === "current"
-                      ? "h-[32px] w-[32px] -mt-[1px] text-sm bg-rally-volt-400 text-rally-ink ring-4 ring-rally-volt-400/30"
-                      : "h-[26px] w-[26px] mt-[2px] text-xs bg-rally-night-line text-rally-subtle-ink border border-status-slate-700"
+                  level.state === "current"
+                    ? "h-[32px] w-[32px] -mt-[1px] text-sm ring-[3px] ring-white"
+                    : `h-[26px] w-[26px] mt-[2px] text-xs ring-1 ring-status-slate-700 ${
+                        level.state === "upcoming" ? "opacity-60" : ""
+                      }`
                 }`}
               >
                 {level.state === "done" ? "✓" : level.number}
-                <span className="sr-only">
-                  {`Level ${level.number}, ${level.name}: ${label}`}
-                </span>
+                <span className="sr-only">{`Level ${level.number}, ${level.name}: ${label}`}</span>
               </span>
               <span
                 aria-hidden="true"
@@ -89,46 +96,67 @@ export function LevelRing({ current }: { current: NonNullable<Journey["current_l
       : current.has_next_level
         ? `${remaining} ${remaining === 1 ? "skill" : "skills"} to Level ${current.number + 1}`
         : `${remaining} ${remaining === 1 ? "skill" : "skills"} to finish the pathway`;
+  const swatch = levelSwatch(current.color);
+  const colorName = levelColorName(current.color);
 
   return (
-    <div className="flex items-center gap-4 rounded-2xl p-4 bg-white border border-rally-line">
-      <svg
-        width="88"
-        height="88"
-        viewBox="0 0 88 88"
-        role="img"
-        aria-label={`${done} of ${total} skills done`}
-        className="shrink-0"
+    <div className="overflow-hidden rounded-2xl bg-white border border-rally-line">
+      <div
+        data-testid="current-level-band"
+        className="flex items-center justify-between gap-2 px-4 py-2.5 font-bold"
+        style={{ background: swatch.fill, color: swatch.on }}
       >
-        <circle cx="44" cy="44" r={RING_R} fill="none" strokeWidth="10" className="stroke-rally-cobalt-100" />
-        <circle
-          cx="44"
-          cy="44"
-          r={RING_R}
-          fill="none"
-          strokeWidth="10"
-          strokeLinecap="round"
-          strokeDasharray={`${filled} ${RING_C}`}
-          transform="rotate(-90 44 44)"
-          className="stroke-rally-cobalt-600"
-        />
-        <text
-          x="44"
-          y="50"
-          textAnchor="middle"
-          className="fill-rally-ink font-display text-xl font-bold"
+        <span className="font-display text-base">
+          {colorName ? `${colorName} level` : `Level ${current.number}`}
+        </span>
+        <span className="truncate text-[13px]">{current.name}</span>
+      </div>
+      <div className="flex items-center gap-4 p-4">
+        <svg
+          width="88"
+          height="88"
+          viewBox="0 0 88 88"
+          role="img"
+          aria-label={`${done} of ${total} skills done`}
+          className="shrink-0"
         >
-          {done}/{total}
-        </text>
-      </svg>
-      <div className="min-w-0 space-y-1">
-        <p className="font-display text-lg font-bold text-rally-ink">{current.name}</p>
-        <p className="text-sm text-status-slate-700">{nextStep}</p>
-        {current.pace_weeks !== null && (
-          <p className="text-[13px] text-rally-muted">
-            At this pace: about {current.pace_weeks} {current.pace_weeks === 1 ? "week" : "weeks"}
-          </p>
-        )}
+          <circle
+            cx="44"
+            cy="44"
+            r={RING_R}
+            fill="none"
+            strokeWidth="10"
+            className="stroke-rally-line"
+          />
+          <circle
+            cx="44"
+            cy="44"
+            r={RING_R}
+            fill="none"
+            strokeWidth="10"
+            strokeLinecap="round"
+            strokeDasharray={`${filled} ${RING_C}`}
+            transform="rotate(-90 44 44)"
+            stroke={swatch.fill}
+          />
+          <text
+            x="44"
+            y="50"
+            textAnchor="middle"
+            className="fill-rally-ink font-display text-xl font-bold"
+          >
+            {done}/{total}
+          </text>
+        </svg>
+        <div className="min-w-0 space-y-1">
+          <p className="font-display text-lg font-bold text-rally-ink">{current.name}</p>
+          <p className="text-sm text-status-slate-700">{nextStep}</p>
+          {current.pace_weeks !== null && (
+            <p className="text-[13px] text-rally-muted">
+              At this pace: about {current.pace_weeks} {current.pace_weeks === 1 ? "week" : "weeks"}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -224,6 +252,11 @@ export function RecentWins({ wins, studentId }: { wins: JourneyWin[]; studentId:
             >
               <p className="text-xs text-rally-muted">{formatWinDate(win.at)}</p>
               <p className="text-sm font-bold text-rally-ink">Mastered {win.title}</p>
+              {win.coach_note && (
+                <p className="mt-0.5 rounded-[10px] bg-status-slate-100 px-2.5 py-2 text-[13px] italic text-status-slate-700">
+                  Coach: &ldquo;{win.coach_note}&rdquo;
+                </p>
+              )}
             </li>
           ),
         )}

@@ -210,6 +210,7 @@ export interface ParentProgressJourney {
     name: string;
     number: number;
     state: "done" | "current" | "upcoming";
+    color?: string | null;
   }[];
   current_level: {
     level_id: string;
@@ -221,6 +222,7 @@ export interface ParentProgressJourney {
     has_next_level: boolean;
     /** Omitted (null) when recent passes are too few to estimate honestly. */
     pace_weeks: number | null;
+    color?: string | null;
   } | null;
   skills: {
     skill_id: string;
@@ -233,6 +235,8 @@ export interface ParentProgressJourney {
     title: string;
     cert_id: string | null;
     cert_number: string | null;
+    /** The coach's optional one-line note to the parent on this win. */
+    coach_note?: string | null;
   }[];
   focus_skill_id: string | null;
   focus_skill_name: string | null;

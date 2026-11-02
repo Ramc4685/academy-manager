@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.curriculum.application.ports import LevelRepository, ProgramRepository
 from backend.v2.contexts.curriculum.domain.errors import LevelNotFound, ProgramNotFound
-from backend.v2.contexts.curriculum.domain.models import Level, LevelCompletionRule
+from backend.v2.contexts.curriculum.domain.models import (
+    HEX_COLOR_PATTERN,
+    Level,
+    LevelCompletionRule,
+)
 from backend.v2.shared.ids import new_ulid
 
 
@@ -32,6 +36,8 @@ class UpdateLevelCommand(BaseModel):
     completion_rule: LevelCompletionRule | None = None
     requires_coach_recommendation: bool | None = None
     requires_admin_approval: bool | None = None
+    #: A hex colour, ``""`` to go back to the level's default, ``None`` to keep.
+    color: str | None = Field(default=None, pattern=f"{HEX_COLOR_PATTERN}|^$")
     updated_by: str
 
 
@@ -85,6 +91,7 @@ class UpdateLevel:
                 }.items()
                 if v is not None
             }
+            | ({"color": cmd.color.upper() or None} if cmd.color is not None else {})
         )
         await self._levels.update(updated)
         return updated

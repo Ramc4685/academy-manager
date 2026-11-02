@@ -464,7 +464,11 @@ async def get_pathway_dashboard(
             PathwayDashboardRequest(
                 program_id=program_id,
                 students=[
-                    SkillBoardStudentRef(student_id=s.student_id, student_name=s.full_name)  # type: ignore[attr-defined]
+                    SkillBoardStudentRef(
+                        student_id=s.student_id,  # type: ignore[attr-defined]
+                        student_name=s.full_name,  # type: ignore[attr-defined]
+                        parent_id=s.parent_id,  # type: ignore[attr-defined]
+                    )
                     for s in students
                 ],
                 now=now,

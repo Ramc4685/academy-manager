@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/api/coach", () => ({
   markCoachSkillMastered: vi.fn(),
   unmarkCoachSkillMastered: vi.fn(),
+  setCoachMasteryNote: vi.fn(),
 }));
 vi.mock("@/lib/api/curriculum", () => ({ getCoachSessionSkillBoard: vi.fn() }));
 
@@ -98,5 +99,39 @@ describe("TapSkillsWorkspace program selection", () => {
       </QueryClientProvider>,
     );
     expect(out).toContain("coach-tap-skills");
+  });
+});
+
+describe("TapSkillsWorkspace coach note", () => {
+  const today = { status: "PASSED" as const, last_updated_at: new Date().toISOString() };
+
+  function withRally(cell: Record<string, unknown>) {
+    const b = board();
+    b.groups[0].color = "#FB923C";
+    b.groups[0].students[1].statuses = { grip: passed, rally: { ...today, ...cell } };
+    return b;
+  }
+
+  it("offers a note on today's win and shows a saved note as a quote", () => {
+    expect(html(withRally({}))).toContain("+ Note for Blake Test&#x27;s parents");
+    const out = html(withRally({ coach_note: "Quick feet" }));
+    expect(out).toContain("“Quick feet”");
+    expect(out).toContain('aria-label="Edit the note for Blake Test&#x27;s parents"');
+    expect(out).toContain('aria-label="Remove the note for Blake Test&#x27;s parents"');
+  });
+
+  it("reads offset-less timestamps from Mongo as UTC", () => {
+    const naiveUtc = (hoursAgo: number) =>
+      new Date(Date.now() - hoursAgo * 3600_000).toISOString().replace("Z", "");
+    expect(html(withRally({ last_updated_at: naiveUtc(23) }))).toContain("+ Note for");
+    expect(html(withRally({ last_updated_at: naiveUtc(25) }))).not.toContain("Note for");
+  });
+
+  it("offers no note on an older win", () => {
+    expect(html(board())).not.toContain("Note for");
+  });
+
+  it("paints the level with its colour", () => {
+    expect(html(withRally({}))).toMatch(/background:\s*#FB923C/i);
   });
 });

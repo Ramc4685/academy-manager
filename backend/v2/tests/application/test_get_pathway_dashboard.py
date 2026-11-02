@@ -78,7 +78,10 @@ def _use_case(*, active, passed, stats, pending=()) -> GetPathwayDashboard:
 def _request(*ids: str) -> PathwayDashboardRequest:
     return PathwayDashboardRequest(
         program_id="prog",
-        students=[SkillBoardStudentRef(student_id=i, student_name=i.title()) for i in ids],
+        students=[
+            SkillBoardStudentRef(student_id=i, student_name=i.title(), parent_id=f"p-{i}")
+            for i in ids
+        ],
         now=NOW,
         timezone="America/Chicago",
     )
@@ -96,6 +99,7 @@ async def test_stuck_counts_from_placement_when_never_won_and_spares_new_student
 
     assert [s.student_id for s in dash.stuck] == ["old"]
     assert dash.stuck[0].last_win_at is None
+    assert dash.stuck[0].parent_id == "p-old"  # the row action messages this family
     assert dash.stuck[0].skills_passed == 0
 
 
@@ -115,6 +119,7 @@ async def test_pending_level_up_is_neither_almost_nor_stuck() -> None:
     dash = await use_case.execute(_request("q", "a"))
 
     assert [(a.student_id, a.missing_skill_name) for a in dash.almost_there] == [("a", "S3")]
+    assert dash.almost_there[0].parent_id == "p-a"
     # Almost there and stuck are not exclusive: two skills in, then nothing for 9 weeks.
     assert [s.student_id for s in dash.stuck] == ["a"]
 

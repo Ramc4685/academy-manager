@@ -34,6 +34,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             introduced_at=doc.get("introduced_at"),
             last_updated_at=doc["last_updated_at"],
             last_updated_by=str(doc["last_updated_by"]),
+            coach_note=doc.get("coach_note") or None,
         )
 
     async def save(self, skill_progress: StudentSkillProgress) -> None:
@@ -48,6 +49,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
                 "introduced_at": skill_progress.introduced_at,
                 "last_updated_at": skill_progress.last_updated_at,
                 "last_updated_by": skill_progress.last_updated_by,
+                "coach_note": skill_progress.coach_note,
             }
         )
 
@@ -65,6 +67,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
                     "introduced_at": skill_progress.introduced_at,
                     "last_updated_at": skill_progress.last_updated_at,
                     "last_updated_by": skill_progress.last_updated_by,
+                    "coach_note": skill_progress.coach_note,
                 }
             },
             upsert=True,
@@ -73,6 +76,21 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         if saved is None:  # pragma: no cover - impossible unless Mongo write failed silently
             raise RuntimeError("skill progress upsert did not persist a row")
         return saved
+
+    async def set_coach_note(
+        self, student_id: str, skill_id: str, *, passed_at: datetime, note: str | None
+    ) -> bool:
+        """Note-only write, and only on the same pass: an undo or re-tap in between wins."""
+        result = await self._update_one(
+            {
+                "student_id": student_id,
+                "skill_id": skill_id,
+                "status": "PASSED",
+                "last_updated_at": passed_at,
+            },
+            {"$set": {"coach_note": note}},
+        )
+        return bool(result.matched_count == 1)
 
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None:
         doc = await self._find_one({"student_id": student_id, "skill_id": skill_id})

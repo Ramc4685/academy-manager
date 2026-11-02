@@ -253,3 +253,25 @@ async def test_a_transient_failure_is_retried_without_resending_others(real_db: 
     assert (first.sent, first.retryable_failed) == (1, 1)  # Lee sent, Raj failed
     assert (retry.sent, retry.retryable_failed, retry.already_claimed) == (1, 0, 1)
     assert sorted(m["user_id"] for m in flaky.sent) == ["p-lee", "p-raj"]
+
+
+async def test_coach_notes_are_quoted_escaped_and_absent_without_a_note(real_db: Any) -> None:
+    await _seed(real_db)
+    await real_db["student_skill_progress"].update_one(
+        {"skill_progress_id": "s-aarav-L2-3"},
+        {"$set": {"coach_note": 'Quick <b>feet</b> & "soft" hands'}},
+    )
+    await real_db["student_skill_progress"].update_one(
+        {"skill_progress_id": "s-diya-L1-1"}, {"$set": {"coach_note": "Ready for Level 2"}}
+    )
+    stub = StubEmailSendPort()
+    with tenant_scope(ACADEMY):
+        await _use_case(real_db, stub).execute(
+            SendParentEveningWinsCommand(academy_id=ACADEMY, local_now=LOCAL_NOW)
+        )
+    body = next(m["body"] for m in stub.sent if m["email"] == "raj@example.test")
+    assert "Coach: \u201cQuick &lt;b&gt;feet&lt;/b&gt; &amp; &quot;soft&quot; hands\u201d" in body
+    assert "<b>feet</b>" not in body
+    # A note on the level's last skill rides with the level-up.
+    assert "Coach: \u201cReady for Level 2\u201d" in body
+    assert body.count("Coach: ") == 2
