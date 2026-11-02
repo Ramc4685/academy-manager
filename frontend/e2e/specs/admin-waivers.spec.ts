@@ -289,6 +289,8 @@ test.describe("admin waivers", () => {
       required: true,
       scope: "programs",
       program_ids: ["prog-juniors"],
+      renew_every_months: null,
+      valid_until: null,
     });
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });

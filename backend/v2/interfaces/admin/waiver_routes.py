@@ -190,6 +190,8 @@ async def assign_admin_waiver_template(
                 required=request.required,
                 scope=request.scope,
                 program_ids=request.program_ids,
+                renew_every_months=request.renew_every_months,
+                valid_until=request.valid_until,
             )
         )
     except WaiverTemplateNotFound as exc:
@@ -297,6 +299,8 @@ def _template_management_view(
         required=template.required,
         scope=template.scope,
         program_ids=list(template.program_ids),
+        renew_every_months=template.renew_every_months,
+        valid_until=template.valid_until,
     )
 
 

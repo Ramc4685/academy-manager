@@ -166,6 +166,14 @@ test.describe("QA defect regressions", () => {
         consent_text: "I agree to sign electronically.",
         version: "1.0",
         body: "BLNO Liability Waiver\nParent agrees to academy safety rules.",
+        waivers: [
+          {
+            waiver_template_id: "wt-qa",
+            title: "BLNO Liability Waiver",
+            version: "1.0",
+            body: "BLNO Liability Waiver\nParent agrees to academy safety rules.",
+          },
+        ],
       });
     });
     await page.route("**/api/v2/parent/onboarding/app-qa-1", async (route) => {
