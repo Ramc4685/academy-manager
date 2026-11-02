@@ -367,6 +367,24 @@ def test_request_ip_uses_forwarded_for_from_trusted_proxy() -> None:
     assert _request_ip(request) == "203.0.113.10"
 
 
+def test_request_ip_ignores_a_client_forged_forwarded_for_prefix() -> None:
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="10.0.0.2"),
+        headers={"x-forwarded-for": "6.6.6.6, 203.0.113.10", "cf-connecting-ip": "6.6.6.6"},
+    )
+
+    assert _request_ip(request) == "203.0.113.10"
+
+
+def test_request_ip_prefers_the_fly_edge_header() -> None:
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="10.0.0.2"),
+        headers={"x-forwarded-for": "6.6.6.6", "fly-client-ip": "203.0.113.10"},
+    )
+
+    assert _request_ip(request) == "203.0.113.10"
+
+
 def test_request_ip_ignores_forwarded_for_from_untrusted_peer() -> None:
     request = SimpleNamespace(
         client=SimpleNamespace(host="8.8.8.8"),

@@ -15,15 +15,16 @@ from fastapi import Request
 def request_ip(request: Request) -> str | None:
     direct_host = request.client.host if request.client else None
     if _trusted_proxy_host(direct_host):
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            first_hop = forwarded_for.split(",", 1)[0].strip()
-            if _valid_ip(first_hop):
-                return first_hop
-        for header_name in ("fly-client-ip", "cf-connecting-ip", "x-real-ip"):
-            candidate = request.headers.get(header_name)
-            if candidate and _valid_ip(candidate.strip()):
-                return candidate.strip()
+        # Fly's edge overwrites Fly-Client-IP, so a client cannot forge it.
+        fly_client = (request.headers.get("fly-client-ip") or "").strip()
+        if _valid_ip(fly_client):
+            return fly_client
+        # The left of X-Forwarded-For is whatever the client sent; the rightmost
+        # public entry is the one our own proxy appended.
+        hops = (request.headers.get("x-forwarded-for") or "").split(",")
+        for hop in reversed([h.strip() for h in hops]):
+            if _valid_ip(hop) and not _trusted_proxy_host(hop):
+                return hop
     return direct_host
 
 
