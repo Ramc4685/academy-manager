@@ -84,15 +84,20 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     <div className="min-h-screen flex flex-col pb-20" style={{ background: "var(--rally-paper)" }}>
       {/* Header */}
       <header
-        className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-y-2 px-4 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]"
         style={{
           background: "linear-gradient(135deg, #0a0f1c 0%, #0f1d38 100%)",
           borderBottom: "1px solid rgba(250,204,21,0.12)",
         }}
       >
-        <div className="flex items-center gap-2">
+        {/* A logo plus a long academy name must never push the icons off a
+            phone: the name truncates first, and when even back + logo + the
+            icons cannot share a row (persona switcher) the icons wrap. The
+            6rem basis is back button + logo, so the wrap decision ignores the
+            name. */}
+        <div className="flex min-w-0 flex-[1_1_6rem] items-center gap-2">
           <ShellBackButton known={PARENT_TOP_LEVEL_ROUTES} home={PARENT_HOME} variant="dark" />
-          <Link href="/parent/dashboard" className="flex items-center gap-2.5">
+          <Link href="/parent/dashboard" className="flex min-w-0 items-center gap-2.5">
             <AcademyMark
               name={academyName}
               logoUrl={academyData?.logo_url}
@@ -104,14 +109,14 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
             {/* #843 added a fifth header control; at 320px the wordmark is
                 what has to give, not the touch targets. */}
             <span
-              className="hidden min-[360px]:inline max-w-[140px] truncate font-semibold text-white text-[15px] tracking-tight"
+              className="hidden min-[360px]:inline min-w-0 max-w-[140px] truncate font-semibold text-white text-[15px] tracking-tight"
               title={academyName}
             >
               {academyName}
             </span>
           </Link>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <Link
             href="/parent/calendar"
             data-testid="nav-calendar"
