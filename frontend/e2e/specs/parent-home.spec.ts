@@ -353,9 +353,9 @@ test.describe("parent home — Progress deep link", () => {
         student_id: forBo ? "st-2" : "st-1",
         program_id: "prog-1",
         levels: [
-          { level_id: "l1", name: "Grip & Control", number: 1, state: "done" },
-          { level_id: "l2", name: "Net & Movement", number: 2, state: "current" },
-          { level_id: "l3", name: "Serve", number: 3, state: "upcoming" },
+          { level_id: "l1", name: "Grip & Control", number: 1, state: "done", color: "#FDE047" },
+          { level_id: "l2", name: "Net & Movement", number: 2, state: "current", color: "#FB923C" },
+          { level_id: "l3", name: "Serve", number: 3, state: "upcoming", color: "#16A34A" },
         ],
         current_level: {
           level_id: "l2",
@@ -366,6 +366,7 @@ test.describe("parent home — Progress deep link", () => {
           skills_remaining: 1,
           has_next_level: true,
           pace_weeks: null,
+          color: "#FB923C",
         },
         skills: [
           {
@@ -382,6 +383,7 @@ test.describe("parent home — Progress deep link", () => {
             title: forBo ? "Bo's overhead clear" : "Ava's short serve",
             cert_id: null,
             cert_number: null,
+            coach_note: "Much quicker to the net this week.",
           },
         ],
         focus_skill_id: "sk-next",
@@ -411,6 +413,9 @@ test.describe("parent home — Progress deep link", () => {
     // No pace line without enough recent passes to estimate one.
     await expect(journey.getByText(/At this pace/)).toHaveCount(0);
     await expect(journey.getByText("Mastered Bo's overhead clear")).toBeVisible();
+    await expect(journey.getByTestId("current-level-band")).toContainText("Orange level");
+    await expect(journey.getByText("Coach: “Much quicker to the net this week.”")).toBeVisible();
+    await journey.screenshot({ path: "test-results/parent-journey-colour.png" });
     await expect(journey.getByRole("link", { name: /Watch drill/ })).toHaveAttribute(
       "href",
       "https://youtu.be/net-rally",

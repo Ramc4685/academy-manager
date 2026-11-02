@@ -15,6 +15,8 @@ const ADMIN_ME = {
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 
+const COLORS = ["#FDE047", "#FB923C", "#16A34A", "#2563EB", "#5B21B6", "#111827"];
+
 const LEVELS = [
   ["Grip & Control", 14],
   ["Net & Movement", 11],
@@ -35,6 +37,7 @@ function dashboard(rule: string) {
       name,
       sequence: i + 1,
       player_count: count,
+      color: COLORS[i],
       requires_admin_approval: rule === "approve_first",
     })),
     level_up_rule: rule,

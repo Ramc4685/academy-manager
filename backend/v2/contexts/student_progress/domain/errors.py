@@ -69,6 +69,13 @@ class SkillNotOnCurrentLevel(DomainError):
     status_code = 409
 
 
+class MasteryNoteClosed(DomainError):
+    """The coach note can only go on a skill mastered in the last day."""
+
+    code = "StudentProgress.MasteryNoteClosed"
+    status_code = 409
+
+
 class LevelUpInProgress(DomainError):
     """An approval already holds the student's level-up, so undo would race it."""
 

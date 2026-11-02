@@ -140,6 +140,34 @@ describe("RecentWins", () => {
   });
 });
 
+describe("level colour and coach note", () => {
+  it("names the current level's colour on the ring band", () => {
+    const html = renderToStaticMarkup(
+      createElement(LevelRing, { current: current({ color: "#FB923C" }) }),
+    );
+    expect(html).toContain('data-testid="current-level-band"');
+    expect(text(html)).toContain("Orange level");
+  });
+
+  it("quotes the coach on a win that has a note and not on one without", () => {
+    const win = {
+      kind: "skill" as const,
+      at: "2026-10-29T18:00:00Z",
+      title: "Lunge",
+      cert_id: null,
+      cert_number: null,
+    };
+    const withNote = text(
+      renderToStaticMarkup(
+        createElement(RecentWins, { wins: [{ ...win, coach_note: "<b>Quick</b> feet" }] }),
+      ),
+    );
+    expect(withNote).toContain("Coach: “&lt;b&gt;Quick&lt;/b&gt; feet”");
+    const without = text(renderToStaticMarkup(createElement(RecentWins, { wins: [win] })));
+    expect(without).not.toContain("Coach:");
+  });
+});
+
 describe("formatWinDate", () => {
   const now = new Date("2026-10-31T18:00:00Z");
   it("uses the weekday within the last week, the date before that", () => {

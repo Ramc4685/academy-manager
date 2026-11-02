@@ -97,6 +97,8 @@ class StudentSkillProgress(BaseModel):
     introduced_at: datetime | None = None
     last_updated_at: datetime
     last_updated_by: str
+    #: Optional one-line coach message to the parent about this mastery.
+    coach_note: str | None = None
 
 
 class TestAttempt(BaseModel):
@@ -268,6 +270,7 @@ class SkillBoardCell(BaseModel):
 
     status: SkillStatus = "NOT_STARTED"
     last_updated_at: datetime | None = None
+    coach_note: str | None = None
 
 
 class SkillBoardSkill(BaseModel):
@@ -304,6 +307,7 @@ class SkillBoardLevelGroup(BaseModel):
     level_id: str
     level_name: str
     sequence: int
+    color: str | None = None
     skills: list[SkillBoardSkill]
     students: list[SkillBoardStudentRow]
 

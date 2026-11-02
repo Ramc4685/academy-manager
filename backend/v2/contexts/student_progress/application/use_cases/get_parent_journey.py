@@ -39,6 +39,7 @@ class JourneyLevel(BaseModel):
     name: str
     number: int
     state: JourneyLevelState
+    color: str | None = None
 
 
 class JourneySkill(BaseModel):
@@ -59,6 +60,7 @@ class JourneyCurrentLevel(BaseModel):
     skills_remaining: int
     has_next_level: bool
     pace_weeks: int | None
+    color: str | None = None
 
 
 class JourneyWin(BaseModel):
@@ -68,6 +70,8 @@ class JourneyWin(BaseModel):
     title: str
     cert_id: str | None = None
     cert_number: str | None = None
+    #: The coach's optional note to the parent on this win.
+    coach_note: str | None = None
 
 
 class ParentJourney(BaseModel):
@@ -137,6 +141,7 @@ class GetParentJourney:
                         name=str(getattr(lvl, "name", "")),
                         number=i + 1,
                         state="done",
+                        color=getattr(lvl, "display_color", None),
                     )
                     for i, lvl in enumerate(program_levels)
                 ]
@@ -163,6 +168,7 @@ class GetParentJourney:
                 level_id=str(getattr(lvl, "level_id", "")),
                 name=str(getattr(lvl, "name", "")),
                 number=i + 1,
+                color=getattr(lvl, "display_color", None),
                 state=(
                     "current"
                     if i == current_index
@@ -215,6 +221,7 @@ class GetParentJourney:
                 has_next_level=current_index is not None
                 and current_index < len(program_levels) - 1,
                 pace_weeks=estimate_weeks_to_next_level(recent_passes, remaining, now),
+                color=getattr(level_meta, "display_color", None),
             ),
             skills=[
                 JourneySkill(
@@ -262,6 +269,7 @@ class GetParentJourney:
                     kind="skill",
                     at=_as_utc(passing.tested_at if passing else row.last_updated_at),
                     title=str(getattr(skill, "name", "")) or "A new skill",
+                    coach_note=row.coach_note,
                 )
             )
         for cert in await self._certs.list_for_student(student_id):

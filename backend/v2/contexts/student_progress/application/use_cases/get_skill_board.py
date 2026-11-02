@@ -89,6 +89,7 @@ class GetSkillBoard:
                 cells_by_student.setdefault(row.student_id, {})[row.skill_id] = SkillBoardCell(
                     status=row.status,
                     last_updated_at=row.last_updated_at,
+                    coach_note=row.coach_note,
                 )
 
             required = [col for col in skill_cols if col.is_required]
@@ -122,6 +123,7 @@ class GetSkillBoard:
                     level_id=level_id,
                     level_name=str(getattr(level, "name", level_id)),
                     sequence=int(getattr(level, "sequence", 0)),
+                    color=getattr(level, "display_color", None),
                     skills=skill_cols,
                     students=student_rows,
                 )

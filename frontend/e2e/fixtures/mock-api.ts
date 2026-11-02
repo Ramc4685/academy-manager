@@ -56,6 +56,8 @@ export interface MockState {
   bulkAttendanceCalls: Array<Record<string, unknown>>;
   bulkSkillCalls: Array<Record<string, unknown>>;
   masteredCalls: Array<{ method: string; url: string; body: Record<string, unknown> }>;
+  /** Backhand-clear mastery per student; taps, undo and notes update it. */
+  backhand: Record<string, { status: string; last_updated_at: string | null; coach_note?: string | null }>;
   skillStatusCalls: Array<Record<string, unknown>>;
   attendanceResponder?: (body: Record<string, unknown>) => {
     status: number;
@@ -230,6 +232,7 @@ export const test = base.extend<{
       bulkAttendanceCalls: [],
       bulkSkillCalls: [],
       masteredCalls: [],
+      backhand: {},
       skillStatusCalls: [],
       statusCalls: [],
       testCalls: [],
@@ -467,6 +470,20 @@ export const test = base.extend<{
       const request = route.request();
       const body = JSON.parse(request.postData() ?? "{}");
       state.masteredCalls.push({ method: request.method(), url: request.url(), body });
+      const studentFromUrl = request.url().match(/students\/([^/]+)\//)?.[1] ?? "";
+      if (request.method() === "PUT") {
+        const row = state.backhand[studentFromUrl];
+        if (row) row.coach_note = body.note || null;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ student_id: studentFromUrl, skill_id: "skill-backhand", coach_note: row?.coach_note ?? null }),
+        });
+      }
+      if (request.method() === "DELETE") delete state.backhand[studentFromUrl];
+      for (const id of body.student_ids ?? []) {
+        state.backhand[id] = { status: "PASSED", last_updated_at: new Date().toISOString(), coach_note: null };
+      }
       const results = (body.student_ids ?? []).map((student_id: string) => ({
         student_id,
         outcome: "mastered",
@@ -801,6 +818,7 @@ export const test = base.extend<{
               level_id: "level-001",
               level_name: "Starter",
               sequence: 1,
+              color: "#FDE047",
               skills: [
                 { skill_id: "skill-backhand", name: "Backhand clear", sequence: 1, is_required: true },
                 { skill_id: "skill-serve", name: "Low serve", sequence: 2, is_required: false },
@@ -809,7 +827,10 @@ export const test = base.extend<{
                 student_id: student.student_id,
                 student_name: student.full_name,
                 statuses: {
-                  "skill-backhand": { status: "LEARNING", last_updated_at: null },
+                  "skill-backhand": state.backhand[student.student_id] ?? {
+                    status: "LEARNING",
+                    last_updated_at: null,
+                  },
                 },
                 required_passed: 0,
                 required_total: 1,

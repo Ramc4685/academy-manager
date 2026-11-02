@@ -8,6 +8,7 @@ import {
   setLevelUpRule,
   type PathwayDashboard,
 } from "@/lib/api/curriculum";
+import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
@@ -83,8 +84,11 @@ function Dashboard({ data }: { data: PathwayDashboard }) {
                 </span>
                 <span className="block h-3.5 overflow-hidden rounded-full bg-status-slate-100">
                   <span
-                    className="block h-full rounded-full bg-rally-cobalt-600"
-                    style={{ width: `${Math.round((level.player_count / maxPlayers) * 100)}%` }}
+                    className="block h-full rounded-full ring-1 ring-inset ring-black/20"
+                    style={{
+                      width: `${Math.round((level.player_count / maxPlayers) * 100)}%`,
+                      background: levelSwatch(level.color).fill,
+                    }}
                   />
                 </span>
                 <span className="text-right text-sm font-bold text-rally-ink">
