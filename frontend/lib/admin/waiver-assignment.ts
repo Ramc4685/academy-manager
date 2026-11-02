@@ -35,6 +35,7 @@ export function studentWaiverSummary(row: AdminStudentWaiverRow): string {
   if (row.status === "older_version") {
     return `Signed an older version${row.signed_version ? ` (v${row.signed_version})` : ""}`;
   }
+  if (row.status === "expired") return "Signature expired: renewal due";
   return "Not signed";
 }
 

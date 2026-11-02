@@ -22,10 +22,11 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
 )
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     ParentWaiverSignature,
+    signature_expired,
     signature_is_current,
 )
 
-StudentWaiverState = Literal["signed", "older_version", "unsigned"]
+StudentWaiverState = Literal["signed", "older_version", "expired", "unsigned"]
 
 
 class StudentWaiverStatusReader(Protocol):
@@ -93,6 +94,8 @@ class GetStudentWaiverStatus:
                 state: StudentWaiverState = "unsigned"
             elif _is_bare_legacy_flag(signature) or signature_is_current(signature, template):
                 state = "signed"
+            elif signature_expired(signature, template):
+                state = "expired"
             else:
                 state = "older_version"
             rows.append(

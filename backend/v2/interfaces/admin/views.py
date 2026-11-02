@@ -1622,6 +1622,9 @@ class AdminWaiverAssignRequest(BaseModel):
     required: bool
     scope: Literal["all", "programs"] = "all"
     program_ids: list[str] = []
+    # How long a signature lasts: omit both for "never expires".
+    renew_every_months: int | None = None
+    valid_until: date | None = None
 
 
 class AdminWaiverProgramView(BaseModel):
@@ -1650,6 +1653,8 @@ class AdminWaiverTemplateManagementView(BaseModel):
     required: bool = False
     scope: Literal["all", "programs"] = "all"
     program_ids: list[str] = []
+    renew_every_months: int | None = None
+    valid_until: date | None = None
 
 
 class AdminWaiverTemplateManagementList(BaseModel):
@@ -1663,7 +1668,7 @@ class AdminStudentWaiverRowView(BaseModel):
     lineage_key: str
     title: str
     version: str | None = None
-    status: Literal["signed", "older_version", "unsigned"]
+    status: Literal["signed", "older_version", "expired", "unsigned"]
     signed_version: str | None = None
     signed_at: datetime | None = None
     signature_id: str | None = None
@@ -2418,3 +2423,5 @@ class AdminSignedWaiverCopyView(BaseModel):
     consent_text: str | None = None
     ip_address: str | None = None
     user_agent: str | None = None
+    initials: dict[str, str] = {}
+    signing_path: Literal["adult", "minor"] | None = None

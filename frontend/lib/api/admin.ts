@@ -1232,6 +1232,8 @@ export interface AdminWaiverTemplateManagementView {
   required?: boolean;
   scope?: AdminWaiverScope;
   program_ids?: string[];
+  renew_every_months?: number | null;
+  valid_until?: string | null;
 }
 
 export type AdminWaiverScope = "all" | "programs";
@@ -1260,9 +1262,13 @@ export interface AdminWaiverAssignRequest {
   required: boolean;
   scope: AdminWaiverScope;
   program_ids: string[];
+  /** A signature must be renewed this many months after signing (1-60). */
+  renew_every_months?: number | null;
+  /** Every signature lapses after this date (YYYY-MM-DD). Not with renew_every_months. */
+  valid_until?: string | null;
 }
 
-export type AdminStudentWaiverState = "signed" | "older_version" | "unsigned";
+export type AdminStudentWaiverState = "signed" | "older_version" | "expired" | "unsigned";
 
 export interface AdminStudentWaiverRow {
   waiver_template_id: string;

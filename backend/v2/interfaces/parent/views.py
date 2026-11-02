@@ -77,6 +77,8 @@ class PatchApplicationRequest(BaseModel):
     # Required with ``accept_waiver``: typed full name and the consent box.
     signer_name: str | None = None
     consent: bool = False
+    # waiver id -> {section key: initials} for sections marked [initials].
+    initials: dict[str, dict[str, str]] | None = None
 
 
 class RegistrationWaiverItemView(BaseModel):
@@ -421,6 +423,9 @@ class ParentWaiverStudentView(BaseModel):
     signed_at: datetime | None = None
     waiver_version: str | None = None
     waiver_signature_id: str | None = None
+    # Set when the waiver has adult and minor sections.
+    signing_path: Literal["adult", "minor"] | None = None
+    date_of_birth_missing: bool = False
 
 
 class ParentWaiverItemView(BaseModel):
@@ -458,6 +463,8 @@ class ParentSignedWaiverView(BaseModel):
     consent_text: str | None = None
     ip_address: str | None = None
     user_agent: str | None = None
+    initials: dict[str, str] = {}
+    signing_path: Literal["adult", "minor"] | None = None
 
 
 class ParentWaiverAcceptRequest(BaseModel):
@@ -466,6 +473,8 @@ class ParentWaiverAcceptRequest(BaseModel):
     consent: bool = False
     # Sign for these children only; ``None`` signs for every child who needs it.
     student_ids: list[str] | None = None
+    # waiver_template_id -> {section key: initials} for sections marked [initials].
+    initials: dict[str, dict[str, str]] | None = None
 
 
 # --- Child schedule ---

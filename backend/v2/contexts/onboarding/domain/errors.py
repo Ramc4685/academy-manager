@@ -65,6 +65,13 @@ class WaiverSignatureIncomplete(DomainError):
     status_code = 422
 
 
+class WaiverDateOfBirthMissing(DomainError):
+    """A waiver with adult and minor sections needs each child's date of birth."""
+
+    code = "Onboarding.WaiverDateOfBirthMissing"
+    status_code = 422
+
+
 class WaiverSignatureNotFound(DomainError):
     code = "Onboarding.WaiverSignatureNotFound"
     status_code = 404

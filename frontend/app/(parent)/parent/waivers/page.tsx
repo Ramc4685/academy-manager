@@ -9,6 +9,7 @@ import {
   getParentCurrentWaiver,
   type ParentWaiverItemView,
   type ParentWaiverStatus,
+  type ParentWaiverStudentView,
 } from "@/lib/api/parent";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
@@ -18,11 +19,15 @@ import { useToast } from "@/components/ds/toast";
 import { WaiverSignBlock, type WaiverSignChild } from "@/components/parent/waiver-sign-block";
 import type { ApiError } from "@/lib/api/client";
 import { waiverSignLabel } from "@/lib/parent/waiver-label";
+import { WaiverText } from "@/components/waivers/waiver-text";
+import { initialsComplete, initialsNeeded, parseWaiverSections } from "@/lib/waivers/sections";
 
 export default function ParentWaiversPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [accepted, setAccepted] = useState(false);
+  // waiver_template_id -> {section key: initials}
+  const [initials, setInitials] = useState<Record<string, Record<string, string>>>({});
   const waiverQuery = useQuery({
     queryKey: ["parent", "waivers", "current"],
     queryFn: getParentCurrentWaiver,
@@ -34,6 +39,7 @@ export default function ParentWaiversPage() {
         signer_name: input.signerName,
         consent: true,
         student_ids: input.studentIds,
+        initials,
       }),
     onSuccess: () => {
       setAccepted(true);
@@ -62,15 +68,44 @@ export default function ParentWaiversPage() {
   const allStudents = useMemo(() => items.flatMap((item) => item.students), [items]);
   const needsSignature = allStudents.some((student) => student.status !== "signed");
   // Each child who still owes a signature on any waiver, once.
+  // A child without a date of birth cannot sign an age-split waiver yet.
   const childrenToSign = useMemo<WaiverSignChild[]>(() => {
     const seen = new Map<string, WaiverSignChild>();
     for (const student of allStudents) {
-      if (student.status === "pending" || student.status === "outdated") {
-        seen.set(student.student_id, student);
-      }
+      if (owes(student) && !student.date_of_birth_missing) seen.set(student.student_id, student);
     }
     return Array.from(seen.values());
   }, [allStudents]);
+  const missingBirthDate = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          allStudents
+            .filter((student) => owes(student) && student.date_of_birth_missing)
+            .map((student) => student.student_name),
+        ),
+      ),
+    [allStudents],
+  );
+  // Initialled sections on the paths of the children still to sign, per waiver.
+  const needed = useMemo(
+    () =>
+      Object.fromEntries(
+        items.map((item) => [
+          item.waiver_template_id,
+          initialsNeeded(
+            parseWaiverSections(item.body),
+            item.students
+              .filter((student) => owes(student) && !student.date_of_birth_missing)
+              .map((student) => student.signing_path ?? null),
+          ),
+        ]),
+      ),
+    [items],
+  );
+  const initialsDone = items.every((item) =>
+    initialsComplete(needed[item.waiver_template_id] ?? [], initials[item.waiver_template_id]),
+  );
   const several = items.length > 1;
 
   if (waiverQuery.isPending) {
@@ -193,8 +228,18 @@ export default function ParentWaiversPage() {
           </Card>
 
           {/* Waiver body */}
-          <article className="max-h-[360px] overflow-y-auto whitespace-pre-wrap rounded-2xl border border-rally-line bg-white p-4 text-sm leading-6 text-rally-ink">
-            {item.body || "Waiver text is not available."}
+          <article className="max-h-[480px] overflow-y-auto rounded-2xl border border-rally-line bg-white p-4">
+            <WaiverText
+              body={item.body}
+              needInitials={needed[item.waiver_template_id]}
+              initials={initials[item.waiver_template_id]}
+              onInitials={(key, value) =>
+                setInitials((current) => ({
+                  ...current,
+                  [item.waiver_template_id]: { ...current[item.waiver_template_id], [key]: value },
+                }))
+              }
+            />
           </article>
         </div>
       ))}
@@ -205,6 +250,15 @@ export default function ParentWaiversPage() {
           {accepted && (
             <p className="mb-3 rounded-xl px-3 py-2 text-sm bg-status-green-50 text-status-green-800" role="status">
               Signed. A copy is on its way to your email.
+            </p>
+          )}
+          {missingBirthDate.length > 0 && (
+            <p className="mb-3 rounded-xl px-3 py-2 text-sm bg-status-amber-50 text-status-amber-800" role="status">
+              Add a date of birth for {missingBirthDate.join(", ")} in{" "}
+              <Link href="/parent/profile" className="font-semibold underline">
+                your profile
+              </Link>{" "}
+              to sign for them. This waiver differs for participants under and over 18.
             </p>
           )}
           <WaiverSignBlock
@@ -218,6 +272,7 @@ export default function ParentWaiversPage() {
                 items.length,
               )
             }
+            blocked={initialsDone ? null : "Initial each marked section above to sign."}
             onSign={(input) => acceptMutation.mutate(input)}
           />
         </Card>
@@ -230,6 +285,10 @@ export default function ParentWaiversPage() {
       )}
     </section>
   );
+}
+
+function owes(student: ParentWaiverStudentView): boolean {
+  return student.status === "pending" || student.status === "outdated";
 }
 
 const WAIVER_STATUS_CHIP: Record<ParentWaiverStatus, { variant: ChipVariant; label: string }> = {
@@ -245,7 +304,14 @@ function WaiverStatusPill({ status }: { status: ParentWaiverStatus }) {
 }
 
 function signErrorMessage(error: unknown): string {
-  if ((error as ApiError | null)?.status === 422) {
+  const apiError = error as ApiError | null;
+  if (apiError?.code === "Onboarding.WaiverDateOfBirthMissing") {
+    return "Add your child's date of birth in your profile, then sign.";
+  }
+  if (apiError?.code === "Onboarding.WaiverSignatureIncomplete") {
+    return "Initial each marked section to sign.";
+  }
+  if (apiError?.status === 422) {
     return "Type your full name and tick the consent box to sign.";
   }
   return "Could not sign the waiver. Please try again.";

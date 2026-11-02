@@ -26,6 +26,7 @@ export function WaiverSignBlock({
   error,
   label,
   onSign,
+  blocked = null,
 }: {
   childrenToSign: ReadonlyArray<WaiverSignChild>;
   consentText: string;
@@ -34,6 +35,8 @@ export function WaiverSignBlock({
   /** Button label for the chosen children, e.g. "Sign waiver for Alice". */
   label: (chosen: ReadonlyArray<WaiverSignChild>) => string;
   onSign: (input: WaiverSignInput) => void;
+  /** Why signing must wait (e.g. initials still to fill); disables Sign. */
+  blocked?: string | null;
 }) {
   const ids = useId();
   const [signerName, setSignerName] = useState("");
@@ -47,7 +50,8 @@ export function WaiverSignBlock({
       ? childrenToSign
       : childrenToSign.filter((child) => !unchosen.has(child.student_id));
   const fullName = signerName.trim().split(/\s+/).filter(Boolean).length >= 2;
-  const ready = fullName && consent && (childrenToSign.length === 0 || chosen.length > 0);
+  const ready =
+    fullName && consent && !blocked && (childrenToSign.length === 0 || chosen.length > 0);
 
   function toggle(studentId: string) {
     setUnchosen((prev) => {
@@ -105,6 +109,8 @@ export function WaiverSignBlock({
         />
         <span>{consentText}</span>
       </label>
+
+      {blocked && <p className="text-xs text-rally-muted">{blocked}</p>}
 
       {error && (
         <p className="rounded-xl px-3 py-2 text-sm bg-status-red-50 text-status-red-800" role="alert">

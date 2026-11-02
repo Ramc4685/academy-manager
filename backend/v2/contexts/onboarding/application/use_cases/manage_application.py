@@ -25,6 +25,7 @@ from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     ApplicationNotFound,
     NoActiveWaiver,
+    WaiverDateOfBirthMissing,
     WaiverSignatureIncomplete,
 )
 from backend.v2.contexts.onboarding.domain.models import (
@@ -32,8 +33,16 @@ from backend.v2.contexts.onboarding.domain.models import (
     Application,
     ChildProfile,
     ParentProfile,
+    Waiver,
     WaiverAcceptance,
     clean_signer_name,
+)
+from backend.v2.contexts.onboarding.domain.waiver_sections import (
+    SigningPath,
+    has_age_paths,
+    missing_initials,
+    parse_sections,
+    signing_path_for,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -181,6 +190,8 @@ class PatchApplicationCommand(BaseModel):
     consent: bool = False
     ip_address: str | None = None
     user_agent: str | None = None
+    # waiver id -> {section key: initials} for sections marked [initials].
+    initials: dict[str, dict[str, str]] | None = None
     accept_waiver: bool = False
 
 
@@ -252,6 +263,26 @@ class PatchApplication:
             if not required:
                 raise NoActiveWaiver("no active waiver to accept")
             accepted_at = self._now()
+            birth_date = str(
+                (cmd.child_profile or {}).get("date_of_birth") or app.child_profile.date_of_birth
+            )
+            paths = _registration_paths(required, birth_date, accepted_at)
+            given = cmd.initials or {}
+            unmet = {
+                waiver.waiver_id: keys
+                for waiver in required
+                if (
+                    keys := missing_initials(
+                        parse_sections(waiver.text),
+                        paths[waiver.waiver_id],
+                        given.get(waiver.waiver_id, {}),
+                    )
+                )
+            }
+            if unmet:
+                raise WaiverSignatureIncomplete(
+                    "Initial every section marked for initials to sign.", missing_initials=unmet
+                )
             accepted = [
                 WaiverAcceptance(
                     waiver_version=waiver.version,
@@ -263,6 +294,12 @@ class PatchApplication:
                     consent_text=ESIGN_CONSENT_TEXT,
                     ip_address=cmd.ip_address,
                     user_agent=cmd.user_agent,
+                    initials={
+                        key: value.strip().upper()
+                        for key, value in given.get(waiver.waiver_id, {}).items()
+                        if value.strip()
+                    },
+                    signing_path=paths[waiver.waiver_id],
                 )
                 for waiver in required
             ]
@@ -645,3 +682,26 @@ class TransitionApplication:
             raise ApplicationNotEditable(
                 "This child is already enrolled. Manage their existing classes instead."
             )
+
+
+def _registration_paths(
+    required: list[Waiver], date_of_birth: str, day: datetime
+) -> dict[str, SigningPath | None]:
+    """The adult/minor path per waiver for the child being registered.
+
+    Only waivers with age-specific sections need one; a missing date of birth
+    on those refuses the signature.
+    """
+    paths: dict[str, SigningPath | None] = {}
+    for waiver in required:
+        if not has_age_paths(parse_sections(waiver.text)):
+            paths[waiver.waiver_id] = None
+            continue
+        # shortcut: UTC date, see parent_student_waivers._path_for.
+        path = signing_path_for(date_of_birth, day.date())
+        if path is None:
+            raise WaiverDateOfBirthMissing(
+                "Add the child's date of birth to sign this waiver.", students=["child"]
+            )
+        paths[waiver.waiver_id] = path
+    return paths

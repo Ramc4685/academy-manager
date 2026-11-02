@@ -4,6 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { WaiverSignBlock } from "@/components/parent/waiver-sign-block";
+import { WaiverText } from "@/components/waivers/waiver-text";
+import {
+  hasAgePaths,
+  initialsComplete,
+  initialsNeeded,
+  parseWaiverSections,
+  signingPathFor,
+} from "@/lib/waivers/sections";
 import { Button } from "@/components/ds/button";
 
 import {
@@ -270,9 +278,12 @@ export default function OnboardingStepperPage() {
             // Only a class-first academy asks for the waivers of the chosen
             // class; otherwise the request is exactly what it always was.
             sessionId={app.waiver_class_first ? app.selected_session_id : null}
+            birthDate={app.child_profile?.date_of_birth ?? null}
             saving={saving}
-            onAccept={async (signerName) => {
-              if (await save({ accept_waiver: true, signer_name: signerName, consent: true })) {
+            onAccept={async (signerName, initials) => {
+              if (
+                await save({ accept_waiver: true, signer_name: signerName, consent: true, initials })
+              ) {
                 advance();
               }
             }}
@@ -651,16 +662,20 @@ function ChildStep({
 function WaiverStep({
   accepted,
   sessionId,
+  birthDate,
   onAccept,
   onContinue,
   saving,
 }: {
   accepted: boolean;
   sessionId: string | null;
-  onAccept: (signerName: string) => void;
+  birthDate: string | null;
+  onAccept: (signerName: string, initials: Record<string, Record<string, string>>) => void;
   onContinue: () => void;
   saving: boolean;
 }) {
+  // waiver_template_id -> {section key: initials}
+  const [initials, setInitials] = useState<Record<string, Record<string, string>>>({});
   const waiverQuery = useQuery<RegistrationWaiver>({
     queryKey: sessionId
       ? ["parent", "registration-waiver", sessionId]
@@ -708,44 +723,55 @@ function WaiverStep({
     );
   }
 
+  const items = waiver.waivers ?? [];
   // Several waivers apply to this class: show each one, one button accepts all.
-  const several = (waiver.waivers?.length ?? 0) > 1;
+  const several = items.length > 1;
+  // The child's date of birth picks the adult or parent/guardian sections.
+  const path = signingPathFor(birthDate, new Date());
+  const sectioned = items.map((item) => {
+    const sections = parseWaiverSections(item.body);
+    return { item, ageSplit: hasAgePaths(sections), needed: initialsNeeded(sections, [path]) };
+  });
+  const birthDateMissing = path === null && sectioned.some(({ ageSplit }) => ageSplit);
+  const initialsDone = sectioned.every(({ item, needed }) =>
+    initialsComplete(needed, initials[item.waiver_template_id]),
+  );
 
   return (
     <div className="space-y-4">
       <StepHeading>{several ? "Waivers" : "Waiver"}</StepHeading>
-      {several ? (
-        <div className="space-y-4" data-testid="onboarding-waivers">
-          {(waiver.waivers ?? []).map((item) => (
-            <div key={item.waiver_template_id} className="space-y-2">
+      <div className="space-y-4" data-testid={several ? "onboarding-waivers" : undefined}>
+        {sectioned.map(({ item, needed }) => (
+          <div key={item.waiver_template_id} className="space-y-2">
+            {several ? (
               <p className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
                 {item.title ?? "Waiver"}
                 <span className="ml-2 text-xs font-normal" style={{ color: "var(--rally-muted)" }}>
                   Version {item.version}
                 </span>
               </p>
-              <div
-                className="max-h-60 overflow-y-auto rounded-2xl border p-3 text-sm"
-                style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
-              >
-                <p className="whitespace-pre-wrap">{item.body}</p>
-              </div>
+            ) : (
+              <p className="text-xs" style={{ color: "var(--rally-muted)" }}>Version {item.version}</p>
+            )}
+            <div
+              className="max-h-80 overflow-y-auto rounded-2xl border p-3"
+              style={{ borderColor: "var(--rally-line)", background: "white" }}
+            >
+              <WaiverText
+                body={item.body}
+                needInitials={accepted ? [] : needed}
+                initials={initials[item.waiver_template_id]}
+                onInitials={(key, value) =>
+                  setInitials((current) => ({
+                    ...current,
+                    [item.waiver_template_id]: { ...current[item.waiver_template_id], [key]: value },
+                  }))
+                }
+              />
             </div>
-          ))}
-        </div>
-      ) : (
-        <>
-          {waiver.version && (
-            <p className="text-xs" style={{ color: "var(--rally-muted)" }}>Version {waiver.version}</p>
-          )}
-          <div
-            className="max-h-60 overflow-y-auto rounded-2xl border p-3 text-sm"
-            style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
-          >
-            <p className="whitespace-pre-wrap">{waiver.body}</p>
           </div>
-        </>
-      )}
+        ))}
+      </div>
       {accepted ? (
         <Button onClick={onContinue} disabled={saving} variant="primary" full>
           Continue →
@@ -756,8 +782,15 @@ function WaiverStep({
           consentText={waiver.consent_text ?? ""}
           busy={saving}
           error={null}
+          blocked={
+            birthDateMissing
+              ? "Go back and add your child's date of birth: this waiver differs for participants under and over 18."
+              : initialsDone
+                ? null
+                : "Initial each marked section above to sign."
+          }
           label={() => (several ? "Sign waivers and continue" : "Sign and continue")}
-          onSign={({ signerName }) => onAccept(signerName)}
+          onSign={({ signerName }) => onAccept(signerName, initials)}
         />
       )}
     </div>

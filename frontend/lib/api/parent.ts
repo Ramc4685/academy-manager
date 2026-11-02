@@ -345,6 +345,8 @@ export function patchOnboarding(
     /** Required with accept_waiver: the typed full legal name and consent box. */
     signer_name?: string;
     consent?: boolean;
+    /** waiver_template_id -> {section key: initials} for sections marked [initials]. */
+    initials?: Record<string, Record<string, string>>;
   },
 ): Promise<OnboardingApplication> {
   return apiFetch(`/parent/onboarding/${application_id}`, {
@@ -586,6 +588,10 @@ export interface ParentWaiverStudentView {
   waiver_version: string | null;
   /** The signature behind a signed status; opens the signed copy. */
   waiver_signature_id?: string | null;
+  /** Adult or parent/guardian release, from the child's date of birth. */
+  signing_path?: "adult" | "minor" | null;
+  /** The waiver has age sections and this child has no date of birth yet. */
+  date_of_birth_missing?: boolean;
 }
 
 export interface ParentWaiverItemView {
@@ -618,6 +624,8 @@ export function acceptParentWaiver(payload: {
   consent: boolean;
   /** Sign for these children only; omit to sign for every child who needs it. */
   student_ids?: string[];
+  /** waiver_template_id -> {section key: initials} for sections marked [initials]. */
+  initials?: Record<string, Record<string, string>>;
 }): Promise<ParentWaiverCurrentView> {
   return apiFetch("/parent/waivers/accept", {
     method: "POST",
@@ -639,6 +647,8 @@ export interface SignedWaiverCopy {
   consent_text: string | null;
   ip_address: string | null;
   user_agent: string | null;
+  initials?: Record<string, string>;
+  signing_path?: "adult" | "minor" | null;
 }
 
 export function getParentSignedWaiver(waiverSignatureId: string): Promise<SignedWaiverCopy> {
