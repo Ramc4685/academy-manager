@@ -259,6 +259,8 @@ class SkillBoardStudentRef(BaseModel):
 
     student_id: str
     student_name: str
+    # Only the pathway dashboard fills this: its row actions message the family.
+    parent_id: str | None = None
 
 
 class SkillBoardCell(BaseModel):
