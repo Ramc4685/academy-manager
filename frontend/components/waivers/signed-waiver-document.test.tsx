@@ -1,0 +1,40 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { formatSignedAt, SignedWaiverDocument } from "./signed-waiver-document";
+
+// Fictional fixture: no real family or academy.
+const copy = {
+  waiver_signature_id: "ws-1",
+  student_name: "Kid One",
+  title: "Participation agreement",
+  version: "3",
+  body: "Line one.\nLine two.",
+  content_hash: "abc123",
+  signed_at: "2026-11-02T18:30:00Z",
+  signer_name: "Pat Parent",
+  signer_email: "pat@example.com",
+  consent_text: "I agree to sign electronically.",
+  ip_address: "203.0.113.10",
+  user_agent: null,
+};
+
+describe("SignedWaiverDocument", () => {
+  it("shows the exact text and the full audit trail", () => {
+    const html = renderToStaticMarkup(createElement(SignedWaiverDocument, { copy }));
+    expect(html).toContain("Line one.\nLine two.");
+    expect(html).toContain("whitespace-pre-wrap");
+    for (const value of ["Pat Parent", "203.0.113.10", "abc123", "ws-1", "Version 3"]) {
+      expect(html).toContain(value);
+    }
+    expect(html).toContain("I agree to sign electronically.");
+    // A field the server did not record says so instead of rendering blank.
+    expect(html).toContain("Not recorded");
+  });
+
+  it("keeps the UTC instant next to the local time", () => {
+    expect(formatSignedAt("2026-11-02T18:30:00Z")).toContain("(2026-11-02T18:30:00Z)");
+    expect(formatSignedAt(null)).toBeNull();
+  });
+});

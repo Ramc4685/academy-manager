@@ -19,10 +19,10 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
 from backend.v2.interfaces.parent.deps import get_parent_use_cases
-from backend.v2.interfaces.parent.payment_routes import _request_ip
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.shared.http import request_ip as _request_ip
 from backend.v2.shared.tenancy.context import tenant_scope
 
 

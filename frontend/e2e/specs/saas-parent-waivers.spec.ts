@@ -110,6 +110,7 @@ test.describe("SaaS v2 — several waivers to sign", () => {
     });
     const payload = (state: "pending" | "signed") => ({
       required: true,
+      consent_text: "I agree to sign electronically.",
       waiver_template_id: "wt-liability",
       title: "Liability waiver",
       version: "3",
@@ -137,8 +138,10 @@ test.describe("SaaS v2 — several waivers to sign", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, payload(accepted ? "signed" : "pending"));
     });
+    let acceptBody: Record<string, unknown> | null = null;
     await page.route("**/api/v2/parent/waivers/accept", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
+      acceptBody = route.request().postDataJSON() as Record<string, unknown>;
       accepted = true;
       return fulfillJson(route, payload("signed"));
     });
@@ -151,8 +154,18 @@ test.describe("SaaS v2 — several waivers to sign", () => {
     // The photo waiver applies only to the child in that program.
     await expect(page.getByTestId("parent-waiver-wt-photo")).toContainText("Photo consent text");
     await expect(page.getByTestId("parent-waiver-wt-photo")).not.toContainText("Dev Rao");
-    await page.getByRole("button", { name: "Accept waivers for Asha Rao and Dev Rao" }).click();
+    // Signing needs a full name and the consent box before the button works.
+    const sign = page.getByRole("button", { name: "Sign waivers for Asha Rao and Dev Rao" });
+    await expect(sign).toBeDisabled();
+    await page.getByLabel("Full legal name").fill("Priya Rao");
+    await page.getByLabel("I agree to sign electronically.").check();
+    await sign.click();
     await expect(page.getByText("Current waivers are signed for all active children.")).toBeVisible();
+    expect(acceptBody).toEqual({
+      signer_name: "Priya Rao",
+      consent: true,
+      student_ids: ["st-1", "st-2"],
+    });
 
     guard.assertNoLegacyApiCalls();
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);

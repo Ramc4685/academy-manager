@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { WaiverSignBlock } from "@/components/parent/waiver-sign-block";
 import { Button } from "@/components/ds/button";
 
 import {
@@ -270,9 +271,12 @@ export default function OnboardingStepperPage() {
             // class; otherwise the request is exactly what it always was.
             sessionId={app.waiver_class_first ? app.selected_session_id : null}
             saving={saving}
-            onAccept={async () => {
-              if (await save({ accept_waiver: true })) advance();
+            onAccept={async (signerName) => {
+              if (await save({ accept_waiver: true, signer_name: signerName, consent: true })) {
+                advance();
+              }
             }}
+            onContinue={advance}
           />
         )}
         {step === "session" && (
@@ -648,11 +652,13 @@ function WaiverStep({
   accepted,
   sessionId,
   onAccept,
+  onContinue,
   saving,
 }: {
   accepted: boolean;
   sessionId: string | null;
-  onAccept: () => void;
+  onAccept: (signerName: string) => void;
+  onContinue: () => void;
   saving: boolean;
 }) {
   const waiverQuery = useQuery<RegistrationWaiver>({
@@ -740,9 +746,20 @@ function WaiverStep({
           </div>
         </>
       )}
-      <Button onClick={onAccept} disabled={saving} variant="primary" full>
-        {accepted ? "Continue →" : several ? "I accept all" : "I Accept"}
-      </Button>
+      {accepted ? (
+        <Button onClick={onContinue} disabled={saving} variant="primary" full>
+          Continue →
+        </Button>
+      ) : (
+        <WaiverSignBlock
+          childrenToSign={[]}
+          consentText={waiver.consent_text ?? ""}
+          busy={saving}
+          error={null}
+          label={() => (several ? "Sign waivers and continue" : "Sign and continue")}
+          onSign={({ signerName }) => onAccept(signerName)}
+        />
+      )}
     </div>
   );
 }

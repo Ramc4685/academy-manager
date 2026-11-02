@@ -49,6 +49,7 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
 )
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     AcceptParentWaiver,
+    GetParentSignedWaiver,
     GetParentWaiverRequirement,
 )
 from backend.v2.shared.comms import Message
@@ -88,6 +89,7 @@ class ParentUseCases:
     cancel_billing_enrollment: object  # callable — CancelBillingEnrollment.execute
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
+    get_parent_signed_waiver: GetParentSignedWaiver
     get_academy_info: object  # callable accepting academy_id
     # Trial class requests + conversion tracking (R3, Task 7)
     submit_trial_request: SubmitTrialRequest

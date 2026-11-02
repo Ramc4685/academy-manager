@@ -24,6 +24,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
+    AdminSignedWaiverCopyView,
     AdminStudentWaiverRowView,
     AdminStudentWaiverStatusView,
     AdminWaiverAssignRequest,
@@ -371,3 +372,18 @@ def _student_waiver_view(row: AdminWaiverStudentRow) -> AdminWaiverStudentView:
         artifact_status=row.artifact_status,
         share_status=row.share_status,
     )
+
+
+@router.get(
+    "/waivers/signatures/{signature_id}/copy",
+    response_model=AdminSignedWaiverCopyView,
+)
+async def get_signed_waiver_copy(
+    signature_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminSignedWaiverCopyView:
+    copy = await use_cases.list_admin_waivers.signed_copy(signature_id)
+    if copy is None:
+        raise HTTPException(status_code=404, detail="Signed waiver not found")
+    return AdminSignedWaiverCopyView(**copy.model_dump())

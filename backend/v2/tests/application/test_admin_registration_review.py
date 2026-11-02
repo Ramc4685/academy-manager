@@ -1152,6 +1152,42 @@ async def test_approve_writes_per_student_waiver_signature_from_registration_acc
 
 
 @pytest.mark.asyncio
+async def test_approve_copies_the_typed_name_and_signing_evidence_onto_the_signature() -> None:
+    app = _application(student_id="student-1").model_copy(
+        update={
+            "waiver_acceptance": WaiverAcceptance(
+                waiver_template_id="wt-2026",
+                waiver_version="2026.1",
+                content_hash="hash-2026",
+                accepted_at=NOW - timedelta(hours=1),
+                signer_name="Patricia Q Parent",
+                consent_text="I agree to sign electronically.",
+                ip_address="203.0.113.10",
+                user_agent="pytest",
+            )
+        }
+    )
+    signatures = InMemoryWaiverSignatures()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        waiver_signatures=signatures,
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    (signature,) = signatures.saved
+    assert signature.signer_name == "Patricia Q Parent"
+    assert signature.consent_text == "I agree to sign electronically."
+    assert (signature.ip_address, signature.user_agent) == ("203.0.113.10", "pytest")
+
+
+@pytest.mark.asyncio
 async def test_waitlist_requires_existing_session_before_writes() -> None:
     app = _application(student_id="student-1")
     apps = InMemoryApplications(app)

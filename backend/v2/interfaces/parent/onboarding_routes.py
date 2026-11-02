@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     PatchApplicationCommand,
@@ -18,7 +18,7 @@ from backend.v2.interfaces.parent.views import (
     RegistrationWaiverView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import request_ip, require_persona
 
 router = APIRouter(tags=["parent.onboarding"])
 
@@ -107,6 +107,7 @@ async def start(
 async def patch(
     application_id: str,
     body: PatchApplicationRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ApplicationView:
@@ -118,6 +119,10 @@ async def patch(
             child_profile=body.child_profile.model_dump() if body.child_profile else None,
             selected_session_id=body.selected_session_id,
             accept_waiver=body.accept_waiver,
+            signer_name=body.signer_name,
+            consent=body.consent,
+            ip_address=request_ip(request) if body.accept_waiver else None,
+            user_agent=request.headers.get("user-agent") if body.accept_waiver else None,
         )
     )
     return _view(app, class_first=await _class_first(use_cases))

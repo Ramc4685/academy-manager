@@ -25,12 +25,15 @@ from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     ApplicationNotFound,
     NoActiveWaiver,
+    WaiverSignatureIncomplete,
 )
 from backend.v2.contexts.onboarding.domain.models import (
+    ESIGN_CONSENT_TEXT,
     Application,
     ChildProfile,
     ParentProfile,
     WaiverAcceptance,
+    clean_signer_name,
 )
 from backend.v2.shared.ids import new_ulid
 
@@ -173,6 +176,11 @@ class PatchApplicationCommand(BaseModel):
     parent_profile: dict[str, object] | None = None
     child_profile: dict[str, object] | None = None
     selected_session_id: str | None = None
+    # Required with ``accept_waiver``: the typed full name and consent box.
+    signer_name: str | None = None
+    consent: bool = False
+    ip_address: str | None = None
+    user_agent: str | None = None
     accept_waiver: bool = False
 
 
@@ -231,6 +239,13 @@ class PatchApplication:
         additional_acceptances = app.additional_waiver_acceptances
         session_id = cmd.selected_session_id or app.selected_session_id
         if cmd.accept_waiver:
+            signer_name = clean_signer_name(cmd.signer_name)
+            if signer_name is None or not cmd.consent:
+                raise WaiverSignatureIncomplete(
+                    "Type your full name and tick the consent box to sign.",
+                    missing_name=signer_name is None,
+                    missing_consent=not cmd.consent,
+                )
             # Everything this class's family signs: the all-families waivers
             # plus the ones assigned to the class's program. First = primary.
             required = await self._waivers.list_required(session_id)
@@ -244,6 +259,10 @@ class PatchApplication:
                     accepted_at=accepted_at,
                     waiver_template_id=waiver.waiver_id,
                     lineage_key=waiver.lineage_key,
+                    signer_name=signer_name,
+                    consent_text=ESIGN_CONSENT_TEXT,
+                    ip_address=cmd.ip_address,
+                    user_agent=cmd.user_agent,
                 )
                 for waiver in required
             ]

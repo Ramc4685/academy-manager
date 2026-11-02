@@ -59,8 +59,11 @@ class _ParentWaiverUseCases:
         signer_email: str,
         ip_address: str | None,
         user_agent: str | None,
+        consent: bool,
+        student_ids: list[str] | None = None,
     ) -> ParentWaiverRequirement:
-        _ = (parent_id, signer_name, signer_email, ip_address, user_agent)
+        _ = (parent_id, signer_name, signer_email, ip_address, user_agent, student_ids)
+        self.consent = consent
         self.signed_student_ids.update({"st-1", "st-2"})
         return self._payload()
 
@@ -112,7 +115,9 @@ def test_parent_gets_required_waiver_for_active_children() -> None:
 
 def test_parent_accepts_required_waiver_for_all_active_children() -> None:
     with _make_client() as (client, use_cases):
-        response = client.post("/api/v2/parent/waivers/accept", json={"signer_name": "Parent One"})
+        response = client.post(
+            "/api/v2/parent/waivers/accept", json={"signer_name": "Parent One", "consent": True}
+        )
 
     assert response.status_code == 200, response.text
     assert use_cases.signed_student_ids == {"st-1", "st-2"}

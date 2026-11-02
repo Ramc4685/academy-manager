@@ -61,6 +61,8 @@ async def test_parent_can_accept_production_published_registration_waiver(db, ac
             application_id="app-prod-waiver",
             caller_user_id="parent-1",
             accept_waiver=True,
+            signer_name="Pat Parent",
+            consent=True,
         )
     )
 

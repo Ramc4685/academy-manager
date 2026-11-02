@@ -67,6 +67,12 @@ class WaiverAcceptance(BaseModel):
     # Which waiver (across versions) this accepts; ``None`` reads as the legacy
     # lineage, the one every pre-lineage template belongs to.
     lineage_key: str | None = None
+    # Signing evidence, copied onto the student's signature at approval.
+    # ``None`` on acceptances made before the explicit signing step.
+    signer_name: str | None = None
+    consent_text: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
 
 
 class Application(BaseModel):
@@ -231,3 +237,20 @@ class WaiverSignature(BaseModel):
     user_agent: str | None = None
     artifact_id: str | None = None
     expires_at: datetime | None = None
+    # The e-signature consent statement the signer ticked; ``None`` on rows
+    # signed before the explicit signing step existed.
+    consent_text: str | None = None
+
+
+# Shown next to the consent checkbox and stored on every signature, so a
+# signed copy can show exactly what the signer agreed to.
+ESIGN_CONSENT_TEXT = (
+    "I agree to sign electronically. Typing my full name is my signature and "
+    "has the same effect as a handwritten signature."
+)
+
+
+def clean_signer_name(name: str | None) -> str | None:
+    """A full legal name: at least two words, or ``None`` when it is not one."""
+    words = " ".join((name or "").split())
+    return words if len(words.split(" ")) >= 2 else None

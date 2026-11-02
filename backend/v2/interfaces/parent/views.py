@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle import (
     PersonLifecycle,
 )
+from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    ESIGN_CONSENT_TEXT,
+)
 
 # --- Onboarding ---
 
@@ -71,6 +74,9 @@ class PatchApplicationRequest(BaseModel):
     child_profile: ChildProfileView | None = None
     selected_session_id: str | None = None
     accept_waiver: bool = False
+    # Required with ``accept_waiver``: typed full name and the consent box.
+    signer_name: str | None = None
+    consent: bool = False
 
 
 class RegistrationWaiverItemView(BaseModel):
@@ -92,6 +98,8 @@ class RegistrationWaiverView(BaseModel):
     # True when some live waiver is assigned to a program: the stepper then
     # asks for the class before the waiver.
     class_first: bool = False
+    # The statement beside the consent checkbox; stored with the acceptance.
+    consent_text: str = ESIGN_CONSENT_TEXT
 
 
 # --- Checkout ---
@@ -412,6 +420,7 @@ class ParentWaiverStudentView(BaseModel):
     status: Literal["signed", "pending", "outdated", "not_required"]
     signed_at: datetime | None = None
     waiver_version: str | None = None
+    waiver_signature_id: str | None = None
 
 
 class ParentWaiverItemView(BaseModel):
@@ -432,10 +441,31 @@ class ParentWaiverCurrentView(BaseModel):
     students: list[ParentWaiverStudentView] = []
     # Every waiver this parent's children must sign, one entry each.
     waivers: list[ParentWaiverItemView] = []
+    # The statement next to the consent checkbox; stored on each signature.
+    consent_text: str = ESIGN_CONSENT_TEXT
+
+
+class ParentSignedWaiverView(BaseModel):
+    waiver_signature_id: str
+    student_name: str
+    title: str | None = None
+    version: str | None = None
+    body: str
+    content_hash: str | None = None
+    signed_at: datetime | None = None
+    signer_name: str
+    signer_email: str | None = None
+    consent_text: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
 
 
 class ParentWaiverAcceptRequest(BaseModel):
     signer_name: str | None = None
+    # The e-signature consent checkbox; signing is refused without it.
+    consent: bool = False
+    # Sign for these children only; ``None`` signs for every child who needs it.
+    student_ids: list[str] | None = None
 
 
 # --- Child schedule ---

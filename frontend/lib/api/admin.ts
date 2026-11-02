@@ -5,6 +5,7 @@
  * the openapi-typescript generator produces lib/api/generated/v2.d.ts.
  */
 
+import type { SignedWaiverCopy } from "@/lib/api/parent";
 import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
@@ -3302,6 +3303,11 @@ export function getAdminWaiverSignature(signatureId: string): Promise<AdminWaive
     `/admin/waivers/signatures/${encodeURIComponent(signatureId)}`,
     { method: "GET" },
   );
+}
+
+/** The printable signed copy: the same document the family sees. */
+export function getAdminSignedWaiverCopy(signatureId: string): Promise<SignedWaiverCopy> {
+  return apiFetch(`/admin/waivers/signatures/${encodeURIComponent(signatureId)}/copy`);
 }
 
 export function listAdminRegistrations(): Promise<AdminRegistrationList> {

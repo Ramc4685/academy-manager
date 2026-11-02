@@ -2401,3 +2401,20 @@ class SendCampaignResponse(BaseModel):
     # True when this request matched an already-sent campaign via its
     # idempotency key and no new email was sent.
     deduplicated: bool = False
+
+
+class AdminSignedWaiverCopyView(BaseModel):
+    """The printable signed copy: the exact text plus the audit trail."""
+
+    waiver_signature_id: str
+    student_name: str
+    title: str | None = None
+    version: str | None = None
+    body: str
+    content_hash: str | None = None
+    signed_at: datetime | None = None
+    signer_name: str
+    signer_email: str | None = None
+    consent_text: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None

@@ -435,6 +435,7 @@ async def test_accept_parent_waiver_writes_land_in_request_tenant() -> None:
         await uc.execute(
             parent_id="par-1",
             signer_name="Pat Parent",
+            consent=True,
             signer_email="pat@example.com",
             ip_address=None,
             user_agent=None,

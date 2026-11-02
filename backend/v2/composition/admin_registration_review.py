@@ -878,7 +878,7 @@ class AdminRegistrationReview:
     ) -> None:
         if self._waiver_signatures is None:
             return
-        signer_name = self._parent_name(app) or str(app.parent_email)
+        fallback_name = self._parent_name(app) or str(app.parent_email)
         for acceptance in app.all_waiver_acceptances:
             if not acceptance.waiver_template_id:
                 continue
@@ -893,9 +893,13 @@ class AdminRegistrationReview:
                     student_id=student_id,
                     parent_user_id=app.parent_user_id,
                     signed_at=acceptance.accepted_at,
-                    signer_name=signer_name,
+                    # The name the parent typed; older acceptances predate it.
+                    signer_name=acceptance.signer_name or fallback_name,
                     signer_email=app.parent_email,
                     content_hash=acceptance.content_hash,
+                    ip_address=acceptance.ip_address,
+                    user_agent=acceptance.user_agent,
+                    consent_text=acceptance.consent_text,
                 )
             )
 

@@ -1837,7 +1837,7 @@ def compose_admin(
 
     send_campaign = compose_send_campaign(db, _email_sender, settings)
     waivers_repo = MongoAdminWaiverRepository(db)
-    list_admin_waivers = ListAdminWaivers(waivers_repo)
+    list_admin_waivers = ListAdminWaivers(waivers_repo, copies=MongoParentWaiverRepository(db))
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
     manage_admin_waiver_templates = ManageAdminWaiverTemplates(
         waiver_templates_repo, programs=MongoWaiverProgramLookup(db)
