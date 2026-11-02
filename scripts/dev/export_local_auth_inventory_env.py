@@ -154,6 +154,21 @@ def build_inventory_env(
         sort=[("created_at", -1)],
     )
     add("LOCAL_AUTH_ADMIN_PROGRAM_ID", program_id)
+    # Same query and sort, so both fields come from one certificate row.
+    for env_name, field in (
+        ("LOCAL_AUTH_CERT_ID", "cert_id"),
+        ("LOCAL_AUTH_CERT_STUDENT_ID", "student_id"),
+    ):
+        add(
+            env_name,
+            _first_field(
+                db,
+                "skill_certificates",
+                {"academy_id": academy_id},
+                (field,),
+                sort=[("issued_at", -1), ("cert_id", 1)],
+            ),
+        )
 
     coach_id = _first_field(
         db,

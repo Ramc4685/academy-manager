@@ -128,6 +128,20 @@ def test_build_inventory_env_exports_all_seeded_dynamic_route_ids() -> None:
             "waiver_templates": [{"academy_id": "blno", "waiver_template_id": "waiver_1"}],
             "waiver_signatures": [{"academy_id": "blno", "waiver_signature_id": "sig_1"}],
             "skill_programs": [{"academy_id": "blno", "program_id": "program_1"}],
+            "skill_certificates": [
+                {
+                    "academy_id": "blno",
+                    "cert_id": "cert_old",
+                    "student_id": "student_old",
+                    "issued_at": "2026-09-01T00:00:00+00:00",
+                },
+                {
+                    "academy_id": "blno",
+                    "cert_id": "cert_1",
+                    "student_id": "student_cert",
+                    "issued_at": "2026-10-30T00:00:00+00:00",
+                },
+            ],
         }
     )
 
@@ -142,6 +156,8 @@ def test_build_inventory_env_exports_all_seeded_dynamic_route_ids() -> None:
         "LOCAL_AUTH_ADMIN_USER_ID": "parent_one",
         "LOCAL_AUTH_ADMIN_WAIVER_ID": "waiver_1",
         "LOCAL_AUTH_ADMIN_WAIVER_SIGNATURE_ID": "sig_1",
+        "LOCAL_AUTH_CERT_ID": "cert_1",
+        "LOCAL_AUTH_CERT_STUDENT_ID": "student_cert",
         "LOCAL_AUTH_COACH_OCCURRENCE_ID": "occ_1",
         "LOCAL_AUTH_COACH_SESSION_DATE": "2099-06-25",
         "LOCAL_AUTH_COACH_SESSION_ID": "ses_coach",

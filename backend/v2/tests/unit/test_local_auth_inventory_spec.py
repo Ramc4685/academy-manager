@@ -81,6 +81,8 @@ def test_local_auth_inventory_spec_declares_seeded_dynamic_route_env_vars() -> N
         "LOCAL_AUTH_COACH_SESSION_ID",
         "LOCAL_AUTH_COACH_SESSION_DATE",
         "LOCAL_AUTH_COACH_STUDENT_ID",
+        "LOCAL_AUTH_CERT_ID",
+        "LOCAL_AUTH_CERT_STUDENT_ID",
     ):
         assert env_name in spec
 
@@ -119,6 +121,8 @@ def test_dynamic_route_env_contract_matches_exporter_names() -> None:
         "LOCAL_AUTH_COACH_SESSION_ID",
         "LOCAL_AUTH_COACH_SESSION_DATE",
         "LOCAL_AUTH_COACH_STUDENT_ID",
+        "LOCAL_AUTH_CERT_ID",
+        "LOCAL_AUTH_CERT_STUDENT_ID",
     }
 
     for env_name in required_env_names:

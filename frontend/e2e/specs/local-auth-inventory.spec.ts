@@ -102,6 +102,12 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   "/admin/students/[studentId]/progress": {
     replacements: [["[studentId]", "LOCAL_AUTH_ADMIN_STUDENT_ID"]],
   },
+  "/admin/students/[studentId]/progress/certificates/[certId]": {
+    replacements: [
+      ["[studentId]", "LOCAL_AUTH_CERT_STUDENT_ID"],
+      ["[certId]", "LOCAL_AUTH_CERT_ID"],
+    ],
+  },
   "/admin/users/[userId]": {
     replacements: [["[userId]", "LOCAL_AUTH_ADMIN_USER_ID"]],
   },
@@ -122,6 +128,9 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   },
   "/admin/families/[parentId]": {
     replacements: [["[parentId]", "LOCAL_AUTH_ADMIN_USER_ID"]],
+  },
+  "/parent/progress/certificates/[certId]": {
+    replacements: [["[certId]", "LOCAL_AUTH_CERT_ID"]],
   },
   "/coach/sessions/[id]": {
     replacements: [["[id]", "LOCAL_AUTH_COACH_SESSION_ID"]],
