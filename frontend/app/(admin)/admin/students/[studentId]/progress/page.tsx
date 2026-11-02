@@ -368,6 +368,12 @@ export default function AdminStudentProgressPage() {
                 <div className="text-right text-xs text-rally-muted">
                   <p>Completed {formatDate(cert.completed_at)}</p>
                   <p>Issued {formatDate(cert.issued_at)}</p>
+                  <Link
+                    href={`/admin/students/${encodeURIComponent(studentId)}/progress/certificates/${encodeURIComponent(cert.cert_id)}`}
+                    className="font-bold text-rally-cobalt-700 hover:underline"
+                  >
+                    View / print
+                  </Link>
                 </div>
               </div>
             ))}

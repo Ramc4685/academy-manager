@@ -1,3 +1,5 @@
+import type { Route } from "next";
+import Link from "next/link";
 import type { ParentProgressJourney } from "@/lib/api/parent";
 import type { SkillCertificate } from "@/lib/api/curriculum";
 
@@ -6,6 +8,11 @@ import type { SkillCertificate } from "@/lib/api/curriculum";
 
 type Journey = ParentProgressJourney;
 type JourneyWin = Journey["recent_wins"][number];
+
+/** The printable certificate screen; it needs the child to check ownership. */
+export function certificateHref(certId: string, studentId: string): Route {
+  return `/parent/progress/certificates/${encodeURIComponent(certId)}?child=${encodeURIComponent(studentId)}` as Route;
+}
 
 export function LevelStrip({ firstName, journey }: { firstName: string; journey: Journey }) {
   const current = journey.current_level;
@@ -185,7 +192,7 @@ export function SkillChecklist({ skills }: { skills: Journey["skills"] }) {
   );
 }
 
-export function RecentWins({ wins }: { wins: JourneyWin[] }) {
+export function RecentWins({ wins, studentId }: { wins: JourneyWin[]; studentId: string }) {
   if (wins.length === 0) return null;
   return (
     <div className="space-y-2">
@@ -201,12 +208,14 @@ export function RecentWins({ wins }: { wins: JourneyWin[] }) {
                 {formatWinDate(win.at)} · Level complete
               </p>
               <p className="text-sm font-bold text-rally-ink">Certificate: {win.title}</p>
-              <a
-                href={`#certificate-${win.cert_id}`}
-                className="text-[13px] font-bold text-rally-cobalt-700 underline-offset-2 hover:underline"
-              >
-                View certificate
-              </a>
+              {win.cert_id && (
+                <Link
+                  href={certificateHref(win.cert_id, studentId)}
+                  className="text-[13px] font-bold text-rally-cobalt-700 underline-offset-2 hover:underline"
+                >
+                  View certificate
+                </Link>
+              )}
             </li>
           ) : (
             <li
@@ -252,31 +261,32 @@ export function CertificateList({ certs }: { certs: SkillCertificate[] }) {
       </h2>
       <ul className="divide-y divide-rally-line">
         {certs.map((cert) => (
-          <li
-            key={cert.cert_id}
-            id={`certificate-${cert.cert_id}`}
-            className="flex items-center gap-3 px-4 py-3 scroll-mt-24 target:bg-rally-volt-100"
-          >
-            <span
-              aria-hidden="true"
-              className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 text-lg bg-rally-volt-100"
+          <li key={cert.cert_id}>
+            <Link
+              href={certificateHref(cert.cert_id, cert.student_id)}
+              className="flex items-center gap-3 px-4 py-3 hover:bg-rally-volt-100"
             >
-              🏅
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold truncate text-rally-ink">{cert.level_name}</p>
-              <p className="text-xs truncate text-rally-muted">{cert.program_name}</p>
-            </div>
-            <div className="shrink-0 text-right">
-              <p className="text-xs font-medium text-rally-ink">
-                {new Date(cert.completed_at).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </p>
-              <p className="text-[11px] text-rally-subtle">#{cert.cert_number}</p>
-            </div>
+              <span
+                aria-hidden="true"
+                className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 text-lg bg-rally-volt-100"
+              >
+                🏅
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold truncate text-rally-ink">{cert.level_name}</p>
+                <p className="text-xs truncate text-rally-muted">{cert.program_name}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-xs font-medium text-rally-ink">
+                  {new Date(cert.completed_at).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+                <p className="text-[11px] text-rally-subtle">#{cert.cert_number}</p>
+              </div>
+            </Link>
           </li>
         ))}
       </ul>

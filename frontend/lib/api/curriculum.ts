@@ -211,6 +211,16 @@ export interface SkillCertificate {
   issued_at: string;
 }
 
+/** One certificate plus what the printable certificate shows (read from the curriculum). */
+export interface CertificateDetail {
+  certificate: SkillCertificate;
+  /** Position on the program's level ladder; null when the level was removed. */
+  level_number: number | null;
+  /** Names of the level's required skills, in curriculum order. */
+  skills: string[];
+  next_level: { level_id: string; name: string; number: number } | null;
+}
+
 // ---------------------------------------------------------------------------
 // Admin — curriculum
 // ---------------------------------------------------------------------------
@@ -473,6 +483,16 @@ export function rejectLevelUp(
   );
 }
 
+export function getAdminCertificateDetail(
+  studentId: string,
+  certId: string,
+): Promise<CertificateDetail> {
+  return apiFetch<CertificateDetail>(
+    `/admin/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}`,
+    { method: "GET" },
+  );
+}
+
 export function getAdminStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/admin/students/${encodeURIComponent(studentId)}/certificates`,
@@ -624,6 +644,16 @@ export function recommendLevelUp(
 // ---------------------------------------------------------------------------
 // Parent
 // ---------------------------------------------------------------------------
+
+export function getParentCertificateDetail(
+  studentId: string,
+  certId: string,
+): Promise<CertificateDetail> {
+  return apiFetch<CertificateDetail>(
+    `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}`,
+    { method: "GET" },
+  );
+}
 
 export function getParentStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(

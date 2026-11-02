@@ -57,6 +57,9 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
 from backend.v2.contexts.student_progress.application.use_cases.auto_approve_level_ups import (
     AutoApproveLevelUps,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
+    GetCertificateDetail,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
 )
@@ -241,6 +244,7 @@ class StudentProgressComposition:
     get_passport: GetStudentPassport
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
+    get_certificate_detail: GetCertificateDetail
     get_skill_board: GetSkillBoard
     get_teaching_focus: GetTeachingFocus
     get_recent_skill_updates: GetRecentSkillUpdates
@@ -396,6 +400,9 @@ def compose_student_progress(
             enrollment_lookup=enrollment_lookup,
         ),
         get_certificates=GetStudentCertificates(certificates=certificate_repo),
+        get_certificate_detail=GetCertificateDetail(
+            certificates=certificate_repo, skill_lookup=skill_lookup
+        ),
         get_skill_board=GetSkillBoard(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,

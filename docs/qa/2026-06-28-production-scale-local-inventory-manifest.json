@@ -1928,6 +1928,39 @@
       ]
     },
     {
+      "route": "/admin/students/[studentId]/progress/certificates/[certId]",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/students/[studentId]/progress/certificates/[certId]/page.tsx",
+      "workflows": [
+        "View level certificate",
+        "Print certificate"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to progress",
+          "Print or save as PDF"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "not found",
+        "error"
+      ],
+      "risk_edges": [
+        "Certificate id from another student",
+        "Print layout spills onto a second page"
+      ],
+      "acceptance": [
+        "Certificate shows the student name, level number and name, program, required skills, completion date and certificate number from the curriculum, with no invented data",
+        "Workflow evidence: \"View level certificate\" completes for the admin route /admin/students/[studentId]/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print certificate\" completes for the admin route /admin/students/[studentId]/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Certificate id from another student\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Print layout spills onto a second page\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/users",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/users/page.tsx",
@@ -3211,6 +3244,43 @@
         "Workflow evidence: \"Open resources\" completes for the parent route /parent/progress with real-user evidence and no framework or runtime errors.",
         "Risk evidence: \"Progress flag mismatch\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"External resource unavailable\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/progress/certificates/[certId]",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/progress/certificates/[certId]/page.tsx",
+      "workflows": [
+        "View level certificate",
+        "Print or save certificate as PDF",
+        "Share certificate with family"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to progress",
+          "Print or save as PDF",
+          "Share with family",
+          "Up next"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "not found",
+        "error"
+      ],
+      "risk_edges": [
+        "Certificate of another family's child",
+        "Print layout spills onto a second page"
+      ],
+      "acceptance": [
+        "Certificate shows the student name, level number and name, program, required skills, completion date and certificate number from the curriculum, with no invented data",
+        "Workflow evidence: \"View level certificate\" completes for the parent route /parent/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print or save certificate as PDF\" completes for the parent route /parent/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Share certificate with family\" completes for the parent route /parent/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Certificate of another family's child\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Print layout spills onto a second page\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {

@@ -17,6 +17,9 @@ from types import SimpleNamespace
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
+    GetCertificateDetailCommand,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
     GetStudentCertificatesCommand,
@@ -405,6 +408,7 @@ def _build_real_parent_progress_app(
     in_progress_skills: list[object] | None = None,
     lesson_card: object | None = None,
     journey: object | None = None,
+    certificate_detail: object | None = None,
 ) -> tuple[FastAPI, SimpleNamespace]:
     list_children = _CallableSpy(children)
     get_program = _ExecuteSpy(
@@ -427,6 +431,7 @@ def _build_real_parent_progress_app(
     get_recent_skill_updates = _ExecuteSpy(recent_updates or [])
     get_in_progress_skills = _ExecuteSpy(in_progress_skills or [])
     get_parent_journey = _ExecuteSpy(journey)
+    get_certificate_detail = _ExecuteSpy(certificate_detail)
     get_lesson_card_for_skill = _ExecuteSpy(
         lesson_card
         if lesson_card is not None
@@ -452,6 +457,7 @@ def _build_real_parent_progress_app(
             get_recent_skill_updates=get_recent_skill_updates,
             get_in_progress_skills=get_in_progress_skills,
             get_parent_journey=get_parent_journey,
+            get_certificate_detail=get_certificate_detail,
         ),
     )
 
@@ -469,6 +475,7 @@ def _build_real_parent_progress_app(
         get_in_progress_skills=get_in_progress_skills,
         get_lesson_card_for_skill=get_lesson_card_for_skill,
         get_parent_journey=get_parent_journey,
+        get_certificate_detail=get_certificate_detail,
     )
 
 
@@ -783,3 +790,46 @@ def test_parent_progress_journey_other_child_returns_404() -> None:
 
     assert response.status_code == 404, response.text
     assert spies.get_parent_journey.calls == []
+
+
+def test_parent_certificate_detail_returns_own_childs_certificate() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        certificate_detail=_Dumpable(level_number=1, skills=["Thumb grip"], next_level=None),
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["skills"] == ["Thumb grip"]
+    assert spies.get_certificate_detail.calls == [
+        ((GetCertificateDetailCommand(student_id=OWN_STUDENT_ID, cert_id="cert-1"),), {})
+    ]
+
+
+def test_parent_certificate_detail_other_child_returns_404_without_lookup() -> None:
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        certificate_detail=_Dumpable(level_number=1, skills=[], next_level=None),
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OTHER_STUDENT_ID}/certificates/cert-1")
+
+    assert response.status_code == 404, response.text
+    assert spies.get_certificate_detail.calls == []
+
+
+def test_parent_certificate_detail_unknown_cert_returns_404() -> None:
+    # The use case scopes by student, so a cert id belonging to another
+    # child (or another tenant) comes back as None.
+    app, _spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        certificate_detail=None,
+    )
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/someone-else")
+
+    assert response.status_code == 404, response.text
