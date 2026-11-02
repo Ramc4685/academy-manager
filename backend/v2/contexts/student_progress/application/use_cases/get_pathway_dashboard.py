@@ -66,6 +66,7 @@ class DashboardLevel(BaseModel):
     sequence: int
     player_count: int
     requires_admin_approval: bool
+    color: str | None = None
 
 
 class AlmostThereStudent(BaseModel):
@@ -224,6 +225,7 @@ class GetPathwayDashboard:
                     sequence=lv.sequence,  # type: ignore[attr-defined]
                     player_count=len(rows_by_level.get(lv.level_id, [])),  # type: ignore[attr-defined]
                     requires_admin_approval=bool(getattr(lv, "requires_admin_approval", False)),
+                    color=getattr(lv, "display_color", None),
                 )
                 for lv in program_levels
             ],

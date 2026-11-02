@@ -34,6 +34,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             introduced_at=doc.get("introduced_at"),
             last_updated_at=doc["last_updated_at"],
             last_updated_by=str(doc["last_updated_by"]),
+            coach_note=doc.get("coach_note") or None,
         )
 
     async def save(self, skill_progress: StudentSkillProgress) -> None:
@@ -48,6 +49,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
                 "introduced_at": skill_progress.introduced_at,
                 "last_updated_at": skill_progress.last_updated_at,
                 "last_updated_by": skill_progress.last_updated_by,
+                "coach_note": skill_progress.coach_note,
             }
         )
 
@@ -65,6 +67,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
                     "introduced_at": skill_progress.introduced_at,
                     "last_updated_at": skill_progress.last_updated_at,
                     "last_updated_by": skill_progress.last_updated_by,
+                    "coach_note": skill_progress.coach_note,
                 }
             },
             upsert=True,

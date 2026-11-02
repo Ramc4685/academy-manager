@@ -301,3 +301,23 @@ async def test_completed_earlier_level_without_active_row_is_still_unplaced() ->
 
     assert journey.pathway_complete is False
     assert journey.levels == []
+
+
+async def test_coach_note_and_level_colours_reach_the_parent() -> None:
+    repos = _Repos()
+    repos.rows[1] = repos.rows[1].model_copy(update={"coach_note": "Lovely split step"})
+    original = list(LEVELS)
+    LEVELS[:] = [
+        SimpleNamespace(**vars(lv), display_color=c)
+        for lv, c in zip(original, ("#FDE047", "#FB923C", "#16A34A"), strict=True)
+    ]
+    try:
+        journey = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
+    finally:
+        LEVELS[:] = original
+
+    assert [lv.color for lv in journey.levels] == ["#FDE047", "#FB923C", "#16A34A"]
+    assert journey.current_level is not None and journey.current_level.color == "#FB923C"
+    notes = {w.title: w.coach_note for w in journey.recent_wins if w.kind == "skill"}
+    # Only the parent-facing mastery note travels; a win without one stays None.
+    assert notes == {"Lunge": None, "Split step": "Lovely split step", "Grip": None}

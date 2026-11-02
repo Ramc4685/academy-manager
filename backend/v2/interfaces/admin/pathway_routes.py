@@ -71,6 +71,8 @@ class UpdateLevelBody(BaseModel):
     completion_rule: str | None = None
     requires_coach_recommendation: bool | None = None
     requires_admin_approval: bool | None = None
+    #: Hex like ``#2563EB``; ``""`` resets to the default colour for the level.
+    color: str | None = Field(default=None, pattern=r"^(#[0-9A-Fa-f]{6})?$")
 
 
 class CreateSkillBody(BaseModel):
@@ -205,6 +207,7 @@ async def update_level(
                 completion_rule=body.completion_rule,
                 requires_coach_recommendation=body.requires_coach_recommendation,
                 requires_admin_approval=body.requires_admin_approval,
+                color=body.color,
                 updated_by=claims.user_id,
             )
         )

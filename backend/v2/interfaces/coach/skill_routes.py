@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
     CreateSkillNoteCommand,
@@ -33,6 +33,10 @@ from backend.v2.contexts.student_progress.application.use_cases.recommend_level_
 )
 from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
     RecordTestAttemptCommand,
+)
+from backend.v2.contexts.student_progress.application.use_cases.set_mastery_note import (
+    MASTERY_NOTE_MAX_CHARS,
+    SetMasteryNoteCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
     UnmarkSkillMasteredCommand,
@@ -530,6 +534,35 @@ async def unmark_skill_mastered(
         )
     )
     return result.model_dump()
+
+
+class MasteryNoteBody(BaseModel):
+    #: ``None`` or blank removes the note.
+    note: str | None = Field(default=None, max_length=MASTERY_NOTE_MAX_CHARS)
+
+
+@router.put("/sessions/{session_id}/students/{student_id}/skills/{skill_id}/mastered/note")
+async def set_mastery_note(
+    session_id: str,
+    student_id: str,
+    skill_id: str,
+    body: MasteryNoteBody,
+    on_date: str | None = Query(None, alias="date"),
+    claims: AuthClaims = Depends(require_coach_surface()),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> object:
+    """The optional one-line note to the parent on today's win."""
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    await _require_roster_students(
+        use_cases, claims.user_id, session_id, [student_id], on_date, is_coach_supervisor(claims)
+    )
+    row = await use_cases.student_progress.set_mastery_note.execute(
+        SetMasteryNoteCommand(
+            student_id=student_id, skill_id=skill_id, note=body.note, updated_by=claims.user_id
+        )
+    )
+    return {"student_id": row.student_id, "skill_id": row.skill_id, "coach_note": row.coach_note}
 
 
 @router.get("/students/{student_id}/passport")

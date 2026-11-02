@@ -342,6 +342,22 @@ export async function unmarkCoachSkillMastered(
   );
 }
 
+/** The optional one-line note to the parent on today's win; null removes it. */
+export async function setCoachMasteryNote(
+  occurrenceId: string,
+  studentId: string,
+  skillId: string,
+  note: string | null,
+  options: { programId: string; date?: string },
+): Promise<{ student_id: string; skill_id: string; coach_note: string | null }> {
+  const path = coachStudentSkillMasteredPath(occurrenceId, studentId, skillId, options);
+  const [base, query] = path.split("?");
+  return apiFetch(`${base}/note${query ? `?${query}` : ""}`, {
+    method: "PUT",
+    body: JSON.stringify({ note }),
+  });
+}
+
 export async function getCoachDashboard(): Promise<CoachDashboardResponse> {
   return apiFetch<CoachDashboardResponse>("/coach/dashboard", {
     method: "GET",

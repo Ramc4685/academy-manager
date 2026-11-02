@@ -33,6 +33,10 @@ export interface Level {
   completion_rule: string;
   requires_coach_recommendation: boolean;
   requires_admin_approval: boolean;
+  /** Owner-chosen colour; null means the default for the level number. */
+  color: string | null;
+  /** `color` or the default: what every surface paints. */
+  display_color: string;
   is_active: boolean;
 }
 
@@ -509,6 +513,7 @@ export interface PathwayDashboard {
     sequence: number;
     player_count: number;
     requires_admin_approval: boolean;
+    color?: string | null;
   }[];
   level_up_rule: LevelUpRule;
   almost_there: {
@@ -534,6 +539,14 @@ export interface PathwayDashboard {
 
 export function getAdminPathwayDashboard(): Promise<PathwayDashboard> {
   return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", { method: "GET" });
+}
+
+/** A hex colour for the level, or "" to go back to its default. */
+export function setLevelColor(levelId: string, color: string): Promise<Level> {
+  return apiFetch<Level>(`/admin/levels/${encodeURIComponent(levelId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ color }),
+  });
 }
 
 /** The level-up rule is each level's requires_admin_approval; set it on every level. */
@@ -639,6 +652,7 @@ export function getParentStudentCertificates(studentId: string): Promise<SkillCe
 export interface SkillBoardCell {
   status: SkillStatus;
   last_updated_at: string | null;
+  coach_note?: string | null;
 }
 
 export interface SkillBoardSkill {
@@ -663,6 +677,7 @@ export interface SkillBoardLevelGroup {
   level_id: string;
   level_name: string;
   sequence: number;
+  color?: string | null;
   skills: SkillBoardSkill[];
   students: SkillBoardStudentRow[];
 }

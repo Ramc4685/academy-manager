@@ -35,6 +35,9 @@ class ChildReportCard:
     #: Short tile label (``L2``) and full name of the active level, if any.
     level_badge: str | None = None
     level_name: str | None = None
+    #: The level's colour and the readable label colour on it, if known.
+    level_color: str | None = None
+    level_ink: str | None = None
     focus: Focus | None = None
 
 
@@ -73,7 +76,12 @@ def _child_block(card: ChildReportCard, family: FamilyReportCard, accent: str) -
         "#065f46",
     ) + _tile(f"{card.classes_attended}/{card.classes_marked}", "classes", "#eff6ff", "#1e3a8a")
     if card.level_badge:
-        tiles += _tile(card.level_badge, card.level_name or "current level", "#fef9c3", "#a16207")
+        tiles += _tile(
+            card.level_badge,
+            card.level_name or "current level",
+            card.level_color or "#fef9c3",
+            card.level_ink or "#a16207",
+        )
     parts = [
         f'<p style="margin:0 0 8px;font-size:18px;font-weight:700;">'
         f"{esc(family.month_name)} for {esc(card.first_name)}</p>",

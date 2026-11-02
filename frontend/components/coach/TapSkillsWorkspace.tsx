@@ -3,9 +3,27 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { markCoachSkillMastered, unmarkCoachSkillMastered } from "@/lib/api/coach";
-import { getCoachSessionSkillBoard, type SkillBoardLevelGroup } from "@/lib/api/curriculum";
+import {
+  markCoachSkillMastered,
+  setCoachMasteryNote,
+  unmarkCoachSkillMastered,
+} from "@/lib/api/coach";
+import {
+  getCoachSessionSkillBoard,
+  type SkillBoardCell,
+  type SkillBoardLevelGroup,
+} from "@/lib/api/curriculum";
+import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
+
+const NOTE_MAX = 140;
+// Matches the backend's MASTERY_NOTE_WINDOW: notes go on the day's wins.
+const NOTE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function noteOpen(cell: SkillBoardCell | undefined): boolean {
+  if (cell?.status !== "PASSED" || !cell.last_updated_at) return false;
+  return Date.now() - new Date(cell.last_updated_at).getTime() < NOTE_WINDOW_MS;
+}
 
 interface Selection {
   levelId: string;
@@ -64,6 +82,8 @@ export function TapSkillsWorkspace({
   const [picked, setPicked] = useState<Selection | null>(null);
   const [notice, setNotice] = useState<LevelUpNotice | null>(null);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   const groups = board?.groups ?? [];
   const selection = picked ?? defaultSelection(groups);
@@ -127,6 +147,16 @@ export function TapSkillsWorkspace({
     },
   });
 
+  const saveNote = useMutation({
+    mutationFn: (args: { studentId: string; note: string | null }) =>
+      setCoachMasteryNote(occurrenceId, args.studentId, skill!.skill_id, args.note, {
+        programId,
+        date,
+      }),
+    onSuccess: () => setNoteFor(null),
+    onSettled: () => refresh(),
+  });
+
   if (isLoading) return <div className="h-40 animate-pulse rounded-lg bg-neutral-100" />;
   if (isError || !board) {
     return (
@@ -176,7 +206,14 @@ export function TapSkillsWorkspace({
         </h2>
         {groups.map((g) => (
           <div key={g.level_id} className="space-y-1.5">
-            <p className="text-xs font-bold text-status-slate-600">{levelLabel(g)}</p>
+            <p className="flex items-center gap-1.5 text-xs font-bold text-status-slate-600">
+              <span
+                aria-hidden="true"
+                className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-black/25"
+                style={{ background: levelSwatch(g.color).fill }}
+              />
+              {levelLabel(g)}
+            </p>
             <div className="flex flex-wrap gap-1.5">
               {g.skills.map((s) => {
                 const active = g.level_id === group.level_id && s.skill_id === skill.skill_id;
@@ -217,7 +254,11 @@ export function TapSkillsWorkspace({
         </div>
         <ul className="space-y-2">
           {group.students.map((student) => {
-            const has = student.statuses[skill.skill_id]?.status === "PASSED";
+            const cell = student.statuses[skill.skill_id];
+            const has = cell?.status === "PASSED";
+            const note = cell?.coach_note ?? "";
+            const noteKey = `${student.student_id}:${skill.skill_id}`;
+            const editing = noteFor === noteKey;
             const pending = pendingIds.includes(student.student_id);
             const movingUp = student.level_up_status === "RECOMMENDED";
             const pct = student.required_total
@@ -246,8 +287,11 @@ export function TapSkillsWorkspace({
                     </span>
                     <span className="block h-1.5 overflow-hidden rounded-full bg-rally-line">
                       <span
-                        className="block h-full rounded-full bg-rally-cobalt"
-                        style={{ width: `${pct}%` }}
+                        className="block h-full rounded-full"
+                        style={{
+                          width: `${pct}%`,
+                          background: levelSwatch(group.color).fill,
+                        }}
                       />
                     </span>
                     <span className="text-xs text-status-slate-600">
@@ -266,10 +310,42 @@ export function TapSkillsWorkspace({
                     </span>
                   )}
                 </button>
+                {has && noteOpen(cell) && (
+                  <MasteryNote
+                    studentName={student.student_name}
+                    note={note}
+                    editing={editing}
+                    draft={draft}
+                    saving={saveNote.isPending}
+                    onDraft={setDraft}
+                    onEdit={() => {
+                      setDraft(note);
+                      setNoteFor(noteKey);
+                    }}
+                    onCancel={() => setNoteFor(null)}
+                    onSave={() =>
+                      saveNote.mutate({
+                        studentId: student.student_id,
+                        note: draft.trim() || null,
+                      })
+                    }
+                    onRemove={() =>
+                      saveNote.mutate({
+                        studentId: student.student_id,
+                        note: null,
+                      })
+                    }
+                  />
+                )}
               </li>
             );
           })}
         </ul>
+        {saveNote.isError && (
+          <p role="alert" className="rounded-md bg-red-50 p-2 text-sm text-red-700">
+            Couldn&apos;t save that note. Try again.
+          </p>
+        )}
         {(mark.isError || unmark.isError) && (
           <p role="alert" className="rounded-md bg-red-50 p-2 text-sm text-red-700">
             Couldn&apos;t save that tap. Check your connection and try again.
@@ -281,6 +357,109 @@ export function TapSkillsWorkspace({
             ` ${board.unplaced.length} student${board.unplaced.length === 1 ? " isn't" : "s aren't"} on a level yet.`}
         </p>
       </section>
+    </div>
+  );
+}
+
+/** The optional one-line note to the parent on today's win. */
+function MasteryNote({
+  studentName,
+  note,
+  editing,
+  draft,
+  saving,
+  onDraft,
+  onEdit,
+  onCancel,
+  onSave,
+  onRemove,
+}: {
+  studentName: string;
+  note: string;
+  editing: boolean;
+  draft: string;
+  saving: boolean;
+  onDraft: (value: string) => void;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+  onRemove: () => void;
+}) {
+  if (editing) {
+    const inputId = `mastery-note-${studentName.replace(/\W+/g, "-")}`;
+    return (
+      <div className="mt-1.5 space-y-1.5 px-1">
+        <label htmlFor={inputId} className="block text-xs font-bold text-status-slate-600">
+          One line for {studentName}&apos;s parents (optional)
+        </label>
+        <input
+          id={inputId}
+          value={draft}
+          maxLength={NOTE_MAX}
+          onChange={(e) => onDraft(e.target.value)}
+          placeholder="Much quicker to the net this week."
+          className="min-h-touch w-full rounded-md border-2 border-rally-line px-3 text-sm"
+        />
+        <div className="flex items-center justify-between gap-2">
+          {/* shortcut: device clock, not the academy timezone; fine while coaches sit in it. */}
+          <span className="text-xs text-status-slate-600">
+            {draft.length}/{NOTE_MAX} ·{" "}
+            {new Date().getHours() < 19
+              ? "goes in tonight’s 7 pm email"
+              : "tonight’s email has gone; shows on their progress page"}
+          </span>
+          <span className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="min-h-touch rounded-md border-2 border-rally-line px-3 text-sm font-bold"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={onSave}
+              className="min-h-touch rounded-md bg-rally-cobalt-700 px-3 text-sm font-bold text-white disabled:opacity-50"
+            >
+              Save note
+            </button>
+          </span>
+        </div>
+      </div>
+    );
+  }
+  if (!note) {
+    return (
+      <button
+        type="button"
+        onClick={onEdit}
+        className="min-h-touch px-1 text-sm font-bold text-rally-cobalt-700"
+      >
+        + Note for {studentName}&apos;s parents
+      </button>
+    );
+  }
+  return (
+    <div className="mt-1.5 flex items-center gap-1 rounded-md bg-status-slate-100 py-1 pl-3 pr-1">
+      <span className="flex-1 text-sm italic text-status-slate-700">&ldquo;{note}&rdquo;</span>
+      <button
+        type="button"
+        onClick={onEdit}
+        aria-label={`Edit the note for ${studentName}'s parents`}
+        className="min-h-touch px-2 text-sm font-bold text-rally-cobalt-700"
+      >
+        Edit
+      </button>
+      <button
+        type="button"
+        disabled={saving}
+        onClick={onRemove}
+        aria-label={`Remove the note for ${studentName}'s parents`}
+        className="min-h-touch px-2 text-sm font-bold text-red-700 disabled:opacity-50"
+      >
+        Remove
+      </button>
     </div>
   );
 }
