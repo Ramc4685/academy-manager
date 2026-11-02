@@ -1,6 +1,6 @@
 # level-colours-coach-note
 
-PR: #0000
+PR: #1104
 
 ## What changed
 Each skill level now has a colour. Levels default to belt order by number: Yellow, Orange, Green, Blue, Purple, then Black for level 6 and above. An owner or admin can pick a preset or a custom hex, or go back to the default, from the level row in Curriculum. The colour shows on:
