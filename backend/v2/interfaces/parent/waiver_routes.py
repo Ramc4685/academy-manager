@@ -40,6 +40,7 @@ async def accept_parent_waiver(
         user_agent=request.headers.get("user-agent"),
         consent=body.consent,
         student_ids=body.student_ids,
+        initials=body.initials,
     )
     return ParentWaiverCurrentView(**result.model_dump())
 

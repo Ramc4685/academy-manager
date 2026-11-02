@@ -102,6 +102,7 @@ class FakeWaivers:
             signed_at=signature.signed_at,
             lineage_key=template.lineage,
             signed_version=template.version,
+            signing_path=signature.signing_path,
         )
 
 

@@ -121,6 +121,7 @@ async def patch(
             accept_waiver=body.accept_waiver,
             signer_name=body.signer_name,
             consent=body.consent,
+            initials=body.initials,
             ip_address=request_ip(request) if body.accept_waiver else None,
             user_agent=request.headers.get("user-agent") if body.accept_waiver else None,
         )

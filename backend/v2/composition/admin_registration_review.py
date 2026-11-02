@@ -900,6 +900,8 @@ class AdminRegistrationReview:
                     ip_address=acceptance.ip_address,
                     user_agent=acceptance.user_agent,
                     consent_text=acceptance.consent_text,
+                    initials=dict(acceptance.initials),
+                    signing_path=acceptance.signing_path,
                 )
             )
 

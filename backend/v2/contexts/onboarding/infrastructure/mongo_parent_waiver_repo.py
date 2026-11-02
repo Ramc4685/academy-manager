@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from secrets import token_urlsafe
-from typing import Any
+from typing import Any, Literal
 
 from bson import ObjectId as BsonObjectId
 
@@ -143,6 +143,7 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     lineage_key=lineage,
                     waiver_signature_id=str(doc.get("waiver_signature_id") or "") or None,
                     signed_version=versions.get(str(doc.get("waiver_template_id") or "")),
+                    signing_path=_signing_path(doc.get("signing_path")),
                 )
         legacy_docs = [
             doc
@@ -276,6 +277,7 @@ class MongoParentWaiverRepository(TenantScopedRepository):
             ParentWaiverStudent(
                 student_id=str(doc.get("student_id") or doc.get("_id")),
                 student_name=self._student_name(doc),
+                date_of_birth=str(doc.get("date_of_birth") or "")[:10] or None,
             )
             for doc in merged
         ]
@@ -402,6 +404,8 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     "artifact_id": artifact_id,
                     "expires_at": signature.expires_at,
                     "consent_text": signature.consent_text,
+                    "initials": dict(signature.initials),
+                    "signing_path": signature.signing_path,
                 }
             },
             upsert=True,
@@ -446,6 +450,8 @@ class MongoParentWaiverRepository(TenantScopedRepository):
             consent_text=signature.get("consent_text"),
             ip_address=signature.get("ip_address"),
             user_agent=signature.get("user_agent"),
+            initials={str(k): str(v) for k, v in (signature.get("initials") or {}).items() if v},
+            signing_path=_signing_path(signature.get("signing_path")),
         )
 
     async def _template_doc(self, waiver_template_id: str) -> dict[str, Any] | None:
@@ -543,3 +549,7 @@ class MongoParentWaiverRepository(TenantScopedRepository):
         first = str(doc.get("first_name") or "").strip()
         last = str(doc.get("last_name") or "").strip()
         return str(doc.get("full_name") or f"{first} {last}".strip() or "Unnamed student")
+
+
+def _signing_path(value: Any) -> Literal["adult", "minor"] | None:
+    return value if value in ("adult", "minor") else None

@@ -1,5 +1,8 @@
 import { Button } from "@/components/ds/button";
+import { WaiverText } from "@/components/waivers/waiver-text";
 import type { SignedWaiverCopy } from "@/lib/api/parent";
+
+const PATH_LABEL = { adult: "Participant (18 or over)", minor: "Parent or guardian" } as const;
 
 /**
  * The signed waiver as a document: the exact text that was signed, then the
@@ -30,7 +33,7 @@ export function SignedWaiverDocument({
           </p>
         </header>
 
-        <div className="whitespace-pre-wrap">{copy.body || "Waiver text is not available."}</div>
+        <WaiverText body={copy.body} signedInitials={copy.initials ?? {}} />
 
         <section className="space-y-3 border-t border-rally-line pt-4">
           <h2 className="font-display text-base font-semibold">Electronic signature</h2>
@@ -38,6 +41,7 @@ export function SignedWaiverDocument({
           <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
             <Row label="Signed by" value={copy.signer_name} />
             <Row label="Email" value={copy.signer_email} />
+            {copy.signing_path && <Row label="Signed as" value={PATH_LABEL[copy.signing_path]} />}
             <Row label="Signed at" value={formatSignedAt(copy.signed_at)} />
             <Row label="IP address" value={copy.ip_address} />
             <Row label="Device" value={copy.user_agent} />

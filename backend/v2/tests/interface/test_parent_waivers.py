@@ -61,8 +61,9 @@ class _ParentWaiverUseCases:
         user_agent: str | None,
         consent: bool,
         student_ids: list[str] | None = None,
+        initials: dict[str, dict[str, str]] | None = None,
     ) -> ParentWaiverRequirement:
-        _ = (parent_id, signer_name, signer_email, ip_address, user_agent, student_ids)
+        _ = (parent_id, signer_name, signer_email, ip_address, user_agent, student_ids, initials)
         self.consent = consent
         self.signed_student_ids.update({"st-1", "st-2"})
         return self._payload()

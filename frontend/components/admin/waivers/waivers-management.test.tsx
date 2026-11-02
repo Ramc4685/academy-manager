@@ -247,3 +247,48 @@ describe("AssignPanel archived programs", () => {
     expect(out).not.toContain("Unused squad");
   });
 });
+
+describe("AssignPanel signature validity", () => {
+  const template = {
+    ...base,
+    waiver_template_id: "wt-yearly",
+    title: "Participation agreement",
+    status: "active",
+    version: "1",
+    assigned_to_registration: false,
+    required: true,
+    scope: "all" as const,
+    program_ids: [],
+    renew_every_months: 12,
+  };
+
+  it("shows the saved renewal period", () => {
+    const out = renderToStaticMarkup(
+      <AssignPanel
+        template={template as never}
+        programs={[]}
+        pending={false}
+        failed={false}
+        onCancel={() => undefined}
+        onSave={() => undefined}
+      />,
+    );
+    expect(out).toContain('data-testid="admin-waiver-validity-wt-yearly"');
+    expect(out).toMatch(/admin-waiver-validity-wt-yearly-renew"[^>]*checked|checked=""[^>]*admin-waiver-validity-wt-yearly-renew/);
+    expect(out).toContain('value="12"');
+  });
+
+  it("hides the validity choice when nobody must sign", () => {
+    const out = renderToStaticMarkup(
+      <AssignPanel
+        template={{ ...template, required: false } as never}
+        programs={[]}
+        pending={false}
+        failed={false}
+        onCancel={() => undefined}
+        onSave={() => undefined}
+      />,
+    );
+    expect(out).not.toContain("admin-waiver-validity-wt-yearly");
+  });
+});

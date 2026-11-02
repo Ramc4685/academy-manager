@@ -73,6 +73,8 @@ class WaiverAcceptance(BaseModel):
     consent_text: str | None = None
     ip_address: str | None = None
     user_agent: str | None = None
+    initials: dict[str, str] = Field(default_factory=dict)
+    signing_path: Literal["adult", "minor"] | None = None
 
 
 class Application(BaseModel):
@@ -237,6 +239,10 @@ class WaiverSignature(BaseModel):
     user_agent: str | None = None
     artifact_id: str | None = None
     expires_at: datetime | None = None
+    # Section key -> the signer's initials, for sections marked [initials].
+    initials: dict[str, str] = Field(default_factory=dict)
+    # "adult" or "minor" when the waiver has age-specific sections.
+    signing_path: Literal["adult", "minor"] | None = None
     # The e-signature consent statement the signer ticked; ``None`` on rows
     # signed before the explicit signing step existed.
     consent_text: str | None = None

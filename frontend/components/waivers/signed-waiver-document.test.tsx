@@ -33,6 +33,24 @@ describe("SignedWaiverDocument", () => {
     expect(html).toContain("Not recorded");
   });
 
+  it("shows each section with the initials and path it was signed with", () => {
+    const html = renderToStaticMarkup(
+      createElement(SignedWaiverDocument, {
+        copy: {
+          ...copy,
+          body: "Intro.\n## Assumption of risk [initials]\nRisky.\n## Parent release [minor]\nFor kids.",
+          initials: { s2: "PP" },
+          signing_path: "minor" as const,
+        },
+      }),
+    );
+    expect(html).toContain("Assumption of risk");
+    expect(html).toContain("Initialled: PP");
+    expect(html).toContain("Participants under 18");
+    expect(html).toContain("Parent or guardian");
+    expect(html).not.toContain("<input");
+  });
+
   it("keeps the UTC instant next to the local time", () => {
     expect(formatSignedAt("2026-11-02T18:30:00Z")).toContain("(2026-11-02T18:30:00Z)");
     expect(formatSignedAt(null)).toBeNull();
