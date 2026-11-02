@@ -519,6 +519,7 @@ export interface PathwayDashboard {
   almost_there: {
     student_id: string;
     student_name: string;
+    parent_id: string | null;
     level_name: string;
     level_sequence: number;
     missing_skill_name: string;
@@ -526,6 +527,7 @@ export interface PathwayDashboard {
   stuck: {
     student_id: string;
     student_name: string;
+    parent_id: string | null;
     level_name: string;
     level_sequence: number;
     skills_passed: number;

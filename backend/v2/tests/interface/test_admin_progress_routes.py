@@ -1181,7 +1181,9 @@ def test_pathway_dashboard_route_shapes_owner_view() -> None:
         list_admin_students=SimpleNamespace(
             execute=AsyncMock(
                 return_value=SimpleNamespace(
-                    students=[SimpleNamespace(student_id="st-1", full_name="Ava")],
+                    students=[
+                        SimpleNamespace(student_id="st-1", full_name="Ava", parent_id="par-1")
+                    ],
                     next_cursor=None,
                 )
             )
@@ -1215,6 +1217,7 @@ def test_pathway_dashboard_route_shapes_owner_view() -> None:
     assert request.program_id == "prog-1"
     assert request.timezone == "America/Chicago"
     assert [s.student_name for s in request.students] == ["Ava"]
+    assert [s.parent_id for s in request.students] == ["par-1"]
     start = engagement.await_args.kwargs["start_date"]
     assert start.weekday() == 0
 
