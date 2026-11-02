@@ -1,6 +1,6 @@
 # pathway-dashboard-message-drafts
 
-PR: #TBD
+PR: #1106
 
 ## What changed
 On the owner skill-pathway dashboard, "Message parent" (Almost there) and "Offer a 1-on-1" (Stuck) now open the existing admin direct-message composer addressed to that child's parent, with an editable draft already in the box (the child's first name, the level, the one skill left and the next level, or skills passed and how long since the last win). Nothing is sent until the owner presses Send. `/admin/messages?dm=<parent_id>` now also accepts `&draft=<text>` to prefill the composer, and the dashboard API rows carry `parent_id`.
