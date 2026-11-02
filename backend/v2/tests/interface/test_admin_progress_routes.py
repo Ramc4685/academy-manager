@@ -1181,7 +1181,9 @@ def test_pathway_dashboard_route_shapes_owner_view() -> None:
         list_admin_students=SimpleNamespace(
             execute=AsyncMock(
                 return_value=SimpleNamespace(
-                    students=[SimpleNamespace(student_id="st-1", full_name="Ava", parent_id="par-1")],
+                    students=[
+                        SimpleNamespace(student_id="st-1", full_name="Ava", parent_id="par-1")
+                    ],
                     next_cursor=None,
                 )
             )
