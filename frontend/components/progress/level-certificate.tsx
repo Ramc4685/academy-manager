@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AcademyMark } from "@/components/ds/academy-mark";
 import type { CertificateDetail } from "@/lib/api/curriculum";
 import {
@@ -8,7 +8,7 @@ import {
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
 import { safeHexColor, safeHttpsUrl } from "@/lib/public-page/format";
-import { ensureContrast } from "@/lib/public-page/theme";
+import { contrastRatio, ensureContrast } from "@/lib/public-page/theme";
 
 /** Letter landscape at 96 CSS px per inch: 11in x 8.5in. */
 const PAGE_W = 1056;
@@ -63,31 +63,104 @@ function CertificateLogo({ academy }: { academy: CertificateAcademy }) {
   );
 }
 
-/** Long names step down so they stay on one line in the 600px column. */
-function nameSize(name: string): number {
-  if (name.length > 32) return 34;
-  if (name.length > 24) return 40;
-  if (name.length > 18) return 54;
-  return 72;
+/**
+ * The student's name on a volt marker stroke, shrunk from 72px until it fits
+ * the column: glyph widths vary too much for a character count to predict.
+ */
+function FittedName({ name }: { name: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [size, setSize] = useState(72);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const column = el?.parentElement;
+    if (!el || !column) return;
+    const fit = () => {
+      el.style.fontSize = "72px";
+      const avail = column.clientWidth;
+      const width = el.scrollWidth;
+      const next =
+        width > avail && width > 0
+          ? Math.max(28, Math.floor((72 * avail) / width))
+          : 72;
+      el.style.fontSize = `${next}px`;
+      setSize(next);
+    };
+    fit();
+    // The display face may still be loading on first paint.
+    void document.fonts?.ready.then(fit);
+  }, [name]);
+  return (
+    <p
+      ref={ref}
+      className="self-start whitespace-nowrap font-display font-bold leading-none tracking-[-0.03em]"
+      style={{
+        fontSize: size,
+        // A volt marker stroke behind the lower half of the name.
+        background: `linear-gradient(transparent 58%, ${VOLT} 58%, ${VOLT} 92%, transparent 92%)`,
+        padding: "0 6px",
+        marginLeft: -6,
+      }}
+    >
+      {name}
+    </p>
+  );
+}
+
+/** Black-ish or white, whichever reads better on ``fill``. */
+function inkOn(fill: string): string {
+  return contrastRatio(fill, "#0f172a") >= contrastRatio(fill, "#ffffff")
+    ? "#0f172a"
+    : "#ffffff";
 }
 
 /**
- * The shuttle's three feathers, shortest to longest, as on the academy mark:
- * one lights up per level reached, so level 2 shows two volt feathers.
+ * The program's level ladder as shuttle feathers, shortest to longest, one per
+ * level in that level's colour, earned up to ``reached``.
  */
-function LevelFeathers({ level }: { level: number | null }) {
-  const lit = level ?? 3;
+function LevelFeathers({
+  colors,
+  reached,
+  band,
+  ink,
+}: {
+  colors: string[];
+  reached: number;
+  band: string;
+  ink: string;
+}) {
+  const n = colors.length;
+  const W = 232;
+  const H = 104;
+  const step = W / (n + 1.4);
+  const sw = Math.min(14, step * 0.5);
   return (
-    <svg width="132" height="96" viewBox="0 0 132 96" aria-hidden="true">
-      {["M14 86 L34 52", "M48 86 L78 32", "M82 86 L122 12"].map((d, i) => (
-        <path
-          key={d}
-          d={d}
-          stroke={i < lit ? VOLT : "rgba(255,255,255,0.22)"}
-          strokeWidth="13"
-          strokeLinecap="round"
-        />
-      ))}
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+      {colors.map((color, i) => {
+        const len = (H - sw) * (0.4 + (0.6 * (i + 1)) / n);
+        const x = sw / 2 + 2 + i * step;
+        const y = H - sw / 2 - 2;
+        const d = `M${x} ${y} L${x + len * 0.5} ${y - len * 0.866}`;
+        // Earned: the level colour, edged in ink (strongly for this level, so
+        // it shows on a band of its own colour). Not yet: a hollow outline.
+        const earned = i < reached;
+        return (
+          <g key={i}>
+            <path
+              d={d}
+              stroke={ink}
+              strokeOpacity={i === reached - 1 ? 0.9 : earned ? 0.3 : 0.35}
+              strokeWidth={sw + 4}
+              strokeLinecap="round"
+            />
+            <path
+              d={d}
+              stroke={earned ? color : band}
+              strokeWidth={sw}
+              strokeLinecap="round"
+            />
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -103,6 +176,13 @@ export function LevelCertificate({
   const cert = detail.certificate;
   const accent = certificateAccent(academy.brandColor);
   const columns = detail.skills.length > 8 ? 3 : 2;
+  const ladder = detail.levels.map((lvl) => safeHexColor(lvl.color, accent));
+  const levelIndex = detail.level_number ? detail.level_number - 1 : -1;
+  // The band wears this level's curriculum colour (the academy colour if the
+  // level is gone); the number is volt wherever volt still reads on it.
+  const band = ladder[levelIndex] ?? accent;
+  const ink = inkOn(band);
+  const numberColor = contrastRatio(VOLT, band) >= 3 ? VOLT : ink;
   return (
     <div
       data-testid="level-certificate"
@@ -132,18 +212,7 @@ export function LevelCertificate({
               Certificate of achievement
             </p>
             <p className="text-[16px] text-slate-600">This certifies that</p>
-            <p
-              className="self-start whitespace-nowrap font-display font-bold leading-none tracking-[-0.03em]"
-              style={{
-                fontSize: nameSize(cert.student_name),
-                // A volt marker stroke behind the lower half of the name.
-                background: `linear-gradient(transparent 58%, ${VOLT} 58%, ${VOLT} 92%, transparent 92%)`,
-                padding: "0 6px",
-                marginLeft: -6,
-              }}
-            >
-              {cert.student_name}
-            </p>
+            <FittedName name={cert.student_name} />
             <p className="mt-2 text-[16px] text-slate-600">
               has mastered every skill in
             </p>
@@ -210,35 +279,49 @@ export function LevelCertificate({
         </div>
 
         <div
-          className="flex shrink-0 flex-col items-center justify-between px-8 pb-10 pt-14 text-white"
-          style={{ width: BAND_W, background: accent }}
+          className="flex shrink-0 flex-col items-center justify-between px-8 pb-10 pt-14"
+          style={{ width: BAND_W, background: band, color: ink }}
         >
-          <LevelFeathers level={detail.level_number} />
+          {ladder.length > 0 ? (
+            <LevelFeathers
+              colors={ladder}
+              reached={levelIndex + 1}
+              band={band}
+              ink={ink}
+            />
+          ) : (
+            <div />
+          )}
           {detail.level_number ? (
             <div className="flex flex-col items-center">
-              <p className="text-[15px] font-bold uppercase tracking-[0.3em] text-white/80">
+              <p className="text-[15px] font-bold uppercase tracking-[0.3em] opacity-80">
                 Level
               </p>
               <p
                 className="font-display text-[200px] font-extrabold leading-none tracking-[-0.04em]"
-                style={{ color: VOLT }}
+                style={{ color: numberColor }}
               >
                 {detail.level_number}
               </p>
+              {ladder.length > 0 ? (
+                <p className="text-[14px] font-semibold opacity-80">
+                  of {ladder.length}
+                </p>
+              ) : null}
             </div>
           ) : (
             <p
               className="font-display text-[44px] font-extrabold"
-              style={{ color: VOLT }}
+              style={{ color: numberColor }}
             >
               Complete
             </p>
           )}
           <div className="flex flex-col items-center gap-1 text-center">
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/70">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] opacity-70">
               Certificate no.
             </p>
-            <p className="break-all text-[12px] font-semibold text-white/90">
+            <p className="break-all text-[12px] font-semibold opacity-90">
               {cert.cert_number}
             </p>
           </div>

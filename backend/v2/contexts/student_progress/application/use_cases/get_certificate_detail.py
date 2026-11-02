@@ -31,6 +31,13 @@ class CertificateNextLevel(BaseModel):
     number: int
 
 
+class CertificateLevel(BaseModel):
+    model_config = {"frozen": True}
+    name: str
+    #: The level's colour from the curriculum (owner-chosen or the default).
+    color: str | None
+
+
 class CertificateDetail(BaseModel):
     model_config = {"frozen": True}
     certificate: SkillCertificate
@@ -38,6 +45,8 @@ class CertificateDetail(BaseModel):
     level_number: int | None
     skills: list[str]
     next_level: CertificateNextLevel | None
+    #: The program's whole level ladder, in order, for the level colours.
+    levels: list[CertificateLevel] = []
 
 
 class GetCertificateDetail:
@@ -87,4 +96,11 @@ class GetCertificateDetail:
             level_number=None if index is None else index + 1,
             skills=[str(getattr(s, "name", "")) for s in skills],
             next_level=next_level,
+            levels=[
+                CertificateLevel(
+                    name=str(getattr(lvl, "name", "")),
+                    color=getattr(lvl, "display_color", None),
+                )
+                for lvl in levels
+            ],
         )
