@@ -346,15 +346,34 @@ test.describe("admin waivers", () => {
         gap_note: "Signed waiver artifact metadata is stored and an authorized share link is active.",
       });
     });
+    await page.route("**/api/v2/admin/waivers/signatures/ws-1/copy", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        waiver_signature_id: "ws-1",
+        student_name: "Aarav Sharma",
+        title: "Annual waiver",
+        version: "2026.1",
+        body: "Parent agrees to academy safety rules.",
+        content_hash: "hash-current",
+        signed_at: "2026-05-01T12:00:00Z",
+        signer_name: "Rohan Sharma",
+        signer_email: "rohan@example.com",
+        consent_text: "I agree to sign electronically.",
+        ip_address: "203.0.113.10",
+        user_agent: "pytest",
+      });
+    });
 
     await page.goto("/admin/waivers/signatures/ws-1");
 
     await expect(page.getByTestId("admin-signed-waiver-detail")).toBeVisible();
-    await expect(page.getByText("Aarav Sharma")).toBeVisible();
+    // The name shows in the detail block and again in the signed copy.
+    await expect(page.getByText("Aarav Sharma").first()).toBeVisible();
     await expect(page.locator("dd").filter({ hasText: /^Stored$/ })).toBeVisible();
     await expect(page.locator("dd").filter({ hasText: /^Available$/ })).toBeVisible();
     await expect(page.getByText("wa_ws-1")).toBeVisible();
     await expect(page.getByText("wsl_non_guessable_token_for_test")).toBeVisible();
+    await expect(page.getByText("Parent agrees to academy safety rules.")).toBeVisible();
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
