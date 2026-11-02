@@ -77,6 +77,21 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             raise RuntimeError("skill progress upsert did not persist a row")
         return saved
 
+    async def set_coach_note(
+        self, student_id: str, skill_id: str, *, passed_at: datetime, note: str | None
+    ) -> bool:
+        """Note-only write, and only on the same pass: an undo or re-tap in between wins."""
+        result = await self._update_one(
+            {
+                "student_id": student_id,
+                "skill_id": skill_id,
+                "status": "PASSED",
+                "last_updated_at": passed_at,
+            },
+            {"$set": {"coach_note": note}},
+        )
+        return bool(result.matched_count == 1)
+
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None:
         doc = await self._find_one({"student_id": student_id, "skill_id": skill_id})
         return self._to_domain(doc) if doc else None

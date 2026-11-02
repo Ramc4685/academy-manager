@@ -120,6 +120,13 @@ describe("TapSkillsWorkspace coach note", () => {
     expect(out).toContain('aria-label="Remove the note for Blake Test&#x27;s parents"');
   });
 
+  it("reads offset-less timestamps from Mongo as UTC", () => {
+    const naiveUtc = (hoursAgo: number) =>
+      new Date(Date.now() - hoursAgo * 3600_000).toISOString().replace("Z", "");
+    expect(html(withRally({ last_updated_at: naiveUtc(23) }))).toContain("+ Note for");
+    expect(html(withRally({ last_updated_at: naiveUtc(25) }))).not.toContain("Note for");
+  });
+
   it("offers no note on an older win", () => {
     expect(html(board())).not.toContain("Note for");
   });

@@ -27,6 +27,7 @@ from backend.v2.contexts.student_progress.application.use_cases.place_student im
     PlaceStudentInLevelCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.set_mastery_note import (
+    SetMasteryNote,
     SetMasteryNoteCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
@@ -35,6 +36,9 @@ from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mas
 from backend.v2.contexts.student_progress.domain.errors import (
     MasteryNoteClosed,
     SkillProgressNotFound,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
+    MongoStudentSkillProgressRepository,
 )
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -191,3 +195,38 @@ async def test_coach_note_is_tenant_scoped_cleared_on_undo_and_only_on_fresh_win
 
     with pytest.raises(ValidationError):
         SetMasteryNoteCommand(student_id=STUDENT, skill_id=first, note="x" * 141, updated_by=COACH)
+
+
+async def test_a_note_saved_after_an_undo_does_not_bring_the_win_back(real_db: Any) -> None:
+    """Undo lands between the note's read and its write: the note must not
+    restore the PASSED row (only ``coach_note`` is written, on the same pass)."""
+    with tenant_scope(ACADEMY):
+        _curriculum, progress, program_id, levels = await _seed(real_db)
+        skill = (await real_db["skills"].find_one({"level_id": levels[0].level_id}))["skill_id"]
+        await progress.mark_skill_mastered.execute(
+            MarkSkillMasteredCommand(
+                skill_id=skill, program_id=program_id, student_ids=[STUDENT], coach_id=COACH
+            )
+        )
+        repo = MongoStudentSkillProgressRepository(real_db)
+        stale = await repo.get(STUDENT, skill)
+        await progress.unmark_skill_mastered.execute(
+            UnmarkSkillMasteredCommand(
+                student_id=STUDENT, skill_id=skill, program_id=program_id, updated_by=COACH
+            )
+        )
+
+        class _ReadBeforeUndo:
+            async def get(self, *_: Any) -> Any:
+                return stale
+
+            set_coach_note = repo.set_coach_note
+
+        with pytest.raises(SkillProgressNotFound):
+            await SetMasteryNote(skill_progress=_ReadBeforeUndo()).execute(  # type: ignore[arg-type]
+                SetMasteryNoteCommand(
+                    student_id=STUDENT, skill_id=skill, note="Nice", updated_by=COACH
+                )
+            )
+        doc = await real_db["student_skill_progress"].find_one({"skill_id": skill})
+        assert (doc["status"], doc["coach_note"]) == ("PRACTICING", None)

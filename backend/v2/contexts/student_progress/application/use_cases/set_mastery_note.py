@@ -55,8 +55,13 @@ class SetMasteryNote:
                 student_id=cmd.student_id,
                 skill_id=cmd.skill_id,
             )
-        # last_updated_at stays the pass time: the evening email and the
-        # recent wins find today's wins by it.
-        return await self._skill_progress.upsert(
-            row.model_copy(update={"coach_note": " ".join((cmd.note or "").split()) or None})
-        )
+        note = " ".join((cmd.note or "").split()) or None
+        if not await self._skill_progress.set_coach_note(
+            cmd.student_id, cmd.skill_id, passed_at=row.last_updated_at, note=note
+        ):
+            raise SkillProgressNotFound(
+                "the win changed (undone or re-marked) while the note was saving",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
+            )
+        return row.model_copy(update={"coach_note": note})

@@ -13,6 +13,7 @@ import {
   type SkillBoardCell,
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
+import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -22,7 +23,7 @@ const NOTE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function noteOpen(cell: SkillBoardCell | undefined): boolean {
   if (cell?.status !== "PASSED" || !cell.last_updated_at) return false;
-  return Date.now() - new Date(cell.last_updated_at).getTime() < NOTE_WINDOW_MS;
+  return Date.now() - parseAcademyInstant(cell.last_updated_at).getTime() < NOTE_WINDOW_MS;
 }
 
 interface Selection {
