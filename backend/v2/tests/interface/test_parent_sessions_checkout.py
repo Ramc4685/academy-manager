@@ -358,40 +358,26 @@ def test_parent_reads_checkout_status_with_request_consent_metadata() -> None:
     ]
 
 
-def test_request_ip_uses_forwarded_for_from_trusted_proxy() -> None:
-    request = SimpleNamespace(
-        client=SimpleNamespace(host="127.0.0.1"),
-        headers={"x-forwarded-for": "203.0.113.10, 10.0.0.5"},
-    )
-
-    assert _request_ip(request) == "203.0.113.10"
-
-
-def test_request_ip_ignores_a_client_forged_forwarded_for_prefix() -> None:
-    request = SimpleNamespace(
+def _ip_request(headers: dict[str, str], secret: str | None = "s3cret") -> SimpleNamespace:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(proxy_shared_secret=secret)),
         client=SimpleNamespace(host="10.0.0.2"),
-        headers={"x-forwarded-for": "6.6.6.6, 203.0.113.10", "cf-connecting-ip": "6.6.6.6"},
+        headers=headers,
     )
 
-    assert _request_ip(request) == "203.0.113.10"
+
+def test_request_ip_trusts_cf_connecting_ip_only_from_the_vouched_proxy() -> None:
+    vouched = {"x-cm-proxy-auth": "s3cret", "cf-connecting-ip": "203.0.113.10"}
+    assert _request_ip(_ip_request({**vouched, "fly-client-ip": "198.51.100.1"})) == "203.0.113.10"
+
+    forged = {"x-cm-proxy-auth": "wrong", "cf-connecting-ip": "6.6.6.6"}
+    assert _request_ip(_ip_request({**forged, "fly-client-ip": "198.51.100.1"})) == "198.51.100.1"
 
 
-def test_request_ip_prefers_the_fly_edge_header() -> None:
-    request = SimpleNamespace(
-        client=SimpleNamespace(host="10.0.0.2"),
-        headers={"x-forwarded-for": "6.6.6.6", "fly-client-ip": "203.0.113.10"},
-    )
-
-    assert _request_ip(request) == "203.0.113.10"
-
-
-def test_request_ip_ignores_forwarded_for_from_untrusted_peer() -> None:
-    request = SimpleNamespace(
-        client=SimpleNamespace(host="8.8.8.8"),
-        headers={"x-forwarded-for": "203.0.113.10"},
-    )
-
-    assert _request_ip(request) == "8.8.8.8"
+def test_request_ip_never_reads_a_forgeable_forwarded_for() -> None:
+    headers = {"x-forwarded-for": "6.6.6.6", "cf-connecting-ip": "6.6.6.6"}
+    assert _request_ip(_ip_request(headers, secret="")) == "10.0.0.2"
+    assert _request_ip(_ip_request({**headers, "fly-client-ip": "203.0.113.10"})) == "203.0.113.10"
 
 
 @pytest.mark.asyncio
