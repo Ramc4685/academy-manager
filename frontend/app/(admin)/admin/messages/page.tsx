@@ -582,7 +582,7 @@ function DmComposer({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (!body.trim()) return;
+        if (!body.trim() || mutation.isPending) return;
         mutation.mutate();
       }}
       className="flex flex-wrap gap-2"
