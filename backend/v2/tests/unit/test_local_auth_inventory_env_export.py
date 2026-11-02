@@ -88,7 +88,12 @@ def test_build_inventory_env_exports_all_seeded_dynamic_route_ids() -> None:
                     "roles": ["parent"],
                 },
             ],
-            "students": [{"academy_id": "blno", "student_id": "student_admin", "status": "active"}],
+            "students": [
+                {"academy_id": "blno", "student_id": "student_admin", "status": "active"},
+                # The sample parent's child holds the older certificate, so the
+                # parent route must not take the academy-wide newest one.
+                {"academy_id": "blno", "student_id": "student_old", "parent_id": "parent_one"},
+            ],
             "enrollments": [
                 {
                     "academy_id": "blno",
@@ -145,7 +150,7 @@ def test_build_inventory_env_exports_all_seeded_dynamic_route_ids() -> None:
         }
     )
 
-    result = module.build_inventory_env(db)
+    result = module.build_inventory_env(db, parent_email="parent@example.test")
 
     assert result.values == {
         "LOCAL_AUTH_ADMIN_APPLICATION_ID": "app_1",
@@ -158,6 +163,8 @@ def test_build_inventory_env_exports_all_seeded_dynamic_route_ids() -> None:
         "LOCAL_AUTH_ADMIN_WAIVER_SIGNATURE_ID": "sig_1",
         "LOCAL_AUTH_CERT_ID": "cert_1",
         "LOCAL_AUTH_CERT_STUDENT_ID": "student_cert",
+        "LOCAL_AUTH_PARENT_CERT_ID": "cert_old",
+        "LOCAL_AUTH_PARENT_CERT_STUDENT_ID": "student_old",
         "LOCAL_AUTH_COACH_OCCURRENCE_ID": "occ_1",
         "LOCAL_AUTH_COACH_SESSION_DATE": "2099-06-25",
         "LOCAL_AUTH_COACH_SESSION_ID": "ses_coach",
