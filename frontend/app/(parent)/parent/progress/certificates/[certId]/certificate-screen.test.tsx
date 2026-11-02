@@ -23,6 +23,11 @@ function detail(overrides: Partial<CertificateDetail> = {}): CertificateDetail {
     level_number: 1,
     skills: ["Thumb grip", "V grip"],
     next_level: { level_id: "l2", name: "Net and Movement", number: 2 },
+    levels: [
+      { name: "Grip and Control", color: "#F8FAFC" },
+      { name: "Net and Movement", color: "#FACC15" },
+      { name: "Rally and Attack", color: "#FB923C" },
+    ],
     ...overrides,
   };
 }

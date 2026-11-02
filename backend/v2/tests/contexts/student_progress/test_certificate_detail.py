@@ -44,8 +44,12 @@ class _Certs:
 
 class _Lookup:
     levels: ClassVar[list[SimpleNamespace]] = [
-        SimpleNamespace(level_id="lvl-2", name="Net and Movement", sequence=2),
-        SimpleNamespace(level_id="lvl-1", name="Grip and Control", sequence=1),
+        SimpleNamespace(
+            level_id="lvl-2", name="Net and Movement", sequence=2, display_color="#FACC15"
+        ),
+        SimpleNamespace(
+            level_id="lvl-1", name="Grip and Control", sequence=1, display_color="#F8FAFC"
+        ),
     ]
     skills: ClassVar[dict[str, list[SimpleNamespace]]] = {
         "lvl-1": [
@@ -77,6 +81,10 @@ async def test_detail_reads_level_number_required_skills_and_next_level() -> Non
     assert detail.certificate.cert_id == "c1"
     assert detail.level_number == 1
     assert detail.skills == ["Thumb grip", "V grip"]
+    assert [(lvl.name, lvl.color) for lvl in detail.levels] == [
+        ("Grip and Control", "#F8FAFC"),
+        ("Net and Movement", "#FACC15"),
+    ]
     assert detail.next_level is not None
     assert (detail.next_level.name, detail.next_level.number) == ("Net and Movement", 2)
 

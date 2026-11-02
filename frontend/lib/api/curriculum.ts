@@ -59,7 +59,8 @@ export interface SkillCriterion {
   display_order: number;
 }
 
-export type ExternalSource = "BWF_SHUTTLE_TIME" | "ACADEMY_CUSTOM" | "COACH_CREATED";
+export type ExternalSource =
+  "BWF_SHUTTLE_TIME" | "ACADEMY_CUSTOM" | "COACH_CREATED";
 
 export interface ExternalLessonReference {
   ref_id: string;
@@ -75,7 +76,11 @@ export interface ExternalLessonReference {
 
 export interface PathwayLevel {
   level: Level;
-  skills: { skill: Skill; criteria: SkillCriterion[]; external_refs: ExternalLessonReference[] }[];
+  skills: {
+    skill: Skill;
+    criteria: SkillCriterion[];
+    external_refs: ExternalLessonReference[];
+  }[];
 }
 
 export interface FullPathway {
@@ -153,10 +158,7 @@ export type ProgressNextAction =
   | "certificate_issued";
 
 export type LevelCompletionStatus =
-  | "not_started"
-  | "in_progress"
-  | "test_ready"
-  | "complete";
+  "not_started" | "in_progress" | "test_ready" | "complete";
 
 export interface StudentProgressOverview {
   student_id: string;
@@ -223,6 +225,8 @@ export interface CertificateDetail {
   /** Names of the level's required skills, in curriculum order. */
   skills: string[];
   next_level: { level_id: string; name: string; number: number } | null;
+  /** The program's whole level ladder, in order, with each level's colour. */
+  levels: { name: string; color: string | null }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +312,10 @@ export function buildCreateSkillBody(
     scoring_type: SkillScoringType;
   },
 ): CreateSkillBody {
-  const lastSequence = existingSkills.reduce((max, s) => Math.max(max, s.sequence), 0);
+  const lastSequence = existingSkills.reduce(
+    (max, s) => Math.max(max, s.sequence),
+    0,
+  );
   return {
     program_id: level.program_id,
     sequence: lastSequence + 1,
@@ -319,7 +326,10 @@ export function buildCreateSkillBody(
   };
 }
 
-export function createSkill(levelId: string, body: CreateSkillBody): Promise<Skill> {
+export function createSkill(
+  levelId: string,
+  body: CreateSkillBody,
+): Promise<Skill> {
   return apiFetch<Skill>(
     `/admin/levels/${encodeURIComponent(levelId)}/skills`,
     { method: "POST", body: JSON.stringify(body) },
@@ -348,7 +358,10 @@ export function addExternalRef(
 // other program-scoped routes, but the use case ignores it: it seeds (or
 // returns the existing) academy-wide badminton program regardless of which
 // id is passed. Safe to call before any program exists.
-export function seedBadmintonPathway(): Promise<{ program_id: string; name: string }> {
+export function seedBadmintonPathway(): Promise<{
+  program_id: string;
+  name: string;
+}> {
   return apiFetch<{ program_id: string; name: string }>(
     `/admin/programs/_/seed-badminton`,
     { method: "POST" },
@@ -391,7 +404,9 @@ export function listLessonCards(programId: string): Promise<LessonCardsList> {
   );
 }
 
-export function seedLessonCards(programId: string): Promise<SeedLessonCardsResult> {
+export function seedLessonCards(
+  programId: string,
+): Promise<SeedLessonCardsResult> {
   return apiFetch<SeedLessonCardsResult>(
     `/admin/programs/${encodeURIComponent(programId)}/lesson-cards/seed`,
     { method: "POST" },
@@ -463,11 +478,16 @@ export function recordAdminTestAttempt(
   );
 }
 
-export function getLevelUpQueue(programId?: string): Promise<LevelUpRecommendation[]> {
+export function getLevelUpQueue(
+  programId?: string,
+): Promise<LevelUpRecommendation[]> {
   const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ queue: LevelUpRecommendation[] }>(`/admin/level-up-queue${q}`, {
-    method: "GET",
-  }).then((d) => d.queue);
+  return apiFetch<{ queue: LevelUpRecommendation[] }>(
+    `/admin/level-up-queue${q}`,
+    {
+      method: "GET",
+    },
+  ).then((d) => d.queue);
 }
 
 export function approveLevelUp(recId: string): Promise<{ approved: boolean }> {
@@ -497,7 +517,9 @@ export function getAdminCertificateDetail(
   );
 }
 
-export function getAdminStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
+export function getAdminStudentCertificates(
+  studentId: string,
+): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/admin/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
@@ -560,7 +582,9 @@ export interface PathwayDashboard {
 }
 
 export function getAdminPathwayDashboard(): Promise<PathwayDashboard> {
-  return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", { method: "GET" });
+  return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", {
+    method: "GET",
+  });
 }
 
 /** A hex colour for the level, or "" to go back to its default. */
@@ -572,7 +596,10 @@ export function setLevelColor(levelId: string, color: string): Promise<Level> {
 }
 
 /** The level-up rule is each level's requires_admin_approval; set it on every level. */
-export async function setLevelUpRule(levelIds: string[], approveFirst: boolean): Promise<void> {
+export async function setLevelUpRule(
+  levelIds: string[],
+  approveFirst: boolean,
+): Promise<void> {
   for (const levelId of levelIds) {
     await apiFetch(`/admin/levels/${encodeURIComponent(levelId)}`, {
       method: "PUT",
@@ -652,7 +679,10 @@ export function recommendLevelUp(
 ): Promise<LevelUpRecommendation> {
   return apiFetch<LevelUpRecommendation>(
     `/coach/students/${encodeURIComponent(studentId)}/level-up`,
-    { method: "POST", body: JSON.stringify(programId ? { program_id: programId } : {}) },
+    {
+      method: "POST",
+      body: JSON.stringify(programId ? { program_id: programId } : {}),
+    },
   );
 }
 
@@ -670,7 +700,9 @@ export function getParentCertificateDetail(
   );
 }
 
-export function getParentStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
+export function getParentStudentCertificates(
+  studentId: string,
+): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/parent/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
