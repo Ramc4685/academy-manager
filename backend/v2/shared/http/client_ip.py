@@ -23,7 +23,7 @@ def request_ip(request: Request) -> str | None:
         # public entry is the one our own proxy appended.
         hops = (request.headers.get("x-forwarded-for") or "").split(",")
         for hop in reversed([h.strip() for h in hops]):
-            if _valid_ip(hop) and not _trusted_proxy_host(hop):
+            if _valid_ip(hop) and not _internal_hop(hop):
                 return hop
     return direct_host
 
@@ -36,6 +36,27 @@ def _trusted_proxy_host(host: str | None) -> bool:
     except ValueError:
         return False
     return parsed.is_loopback or parsed.is_private
+
+
+# Loopback, RFC 1918 and ULA (Fly's private 6PN network): hops our own
+# infrastructure adds. Not ``is_private``, which also covers documentation and
+# other non-routable ranges a real client address can never be confused with.
+_INTERNAL_NETS = tuple(
+    ipaddress.ip_network(net)
+    for net in (
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "::1/128",
+        "fc00::/7",
+    )
+)
+
+
+def _internal_hop(host: str) -> bool:
+    address = ipaddress.ip_address(host)
+    return any(address in net for net in _INTERNAL_NETS if net.version == address.version)
 
 
 def _valid_ip(host: str) -> bool:
