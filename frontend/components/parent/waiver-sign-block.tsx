@@ -40,7 +40,12 @@ export function WaiverSignBlock({
   const [consent, setConsent] = useState(false);
   const [unchosen, setUnchosen] = useState<ReadonlySet<string>>(new Set());
 
-  const chosen = childrenToSign.filter((child) => !unchosen.has(child.student_id));
+  // With one child left the checkboxes are hidden, so that child is always
+  // chosen (a sibling deselected earlier may be all that remains after signing).
+  const chosen =
+    childrenToSign.length === 1
+      ? childrenToSign
+      : childrenToSign.filter((child) => !unchosen.has(child.student_id));
   const fullName = signerName.trim().split(/\s+/).filter(Boolean).length >= 2;
   const ready = fullName && consent && (childrenToSign.length === 0 || chosen.length > 0);
 

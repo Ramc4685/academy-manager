@@ -195,6 +195,23 @@ class InMemoryWaiverSignatures:
     async def save_signature(self, signature: WaiverSignature) -> None:
         self.saved.append(signature)
 
+    async def signed_copy(self, waiver_signature_id: str) -> object | None:
+        # Mirrors the upsert store: a saved id reads back.
+        return next((s for s in self.saved if s.waiver_signature_id == waiver_signature_id), None)
+
+
+class RecordingReceipts:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[list[str]] = []
+        self.fail = fail
+
+    async def waivers_signed(
+        self, *, parent_user_id: str, signer_email: str, waiver_signature_ids: list[str]
+    ) -> None:
+        self.calls.append(waiver_signature_ids)
+        if self.fail:
+            raise RuntimeError("email down")
+
 
 class InMemoryEnrollments:
     def __init__(self, existing: list[Enrollment] | None = None) -> None:
@@ -2271,3 +2288,65 @@ async def test_waiver_is_satisfied_per_waiver_and_every_acceptance_becomes_a_sig
         "wt-liability",
         "wt-photo",
     ]
+
+
+@pytest.mark.asyncio
+async def test_approve_sends_one_receipt_for_new_registration_signatures_only() -> None:
+    app = _application(student_id="student-1").model_copy(
+        update={
+            "waiver_acceptance": WaiverAcceptance(
+                waiver_template_id="wt-2026",
+                waiver_version="2026.1",
+                content_hash="hash-2026",
+                accepted_at=NOW - timedelta(hours=1),
+            )
+        }
+    )
+    signatures = InMemoryWaiverSignatures()
+    receipts = RecordingReceipts()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        waiver_signatures=signatures,
+        waiver_receipt_notifier=receipts,
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    await review._record_registration_waiver_signature(app, "student-1")
+    await review._record_registration_waiver_signature(app, "student-1")
+
+    assert receipts.calls == [["ws_registration_app-1_student-1_wt-2026"]]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_registration_receipt_never_fails_approval() -> None:
+    app = _application(student_id="student-1").model_copy(
+        update={
+            "waiver_acceptance": WaiverAcceptance(
+                waiver_template_id="wt-2026",
+                waiver_version="2026.1",
+                content_hash="hash-2026",
+                accepted_at=NOW - timedelta(hours=1),
+            )
+        }
+    )
+    signatures = InMemoryWaiverSignatures()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(app),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        waiver_signatures=signatures,
+        waiver_receipt_notifier=RecordingReceipts(fail=True),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert len(signatures.saved) == 1

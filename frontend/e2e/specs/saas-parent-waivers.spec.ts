@@ -172,6 +172,75 @@ test.describe("SaaS v2 — several waivers to sign", () => {
   });
 });
 
+test.describe("SaaS v2 — signing for one child at a time", () => {
+  test("after signing for one child, the other child can still be signed without a reload", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMe(page, {
+      user_id: "user-parent-w8",
+      email: "parent@example.com",
+      academy_id: ACADEMY_A,
+      roles: ["parent"],
+    });
+    await stubParentProfile(page, { user_id: "user-parent-w8" });
+    await stubParentMessages(page);
+    await stubParentAcademy(page);
+
+    const signed = new Set<string>();
+    const view = () => {
+      const students = [
+        { student_id: "st-1", student_name: "Asha Rao" },
+        { student_id: "st-2", student_name: "Dev Rao" },
+      ].map((s) => ({
+        ...s,
+        status: signed.has(s.student_id) ? "signed" : "pending",
+        signed_at: null,
+        waiver_version: null,
+      }));
+      return {
+        required: true,
+        consent_text: "I agree to sign electronically.",
+        waiver_template_id: "wt-liability",
+        title: "Liability waiver",
+        version: "3",
+        body: "Liability text",
+        students,
+        waivers: [
+          { waiver_template_id: "wt-liability", title: "Liability waiver", version: "3", body: "Liability text", students },
+        ],
+      };
+    };
+    const bodies: Record<string, unknown>[] = [];
+    await page.route("**/api/v2/parent/waivers/current", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, view());
+    });
+    await page.route("**/api/v2/parent/waivers/accept", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      const body = route.request().postDataJSON() as { student_ids: string[] };
+      bodies.push(body);
+      body.student_ids.forEach((id) => signed.add(id));
+      return fulfillJson(route, view());
+    });
+
+    await page.goto("/parent/waivers");
+    await page.getByLabel("Full legal name").fill("Priya Rao");
+    await page.getByLabel("I agree to sign electronically.").check();
+    await page.getByRole("checkbox", { name: "Dev Rao" }).uncheck();
+    await page.getByRole("button", { name: /^Sign waiver/ }).click();
+    await expect.poll(() => bodies.length).toBe(1);
+
+    // Dev is now the only child left; the checkbox list is gone but Dev is signable.
+    const signDev = page.getByRole("button", { name: /^Sign waiver.*Dev Rao/ });
+    await expect(signDev).toBeEnabled();
+    await signDev.click();
+    await expect.poll(() => bodies.length).toBe(2);
+    expect(bodies.map((b) => b.student_ids)).toEqual([["st-1"], ["st-2"]]);
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+});
+
 test.describe("SaaS v2 — waiver template versioning", () => {
   test("admin waiver row surfaces the correct template version for a signed parent waiver", async ({
     page,
