@@ -40,6 +40,10 @@ export function levelLabel(detail: CertificateDetail): string {
 }
 
 const caps = "text-[12px] font-bold uppercase tracking-[0.12em] text-slate-600";
+/** Rally's volt, the shuttle-feather colour: fills and strokes only, never text on white. */
+const VOLT = "#facc15";
+const VOLT_DEEP = "#eab308";
+const VOLT_TINT = "#fef9c3";
 
 function CertificateLogo({ academy }: { academy: CertificateAcademy }) {
   const src = safeHttpsUrl(academy.logoUrl);
@@ -51,6 +55,67 @@ function CertificateLogo({ academy }: { academy: CertificateAcademy }) {
       alt={academy.name}
       style={{ height: 64, width: "auto", maxWidth: 180, objectFit: "contain" }}
     />
+  );
+}
+
+/** Three shuttle feathers, shortest to longest, tucked into a frame corner. */
+function CornerFeathers({ className, flip }: { className: string; flip: string }) {
+  return (
+    <svg
+      width="40"
+      height="40"
+      viewBox="0 0 56 56"
+      aria-hidden="true"
+      className={`absolute ${className}`}
+      style={{ transform: flip }}
+    >
+      {["M8 30 L18 12", "M17 38 L31 13", "M26 46 L45 14"].map((d) => (
+        <path key={d} d={d} stroke={VOLT_DEEP} strokeWidth="6" strokeLinecap="round" />
+      ))}
+    </svg>
+  );
+}
+
+/** The level seal: the academy colour with volt feathers, like the shuttle-o. */
+function LevelSeal({ level, accent }: { level: number | null; accent: string }) {
+  return (
+    <svg width="150" height="142" viewBox="0 0 150 142" aria-hidden="true">
+      {["M81.8 27.5 L88.8 15.4", "M99.3 37.6 L113.4 23.5", "M112.2 53 L134.7 40"].map((d) => (
+        <path key={d} d={d} stroke={VOLT_DEEP} strokeWidth="7" strokeLinecap="round" />
+      ))}
+      <circle cx="62" cy="82" r="52" fill={accent} stroke={VOLT} strokeWidth="5" />
+      <circle
+        cx="62"
+        cy="82"
+        r="42"
+        fill="none"
+        stroke={VOLT}
+        strokeWidth="1.2"
+        strokeDasharray="3 4"
+      />
+      {level ? (
+        <>
+          <text
+            x="62"
+            y="70"
+            textAnchor="middle"
+            fontSize="12"
+            fontWeight="700"
+            letterSpacing="2"
+            fill="#ffffff"
+          >
+            LEVEL
+          </text>
+          <text x="62" y="108" textAnchor="middle" fontSize="40" fontWeight="800" fill={VOLT}>
+            {level}
+          </text>
+        </>
+      ) : (
+        <text x="62" y="87" textAnchor="middle" fontSize="13" fontWeight="800" fill={VOLT}>
+          COMPLETE
+        </text>
+      )}
+    </svg>
   );
 }
 
@@ -67,16 +132,22 @@ export function LevelCertificate({
   return (
     <div
       data-testid="level-certificate"
-      className="box-border bg-white p-7 font-sans text-slate-900"
+      className="box-border bg-white p-6 font-sans text-slate-900"
       style={{ width: PAGE_W, height: PAGE_H }}
     >
-      <div className="box-border h-full p-1.5" style={{ border: `3px solid ${accent}` }}>
+      <div className="box-border h-full rounded-md p-2" style={{ border: `10px solid ${accent}` }}>
         <div
-          className="box-border flex h-full flex-col items-center justify-between px-16 pb-8 pt-9"
-          style={{ border: `1px solid ${accent}` }}
+          className="relative box-border flex h-full flex-col items-center justify-between rounded-sm px-16 pb-7 pt-8"
+          style={{
+            border: `2px solid ${VOLT}`,
+            background: `radial-gradient(circle at 0% 100%, rgba(250,204,21,0.16), transparent 32%), radial-gradient(circle at 100% 0%, rgba(250,204,21,0.12), transparent 28%)`,
+          }}
         >
+          <CornerFeathers className="left-2 top-2" flip="scaleY(-1)" />
+          <CornerFeathers className="right-2 bottom-2" flip="scaleX(-1)" />
+
           <div className="flex w-full items-start justify-between">
-            <div className="flex items-center gap-3.5">
+            <div className="flex items-center gap-3.5 pl-8">
               <CertificateLogo academy={academy} />
               <div className="flex flex-col gap-0.5">
                 <p className="font-display text-[20px] font-bold">{academy.name}</p>
@@ -91,13 +162,16 @@ export function LevelCertificate({
 
           <div className="flex flex-col items-center gap-2.5 text-center">
             <p
-              className="text-[14px] font-bold uppercase tracking-[0.24em]"
-              style={{ color: accent }}
+              className="rounded-full px-6 py-1.5 text-[14px] font-extrabold uppercase tracking-[0.24em] text-slate-900"
+              style={{ background: VOLT }}
             >
               Certificate of achievement
             </p>
-            <p className="text-[17px] text-slate-600">This certifies that</p>
-            <p className="border-b-2 border-slate-300 px-10 pb-2.5 font-display text-[64px] font-bold leading-[1.05]">
+            <p className="mt-1 text-[17px] text-slate-600">This certifies that</p>
+            <p
+              className="px-10 pb-2 font-display text-[66px] font-bold leading-[1.05]"
+              style={{ borderBottom: `5px solid ${VOLT_DEEP}` }}
+            >
               {cert.student_name}
             </p>
             <p className="mt-1.5 text-[17px] text-slate-600">has mastered every skill in</p>
@@ -109,18 +183,19 @@ export function LevelCertificate({
           {detail.skills.length > 0 ? (
             <div className="flex flex-col items-center gap-2.5">
               <p className={caps}>Skills mastered</p>
-              <ul className="flex max-w-[800px] flex-wrap justify-center gap-2">
+              <ul className="flex max-w-[820px] flex-wrap justify-center gap-2">
                 {detail.skills.map((skill) => (
                   <li
                     key={skill}
-                    className="flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-[14px] font-semibold text-slate-800"
+                    className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[14px] font-semibold text-slate-900"
+                    style={{ background: VOLT_TINT, border: `1.5px solid ${VOLT_DEEP}` }}
                   >
                     <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
                       <path
                         d="M2.5 7.5l3 3 6-7"
                         fill="none"
-                        stroke="#047857"
-                        strokeWidth="2"
+                        stroke={accent}
+                        strokeWidth="2.2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       />
@@ -139,62 +214,15 @@ export function LevelCertificate({
               <p className="font-display text-[18px] font-semibold">
                 {formatCertificateDate(cert.completed_at, academy.timezone)}
               </p>
-              <div className="w-[220px] border-t-[1.5px] border-slate-700" />
+              <div className="w-[220px]" style={{ borderTop: `2px solid ${accent}` }} />
               <p className="text-[13px] text-slate-600">Date completed</p>
             </div>
-            <svg width="112" height="112" viewBox="0 0 112 112" aria-hidden="true">
-              <circle cx="56" cy="56" r="52" fill="#fef9c3" stroke={accent} strokeWidth="3" />
-              <circle
-                cx="56"
-                cy="56"
-                r="43"
-                fill="none"
-                stroke={accent}
-                strokeWidth="1"
-                strokeDasharray="3 4"
-              />
-              {detail.level_number ? (
-                <>
-                  <text
-                    x="56"
-                    y="44"
-                    textAnchor="middle"
-                    fontSize="12"
-                    fontWeight="700"
-                    letterSpacing="2"
-                    fill={accent}
-                  >
-                    LEVEL
-                  </text>
-                  <text
-                    x="56"
-                    y="80"
-                    textAnchor="middle"
-                    fontSize="38"
-                    fontWeight="700"
-                    fill={accent}
-                  >
-                    {detail.level_number}
-                  </text>
-                </>
-              ) : (
-                <text
-                  x="56"
-                  y="61"
-                  textAnchor="middle"
-                  fontSize="13"
-                  fontWeight="700"
-                  fill={accent}
-                >
-                  COMPLETE
-                </text>
-              )}
-            </svg>
+            <LevelSeal level={detail.level_number} accent={accent} />
             {/* No coach is recorded on the certificate (auto level-ups are
                 issued by the system), so the academy signs it. */}
             <div className="flex flex-col items-end gap-1.5">
               <p className="font-display text-[18px] font-semibold">{academy.name}</p>
-              <div className="w-[220px] border-t-[1.5px] border-slate-700" />
+              <div className="w-[220px]" style={{ borderTop: `2px solid ${accent}` }} />
               <p className="text-[13px] text-slate-600">Awarded by</p>
             </div>
           </div>
