@@ -132,11 +132,12 @@ describe("RecentWins", () => {
             cert_number: "BLN-1",
           },
         ],
+        studentId: "s1",
       }),
     );
     expect(text(html)).toContain("Mastered Forecourt movement");
     expect(text(html)).toContain("Certificate: Grip &amp; Control");
-    expect(html).toContain('href="#certificate-c1"');
+    expect(html).toContain('href="/parent/progress/certificates/c1?child=s1"');
   });
 });
 

@@ -197,7 +197,7 @@ async def test_one_email_per_family_with_a_win_and_none_on_rerun(real_db: Any) -
     )
     assert "Diya finished Level 1!" in body
     assert "See the certificate" in body
-    assert "/parent/progress?child=s-diya" in body
+    assert "/parent/progress/certificates/c1?child=s-diya" in body
     assert "Footwork" not in body  # celebrated as the level-up, not a skill line
     assert "Ready stance" not in body and "Serve" not in body
     assert render_unsubscribe_footer(None) in body

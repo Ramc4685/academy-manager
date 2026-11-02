@@ -705,6 +705,27 @@ async def get_certificates(
     return {"certificates": [c.model_dump() for c in certs]}
 
 
+@router.get("/students/{student_id}/certificates/{cert_id}")
+async def get_certificate_detail(
+    student_id: str,
+    cert_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
+        GetCertificateDetailCommand,
+    )
+
+    detail = await use_cases.student_progress.get_certificate_detail.execute(
+        GetCertificateDetailCommand(student_id=student_id, cert_id=cert_id)
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    return detail.model_dump(mode="json")
+
+
 # Mirrors coach/skill_routes.py get_session_skill_board (per-persona twin).
 @router.get("/sessions/{session_id}/skill-board")
 async def get_session_skill_board(

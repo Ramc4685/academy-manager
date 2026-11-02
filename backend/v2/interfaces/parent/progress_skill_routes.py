@@ -9,6 +9,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
+from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
+    GetCertificateDetailCommand,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificatesCommand,
 )
@@ -227,6 +230,24 @@ async def get_certificates(
         GetStudentCertificatesCommand(student_id=student_id)
     )
     return {"certificates": [c.model_dump() for c in certs]}
+
+
+@router.get("/students/{student_id}/certificates/{cert_id}")
+async def get_certificate_detail(
+    student_id: str,
+    cert_id: str,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> object:
+    await _verify_child_ownership(claims.user_id, student_id, use_cases)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    detail = await use_cases.student_progress.get_certificate_detail.execute(
+        GetCertificateDetailCommand(student_id=student_id, cert_id=cert_id)
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    return detail.model_dump(mode="json")
 
 
 @router.get("/progress/summary")

@@ -58,10 +58,20 @@ class _ParentWinsProvider:
                 sorted({p.student_id for p in passed} | {c.student_id for c in certs})
             )
         }
+        doc = await self._academies.find_by_id(current_academy_id())
+        frontend = academy_frontend_url(
+            frontend_url=get_settings().frontend_url,
+            academy_slug=str((doc or {}).get("slug") or ""),
+        )
         level_ups: dict[str, dict[str, LevelUp]] = defaultdict(dict)
         for cert in certs:
             level_ups[cert.student_id][cert.level_id] = LevelUp(
-                level_name=cert.level_name, program_name=cert.program_name
+                level_name=cert.level_name,
+                program_name=cert.program_name,
+                certificate_url=(
+                    f"{frontend}/parent/progress/certificates/{cert.cert_id}"
+                    f"?child={cert.student_id}"
+                ),
             )
         # Skills passed today in a level that is not finished today, by student.
         open_levels: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
@@ -74,12 +84,6 @@ class _ParentWinsProvider:
                     notes[(row.student_id, row.skill_id)] = row.coach_note
             elif row.coach_note:
                 level_notes[(row.student_id, row.level_id)].append(row.coach_note)
-
-        doc = await self._academies.find_by_id(current_academy_id())
-        frontend = academy_frontend_url(
-            frontend_url=get_settings().frontend_url,
-            academy_slug=str((doc or {}).get("slug") or ""),
-        )
         skills_by_level: dict[str, dict[str, Any]] = {}
         level_names: dict[str, str] = {}
         families: dict[str, list[ChildWins]] = defaultdict(list)
@@ -118,6 +122,7 @@ class _ParentWinsProvider:
                 LevelUp(
                     level_name=up.level_name,
                     program_name=up.program_name,
+                    certificate_url=up.certificate_url,
                     coach_notes=tuple(level_notes[(student_id, level_id)]),
                 )
                 for level_id, up in level_ups[student_id].items()

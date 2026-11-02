@@ -35,6 +35,8 @@ class LevelUp:
 
     level_name: str
     program_name: str
+    #: Deep link to the printable certificate; empty falls back to progress.
+    certificate_url: str = ""
     coach_notes: tuple[str, ...] = ()
 
 
@@ -112,9 +114,8 @@ def _child_block(child: ChildWins, accent: str) -> str:
         parts.append(f'<p style="margin:0 0 12px;">{esc(_skill_line(child.first_name, wins))}</p>')
         parts.extend(_quote(note) for note in wins.coach_notes)
     label = "See the certificate" if child.level_ups else f"See {child.first_name}'s progress"
-    parts.append(
-        f'<p style="margin:0 0 20px;">{button(label, child.progress_url, accent=accent)}</p>'
-    )
+    url = (child.level_ups[-1].certificate_url if child.level_ups else "") or child.progress_url
+    parts.append(f'<p style="margin:0 0 20px;">{button(label, url, accent=accent)}</p>')
     return "".join(parts)
 
 

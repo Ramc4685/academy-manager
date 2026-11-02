@@ -145,8 +145,11 @@ Browser and real-user audit:
   `LOCAL_AUTH_ADMIN_PAYOUT_ID`, `LOCAL_AUTH_ADMIN_APPLICATION_ID`,
   `LOCAL_AUTH_ADMIN_WAIVER_ID`, `LOCAL_AUTH_ADMIN_WAIVER_SIGNATURE_ID`,
   `LOCAL_AUTH_ADMIN_PROGRAM_ID`, `LOCAL_AUTH_COACH_OCCURRENCE_ID`,
-  `LOCAL_AUTH_COACH_SESSION_ID`, `LOCAL_AUTH_COACH_SESSION_DATE`, and
-  `LOCAL_AUTH_COACH_STUDENT_ID`. Generate currently available values with
+  `LOCAL_AUTH_COACH_SESSION_ID`, `LOCAL_AUTH_COACH_SESSION_DATE`,
+  `LOCAL_AUTH_COACH_STUDENT_ID`, `LOCAL_AUTH_CERT_ID`,
+  `LOCAL_AUTH_CERT_STUDENT_ID`, `LOCAL_AUTH_PARENT_CERT_ID`, and
+  `LOCAL_AUTH_PARENT_CERT_STUDENT_ID` (a certificate of the sample parent's own
+  child; the certificate routes also assert the certificate renders). Generate currently available values with
   `scripts/dev/saas_staging.sh local-auth-env`; it prints comments for IDs
   that are still missing from the local staging dataset.
 - Real-auth Playwright execution also requires `LOCAL_AUTH_E2E=1` and

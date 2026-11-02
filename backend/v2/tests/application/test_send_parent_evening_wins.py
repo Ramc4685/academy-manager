@@ -53,10 +53,17 @@ def test_several_skills_and_a_full_level_awaiting_its_level_up() -> None:
 
 
 def test_level_up_celebrates_and_links_the_certificate() -> None:
-    family = FamilyWins("p1", (_child(level_ups=(LevelUp("Level 1", "Pathway"),)),))
+    cert_url = "https://blno.example.test/parent/progress/certificates/c1?child=s1"
+    family = FamilyWins("p1", (_child(level_ups=(LevelUp("Level 1", "Pathway", cert_url),)),))
     subject, body = render_parent_wins(family)
     assert subject == "Aarav finished Level 1 today!"
-    assert "See the certificate" in body and URL.replace("&", "&amp;") in body
+    assert "See the certificate" in body and cert_url in body
+
+
+def test_level_up_without_a_certificate_link_falls_back_to_progress() -> None:
+    family = FamilyWins("p1", (_child(level_ups=(LevelUp("Level 1", "Pathway"),)),))
+    _subject, body = render_parent_wins(family)
+    assert "See the certificate" in body and URL in body
 
 
 def test_names_are_escaped() -> None:
