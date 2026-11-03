@@ -75,6 +75,7 @@
 	<key>WKAppBoundDomains</key>
 	<array>
 		<string>academy.courtmastr.com</string>
+		<string>blno-academy.courtmastr.com</string>
 		<string>localhost</string>
 		<string>checkout.stripe.com</string>
 	</array>
