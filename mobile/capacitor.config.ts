@@ -10,8 +10,9 @@ const serverUrl = process.env.MOBILE_SERVER_URL ?? "http://localhost:3001";
 if (process.env.MOBILE_RELEASE === "1" && !serverUrl.startsWith("https://")) {
   throw new Error(`MOBILE_RELEASE builds need an https MOBILE_SERVER_URL, got ${serverUrl}`);
 }
-// Open on login, not `/`: the root route is the marketing landing on the product host.
-const startUrl = new URL("/login", serverUrl).toString();
+// Not `/` (the marketing landing on the product host): /post-login sends signed-in
+// users to their home and everyone else to /login.
+const startUrl = new URL("/post-login", serverUrl).toString();
 
 const config: CapacitorConfig = {
   appId: "com.courtmastr.academy",
