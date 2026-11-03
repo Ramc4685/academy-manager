@@ -76,6 +76,10 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
       });
     }
 
+    if (searchParams.get("deleted") === "1") {
+      setNotice("Your account has been deleted and you are signed out.");
+    }
+
     const prefillEmail = searchParams.get("email");
     if (prefillEmail) {
       setEmail(prefillEmail);
