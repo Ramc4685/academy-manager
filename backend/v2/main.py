@@ -145,6 +145,9 @@ from backend.v2.contexts.identity.application.list_my_memberships_use_case impor
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
 )
+from backend.v2.contexts.identity.application.use_cases.list_account_deletions import (
+    ListAccountDeletions,
+)
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
@@ -724,6 +727,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.request_account_deletion = RequestAccountDeletion(
         store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
     )
+    # D4: GET /api/v2/admin/account-deletions.
+    app.state.list_account_deletions = ListAccountDeletions(store=MongoAccountDeletionStore(db))
     # Push sending (mobile M3). Stub unless PUSH_DELIVERY_ENABLED; no caller yet,
     # the future ParentNotifier fans out to it after email.
     app.state.send_push_to_user = SendPushToUser(

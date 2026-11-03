@@ -19,6 +19,9 @@ from typing import Any
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.contexts.identity.application.use_cases.list_account_deletions import (
+    AccountDeletionSummary,
+)
 from backend.v2.contexts.identity.domain.account_deletion import (
     AccountDeletionRequest,
     AccountMembership,
@@ -317,3 +320,35 @@ class MongoAccountDeletionStore:
                 limit=1,
             )
         )
+
+    # --- D4: admin visibility ---
+
+    async def list_for_academy(self, academy_id: str) -> list[AccountDeletionSummary]:
+        rows = await (
+            self._requests.find({"academy_ids": academy_id})
+            .sort("requested_at", -1)
+            .limit(200)
+            .to_list(None)
+        )
+        names = {
+            str(doc["user_id"]): str(doc.get("display_name") or "")
+            async for doc in self._db["users"].find(
+                {"user_id": {"$in": [r["user_id"] for r in rows]}},
+                {"user_id": 1, "display_name": 1},
+            )
+        }
+        return [
+            AccountDeletionSummary(
+                request_id=r["request_id"],
+                user_id=r["user_id"],
+                aliases=tuple(r.get("aliases") or ()),
+                display_name=names.get(r["user_id"]) or DELETED_NAME,
+                status=r.get("status", "scheduled"),
+                requested_at=_aware(r["requested_at"]),
+                execute_after=_aware(r["execute_after"]),
+                completed_at=_aware(r["completed_at"]) if r.get("completed_at") else None,
+                attempts=int(r.get("attempts") or 0),
+                failing_step=(r.get("last_error") or {}).get("step"),
+            )
+            for r in rows
+        ]
