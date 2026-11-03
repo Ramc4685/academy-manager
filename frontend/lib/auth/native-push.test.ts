@@ -12,10 +12,11 @@ const plugin = {
   }),
   checkPermissions: vi.fn(async () => ({ receive: "prompt" })),
   requestPermissions: vi.fn(async () => ({ receive: "granted" })),
-  register: vi.fn(async () => undefined),
+  getToken: vi.fn(async () => ({ token: "tok-123" })),
+  deleteToken: vi.fn(async () => undefined),
   removeAllListeners: vi.fn(async () => listeners.clear()),
 };
-vi.mock("@capacitor/push-notifications", () => ({ PushNotifications: plugin }));
+vi.mock("@capacitor-firebase/messaging", () => ({ FirebaseMessaging: plugin }));
 
 async function load() {
   vi.resetModules();
@@ -29,7 +30,7 @@ const storage = {
   removeItem: (k: string) => void store.delete(k),
 };
 
-function installShell(platform: string, plugins: string[] = ["PushNotifications", "PushReady"]) {
+function installShell(platform: string, plugins: string[] = ["FirebaseMessaging"]) {
   const assign = vi.fn();
   (globalThis as { window?: unknown }).window = {
     Capacitor: {
@@ -73,16 +74,13 @@ describe("push detection", () => {
   it("is on in a shell with the plugin", async () => {
     installShell("android");
     expect((await load()).canUsePush()).toBe(true);
-    installShell("ios", ["PushNotifications"]);
+    installShell("ios");
     expect((await load()).canUsePush()).toBe(true);
   });
 
-  it("is off on Android until Firebase is configured (register() would crash)", async () => {
-    installShell("android", ["PushNotifications"]);
-    const push = await load();
-    expect(push.canUsePush()).toBe(false);
-    await push.startPushNotifications();
-    expect(plugin.register).not.toHaveBeenCalled();
+  it("ignores the old push plugin (it reports APNs tokens FCM rejects)", async () => {
+    installShell("ios", ["PushNotifications"]);
+    expect((await load()).canUsePush()).toBe(false);
   });
 });
 
@@ -119,45 +117,55 @@ describe("startPushNotifications", () => {
     expect(apiFetch).not.toHaveBeenCalled();
   });
 
-  it("asks once, registers, and posts the token with the platform", async () => {
+  it("asks once, fetches the FCM token, and posts it with the platform", async () => {
     installShell("ios");
     const push = await load();
     await push.startPushNotifications();
     await push.startPushNotifications();
 
     expect(plugin.requestPermissions).toHaveBeenCalledTimes(1);
-    expect(plugin.register).toHaveBeenCalledTimes(1);
-
-    listeners.get("registration")!({ value: "tok-123" });
+    expect(plugin.getToken).toHaveBeenCalledTimes(1);
     expect(apiFetch).toHaveBeenCalledWith("/me/devices", {
       method: "POST",
       body: JSON.stringify({ token: "tok-123", platform: "ios" }),
     });
   });
 
-  it("does not re-prompt or register when permission was denied", async () => {
+  it("posts a refreshed token", async () => {
+    installShell("android");
+    await (await load()).startPushNotifications();
+    apiFetch.mockClear();
+
+    listeners.get("tokenReceived")!({ token: "tok-new" });
+    expect(apiFetch).toHaveBeenCalledWith("/me/devices", {
+      method: "POST",
+      body: JSON.stringify({ token: "tok-new", platform: "android" }),
+    });
+  });
+
+  it("does not re-prompt or fetch a token when permission was denied", async () => {
     installShell("android");
     plugin.checkPermissions.mockResolvedValueOnce({ receive: "denied" });
     await (await load()).startPushNotifications();
     expect(plugin.requestPermissions).not.toHaveBeenCalled();
-    expect(plugin.register).not.toHaveBeenCalled();
+    expect(plugin.getToken).not.toHaveBeenCalled();
   });
 
-  it("stays quiet when registration or the token upload fails", async () => {
+  it("stays quiet when the token fetch or upload fails", async () => {
     installShell("android");
-    plugin.register.mockRejectedValueOnce(new Error("no google-services.json"));
+    plugin.getToken.mockRejectedValueOnce(new Error("Firebase is not configured"));
     apiFetch.mockRejectedValue(new Error("500"));
     const push = await load();
     await expect(push.startPushNotifications()).resolves.toBeUndefined();
-    listeners.get("registrationError")!({ error: "missing config" });
-    listeners.get("registration")!({ value: "tok" });
+    expect(apiFetch).not.toHaveBeenCalled();
+    listeners.get("tokenReceived")!({ token: "tok" });
     await Promise.resolve();
   });
 
   it("opens same-origin notification links and ignores external ones", async () => {
     const assign = installShell("ios");
     await (await load()).startPushNotifications();
-    const tap = listeners.get("pushNotificationActionPerformed")!;
+    const tap = listeners.get("notificationActionPerformed")!;
 
     tap({ notification: { data: { url: "/parent/messages" } } });
     tap({ notification: { data: { url: "https://evil.example" } } });
@@ -172,23 +180,24 @@ describe("stopPushNotifications", () => {
   it("deletes the registered token and resets so the next user registers", async () => {
     installShell("ios");
     const push = await load();
+    plugin.getToken.mockResolvedValueOnce({ token: "tok/with+chars" });
     await push.startPushNotifications();
-    listeners.get("registration")!({ value: "tok/with+chars" });
     apiFetch.mockClear();
 
     await push.stopPushNotifications();
     expect(apiFetch).toHaveBeenCalledWith("/me/devices/tok%2Fwith%2Bchars", { method: "DELETE" });
     expect(plugin.removeAllListeners).toHaveBeenCalled();
+    expect(plugin.deleteToken).toHaveBeenCalled();
 
     await push.startPushNotifications();
-    expect(plugin.register).toHaveBeenCalledTimes(2);
+    expect(plugin.getToken).toHaveBeenCalledTimes(2);
   });
 
   it("drops a token registered on an earlier page load", async () => {
     installShell("ios");
     const first = await load();
+    plugin.getToken.mockResolvedValueOnce({ token: "tok-old-page" });
     await first.startPushNotifications();
-    listeners.get("registration")!({ value: "tok-old-page" });
     apiFetch.mockClear();
 
     // Fresh JS context (full navigation): start never ran on this page.
@@ -205,13 +214,12 @@ describe("stopPushNotifications", () => {
     installShell("android");
     const push = await load();
     await push.startPushNotifications();
-    listeners.get("registration")!({ value: "tok" });
 
     apiFetch.mockRejectedValueOnce(new Error("offline"));
+    plugin.deleteToken.mockRejectedValueOnce(new Error("Firebase is not configured"));
     await expect(push.stopPushNotifications()).resolves.toBeUndefined();
 
     await push.startPushNotifications();
-    listeners.get("registration")!({ value: "tok" });
     vi.useFakeTimers();
     try {
       apiFetch.mockReturnValueOnce(new Promise(() => undefined));

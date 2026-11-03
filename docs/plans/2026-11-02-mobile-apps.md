@@ -36,14 +36,14 @@ Progress (2026-11-02 night):
 - M4: built on `feat/mobile-push-app` (local commit, not pushed;
   `frontend/lib/auth/native-push.ts`). Permission prompt and registration after
   the persona shell resolves, unregister on sign-out, notification tap opens
-  same-origin `data.url` only. Android registers only when the shell bundles
-  `google-services.json` (the `PushReady` marker in `MainActivity`), because
-  `register()` crashes the app without it. **iOS gap for M3:**
-  `@capacitor/push-notifications` reports the raw APNs token on iOS, not an FCM
-  token, so `firebase_admin.messaging` cannot send to it. Fix before M3: either
-  switch the app to `@capacitor-firebase/messaging` (FCM tokens on both
-  platforms) or add FirebaseMessaging to the iOS app target and swap the token in
-  `AppDelegate`.
+  same-origin `data.url` only. Uses `@capacitor-firebase/messaging` 8.5.2
+  (`feat/mobile-fcm-messaging`), so both platforms report FCM registration
+  tokens that `firebase_admin.messaging` can send to; the iOS raw-APNs-token gap
+  is resolved. Without the Firebase app files the plugin still loads and
+  `getToken()` just rejects (Android catches the missing `FirebaseApp`, iOS skips
+  `FirebaseApp.configure()` when `GoogleService-Info.plist` is absent), so the
+  old `PushReady` crash guard is gone. Not yet run on a device; iOS not built
+  (Xcode license not accepted).
 - Owner decision: no PRs for M1 or M2 until the shell has run on a device.
 
 ## Decisions

@@ -11,6 +11,9 @@ importers:
       '@capacitor-firebase/authentication':
         specifier: 8.5.2
         version: 8.5.2(@capacitor/core@8.5.0)(firebase@12.18.0)
+      '@capacitor-firebase/messaging':
+        specifier: 8.5.2
+        version: 8.5.2(@capacitor/core@8.5.0)(firebase@12.18.0)
       '@capacitor/android':
         specifier: 8.5.0
         version: 8.5.0(@capacitor/core@8.5.0)
@@ -20,9 +23,6 @@ importers:
       '@capacitor/ios':
         specifier: 8.5.0
         version: 8.5.0(@capacitor/core@8.5.0)
-      '@capacitor/push-notifications':
-        specifier: 8.1.3
-        version: 8.1.3(@capacitor/core@8.5.0)
       firebase:
         specifier: 12.18.0
         version: 12.18.0
@@ -41,6 +41,15 @@ packages:
 
   '@capacitor-firebase/authentication@8.5.2':
     resolution: {integrity: sha512-URpL6nxrCS9E/3OfpJDUJx5Kxbhi1KqnzY5bvpt1B3va48o7aaksz7RTggjNGW5J4EsG+Q5U2vSZ/ycJkcODQw==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+      firebase: ^12.6.0
+    peerDependenciesMeta:
+      firebase:
+        optional: true
+
+  '@capacitor-firebase/messaging@8.5.2':
+    resolution: {integrity: sha512-6EFxNeU/9teXdlQMmlHdjVqAMq+rr2po8oxLflvGuA6Xy+LPKbKccvamShXnTLjGO30beD6YmERNv5k9SxeGvg==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
       firebase: ^12.6.0
@@ -75,11 +84,6 @@ packages:
     resolution: {integrity: sha512-7k1TfohJu5BzRXc1F3g04Q8QQ0fyQgms6h1AvhnHb04VaNr9EdHOx03hL8O+OigEKMQnyJd1ZOjTPPNHCqL5Yw==}
     peerDependencies:
       '@capacitor/core': ^8.5.0
-
-  '@capacitor/push-notifications@8.1.3':
-    resolution: {integrity: sha512-UlOCTS3uiw8ZUJ1rkFKJgoqPADipHDNn0lq5mNRwtXALVxQXIeIoRd3iqpzC+962R2LpCRJRkCTjPX2OHK3tBA==}
-    peerDependencies:
-      '@capacitor/core': '>=8.0.0'
 
   '@firebase/ai@2.15.0':
     resolution: {integrity: sha512-Aj7TbFdAIWZdkX8JfdDStERpR35g6WNs+7XhNPtFLFOizUotj6k4N/D8HJkR45165HhnMJBe4hjOeeaxnnn56Q==}
@@ -1196,6 +1200,12 @@ snapshots:
     optionalDependencies:
       firebase: 12.18.0
 
+  '@capacitor-firebase/messaging@8.5.2(@capacitor/core@8.5.0)(firebase@12.18.0)':
+    dependencies:
+      '@capacitor/core': 8.5.0
+    optionalDependencies:
+      firebase: 12.18.0
+
   '@capacitor/android@8.5.0(@capacitor/core@8.5.0)':
     dependencies:
       '@capacitor/core': 8.5.0
@@ -1271,10 +1281,6 @@ snapshots:
       tslib: 2.9.1
 
   '@capacitor/ios@8.5.0(@capacitor/core@8.5.0)':
-    dependencies:
-      '@capacitor/core': 8.5.0
-
-  '@capacitor/push-notifications@8.1.3(@capacitor/core@8.5.0)':
     dependencies:
       '@capacitor/core': 8.5.0
 
