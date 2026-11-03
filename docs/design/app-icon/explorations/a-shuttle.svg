@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Evolution of the CourtMastr platform ShuttleMark (frontend/components/ds/shuttle.tsx): volt skirt, white cork -->
+  <rect width="256" height="256" fill="#0a0f1c"/>
+  <g transform="translate(-18 12) rotate(30 128 128)">
+    <path d="M66 58H190L154 150H102Z" fill="#facc15"/>
+    <path d="M107 58L119 150M149 58L137 150" stroke="#0a0f1c" stroke-width="7"/>
+    <path d="M98 158H158V168A30 30 0 0 1 98 168Z" fill="#f8fafc"/>
+  </g>
+</svg>

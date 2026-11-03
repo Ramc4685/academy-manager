@@ -46,11 +46,10 @@ cd mobile && MOBILE_SERVER_URL=http://10.0.2.2:3001 pnpm sync && pnpm android
 ## Icon and splash
 
 Sources live in `mobile/assets/` (1024px icon, adaptive foreground/background,
-2732px splash on `#0a0a0a`), drawn from the PWA mark in `frontend/public/icons`
-(yellow `#ffd21f` tile, navy `#06121f` "B"). Regenerate every native size with
+2732px splash on `#0a0f1c`), exported from the CourtMastr Academy "Earned Stripes" logo in
+`docs/design/logo/` (three chevrons, the top one volt, on Floodlit Night). Regenerate every native size with
 `pnpm assets`. The generator also reformats `android/app/src/main/AndroidManifest.xml`;
-discard that diff, it changes nothing. The "B" is the house academy's mark; replace
-the five source files if the store app gets its own brand, then rerun `pnpm assets`.
+discard that diff, it changes nothing. See `docs/design/logo/README.md` for the store slots.
 
 ## Device run, 2026-11-03 (Android emulator, API 37, local stack)
 

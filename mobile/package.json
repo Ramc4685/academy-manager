@@ -6,7 +6,7 @@
     "sync": "cap sync",
     "ios": "cap run ios",
     "android": "cap run android",
-    "assets": "capacitor-assets generate --ios --android --iconBackgroundColor '#ffd21f' --iconBackgroundColorDark '#ffd21f' --splashBackgroundColor '#0a0a0a' --splashBackgroundColorDark '#0a0a0a'"
+    "assets": "capacitor-assets generate --ios --android --iconBackgroundColor '#0a0f1c' --iconBackgroundColorDark '#0a0f1c' --splashBackgroundColor '#0a0f1c' --splashBackgroundColorDark '#0a0f1c'"
   },
   "dependencies": {
     "@capacitor-firebase/authentication": "8.5.2",
