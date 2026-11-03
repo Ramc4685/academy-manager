@@ -1,0 +1,4 @@
+allowBuilds:
+  # The shell bundles none of this JS; firebase is only a peer of the auth plugin.
+  '@firebase/util': false
+  protobufjs: false
