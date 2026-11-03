@@ -1,6 +1,6 @@
 # hide-google-in-app-shell
 
-PR: #TBD
+PR: #1112
 
 ## What changed
 The login and registration pages no longer show "Continue with Google" inside the iOS/Android app shell (detected by the `window.Capacitor` global the shell injects). In the app, web Google sign-in cannot finish: the redirect to accounts.google.com opens in Safari, returns there without its starting state, and Firebase reports "missing initial state". The registration intro text drops its Google wording in the app. Browsers, including mobile Safari and Chrome, are unchanged. Native Google/Apple sign-in for the app comes later from the mobile branch.
