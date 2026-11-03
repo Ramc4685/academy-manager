@@ -42,3 +42,12 @@ cd mobile && MOBILE_SERVER_URL=http://10.0.2.2:3001 pnpm sync && pnpm android
 - Is there a staging deployment? None is referenced in the repo; until there is one,
   the spike targets local dev.
 - Start URL: point `server.url` at `/login` (or a post-login route) rather than `/`.
+
+## Icon and splash
+
+Sources live in `mobile/assets/` (1024px icon, adaptive foreground/background,
+2732px splash on `#0a0a0a`), drawn from the PWA mark in `frontend/public/icons`
+(yellow `#ffd21f` tile, navy `#06121f` "B"). Regenerate every native size with
+`pnpm assets`. The generator also reformats `android/app/src/main/AndroidManifest.xml`;
+discard that diff, it changes nothing. The "B" is the house academy's mark; replace
+the five source files if the store app gets its own brand, then rerun `pnpm assets`.
