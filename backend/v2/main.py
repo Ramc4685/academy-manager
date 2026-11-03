@@ -414,6 +414,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 30,
         "max_runtime": 30,
     },
+    # Mobile M5 (D3): erases self-service deleted accounts once their 14-day
+    # grace window ends. Hourly; a failed account is retried on the next tick.
+    "execute_account_deletions": {
+        "schedule": {"type": "crontab", "value": "50 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
     "process_stripe_webhook_events": {
         "schedule": {"type": "interval", "value": 1, "unit": "minute"},
         "checkin_margin": 5,
@@ -947,6 +954,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
+    from backend.v2.composition.account_deletion import compose_execute_account_deletions
+
+    app.state.execute_account_deletions = compose_execute_account_deletions(
+        db, stop_all_classes=_departures.stop_all_classes, stripe=stripe_gw
+    )
     # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back
     # (and re-offer it); a bare status write leaked the seat. Same promote
     # instance as the admin route and the sweep, so the SeatBroker applies.
@@ -1104,6 +1116,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 totals[key] += result[key]
         if totals["expired"]:
             log.info("waitlist_offers_swept", extra=totals)
+
+    async def _execute_account_deletions() -> None:
+        await _run_leased_job(
+            "execute_account_deletions",
+            timedelta(minutes=20),
+            _execute_account_deletions_body,
+        )
+
+    async def _execute_account_deletions_body() -> None:
+        # Global, not per academy: one deletion spans every academy the
+        # person belonged to, and each step opens its own tenant scope.
+        result = await app.state.execute_account_deletions.execute()
+        if result.completed or result.failed:
+            log.info(
+                "account_deletions_executed",
+                extra={"completed": result.completed, "failed": result.failed},
+            )
 
     async def _process_scheduled_cancellations() -> None:
         await _run_leased_job(
@@ -1922,6 +1951,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "cron",
         minute=35,
         id="sweep_expired_waitlist_offers",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _execute_account_deletions,
+        "cron",
+        minute=50,
+        id="execute_account_deletions",
         replace_existing=True,
         max_instances=1,
     )

@@ -403,6 +403,14 @@ class FirebaseAdminAdapter:
         _ensure_firebase_app()
         await asyncio.to_thread(firebase_admin_auth.delete_user, uid)
 
+    async def delete_user_if_present(self, uid: str) -> None:
+        """``delete_user`` that treats an account already gone as done (job retries)."""
+        try:
+            await self.delete_user(uid)
+        except Exception as exc:
+            if not _is_firebase_auth_error(exc, "UserNotFoundError"):
+                raise
+
     async def create_custom_token(self, uid: str) -> str:
         """Mint a Firebase custom token for ``uid``.
 

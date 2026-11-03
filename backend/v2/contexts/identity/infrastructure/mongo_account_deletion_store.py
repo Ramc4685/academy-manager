@@ -27,7 +27,12 @@ from backend.v2.contexts.identity.domain.identity_aliases import (
     aliases_from_doc,
     identity_aliases,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_verification_email_cooldown import (
+    _key as _cooldown_key,
+)
 from backend.v2.shared.ids import new_ulid
+
+DELETED_NAME = "Deleted user"
 
 
 def _aware(value: datetime) -> datetime:
@@ -46,6 +51,11 @@ def _to_request(doc: dict[str, Any]) -> AccountDeletionRequest:
         execute_after=_aware(doc["execute_after"]),
         status=doc.get("status", "scheduled"),
     )
+
+
+def _placeholder_email(request_id: str) -> str:
+    # Unique per account (users.email may be indexed) and undeliverable (.invalid).
+    return f"deleted+{request_id.lower()}@deleted.invalid"
 
 
 class MongoAccountDeletionStore:
@@ -181,4 +191,118 @@ class MongoAccountDeletionStore:
                     "execute_after": request.execute_after,
                 },
             }
+        )
+
+    # --- D3: carrying the deletion out ---
+
+    async def due_requests(self, *, now: datetime, limit: int) -> list[AccountDeletionRequest]:
+        cursor = (
+            self._requests.find({"status": "scheduled", "execute_after": {"$lte": now}})
+            .sort("execute_after", 1)
+            .limit(limit)
+        )
+        return [_to_request(doc) async for doc in cursor]
+
+    async def anonymise_identity(self, request: AccountDeletionRequest, *, now: datetime) -> None:
+        ids = list(request.aliases)
+        who: list[dict[str, Any]] = [
+            {"user_id": {"$in": ids}},
+            {"auth_uid": {"$in": ids}},
+            {"firebase_uid": {"$in": ids}},
+        ]
+        if request.email:
+            who += [{"email": request.email}, {"normalized_email": request.email.strip().lower()}]
+        await self._db["users"].update_many(
+            {"$or": who},
+            {
+                "$set": {
+                    "display_name": DELETED_NAME,
+                    "name": DELETED_NAME,
+                    "full_name": DELETED_NAME,
+                    "email": _placeholder_email(request.request_id),
+                    "phone": None,
+                    "status": "deleted",
+                    "global_status": "deleted",
+                    "is_active": False,
+                    "deleted_at": now,
+                    "updated_at": now,
+                },
+                # Unset, not overwritten: the sparse unique index allows many absent values.
+                "$unset": {
+                    "normalized_email": "",
+                    "first_name": "",
+                    "last_name": "",
+                    "photo_url": "",
+                },
+            },
+        )
+        await self._db["parent_magic_links"].delete_many({"user_id": {"$in": ids}})
+        await self._db["login_attempts"].delete_many({"user_id": {"$in": ids}})
+        if request.email:
+            await self._db["verification_email_cooldowns"].delete_many(
+                {"_id": _cooldown_key(request.email)}
+            )
+        for academy_id in request.academy_ids:
+            # Fixed id: a retry after a later failure rewrites, never duplicates.
+            await self._db["audit_logs"].update_one(
+                {"audit_id": f"deletion-completed-{request.request_id}-{academy_id}"},
+                {
+                    "$setOnInsert": {
+                        "academy_id": academy_id,
+                        "actor_id": "system:account-deletion",
+                        "action": "user.deletion_completed",
+                        "entity_type": "user",
+                        "entity_id": request.user_id,
+                        "reason": "self-service account deletion",
+                        "created_at": now,
+                        "metadata": {"request_id": request.request_id},
+                    }
+                },
+                upsert=True,
+            )
+
+    async def mark_completed(self, request_id: str, *, now: datetime) -> None:
+        # The address was kept only so the person could be reached during the
+        # grace window; the ids stay so admins can trace what was erased.
+        await self._requests.update_one(
+            {"request_id": request_id},
+            {
+                "$set": {"status": "completed", "completed_at": now},
+                "$unset": {"email": "", "last_error": ""},
+            },
+        )
+
+    async def record_failure(
+        self, request_id: str, *, step: str, error: str, now: datetime
+    ) -> None:
+        await self._requests.update_one(
+            {"request_id": request_id},
+            {
+                "$set": {"last_error": {"step": step, "error": error[:500], "at": now}},
+                "$inc": {"attempts": 1},
+            },
+        )
+
+    async def has_active_account(self, *, academy_id: str, emails: list[str]) -> bool:
+        """Whether any of ``emails`` signs in to ``academy_id`` (another guardian)."""
+        normalized = sorted({e.strip().lower() for e in emails if e.strip()})
+        if not normalized:
+            return False
+        users = await (
+            self._db["users"]
+            .find(
+                {
+                    "$or": [{"normalized_email": {"$in": normalized}}, {"email": {"$in": emails}}],
+                    "status": {"$ne": "deleted"},
+                }
+            )
+            .to_list(None)
+        )
+        ids = [a for doc in users for a in aliases_from_doc(doc)]
+        return bool(
+            ids
+            and await self._db["academy_memberships"].count_documents(
+                {"academy_id": academy_id, "user_id": {"$in": ids}, "status": "active"},
+                limit=1,
+            )
         )

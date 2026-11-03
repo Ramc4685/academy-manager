@@ -50,6 +50,8 @@ class FakeStripeGateway(StripeGateway):
         self.refund_requests: list[dict[str, Any]] = []
         self._refunds_by_key: dict[str, dict[str, Any]] = {}
         self.cancelled_subscriptions: list[dict[str, Any]] = []
+        # (stripe_account, customer_id) -> payment method ids still attached.
+        self.attached_payment_methods: dict[tuple[str | None, str], list[str]] = {}
         self.paused_subscriptions: list[dict[str, Any]] = []
         self.resumed_subscriptions: list[dict[str, Any]] = []
         self.subscription_prorations: list[dict[str, Any]] = []
@@ -542,6 +544,11 @@ class FakeStripeGateway(StripeGateway):
         if scoped_key is not None:
             self._refunds_by_key[scoped_key] = refund
         return refund_id
+
+    async def detach_customer_payment_methods(
+        self, stripe_customer_id: str, *, stripe_account: str | None = None
+    ) -> int:
+        return len(self.attached_payment_methods.pop((stripe_account, stripe_customer_id), []))
 
     async def cancel_subscription(
         self, stripe_subscription_id: str, *, at_period_end: bool
