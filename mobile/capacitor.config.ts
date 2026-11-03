@@ -10,9 +10,10 @@ const serverUrl = process.env.MOBILE_SERVER_URL ?? "http://localhost:3001";
 if (process.env.MOBILE_RELEASE === "1" && !serverUrl.startsWith("https://")) {
   throw new Error(`MOBILE_RELEASE builds need an https MOBILE_SERVER_URL, got ${serverUrl}`);
 }
-// Not `/` (the marketing landing on the product host): /post-login sends signed-in
-// users to their home and everyone else to /login.
-const startUrl = new URL("/post-login", serverUrl).toString();
+// server.url stays the bare origin: iOS treats any full-page load whose URL does not
+// start with server.url as external and opens it in Safari (sign-out did exactly that
+// when the path lived here).
+const origin = new URL(serverUrl).origin;
 
 const config: CapacitorConfig = {
   appId: "com.courtmastr.academy",
@@ -21,7 +22,12 @@ const config: CapacitorConfig = {
   // Matches the manifest theme so launch and overscroll never flash white.
   backgroundColor: "#0a0a0a",
   server: {
-    url: startUrl,
+    url: origin,
+    // Not `/` (the marketing landing on the product host): /post-login sends signed-in
+    // users to their home and everyone else to /login.
+    // iOS refuses to start unless www/post-login exists locally, even though the
+    // page itself comes from the server; www/post-login/ is that placeholder.
+    appStartPath: "/post-login",
     cleartext: serverUrl.startsWith("http://"),
     // Hosts not listed here open in the system browser, which would strand
     // Stripe Checkout's success_url outside the app.

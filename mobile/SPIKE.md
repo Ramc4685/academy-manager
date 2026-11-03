@@ -82,3 +82,28 @@ JDK 21 (`brew install openjdk@21`); Android Studio's bundled JDK 25 fails.
   shows Android's "Webpage not available".
 - `@capacitor-firebase/messaging`: permission prompt shows once; with no
   `google-services.json`, `getToken` rejects and the app keeps running. Pass.
+
+## Device run, 2026-11-03 (iOS simulator, iPhone 18 Pro, iOS 27.2, local stack)
+
+Built with Xcode 27.2. The first build took ~58 min (Firebase SPM checkout);
+incremental builds take ~1 min. `Package.resolved` is committed so the Firebase
+pins stay put.
+
+- Launch → branded sign-in → coach sign-in → Today. Pass.
+- Push permission prompt → granted; with no `GoogleService-Info.plist` Firebase
+  logs "not configured" and the app keeps running. Pass.
+- "Continue with Google" without the plist shows an inline error, no crash.
+  Needs the Firebase file to test for real.
+- Sign-out originally opened Safari: iOS treats any top-level load whose URL does
+  not start with `server.url` as external, and `server.url` held `/post-login`.
+  Fixed: `server.url` is now the bare origin and the start route moved to
+  `server.appStartPath`. iOS also requires `www/<appStartPath>` to exist locally
+  before it will start, hence the `www/post-login/` placeholder. Pass after fix;
+  Android re-checked with the same config (opens `/post-login` → home). Pass.
+- Offline relaunch with the frontend stopped renders the cached sign-in page from
+  the service worker. Pass.
+- Open issue (also on the website in mobile Safari): inputs under 16px (`text-sm`)
+  make iOS zoom in on focus, and the zoom persists after navigation, so the next
+  page looks cut off on the left. Fix belongs in the web UI, not the shell.
+- Not covered: Stripe Checkout, real push send, Sign in with Apple (needs a paid
+  team), physical device.
