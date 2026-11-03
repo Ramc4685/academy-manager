@@ -32,6 +32,7 @@ from backend.v2.contexts.communications.domain.models import (
     SelectedRecipientsAudience,
     SessionAudience,
 )
+from backend.v2.contexts.communications.domain.push_device import PushDevice
 from backend.v2.shared.comms.email_theme import EmailBrand
 
 
@@ -149,6 +150,23 @@ class AcademySlugLookup(Protocol):
     """
 
     async def slug_for(self, academy_id: str) -> str | None: ...
+
+
+class PushDeviceRepository(Protocol):
+    """FCM device registrations (mobile M2). One row per token, tenant-stamped."""
+
+    async def register(self, device: PushDevice) -> PushDevice:
+        """Upsert by token for the tenant in scope.
+
+        A token already held by another user (or by this user in another
+        academy) moves to ``device.user_id``; ``created_at`` is kept from the
+        first registration. Returns the stored row.
+        """
+        ...
+
+    async def delete(self, *, user_id: str, token: str) -> None:
+        """Remove ``token`` only if ``user_id`` holds it in this academy; else no-op."""
+        ...
 
 
 class EmailPreferenceRepository(Protocol):

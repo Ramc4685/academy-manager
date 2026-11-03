@@ -101,6 +101,9 @@ from backend.v2.contexts.communications.application.ports import ResolvedRecipie
 from backend.v2.contexts.communications.application.use_cases.get_email_preferences import (
     GetEmailPreferences,
 )
+from backend.v2.contexts.communications.application.use_cases.register_push_device import (
+    RegisterPushDevice,
+)
 from backend.v2.contexts.communications.application.use_cases.resolve_unsubscribe_token import (
     ResolveUnsubscribeToken,
 )
@@ -119,8 +122,14 @@ from backend.v2.contexts.communications.application.use_cases.send_parent_report
 from backend.v2.contexts.communications.application.use_cases.set_email_preferences import (
     SetEmailPreferences,
 )
+from backend.v2.contexts.communications.application.use_cases.unregister_push_device import (
+    UnregisterPushDevice,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
     MongoEmailPreferenceRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo import (
+    MongoPushDeviceRepository,
 )
 from backend.v2.contexts.identity.application.list_my_memberships_use_case import (
     ListMyMembershipsUseCase,
@@ -683,6 +692,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _email_preference_repo = MongoEmailPreferenceRepository(db)
     app.state.get_email_preferences = GetEmailPreferences(preferences=_email_preference_repo)
     app.state.set_email_preferences = SetEmailPreferences(preferences=_email_preference_repo)
+    # Push device tokens (mobile M2): POST/DELETE /api/v2/me/devices.
+    _push_device_repo = MongoPushDeviceRepository(db)
+    app.state.register_push_device = RegisterPushDevice(devices=_push_device_repo)
+    app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
     # Fail closed: with no secret configured nothing was ever signed, the
     # footer rendered a portal pointer instead of a link, and the unsubscribe
     # endpoints 404. There is deliberately no fallback onto another secret.
