@@ -4,6 +4,7 @@ import {
   canUseNativeSignIn,
   nativePlatform,
   shouldOfferAppleSignIn,
+  shouldOfferGoogleSignIn,
   toFirebaseCredential,
 } from "@/lib/auth/native-sign-in";
 
@@ -56,6 +57,15 @@ describe("native shell detection", () => {
     installShell("ios", []);
     expect(canUseNativeSignIn()).toBe(false);
     expect(shouldOfferAppleSignIn()).toBe(false);
+  });
+
+  it("hides Google only in an app build that can't sign in natively", () => {
+    (globalThis as { window?: unknown }).window = {};
+    expect(shouldOfferGoogleSignIn()).toBe(true);
+    installShell("android");
+    expect(shouldOfferGoogleSignIn()).toBe(true);
+    installShell("android", []);
+    expect(shouldOfferGoogleSignIn()).toBe(false);
   });
 });
 

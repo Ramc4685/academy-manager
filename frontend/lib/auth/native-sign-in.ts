@@ -48,6 +48,14 @@ export function canUseNativeSignIn(): boolean {
   return hasNativePlugin("FirebaseAuthentication");
 }
 
+/**
+ * Google is offered everywhere except an app build that lacks the native plugin
+ * (or its Firebase config): the web fallback there is blocked by Google.
+ */
+export function shouldOfferGoogleSignIn(): boolean {
+  return nativePlatform() === null || canUseNativeSignIn();
+}
+
 /** Sign in with Apple is offered on iOS, where App Review requires it alongside Google. */
 export function shouldOfferAppleSignIn(): boolean {
   return nativePlatform() === "ios" && canUseNativeSignIn();
