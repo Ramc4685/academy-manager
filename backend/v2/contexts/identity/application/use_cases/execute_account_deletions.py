@@ -92,7 +92,16 @@ class ExecuteAccountDeletions:
                     "account_deletion_failed",
                     extra={"request_id": request.request_id, "step": step},
                 )
-                await self._store.record_failure(
-                    request.request_id, step=step, error=f"{type(exc).__name__}: {exc}", now=now
-                )
+                try:
+                    await self._store.record_failure(
+                        request.request_id,
+                        step=step,
+                        error=f"{type(exc).__name__}: {exc}",
+                        now=now,
+                    )
+                except Exception:  # bookkeeping must not abort the batch either
+                    log.exception(
+                        "account_deletion_failure_not_recorded",
+                        extra={"request_id": request.request_id},
+                    )
         return ExecuteAccountDeletionsResult(completed=completed, failed=failed)

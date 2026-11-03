@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.identity.domain.account_deletion import (
@@ -277,18 +278,20 @@ class MongoAccountDeletionStore:
     ) -> None:
         # Back off (1h doubling, capped at a day) so a request that keeps
         # failing stops filling every batch and starving the rest of the queue.
-        doc = await self._requests.find_one({"request_id": request_id}, {"attempts": 1})
-        attempts = int((doc or {}).get("attempts") or 0) + 1
-        retry_at = now + min(timedelta(hours=2 ** (attempts - 1)), timedelta(days=1))
-        await self._requests.update_one(
+        doc = await self._requests.find_one_and_update(
             {"request_id": request_id},
             {
-                "$set": {
-                    "last_error": {"step": step, "error": error[:500], "at": now},
-                    "attempts": attempts,
-                    "execute_after": retry_at,
-                }
+                "$set": {"last_error": {"step": step, "error": error[:500], "at": now}},
+                "$inc": {"attempts": 1},
             },
+            projection={"attempts": 1},
+            return_document=ReturnDocument.AFTER,
+        )
+        attempts = int((doc or {}).get("attempts") or 1)
+        delay = timedelta(hours=2 ** min(attempts - 1, 5))  # 2**5 h > a day: cap reached
+        await self._requests.update_one(
+            {"request_id": request_id},
+            {"$set": {"execute_after": now + min(delay, timedelta(days=1))}},
         )
 
     async def has_active_account(self, *, academy_id: str, emails: list[str]) -> bool:

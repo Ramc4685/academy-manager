@@ -213,3 +213,18 @@ async def test_a_failing_request_backs_off_instead_of_blocking_the_queue(real_db
     assert row["execute_after"].replace(tzinfo=UTC) == NOW + timedelta(hours=1)
     # Not picked up again until the back-off passes.
     assert (await job.execute(now=NOW + timedelta(minutes=30))).failed == 0
+
+
+async def test_back_off_is_capped_at_a_day_however_many_attempts(real_db: Any) -> None:
+    from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
+        MongoAccountDeletionStore,
+    )
+
+    await _seed(real_db)
+    await real_db["account_deletion_requests"].update_one(
+        {"request_id": "r1"}, {"$set": {"attempts": 500}}
+    )
+    await MongoAccountDeletionStore(real_db).record_failure("r1", step="x", error="e", now=NOW)
+    row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
+    assert row["attempts"] == 501
+    assert row["execute_after"].replace(tzinfo=UTC) == NOW + timedelta(days=1)
