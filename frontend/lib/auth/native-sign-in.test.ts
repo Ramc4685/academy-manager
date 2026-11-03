@@ -8,8 +8,13 @@ import {
   toFirebaseCredential,
 } from "@/lib/auth/native-sign-in";
 
-function installShell(platform: string, plugins: string[] = ["FirebaseAuthentication"]) {
+function installShell(
+  platform: string,
+  plugins: string[] = ["FirebaseAuthentication"],
+  userAgent = "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 CourtMastrNativeAuth/1"
+) {
   (globalThis as { window?: unknown }).window = {
+    navigator: { userAgent },
     Capacitor: {
       isNativePlatform: () => platform !== "web",
       getPlatform: () => platform,
@@ -56,6 +61,13 @@ describe("native shell detection", () => {
   it("falls back to the web flow in an app build without the auth plugin", () => {
     installShell("ios", []);
     expect(canUseNativeSignIn()).toBe(false);
+    expect(shouldOfferAppleSignIn()).toBe(false);
+  });
+
+  it("hides Google and Apple in an app build without its Firebase config", () => {
+    installShell("ios", ["FirebaseAuthentication"], "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15");
+    expect(canUseNativeSignIn()).toBe(false);
+    expect(shouldOfferGoogleSignIn()).toBe(false);
     expect(shouldOfferAppleSignIn()).toBe(false);
   });
 

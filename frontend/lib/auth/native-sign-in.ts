@@ -44,13 +44,23 @@ export function hasNativePlugin(name: string): boolean {
   return nativePlatform() !== null && capacitor()?.isPluginAvailable?.(name) === true;
 }
 
+/** Set by mobile/capacitor.config.ts only in builds that bundle their Firebase config. */
+const NATIVE_AUTH_MARKER = "CourtMastrNativeAuth/1";
+
+/**
+ * The plugin alone is not enough: a build without GoogleService-Info.plist has it
+ * but cannot sign in (TestFlight 1.0 (4) is one), so also require the build marker.
+ */
 export function canUseNativeSignIn(): boolean {
-  return hasNativePlugin("FirebaseAuthentication");
+  return (
+    hasNativePlugin("FirebaseAuthentication") &&
+    window.navigator?.userAgent?.includes(NATIVE_AUTH_MARKER) === true
+  );
 }
 
 /**
- * Google is offered everywhere except an app build that lacks the native plugin
- * (or its Firebase config): the web fallback there is blocked by Google.
+ * Google is offered everywhere except an app build that cannot sign in natively:
+ * the web fallback there leaves the app for Safari and never completes.
  */
 export function shouldOfferGoogleSignIn(): boolean {
   return nativePlatform() === null || canUseNativeSignIn();

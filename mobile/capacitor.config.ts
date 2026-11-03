@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import type { CapacitorConfig } from "@capacitor/cli";
 
 // Spike: the shell loads the deployed Next.js app instead of bundling it,
@@ -14,6 +16,13 @@ if (process.env.MOBILE_RELEASE === "1" && !serverUrl.startsWith("https://")) {
 // start with server.url as external and opens it in Safari (sign-out did exactly that
 // when the path lived here).
 const origin = new URL(serverUrl).origin;
+// The web app offers native Google/Apple sign-in only when the user agent carries this
+// marker (frontend/lib/auth/native-sign-in.ts). A build is marked only if it bundles its
+// Firebase config, so older builds and Android (no google-services.json yet) keep Google hidden.
+const NATIVE_AUTH_MARKER = "CourtMastrNativeAuth/1";
+// Paths are relative to mobile/, where every `cap` command runs.
+const nativeAuthMarker = (configFile: string) =>
+  existsSync(configFile) ? NATIVE_AUTH_MARKER : undefined;
 
 const config: CapacitorConfig = {
   appId: "com.courtmastr.academy",
@@ -43,8 +52,12 @@ const config: CapacitorConfig = {
     },
   },
   ios: {
+    appendUserAgent: nativeAuthMarker("ios/App/App/GoogleService-Info.plist"),
     // Service workers in WKWebView need App-Bound Domains (WKAppBoundDomains in Info.plist).
     limitsNavigationsToAppBoundDomains: true,
+  },
+  android: {
+    appendUserAgent: nativeAuthMarker("android/app/google-services.json"),
   },
   // Both Capawesome Firebase plugins' READMEs require this to avoid a SwiftPM
   // package identity collision (capawesome-team/capacitor-firebase#959).
