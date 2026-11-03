@@ -19,7 +19,8 @@ const config: CapacitorConfig = {
     cleartext: serverUrl.startsWith("http://"),
     // Hosts not listed here open in the system browser, which would strand
     // Stripe Checkout's success_url outside the app.
-    allowNavigation: ["checkout.stripe.com", "*.firebaseapp.com", "accounts.google.com"],
+    // Exact hosts only: every allowed host gets the native bridge. Sign-in runs natively.
+    allowNavigation: ["checkout.stripe.com"],
   },
   plugins: {
     // The web Firebase SDK owns the session; the native SDKs only collect the
