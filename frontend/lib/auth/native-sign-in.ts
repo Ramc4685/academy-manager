@@ -37,14 +37,15 @@ export function nativePlatform(): NativePlatform | null {
 }
 
 /**
- * True only when the shell also ships the native auth plugin. An older app
- * build without it falls back to the web flow instead of failing.
+ * True only inside the app shell when that build ships the named native
+ * plugin. Older app builds without it keep the web behaviour instead of failing.
  */
+export function hasNativePlugin(name: string): boolean {
+  return nativePlatform() !== null && capacitor()?.isPluginAvailable?.(name) === true;
+}
+
 export function canUseNativeSignIn(): boolean {
-  return (
-    nativePlatform() !== null &&
-    capacitor()?.isPluginAvailable?.("FirebaseAuthentication") === true
-  );
+  return hasNativePlugin("FirebaseAuthentication");
 }
 
 /** Sign in with Apple is offered on iOS, where App Review requires it alongside Google. */

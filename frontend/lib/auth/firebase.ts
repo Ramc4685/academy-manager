@@ -36,6 +36,7 @@ import {
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
+import { stopPushNotifications } from "@/lib/auth/native-push";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -277,6 +278,8 @@ export async function confirmPasswordResetValue(
 }
 
 export async function signOutCurrent(): Promise<void> {
+  // App shell only (no-op in browsers); needs the session, so it runs first.
+  await stopPushNotifications();
   clearBffIdentityCookie();
   // Leave no persona hint behind for the next user of a shared device (#451).
   clearPersonaHintCookie();
