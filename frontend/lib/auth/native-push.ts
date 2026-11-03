@@ -14,8 +14,27 @@ const PLUGIN = "PushNotifications";
 /** Sign-out waits at most this long for the device to be dropped server-side. */
 const UNREGISTER_TIMEOUT_MS = 3_000;
 
+/** Survives full page loads, so sign-out can drop a token registered on an earlier page. */
+const TOKEN_KEY = "am.pushToken";
+
 let started = false;
-let registeredToken: string | null = null;
+
+function storedToken(): string | null {
+  try {
+    return window.localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeToken(token: string | null): void {
+  try {
+    if (token) window.localStorage.setItem(TOKEN_KEY, token);
+    else window.localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // Storage blocked: sign-out falls back to the backend rebinding the token.
+  }
+}
 
 export function canUsePush(): boolean {
   if (!hasNativePlugin(PLUGIN)) return false;
@@ -34,7 +53,8 @@ export function safeAppPath(url: unknown): string | null {
   try {
     // The URL parser also normalises tricks like "/\\evil.com" or tabs.
     const parsed = new URL(url, base);
-    if (parsed.origin !== base) return null;
+    // "/.//evil.example" normalises to "//evil.example", which assign() reads as a host.
+    if (parsed.origin !== base || parsed.pathname.startsWith("//")) return null;
     return `${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return null;
@@ -52,7 +72,7 @@ export async function startPushNotifications(): Promise<void> {
   try {
     const { PushNotifications } = await import("@capacitor/push-notifications");
     await PushNotifications.addListener("registration", ({ value }) => {
-      registeredToken = value;
+      storeToken(value);
       void apiFetch("/me/devices", {
         method: "POST",
         body: JSON.stringify({ token: value, platform }),
@@ -82,10 +102,10 @@ export async function startPushNotifications(): Promise<void> {
  * longer than UNREGISTER_TIMEOUT_MS.
  */
 export async function stopPushNotifications(): Promise<void> {
-  if (!started) return;
-  const token = registeredToken;
+  const token = storedToken();
+  if (!started && !token) return;
   started = false;
-  registeredToken = null;
+  storeToken(null);
   try {
     const { PushNotifications } = await import("@capacitor/push-notifications");
     await PushNotifications.removeAllListeners();

@@ -22,6 +22,13 @@ async function load() {
   return import("@/lib/auth/native-push");
 }
 
+const store = new Map<string, string>();
+const storage = {
+  getItem: (k: string) => store.get(k) ?? null,
+  setItem: (k: string, v: string) => void store.set(k, v),
+  removeItem: (k: string) => void store.delete(k),
+};
+
 function installShell(platform: string, plugins: string[] = ["PushNotifications", "PushReady"]) {
   const assign = vi.fn();
   (globalThis as { window?: unknown }).window = {
@@ -31,6 +38,7 @@ function installShell(platform: string, plugins: string[] = ["PushNotifications"
       isPluginAvailable: (name: string) => plugins.includes(name),
     },
     location: { assign },
+    localStorage: storage,
   };
   return assign;
 }
@@ -38,6 +46,7 @@ function installShell(platform: string, plugins: string[] = ["PushNotifications"
 beforeEach(() => {
   apiFetch.mockReset().mockResolvedValue(null);
   listeners.clear();
+  store.clear();
   vi.clearAllMocks();
 });
 
@@ -90,6 +99,8 @@ describe("safeAppPath", () => {
     "//evil.example/phish",
     "/\\evil.example",
     "/\t/evil.example",
+    "/.//evil.example",
+    "/..//evil.example",
     "javascript:alert(1)",
     "parent/payments",
     "",
@@ -171,6 +182,18 @@ describe("stopPushNotifications", () => {
 
     await push.startPushNotifications();
     expect(plugin.register).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a token registered on an earlier page load", async () => {
+    installShell("ios");
+    const first = await load();
+    await first.startPushNotifications();
+    listeners.get("registration")!({ value: "tok-old-page" });
+    apiFetch.mockClear();
+
+    // Fresh JS context (full navigation): start never ran on this page.
+    await (await load()).stopPushNotifications();
+    expect(apiFetch).toHaveBeenCalledWith("/me/devices/tok-old-page", { method: "DELETE" });
   });
 
   it("is a no-op in a browser", async () => {
