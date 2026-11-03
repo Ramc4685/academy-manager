@@ -69,3 +69,16 @@ JDK 21 (`brew install openjdk@21`); Android Studio's bundled JDK 25 fails.
   `@capacitor-firebase/messaging`, which rejects `getToken()` instead. Not re-run.)
 - Not covered: Stripe Checkout (no local Stripe keys), offline attendance
   (service worker is off in `next dev`), iOS (Xcode license needs `sudo`).
+
+### Second pass, 2026-11-03 01:20–01:35 (production build via `pnpm build && pnpm start`)
+
+- Start URL is now `/post-login`: a signed-in coach relaunching the app lands on
+  Today instead of the sign-in form. Pass. On the emulator (software GPU) the
+  cold start to Today takes ~30s; recheck on a real phone before worrying.
+- Service worker runs inside the Android WebView (checked over DevTools:
+  page controlled, `pages` and `coach-api-v1` caches filled). With the server
+  cut (`adb reverse --remove`), a relaunch rendered the cached page. Pass, but
+  only after a page has been visited once online; a first-ever offline launch
+  shows Android's "Webpage not available".
+- `@capacitor-firebase/messaging`: permission prompt shows once; with no
+  `google-services.json`, `getToken` rejects and the app keeps running. Pass.
