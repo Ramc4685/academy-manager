@@ -64,6 +64,7 @@ from backend.v2.composition.pricing import compose_admin_pricing
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
+from backend.v2.composition.push import _build_push_sender
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
@@ -101,6 +102,9 @@ from backend.v2.contexts.communications.application.ports import ResolvedRecipie
 from backend.v2.contexts.communications.application.use_cases.get_email_preferences import (
     GetEmailPreferences,
 )
+from backend.v2.contexts.communications.application.use_cases.register_push_device import (
+    RegisterPushDevice,
+)
 from backend.v2.contexts.communications.application.use_cases.resolve_unsubscribe_token import (
     ResolveUnsubscribeToken,
 )
@@ -116,11 +120,23 @@ from backend.v2.contexts.communications.application.use_cases.send_parent_evenin
 from backend.v2.contexts.communications.application.use_cases.send_parent_report_cards import (
     SendParentReportCardsCommand,
 )
+from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
+    SendPushToUser,
+)
 from backend.v2.contexts.communications.application.use_cases.set_email_preferences import (
     SetEmailPreferences,
 )
+from backend.v2.contexts.communications.application.use_cases.unregister_push_device import (
+    UnregisterPushDevice,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
     MongoEmailPreferenceRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo import (
+    MongoPushDeviceRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_push_token_audit import (
+    MongoPushTokenAudit,
 )
 from backend.v2.contexts.identity.application.list_my_memberships_use_case import (
     ListMyMembershipsUseCase,
@@ -683,6 +699,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _email_preference_repo = MongoEmailPreferenceRepository(db)
     app.state.get_email_preferences = GetEmailPreferences(preferences=_email_preference_repo)
     app.state.set_email_preferences = SetEmailPreferences(preferences=_email_preference_repo)
+    # Push device tokens (mobile M2): POST/DELETE /api/v2/me/devices.
+    _push_device_repo = MongoPushDeviceRepository(db)
+    app.state.register_push_device = RegisterPushDevice(
+        devices=_push_device_repo, audit=MongoPushTokenAudit(db)
+    )
+    app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
+    # Push sending (mobile M3). Stub unless PUSH_DELIVERY_ENABLED; no caller yet,
+    # the future ParentNotifier fans out to it after email.
+    app.state.send_push_to_user = SendPushToUser(
+        devices=_push_device_repo, sender=_build_push_sender(settings)
+    )
     # Fail closed: with no secret configured nothing was ever signed, the
     # footer rendered a portal pointer instead of a link, and the unsubscribe
     # endpoints 404. There is deliberately no fallback onto another secret.

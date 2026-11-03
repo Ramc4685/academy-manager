@@ -125,6 +125,9 @@ TENANT_OWNED_COLLECTIONS = {
     # Scheduled plan price changes (migration 0212, Settings overhaul PR 26);
     # read by every charge path with an explicit academy_id filter.
     "plan_price_changes",
+    # FCM device tokens (migration 0215, mobile M2). Token is unique across
+    # academies; register re-stamps academy_id from the request scope.
+    "push_devices",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
