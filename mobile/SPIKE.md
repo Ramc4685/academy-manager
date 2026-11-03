@@ -51,3 +51,19 @@ Sources live in `mobile/assets/` (1024px icon, adaptive foreground/background,
 `pnpm assets`. The generator also reformats `android/app/src/main/AndroidManifest.xml`;
 discard that diff, it changes nothing. The "B" is the house academy's mark; replace
 the five source files if the store app gets its own brand, then rerun `pnpm assets`.
+
+## Device run, 2026-11-03 (Android emulator, API 37, local stack)
+
+`adb reverse tcp:3001 tcp:3001` and `adb reverse tcp:9099 tcp:9099` let the
+emulator use `localhost` for the dev server and the Firebase Auth emulator, so
+the Android build needs no `MOBILE_SERVER_URL` override. Gradle 8.14 needs
+JDK 21 (`brew install openjdk@21`); Android Studio's bundled JDK 25 fails.
+
+- Shell boots, opens `/login`, academy branding resolves after seeding. Pass.
+- Email sign-in → admin dashboard, then Log out → back to `/login`. Pass, no crash.
+- Google sign-in: without `google-services.json` the native auth plugin fails
+  to load, so the button is now hidden in the app (the web fallback opened
+  Chrome, which Google blocks in webviews anyway). Needs the Firebase file.
+- Push: stays off on Android until `google-services.json` is bundled (PushReady guard). No crash.
+- Not covered: Stripe Checkout (no local Stripe keys), offline attendance
+  (service worker is off in `next dev`), iOS (Xcode license needs `sudo`).
