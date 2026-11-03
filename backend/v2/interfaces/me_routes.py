@@ -7,6 +7,7 @@ authorization path as every persona BFF route.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -19,10 +20,15 @@ from backend.v2.contexts.communications.application.use_cases.register_push_devi
     RegisterPushDeviceCommand,
 )
 from backend.v2.contexts.communications.application.use_cases.unregister_push_device import (
+    ForgetPushDevices,
     UnregisterPushDevice,
 )
 from backend.v2.contexts.identity.application.list_my_memberships_use_case import (
     ListMyMembershipsUseCase,
+)
+from backend.v2.contexts.identity.application.use_cases.request_account_deletion import (
+    RequestAccountDeletion,
+    RequestAccountDeletionCommand,
 )
 from backend.v2.shared.auth.claims import AuthClaims, Role, get_auth_claims
 
@@ -132,3 +138,41 @@ async def unregister_my_device(
     """Drop the caller's token on logout; missing or not-yours is a silent no-op."""
     use_case: UnregisterPushDevice = request.app.state.unregister_push_device
     await use_case.execute(user_id=claims.user_id, token=token)
+
+
+class AccountDeletionBody(BaseModel):
+    # The typed confirmation from the delete screen; anything else is a 422.
+    confirm: Literal["DELETE"]
+
+
+class AccountDeletionView(BaseModel):
+    status: str
+    requested_at: datetime
+    execute_after: datetime
+
+
+@router.post("/me/account-deletion", response_model=AccountDeletionView)
+async def request_my_account_deletion(
+    body: AccountDeletionBody,
+    request: Request,
+    claims: AuthClaims = Depends(get_auth_claims),
+) -> AccountDeletionView:
+    """Delete the caller's own account (any persona; store rules, mobile M5).
+
+    Needs a sign-in from the last few minutes. Locks the account in every
+    academy at once and schedules the data clean-up; a repeat returns the
+    request already on file.
+    """
+    use_case: RequestAccountDeletion = request.app.state.request_account_deletion
+    deletion = await use_case.execute(
+        RequestAccountDeletionCommand(
+            user_id=claims.user_id, email=claims.email, signed_in_at=claims.signed_in_at
+        )
+    )
+    forget: ForgetPushDevices = request.app.state.forget_push_devices
+    await forget.execute(user_ids=deletion.aliases, academy_ids=deletion.academy_ids)
+    return AccountDeletionView(
+        status=deletion.status,
+        requested_at=deletion.requested_at,
+        execute_after=deletion.execute_after,
+    )

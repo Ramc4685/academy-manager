@@ -1,6 +1,6 @@
 # In-app account deletion (mobile slice M5) — design
 
-Status: design only, nothing built (2026-11-03). Owner decisions are marked **[owner]**.
+Status: D1 (request endpoint) built 2026-11-03 with the proposed defaults for decisions 7-9: a balance does not block, a coach with upcoming classes is refused, 14-day window. D2-D5 not started. Owner decisions are marked **[owner]**.
 Parent plan: `docs/plans/2026-11-02-mobile-apps.md` (M5).
 
 ## Why

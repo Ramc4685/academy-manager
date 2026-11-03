@@ -127,6 +127,7 @@ from backend.v2.contexts.communications.application.use_cases.set_email_preferen
     SetEmailPreferences,
 )
 from backend.v2.contexts.communications.application.use_cases.unregister_push_device import (
+    ForgetPushDevices,
     UnregisterPushDevice,
 )
 from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
@@ -153,6 +154,9 @@ from backend.v2.contexts.identity.application.use_cases.magic_link import (
 from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
     RegisterPublicParent,
 )
+from backend.v2.contexts.identity.application.use_cases.request_account_deletion import (
+    RequestAccountDeletion,
+)
 from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
     SendRegistrationVerificationEmail,
 )
@@ -173,6 +177,9 @@ from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import 
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
+    MongoAccountDeletionStore,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
@@ -705,6 +712,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         devices=_push_device_repo, audit=MongoPushTokenAudit(db)
     )
     app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
+    app.state.forget_push_devices = ForgetPushDevices(devices=_push_device_repo)
+    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
+    app.state.request_account_deletion = RequestAccountDeletion(
+        store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
+    )
     # Push sending (mobile M3). Stub unless PUSH_DELIVERY_ENABLED; no caller yet,
     # the future ParentNotifier fans out to it after email.
     app.state.send_push_to_user = SendPushToUser(

@@ -145,6 +145,9 @@ GLOBAL_COLLECTIONS = {
     # Host -> academy mapping, resolved globally by hostname during request
     # tenant resolution (see shared/tenancy/resolver.py).
     "academy_domains",
+    # Self-service account deletion requests (migration 0216, mobile M5): one
+    # Firebase account spans academies, so its deletion request does too.
+    "account_deletion_requests",
 }
 
 assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (

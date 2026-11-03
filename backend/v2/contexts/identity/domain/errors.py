@@ -209,3 +209,14 @@ class InvalidManualPaymentMethods(DomainError):
 
     code = "Identity.InvalidManualPaymentMethods"
     status_code = 422
+
+
+class RecentSignInRequired(DomainError):
+    """Account deletion needs a sign-in from the last few minutes (mobile M5).
+
+    The client re-authenticates (password, Google or Apple) and retries with
+    the fresh ID token, whose ``auth_time`` proves the person is at the phone.
+    """
+
+    code = "Identity.RecentSignInRequired"
+    status_code = 403
