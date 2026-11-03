@@ -8,12 +8,14 @@ import {
   completeGoogleRedirectSignIn,
   onAuthChange,
   sendPasswordReset,
+  signInWithApple,
   signInWithEmail,
   signInWithGoogle,
   signOutCurrent,
 } from "@/lib/auth/firebase";
 import { toAuthErrorMessage } from "@/lib/auth/auth-error";
 import { loginErrorMessage } from "@/lib/auth/login-error";
+import { shouldOfferAppleSignIn, shouldOfferGoogleSignIn } from "@/lib/auth/native-sign-in";
 import { registerPublicParent } from "@/lib/api/registration";
 import {
   clearPendingParentRegistration,
@@ -42,6 +44,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +74,10 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
           router.replace(handOff as Parameters<typeof router.replace>[0]);
         }
       });
+    }
+
+    if (searchParams.get("deleted") === "1") {
+      setNotice("Your account has been deleted and you are signed out.");
     }
 
     const prefillEmail = searchParams.get("email");
@@ -147,6 +154,22 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     }
   }
 
+  async function handleApple() {
+    setAppleLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      clearBffIdentityCookie();
+      clearPersonaHintCookie();
+      await signInWithApple();
+      router.push("/post-login");
+    } catch (err) {
+      setError(toAuthErrorMessage(err, "Apple sign-in failed. Please try again."));
+    } finally {
+      setAppleLoading(false);
+    }
+  }
+
   async function handlePasswordReset() {
     const trimmedEmail = email.trim();
     setError(null);
@@ -168,7 +191,10 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     }
   }
 
-  const busy = !hydrated || loading || googleLoading || resetLoading;
+  const busy = !hydrated || loading || googleLoading || appleLoading || resetLoading;
+  // After hydration only: the app shell is detected from a window global.
+  const offerApple = hydrated && shouldOfferAppleSignIn();
+  const offerGoogle = !hydrated || shouldOfferGoogleSignIn();
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -272,21 +298,37 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
               </button>
             </form>
 
-            <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
-              <div className="h-px flex-1 bg-slate-200" />
-              <span>or</span>
-              <div className="h-px flex-1 bg-slate-200" />
-            </div>
+            {offerGoogle && (
+              <>
+                <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span>or</span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
 
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleGoogle}
-              data-testid="login-google"
-              className="mt-5 flex min-h-touch w-full items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {googleLoading ? "Connecting..." : "Continue with Google"}
-            </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleGoogle}
+                  data-testid="login-google"
+                  className="mt-5 flex min-h-touch w-full items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {googleLoading ? "Connecting..." : "Continue with Google"}
+                </button>
+              </>
+            )}
+
+            {offerApple && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleApple}
+                data-testid="login-apple"
+                className="mt-3 flex min-h-touch w-full items-center justify-center rounded-md bg-black px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {appleLoading ? "Connecting..." : "Continue with Apple"}
+              </button>
+            )}
 
             <p className="mt-6 text-center text-sm text-slate-600">
               New parent?{" "}

@@ -8,10 +8,12 @@ import {
   registerPublicParent,
   sendParentVerificationEmail,
 } from "@/lib/api/registration";
+import { shouldOfferAppleSignIn, shouldOfferGoogleSignIn } from "@/lib/auth/native-sign-in";
 import { rememberPendingParentRegistration } from "@/lib/auth/parent-registration-continuation";
 import {
   completeGoogleRedirectSignIn,
   registerWithEmail,
+  signInWithApple,
   signInWithGoogle,
   signOutCurrent,
   verificationRequestToken,
@@ -41,6 +43,7 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -107,6 +110,22 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
     }
   }
 
+  async function handleApple() {
+    setAppleLoading(true);
+    setError(null);
+    setNotice(null);
+    setPendingVerificationUser(null);
+    try {
+      await signInWithApple();
+      await finishParentRegistration();
+    } catch (err) {
+      if (redirectToLoginOnGoogleConflict(err)) return;
+      setError(toAuthErrorMessage(err, "Apple registration failed."));
+    } finally {
+      setAppleLoading(false);
+    }
+  }
+
   async function handleEmailSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
@@ -166,7 +185,10 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
     }
   }
 
-  const busy = !hydrated || loading || googleLoading || verificationLoading;
+  const busy = !hydrated || loading || googleLoading || appleLoading || verificationLoading;
+  // After hydration only: the app shell is detected from a window global.
+  const offerApple = hydrated && shouldOfferAppleSignIn();
+  const offerGoogle = !hydrated || shouldOfferGoogleSignIn();
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -209,23 +231,37 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
               </p>
             </div>
 
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleGoogle}
-              data-testid="register-google"
-              className="mt-8 flex min-h-touch w-full items-center justify-center gap-3 rounded-md border border-blue-700 bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <span className="flex size-6 items-center justify-center rounded-full bg-white text-sm font-bold text-blue-700">
-                G
-              </span>
-              <span>{googleLoading ? "Connecting..." : "Continue with Google"}</span>
-              {!googleLoading && (
-                <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] uppercase">
-                  Recommended
+            {offerGoogle && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleGoogle}
+                data-testid="register-google"
+                className="mt-8 flex min-h-touch w-full items-center justify-center gap-3 rounded-md border border-blue-700 bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="flex size-6 items-center justify-center rounded-full bg-white text-sm font-bold text-blue-700">
+                  G
                 </span>
-              )}
-            </button>
+                <span>{googleLoading ? "Connecting..." : "Continue with Google"}</span>
+                {!googleLoading && (
+                  <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] uppercase">
+                    Recommended
+                  </span>
+                )}
+              </button>
+            )}
+
+            {offerApple && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleApple}
+                data-testid="register-apple"
+                className="mt-3 flex min-h-touch w-full items-center justify-center rounded-md bg-black px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {appleLoading ? "Connecting..." : "Continue with Apple"}
+              </button>
+            )}
 
             <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
               <div className="h-px flex-1 bg-slate-200" />
