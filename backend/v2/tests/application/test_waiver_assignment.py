@@ -95,12 +95,14 @@ class FakeWaivers:
         )
         self.signatures[(signature.student_id, template.lineage)] = ParentWaiverSignature(
             student_id=signature.student_id,
+            waiver_signature_id=signature.waiver_signature_id,
             waiver_template_id=signature.waiver_template_id,
             content_hash=signature.content_hash,
             parent_user_id=signature.parent_user_id,
             signed_at=signature.signed_at,
             lineage_key=template.lineage,
             signed_version=template.version,
+            signing_path=signature.signing_path,
         )
 
 
@@ -120,7 +122,8 @@ def _accept(waivers: FakeWaivers) -> AcceptParentWaiver:
 async def _sign(waivers: FakeWaivers, parent_id: str = "parent-1"):
     return await _accept(waivers).execute(
         parent_id=parent_id,
-        signer_name="Pat",
+        signer_name="Pat Parent",
+        consent=True,
         signer_email="pat@example.com",
         ip_address=None,
         user_agent=None,
@@ -389,7 +392,11 @@ async def test_accepting_stores_every_waiver_for_the_chosen_class() -> None:
 
     updated = await use_case.execute(
         PatchApplicationCommand(
-            application_id="app-1", caller_user_id="parent-1", accept_waiver=True
+            application_id="app-1",
+            caller_user_id="parent-1",
+            accept_waiver=True,
+            signer_name="Pat Parent",
+            consent=True,
         )
     )
 
@@ -408,7 +415,11 @@ async def test_single_waiver_flow_is_unchanged_by_choosing_a_class() -> None:
 
     accepted = await use_case.execute(
         PatchApplicationCommand(
-            application_id="app-1", caller_user_id="parent-1", accept_waiver=True
+            application_id="app-1",
+            caller_user_id="parent-1",
+            accept_waiver=True,
+            signer_name="Pat Parent",
+            consent=True,
         )
     )
     chose_class = await use_case.execute(

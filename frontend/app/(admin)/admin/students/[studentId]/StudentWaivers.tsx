@@ -32,6 +32,7 @@ export function StudentWaiverWarning({ rows }: { rows: ReadonlyArray<AdminStuden
 const STATE_CHIP: Record<AdminStudentWaiverRow["status"], { variant: ChipVariant; label: string }> = {
   signed: { variant: "approved", label: "SIGNED" },
   older_version: { variant: "pending", label: "OLDER VERSION" },
+  expired: { variant: "pending", label: "EXPIRED" },
   unsigned: { variant: "pending", label: "NOT SIGNED" },
 };
 

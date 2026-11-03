@@ -2226,7 +2226,8 @@
       "controls": {
         "buttons": [
           "Back",
-          "Download"
+          "Download",
+          "Print or save as PDF"
         ],
         "inputs": [],
         "modals": []
@@ -3336,11 +3337,14 @@
       ],
       "controls": {
         "buttons": [
-          "Accept waiver",
+          "Sign waiver",
+          "Signed copy",
           "Retry"
         ],
         "inputs": [
-          "Signer name"
+          "Full legal name",
+          "Consent checkbox",
+          "Sign for child checkbox"
         ],
         "modals": []
       },
@@ -3356,14 +3360,47 @@
       ],
       "risk_edges": [
         "Signer name blank",
+        "Consent not ticked",
         "Mixed outdated/current child states"
       ],
       "acceptance": [
         "Current waiver signature is required before dependent workflows",
         "Workflow evidence: \"Review waiver status\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Sign waiver\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Consent not ticked\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Signer name blank\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Mixed outdated/current child states\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/waivers/signatures/[signatureId]",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/waivers/signatures/[signatureId]/page.tsx",
+      "workflows": [
+        "View signed waiver copy",
+        "Print signed waiver"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to waivers",
+          "Print or save as PDF"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "error",
+        "not found"
+      ],
+      "risk_edges": [
+        "Another family's signature id"
+      ],
+      "acceptance": [
+        "The signed copy shows the exact signed text and its audit trail",
+        "Workflow evidence: \"View signed waiver copy\" completes for the parent route /parent/waivers/signatures/[signatureId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print signed waiver\" completes for the parent route /parent/waivers/signatures/[signatureId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Another family's signature id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {

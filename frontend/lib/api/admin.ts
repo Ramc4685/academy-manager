@@ -5,6 +5,7 @@
  * the openapi-typescript generator produces lib/api/generated/v2.d.ts.
  */
 
+import type { SignedWaiverCopy } from "@/lib/api/parent";
 import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
@@ -1231,6 +1232,8 @@ export interface AdminWaiverTemplateManagementView {
   required?: boolean;
   scope?: AdminWaiverScope;
   program_ids?: string[];
+  renew_every_months?: number | null;
+  valid_until?: string | null;
 }
 
 export type AdminWaiverScope = "all" | "programs";
@@ -1259,9 +1262,13 @@ export interface AdminWaiverAssignRequest {
   required: boolean;
   scope: AdminWaiverScope;
   program_ids: string[];
+  /** A signature must be renewed this many months after signing (1-60). */
+  renew_every_months?: number | null;
+  /** Every signature lapses after this date (YYYY-MM-DD). Not with renew_every_months. */
+  valid_until?: string | null;
 }
 
-export type AdminStudentWaiverState = "signed" | "older_version" | "unsigned";
+export type AdminStudentWaiverState = "signed" | "older_version" | "expired" | "unsigned";
 
 export interface AdminStudentWaiverRow {
   waiver_template_id: string;
@@ -3302,6 +3309,11 @@ export function getAdminWaiverSignature(signatureId: string): Promise<AdminWaive
     `/admin/waivers/signatures/${encodeURIComponent(signatureId)}`,
     { method: "GET" },
   );
+}
+
+/** The printable signed copy: the same document the family sees. */
+export function getAdminSignedWaiverCopy(signatureId: string): Promise<SignedWaiverCopy> {
+  return apiFetch(`/admin/waivers/signatures/${encodeURIComponent(signatureId)}/copy`);
 }
 
 export function listAdminRegistrations(): Promise<AdminRegistrationList> {

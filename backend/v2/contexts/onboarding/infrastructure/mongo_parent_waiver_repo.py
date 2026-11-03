@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from secrets import token_urlsafe
-from typing import Any
+from typing import Any, Literal
 
 from bson import ObjectId as BsonObjectId
 
@@ -12,6 +12,7 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
     AdminWaiverTemplateRecord,
 )
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    ParentSignedWaiverCopy,
     ParentWaiverSignature,
     ParentWaiverStudent,
 )
@@ -142,6 +143,7 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     lineage_key=lineage,
                     waiver_signature_id=str(doc.get("waiver_signature_id") or "") or None,
                     signed_version=versions.get(str(doc.get("waiver_template_id") or "")),
+                    signing_path=_signing_path(doc.get("signing_path")),
                 )
         legacy_docs = [
             doc
@@ -275,6 +277,7 @@ class MongoParentWaiverRepository(TenantScopedRepository):
             ParentWaiverStudent(
                 student_id=str(doc.get("student_id") or doc.get("_id")),
                 student_name=self._student_name(doc),
+                date_of_birth=str(doc.get("date_of_birth") or "")[:10] or None,
             )
             for doc in merged
         ]
@@ -400,9 +403,55 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     "user_agent": signature.user_agent,
                     "artifact_id": artifact_id,
                     "expires_at": signature.expires_at,
+                    "consent_text": signature.consent_text,
+                    "initials": dict(signature.initials),
+                    "signing_path": signature.signing_path,
                 }
             },
             upsert=True,
+        )
+
+    async def signed_copy(self, waiver_signature_id: str) -> ParentSignedWaiverCopy | None:
+        academy_id = current_academy_id()
+        signature = await self._find_one({"waiver_signature_id": waiver_signature_id})
+        if signature is None:
+            return None
+        artifact = None
+        if signature.get("artifact_id"):
+            artifact = await self._db["waiver_artifacts"].find_one(
+                {"academy_id": academy_id, "artifact_id": signature["artifact_id"]}
+            )
+        artifact = artifact or {}
+        template = None
+        if not artifact.get("body"):
+            template = await self._template_doc(str(signature.get("waiver_template_id") or ""))
+        template = template or {}
+        student_id = str(signature.get("student_id") or "")
+        student = await self._db["students"].find_one(
+            {"academy_id": academy_id, "student_id": student_id}
+        )
+        if student is None and BsonObjectId.is_valid(student_id):
+            student = await self._db["students"].find_one(
+                {"academy_id": academy_id, "_id": BsonObjectId(student_id)}
+            )
+        parent_user_id = signature.get("parent_user_id")
+        return ParentSignedWaiverCopy(
+            waiver_signature_id=waiver_signature_id,
+            student_id=student_id,
+            student_name=self._student_name(student) if student else "Student",
+            parent_user_id=str(parent_user_id) if parent_user_id else None,
+            title=artifact.get("template_title") or template.get("name") or template.get("title"),
+            version=artifact.get("template_version") or template.get("version"),
+            body=str(artifact.get("body") or template.get("body") or template.get("text") or ""),
+            content_hash=signature.get("content_hash"),
+            signed_at=self._as_datetime(signature.get("signed_at")),
+            signer_name=str(signature.get("signer_name") or ""),
+            signer_email=signature.get("signer_email"),
+            consent_text=signature.get("consent_text"),
+            ip_address=signature.get("ip_address"),
+            user_agent=signature.get("user_agent"),
+            initials={str(k): str(v) for k, v in (signature.get("initials") or {}).items() if v},
+            signing_path=_signing_path(signature.get("signing_path")),
         )
 
     async def _template_doc(self, waiver_template_id: str) -> dict[str, Any] | None:
@@ -443,6 +492,9 @@ class MongoParentWaiverRepository(TenantScopedRepository):
                     "signed_at": signature.signed_at,
                     "signer_name": signature.signer_name,
                     "signer_email": str(signature.signer_email),
+                    "ip_address": signature.ip_address,
+                    "user_agent": signature.user_agent,
+                    "consent_text": signature.consent_text,
                     "template_title": (
                         str(template.get("name") or template.get("title") or "")
                         if template
@@ -497,3 +549,7 @@ class MongoParentWaiverRepository(TenantScopedRepository):
         first = str(doc.get("first_name") or "").strip()
         last = str(doc.get("last_name") or "").strip()
         return str(doc.get("full_name") or f"{first} {last}".strip() or "Unnamed student")
+
+
+def _signing_path(value: Any) -> Literal["adult", "minor"] | None:
+    return value if value in ("adult", "minor") else None

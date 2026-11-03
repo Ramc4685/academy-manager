@@ -320,6 +320,8 @@ export interface RegistrationWaiver {
   body: string | null;
   /** Every waiver to sign for the chosen class; the flat fields above are the first. */
   waivers?: RegistrationWaiverItem[];
+  /** The statement beside the consent checkbox; stored with the acceptance. */
+  consent_text?: string;
   /** True when a waiver is assigned to a program: ask for the class first. */
   class_first?: boolean;
 }
@@ -340,6 +342,11 @@ export function patchOnboarding(
     child_profile?: Partial<ChildProfile>;
     selected_session_id?: string;
     accept_waiver?: boolean;
+    /** Required with accept_waiver: the typed full legal name and consent box. */
+    signer_name?: string;
+    consent?: boolean;
+    /** waiver_template_id -> {section key: initials} for sections marked [initials]. */
+    initials?: Record<string, Record<string, string>>;
   },
 ): Promise<OnboardingApplication> {
   return apiFetch(`/parent/onboarding/${application_id}`, {
@@ -579,6 +586,12 @@ export interface ParentWaiverStudentView {
   status: ParentWaiverStatus;
   signed_at: string | null;
   waiver_version: string | null;
+  /** The signature behind a signed status; opens the signed copy. */
+  waiver_signature_id?: string | null;
+  /** Adult or parent/guardian release, from the child's date of birth. */
+  signing_path?: "adult" | "minor" | null;
+  /** The waiver has age sections and this child has no date of birth yet. */
+  date_of_birth_missing?: boolean;
 }
 
 export interface ParentWaiverItemView {
@@ -598,6 +611,8 @@ export interface ParentWaiverCurrentView {
   students: ParentWaiverStudentView[];
   /** Every waiver this parent's children must sign; the flat fields above are the first. */
   waivers?: ParentWaiverItemView[];
+  /** The statement beside the consent checkbox; stored on every signature. */
+  consent_text: string;
 }
 
 export function getParentCurrentWaiver(): Promise<ParentWaiverCurrentView> {
@@ -605,11 +620,40 @@ export function getParentCurrentWaiver(): Promise<ParentWaiverCurrentView> {
 }
 
 export function acceptParentWaiver(payload: {
-  signer_name: string | null;
+  signer_name: string;
+  consent: boolean;
+  /** Sign for these children only; omit to sign for every child who needs it. */
+  student_ids?: string[];
+  /** waiver_template_id -> {section key: initials} for sections marked [initials]. */
+  initials?: Record<string, Record<string, string>>;
 }): Promise<ParentWaiverCurrentView> {
   return apiFetch("/parent/waivers/accept", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+/** A signed waiver as a document: the exact text plus its audit trail. */
+export interface SignedWaiverCopy {
+  waiver_signature_id: string;
+  student_name: string;
+  title: string | null;
+  version: string | null;
+  body: string;
+  content_hash: string | null;
+  signed_at: string | null;
+  signer_name: string;
+  signer_email: string | null;
+  consent_text: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  initials?: Record<string, string>;
+  signing_path?: "adult" | "minor" | null;
+}
+
+export function getParentSignedWaiver(waiverSignatureId: string): Promise<SignedWaiverCopy> {
+  return apiFetch(`/parent/waivers/signatures/${encodeURIComponent(waiverSignatureId)}`, {
+    method: "GET",
   });
 }
 

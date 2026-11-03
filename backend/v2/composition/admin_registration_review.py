@@ -35,6 +35,9 @@ from backend.v2.contexts.onboarding.application.ports import ApplicationReposito
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     AdminWaiverTemplateRecord,
 )
+from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    WaiverSignedNotifier,
+)
 from backend.v2.contexts.onboarding.domain.errors import (
     ApplicationNotEditable,
     ApplicationNotFound,
@@ -60,6 +63,8 @@ class RegistrationWaiverTemplateQuery(Protocol):
 
 class RegistrationWaiverSignatureWriter(Protocol):
     async def save_signature(self, signature: WaiverSignature) -> None: ...
+
+    async def signed_copy(self, waiver_signature_id: str) -> object | None: ...
 
 
 class StudentRegistrationQuery(Protocol):
@@ -277,6 +282,7 @@ class AdminRegistrationReview:
         welcome_notifier: EnrollmentWelcomeNotifier | None = None,
         roster_notifier: RosterChangeNotifier | None = None,
         decision_notifier: RegistrationDecisionNotifier | None = None,
+        waiver_receipt_notifier: WaiverSignedNotifier | None = None,
         seat_broker: SeatBroker | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -288,6 +294,7 @@ class AdminRegistrationReview:
         self._academy_id = academy_id
         self._waiver_templates = waiver_templates
         self._waiver_signatures = waiver_signatures
+        self._waiver_receipt_notifier = waiver_receipt_notifier
         self._enrollment_events = enrollment_events
         self._trial_conversion = trial_conversion
         self._student_registrations = student_registrations
@@ -878,26 +885,53 @@ class AdminRegistrationReview:
     ) -> None:
         if self._waiver_signatures is None:
             return
-        signer_name = self._parent_name(app) or str(app.parent_email)
+        fallback_name = self._parent_name(app) or str(app.parent_email)
+        created: list[str] = []
         for acceptance in app.all_waiver_acceptances:
             if not acceptance.waiver_template_id:
                 continue
+            signature_id = (
+                f"ws_registration_{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
+            )
+            # Ids are deterministic, so a retried approval re-saves the same rows;
+            # only rows this call creates earn a receipt.
+            if (
+                self._waiver_receipt_notifier is not None
+                and await self._waiver_signatures.signed_copy(signature_id) is None
+            ):
+                created.append(signature_id)
             await self._waiver_signatures.save_signature(
                 WaiverSignature(
-                    waiver_signature_id=(
-                        "ws_registration_"
-                        f"{app.application_id}_{student_id}_{acceptance.waiver_template_id}"
-                    ),
+                    waiver_signature_id=signature_id,
                     academy_id=self._request_academy_id(),
                     waiver_template_id=acceptance.waiver_template_id,
                     student_id=student_id,
                     parent_user_id=app.parent_user_id,
                     signed_at=acceptance.accepted_at,
-                    signer_name=signer_name,
+                    # The name the parent typed; older acceptances predate it.
+                    signer_name=acceptance.signer_name or fallback_name,
                     signer_email=app.parent_email,
                     content_hash=acceptance.content_hash,
+                    ip_address=acceptance.ip_address,
+                    user_agent=acceptance.user_agent,
+                    consent_text=acceptance.consent_text,
+                    initials=dict(acceptance.initials),
+                    signing_path=acceptance.signing_path,
                 )
             )
+        if created and self._waiver_receipt_notifier is not None:
+            try:
+                await self._waiver_receipt_notifier.waivers_signed(
+                    parent_user_id=app.parent_user_id,
+                    signer_email=str(app.parent_email),
+                    waiver_signature_ids=created,
+                )
+            except Exception:
+                # Best-effort: approval already stored the signatures.
+                logger.exception(
+                    "waiver.receipt_email_failed",
+                    extra={"application_id": app.application_id},
+                )
 
     async def _row(
         self,

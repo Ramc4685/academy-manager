@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from typing import Literal, Protocol
 
@@ -41,6 +41,8 @@ class AdminWaiverTemplateRecord(BaseModel):
     required: bool = False
     scope: WaiverScope = "all"
     program_ids: list[str] = Field(default_factory=list)
+    renew_every_months: int | None = None
+    valid_until: date | None = None
 
     @property
     def lineage(self) -> str:
@@ -52,6 +54,8 @@ class AdminWaiverTemplateRecord(BaseModel):
             required=self.required,
             scope=self.scope,
             program_ids=tuple(self.program_ids),
+            renew_every_months=self.renew_every_months,
+            valid_until=self.valid_until,
         )
 
 
@@ -88,6 +92,8 @@ class AssignWaiverCommand(BaseModel):
     required: bool
     scope: WaiverScope = "all"
     program_ids: list[str] = Field(default_factory=list)
+    renew_every_months: int | None = None
+    valid_until: date | None = None
 
 
 class PublishWaiverTemplateCommand(BaseModel):
@@ -238,10 +244,19 @@ class ManageAdminWaiverTemplates:
         if template.status != "active":
             raise ValueError("Only active waiver templates can be assigned")
         program_ids = list(dict.fromkeys(pid.strip() for pid in command.program_ids if pid.strip()))
+        if command.renew_every_months is not None and command.valid_until is not None:
+            raise ValueError("Choose either a renewal period or an end date, not both")
+        if command.renew_every_months is not None and not 1 <= command.renew_every_months <= 60:
+            raise ValueError("Renewal must be between 1 and 60 months")
+        renew, until = command.renew_every_months, command.valid_until
         if not command.required:
-            assignment = WaiverAssignment(required=False)
+            assignment = WaiverAssignment(
+                required=False, renew_every_months=renew, valid_until=until
+            )
         elif command.scope == "all":
-            assignment = WaiverAssignment(required=True, scope="all")
+            assignment = WaiverAssignment(
+                required=True, scope="all", renew_every_months=renew, valid_until=until
+            )
         else:
             if not program_ids:
                 raise ValueError("Choose at least one program")
@@ -250,7 +265,11 @@ class ManageAdminWaiverTemplates:
             if unknown:
                 raise ValueError("Unknown program")
             assignment = WaiverAssignment(
-                required=True, scope="programs", program_ids=tuple(program_ids)
+                required=True,
+                scope="programs",
+                program_ids=tuple(program_ids),
+                renew_every_months=renew,
+                valid_until=until,
             )
         return await self._templates.set_assignment(
             waiver_template_id=template.waiver_template_id,

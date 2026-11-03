@@ -134,6 +134,10 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   "/admin/families/[parentId]": {
     replacements: [["[parentId]", "LOCAL_AUTH_ADMIN_USER_ID"]],
   },
+  // Seeded signature id; a parent who is not its signer sees the not-found state.
+  "/parent/waivers/signatures/[signatureId]": {
+    replacements: [["[signatureId]", "LOCAL_AUTH_ADMIN_WAIVER_SIGNATURE_ID"]],
+  },
   "/parent/progress/certificates/[certId]": {
     replacements: [["[certId]", "LOCAL_AUTH_PARENT_CERT_ID"]],
     query: [["child", "LOCAL_AUTH_PARENT_CERT_STUDENT_ID"]],
