@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { shouldUseRedirectForGoogleSignIn } from "./google-sign-in-mode.ts";
+import { isNativeAppShell, shouldUseRedirectForGoogleSignIn } from "./google-sign-in-mode.ts";
 
 test("uses redirect for iPhone Safari instead of popup", () => {
   assert.equal(
@@ -49,4 +49,11 @@ test("keeps popup for desktop Chrome", () => {
     }),
     false
   );
+});
+
+test("detects the Capacitor app shell only when it reports a native platform", () => {
+  assert.equal(isNativeAppShell({ Capacitor: { isNativePlatform: () => true } }), true);
+  assert.equal(isNativeAppShell({ Capacitor: { isNativePlatform: () => false } }), false);
+  assert.equal(isNativeAppShell({}), false);
+  assert.equal(isNativeAppShell(undefined), false);
 });

@@ -22,6 +22,7 @@ import {
   isEmailAlreadyInUseError,
   toAuthErrorMessage,
 } from "@/lib/auth/auth-error";
+import { isNativeAppShell } from "@/lib/auth/google-sign-in-mode";
 import { BrandLockup } from "@/components/marketing/brand-lockup";
 
 // Self-hosted: a CSS gradient, not a hotlinked third-party image, so the
@@ -167,6 +168,8 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
   }
 
   const busy = !hydrated || loading || googleLoading || verificationLoading;
+  // After hydration only: the app shell is detected from a window global.
+  const offerGoogle = !hydrated || !isNativeAppShell(window);
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -205,33 +208,39 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
                 Register your child
               </h2>
               <p className="mt-2 text-sm text-slate-600">
-                Continue with Google for the fastest setup. Email signup requires verification before onboarding.
+                {offerGoogle
+                  ? "Continue with Google for the fastest setup. Email signup requires verification before onboarding."
+                  : "Sign up with your email. We will send a verification link before onboarding."}
               </p>
             </div>
 
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleGoogle}
-              data-testid="register-google"
-              className="mt-8 flex min-h-touch w-full items-center justify-center gap-3 rounded-md border border-blue-700 bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <span className="flex size-6 items-center justify-center rounded-full bg-white text-sm font-bold text-blue-700">
-                G
-              </span>
-              <span>{googleLoading ? "Connecting..." : "Continue with Google"}</span>
-              {!googleLoading && (
-                <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] uppercase">
-                  Recommended
-                </span>
-              )}
-            </button>
+            {offerGoogle && (
+              <>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleGoogle}
+                  data-testid="register-google"
+                  className="mt-8 flex min-h-touch w-full items-center justify-center gap-3 rounded-md border border-blue-700 bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="flex size-6 items-center justify-center rounded-full bg-white text-sm font-bold text-blue-700">
+                    G
+                  </span>
+                  <span>{googleLoading ? "Connecting..." : "Continue with Google"}</span>
+                  {!googleLoading && (
+                    <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] uppercase">
+                      Recommended
+                    </span>
+                  )}
+                </button>
 
-            <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
-              <div className="h-px flex-1 bg-slate-200" />
-              <span>Email option</span>
-              <div className="h-px flex-1 bg-slate-200" />
-            </div>
+                <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span>Email option</span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
+              </>
+            )}
 
             <form onSubmit={handleEmailSubmit} className="mt-5 space-y-5" data-testid="register-form">
               <Field

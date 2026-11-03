@@ -13,6 +13,7 @@ import {
   signOutCurrent,
 } from "@/lib/auth/firebase";
 import { toAuthErrorMessage } from "@/lib/auth/auth-error";
+import { isNativeAppShell } from "@/lib/auth/google-sign-in-mode";
 import { loginErrorMessage } from "@/lib/auth/login-error";
 import { registerPublicParent } from "@/lib/api/registration";
 import {
@@ -169,6 +170,8 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
   }
 
   const busy = !hydrated || loading || googleLoading || resetLoading;
+  // After hydration only: the app shell is detected from a window global.
+  const offerGoogle = !hydrated || !isNativeAppShell(window);
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -272,21 +275,25 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
               </button>
             </form>
 
-            <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
-              <div className="h-px flex-1 bg-slate-200" />
-              <span>or</span>
-              <div className="h-px flex-1 bg-slate-200" />
-            </div>
+            {offerGoogle && (
+              <>
+                <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span>or</span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
 
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleGoogle}
-              data-testid="login-google"
-              className="mt-5 flex min-h-touch w-full items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {googleLoading ? "Connecting..." : "Continue with Google"}
-            </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleGoogle}
+                  data-testid="login-google"
+                  className="mt-5 flex min-h-touch w-full items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {googleLoading ? "Connecting..." : "Continue with Google"}
+                </button>
+              </>
+            )}
 
             <p className="mt-6 text-center text-sm text-slate-600">
               New parent?{" "}
