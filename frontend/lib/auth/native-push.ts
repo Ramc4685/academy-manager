@@ -1,6 +1,9 @@
 /**
  * Push notifications inside the iOS/Android app shell (see mobile/, slice M4).
  *
+ * Uses @capacitor-firebase/messaging because the backend sends through FCM and
+ * needs FCM registration tokens on iOS too, not raw APNs device tokens.
+ *
  * Browsers never reach the plugin: every entry point checks the shell first
  * and the plugin is dynamic-imported, so the web bundle loads no Capacitor
  * code. Push is best-effort; any failure (no Firebase config yet, permission
@@ -10,7 +13,7 @@
 import { apiFetch } from "@/lib/api/client";
 import { hasNativePlugin, nativePlatform } from "@/lib/auth/native-sign-in";
 
-const PLUGIN = "PushNotifications";
+const PLUGIN = "FirebaseMessaging";
 /** Sign-out waits at most this long for the device to be dropped server-side. */
 const UNREGISTER_TIMEOUT_MS = 3_000;
 
@@ -37,10 +40,9 @@ function storeToken(token: string | null): void {
 }
 
 export function canUsePush(): boolean {
-  if (!hasNativePlugin(PLUGIN)) return false;
-  // Android's register() crashes the app when Firebase isn't configured; the
-  // shell registers the PushReady marker only when google-services.json is bundled.
-  return nativePlatform() !== "android" || hasNativePlugin("PushReady");
+  // Without google-services.json / GoogleService-Info.plist the plugin still
+  // loads and getToken() just rejects, so no Firebase-config check is needed here.
+  return hasNativePlugin(PLUGIN);
 }
 
 /**
@@ -62,35 +64,35 @@ export function safeAppPath(url: unknown): string | null {
 }
 
 /**
- * Ask for permission (the OS only prompts once), register with FCM/APNs and
- * send the token to the backend. Safe to call on every signed-in page load.
+ * Ask for permission (the OS only prompts once), fetch the FCM registration
+ * token and send it to the backend. Safe to call on every signed-in page load.
  */
 export async function startPushNotifications(): Promise<void> {
   const platform = nativePlatform();
   if (started || !platform || !canUsePush()) return;
   started = true;
+  const save = (token: string) => {
+    storeToken(token);
+    void apiFetch("/me/devices", {
+      method: "POST",
+      body: JSON.stringify({ token, platform }),
+    }).catch(() => undefined);
+  };
   try {
-    const { PushNotifications } = await import("@capacitor/push-notifications");
-    await PushNotifications.addListener("registration", ({ value }) => {
-      storeToken(value);
-      void apiFetch("/me/devices", {
-        method: "POST",
-        body: JSON.stringify({ token: value, platform }),
-      }).catch(() => undefined);
-    });
-    // Without GoogleService-Info.plist / google-services.json this fires; stay quiet.
-    await PushNotifications.addListener("registrationError", () => undefined);
-    await PushNotifications.addListener("pushNotificationActionPerformed", ({ notification }) => {
+    const { FirebaseMessaging } = await import("@capacitor-firebase/messaging");
+    await FirebaseMessaging.addListener("tokenReceived", ({ token }) => save(token));
+    await FirebaseMessaging.addListener("notificationActionPerformed", ({ notification }) => {
       const path = safeAppPath((notification.data as { url?: unknown } | undefined)?.url);
       if (path) window.location.assign(path);
     });
 
-    let { receive } = await PushNotifications.checkPermissions();
+    let { receive } = await FirebaseMessaging.checkPermissions();
     if (receive === "prompt" || receive === "prompt-with-rationale") {
-      ({ receive } = await PushNotifications.requestPermissions());
+      ({ receive } = await FirebaseMessaging.requestPermissions());
     }
     if (receive !== "granted") return;
-    await PushNotifications.register();
+    // Rejects without Firebase config; the catch below keeps that quiet.
+    save((await FirebaseMessaging.getToken()).token);
   } catch {
     // Push is optional; the app works without it.
   }
@@ -106,18 +108,20 @@ export async function stopPushNotifications(): Promise<void> {
   if (!started && !token) return;
   started = false;
   storeToken(null);
-  try {
-    const { PushNotifications } = await import("@capacitor/push-notifications");
-    await PushNotifications.removeAllListeners();
-  } catch {
-    // Listeners die with the page anyway.
-  }
-  if (!token) return;
-  const request = apiFetch(`/me/devices/${encodeURIComponent(token)}`, {
-    method: "DELETE",
-  }).catch(() => undefined);
+  // Best-effort: deleteToken() also makes FCM issue a fresh token for the next user.
+  const native = import("@capacitor-firebase/messaging")
+    .then(async ({ FirebaseMessaging }) => {
+      await FirebaseMessaging.removeAllListeners();
+      await FirebaseMessaging.deleteToken();
+    })
+    .catch(() => undefined);
+  const request = token
+    ? apiFetch(`/me/devices/${encodeURIComponent(token)}`, { method: "DELETE" }).catch(
+        () => undefined,
+      )
+    : undefined;
   await Promise.race([
-    request,
+    Promise.all([native, request]),
     new Promise((resolve) => setTimeout(resolve, UNREGISTER_TIMEOUT_MS)),
   ]);
 }

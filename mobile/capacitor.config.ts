@@ -40,6 +40,18 @@ const config: CapacitorConfig = {
     // Service workers in WKWebView need App-Bound Domains (WKAppBoundDomains in Info.plist).
     limitsNavigationsToAppBoundDomains: true,
   },
+  // Both Capawesome Firebase plugins' READMEs require this to avoid a SwiftPM
+  // package identity collision (capawesome-team/capacitor-firebase#959).
+  experimental: {
+    ios: {
+      spm: {
+        packageOptions: {
+          "@capacitor-firebase/authentication": { symlink: true },
+          "@capacitor-firebase/messaging": { symlink: true },
+        },
+      },
+    },
+  },
 };
 
 export default config;

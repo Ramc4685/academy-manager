@@ -64,6 +64,8 @@ JDK 21 (`brew install openjdk@21`); Android Studio's bundled JDK 25 fails.
 - Google sign-in: without `google-services.json` the native auth plugin fails
   to load, so the button is now hidden in the app (the web fallback opened
   Chrome, which Google blocks in webviews anyway). Needs the Firebase file.
-- Push: stays off on Android until `google-services.json` is bundled (PushReady guard). No crash.
+- Push: stays off on Android until `google-services.json` is bundled. No crash.
+  (Run with the old push plugin and its PushReady guard; since replaced by
+  `@capacitor-firebase/messaging`, which rejects `getToken()` instead. Not re-run.)
 - Not covered: Stripe Checkout (no local Stripe keys), offline attendance
   (service worker is off in `next dev`), iOS (Xcode license needs `sudo`).
