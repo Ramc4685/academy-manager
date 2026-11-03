@@ -13,7 +13,7 @@ stale alias would keep that academy's door open.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pymongo.errors import DuplicateKeyError
@@ -275,11 +275,19 @@ class MongoAccountDeletionStore:
     async def record_failure(
         self, request_id: str, *, step: str, error: str, now: datetime
     ) -> None:
+        # Back off (1h doubling, capped at a day) so a request that keeps
+        # failing stops filling every batch and starving the rest of the queue.
+        doc = await self._requests.find_one({"request_id": request_id}, {"attempts": 1})
+        attempts = int((doc or {}).get("attempts") or 0) + 1
+        retry_at = now + min(timedelta(hours=2 ** (attempts - 1)), timedelta(days=1))
         await self._requests.update_one(
             {"request_id": request_id},
             {
-                "$set": {"last_error": {"step": step, "error": error[:500], "at": now}},
-                "$inc": {"attempts": 1},
+                "$set": {
+                    "last_error": {"step": step, "error": error[:500], "at": now},
+                    "attempts": attempts,
+                    "execute_after": retry_at,
+                }
             },
         )
 

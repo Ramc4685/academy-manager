@@ -190,3 +190,26 @@ async def test_not_yet_due_requests_are_left_alone(real_db: Any) -> None:
     assert (await job.execute(now=NOW)).completed == 0
     assert stop_all.students == [] and firebase.deleted == []
     assert (await real_db["users"].find_one({"user_id": "u1"}))["display_name"] == "Pat Parent"
+
+
+async def test_a_failing_request_backs_off_instead_of_blocking_the_queue(real_db: Any) -> None:
+    await _seed(real_db)
+    stop_all, stripe = RecordingStopAll(), FakeStripeGateway()
+
+    class DownFirebase:
+        async def delete_user(self, uid: str) -> None:
+            raise RuntimeError("firebase down")
+
+    job = compose_execute_account_deletions(
+        real_db,
+        stop_all_classes=stop_all,
+        stripe=stripe,
+        firebase=DownFirebase(),  # type: ignore[arg-type]
+    )
+    assert (await job.execute(now=NOW)).failed == 1
+    row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
+    assert row["status"] == "scheduled" and row["attempts"] == 1
+    assert row["last_error"]["step"] == "firebase"
+    assert row["execute_after"].replace(tzinfo=UTC) == NOW + timedelta(hours=1)
+    # Not picked up again until the back-off passes.
+    assert (await job.execute(now=NOW + timedelta(minutes=30))).failed == 0

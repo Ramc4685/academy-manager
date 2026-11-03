@@ -15,7 +15,7 @@ Self-service account deletions are now carried out 14 days after the request (sl
   - the Firebase account is deleted last, and a `user.deletion_completed` audit row is written per academy.
 - Invoices, payments, payouts and audit snapshots are kept unchanged under the 7-year retention.
 - If another guardian on the family still has an active account in that academy, the children and family records are kept, and an ops alert asks an admin to re-home the family. The classes are still dropped, because billing belonged to the deleted parent.
-- A failure on one account is recorded on its request (`last_error`, `attempts`) and retried on the next tick. Every step is safe to repeat, and other accounts carry on.
+- A failure on one account is recorded on its request (`last_error`, `attempts`) and retried after a back-off of 1 hour, doubling up to a day, so a stuck account never blocks the queue. Every step is safe to repeat, and other accounts carry on.
 - The request row drops its email once the job completes.
 
 ## Deploy notes
