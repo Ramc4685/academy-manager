@@ -94,6 +94,11 @@ def _ensure_firebase_app() -> Any:
     return _firebase_app
 
 
+def firebase_app() -> Any:
+    """The shared Firebase Admin app, initialised on first use (FCM push reuses it)."""
+    return _ensure_firebase_app()
+
+
 def _get_google_public_cert_request() -> Any:
     global _google_public_cert_request
     if google_auth_requests is None:

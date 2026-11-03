@@ -24,6 +24,9 @@ from backend.v2.contexts.communications.application.use_cases.unregister_push_de
 from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo import (
     MongoPushDeviceRepository,
 )
+from backend.v2.contexts.communications.infrastructure.mongo_push_token_audit import (
+    MongoPushTokenAudit,
+)
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.tenancy.context import _current as _tenant_var
@@ -43,7 +46,7 @@ def _app(db: Any, *, user_id: str | None, academy_id: str = "acad-a") -> FastAPI
     app = FastAPI()
     app.include_router(me_router, prefix="/api/v2")
     repo = MongoPushDeviceRepository(db)
-    app.state.register_push_device = RegisterPushDevice(devices=repo)
+    app.state.register_push_device = RegisterPushDevice(devices=repo, audit=MongoPushTokenAudit(db))
     app.state.unregister_push_device = UnregisterPushDevice(devices=repo)
 
     @app.middleware("http")
@@ -83,6 +86,7 @@ async def test_register_is_idempotent_and_owned_by_the_caller(db: Any) -> None:
     assert second.json()["platform"] == "ios"
     rows = await db["push_devices"].find({}).to_list(None)
     assert [(r["user_id"], r["academy_id"]) for r in rows] == [("u1", "acad-a")]
+    assert await db["audit_logs"].count_documents({}) == 0
 
 
 @pytest.mark.asyncio
@@ -108,6 +112,15 @@ async def test_shared_phone_moves_the_token_to_the_new_user(db: Any) -> None:
 
     rows = await db["push_devices"].find({}).to_list(None)
     assert [(r["user_id"], r["academy_id"]) for r in rows] == [("dad", "acad-b")]
+    audits = await db["audit_logs"].find({"action": "push_device.token_moved"}).to_list(None)
+    assert [(a["academy_id"], a["before"], a["after"]) for a in audits] == [
+        (
+            "acad-b",
+            {"user_id": "mom", "academy_id": "acad-a"},
+            {"user_id": "dad", "academy_id": "acad-b"},
+        )
+    ]
+    assert "fcm-1" not in str(audits)
 
 
 @pytest.mark.asyncio

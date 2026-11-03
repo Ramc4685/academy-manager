@@ -9,7 +9,8 @@ rows the way email reads addresses.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, get_args
 
@@ -48,3 +49,33 @@ class PushDevice:
             raise InvalidPushDevice(f"unsupported platform: {self.platform!r}")
         if self.app_version is not None and len(self.app_version) > MAX_APP_VERSION_LENGTH:
             raise InvalidPushDevice("app_version is too long")
+
+
+def token_fingerprint(token: str) -> str:
+    """Short SHA-256 of a token for audit rows and logs; the raw token is a credential."""
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+@dataclass(frozen=True, slots=True)
+class PushTokenMove:
+    """A registration took a token from another user or academy (the shared-phone path).
+
+    Legitimate on a family phone, but it is also exactly what presenting someone
+    else's token looks like, so every move is audited. Carries only the token's
+    fingerprint, never the token.
+    """
+
+    token_fingerprint: str
+    from_user_id: str
+    from_academy_id: str
+    to_user_id: str
+    to_academy_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PushSendResult:
+    """What one push fan-out did. ``dead_tokens`` are ones FCM says will never work again."""
+
+    attempted: int = 0
+    sent: int = 0
+    dead_tokens: tuple[str, ...] = field(default=())
