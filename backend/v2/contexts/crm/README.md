@@ -231,7 +231,54 @@ the page is unpublished, answers `409 Public.TrialsClosed` when trials are
 switched off, resolves the optional class from its opaque `public_id` against
 the academy's **published** classes only, and returns one acknowledgement body
 for new, repeated and honeypot submissions. `created` is used only after the
-response, to email the academy's owners once per new row.
+response, to email the academy's owners once per new row, and to send the
+family its acknowledgement (below).
+
+## Emailing a prospect (AI strategy Phase 1 #2)
+
+A contact is not a user, so it cannot go through the audience resolver. The
+one send path for a lead-facing email is
+`composition/prospect_email.py::ProspectEmailer.send(contact=, academy_doc=,
+subject=, inner_html=, category=, reply_to=)`, called inside `tenant_scope`
+of the contact's academy. It builds the `ResolvedRecipient` under the stable
+pseudo id `crm_contact:<contact_id>` (`communications/application/
+prospect_recipient.py`), wraps the body in the themed shell with the CAN-SPAM
+footer, mints the unsubscribe link to the backend-rendered page
+`GET /api/v2/unsubscribe/prospect?t=<token>` (same HMAC scheme as the user
+link), and sends under the academy's display name with replies to the
+academy's reply-to. The shared `GatedEmailSendPort` applies provider bounce
+suppression by address and `ProspectOptOutGate`, which reads
+`email_prospect_opt_outs` (`(academy_id, email)`, migration 0217; written by
+the POST of that page). Every category is blocked for an opted-out prospect,
+transactional included.
+
+The first user is the inquiry acknowledgement in
+`composition/public_trial_requests.py` (`render_inquiry_acknowledgement`,
+sent from the owner-alert background task): class named, seat available
+(`trial`) or waitlisted / "we will tell you" (`lead`), reply to this email.
+It is TRANSACTIONAL under the mandatory `contact_about_request` tick and
+claimed once per contact by
+`MongoCrmContactRepository.try_claim_acknowledgement` (`acknowledged_at` on
+the row), so a retry never sends twice; a provider failure, an opt-out
+store outage, a render error, or no unsubscribe link to mint (no
+`UNSUBSCRIBE_TOKEN_SECRET` / `FRONTEND_URL`: a prospect has no account
+preferences to fall back on, so nothing is sent) gives the claim back
+(`release_acknowledgement`) so the row says no email went out (nothing
+re-sends it yet). The form takes any address unverified, so the body carries
+nothing the submitter typed and one inbox gets at most one acknowledgement
+per academy per UTC day, whatever contact rows or address spellings it files:
+`MongoInquiryAckThrottleRepository` inserts one `crm_inquiry_ack_throttle` row
+per `(academy_id, mailbox, day)` under a unique index (migration 0218, 7-day
+TTL), where `mailbox` is `canonical_mailbox` (lower-cased, `+tag` dropped,
+Gmail dots and googlemail.com folded). The insert is the claim, so concurrent
+submissions for one inbox send once; anything that sent nothing deletes it
+with the contact claim. An academy also sends at most 20 acknowledgements an hour
+(a soft count over the same rows).
+Replies go only to the academy's configured reply-to; with none, the email
+has no reply line rather than exposing an owner's address. Honeypot and
+repeat submissions send nothing. There is no academy toggle for it: no
+existing notification switch matches, and none was added. Slice 3 (trial
+nudges) reuses `ProspectEmailer` with its own template and claim.
 
 
 ## Tests

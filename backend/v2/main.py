@@ -61,6 +61,7 @@ from backend.v2.composition.parent import compose_parent, compose_parent_webhook
 from backend.v2.composition.payment_methods import compose_admin_payment_methods
 from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.composition.pricing import compose_admin_pricing
+from backend.v2.composition.prospect_email import compose_unsubscribe_prospect
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
@@ -1007,6 +1008,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.public_page = compose_public_page_read(db)
     # Anonymous public trial request (Lane B4), POST /api/v2/public/trial-requests.
     app.state.public_trial_requests = compose_public_trial_requests(db, settings)
+    app.state.unsubscribe_prospect = compose_unsubscribe_prospect(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)

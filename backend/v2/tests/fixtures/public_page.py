@@ -14,13 +14,27 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 
+from backend.v2.composition.prospect_email import ProspectEmailer, compose_unsubscribe_prospect
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import (
     PublicTrialRequests,
     TrialRequestOwnerEmail,
 )
+from backend.v2.contexts.communications.application.unsubscribe_token import (
+    UnsubscribeLinkBuilder,
+)
+from backend.v2.contexts.communications.application.use_cases.resolve_unsubscribe_token import (
+    ResolveUnsubscribeToken,
+)
+from backend.v2.contexts.communications.infrastructure.gated_send_port import (
+    GatedEmailSendPort,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_repo import (
+    MongoProspectOptOutRepository,
+    ProspectOptOutGate,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import StubEmailSendPort
 from backend.v2.contexts.crm.application.use_cases.create_contact import CreateContact
@@ -29,6 +43,9 @@ from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import
 )
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
+)
+from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo import (
+    MongoInquiryAckThrottleRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.public_class_choice import (
     ResolvePublicClassChoice,
@@ -43,6 +60,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
 from backend.v2.interfaces.public.router import router as public_router
+from backend.v2.interfaces.unsubscribe_routes import router as unsubscribe_router
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.http import register_exception_handlers
 
@@ -53,6 +71,8 @@ HOSTS = {
     "lakeside-academy.courtmastr.test": OTHER,
 }
 RIVERSIDE_HOST = "riverside-academy.courtmastr.test"
+FRONTEND_URL = "https://app.courtmastr.test"
+UNSUBSCRIBE_SECRET = "public-page-test-unsubscribe-secret"
 NOW = datetime(2026, 9, 23, tzinfo=UTC)
 
 SECRETS = {
@@ -275,23 +295,41 @@ def build_app(
         primary_academy_id=primary_academy_id,
     )
     app.include_router(public_router, prefix="/api/v2")
+    app.include_router(unsubscribe_router, prefix="/api/v2")
+    app.state.saas_mode = True
     app.state.public_page = compose_public_page_read(db)
-    # Lane B4: the trial form, with the recording stub in place of Resend.
+    # Lane B4: the trial form, with the recording stub in place of Resend,
+    # behind the real prospect opt-out gate so the family's unsubscribe is
+    # exercised end to end.
     app.state.sent_email = StubEmailSendPort()
     app.state.public_trial_requests = compose_trial_requests_for_test(db, app.state.sent_email)
+    app.state.resolve_unsubscribe_token = ResolveUnsubscribeToken(secret=UNSUBSCRIBE_SECRET)
+    app.state.unsubscribe_prospect = compose_unsubscribe_prospect(db)
     return app
 
 
-def compose_trial_requests_for_test(db: Any, sender: Any) -> PublicTrialRequests:
+def compose_trial_requests_for_test(db: Any, stub: StubEmailSendPort) -> PublicTrialRequests:
     """``compose_public_trial_requests`` with an injected send port (no settings)."""
     academies = MongoAcademyRepository(db)
+    contacts = MongoCrmContactRepository(db)
+    sender = GatedEmailSendPort(
+        inner=stub, prospects=ProspectOptOutGate(MongoProspectOptOutRepository(db))
+    )
     return PublicTrialRequests(
         get_academy_profile=GetPublicAcademyProfile(academies),
         resolve_class_choice=ResolvePublicClassChoice(MongoSessionRepository(db)),
-        submit_inquiry=SubmitWebsiteInquiry(CreateContact(MongoCrmContactRepository(db))),
+        submit_inquiry=SubmitWebsiteInquiry(CreateContact(contacts)),
         notifier=TrialRequestOwnerEmail(
             academies=academies,
             audiences=MongoAudienceResolver(db=db),
             sender=sender,
+            contacts=contacts,
+            inboxes=MongoInquiryAckThrottleRepository(db),
+            prospects=ProspectEmailer(
+                sender=sender,
+                unsubscribe_links=UnsubscribeLinkBuilder(
+                    frontend_url=FRONTEND_URL, secret=UNSUBSCRIBE_SECRET
+                ),
+            ),
         ),
     )

@@ -105,4 +105,7 @@ async def test_concurrent_identical_submissions_make_one_row_and_one_answer(real
     by_academy = sorted(doc["academy_id"] for doc in rows)
     assert by_academy == sorted([ACADEMY, OTHER])
     # One new Riverside row -> one owner email; Lakeside has no address at all.
-    assert len(app.state.sent_email.sent) == 1
+    # Each new row -> one family acknowledgement.
+    sent = app.state.sent_email.sent
+    assert len([s for s in sent if not s["user_id"].startswith("crm_contact:")]) == 1
+    assert len([s for s in sent if s["user_id"].startswith("crm_contact:")]) == 2

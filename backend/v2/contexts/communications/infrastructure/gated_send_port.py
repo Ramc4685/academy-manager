@@ -36,6 +36,7 @@ class GatedEmailSendPort(EmailSendPort):
     inner: EmailSendPort
     suppressions: RecipientGate | None = None  # #556
     preferences: RecipientGate | None = None  # #555
+    prospects: RecipientGate | None = None  # email-keyed opt-outs for crm_contacts
 
     async def send(
         self,
@@ -50,7 +51,7 @@ class GatedEmailSendPort(EmailSendPort):
         sender_name: str | None = None,
     ) -> SendOutcome:
         if recipient.email:
-            for gate in (self.suppressions, self.preferences):
+            for gate in (self.suppressions, self.preferences, self.prospects):
                 if gate is None:
                     continue
                 verdict = await gate.check(

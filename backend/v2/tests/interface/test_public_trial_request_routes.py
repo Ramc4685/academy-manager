@@ -30,10 +30,14 @@ URL = "/api/v2/public/trial-requests"
 LAKESIDE_HOST = "lakeside-academy.courtmastr.test"
 OWNER_EMAIL = "owner.riverside@example.test"
 _M0192 = importlib.import_module("backend.v2.migrations.0192_crm_contacts")
+_M0217 = importlib.import_module("backend.v2.migrations.0217_email_prospect_opt_outs")
+_M0218 = importlib.import_module("backend.v2.migrations.0218_crm_inquiry_ack_throttle")
 
 
 async def _seed_all(db: Any, *, published: bool, owner: bool) -> None:
     await _M0192.up(db)
+    await _M0217.up(db)
+    await _M0218.up(db)
     await seed(db, published=published)
     if owner:
         await db["academy_memberships"].insert_one(
@@ -86,6 +90,14 @@ def _rows(db: Any) -> list[dict[str, Any]]:
     return asyncio.run(_all())
 
 
+def _owner_sends(app: Any) -> list[dict[str, Any]]:
+    return [s for s in app.state.sent_email.sent if not s["user_id"].startswith("crm_contact:")]
+
+
+def _family_sends(app: Any) -> list[dict[str, Any]]:
+    return [s for s in app.state.sent_email.sent if s["user_id"].startswith("crm_contact:")]
+
+
 def _comparable(response: Any) -> tuple[int, bytes, dict[str, str]]:
     headers = {k.lower(): v for k, v in response.headers.items() if k.lower() != "date"}
     return response.status_code, response.content, headers
@@ -127,7 +139,7 @@ def test_owner_is_emailed_once_for_a_new_contact_only() -> None:
     _post(app, _form())
     _post(app, _form())
 
-    [sent] = app.state.sent_email.sent
+    [sent] = _owner_sends(app)
     assert sent["email"] == OWNER_EMAIL
     assert sent["reply_to"] == "jamie.testparent@example.test"
     assert sent["subject"] == "New trial request from Jamie Testparent"
@@ -140,16 +152,18 @@ def test_owner_email_escapes_form_text() -> None:
     db = _db()
     app = build_app(db)
     _post(app, _form(name="<b>Jamie</b>", message="<script>alert(1)</script>"))
-    [sent] = app.state.sent_email.sent
+    [sent] = _owner_sends(app)
     assert "<script>" not in sent["body"]
     assert "&lt;script&gt;" in sent["body"]
+    [ack] = _family_sends(app)
+    assert "Jamie" not in ack["body"]  # nothing the submitter typed is mailed back
 
 
 def test_no_owner_address_falls_back_to_the_academy_contact_email() -> None:
     db = _db(owner=False)
     app = build_app(db)
     _post(app, _form())
-    [sent] = app.state.sent_email.sent
+    [sent] = _owner_sends(app)
     assert sent["email"] == SECRETS["contact_email"]
 
 
@@ -174,7 +188,10 @@ def test_honeypot_hit_gets_the_same_answer_and_writes_nothing() -> None:
     bot = _post(app, _form(website="https://spam.example.test"))
     assert _comparable(bot) == _comparable(real)
     assert [r["email"] for r in _rows(db)] == ["someone.else@example.test"]
-    assert len(app.state.sent_email.sent) == 1
+    # The real submission: one owner alert, one family acknowledgement. The
+    # bot: nothing to anyone, so no acknowledgement to the address it typed.
+    assert [s["email"] for s in _owner_sends(app)] == [OWNER_EMAIL]
+    assert [s["email"] for s in _family_sends(app)] == ["someone.else@example.test"]
 
 
 def test_honeypot_runs_the_same_validation_and_class_read_as_a_person() -> None:
@@ -361,3 +378,90 @@ def test_academy_with_nothing_listed_files_a_lead() -> None:
     assert response.status_code == 200
     [row] = _rows(db)
     assert row["pipeline_status"] == "lead"
+
+
+# --- the family's acknowledgement (AI strategy Phase 1 #2) --------------------
+
+
+def test_new_contact_gets_one_acknowledgement_in_the_background() -> None:
+    db = _db()
+    app = build_app(db)
+    _post(app, _form())
+    _post(app, _form())  # repeat: no second acknowledgement
+
+    [ack] = _family_sends(app)
+    assert ack["email"] == "jamie.testparent@example.test"
+    assert ack["user_id"].startswith("crm_contact:")
+    assert ack["subject"] == "Your free trial request at Riverside Shuttle Club"
+    assert "Class jr-sat" in ack["body"] and "A seat is available" in ack["body"]
+    assert ack["sender_name"] == "Riverside Shuttle Club"
+    assert ack["reply_to"] is None  # no academy reply-to, never the owner's address
+    assert "/api/v2/unsubscribe/prospect?t=" in ack["body"]
+    [row] = _rows(db)
+    assert row["acknowledged_at"] is not None
+
+
+def _unsubscribe_url(ack: dict[str, Any]) -> str:
+    start = ack["body"].index("https://riverside-academy.courtmastr.test/api/v2/unsubscribe/")
+    return ack["body"][start : ack["body"].index('"', start)].replace("&amp;", "&")
+
+
+def test_the_emailed_link_opts_the_address_out_and_later_inquiries_get_nothing() -> None:
+    db = _db()
+    app = build_app(db)
+    _post(app, _form())
+    [ack] = _family_sends(app)
+    url = _unsubscribe_url(ack)
+    client = TestClient(app)
+
+    page = client.get(url)
+    assert page.status_code == 200
+    assert "Stop these emails" in page.text
+    assert page.headers["cache-control"] == "no-store"
+    assert _rows_in(db, "email_prospect_opt_outs") == []  # GET mutates nothing
+
+    done = client.post(url)
+    assert done.status_code == 200 and "Done" in done.text
+    [opt_out] = _rows_in(db, "email_prospect_opt_outs")
+    assert (opt_out["academy_id"], opt_out["email"]) == (ACADEMY, "jamie.testparent@example.test")
+
+    # A fresh inquiry (different age -> a new contact) alerts the owner but
+    # sends the family nothing.
+    _post(app, _form(player_age="11"))
+    assert len(_rows(db)) == 2
+    assert len(_owner_sends(app)) == 2
+    assert len(_family_sends(app)) == 1
+
+
+def _rows_in(db: Any, collection: str) -> list[dict[str, Any]]:
+    async def _all() -> list[dict[str, Any]]:
+        return [doc async for doc in db[collection].find({})]
+
+    return asyncio.run(_all())
+
+
+def test_prospect_unsubscribe_refuses_forged_user_and_other_tenant_tokens() -> None:
+    from backend.v2.contexts.communications.application.unsubscribe_token import (
+        mint_unsubscribe_token,
+    )
+    from backend.v2.tests.fixtures.public_page import UNSUBSCRIBE_SECRET
+
+    db = _db()
+    app = build_app(db)
+    _post(app, _form())
+    [ack] = _family_sends(app)
+    url = _unsubscribe_url(ack)
+    client = TestClient(app)
+    base = "/api/v2/unsubscribe/prospect?t="
+
+    assert client.post(url + "x").status_code == 401
+    assert client.post(url, headers={"host": LAKESIDE_HOST}).status_code == 401
+    user_token = mint_unsubscribe_token(
+        academy_id=ACADEMY, user_id="owner-rsc-1", secret=UNSUBSCRIBE_SECRET
+    )
+    assert client.get(base + str(user_token), headers={"host": RIVERSIDE_HOST}).status_code == 401
+    ghost = mint_unsubscribe_token(
+        academy_id=ACADEMY, user_id="crm_contact:nobody", secret=UNSUBSCRIBE_SECRET
+    )
+    assert client.post(base + str(ghost), headers={"host": RIVERSIDE_HOST}).status_code == 401
+    assert _rows_in(db, "email_prospect_opt_outs") == []

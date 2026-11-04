@@ -88,6 +88,24 @@ class MongoCrmContactRepository(TenantScopedRepository):
         doc = await self._find_one({"contact_id": contact_id})
         return self._to_domain(doc) if doc else None
 
+    async def try_claim_acknowledgement(self, contact_id: str, *, at: datetime) -> bool:
+        """Claim the one inquiry-acknowledgement email for this contact.
+
+        A conditional update on the row itself (no claims collection): it
+        matches only while ``acknowledged_at`` is unset, so of two concurrent
+        sends exactly one wins and a retry never emails the family twice.
+        Served by ``crm_contacts_academy_contact_unique``.
+        """
+        doc = await self._find_one_and_update(
+            {"contact_id": contact_id, "acknowledged_at": None},
+            {"$set": {"acknowledged_at": at}},
+        )
+        return doc is not None
+
+    async def release_acknowledgement(self, contact_id: str) -> None:
+        """Give a claim back after the email provably did not go out."""
+        await self._update_one({"contact_id": contact_id}, {"$unset": {"acknowledged_at": ""}})
+
     async def set_pipeline_override(
         self,
         contact_id: str,

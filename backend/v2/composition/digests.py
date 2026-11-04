@@ -92,6 +92,10 @@ from backend.v2.contexts.communications.infrastructure.mongo_email_preference_re
 from backend.v2.contexts.communications.infrastructure.mongo_parent_digest_send_repo import (
     MongoParentDigestSendRepository,
 )
+from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_repo import (
+    MongoProspectOptOutRepository,
+    ProspectOptOutGate,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_provider_event_repo import (
     MongoEmailProviderEventDedup,
 )
@@ -1094,6 +1098,7 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
         inner=inner,
         suppressions=MongoSuppressionGate(MongoSuppressionRepository(db)),
         preferences=MongoEmailPreferenceGate(db),
+        prospects=ProspectOptOutGate(MongoProspectOptOutRepository(db)),
     )
 
 
