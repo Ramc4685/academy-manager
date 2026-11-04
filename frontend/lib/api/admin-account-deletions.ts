@@ -39,6 +39,10 @@ export function deletionSummary(row: AccountDeletion): string {
   if (row.status === "running") {
     return `Deleted by the parent on ${day(row.requested_at)}. Personal details are being removed now.`;
   }
-  const stuck = row.attempts > 0 ? ` Removal has failed ${row.attempts} time${row.attempts === 1 ? "" : "s"} and is being retried.` : "";
-  return `Deleted by the parent on ${day(row.requested_at)}. Personal details are removed on ${day(row.execute_after)}; until then support can still restore the account.${stuck}`;
+  const removal = `Deleted by the parent on ${day(row.requested_at)}. Personal details are removed on ${day(row.execute_after)}`;
+  // A started removal is never restored (support-only restore, PR #1115): it is retried to the end.
+  if (row.attempts > 0) {
+    return `${removal}. Removal has failed ${row.attempts} time${row.attempts === 1 ? "" : "s"} and is being retried.`;
+  }
+  return `${removal}; until then the parent can contact support to restore it. The academy cannot restore it.`;
 }

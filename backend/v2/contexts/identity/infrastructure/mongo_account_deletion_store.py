@@ -27,7 +27,6 @@ from backend.v2.contexts.identity.domain.account_deletion import (
     AccountMembership,
     DeletableAccount,
 )
-from backend.v2.contexts.identity.domain.errors import AccountDeletionInProgress
 from backend.v2.contexts.identity.domain.identity_aliases import (
     aliases_from_doc,
     identity_aliases,
@@ -57,7 +56,6 @@ def _to_request(doc: dict[str, Any]) -> AccountDeletionRequest:
         requested_at=_aware(doc["requested_at"]),
         execute_after=_aware(doc["execute_after"]),
         status=doc.get("status", "scheduled"),
-        restored_academy_ids=tuple(doc.get("restored_academy_ids") or ()),
     )
 
 
@@ -174,16 +172,20 @@ class MongoAccountDeletionStore:
             )
         )
 
-    async def remove_memberships(
-        self, *, aliases: tuple[str, ...], academy_ids: tuple[str, ...], now: datetime
-    ) -> None:
+    async def remove_memberships(self, *, aliases: tuple[str, ...], now: datetime) -> None:
+        # The prior status is kept so a support cancel puts back exactly what
+        # was there (a suspended or invited member must not come back active).
         await self._db["academy_memberships"].update_many(
-            {
-                "user_id": {"$in": list(aliases)},
-                "academy_id": {"$in": list(academy_ids)},
-                "status": {"$ne": "removed"},
-            },
-            {"$set": {"status": "removed", "updated_at": now}},
+            {"user_id": {"$in": list(aliases)}, "status": {"$ne": "removed"}},
+            [
+                {
+                    "$set": {
+                        "status_before_deletion": "$status",
+                        "status": "removed",
+                        "updated_at": now,
+                    }
+                }
+            ],
         )
 
     async def record_audit(
@@ -234,8 +236,7 @@ class MongoAccountDeletionStore:
         if request.email:
             who += [{"email": request.email}, {"normalized_email": request.email.strip().lower()}]
         await self._db["users"].update_many(
-            # A restoring academy keeps its own users doc; the rest are erased.
-            {"$or": who, "academy_id": {"$nin": list(request.restored_academy_ids)}},
+            {"$or": who},
             {
                 "$set": {
                     "display_name": DELETED_NAME,
@@ -286,8 +287,8 @@ class MongoAccountDeletionStore:
     async def claim(self, request_id: str, *, now: datetime) -> AccountDeletionRequest | None:
         """Move the request to ``running`` and return it as it stands now.
 
-        ``release_academy`` only matches ``scheduled`` rows, so once this lands
-        no restore can change the academies the run is erasing.
+        Once this lands ``cancel_request`` refuses the row (it needs an
+        unclaimed one), so support cannot cancel an erasure under way.
         """
         doc = await self._requests.find_one_and_update(
             {
@@ -302,36 +303,49 @@ class MongoAccountDeletionStore:
         )
         return _to_request(doc) if doc else None
 
-    async def release_academy(self, *, aliases: list[str], academy_id: str) -> bool:
-        """An admin of ``academy_id`` restored the account in the grace window.
-
-        Only that academy's share leaves the erasure: the person's request stays
-        in force for every other academy, and for the shared login. Returns
-        whether a scheduled request named this academy.
-        """
-        match: dict[str, Any] = {"status": "scheduled", "aliases": {"$in": aliases}}
-        released = await self._requests.update_many(
-            {**match, "academy_ids": academy_id},
-            {
-                "$pull": {"academy_ids": academy_id},
-                "$addToSet": {"restored_academy_ids": academy_id},
-            },
+    async def pending_request_exists(self, aliases: list[str]) -> bool:
+        """Whether this person has a deletion request not yet carried out."""
+        return bool(
+            await self._requests.count_documents(
+                {"aliases": {"$in": aliases}, "status": {"$in": ["scheduled", "running"]}},
+                limit=1,
+            )
         )
-        if released.modified_count:
-            # Every academy restored: nothing is left to erase. Deleted, not
-            # flagged: user_id is unique, so a leftover row would block a later request.
-            await self._requests.delete_many(
-                {**match, "academy_ids": {"$size": 0}, "restored_academy_ids": academy_id}
-            )
-        elif await self._requests.count_documents(
-            {"status": "running", "aliases": {"$in": aliases}, "academy_ids": academy_id},
-            limit=1,
-        ):
-            raise AccountDeletionInProgress(
-                "this account's personal details are being removed right now and "
-                "can no longer be restored"
-            )
-        return bool(released.modified_count)
+
+    async def cancel_request(self, request_id: str) -> AccountDeletionRequest | None:
+        """Support-only restore: remove a request no erasure has touched yet.
+
+        Atomic against ``claim``: a request the job claimed, or one with any
+        attempt behind it (``claimed_at`` stays set after a failure), is left
+        alone, because some of its records may already be gone. Deleted, not
+        flagged: ``user_id`` is unique, so a leftover row would block a later request.
+        """
+        doc = await self._requests.find_one_and_delete(
+            {
+                "request_id": request_id,
+                "status": "scheduled",
+                "claimed_at": {"$exists": False},
+                "attempts": {"$not": {"$gt": 0}},
+            }
+        )
+        return _to_request(doc) if doc else None
+
+    async def request_exists(self, request_id: str) -> bool:
+        return bool(await self._requests.count_documents({"request_id": request_id}, limit=1))
+
+    async def restore_memberships(self, *, aliases: tuple[str, ...], now: datetime) -> None:
+        """Undo ``remove_memberships`` in every academy, back to the prior status."""
+        await self._db["academy_memberships"].update_many(
+            {
+                "user_id": {"$in": list(aliases)},
+                "status": "removed",
+                "status_before_deletion": {"$exists": True},
+            },
+            [
+                {"$set": {"status": "$status_before_deletion", "updated_at": now}},
+                {"$unset": "status_before_deletion"},
+            ],
+        )
 
     async def mark_completed(self, request_id: str, *, now: datetime) -> None:
         # The address was kept only so the person could be reached during the

@@ -145,6 +145,9 @@ from backend.v2.contexts.identity.application.list_my_memberships_use_case impor
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
 )
+from backend.v2.contexts.identity.application.use_cases.cancel_account_deletion import (
+    CancelAccountDeletion,
+)
 from backend.v2.contexts.identity.application.use_cases.list_account_deletions import (
     ListAccountDeletions,
 )
@@ -729,6 +732,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # D4: GET /api/v2/admin/account-deletions.
     app.state.list_account_deletions = ListAccountDeletions(store=MongoAccountDeletionStore(db))
+    # Support-only restore: POST /api/v2/platform/account-deletions/{id}/cancel.
+    app.state.cancel_account_deletion = CancelAccountDeletion(
+        store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
+    )
     # Push sending (mobile M3). Stub unless PUSH_DELIVERY_ENABLED. The parent
     # notifiers build their own via composition.push.compose_send_push_to_user.
     app.state.send_push_to_user = SendPushToUser(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -33,7 +32,7 @@ class Store:
         self.requests = list(requests)
         self.calls: list[str] = []
         self.failures: list[tuple[str, str]] = []
-        # What a re-read returns, where a restore changed the row after the batch read.
+        # What a claim returns, where support cancelled the row after the batch read.
         self.current: dict[str, AccountDeletionRequest | None] = {}
 
     async def due_requests(self, *, now, limit):
@@ -110,7 +109,7 @@ async def test_a_failing_account_is_recorded_and_does_not_stop_the_others() -> N
 
 
 @pytest.mark.asyncio
-async def test_skips_a_request_restored_after_the_batch_was_read() -> None:
+async def test_skips_a_request_support_cancelled_after_the_batch_was_read() -> None:
     store = Store(_request(1), _request(2))
     store.current["r1"] = None
     job = ExecuteAccountDeletions(
@@ -121,23 +120,3 @@ async def test_skips_a_request_restored_after_the_batch_was_read() -> None:
 
     assert result.completed == 1
     assert not any(_request(1).request_id in c for c in store.calls)
-
-
-@pytest.mark.asyncio
-async def test_erases_only_the_academies_still_on_the_request_when_it_runs() -> None:
-    # Academy B restored the account after the batch was read; A's share still goes.
-    due = replace(_request(1), academy_ids=("acad-a", "acad-b"))
-    store = Store(due)
-    store.current["r1"] = replace(due, academy_ids=("acad-a",), restored_academy_ids=("acad-b",))
-    seen: list[tuple[str, ...]] = []
-
-    class Family:
-        name = "family"
-
-        async def erase(self, request, *, now):
-            seen.append(request.academy_ids)
-
-    job = ExecuteAccountDeletions(store=store, steps=[Family()], firebase=Firebase(store.calls))
-
-    assert (await job.execute(now=NOW)).completed == 1
-    assert seen == [("acad-a",)]

@@ -116,25 +116,27 @@ async def test_other_owner_check_ignores_the_leaver_and_inactive_rows(real_db) -
     assert await store.other_active_owner_exists(academy_id="acad-a", aliases=("u1",))
 
 
-async def test_remove_memberships_reaches_every_alias_and_academy_only(real_db) -> None:
+async def test_remove_memberships_reaches_every_alias_and_keeps_the_prior_status(
+    real_db,
+) -> None:
     await real_db["academy_memberships"].insert_many(
         [
             _m("acad-a", "u1"),
             _m("acad-b", "fb-1", "suspended"),
+            _m("acad-c", "u1", "removed"),
             _m("acad-a", "other"),
-            _m("acad-c", "u1"),
         ]
     )
-    await MongoAccountDeletionStore(real_db).remove_memberships(
-        aliases=("u1", "fb-1"), academy_ids=("acad-a", "acad-b"), now=T0
-    )
+    await MongoAccountDeletionStore(real_db).remove_memberships(aliases=("u1", "fb-1"), now=T0)
     rows = await real_db["academy_memberships"].find({}, {"_id": 0}).to_list(None)
-    assert {(r["academy_id"], r["user_id"], r["status"]) for r in rows} == {
-        ("acad-a", "u1", "removed"),
-        ("acad-b", "fb-1", "removed"),
-        ("acad-a", "other", "active"),
-        # An academy not on the request (one that restored the account) is left alone.
-        ("acad-c", "u1", "active"),
+    assert {
+        (r["academy_id"], r["user_id"], r["status"], r.get("status_before_deletion")) for r in rows
+    } == {
+        ("acad-a", "u1", "removed", "active"),
+        ("acad-b", "fb-1", "removed", "suspended"),
+        # Removed before the request: not the request's to give back.
+        ("acad-c", "u1", "removed", None),
+        ("acad-a", "other", "active", None),
     }
 
 
@@ -153,36 +155,36 @@ async def test_upcoming_coaching_counts_future_live_occurrences_in_that_academy(
     assert await store.upcoming_coaching_count(academy_id="acad-c", aliases=("u1",)) == 0
 
 
-async def test_release_academy_takes_out_only_that_academys_share(real_db) -> None:
+async def test_support_cancel_removes_the_request_and_restores_every_academy(real_db) -> None:
     store = MongoAccountDeletionStore(real_db)
+    await real_db["academy_memberships"].insert_many(
+        [_m("acad-a", "u1"), _m("acad-b", "fb-1", "suspended"), _m("acad-c", "u1", "removed")]
+    )
     await store.create_request(
         replace(_request("r1", ("u1", "fb-1")), academy_ids=("acad-a", "acad-b"))
     )
+    await store.remove_memberships(aliases=("u1", "fb-1"), now=T0)
+    assert await store.pending_request_exists(["fb-1"])
 
-    # An academy the request never named changes nothing.
-    assert not await store.release_academy(aliases=["fb-1"], academy_id="acad-c")
-    assert await store.release_academy(aliases=["fb-1"], academy_id="acad-b")
-    request = await store.claim("r1", now=T0)
-    assert request is not None
-    await real_db["account_deletion_requests"].update_one(
-        {"request_id": "r1"}, {"$set": {"status": "scheduled"}}
-    )
-    assert request.academy_ids == ("acad-a",)
-    assert request.restored_academy_ids == ("acad-b",)
+    cancelled = await store.cancel_request("r1")
+    assert cancelled is not None and cancelled.academy_ids == ("acad-a", "acad-b")
+    await store.restore_memberships(aliases=cancelled.aliases, now=T0)
 
-    # A repeat restore in B is a no-op; A's share stays scheduled.
-    assert not await store.release_academy(aliases=["u1"], academy_id="acad-b")
-    assert (await real_db["account_deletion_requests"].find_one({"request_id": "r1"})) is not None
-
-    # Once the last academy restores, nothing is left to erase and the row goes,
-    # so a later request by the same person is not blocked by the unique user_id.
-    assert await store.release_academy(aliases=["u1"], academy_id="acad-a")
     assert await real_db["account_deletion_requests"].count_documents({}) == 0
+    assert not await store.pending_request_exists(["fb-1"])
+    rows = await real_db["academy_memberships"].find({}, {"_id": 0}).to_list(None)
+    assert {(r["academy_id"], r["status"], "status_before_deletion" in r) for r in rows} == {
+        ("acad-a", "active", False),
+        ("acad-b", "suspended", False),
+        ("acad-c", "removed", False),
+    }
+    # The unique user_id no longer blocks a later request by the same person.
+    assert (await store.create_request(_request("r2", ("u1",)))).request_id == "r2"
 
 
-async def test_a_claimed_request_cannot_be_restored_until_the_run_lets_go(real_db) -> None:
-    from backend.v2.contexts.identity.domain.errors import AccountDeletionInProgress
-
+async def test_support_cancel_is_refused_once_the_erasure_claimed_or_attempted_it(
+    real_db,
+) -> None:
     store = MongoAccountDeletionStore(real_db)
     await store.create_request(
         replace(_request("r1", ("u1", "fb-1")), academy_ids=("acad-a", "acad-b"))
@@ -191,20 +193,23 @@ async def test_a_claimed_request_cannot_be_restored_until_the_run_lets_go(real_d
     assert claimed is not None and claimed.status == "running"
     # A second run (or a second tick) does not get it while the claim is fresh.
     assert await store.claim("r1", now=T0 + timedelta(minutes=5)) is None
+    assert await store.cancel_request("r1") is None
+    assert await store.pending_request_exists(["u1"])
 
-    # The run already holds B in its academies: B's restore is refused, not
-    # silently ignored while B's records are erased.
-    with pytest.raises(AccountDeletionInProgress):
-        await store.release_academy(aliases=["fb-1"], academy_id="acad-b")
-    row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
-    assert row["academy_ids"] == ["acad-a", "acad-b"]
-
-    # A failed run hands the request back; a restore can land again.
+    # A failed run hands the request back to the job, never to support: some
+    # records may already be gone, so it is retried to the end.
     await store.record_failure("r1", step="family", error="boom", now=T0)
-    assert (await real_db["account_deletion_requests"].find_one({"request_id": "r1"}))[
-        "status"
-    ] == "scheduled"
-    assert await store.release_academy(aliases=["fb-1"], academy_id="acad-b")
+    row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
+    assert row["status"] == "scheduled" and row["attempts"] == 1
+    assert await store.cancel_request("r1") is None
+    assert await store.request_exists("r1")
+
+    # Even an attempt that left no claim marker behind (the claim itself failed).
+    await store.create_request(_request("r2", ("u2",)))
+    await real_db["account_deletion_requests"].update_one(
+        {"request_id": "r2"}, {"$set": {"attempts": 1}}
+    )
+    assert await store.cancel_request("r2") is None
 
 
 async def test_mark_completed_needs_the_runs_claim(real_db) -> None:
@@ -231,7 +236,9 @@ async def test_a_claim_left_by_a_dead_run_is_picked_up_again(real_db) -> None:
     assert await store.claim("r1", now=later) is not None
 
 
-async def test_anonymise_identity_keeps_a_restoring_academys_users_doc(real_db) -> None:
+async def test_anonymise_identity_erases_the_persons_users_doc_in_every_academy(
+    real_db,
+) -> None:
     await real_db["users"].insert_many(
         [
             {
@@ -241,23 +248,16 @@ async def test_anonymise_identity_keeps_a_restoring_academys_users_doc(real_db) 
                 "display_name": "Pat",
             },
             # The same person's doc in academy B, keyed by the Firebase uid.
-            {
-                "user_id": "fb-1",
-                "academy_id": "acad-b",
-                "display_name": "Pat",
-            },
+            {"user_id": "fb-1", "academy_id": "acad-b", "display_name": "Pat"},
+            {"user_id": "u9", "academy_id": "acad-b", "display_name": "Sam"},
         ]
     )
-    request = replace(
-        _request("r1", ("u1", "fb-1")),
-        academy_ids=("acad-a",),
-        restored_academy_ids=("acad-b",),
-    )
+    request = replace(_request("r1", ("u1", "fb-1")), academy_ids=("acad-a", "acad-b"))
 
     await MongoAccountDeletionStore(real_db).anonymise_identity(request, now=T0)
 
     names = {
-        d["academy_id"]: d["display_name"]
-        async for d in real_db["users"].find({}, {"academy_id": 1, "display_name": 1})
+        d["user_id"]: d["display_name"]
+        async for d in real_db["users"].find({}, {"user_id": 1, "display_name": 1})
     }
-    assert names == {"acad-a": "Deleted user", "acad-b": "Pat"}
+    assert names == {"u1": "Deleted user", "fb-1": "Deleted user", "u9": "Sam"}

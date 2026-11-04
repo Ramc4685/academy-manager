@@ -204,27 +204,6 @@ async def test_a_retry_after_a_crash_finishes_the_lockout(db: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_retry_leaves_an_academy_that_restored_the_account_alone(db: Any) -> None:
-    with TestClient(_app(db)) as client:
-        client.post(URL, json=CONFIRM)
-    # Academy B's admin re-enabled the account in the grace window.
-    await MongoAccountDeletionStore(db).release_academy(aliases=["fb-1"], academy_id="acad-b")
-    await db["academy_memberships"].update_one(
-        {"academy_id": "acad-b", "user_id": "fb-1"}, {"$set": {"status": "active"}}
-    )
-    firebase = FakeFirebase()
-    with TestClient(_app(db, firebase=firebase)) as client:
-        assert client.post(URL, json=CONFIRM).status_code == 200
-
-    # B is out of the request, so locking B out would keep its data and its
-    # member's login gone for good; B's membership and the shared login stay.
-    assert (await _membership_statuses(db))[("acad-b", "fb-1")] == "active"
-    assert firebase.disabled == []
-    row = await db["account_deletion_requests"].find_one({})
-    assert row["academy_ids"] == ["acad-a"]
-
-
-@pytest.mark.asyncio
 async def test_firebase_outage_still_locks_the_account(db: Any) -> None:
     with TestClient(_app(db, firebase=FakeFirebase(fail=True))) as client:
         assert client.post(URL, json=CONFIRM).status_code == 200

@@ -9,7 +9,7 @@ The `/privacy` page is rewritten to match the App Store privacy label and Google
 - States what is not done: no ads, no selling data, no cross-app tracking, no location, contacts or camera; children do not sign in.
 - Names the processors: Google Firebase, Stripe, Resend, Sentry, Fly.io, Cloudflare, MongoDB Atlas.
 - Retention: account data while the account is open; invoices, payments and audit logs 7 years; waivers kept as the academy's record; exports 7 days.
-- Deletion: in-app under Profile or via `/account-deletion`, the 14-day window, and what is kept.
+- Deletion: in-app under Profile or via `/account-deletion`, the 14-day window during which the person can contact support to restore the account, and what is kept. `/account-deletion` says the same: contact support at the support email, the academy cannot restore it.
 - Responsibility: the academy for the records it keeps, Marvy Labs for the sign-in account.
 - The draft banner stays, reworded to "Draft pending legal review". The nav links to the new deletion page.
 

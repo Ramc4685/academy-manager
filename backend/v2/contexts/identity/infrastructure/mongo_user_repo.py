@@ -25,6 +25,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.errors import (
+    AccountDeletionPending,
     CannotRemoveLastOwner,
     CannotRemoveLastRole,
     CoachHasFutureSessions,
@@ -1054,18 +1055,15 @@ class MongoUserRepository:
             # account — so it has to clear at least the same bar.
             await self._assert_offboardable(before, academy_id=academy_id)
         if status_change == "active":
-            # Restoring during the 14-day grace window takes THIS academy out
-            # of a pending self-service deletion (the promise on
-            # /account-deletion); other academies' share stays scheduled. It
-            # runs before any write: when an erasure already claimed the
-            # request it raises, and the restore must not half-apply.
+            # A self-service deletion covers every academy; only platform
+            # support may undo it. Checked before any write so nothing changes.
             aliases = list(self._membership_aliases(before))
-            if aliases and await MongoAccountDeletionStore(self._db).release_academy(
-                aliases=aliases, academy_id=academy_id
+            if aliases and await MongoAccountDeletionStore(self._db).pending_request_exists(
+                aliases
             ):
-                _log.info(
-                    "identity.account_deletion_released_by_restore",
-                    extra={"academy_id": academy_id, "aliases": aliases},
+                raise AccountDeletionPending(
+                    "this person asked to delete their account; only CourtMastr "
+                    "support can restore it, after confirming with them"
                 )
         changed = [
             key

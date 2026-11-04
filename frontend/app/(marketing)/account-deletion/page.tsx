@@ -69,8 +69,9 @@ export default function AccountDeletionPage() {
               </li>
             </ul>
             <p>
-              This happens 14 days after you ask. Until then the academy can restore your account if
-              you change your mind.
+              This happens 14 days after you ask. If you change your mind before then, contact
+              support at <a href={`mailto:${brand.supportEmail}`}>{brand.supportEmail}</a> to
+              restore your account. Your academy cannot restore it for you.
             </p>
           </section>
 

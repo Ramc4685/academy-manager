@@ -232,41 +232,73 @@ async def test_back_off_is_capped_at_a_day_however_many_attempts(real_db: Any) -
     assert row["execute_after"].replace(tzinfo=UTC) == NOW + timedelta(days=1)
 
 
-async def test_an_academy_that_restored_the_account_keeps_its_records(real_db: Any) -> None:
-    from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
-        MongoAccountDeletionStore,
+async def test_an_academy_restore_is_refused_and_the_erasure_runs_in_every_academy(
+    real_db: Any, monkeypatch: Any
+) -> None:
+    """Support-only restore (PR #1115): an academy admin's Enable cannot take
+    its academy out of the person's request, so both academies are erased."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
     )
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+    from backend.v2.contexts.identity.infrastructure import mongo_user_repo
+    from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 
+    class _NoFirebase:
+        async def set_user_disabled(self, uid: str, disabled: bool) -> None:
+            raise AssertionError("a refused restore must not touch Firebase")
+
+    monkeypatch.setattr(mongo_user_repo, "get_firebase_admin_adapter", lambda: _NoFirebase())
     await _seed(real_db)
     await real_db["account_deletion_requests"].update_one(
         {"request_id": "r1"}, {"$set": {"academy_ids": [A, B]}}
     )
     await real_db["users"].update_one({"user_id": "u1"}, {"$set": {"academy_id": A}})
-    await real_db["users"].insert_one({"user_id": "fb1", "academy_id": B, "display_name": "Pat B"})
+    await real_db["users"].insert_one(
+        {
+            "user_id": "fb1",
+            "academy_id": B,
+            "email": "p@example.com",
+            "display_name": "Pat B",
+            "status": "disabled",
+        }
+    )
+    await real_db["academy_memberships"].insert_one(
+        {
+            "membership_id": "mb",
+            "academy_id": B,
+            "user_id": "fb1",
+            "roles": ["parent"],
+            "status": "removed",
+            "status_before_deletion": "active",
+        }
+    )
     await real_db["students"].insert_one(
         {"academy_id": B, "student_id": "stu-b", "parent_id": "u1", "full_name": "Kid B"}
     )
     await real_db["family_notes"].insert_one({"academy_id": B, "parent_id": "u1", "body": "b"})
-    # Academy B's admin re-enabled the account during the grace window.
-    await MongoAccountDeletionStore(real_db).release_academy(aliases=["u1"], academy_id=B)
-    job, stop_all, _stripe, firebase = _job(real_db)
 
+    with pytest.raises(AccountDeletionPending):
+        await MongoUserRepository(real_db, default_academy_id=B).update_admin_user(
+            "fb1",
+            UpdateAdminUserCommand(status="active", actor_id="admin-b", reason="asked us"),
+            academy_id=B,
+        )
+    assert (await real_db["academy_memberships"].find_one({"membership_id": "mb"}))[
+        "status"
+    ] == "removed"
+
+    job, stop_all, _stripe, firebase = _job(real_db)
     assert (await job.execute(now=NOW)).completed == 1
 
-    # A's share went as the person asked.
-    assert stop_all.students == ["stu-abcd"]
-    assert (await real_db["students"].find_one({"student_id": "stu-abcd"}))["full_name"] == (
-        "Student ABCD"
-    )
-    assert (await real_db["users"].find_one({"user_id": "u1"}))["display_name"] == "Deleted user"
-    assert await real_db["family_notes"].count_documents({"academy_id": A}) == 0
-    # B's records stay.
-    assert (await real_db["students"].find_one({"student_id": "stu-b"}))["full_name"] == "Kid B"
-    assert await real_db["family_notes"].count_documents({"academy_id": B}) == 1
-    assert (await real_db["users"].find_one({"user_id": "fb1"}))["display_name"] == "Pat B"
-    # The shared login is the person's, not B's: it is still deleted.
+    assert sorted(stop_all.students) == ["stu-abcd", "stu-b"]
+    assert (await real_db["students"].find_one({"student_id": "stu-b"}))["full_name"] != "Kid B"
+    assert await real_db["family_notes"].count_documents({}) == 0
+    for user_id in ("u1", "fb1"):
+        doc = await real_db["users"].find_one({"user_id": user_id})
+        assert doc["display_name"] == "Deleted user", user_id
     assert firebase.deleted == ["fb1"]
     completed = await real_db["audit_logs"].distinct(
         "academy_id", {"action": "user.deletion_completed"}
     )
-    assert completed == [A]
+    assert sorted(completed) == [A, B]

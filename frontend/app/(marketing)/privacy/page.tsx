@@ -123,9 +123,9 @@ export default function PrivacyPage() {
             <p>
               Delete your account in the app under Profile, or follow the steps on{" "}
               <Link href="/account-deletion">the account deletion page</Link>. You are signed out
-              at once. Your personal details are removed 14 days later; until then the academy can
-              restore the account if you ask. Invoices and payment records stay for 7 years, and
-              attendance and skill records stay with names removed.
+              at once. Your personal details are removed 14 days later; until then you can contact
+              support at {contact} to restore the account. Invoices and payment records stay for 7
+              years, and attendance and skill records stay with names removed.
             </p>
           </section>
 

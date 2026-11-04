@@ -40,8 +40,8 @@ class DueDeletionStore(Protocol):
 
     async def claim(self, request_id: str, *, now: datetime) -> AccountDeletionRequest | None:
         """Atomically mark the request running and return it as it stands now:
-        None once every academy restored it (or another run holds it), and
-        without any academy that restored it. A restore cannot land after this."""
+        None once support cancelled it or another run holds it. A support
+        cancel cannot land after this."""
         ...
 
     async def mark_completed(self, request_id: str, *, now: datetime) -> None: ...
@@ -84,8 +84,8 @@ class ExecuteAccountDeletions:
             request = due
             step = "start"
             try:
-                # Claim per request: a restore may land after the batch was read,
-                # and must not land while this run erases the academies it names.
+                # Claim per request: a support cancel may land after the batch was
+                # read, and must not land while this run erases.
                 current = await self._store.claim(due.request_id, now=now)
                 if current is None:
                     continue

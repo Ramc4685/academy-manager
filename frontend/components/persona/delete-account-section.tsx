@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { requestAccountDeletion } from "@/lib/api/me";
+import { brand } from "@/lib/brand";
 import { toAuthErrorMessage } from "@/lib/auth/auth-error";
 import {
   reauthMethods,
@@ -99,8 +100,8 @@ export function DeleteAccountSection() {
           <ul className="list-disc space-y-1 pl-5">
             <li>You are signed out right away and cannot sign in again, in any academy.</li>
             <li>
-              After 14 days your personal details are removed. Until then, the academy can restore
-              the account if you ask them.
+              After 14 days your personal details are removed. Until then, you can contact support
+              at {brand.supportEmail} to restore the account.
             </li>
             <li>
               Invoices and payment records are kept for 7 years, as tax law requires. Any balance

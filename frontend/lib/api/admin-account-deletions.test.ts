@@ -27,7 +27,8 @@ describe("deletionForFamily", () => {
 describe("deletionSummary", () => {
   it("tells a pending deletion apart from a finished one", () => {
     expect(deletionSummary(row())).toContain("are removed on");
-    expect(deletionSummary(row())).toContain("can still restore");
+    expect(deletionSummary(row())).toContain("contact support to restore");
+    expect(deletionSummary(row())).toContain("The academy cannot restore it");
     expect(deletionSummary(row({ status: "completed", completed_at: "2026-11-17T13:00:00Z" }))).toContain(
       "were removed on",
     );
@@ -36,11 +37,13 @@ describe("deletionSummary", () => {
   it("stops offering a restore once the removal is under way", () => {
     const text = deletionSummary(row({ status: "running" }));
     expect(text).toContain("being removed now");
-    expect(text).not.toContain("can still restore");
+    expect(text).not.toContain("restore");
   });
 
   it("says when the removal keeps failing", () => {
     expect(deletionSummary(row({ attempts: 2 }))).toContain("failed 2 times");
     expect(deletionSummary(row({ attempts: 1 }))).toContain("failed 1 time ");
+    // An erasure that failed partway stays non-restorable.
+    expect(deletionSummary(row({ attempts: 1 }))).not.toContain("restore");
   });
 });
