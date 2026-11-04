@@ -34,6 +34,7 @@ from .payout_period_routes import router as payout_period_router
 from .payroll_routes import router as payroll_router
 from .people_reports_routes import router as people_reports_router
 from .pipeline_routes import router as pipeline_router
+from .platform_fee_routes import router as platform_fee_router
 from .pricing_routes import router as pricing_router
 from .progress_routes import router as progress_router
 from .public_page_routes import router as public_page_router
@@ -78,6 +79,7 @@ router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
 router.include_router(billing_rules_router)
 router.include_router(payment_methods_router)
+router.include_router(platform_fee_router)
 router.include_router(pricing_router)
 router.include_router(payout_period_router)
 router.include_router(payroll_router)
