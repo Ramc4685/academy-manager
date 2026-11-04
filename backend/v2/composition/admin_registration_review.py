@@ -171,6 +171,16 @@ class TrialConversionLinker(Protocol):
     async def execute(self, *, parent_user_id: str, application_id: str) -> None: ...
 
 
+class LeadConversionLinker(Protocol):
+    """Port for the crm context's ``MarkLeadEnrolled`` use case (AI strategy
+    Phase 1, item #1): the inquiry that led to this registration becomes
+    ``enrolled``. Same shape and reasons as ``TrialConversionLinker``."""
+
+    async def execute(
+        self, *, parent_user_id: str, parent_email: str | None, application_id: str
+    ) -> int: ...
+
+
 class PaidPeriodResolver(Protocol):
     """Port for resolving which billing period a registration checkout
     payment already covered (#506).
@@ -276,6 +286,7 @@ class AdminRegistrationReview:
         waiver_signatures: RegistrationWaiverSignatureWriter | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         trial_conversion: TrialConversionLinker | None = None,
+        lead_conversion: LeadConversionLinker | None = None,
         student_registrations: StudentRegistrationQuery | None = None,
         refunds: RegistrationRefundIssuer | None = None,
         paid_period_resolver: PaidPeriodResolver | None = None,
@@ -297,6 +308,7 @@ class AdminRegistrationReview:
         self._waiver_receipt_notifier = waiver_receipt_notifier
         self._enrollment_events = enrollment_events
         self._trial_conversion = trial_conversion
+        self._lead_conversion = lead_conversion
         self._student_registrations = student_registrations
         self._refunds = refunds
         self._paid_period_resolver = paid_period_resolver
@@ -315,6 +327,11 @@ class AdminRegistrationReview:
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._seat_broker = seat_broker
+
+    def set_lead_conversion(self, lead_conversion: LeadConversionLinker) -> None:
+        """Attached from ``main.py`` like ``set_seat_broker``: the crm use case
+        is composed outside the line-capped ``composition/admin.py``."""
+        self._lead_conversion = lead_conversion
 
     async def list_pending(self) -> list[AdminRegistrationRow]:
         apps = await self._apps.list_by_status(
@@ -531,6 +548,13 @@ class AdminRegistrationReview:
             except Exception:
                 logger.exception(
                     "Registration %s was approved, but trial conversion linking failed",
+                    decided.application_id,
+                )
+            try:
+                await self._link_lead_conversion(decided)
+            except Exception:
+                logger.exception(
+                    "Registration %s was approved, but lead conversion failed",
                     decided.application_id,
                 )
             # #613 welcome email. After `_complete_review`, so the approval is
@@ -823,6 +847,18 @@ class AdminRegistrationReview:
             return
         await self._trial_conversion.execute(
             parent_user_id=app.parent_user_id,
+            application_id=app.application_id,
+        )
+
+    async def _link_lead_conversion(self, app: Application) -> None:
+        """Phase 1 lead-loop hook: after a successful approval, tell the crm
+        context so the inquiry filed under this parent's email (if any) is
+        marked ``enrolled`` and linked to the family. No-op when unwired."""
+        if self._lead_conversion is None:
+            return
+        await self._lead_conversion.execute(
+            parent_user_id=app.parent_user_id,
+            parent_email=str(app.parent_email) or None,
             application_id=app.application_id,
         )
 

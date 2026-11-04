@@ -933,6 +933,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # site that the original four-class wiring test never counted — see
     # tests/structural/test_seat_broker_wiring.py.
     app.state.admin.admin_registration_review.set_seat_broker(_holds.seat_broker)
+    # AI strategy Phase 1 #1: registration approval marks the matching crm
+    # inquiry `enrolled` (composition/crm_pipeline.py), attached the same way.
+    from backend.v2.composition.crm_pipeline import compose_mark_lead_enrolled
+
+    app.state.admin.admin_registration_review.set_lead_conversion(compose_mark_lead_enrolled(db))
     # The event-driven promotion path (Enrollment.EnrollmentCancelled ->
     # PromoteFromWaitlist, wired via install_handlers in compose_parent) is a
     # SECOND PromoteFromWaitlist instance, distinct from the one above that
