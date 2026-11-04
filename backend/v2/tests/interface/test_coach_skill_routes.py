@@ -1347,6 +1347,11 @@ class _FakeSkillLookupBoard:
         return self._skills.get(level_id, [])
 
 
+class _FakeCriteria:
+    async def list_for_skill(self, skill_id: str) -> list[object]:
+        return []
+
+
 def _build_real_router_app_with_board(
     *,
     assigned: bool,
@@ -1376,6 +1381,7 @@ def _build_real_router_app_with_board(
         skill_progress=skill_progress_repo,  # type: ignore[arg-type]
         recommendations=recommendation_repo,  # type: ignore[arg-type]
         skill_lookup=skill_lookup,  # type: ignore[arg-type]
+        criteria=_FakeCriteria(),
     )
 
     student_progress = SimpleNamespace(

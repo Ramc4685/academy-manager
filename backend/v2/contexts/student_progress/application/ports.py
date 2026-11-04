@@ -147,6 +147,12 @@ class SkillLookup(Protocol):
     async def list_levels_for_program(self, program_id: str) -> list[object]: ...
 
 
+class CriterionLookup(Protocol):
+    """Cross-context port: a skill's observable criteria, from the curriculum context."""
+
+    async def list_for_skill(self, skill_id: str) -> list[object]: ...
+
+
 class EnrollmentStatusLookup(Protocol):
     """Cross-context port: does the student still attend (issue #673)?
 
