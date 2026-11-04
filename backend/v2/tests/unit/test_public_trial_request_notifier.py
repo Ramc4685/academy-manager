@@ -60,8 +60,14 @@ class _AlreadyAcknowledged:
     """The family acknowledgement is covered by test_inquiry_acknowledgement.py;
     here its claim is already taken, so only the owner alert runs."""
 
+    async def acknowledged_since(self, email: str, *, since: datetime) -> bool:
+        return False
+
     async def try_claim_acknowledgement(self, contact_id: str, *, at: datetime) -> bool:
         return False
+
+    async def release_acknowledgement(self, contact_id: str) -> None:
+        raise AssertionError("nothing to release: the claim was never taken")
 
 
 class _Audiences:

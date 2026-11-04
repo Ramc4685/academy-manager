@@ -41,7 +41,7 @@ def test_opt_out_is_stored_by_normalised_address_for_one_academy_only(db: Any) -
     assert asyncio.run(_run()) == (True, False, 1)
 
 
-def test_gate_blocks_only_prospect_recipients_and_allows_on_store_errors(db: Any) -> None:
+def test_gate_blocks_only_prospect_recipients_and_fails_closed_on_store_errors(db: Any) -> None:
     repo = MongoProspectOptOutRepository(db)
     gate = ProspectOptOutGate(repo)
 
@@ -58,12 +58,12 @@ def test_gate_blocks_only_prospect_recipients_and_allows_on_store_errors(db: Any
                 email="jamie@example.test",
                 category=EmailCategory.TRANSACTIONAL,
             )
-        # No tenant in scope: the repository raises, the gate allows.
+        # No tenant in scope: the repository raises, the gate refuses.
         broken = await gate.check(
             recipient_user_id="crm_contact:c9",
             email="jamie@example.test",
             category=EmailCategory.TRANSACTIONAL,
         )
-        return [prospect.allowed, user.allowed, broken.allowed]
+        return [prospect.allowed, user.allowed, broken.allowed, broken.reason]
 
-    assert asyncio.run(_run()) == [False, True, True]
+    assert asyncio.run(_run()) == [False, True, False, "unsubscribe_check_unavailable"]

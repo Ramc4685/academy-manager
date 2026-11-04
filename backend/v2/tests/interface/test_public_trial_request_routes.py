@@ -154,7 +154,7 @@ def test_owner_email_escapes_form_text() -> None:
     assert "<script>" not in sent["body"]
     assert "&lt;script&gt;" in sent["body"]
     [ack] = _family_sends(app)
-    assert "<b>Jamie</b>" not in ack["body"] and "&lt;b&gt;Jamie&lt;/b&gt;" in ack["body"]
+    assert "Jamie" not in ack["body"]  # nothing the submitter typed is mailed back
 
 
 def test_no_owner_address_falls_back_to_the_academy_contact_email() -> None:
@@ -393,7 +393,7 @@ def test_new_contact_gets_one_acknowledgement_in_the_background() -> None:
     assert ack["subject"] == "Your free trial request at Riverside Shuttle Club"
     assert "Class jr-sat" in ack["body"] and "A seat is available" in ack["body"]
     assert ack["sender_name"] == "Riverside Shuttle Club"
-    assert ack["reply_to"] == OWNER_EMAIL
+    assert ack["reply_to"] is None  # no academy reply-to, never the owner's address
     assert "/api/v2/unsubscribe/prospect?t=" in ack["body"]
     [row] = _rows(db)
     assert row["acknowledged_at"] is not None
