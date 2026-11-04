@@ -36,6 +36,9 @@ export interface FamilyAutopay {
 
 export interface FamilyLastPayment {
   amount_cents: number;
+  /** #929: this payment's cumulative refund and what the academy kept. */
+  refunded_cents?: number;
+  net_cents?: number | null;
   method: string | null;
   paid_at: string | null;
   invoice_ids: string[];
@@ -47,13 +50,26 @@ export interface FamilyRegistration {
   last_invited_at: string | null;
 }
 
+/** #778: what the provider knows about this family's address. */
+export interface FamilyEmailDelivery {
+  undeliverable: boolean;
+  since: string | null;
+  reason: "hard_bounce" | "complaint" | "manual" | string | null;
+  email: string | null;
+}
+
 export interface FamilyHeader {
   balance_cents: number;
   open_invoice_count: number;
   available_credit_cents: number;
+  /** #929 family totals over the invoices on the page. Optional: older payloads omit them. */
+  paid_cents?: number;
+  refunded_cents?: number;
+  net_paid_cents?: number;
   last_payment: FamilyLastPayment | null;
   autopay: FamilyAutopay;
   registration: FamilyRegistration;
+  email_delivery?: FamilyEmailDelivery;
   enrollment_counts: { active: number; paused: number; cancelled: number };
 }
 
@@ -64,6 +80,12 @@ export interface FamilyEnrollment {
   schedule: string | null;
   status: string;
   monthly_price_cents: number | null;
+  /**
+   * What the class is billed per month, read the way the monthly invoice
+   * reads it (Settings overhaul PR 11b). Display only; optional so older
+   * payloads still type-check.
+   */
+  class_fee_cents?: number | null;
   override_price_cents: number | null;
   autopay_status: string | null;
   recurring_discount: Record<string, unknown> | null;
@@ -97,6 +119,24 @@ export interface FamilyInvoiceCredit {
   amount_cents: number;
 }
 
+export interface FamilyManualPaymentAllocation {
+  invoice_id: string;
+  amount_cents: number;
+}
+
+/** A live cash/check/Zelle/... payment an owner may void if it was recorded by mistake. */
+export interface FamilyManualPayment {
+  payment_id: string;
+  method: string | null;
+  amount_cents: number;
+  paid_at: string | null;
+  allocations: FamilyManualPaymentAllocation[];
+  /** OVERPAYMENT credit this payment created; voiding cancels it. */
+  credit_cents: number;
+  credit_spent_cents: number;
+  void_blocked_reason: "credit_spent" | "legacy_allocation" | null;
+}
+
 export interface FamilyInvoice {
   invoice_id: string;
   invoice_number: string | null;
@@ -107,6 +147,10 @@ export interface FamilyInvoice {
   status: string;
   total_cents: number;
   paid_cents: number;
+  /** #929: cumulative refunds on this invoice (admin or Stripe dashboard). */
+  refunded_cents?: number;
+  /** #929: paid minus refunded, never below zero. */
+  net_paid_cents?: number;
   balance_due_cents: number;
   due_date: string | null;
   created_at: string | null;
@@ -133,6 +177,8 @@ export interface FamilyTimelineEntry {
   actor_id: string | null;
   reason: string | null;
   amount_cents: number | null;
+  /** #929: on a `payment_received` entry, how much of that payment went back. */
+  refunded_cents?: number | null;
   muted: boolean;
 }
 
@@ -151,9 +197,68 @@ export interface AdminFamilyBillingView {
   header: FamilyHeader;
   students: FamilyStudent[];
   invoices: FamilyInvoice[];
+  manual_payments?: FamilyManualPayment[];
   timeline: FamilyTimelineEntry[];
   actions: FamilyAction[];
   warnings: string[];
+}
+
+/**
+ * People CRM Phase 5: every kind the unified family timeline carries. The
+ * Billing tab's own timeline only ever uses the first four (`TimelineKind`).
+ */
+export type FamilyTimelineKind =
+  | TimelineKind
+  | "attendance"
+  | "requests"
+  | "coach"
+  | "crm";
+
+/** One row of `GET /admin/families/{id}/timeline`. */
+export interface UnifiedTimelineEntry {
+  entry_id: string;
+  at: string;
+  kind: FamilyTimelineKind;
+  code: string;
+  summary: string;
+  source: string;
+  /** Longer text under the summary: a team note or a coach note body. */
+  detail: string | null;
+  student_id: string | null;
+  student_name: string | null;
+  enrollment_id: string | null;
+  invoice_id: string | null;
+  invoice_ids: string[];
+  actor_id: string | null;
+  actor_name: string | null;
+  reason: string | null;
+  /** Null for a caller who may not see money (front desk, #553). */
+  amount_cents: number | null;
+  refunded_cents: number | null;
+  muted: boolean;
+  /** Codes of same-enrollment rows folded into this one (10-minute window). */
+  collapsed_codes: string[];
+}
+
+export interface FamilyTimelinePage {
+  family_id: string;
+  entries: UnifiedTimelineEntry[];
+  /** Pass back as `before` for the next (older) page; null on the last one. */
+  next_cursor: string | null;
+  money_visible: boolean;
+  warnings: string[];
+}
+
+export function fetchFamilyTimeline(
+  parentId: string,
+  before: string | null = null,
+  limit = 50,
+): Promise<FamilyTimelinePage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before) params.set("before", before);
+  return apiFetch<FamilyTimelinePage>(
+    `/admin/families/${encodeURIComponent(parentId)}/timeline?${params.toString()}`,
+  );
 }
 
 export function fetchAdminFamilyBilling(parentId: string): Promise<AdminFamilyBillingView> {
@@ -180,5 +285,222 @@ export function pauseFamilyAutopay(
   return apiFetch<PauseFamilyAutopayResponse>(
     `/admin/families/${encodeURIComponent(parentId)}/autopay/pause`,
     { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// People CRM family index — `GET /admin/families` and `/admin/families/summary`.
+// Spec: docs/design/people-crm/engineering-spec.md §3.2. Shapes mirror
+// backend/v2/interfaces/admin/family_index_views.py exactly.
+// ---------------------------------------------------------------------------
+
+export type FamilyStage =
+  | "pending_cancel"
+  | "active"
+  | "at_risk"
+  | "on_hold"
+  | "paused"
+  | "trial"
+  | "never_enrolled"
+  | "left";
+
+export type FamilyScope = "active" | "leaving" | "left";
+export type FamilyIndexSort = "name" | "stage" | "balance" | "children";
+
+export interface FamilyIndexClass {
+  session_id: string;
+  title: string;
+}
+
+export interface FamilyIndexChild {
+  student_id: string;
+  name: string;
+  lifecycle: FamilyStage;
+  lifecycle_as_of: string | null;
+  classes: FamilyIndexClass[];
+  /** The search matched this child: the child is the result row (spec §3.2). */
+  matched: boolean;
+}
+
+export interface FamilyIndexMoney {
+  balance_cents: number;
+  open_invoice_count: number;
+  overdue_invoice_count: number;
+  overdue_cents: number;
+  oldest_overdue_due_on: string | null;
+  last_failed_payment_at: string | null;
+}
+
+export interface FamilyIndexRow {
+  /** The id `/admin/families/{family_id}` opens. */
+  family_id: string;
+  parent_name: string | null;
+  email: string | null;
+  phone: string | null;
+  /** False when no users document answers to the parent id: no Billing tab. */
+  has_account: boolean;
+  stage: FamilyStage;
+  children: FamilyIndexChild[];
+  card_on_file: boolean | null;
+  registration: RegistrationState | null;
+  /** Null when money is hidden from this caller or could not be read. */
+  money: FamilyIndexMoney | null;
+  /**
+   * The "owes money" flag (balance above zero) for callers who see amounts
+   * or the flag (front desk). Null when hidden or unreadable: unknown, never
+   * "does not owe". Optional: responses before L2b omit it.
+   */
+  owes_money?: boolean | null;
+  matched_parent: boolean;
+}
+
+/**
+ * How the server let this caller see family money (L2b, #553): `amounts`
+ * (owner, admin, billing), `flag` (front desk: owes money yes/no, no amount)
+ * or `none`. The server redacts; the client only renders what came back.
+ */
+export type FamilyMoneyView = "amounts" | "flag" | "none";
+
+export interface FamilyIndexPage {
+  generated_at: string;
+  families: FamilyIndexRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  money_visible: boolean;
+  /** Optional: responses before L2b omit it (read `money_visible`). */
+  money_view?: FamilyMoneyView;
+  warnings: string[];
+}
+
+export interface FamilyViewPreset {
+  id: string;
+  label: string;
+  params: Record<string, string>;
+  money: boolean;
+}
+
+export interface FamilyIndexSummary {
+  generated_at: string;
+  total_families: number;
+  tiles: Partial<Record<FamilyScope, number>>;
+  counts_by_stage: Partial<Record<FamilyStage, number>>;
+  presets: FamilyViewPreset[];
+  /** Families each non-scope preset keeps, by preset id (`no_card`; `overdue`
+   * only when money is visible). Optional: older responses omit it. */
+  preset_counts?: Partial<Record<string, number>>;
+  warnings: string[];
+}
+
+export interface FamilyIndexParams {
+  search?: string;
+  scope?: FamilyScope;
+  stage?: FamilyStage[];
+  class_id?: string;
+  card_on_file?: boolean;
+  overdue?: boolean;
+  sort?: FamilyIndexSort;
+  order?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
+
+export function familyIndexQueryString(params: FamilyIndexParams): string {
+  const search = new URLSearchParams();
+  if (params.search) search.set("search", params.search);
+  if (params.scope) search.set("scope", params.scope);
+  for (const stage of params.stage ?? []) search.append("stage", stage);
+  if (params.class_id) search.set("class_id", params.class_id);
+  if (params.card_on_file !== undefined) search.set("card_on_file", String(params.card_on_file));
+  if (params.overdue !== undefined) search.set("overdue", String(params.overdue));
+  if (params.sort) search.set("sort", params.sort);
+  if (params.order) search.set("order", params.order);
+  if (params.page) search.set("page", String(params.page));
+  if (params.page_size) search.set("page_size", String(params.page_size));
+  return search.toString();
+}
+
+export function fetchFamilyIndex(params: FamilyIndexParams = {}): Promise<FamilyIndexPage> {
+  const qs = familyIndexQueryString(params);
+  return apiFetch<FamilyIndexPage>(`/admin/families${qs ? `?${qs}` : ""}`, { method: "GET" });
+}
+
+export function fetchFamilyIndexSummary(): Promise<FamilyIndexSummary> {
+  return apiFetch<FamilyIndexSummary>("/admin/families/summary", { method: "GET" });
+}
+
+// ---------------------------------------------------------------------------
+// People CRM family record page (Lane A4). Shapes mirror
+// backend/v2/interfaces/admin/family_index_views.py (AdminFamilyRecordView)
+// and backend/v2/interfaces/admin/family_record_routes.py.
+// ---------------------------------------------------------------------------
+
+/** `GET /admin/families/{familyId}/record`: the family's index row. */
+export interface FamilyRecordView {
+  generated_at: string;
+  /** The canonical family id, whichever alias the request URL carried. */
+  family_id: string;
+  family: FamilyIndexRow;
+  money_visible: boolean;
+  /** Optional: responses before L2b omit it (read `money_visible`). */
+  money_view?: FamilyMoneyView;
+  warnings: string[];
+}
+
+export function fetchFamilyRecord(familyId: string): Promise<FamilyRecordView> {
+  return apiFetch<FamilyRecordView>(
+    `/admin/families/${encodeURIComponent(familyId)}/record`,
+    { method: "GET" },
+  );
+}
+
+/** A coach note the coach shared with the family (#665), read-only. */
+export interface StudentCoachNote {
+  note_id: string;
+  session_id: string | null;
+  session_title: string | null;
+  coach_name: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface StudentCoachNoteList {
+  student_id: string;
+  notes: StudentCoachNote[];
+}
+
+export function fetchStudentCoachNotes(studentId: string): Promise<StudentCoachNoteList> {
+  return apiFetch<StudentCoachNoteList>(
+    `/admin/students/${encodeURIComponent(studentId)}/coach-notes`,
+    { method: "GET" },
+  );
+}
+
+export type CorrectableAttendanceStatus = "present" | "absent" | "late";
+
+export interface CorrectedAttendance {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  student_id: string;
+  status: CorrectableAttendanceStatus;
+  previous_status: CorrectableAttendanceStatus | "voided" | null;
+  corrected_by: string | null;
+  corrected_at: string | null;
+}
+
+/**
+ * Admin correction of one recorded mark (#517): any time, no coach window.
+ * The backend keeps the previous status, the admin and the reason on the row
+ * and emits `Coaching.AttendanceCorrected`.
+ */
+export function correctStudentAttendance(
+  occurrenceId: string,
+  studentId: string,
+  payload: { status: CorrectableAttendanceStatus; reason: string | null },
+): Promise<CorrectedAttendance> {
+  return apiFetch<CorrectedAttendance>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
   );
 }

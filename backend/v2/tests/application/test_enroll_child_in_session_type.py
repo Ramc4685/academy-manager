@@ -203,6 +203,8 @@ async def test_enroll_routes_autopay_setup_through_ready_connected_account():
     enrollments = FakeEnrollmentRepo()
     stripe = FakeStripeGateway()
     connected_account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
         academy_id="acad",
         stripe_account_id="acct_ready",
     ).with_status(status="active", charges_enabled=True)
@@ -225,7 +227,11 @@ async def test_enroll_routes_autopay_setup_through_ready_connected_account():
     )
 
     assert connected_accounts.calls == 1
-    assert stripe.autopay_setup_checkouts[0]["connected_account_id"] == "acct_ready"
+    setup = stripe.autopay_setup_checkouts[0]
+    assert setup["stripe_account"] == "acct_ready"
+    assert setup["connected_account_id"] is None
+    # Checkout's customer lives on the academy's account, not the platform.
+    assert stripe.account_of(setup["customer_id"]) == "acct_ready"
 
 
 @pytest.mark.asyncio
@@ -233,7 +239,12 @@ async def test_enroll_fails_closed_without_ready_connected_account():
     enrollments = FakeEnrollmentRepo()
     stripe = FakeStripeGateway()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     uc = _make_use_case(
         enrollments=enrollments,
@@ -275,7 +286,12 @@ class _SettingsRepo:
 async def test_enroll_falls_back_to_platform_when_flag_on():
     stripe = FakeStripeGateway()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     uc = _make_use_case(
         session_type=_make_session_type(),
@@ -301,7 +317,12 @@ async def test_enroll_falls_back_to_platform_when_flag_on():
 async def test_enroll_still_fails_closed_when_settings_lookup_errors():
     stripe = FakeStripeGateway()
     connected_accounts = FakeConnectedAccounts(
-        ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_pending")
+        ConnectedAccount.new(
+            fees_collector="stripe",
+            losses_collector="stripe",
+            academy_id="acad",
+            stripe_account_id="acct_pending",
+        )
     )
     uc = _make_use_case(
         session_type=_make_session_type(),

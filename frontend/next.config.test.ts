@@ -34,10 +34,78 @@ describe("next.config redirects", () => {
     expect(entry?.has).toBeUndefined();
   });
 
+  // #827: /admin/parents and /admin/coaches have been pure forwards into the
+  // Users directory for some time, but they forwarded by RENDERING the
+  // `(admin)` layout and throwing `redirect()` from it — the exact shape that
+  // served Cloudflare's Error 1102 instead of a redirect on the Dues paths.
+  // A static config redirect is matched before route resolution, so the
+  // authenticated layout never runs for a URL that only forwards.
+  // Sidebar regroup PR 3: parents left the Staff list, so /admin/parents lands
+  // on the Families view (`?view=families`, People CRM Phase 1). It is a 307
+  // on purpose — the old 308 to `?role=parent` is already pinned in some
+  // browsers, and this move must stay reversible.
+  it.each([
+    ["/admin/parents", "/admin/families?view=families", false],
+    ["/admin/coaches", "/admin/users?role=coach", true],
+  ])("forwards the retired %s bookmark to %s", async (source, destination, permanent) => {
+    const entry = (await resolveRedirects()).find((redirect) => redirect.source === source);
+
+    expect(entry, `no redirect declared for ${source}`).toBeDefined();
+    expect(entry?.destination).toBe(destination);
+    expect(entry?.permanent).toBe(permanent);
+    expect(entry?.has).toBeUndefined();
+  });
+
+  // Lane A verify #3: an old per-parent bookmark opens that family's record
+  // (a 307, like the list rule above), keeping the id in the path.
+  it("forwards a retired /admin/parents/{id} bookmark to the family record", async () => {
+    const entry = (await resolveRedirects()).find(
+      (redirect) => redirect.source === "/admin/parents/:parentId",
+    );
+
+    expect(entry, "no redirect declared for /admin/parents/:parentId").toBeDefined();
+    expect(entry?.destination).toBe("/admin/families/:parentId");
+    expect(entry?.permanent).toBe(false);
+    expect(entry?.has).toBeUndefined();
+  });
+
+  // #839: /admin/users/new was a second, differently-shaped add-user form
+  // sitting beside the directory's own Add user dialog. One form now, and the
+  // old URL forwards to it with the dialog open.
+  it("forwards the retired add-user page to the directory's dialog", async () => {
+    const entry = (await resolveRedirects()).find(
+      (redirect) => redirect.source === "/admin/users/new",
+    );
+
+    expect(entry, "no redirect declared for /admin/users/new").toBeDefined();
+    expect(entry?.destination).toBe("/admin/users?add=1");
+    expect(entry?.permanent).toBe(true);
+    expect(entry?.has).toBeUndefined();
+  });
+
+  // The Users directory itself is live and sets `?role=` as its own filter —
+  // redirecting it would break the page the two entries above point at.
+  it("leaves the live Users directory alone", async () => {
+    const sources = (await resolveRedirects()).map((entry) => entry.source);
+    expect(sources).not.toContain("/admin/users");
+  });
+
   it("keeps the canonical-host redirect", async () => {
     const hostRedirects = (await resolveRedirects()).filter((entry) => entry.has !== undefined);
 
     expect(hostRedirects.length).toBeGreaterThan(0);
     expect(hostRedirects.every((entry) => entry.source === "/:path*")).toBe(true);
+  });
+});
+
+describe("next.config CSP img-src", () => {
+  it("allows academy logos from Firebase Storage and the Firebase Hosting site", async () => {
+    const rules = (await config.headers?.()) ?? [];
+    const csp = rules
+      .flatMap((rule) => rule.headers)
+      .find((header) => header.key === "Content-Security-Policy-Report-Only");
+    const imgSrc = csp?.value.split("; ").find((part) => part.startsWith("img-src "));
+    expect(imgSrc).toContain("https://firebasestorage.googleapis.com");
+    expect(imgSrc).toContain("https://academy-courtmastr.web.app");
   });
 });

@@ -107,15 +107,28 @@ export function Field({
 export function Th({
   children,
   align = "left",
+  /**
+   * #897: the People tables each pad their own way (Students `px-5 py-4`,
+   * Users `px-2 pb-3`), and a padding utility passed through `className`
+   * would not reliably beat the default — Tailwind resolves conflicts by
+   * stylesheet order, not by the order of the class names. It is a parameter
+   * so the one mono header style can be shared without moving the padding.
+   */
+  padding = "px-4 py-3",
   className,
+  ariaSort,
 }: {
   children: ReactNode;
   align?: "left" | "right";
+  padding?: string;
   className?: string;
+  /** Set on a sortable column only; the header then holds a sort button. */
+  ariaSort?: "ascending" | "descending" | "none";
 }) {
   return (
     <th
-      className={`px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${
+      aria-sort={ariaSort}
+      className={`${padding} font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted ${
         align === "right" ? "text-right" : "text-left"
       } ${className ?? ""}`}
     >

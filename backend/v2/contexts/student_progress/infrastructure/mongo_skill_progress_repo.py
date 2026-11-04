@@ -34,6 +34,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             introduced_at=doc.get("introduced_at"),
             last_updated_at=doc["last_updated_at"],
             last_updated_by=str(doc["last_updated_by"]),
+            coach_note=doc.get("coach_note") or None,
         )
 
     async def save(self, skill_progress: StudentSkillProgress) -> None:
@@ -48,6 +49,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
                 "introduced_at": skill_progress.introduced_at,
                 "last_updated_at": skill_progress.last_updated_at,
                 "last_updated_by": skill_progress.last_updated_by,
+                "coach_note": skill_progress.coach_note,
             }
         )
 
@@ -65,6 +67,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
                     "introduced_at": skill_progress.introduced_at,
                     "last_updated_at": skill_progress.last_updated_at,
                     "last_updated_by": skill_progress.last_updated_by,
+                    "coach_note": skill_progress.coach_note,
                 }
             },
             upsert=True,
@@ -73,6 +76,21 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         if saved is None:  # pragma: no cover - impossible unless Mongo write failed silently
             raise RuntimeError("skill progress upsert did not persist a row")
         return saved
+
+    async def set_coach_note(
+        self, student_id: str, skill_id: str, *, passed_at: datetime, note: str | None
+    ) -> bool:
+        """Note-only write, and only on the same pass: an undo or re-tap in between wins."""
+        result = await self._update_one(
+            {
+                "student_id": student_id,
+                "skill_id": skill_id,
+                "status": "PASSED",
+                "last_updated_at": passed_at,
+            },
+            {"$set": {"coach_note": note}},
+        )
+        return bool(result.matched_count == 1)
 
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None:
         doc = await self._find_one({"student_id": student_id, "skill_id": skill_id})
@@ -92,6 +110,15 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
     ) -> list[StudentSkillProgress]:
         cursor = self._find_many(
             {"student_id": student_id, "level_id": level_id, "status": "PASSED"},
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_passed_between(
+        self, start: datetime, end: datetime
+    ) -> list[StudentSkillProgress]:
+        """Skills that reached PASSED in ``[start, end)`` -- the evening win email."""
+        cursor = self._find_many(
+            {"status": "PASSED", "last_updated_at": {"$gte": start, "$lt": end}},
         )
         return [self._to_domain(doc) async for doc in cursor]
 
@@ -122,6 +149,41 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             sort=[("student_id", 1), ("skill_id", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def passed_stats_for_students(
+        self, student_ids: list[str], program_id: str, *, since: datetime
+    ) -> list[dict[str, object]]:
+        """Per student: when the last skill was PASSED, and how many since ``since``."""
+        if not student_ids:
+            return []
+        pipeline = [
+            {
+                "$match": self._scoped(
+                    {
+                        "student_id": {"$in": list(student_ids)},
+                        "program_id": program_id,
+                        "status": "PASSED",
+                    }
+                )
+            },
+            {
+                "$group": {
+                    "_id": "$student_id",
+                    "last_passed_at": {"$max": "$last_updated_at"},
+                    "passed_since": {
+                        "$sum": {"$cond": [{"$gte": ["$last_updated_at", since]}, 1, 0]}
+                    },
+                }
+            },
+        ]
+        return [
+            {
+                "student_id": str(doc["_id"]),
+                "last_passed_at": doc["last_passed_at"],
+                "passed_since": int(doc["passed_since"]),
+            }
+            async for doc in self.collection.aggregate(pipeline)
+        ]
 
     async def count_updates_by_coach(
         self, *, start_at: datetime, end_at: datetime

@@ -154,11 +154,14 @@ async function stubSessionDetail(page: Page) {
   });
 }
 
+/**
+ * #857: below `md` the Class dates table is replaced by phone rows, so an
+ * ancestor-of-a-`<table>` walk resolves nothing under chromium-mobile. Both
+ * layouts tag each date `class-date-row-<occurrenceId>`, which is also the
+ * document order the windowing assertions rely on.
+ */
 function classDateRows(page: Page) {
-  return page
-    .getByRole("heading", { name: "Class dates" })
-    .locator("xpath=ancestor::*[.//table][1]")
-    .locator("tbody tr");
+  return page.locator('[data-testid^="class-date-row-"]');
 }
 
 test.describe("admin session detail — class dates window and roster tabs (#711)", () => {
@@ -166,12 +169,19 @@ test.describe("admin session detail — class dates window and roster tabs (#711
     await stubAdminShell(page);
     await stubSessionDetail(page);
     await page.goto(`/admin/sessions/${SESSION_ID}`);
-    await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
+    // Roster is the first tab on every screen; Class dates is one click away.
+    await expect(page.getByTestId("enrollment-row-enr-active-1")).toBeVisible();
   });
+
+  async function openClassDates(page: Page) {
+    await page.getByRole("button", { name: "Class dates", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
+  }
 
   test("class dates default to 3 past + 3 upcoming and expand to the full list", async ({
     page,
   }) => {
+    await openClassDates(page);
     const rows = classDateRows(page);
     await expect(rows).toHaveCount(6);
     // The two oldest past dates are windowed out; the newest 3 past and all 3
@@ -239,5 +249,121 @@ test.describe("admin session detail — class dates window and roster tabs (#711
     await page.getByRole("button", { name: "Roster", exact: true }).click();
     await expect(page.getByRole("tab", { name: /Past/ })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId("enrollment-row-enr-paused")).toBeVisible();
+  });
+
+  /**
+   * Most visits to this page are roster visits, so the Roster tab opens first
+   * on every screen and the first student is within the first two screens.
+   * Class dates, Waitlist, Teaching plan and Welcome email are tabs; Coaching
+   * staff is a one-line strip under the header.
+   */
+  const PHONE = { width: 400, height: 800 };
+  const DESKTOP = { width: 1280, height: 800 };
+
+  for (const [label, viewport] of [
+    ["at 400px", PHONE],
+    ["on a desktop", DESKTOP],
+  ] as const) {
+    test(`${label} the roster opens first and its first row is within two screens`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      const firstRow = page.getByTestId("enrollment-row-enr-active-1");
+      await expect(firstRow).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Roster", exact: true })).toBeVisible();
+      // The setup panels are not stacked above the roster any more.
+      await expect(page.getByRole("heading", { name: "Class dates" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Communication pack" })).toHaveCount(0);
+      const firstRowTop = await firstRow.evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+      expect(firstRowTop).toBeLessThan(2 * viewport.height);
+    });
+  }
+
+  test("the tab strip lists Roster, Class dates, Waitlist, Teaching plan, Welcome email in order", async ({
+    page,
+  }) => {
+    const labels = await page.locator('[data-testid^="session-tab-"]').allInnerTexts();
+    expect(labels).toEqual(["Roster", "Class dates", "Waitlist", "Teaching plan", "Welcome email"]);
+    await expect(page.getByTestId("session-staff")).toContainText("Coach One");
+  });
+
+  test.describe("Welcome email tab", () => {
+    test("shows academy defaults in grey, and Save sends only the pack fields", async ({ page }) => {
+      await page.route("**/api/v2/admin/academy", (route) => {
+        if (route.request().method() !== "GET") return route.fallback();
+        return fulfillJson(route, {
+          academy_id: ACADEMY,
+          display_name: "Academy E2E",
+          default_class_size: 10,
+          default_class_length_minutes: 45,
+          default_venue_address: "123 Court St",
+          default_parking_note: null,
+          default_what_to_bring: null,
+          default_arrival_minutes_before: 10,
+          default_coach_contact_policy: null,
+        });
+      });
+      await page.route("**/api/v2/admin/self-service/policy", (route) =>
+        fulfillJson(route, { welcome_email_absence_policy_default: "Tell us 24 hours ahead" }),
+      );
+      const patches: Array<Record<string, unknown>> = [];
+      await page.route(`**/api/v2/admin/sessions/${SESSION_ID}`, (route) => {
+        if (route.request().method() !== "PATCH") return route.fallback();
+        patches.push(JSON.parse(route.request().postData() ?? "{}"));
+        return fulfillJson(route, {
+          session_id: SESSION_ID,
+          coach_id: "coach-1",
+          coach_name: "Coach One",
+          title: "Tuesday 6:00 PM Beginner",
+          location: "Court 1",
+          start_at: OCCURRENCES[0].start_at,
+          end_at: OCCURRENCES[0].end_at,
+          days_of_week: ["Tue"],
+          start_time: "18:00",
+          end_time: "18:45",
+          timezone: "America/Chicago",
+          capacity: 12,
+          amount_cents: 10000,
+          status: "scheduled",
+          enrolled_count: 2,
+          waitlist_count: 0,
+          parking_notes: "Lot B",
+        });
+      });
+
+      // The admin shell already loaded (and cached) the academy before these
+      // stubs existed, so load the page again to read the stubbed defaults.
+      await page.reload();
+      await page.getByRole("button", { name: "Welcome email", exact: true }).click();
+      const venue = page.getByTestId("welcome-row-venue_address");
+      await expect(venue).toContainText("123 Court St");
+      await expect(venue).toContainText("(academy default)");
+      await expect(page.getByTestId("welcome-row-arrival_minutes_before")).toContainText(
+        "10 minutes before start",
+      );
+      await expect(page.getByTestId("welcome-row-absence_policy")).toContainText(
+        "Tell us 24 hours ahead",
+      );
+      await expect(page.getByTestId("welcome-row-parking_notes")).toContainText("Not set");
+      await expect(page.getByTestId("welcome-email-save")).toBeDisabled();
+
+      await page.getByTestId("welcome-row-parking_notes-override").click();
+      await page.getByTestId("welcome-input-parking_notes").fill("Lot B");
+      await page.getByTestId("welcome-email-save").click();
+
+      await expect.poll(() => patches.length).toBe(1);
+      expect(patches[0]).toEqual({ parking_notes: "Lot B" });
+    });
+  });
+
+  // #521: the page only needs coach names (for the replacement-coach table),
+  // but used to fetch the entire tenant user directory on every load.
+  test("fetches only coach-role users, not the full tenant directory", async ({ page }) => {
+    const usersRequest = page.waitForRequest(
+      (request) => request.method() === "GET" && request.url().includes("/api/v2/admin/users"),
+    );
+    await page.reload();
+    const request = await usersRequest;
+    expect(new URL(request.url()).searchParams.get("role")).toBe("coach");
   });
 });

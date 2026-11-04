@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import UTC, date, datetime, time
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -28,10 +30,28 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 log = logging.getLogger(__name__)
 
+# #931 allocation claim states (``payment_allocations.allocation_state``).
+_ALLOCATION_PENDING = "pending"
+_ALLOCATION_COMMITTED = "committed"
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Mongo hands back naive UTC datetimes; compare them as aware ones."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
 
 class MongoBillingLedgerRepository(TenantScopedRepository):
     collection_name = "invoices"
     ledger_payments_collection_name = "ledger_payments"
+
+    # #931: an allocation row is inserted as a PENDING claim and flipped to
+    # COMMITTED only by its inserter, after the guarded debit and invoice post
+    # both landed. A same-key caller that finds a pending row waits for it
+    # instead of repairing around it. Rows written before #931 have no state
+    # and count as committed.
+    allocation_claim_lease = timedelta(seconds=60)
+    allocation_claim_wait_seconds = 10.0
+    allocation_claim_poll_seconds = 0.05
 
     def __init__(self, db: Any, *, clock=lambda: datetime.now(UTC)) -> None:
         super().__init__(db)
@@ -64,6 +84,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             refunded_cents=int(doc.get("refunded_cents", 0)),
             payment_method=doc.get("payment_method"),
             stripe_payment_intent_id=doc.get("stripe_payment_intent_id"),
+            stripe_account_id=doc.get("stripe_account_id"),
             stripe_invoice_id=doc.get("stripe_invoice_id"),
             paid_at=doc.get("paid_at"),
             recorded_by=doc.get("recorded_by"),
@@ -255,6 +276,49 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [self._invoice_from_doc(doc) async for doc in cursor]
 
+    async def list_overdue_invoices(
+        self,
+        *,
+        due_before: date,
+        due_on_or_after: date | None = None,
+        after: tuple[date, str] | None = None,
+        limit: int = 200,
+    ) -> list[LedgerInvoice]:
+        """Collectable invoices whose due date is strictly before ``due_before``.
+
+        Feeds the automated late-fee pass (issue #552). ``due_date`` is stored
+        as a UTC-midnight datetime (see ``_mongo_doc`` at the foot of this
+        module), so the
+        boundary is compared as one too rather than as a ``date``, which BSON
+        cannot order against a stored datetime.
+
+        Oldest-first, one page per call. The pass skips rows that already
+        carry a fee only after fetching them, so it walks pages with ``after``
+        (the last row's ``(due_date, invoice_id)``). Without the cursor every
+        tick re-read the same oldest page and newer invoices starved.
+        """
+        due_date_filter: dict[str, Any] = {"$lt": _utc_midnight(due_before)}
+        if due_on_or_after is not None:
+            due_date_filter["$gte"] = _utc_midnight(due_on_or_after)
+        query: dict[str, Any] = {
+            "academy_id": current_academy_id(),
+            "status": {"$in": ["open", "partially_paid"]},
+            "balance_due_cents": {"$gt": 0},
+            "due_date": due_date_filter,
+        }
+        if after is not None:
+            after_due = _utc_midnight(after[0])
+            query["$or"] = [
+                {"due_date": {"$gt": after_due}},
+                {"due_date": after_due, "invoice_id": {"$gt": after[1]}},
+            ]
+        cursor = self.collection.find(
+            query,
+            sort=[("due_date", 1), ("invoice_id", 1)],
+            limit=limit,
+        )
+        return [self._invoice_from_doc(doc) async for doc in cursor]
+
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None:
@@ -291,6 +355,10 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             return self._payment_from_doc(existing)
 
         doc = _mongo_doc(payment)
+        if doc.get("stripe_account_id") is None:
+            # Platform payment (house academy / legacy destination charge):
+            # the row keeps exactly the shape it always had.
+            doc.pop("stripe_account_id", None)
         doc["ledger_idempotency_key"] = idempotency_key
         try:
             await self.ledger_payments.insert_one(
@@ -527,12 +595,42 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         idempotency_key: str,
     ) -> LedgerAllocationResult:
         academy_id = current_academy_id()
-        existing = await self._db["payment_allocations"].find_one(
-            {"academy_id": academy_id, "idempotency_key": idempotency_key}
-        )
-        if existing is not None:
-            return await self._existing_allocation_result(existing)
+        # Bounded: each pass either returns, or saw the key's claim vanish
+        # (its owner rolled back) and tries to claim it afresh.
+        for _ in range(3):
+            existing = await self._db["payment_allocations"].find_one(
+                {"academy_id": academy_id, "idempotency_key": idempotency_key}
+            )
+            if existing is not None:
+                settled = await self._await_settled_allocation(existing)
+                if settled is None:
+                    continue
+                return await self._existing_allocation_result(settled)
+            claimed = await self._claim_and_apply_allocation(
+                academy_id=academy_id,
+                payment_id=payment_id,
+                invoice_id=invoice_id,
+                amount_cents=amount_cents,
+                idempotency_key=idempotency_key,
+            )
+            if claimed is not None:
+                return claimed
+        raise ValueError("allocation claim kept changing; retry")
 
+    async def _claim_and_apply_allocation(
+        self,
+        *,
+        academy_id: str,
+        payment_id: str,
+        invoice_id: str,
+        amount_cents: int,
+        idempotency_key: str,
+    ) -> LedgerAllocationResult | None:
+        """Claim ``idempotency_key`` and apply the allocation it names.
+
+        Returns ``None`` when another caller holds the claim (the caller loops
+        back and waits on that claim instead).
+        """
         invoice_doc = await self._find_one({"invoice_id": invoice_id})
         payment_doc = await self.ledger_payments.find_one(
             {"academy_id": academy_id, "payment_id": payment_id}
@@ -548,25 +646,37 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 {"academy_id": academy_id, "invoice_id": invoice_id}
             )
         ]
-        result = allocate_payment_to_invoice(
-            invoice=self._invoice_from_doc(invoice_doc),
-            payment=self._payment_from_doc(payment_doc),
-            lines=lines,
-            requested_amount_cents=amount_cents,
-            allocation_id=str(new_ulid()),
-            now=self._clock(),
-        )
+        try:
+            result = allocate_payment_to_invoice(
+                invoice=self._invoice_from_doc(invoice_doc),
+                payment=self._payment_from_doc(payment_doc),
+                lines=lines,
+                requested_amount_cents=amount_cents,
+                allocation_id=str(new_ulid()),
+                now=self._clock(),
+            )
+        except ValueError:
+            # A same-key caller may have claimed and committed between our
+            # find_one and the snapshot reads above, spending the balance we
+            # were about to compute against (#931). Replay its claim instead
+            # of failing; a genuine "nothing payable" still raises.
+            if await self._db["payment_allocations"].find_one(
+                {"academy_id": academy_id, "idempotency_key": idempotency_key}
+            ):
+                return None
+            raise
         allocation_doc = _mongo_doc(result.allocation)
         allocation_doc["idempotency_key"] = idempotency_key
+        # The unique (academy_id, idempotency_key) index (0091) makes this
+        # insert the claim. The row stays PENDING until this caller's guarded
+        # writes below have landed; a same-key loser must not repair around it
+        # meanwhile (#931), see ``_await_settled_allocation``.
+        allocation_doc["allocation_state"] = _ALLOCATION_PENDING
+        allocation_doc["claimed_at"] = self._clock()
         try:
             await self._db["payment_allocations"].insert_one(allocation_doc)
         except DuplicateKeyError:
-            existing = await self._db["payment_allocations"].find_one(
-                {"academy_id": academy_id, "idempotency_key": idempotency_key}
-            )
-            if existing is not None:
-                return await self._existing_allocation_result(existing)
-            raise
+            return None
         # ------------------------------------------------------------------
         # Write ordering (#518): DEBIT THE PAYMENT FIRST, then post the invoice.
         #
@@ -625,12 +735,15 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             },
         )
         if getattr(payment_update, "matched_count", 0) != 1:
-            await self._rollback_pending_allocation(
+            taken_over = await self._rollback_pending_allocation(
                 academy_id=academy_id,
                 payment_id=payment_id,
+                invoice_id=invoice_id,
                 allocation_id=result.allocation.allocation_id,
                 idempotency_key=idempotency_key,
             )
+            if taken_over is not None:
+                return await self._existing_allocation_result(taken_over)
             raise ValueError("payment funds changed during allocation; retry")
         invoice_update = await self.collection.update_one(
             {
@@ -651,13 +764,27 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             # The debit landed but the invoice was never posted, so the reserved
             # funds have to go back. Re-derive rather than ``$inc`` them back:
             # see ``_rollback_pending_allocation``.
-            await self._rollback_pending_allocation(
+            taken_over = await self._rollback_pending_allocation(
                 academy_id=academy_id,
                 payment_id=payment_id,
+                invoice_id=invoice_id,
                 allocation_id=result.allocation.allocation_id,
                 idempotency_key=idempotency_key,
             )
+            if taken_over is not None:
+                return await self._existing_allocation_result(taken_over)
             raise ValueError("invoice changed during allocation; retry")
+        # Both guarded writes landed: publish the claim. A miss means a
+        # lease-expired takeover committed it first, which is equally final.
+        await self._db["payment_allocations"].update_one(
+            {
+                "academy_id": academy_id,
+                "allocation_id": result.allocation.allocation_id,
+                "idempotency_key": idempotency_key,
+                "allocation_state": _ALLOCATION_PENDING,
+            },
+            {"$set": {"allocation_state": _ALLOCATION_COMMITTED}},
+        )
         stored_allocation = await self._db["payment_allocations"].find_one(
             {"academy_id": academy_id, "idempotency_key": idempotency_key}
         )
@@ -794,15 +921,27 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 {"academy_id": academy_id, "payment_id": payment_id}
             )
         ]
+        # Every refusal runs before the first reversal, so a refused void
+        # leaves the payment exactly as it was.
+        if any(not allocation.get("idempotency_key") for allocation in allocation_docs):
+            # Pre-0130 rows carry no idempotency key, which is the handle
+            # reverse_payment_allocation reverses by. Refuse rather than
+            # void a payment whose invoice would stay wrongly settled.
+            raise ValueError("payment has an un-reversible legacy allocation; reconcile first")
+        spent = await self._spent_overpayment_credit_cents(
+            academy_id=academy_id,
+            allocation_ids=[str(a["allocation_id"]) for a in allocation_docs],
+        )
+        if spent > 0:
+            # Voiding would cancel the credit but cannot take back what it
+            # already paid, so the family would keep $spent of value for free.
+            raise ValueError(
+                f"${spent / 100:.2f} of the account credit this payment created was "
+                "already used on another invoice; undo that first"
+            )
         for allocation in allocation_docs:
-            allocation_key = allocation.get("idempotency_key")
-            if not allocation_key:
-                # Pre-0130 rows carry no idempotency key, which is the handle
-                # reverse_payment_allocation reverses by. Refuse rather than
-                # void a payment whose invoice would stay wrongly settled.
-                raise ValueError("payment has an un-reversible legacy allocation; reconcile first")
             await self.reverse_payment_allocation(
-                allocation_idempotency_key=str(allocation_key),
+                allocation_idempotency_key=str(allocation["idempotency_key"]),
                 reversal_idempotency_key=f"void:{payment_id}:{allocation['allocation_id']}",
                 reason=f"payment_voided:{reason}",
                 return_code=None,
@@ -957,6 +1096,31 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return [self._invoice_from_doc(doc) async for doc in cursor]
 
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: Sequence[str], *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        """Invoices stamped with ANY of one parent's ids, newest first (#932).
+
+        One tenant-scoped equality query per id, each served by the
+        ``(academy_id, parent_id, created_at)`` index, merged by ``invoice_id``.
+        Deliberately never ``{"parent_id": {"$in": ...}}`` across an ``$or`` of
+        fields (#878/#894). Callers pass ids of ONE parent (identity's
+        ``resolve_parent_aliases``); this method does no authorization itself.
+        """
+        merged: dict[str, LedgerInvoice] = {}
+        for parent_id in dict.fromkeys(pid for pid in parent_ids if pid):
+            cursor = self._find_many(
+                {"parent_id": parent_id},
+                sort=[("created_at", -1)],
+                limit=limit,
+            )
+            async for doc in cursor:
+                invoice = self._invoice_from_doc(doc)
+                merged.setdefault(invoice.invoice_id, invoice)
+        rows = sorted(merged.values(), key=lambda inv: inv.invoice_id, reverse=True)
+        rows.sort(key=lambda inv: _sort_instant(inv.created_at), reverse=True)
+        return rows[:limit]
+
     async def list_invoices_for_student(
         self, student_id: str, *, limit: int = 100
     ) -> list[LedgerInvoice]:
@@ -1044,10 +1208,18 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         *,
         academy_id: str,
         payment_id: str,
+        invoice_id: str,
         allocation_id: str,
         idempotency_key: str,
-    ) -> None:
+    ) -> dict[str, object] | None:
         """Undo a half-applied allocation and RE-DERIVE the payment's balance.
+
+        Only a still-PENDING claim is removed (#931). If a lease-expired
+        takeover already committed this row, the allocation stands: nothing is
+        deleted and the committed row is returned for the caller to report.
+        Otherwise returns ``None`` after the rollback, having re-derived the
+        invoice as well as the payment, since a concurrent repair may have
+        posted the invoice on this row's behalf.
 
         Removes the allocation row and any overpayment credit minted alongside
         it, then recomputes ``unapplied_amount_cents`` from the rows that
@@ -1067,6 +1239,24 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         restored, minting phantom funds. Recomputing from the surviving rows
         converges to the correct balance in every one of those interleavings.
         """
+        deleted = await self._db["payment_allocations"].delete_one(
+            {
+                "academy_id": academy_id,
+                "allocation_id": allocation_id,
+                "idempotency_key": idempotency_key,
+                "allocation_state": _ALLOCATION_PENDING,
+            }
+        )
+        if getattr(deleted, "deleted_count", 0) != 1:
+            survivor: dict[str, object] | None = await self._db["payment_allocations"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "allocation_id": allocation_id,
+                    "idempotency_key": idempotency_key,
+                }
+            )
+            if survivor is not None:
+                return survivor
         await self._db["account_credit_ledger"].delete_one(
             {
                 "academy_id": academy_id,
@@ -1074,18 +1264,92 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 "source_id": allocation_id,
             }
         )
-        await self._db["payment_allocations"].delete_one(
-            {
-                "academy_id": academy_id,
-                "allocation_id": allocation_id,
-                "idempotency_key": idempotency_key,
-            }
+        await self._repair_after_claim_removed(
+            academy_id=academy_id, payment_id=payment_id, invoice_id=invoice_id
         )
+        return None
+
+    async def _repair_after_claim_removed(
+        self, *, academy_id: str, payment_id: str, invoice_id: str
+    ) -> None:
+        """Re-derive the payment AND the invoice from the surviving rows.
+
+        A removed claim row may already have been counted by a concurrent
+        repair that posted its invoice; re-deriving only the payment (the
+        pre-#931 behaviour) left that invoice paid with no allocation.
+        """
+        now = self._clock()
         await self._repair_payment_after_allocation_change(
-            academy_id=academy_id,
-            payment_id=payment_id,
-            now=self._clock(),
+            academy_id=academy_id, payment_id=payment_id, now=now
         )
+        await self._repair_invoice_after_allocation_change(
+            academy_id=academy_id, invoice_id=invoice_id, now=now
+        )
+
+    async def _await_settled_allocation(
+        self, allocation_doc: dict[str, object]
+    ) -> dict[str, object] | None:
+        """Wait for a same-key claim to settle; never repair around a live one.
+
+        Returns the row once it is committed (or predates #931), after taking
+        it over if its owner abandoned it past the lease, or ``None`` if the
+        owner rolled it back meanwhile (the caller then claims afresh).
+        """
+        academy_id = current_academy_id()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.allocation_claim_wait_seconds
+        doc: dict[str, object] | None = allocation_doc
+        while doc is not None:
+            if doc.get("allocation_state") != _ALLOCATION_PENDING:
+                return doc
+            claimed_at = doc.get("claimed_at")
+            if not isinstance(claimed_at, datetime) or (
+                _as_utc(claimed_at) + self.allocation_claim_lease <= _as_utc(self._clock())
+            ):
+                return await self._take_over_abandoned_claim(doc)
+            if loop.time() >= deadline:
+                raise ValueError("allocation already in progress under this key; retry")
+            await asyncio.sleep(self.allocation_claim_poll_seconds)
+            doc = await self._db["payment_allocations"].find_one(
+                {
+                    "academy_id": academy_id,
+                    "allocation_id": doc["allocation_id"],
+                    "idempotency_key": doc["idempotency_key"],
+                }
+            )
+        return None
+
+    async def _take_over_abandoned_claim(
+        self, allocation_doc: dict[str, object]
+    ) -> dict[str, object] | None:
+        """Heal a claim whose owner died after its insert, then commit it.
+
+        The projection is re-derived from the allocation rows (the self-healing
+        path the #518 write ordering relies on) and the claim is committed with
+        a CAS on PENDING. If the owner turned out to be alive and rolled the
+        row back meanwhile, the repair is re-run without it and ``None`` is
+        returned so the caller claims afresh.
+        """
+        academy_id = current_academy_id()
+        allocation = self._allocation_from_doc(allocation_doc)
+        await self._repair_allocation_projection(allocation=allocation, academy_id=academy_id)
+        ref = {
+            "academy_id": academy_id,
+            "allocation_id": allocation.allocation_id,
+            "idempotency_key": allocation_doc["idempotency_key"],
+        }
+        await self._db["payment_allocations"].update_one(
+            {**ref, "allocation_state": _ALLOCATION_PENDING},
+            {"$set": {"allocation_state": _ALLOCATION_COMMITTED}},
+        )
+        committed: dict[str, object] | None = await self._db["payment_allocations"].find_one(ref)
+        if committed is None:
+            await self._repair_after_claim_removed(
+                academy_id=academy_id,
+                payment_id=allocation.payment_id,
+                invoice_id=allocation.invoice_id,
+            )
+        return committed
 
     async def _existing_allocation_result(
         self, allocation_doc: dict[str, object]
@@ -1339,6 +1603,26 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 }
             },
         )
+
+    async def _spent_overpayment_credit_cents(
+        self, *, academy_id: str, allocation_ids: list[str]
+    ) -> int:
+        """Cents already applied from live OVERPAYMENT credits minted by these allocations."""
+        if not allocation_ids:
+            return 0
+        spent = 0
+        async for credit_doc in self._db["account_credit_ledger"].find(
+            {
+                "academy_id": academy_id,
+                "source_type": "OVERPAYMENT",
+                "source_id": {"$in": allocation_ids},
+                "status": {"$ne": "VOIDED"},
+            }
+        ):
+            amount = int(credit_doc.get("amount_cents") or 0)
+            remaining = int(credit_doc.get("remaining_amount_cents") or 0)
+            spent += max(amount - remaining, 0)
+        return spent
 
     async def _void_overpayment_credit_for_allocation(
         self,
@@ -1636,3 +1920,15 @@ def _mongo_doc(model: Any) -> dict[str, Any]:
         if isinstance(due_date, date) and not isinstance(due_date, datetime):
             doc["due_date"] = datetime.combine(due_date, time.min, tzinfo=UTC)
     return doc
+
+
+def _sort_instant(value: datetime | None) -> datetime:
+    """Mongo hands back naive UTC datetimes; compare everything as aware UTC."""
+    if value is None:
+        return datetime.min.replace(tzinfo=UTC)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _utc_midnight(day: date) -> datetime:
+    """A calendar date as the UTC-midnight datetime ``due_date`` is stored as."""
+    return datetime.combine(day, time.min, tzinfo=UTC)

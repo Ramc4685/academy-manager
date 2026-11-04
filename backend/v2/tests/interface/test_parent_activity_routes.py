@@ -151,6 +151,20 @@ def test_attendance_happy_path() -> None:
     assert first["coach_name"] == "Coach Bob"
 
 
+def test_attendance_surfaces_a_voided_mark_to_the_parent() -> None:
+    """#554: a void is visible history, not a silent disappearance."""
+    rows = _seed_attendance(n=1)
+    rows[0]["status"] = "voided"
+    rows[0]["previous_status"] = "present"
+    with _make_client(attendance=rows) as client:
+        response = client.get("/api/v2/parent/attendance")
+
+    assert response.status_code == 200, response.text
+    record = response.json()["records"][0]
+    assert record["status"] == "voided"
+    assert record["previous_status"] == "present"
+
+
 def test_attendance_coach_name_none_when_unknown() -> None:
     rows = _seed_attendance(n=2, coach_name=None)
     with _make_client(attendance=rows) as client:

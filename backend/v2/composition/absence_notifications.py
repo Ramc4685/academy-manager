@@ -78,6 +78,7 @@ from backend.v2.contexts.communications.infrastructure.digest_claim import claim
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import AbsenceNotice
 from backend.v2.contexts.enrollment.domain.models import Session, SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import ParentSelfServicePolicy
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
@@ -153,15 +154,17 @@ class MongoAbsenceNoticeSendRepository(TenantScopedRepository):
             digest_date=audience,
         )
 
-    async def mark_sent(self, send_id: str) -> None:
+    async def mark_sent(self, academy_id: str, send_id: str) -> None:
         await self.collection.update_one(
-            {"send_id": send_id},
+            {"academy_id": academy_id, "send_id": send_id},
             {"$set": {"status": str(DigestSendStatus.SENT), "failed_reason": None}},
         )
 
-    async def mark_failed(self, send_id: str, reason: str, *, retryable: bool = True) -> None:
+    async def mark_failed(
+        self, academy_id: str, send_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         await self.collection.update_one(
-            {"send_id": send_id},
+            {"academy_id": academy_id, "send_id": send_id},
             {
                 "$set": {
                     "status": str(DigestSendStatus.FAILED),
@@ -538,7 +541,9 @@ class AbsenceNoticeNotificationAdapter:
 
         resolved = await recipients()
         if not resolved:
-            await self._notice_sends.mark_failed(send_id, "no_recipient", retryable=False)
+            await self._notice_sends.mark_failed(
+                academy_id, send_id, "no_recipient", retryable=False
+            )
             return
 
         failure: str | None = None
@@ -552,9 +557,9 @@ class AbsenceNoticeNotificationAdapter:
             )
             failure = failure or reason
         if failure is None:
-            await self._notice_sends.mark_sent(send_id)
+            await self._notice_sends.mark_sent(academy_id, send_id)
         else:
-            await self._notice_sends.mark_failed(send_id, failure)
+            await self._notice_sends.mark_failed(academy_id, send_id, failure)
 
     async def _send_one(
         self,
@@ -567,11 +572,14 @@ class AbsenceNoticeNotificationAdapter:
     ) -> str | None:
         """One recipient, never raising. Returns a failure reason or ``None``."""
         try:
+            identity = await sender_identity_for_current_academy(self._academies)
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
                 body=body,
                 category=category,
+                reply_to=identity.reply_to,
+                sender_name=identity.sender_name,
             )
         except Exception:
             logger.exception(

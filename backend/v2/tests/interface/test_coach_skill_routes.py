@@ -620,6 +620,15 @@ def _build_real_router_app(
         update_skill_status=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         record_test_attempt=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         recommend_level_up=_SpyUseCase(_Dumpable(student_id=STUDENT_ID)),
+        mark_skill_mastered=_SpyUseCase(
+            [_Dumpable(student_id=STUDENT_ID, outcome="mastered", level_up_queued=False)]
+        ),
+        unmark_skill_mastered=_SpyUseCase(
+            _Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID, status="PRACTICING")
+        ),
+        set_mastery_note=_SpyUseCase(
+            SimpleNamespace(student_id=STUDENT_ID, skill_id=SKILL_ID, coach_note="Quick feet")
+        ),
         create_skill_note=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         list_skill_notes=_SpyUseCase([_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)]),
         set_skill_note_visibility=_SpyUseCase(
@@ -645,6 +654,9 @@ def _build_real_router_app(
         record_test_attempt=spies.record_test_attempt,
         recommend_level_up=spies.recommend_level_up,
         get_progress_summary=spies.get_progress_summary,
+        mark_skill_mastered=spies.mark_skill_mastered,
+        unmark_skill_mastered=spies.unmark_skill_mastered,
+        set_mastery_note=spies.set_mastery_note,
     )
     curriculum = SimpleNamespace(
         get_program=spies.get_program,
@@ -1335,6 +1347,11 @@ class _FakeSkillLookupBoard:
         return self._skills.get(level_id, [])
 
 
+class _FakeCriteria:
+    async def list_for_skill(self, skill_id: str) -> list[object]:
+        return []
+
+
 def _build_real_router_app_with_board(
     *,
     assigned: bool,
@@ -1364,6 +1381,7 @@ def _build_real_router_app_with_board(
         skill_progress=skill_progress_repo,  # type: ignore[arg-type]
         recommendations=recommendation_repo,  # type: ignore[arg-type]
         skill_lookup=skill_lookup,  # type: ignore[arg-type]
+        criteria=_FakeCriteria(),
     )
 
     student_progress = SimpleNamespace(
@@ -1930,3 +1948,126 @@ def test_real_skill_router_allows_assigned_coach_to_reach_paused_student() -> No
     assert response.status_code == 200, response.text
     assert spies.get_passport.calls == 1
     assert spies.assigned_sessions.calls == [(COACH_ID, SESSION_ID)]
+
+
+def test_day_hub_fills_a_zoneless_session_with_the_academy_zone() -> None:
+    """Row 19: the skill day hub no longer ships ``timezone: null`` for a
+    zoneless session; it carries the academy's zone (BLNO: America/Chicago)."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.list_today.result[0].timezone = None
+    use_cases = app.dependency_overrides[get_coach_use_cases]()
+
+    async def academy_zone(_academy_id: str) -> str | None:
+        return "America/Chicago"
+
+    use_cases.get_academy_timezone = academy_zone
+    response = TestClient(app).get("/api/v2/coach/day-hub", params={"date": "2026-06-19"})
+    assert response.status_code == 200, response.text
+    assert response.json()["sessions"][0]["timezone"] == "America/Chicago"
+
+
+def test_real_skill_router_mark_mastered_passes_roster_students_to_use_case() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    response = TestClient(app).post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills/{SKILL_ID}/mastered",
+        json={"program_id": PROGRAM_ID, "student_ids": [STUDENT_ID, STUDENT_ID]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["results"][0]["outcome"] == "mastered"
+    command = spies.mark_skill_mastered.args[0]
+    assert command.student_ids == [STUDENT_ID]
+    assert command.skill_id == SKILL_ID
+    assert command.session_id == SESSION_ID
+
+
+@pytest.mark.parametrize(
+    ("student_id", "assigned"),
+    [("other-student", {SESSION_ID}), (STUDENT_ID, set())],
+)
+def test_real_skill_router_mark_and_unmark_404_off_roster_or_unassigned(
+    student_id: str, assigned: set[str]
+) -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids=assigned
+    )
+    client = TestClient(app)
+
+    marked = client.post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills/{SKILL_ID}/mastered",
+        json={"program_id": PROGRAM_ID, "student_ids": [student_id]},
+    )
+    unmarked = client.delete(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{student_id}/skills/{SKILL_ID}/mastered",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert (marked.status_code, unmarked.status_code) == (404, 404)
+    assert spies.mark_skill_mastered.calls == 0
+    assert spies.unmark_skill_mastered.calls == 0
+
+
+def test_real_skill_router_unmark_mastered_runs_undo() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    response = TestClient(app).delete(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{STUDENT_ID}/skills/{SKILL_ID}/mastered",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "PRACTICING"
+    command = spies.unmark_skill_mastered.args[0]
+    assert (command.student_id, command.skill_id) == (STUDENT_ID, SKILL_ID)
+
+
+def test_real_skill_router_sets_the_mastery_note_for_a_roster_student() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    path = (
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{STUDENT_ID}/skills/{SKILL_ID}/mastered/note"
+    )
+    response = TestClient(app).put(path, json={"note": "Quick feet"})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "student_id": STUDENT_ID,
+        "skill_id": SKILL_ID,
+        "coach_note": "Quick feet",
+    }
+    command = spies.set_mastery_note.args[0]
+    assert (command.student_id, command.skill_id, command.note) == (
+        STUDENT_ID,
+        SKILL_ID,
+        "Quick feet",
+    )
+
+
+@pytest.mark.parametrize(
+    ("student_id", "assigned", "note", "status"),
+    [
+        ("other-student", {SESSION_ID}, "hi", 404),
+        (STUDENT_ID, set(), "hi", 404),
+        (STUDENT_ID, {SESSION_ID}, "x" * 141, 422),
+    ],
+)
+def test_real_skill_router_mastery_note_refuses_off_roster_unassigned_or_too_long(
+    student_id: str, assigned: set[str], note: str, status: int
+) -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids=assigned
+    )
+    path = (
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{student_id}/skills/{SKILL_ID}/mastered/note"
+    )
+    response = TestClient(app).put(path, json={"note": note})
+
+    assert response.status_code == status
+    assert spies.set_mastery_note.calls == 0

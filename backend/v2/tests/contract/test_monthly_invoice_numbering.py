@@ -24,6 +24,10 @@ NUMBER_RE = re.compile(r"^[A-Z0-9]+-\d{4}-\d{2}-\d{4,}$")
 
 
 async def _seed(db, acad: str, *, enrollment_id: str, student_id: str) -> None:
+    # The academy's platform-set prefix; no code path falls back to "BLNO".
+    await db["billing_settings"].update_one(
+        {"academy_id": acad}, {"$set": {"invoice_number_prefix": "BLNO"}}, upsert=True
+    )
     await db["sessions"].insert_one(
         {
             "academy_id": acad,

@@ -5,6 +5,10 @@
  */
 export function billingRulesFixture(
   overrides: Partial<Record<string, number>> = {},
+  ach: { enabled: boolean; percent: number; max_percent?: number } = {
+    enabled: false,
+    percent: 0,
+  },
 ): Record<string, unknown> {
   const value = (key: string, fallback: number) => overrides[key] ?? fallback;
   const editable = (
@@ -63,10 +67,25 @@ export function billingRulesFixture(
       {
         key: "late_payments",
         title: "Late payments",
-        note: "Not applied automatically yet — these values are stored for when late fees ship.",
+        note: "Applied automatically. Every hour, each open invoice whose grace period has ended gets the late fee once.",
         rows: [
           editable("grace_days", "Grace days after due", 5, "days", 0, 60),
           editable("late_fee_cents", "Late fee", 1500, "cents", 0, 100000),
+          {
+            key: "ach_discount",
+            label: "Bank (ACH) discount",
+            editable: true,
+            value: null,
+            unit: null,
+            min_value: null,
+            max_value: null,
+            display: null,
+            detail:
+              "Autopay only. Applies to autopay bank payments, taken after any tuition discount. Checkout does not apply it.",
+            enabled: ach.enabled,
+            percent: ach.percent,
+            max_percent: ach.max_percent ?? 3,
+          },
         ],
       },
       {

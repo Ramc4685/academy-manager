@@ -5,10 +5,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getBillingRules, updateBillingRules } from "@/lib/api/admin";
 import {
+  ACH_ENABLED_FIELD,
+  ACH_KEY,
+  ACH_PERCENT_FIELD,
   canSave,
   diffForm,
+  isAchRow,
+  isChoiceRow,
+  isListRow,
   saveSummary,
   toForm,
+  turnsLateFeeOn,
   type BillingRuleGroup,
   type BillingRuleRow,
   type BillingRulesForm,
@@ -19,6 +26,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { OfflinePaymentsCard } from "@/components/admin/settings/offline-payments-card";
+import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 
 /**
  * Settings → Billing rules (spec 2026-09-07-billing-rules-design).
@@ -37,22 +46,44 @@ export function BillingRulesPanel() {
   const query = useQuery({ queryKey: queryKeys.admin.billingRules(), queryFn: getBillingRules });
   const [form, setForm] = useState<BillingRulesForm>({});
   const [saved, setSaved] = useState(false);
+  const [lateFeeAcknowledged, setLateFeeAcknowledged] = useState(false);
 
   useEffect(() => {
     if (query.data) setForm(toForm(query.data));
   }, [query.data]);
 
   const diff = useMemo(() => diffForm(query.data, form, MONEY), [query.data, form]);
+  // Money audit X4: switching the fee on starts real charges on the next
+  // hourly run, so the owner must acknowledge it before Save is enabled.
+  const needsLateFeeAck = turnsLateFeeOn(query.data, diff);
+  const saveEnabled = canSave(diff) && (!needsLateFeeAck || lateFeeAcknowledged);
   const mutation = useMutation({
     mutationFn: () => updateBillingRules(diff.payload),
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.admin.billingRules(), data);
+      // The cancellation fee and notice are shared with the Self-service tab;
+      // drop its cached copy so it never shows (or re-saves) the old values.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServicePolicy() });
+      // drop_default_outcome is also echoed by the Holds panel's own save
+      // (DeparturePolicyPanel). Without dropping its cache too, that panel
+      // keeps sending the pre-change value for up to the 5-minute staleTime
+      // and gets spuriously 422'd by the backend's stale-value check.
+      if (diff.changed.includes("drop_default_outcome")) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.admin.departurePolicy() });
+      }
       setForm(toForm(data));
+      setLateFeeAcknowledged(false);
       setSaved(true);
     },
   });
 
   const errors = { ...diff.errors, ...parseServerErrors(mutation.error) };
+  // Edits that are typed but not yet valid still count as unsaved work:
+  // the tab strip must warn before it throws them away (#863).
+  useReportSettingsDirty(
+    "billing-rules",
+    diff.changed.length > 0 || Object.keys(diff.errors).length > 0
+  );
 
   return (
     <section data-testid="admin-settings-billing-rules" className="space-y-4">
@@ -73,12 +104,37 @@ export function BillingRulesPanel() {
           }}
         />
       ))}
+      {query.data && needsLateFeeAck && (
+        <div
+          role="alert"
+          className="max-w-3xl rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          data-testid="billing-rules-late-fee-warning"
+        >
+          <p className="font-semibold">You are turning on a late fee.</p>
+          <p className="mt-1">
+            From the next hourly run, the fee is added once to each unpaid invoice whose grace
+            period ends today or later. Invoices that are already overdue are not charged. Autopay
+            invoices wait until their card retries finish. Parents see the fee on the invoice and in
+            the next reminder.
+          </p>
+          <label className="mt-3 flex items-start gap-2 font-medium">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={lateFeeAcknowledged}
+              onChange={(event) => setLateFeeAcknowledged(event.target.checked)}
+              data-testid="billing-rules-late-fee-ack"
+            />
+            <span>I understand parents will be charged this fee.</span>
+          </label>
+        </div>
+      )}
       {query.data && (
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            variant={canSave(diff) ? "volt" : "secondary"}
+            variant={saveEnabled ? "volt" : "secondary"}
             size="sm"
-            disabled={!canSave(diff) || mutation.isPending}
+            disabled={!saveEnabled || mutation.isPending}
             onClick={() => mutation.mutate()}
             data-testid="billing-rules-save"
           >
@@ -96,6 +152,8 @@ export function BillingRulesPanel() {
           )}
         </div>
       )}
+      {/* Row 22: its own card and Save, so it never rides on the rules diff. */}
+      <OfflinePaymentsCard />
     </section>
   );
 }
@@ -122,7 +180,16 @@ function RuleGroupCard({
       )}
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {group.rows.map((row) =>
-          row.editable ? (
+          row.editable && isAchRow(row) ? (
+            <AchDiscountRule
+              key={row.key}
+              row={row}
+              enabled={(form[ACH_ENABLED_FIELD] ?? "false") === "true"}
+              percent={form[ACH_PERCENT_FIELD] ?? ""}
+              error={errors[ACH_KEY] ?? errors[ACH_PERCENT_FIELD]}
+              onChange={onChange}
+            />
+          ) : row.editable ? (
             <EditableRule
               key={row.key}
               row={row}
@@ -150,15 +217,46 @@ function EditableRule({
   error?: string;
   onChange: (value: string) => void;
 }) {
+  // Issue #774: `reminder_days` holds a LIST ("15, 20"), so it is a text box
+  // rather than a number spinner, and an empty box is a real value meaning
+  // "send no reminders" — the off switch the owner asked for.
+  const list = isListRow(row);
+  const choice = isChoiceRow(row);
+  if (choice) {
+    return (
+      <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
+        {row.label}
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-10 rounded-lg border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500"
+          data-testid={`billing-rules-input-${row.key}`}
+        >
+          {(row.choices ?? []).map((option) => (
+            <option key={option} value={option}>
+              {choiceLabel(option)}
+            </option>
+          ))}
+        </select>
+        {error && (
+          <span className="text-xs text-red-700" role="alert" data-testid={`billing-rules-error-${row.key}`}>
+            {error}
+          </span>
+        )}
+        {!error && row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
+      </label>
+    );
+  }
   return (
     <label className="grid gap-1.5 text-sm font-medium text-rally-ink">
       {row.unit === "cents" ? `${row.label} ($)` : row.label}
       <input
-        type="number"
-        min={inputBound(row, row.min_value)}
-        max={inputBound(row, row.max_value)}
-        step={row.unit === "cents" ? "0.01" : "1"}
-        inputMode={row.unit === "cents" ? "decimal" : "numeric"}
+        type={list ? "text" : "number"}
+        min={list ? undefined : inputBound(row, row.min_value)}
+        max={list ? undefined : inputBound(row, row.max_value)}
+        step={list ? undefined : row.unit === "cents" ? "0.01" : "1"}
+        inputMode={list ? "numeric" : row.unit === "cents" ? "decimal" : "numeric"}
+        placeholder={list ? "15, 20 — empty to send none" : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={error ? true : undefined}
@@ -172,7 +270,74 @@ function EditableRule({
           {error}
         </span>
       )}
+      {!error && row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
     </label>
+  );
+}
+
+/**
+ * Bank (ACH) discount (Settings overhaul Phase 4 PR 13): a switch and a
+ * percent. The percent box stays visible when the switch is off so the
+ * stored value is not lost; the ceiling comes from the platform, not here.
+ */
+function AchDiscountRule({
+  row,
+  enabled,
+  percent,
+  error,
+  onChange,
+}: {
+  row: BillingRuleRow;
+  enabled: boolean;
+  percent: string;
+  error?: string;
+  onChange: (key: string, value: string) => void;
+}) {
+  return (
+    <div className="grid gap-1.5 text-sm font-medium text-rally-ink sm:col-span-2" data-testid="billing-rules-ach">
+      <span id="billing-rules-ach-label">{row.label}</span>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 font-normal">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(event) => onChange(ACH_ENABLED_FIELD, event.target.checked ? "true" : "false")}
+            aria-labelledby="billing-rules-ach-label"
+            data-testid="billing-rules-input-ach_discount-enabled"
+          />
+          <span>{enabled ? "On" : "Off"}</span>
+        </label>
+        <label className="flex items-center gap-2 font-normal">
+          <span>Percent</span>
+          <input
+            type="number"
+            min={0}
+            max={row.max_percent ?? undefined}
+            step="0.01"
+            inputMode="decimal"
+            value={percent}
+            onChange={(event) => onChange(ACH_PERCENT_FIELD, event.target.value)}
+            aria-invalid={error ? true : undefined}
+            className={`h-10 w-28 rounded-lg border bg-white px-3 font-mono text-sm tabular-nums outline-none focus:border-blue-500 ${
+              error ? "border-red-500" : "border-rally-line"
+            }`}
+            data-testid="billing-rules-input-ach_discount-percent"
+          />
+          <span>%</span>
+        </label>
+      </div>
+      {error && (
+        <span className="text-xs text-red-700" role="alert" data-testid="billing-rules-error-ach_discount">
+          {error}
+        </span>
+      )}
+      {!error && (
+        <span className="text-xs font-normal text-rally-muted">
+          {row.detail}
+          {row.max_percent ? ` Up to ${row.max_percent}%.` : ""}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -185,6 +350,19 @@ function FixedRule({ row }: { row: BillingRuleRow }) {
       {row.detail && <span className="text-xs text-rally-muted">{row.detail}</span>}
     </div>
   );
+}
+
+/** Choice-row option → its label, across every choice-typed row. */
+const CHOICE_LABELS: Record<string, string> = {
+  immediate: "Immediate",
+  end_of_period: "End of billing period",
+  no_credit_mid_month: "No credit, mid-month (default)",
+  credit_mid_month: "Prorated credit, mid-month",
+  no_credit_end_of_period: "No credit, end of period",
+};
+
+function choiceLabel(option: string): string {
+  return CHOICE_LABELS[option] ?? option;
 }
 
 /** min/max arrive in the row's stored unit; a cents input shows dollars. */

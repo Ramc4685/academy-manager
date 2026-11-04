@@ -19,10 +19,15 @@ pytest runs in ``asyncio_mode = "auto"`` so bare ``async def test_*`` works.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+import pytest
+
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
     _LEVELS,
     seed_badminton_pathway,
 )
+from backend.v2.contexts.curriculum.domain.errors import ActiveProgramExists
 from backend.v2.contexts.curriculum.domain.models import (
     ExternalLessonReference,
     Level,
@@ -305,3 +310,25 @@ async def test_no_bwf_lesson_body_text_in_seeded_values() -> None:
             assert len(value) <= 120
         if ref.page_hint is not None:
             assert len(ref.page_hint) <= 40
+
+
+async def test_seed_refuses_when_another_active_program_exists() -> None:
+    """A non-badminton active program would make the seed a second active one (#968)."""
+    repos = _fresh_repos()
+    other = Program(
+        program_id="custom-1",
+        academy_id=ACADEMY_ID,
+        sport="tennis",
+        name="Custom",
+        is_active=True,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        created_by="admin",
+    )
+    await repos["programs"].save(other)  # type: ignore[attr-defined]
+
+    with pytest.raises(ActiveProgramExists):
+        await _run_seed(repos)
+
+    assert repos["programs"].saved == [other]  # type: ignore[attr-defined]
+    assert repos["levels"].saved == []  # type: ignore[attr-defined]

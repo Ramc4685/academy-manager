@@ -60,16 +60,32 @@ class FakeParentDigestSendRepository:
         self.by_id[digest.digest_id] = digest
         return digest
 
-    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
-        d = self.by_id[digest_id]
+    def _owned(self, academy_id: str, digest_id: str) -> DigestSend | None:
+        # Mirror Mongo: an update filtered on (academy_id, digest_id) that
+        # matches no row is a silent no-op, never a cross-academy write (#880).
+        d = self.by_id.get(digest_id)
+        return d if d is not None and d.academy_id == academy_id else None
+
+    async def mark_sent(
+        self, academy_id: str, digest_id: str, provider_message_id: str | None
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_sent(provider_message_id=provider_message_id, sent_at="now")
 
-    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None:
-        d = self.by_id[digest_id]
+    async def mark_failed(
+        self, academy_id: str, digest_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_failed(reason=reason, retryable=retryable)
 
-    async def mark_skipped_empty(self, digest_id: str) -> None:
-        d = self.by_id[digest_id]
+    async def mark_skipped_empty(self, academy_id: str, digest_id: str) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_skipped_empty()
 
 
@@ -108,6 +124,7 @@ class StubSendPort:
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         self.sent.append(
             {
@@ -116,6 +133,7 @@ class StubSendPort:
                 "body": body,
                 "reply_to": reply_to,
                 "category": category,
+                "sender_name": sender_name,
             }
         )
         return SendOutcome(
@@ -276,3 +294,64 @@ async def test_brand_lookup_failure_does_not_block_send() -> None:
         SendParentDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
     )
     assert result.sent == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
+    """Fake fidelity (#880): a mark issued with another academy's id is a no-op,
+    exactly as the ``(academy_id, digest_id)`` Mongo filter makes it."""
+    repo = FakeParentDigestSendRepository()
+    own = await repo.try_claim(ACADEMY_ID, "parent-1", "2026-07-16")
+    assert own is not None
+
+    await repo.mark_sent("acad-2", own.digest_id, "prov-x")
+    await repo.mark_failed("acad-2", own.digest_id, "boom")
+    await repo.mark_skipped_empty("acad-2", own.digest_id)
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.QUEUED
+
+    await repo.mark_failed(ACADEMY_ID, own.digest_id, "boom", retryable=False)
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_parent_digest_carries_the_academy_sender_name() -> None:
+    """L9a: the From display name follows the academy; reply-to stays the
+    view's (which prefers the academy's explicit reply-to)."""
+    use_case, _digests, sender, _ = _build(
+        parents=[ResolvedRecipient(user_id="p1", email="p1@example.test")],
+        views={"p1": _view(reply_to="desk@example.com")},
+    )
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(
+            return_value=EmailBrand(academy_name="Brand Co", sender_name="Brand Co Desk")
+        )
+    )
+    await use_case.execute(
+        SendParentDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert sender.sent[0]["sender_name"] == "Brand Co Desk"
+    assert sender.sent[0]["reply_to"] == "desk@example.com"
+    use_case.brands.brand_for.assert_awaited_with(ACADEMY_ID)
+
+
+def test_digest_reply_to_prefers_the_academy_explicit_reply_to() -> None:
+    from backend.v2.composition.digests import _ParentDigestProvider
+
+    reply_to = _ParentDigestProvider._reply_to
+    doc = {"contact_email": "contact@example.com"}
+    assert reply_to("platform@example.com", doc) == "contact@example.com"
+    assert (
+        reply_to("platform@example.com", {**doc, "email_reply_to": "desk@example.com"})
+        == "desk@example.com"
+    )
+    # A blank, whitespace-only or invalid explicit reply-to falls through to
+    # the pre-L9a contact-address chain unchanged.
+    for blank in ("", "   ", None, "not-an-email"):
+        assert (
+            reply_to("platform@example.com", {**doc, "email_reply_to": blank})
+            == "contact@example.com"
+        )
+    assert reply_to("platform@example.com", {"owner_email": "owner@example.com"}) == (
+        "owner@example.com"
+    )
+    assert reply_to("platform@example.com", None) == "platform@example.com"

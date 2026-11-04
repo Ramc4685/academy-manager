@@ -18,6 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.absence_notices import
 from backend.v2.contexts.enrollment.domain.errors import OccurrenceNotFound, StudentNotFound
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import (
+    ParentActionDisabled,
     ParentSelfServicePolicy,
     StudentNotEnrolledInSession,
 )
@@ -654,3 +655,52 @@ async def test_admin_record_swallows_notifier_failure() -> None:
 
     assert len(notifier.calls) == 1
     assert notices.added == [result]
+
+
+# --- can_report_absence switch (Settings overhaul Phase 1 Lane C) -----------
+
+
+@pytest.mark.asyncio
+async def test_submit_absence_notice_rejected_when_switch_off() -> None:
+    off_policy = ParentSelfServicePolicy.default("acad").model_copy(
+        update={"can_report_absence": False}
+    )
+    notices = _FakeNotices()
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=_FakeOccurrences(),
+        enrollments=_FakeEnrollments(),
+        notices=notices,
+        policies=_FakePolicies(off_policy),
+        clock=_now,
+    )
+
+    with pytest.raises(ParentActionDisabled) as exc_info:
+        await use_case.execute(
+            SubmitAbsenceNoticeCommand(
+                parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+            )
+        )
+
+    assert exc_info.value.code == "parent_action_disabled"
+    assert notices.added == []
+
+
+@pytest.mark.asyncio
+async def test_submit_absence_notice_allowed_when_switch_on() -> None:
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=_FakeOccurrences(),
+        enrollments=_FakeEnrollments(),
+        notices=_FakeNotices(),
+        policies=_FakePolicies(),  # default -> can_report_absence=True
+        clock=_now,
+    )
+
+    result = await use_case.execute(
+        SubmitAbsenceNoticeCommand(
+            parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+        )
+    )
+
+    assert result.notice_id

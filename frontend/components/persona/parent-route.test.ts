@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { isTopLevel, parentRoute } from "./parent-route";
 
 const COACH_KNOWN = [
-  "/coach/dashboard",
   "/coach/today",
   "/coach/sessions",
   "/coach/profile",
@@ -16,13 +15,13 @@ const ADMIN_KNOWN = ["/admin", "/admin/sessions", "/admin/reports", "/admin/dash
 
 describe("parentRoute", () => {
   it("falls back to home when no ancestor is known", () => {
-    expect(parentRoute("/coach/students/abc/passport", COACH_KNOWN, "/coach/dashboard")).toBe(
-      "/coach/dashboard",
+    expect(parentRoute("/coach/students/abc/passport", COACH_KNOWN, "/coach/today")).toBe(
+      "/coach/today",
     );
   });
 
   it("returns the nearest known ancestor, skipping unknown middle segments", () => {
-    expect(parentRoute("/coach/sessions/abc/skills", COACH_KNOWN, "/coach/dashboard")).toBe(
+    expect(parentRoute("/coach/sessions/abc/skills", COACH_KNOWN, "/coach/today")).toBe(
       "/coach/sessions",
     );
   });
@@ -38,15 +37,15 @@ describe("parentRoute", () => {
   });
 
   it("ignores a trailing slash", () => {
-    expect(parentRoute("/coach/sessions/abc/", COACH_KNOWN, "/coach/dashboard")).toBe(
+    expect(parentRoute("/coach/sessions/abc/", COACH_KNOWN, "/coach/today")).toBe(
       "/coach/sessions",
     );
   });
 
   it("returns home for a top-level or root path with no known ancestor", () => {
-    expect(parentRoute("/coach/today", COACH_KNOWN, "/coach/dashboard")).toBe("/coach/dashboard");
-    expect(parentRoute("/", COACH_KNOWN, "/coach/dashboard")).toBe("/coach/dashboard");
-    expect(parentRoute("/coach", COACH_KNOWN, "/coach/dashboard")).toBe("/coach/dashboard");
+    expect(parentRoute("/coach/today", COACH_KNOWN, "/coach/today")).toBe("/coach/today");
+    expect(parentRoute("/", COACH_KNOWN, "/coach/today")).toBe("/coach/today");
+    expect(parentRoute("/coach", COACH_KNOWN, "/coach/today")).toBe("/coach/today");
   });
 });
 

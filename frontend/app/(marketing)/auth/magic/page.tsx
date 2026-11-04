@@ -58,7 +58,7 @@ function MagicLinkContent() {
   }, [router, searchParams]);
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-slate-50 p-6 font-body text-slate-950">
+    <main className="grid min-h-dvh place-items-center bg-slate-50 p-6 pt-[calc(1.5rem+env(safe-area-inset-top,0px))] font-body text-slate-950">
       <div className="w-full max-w-md text-center">
         <p className="font-display text-sm font-semibold uppercase tracking-wide text-slate-500">
           {brand.productName}

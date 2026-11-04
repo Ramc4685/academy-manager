@@ -18,6 +18,7 @@ from backend.v2.contexts.curriculum.application.ports import (
     ProgramRepository,
     SkillRepository,
 )
+from backend.v2.contexts.curriculum.domain.errors import ActiveProgramExists
 from backend.v2.contexts.curriculum.domain.models import (
     ExternalLessonReference,
     Level,
@@ -465,6 +466,12 @@ async def seed_badminton_pathway(
     for prog in existing:
         if prog.sport == "badminton":
             return prog
+    if existing:
+        # A second active program breaks the single-program surfaces (#968).
+        raise ActiveProgramExists(
+            "This academy already has an active skill program",
+            program_id=existing[0].program_id,
+        )
 
     now = datetime.now(UTC)
     program = Program(

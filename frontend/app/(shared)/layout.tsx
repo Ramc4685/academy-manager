@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  SharedShellSkeleton,
+  sharedShellClassName,
+} from "@/components/shared/shell-skeleton";
 import { onAuthChange } from "@/lib/auth/firebase";
 
 export default function SharedLayout({ children }: { children: React.ReactNode }) {
@@ -20,17 +24,16 @@ export default function SharedLayout({ children }: { children: React.ReactNode }
     [router]
   );
 
-  if (!checked) {
-    return <div className="min-h-screen flex items-center justify-center text-neutral-500">Loading...</div>;
+  // Auth unresolved, or signed out and mid-redirect to /login: hold the shell
+  // with a neutral skeleton rather than flashing bare status text.
+  if (!checked || !signedIn) {
+    return (
+      <SharedShellSkeleton
+        className={sharedShellClassName}
+        testId="shared-auth-skeleton"
+      />
+    );
   }
 
-  if (!signedIn) {
-    return <div className="min-h-screen flex items-center justify-center text-neutral-500">Redirecting...</div>;
-  }
-
-  return (
-    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 dark:bg-slate-950 dark:text-white">
-      {children}
-    </main>
-  );
+  return <main className={sharedShellClassName}>{children}</main>;
 }

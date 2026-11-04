@@ -2,12 +2,25 @@
 import type { ChipVariant } from "@/components/ds/chip";
 import type {
   FamilyAutopay,
+  FamilyEmailDelivery,
   FamilyEnrollment,
+  FamilyHeader,
+  FamilyInvoice,
+  FamilyManualPayment,
   FamilyStudent,
   InvoiceAction,
   RegistrationState,
-  TimelineKind,
+  FamilyTimelineKind,
 } from "@/lib/api/admin-families";
+import { formatCents } from "@/lib/money";
+import { isManualPaymentMethod, MANUAL_PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
+import {
+  cardChip,
+  cardStateFromRegistration,
+  loginChip,
+  loginStateFromRegistration,
+  type PeopleChip,
+} from "@/lib/people-status";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -71,22 +84,124 @@ export function invoiceActionLabel(action: InvoiceAction): string {
   return INVOICE_ACTION_LABELS[action];
 }
 
-export interface RegistrationChip {
+/**
+ * #929: "$25.00 refunded · $35.00 net" when anything came back, else null.
+ * `net` is the backend's figure when it sent one; otherwise paid minus refunded.
+ */
+export function refundLabel(
+  paidCents: number,
+  refundedCents: number | null | undefined,
+  netCents?: number | null,
+): string | null {
+  const refunded = refundedCents ?? 0;
+  if (refunded <= 0) return null;
+  const net = netCents ?? Math.max(paidCents - refunded, 0);
+  return `${formatCents(refunded)} refunded · ${formatCents(net)} net`;
+}
+
+export function invoiceRefundLabel(inv: FamilyInvoice): string | null {
+  return refundLabel(inv.paid_cents, inv.refunded_cents, inv.net_paid_cents);
+}
+
+/** #929 family totals line: "Paid $70.00 · $50.00 refunded · $20.00 net", or null. */
+export function familyRefundLine(header: FamilyHeader): string | null {
+  const paid = header.paid_cents ?? 0;
+  const label = refundLabel(paid, header.refunded_cents, header.net_paid_cents);
+  return label ? `Paid ${formatCents(paid)} · ${label}` : null;
+}
+
+/**
+ * Card money on this invoice not yet given back: the Refund dialog's ceiling.
+ * Before #929 this ignored earlier refunds, so a second refund offered the
+ * full card amount again.
+ */
+export function refundableCents(inv: FamilyInvoice): number {
+  const card = inv.allocations
+    .filter((a) => a.stripe_payment_intent_id)
+    .reduce((s, a) => s + a.amount_cents, 0);
+  return Math.max(card - (inv.refunded_cents ?? 0), 0);
+}
+
+export interface RegistrationChips {
+  login: PeopleChip;
+  card: PeopleChip;
+}
+
+/**
+ * Registration is really two facts — can they log in, and can we charge them.
+ * #840: both take their wording from `lib/people-status`, the one map the
+ * families list and the Users page read too, so the pages cannot drift.
+ */
+export function registrationChips(state: RegistrationState): RegistrationChips {
+  return {
+    login: loginChip(loginStateFromRegistration(state)),
+    card: cardChip(cardStateFromRegistration(state)),
+  };
+}
+
+export interface UndeliverableChip {
   label: string;
   variant: ChipVariant;
+  detail: string;
 }
 
-/** Maps registration state onto the DS Chip's real variants (paid=green, pending=amber, manual=slate). */
-export function registrationChip(state: RegistrationState): RegistrationChip {
-  if (state === "registered") return { label: "Card on file", variant: "paid" };
-  if (state === "invited") return { label: "Invited", variant: "pending" };
-  return { label: "Not invited", variant: "manual" };
+/**
+ * #778: the suppression list has known these addresses were dead since #556,
+ * but nothing admin-facing said so — the family was invoiced, dunned and
+ * eventually dropped in silence.
+ *
+ * A hard bounce blocks everything including invoices, so it is a red chip and
+ * an instruction. A complaint only blocks digests and news, so it says that
+ * instead of frightening an admin into chasing a working address.
+ */
+export function undeliverableChip(
+  delivery: FamilyEmailDelivery | undefined | null,
+): UndeliverableChip | null {
+  if (!delivery?.undeliverable || !delivery.since) return null;
+  const day = shortDate(delivery.since) ?? "an earlier date";
+  const address = delivery.email ?? "this address";
+  if (delivery.reason === "complaint") {
+    return {
+      label: `Marked as spam on ${day}`,
+      variant: "pending",
+      detail: `${address} reported our email as spam, so summaries and news are blocked. Invoices still send.`,
+    };
+  }
+  return {
+    label: `Email undeliverable since ${day}`,
+    variant: "failed",
+    detail: `Nothing we send reaches ${address}. Ask for a new address.`,
+  };
 }
 
-export type TimelineTone = "muted" | TimelineKind;
+export type TimelineTone = "muted" | FamilyTimelineKind;
 
-export function timelineTone(entry: { kind: TimelineKind; muted: boolean }): TimelineTone {
+export function timelineTone(entry: {
+  kind: FamilyTimelineKind;
+  muted: boolean;
+}): TimelineTone {
   return entry.muted ? "muted" : entry.kind;
+}
+
+const TIMELINE_KIND_LABELS: Record<FamilyTimelineKind, string> = {
+  money: "Money",
+  lifecycle: "Enrollment",
+  attendance: "Attendance",
+  requests: "Request",
+  comms: "Message",
+  coach: "Coach",
+  admin: "Admin",
+  crm: "Team",
+};
+
+/** The small label in front of a unified timeline row. */
+export function timelineKindLabel(kind: string): string {
+  return TIMELINE_KIND_LABELS[kind as FamilyTimelineKind] ?? "Activity";
+}
+
+/** Timeline rows are emphasised when they are money or a staff action. */
+export function timelineEmphasis(tone: TimelineTone): boolean {
+  return tone === "money" || tone === "admin";
 }
 
 function pad(n: number): string {
@@ -162,4 +277,59 @@ export function mintRequestId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `req-${Date.now()}`;
+}
+
+export interface ManualPaymentSummary {
+  /** "Zelle $300.00 · Oct 29" */
+  title: string;
+  /** Where the money went: "Paid Oct 2026 $60.00 · $240.00 account credit" */
+  detail: string;
+  /** Why it cannot be voided here; null when it can. */
+  blocked: string | null;
+}
+
+/**
+ * One manual payment as the Fix something panel lists it. Invoices are named by
+ * their period when this page has them, else by id (a capped-out old invoice).
+ */
+export function manualPaymentSummary(
+  p: FamilyManualPayment,
+  invoices: Pick<FamilyInvoice, "invoice_id" | "period">[],
+): ManualPaymentSummary {
+  const periodById = new Map(invoices.map((inv) => [inv.invoice_id, inv.period]));
+  const method = isManualPaymentMethod(p.method)
+    ? MANUAL_PAYMENT_METHOD_LABELS[p.method]
+    : (p.method ?? "Payment");
+  const day = shortDate(p.paid_at);
+  const paid = p.allocations.map((a) => {
+    const period = periodById.get(a.invoice_id);
+    return `${period ? periodLabel(period) : a.invoice_id} ${formatCents(a.amount_cents)}`;
+  });
+  const parts = [paid.length ? `Paid ${paid.join(", ")}` : "Paid no invoice"];
+  if (p.credit_cents > 0) parts.push(`${formatCents(p.credit_cents)} account credit`);
+  const blocked =
+    p.void_blocked_reason === "credit_spent"
+      ? `${formatCents(p.credit_spent_cents)} of its credit already paid another invoice, so voiding it here would lose that money. Undo that first.`
+      : p.void_blocked_reason === "legacy_allocation"
+        ? "Recorded before payments were tracked per invoice; it needs reconciling by hand."
+        : null;
+  return {
+    title: `${method} ${formatCents(p.amount_cents)}${day ? ` · ${day}` : ""}`,
+    detail: parts.join(" · "),
+    blocked,
+  };
+}
+
+/**
+ * What voiding this payment does, said plainly: it is the PAYMENT that goes,
+ * never an invoice.
+ */
+export function voidPaymentExplainer(p: FamilyManualPayment | null): string {
+  const base =
+    "This voids the payment, not an invoice. Nothing is deleted: the payment is kept for " +
+    "the audit trail and stops counting in revenue and deposit reports. Every invoice it " +
+    "paid stays and its balance reopens.";
+  return p && p.credit_cents > 0
+    ? `${base} The ${formatCents(p.credit_cents)} account credit it created is cancelled.`
+    : base;
 }

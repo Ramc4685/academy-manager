@@ -155,6 +155,27 @@ async function openWithdrawDialog(page: Page) {
 }
 
 test.describe("admin enrollment withdraw dialog (#670)", () => {
+  // #859 remainder: the Drop dialog used to be a hand-rolled filled orange
+  // button; it now matches the void-invoice pattern (danger-outline, plus a
+  // stated family-email consequence), same as Delete's `variant="danger"`.
+  test("the Drop button is the shared danger-outline style, not a filled button, and states the family-email consequence", async ({
+    page,
+  }) => {
+    await stubAdminShell(page, ["admin", "owner"]);
+    await stubSessionDetail(page);
+    await openWithdrawDialog(page);
+
+    const dialog = page.getByRole("dialog", { name: "Drop enrollment" });
+    const dropButton = dialog.getByRole("button", { name: "Drop", exact: true });
+    await expect(dropButton).toHaveClass(/bg-white/);
+    await expect(dropButton).toHaveClass(/text-status-red-800/);
+    await expect(dropButton).not.toHaveClass(/bg-orange-600/);
+
+    await expect(
+      dialog.getByText("Ends the enrollment, frees the seat and stops billing. The family is emailed."),
+    ).toBeVisible();
+  });
+
   test("owner: account credit goes through the single withdraw route", async ({ page }) => {
     await stubAdminShell(page, ["admin", "owner"]);
     const stub = await stubSessionDetail(page);

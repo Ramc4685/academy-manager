@@ -4,12 +4,14 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { exportAdminReportCsv, getAdminRefundsReport } from "@/lib/api/admin";
+import { useIsNativeApp } from "@/lib/use-native-app";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { BigNum, Overline } from "@/components/ds/typography";
 
 export default function AdminRefundsReportPage() {
   const [period, setPeriod] = useState(() => currentPeriod());
+  const isNativeApp = useIsNativeApp();
 
   const reportQuery = useQuery({
     queryKey: ["admin", "reports", "refunds", period],
@@ -39,16 +41,18 @@ export default function AdminRefundsReportPage() {
               type="month"
               value={period}
               onChange={(event) => setPeriod(event.target.value || currentPeriod())}
-              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-accent focus:outline-none focus:ring-2 focus:ring-rally-accent/20 dark:bg-neutral-950"
+              className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-950"
             />
           </label>
-          <Button
-            variant="secondary"
-            onClick={() => exportMutation.mutate()}
-            disabled={exportMutation.isPending}
-          >
-            {exportMutation.isPending ? "Exporting..." : "Export CSV"}
-          </Button>
+          {!isNativeApp && (
+            <Button
+              variant="secondary"
+              onClick={() => exportMutation.mutate()}
+              disabled={exportMutation.isPending}
+            >
+              {exportMutation.isPending ? "Exporting..." : "Export CSV"}
+            </Button>
+          )}
         </div>
       </div>
 

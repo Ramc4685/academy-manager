@@ -1,0 +1,14 @@
+# Reviewed 2026-10-06: test fixtures and doc examples, not real secrets. One fingerprint per line (commit:file:rule:line).
+071712b588e0411ad93fe324874972c5172e70f1:backend/v2/tests/contract/test_ledger_discount_counted_once.py:generic-api-key:41
+09a7b6f537c410b363567a26a99c5d37d601ae84:backend/v2/tests/contract/test_mongo_payment_repo_discounts.py:generic-api-key:361
+09a7b6f537c410b363567a26a99c5d37d601ae84:backend/v2/tests/contract/test_mongo_payment_repo_discounts.py:generic-api-key:429
+09a7b6f537c410b363567a26a99c5d37d601ae84:backend/v2/tests/contract/test_mongo_payment_repo_discounts.py:generic-api-key:445
+114b9989dd479f4473709974db0ab59ea9c90cc1:backend/v2/tests/application/test_pause_requests.py:generic-api-key:329
+114b9989dd479f4473709974db0ab59ea9c90cc1:backend/v2/tests/contract/test_billing_idempotency.py:generic-api-key:534
+4998ded09b6422ab0b4c4f4fa988bbd98bab76b5:backend/v2/tests/application/test_pause_requests.py:generic-api-key:296
+5f510a5e40dcdfd4647214d8bbd421ec0af85f13:backend/v2/tests/unit/test_unsubscribe_token.py:generic-api-key:16
+9f4296536f95db1bdfd7a954027d05c5b8eadcd6:backend/v2/tests/contract/test_ledger_discount_counted_once.py:generic-api-key:41
+9f599cc35b6c27c58e28aa6a878ebace5f579876:backend/v2/tests/contract/test_ledger_credit_counted_once.py:generic-api-key:214
+baba02ac16d3865f917ac78482231322cd825dcb:backend/v2/tests/unit/test_resend_per_client_key.py:stripe-access-token:162
+ca4f5077dff6c909bedeeece909c9f65f6e02514:backend/v2/tests/unit/test_resend_per_client_key.py:stripe-access-token:162
+e063efeeac6acf0bbc6dca908ded5f289abb9a08:backend/v2/tests/contract/test_billing_idempotency.py:generic-api-key:534

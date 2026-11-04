@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.coaching.domain.errors import ConflictAttendanceExists
-from backend.v2.contexts.coaching.domain.models import Attendance, CoachAttendance
+from backend.v2.contexts.coaching.domain.models import (
+    Attendance,
+    CoachAttendance,
+    CoachAttendanceAuditEntry,
+)
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -91,6 +97,12 @@ class MongoAttendanceRepository(TenantScopedRepository):
         doc = await self._find_one({"attendance_id": attendance_id})
         return self._to_domain(doc) if doc else None
 
+    async def list_marked_between(self, start: datetime, end: datetime) -> list[Attendance]:
+        """Rows marked in ``[start, end)``, voided ones included -- the parent
+        monthly report card."""
+        cursor = self._find_many({"marked_at": {"$gte": start, "$lt": end}})
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_occurrence(self, occurrence_id: str) -> list[Attendance]:
         """All student attendance rows already recorded for one occurrence."""
         cursor = self._find_many({"occurrence_id": occurrence_id}, sort=[("marked_at", 1)])
@@ -156,3 +168,13 @@ class MongoCoachAttendanceRepository(TenantScopedRepository):
             sort=[("marked_at", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+
+class MongoCoachAttendanceAuditLogRepository(TenantScopedRepository):
+    """Append-only before/after log for edited coach attendance marks (#539)."""
+
+    collection_name = "coach_attendance_audit_log"
+
+    async def append(self, entry: CoachAttendanceAuditEntry) -> None:
+        doc = {k: v for k, v in entry.model_dump(mode="python").items() if k != "academy_id"}
+        await self._insert_one(doc)

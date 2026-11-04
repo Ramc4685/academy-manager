@@ -27,10 +27,12 @@ def test_validator_matches_the_widened_model() -> None:
     schema = _schema()
     assert "pause_request_id" not in schema["required"]
     assert "null" in schema["properties"]["pause_request_id"]["bsonType"]
-    assert set(schema["properties"]["action_type"]["enum"]) == {
-        "resume_from_pause",
-        "cancel_at_period_end",
-    }
+    # A SUBSET check, not equality: 0133's enum is the live vocabulary and
+    # later migrations widen it (0182 added #820's admin drop). 0169 only owns
+    # the two types it introduced.
+    assert {"resume_from_pause", "cancel_at_period_end"} <= set(
+        schema["properties"]["action_type"]["enum"]
+    )
     assert ScheduledEnrollmentAction.model_fields["pause_request_id"].annotation == (str | None)
 
 

@@ -33,6 +33,10 @@ export interface Level {
   completion_rule: string;
   requires_coach_recommendation: boolean;
   requires_admin_approval: boolean;
+  /** Owner-chosen colour; null means the default for the level number. */
+  color: string | null;
+  /** `color` or the default: what every surface paints. */
+  display_color: string;
   is_active: boolean;
 }
 
@@ -55,7 +59,8 @@ export interface SkillCriterion {
   display_order: number;
 }
 
-export type ExternalSource = "BWF_SHUTTLE_TIME" | "ACADEMY_CUSTOM" | "COACH_CREATED";
+export type ExternalSource =
+  "BWF_SHUTTLE_TIME" | "ACADEMY_CUSTOM" | "COACH_CREATED";
 
 export interface ExternalLessonReference {
   ref_id: string;
@@ -71,7 +76,11 @@ export interface ExternalLessonReference {
 
 export interface PathwayLevel {
   level: Level;
-  skills: { skill: Skill; criteria: SkillCriterion[]; external_refs: ExternalLessonReference[] }[];
+  skills: {
+    skill: Skill;
+    criteria: SkillCriterion[];
+    external_refs: ExternalLessonReference[];
+  }[];
 }
 
 export interface FullPathway {
@@ -149,10 +158,7 @@ export type ProgressNextAction =
   | "certificate_issued";
 
 export type LevelCompletionStatus =
-  | "not_started"
-  | "in_progress"
-  | "test_ready"
-  | "complete";
+  "not_started" | "in_progress" | "test_ready" | "complete";
 
 export interface StudentProgressOverview {
   student_id: string;
@@ -190,6 +196,14 @@ export interface LevelUpRecommendation {
    * sets it; the coach recommend response leaves it undefined.
    */
   enrollment_active?: boolean;
+  /**
+   * Issue #841: resolved display names for the ids above. Only the admin queue
+   * read sets them; null when a lookup failed, which the UI falls back from.
+   */
+  student_name?: string | null;
+  program_name?: string | null;
+  from_level_name?: string | null;
+  to_level_name?: string | null;
 }
 
 export interface SkillCertificate {
@@ -203,13 +217,30 @@ export interface SkillCertificate {
   issued_at: string;
 }
 
+/** One certificate plus what the printable certificate shows (read from the curriculum). */
+export interface CertificateDetail {
+  certificate: SkillCertificate;
+  /** Position on the program's level ladder; null when the level was removed. */
+  level_number: number | null;
+  /** Names of the level's required skills, in curriculum order. */
+  skills: string[];
+  next_level: { level_id: string; name: string; number: number } | null;
+  /** The program's whole level ladder, in order, with each level's colour. */
+  levels: { name: string; color: string | null }[];
+}
+
 // ---------------------------------------------------------------------------
 // Admin — curriculum
 // ---------------------------------------------------------------------------
 
+// Skill programs live under /admin/curriculum/programs. The bare
+// /admin/programs path belongs to the public page's programs (see
+// lib/api/admin.ts); the two used to collide and the public page won.
+export const CURRICULUM_PROGRAMS_PATH = "/admin/curriculum/programs";
+
 export function listPrograms(academyId: string): Promise<Program[]> {
   return apiFetch<{ programs: Program[] }>(
-    `/admin/programs?academy_id=${encodeURIComponent(academyId)}`,
+    `${CURRICULUM_PROGRAMS_PATH}?academy_id=${encodeURIComponent(academyId)}`,
     { method: "GET" },
   ).then((d) => d.programs);
 }
@@ -219,7 +250,7 @@ export function createProgram(body: {
   sport: string;
   description: string;
 }): Promise<Program> {
-  return apiFetch<Program>("/admin/programs", {
+  return apiFetch<Program>(CURRICULUM_PROGRAMS_PATH, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -247,15 +278,57 @@ export function createLevel(
   );
 }
 
-export function createSkill(
-  levelId: string,
-  body: {
+// Mirrors the backend ScoringType literal
+// (backend/v2/contexts/curriculum/domain/models.py).
+export const SKILL_SCORING_TYPES = [
+  { value: "ATTEMPT_BASED", label: "Attempts (pass %)" },
+  { value: "CHECKLIST_BASED", label: "Checklist" },
+  { value: "COACH_APPROVAL", label: "Coach approval" },
+  { value: "RALLY_COUNT", label: "Rally count" },
+  { value: "TIME_BASED", label: "Time based" },
+  { value: "POINTS_BASED", label: "Points based" },
+] as const;
+
+export type SkillScoringType = (typeof SKILL_SCORING_TYPES)[number]["value"];
+
+export interface CreateSkillBody {
+  program_id: string;
+  sequence: number;
+  name: string;
+  description: string;
+  is_required: boolean;
+  scoring_type: SkillScoringType;
+  pass_threshold_pct?: number;
+}
+
+// The new skill goes after the level's existing skills.
+export function buildCreateSkillBody(
+  level: Pick<Level, "program_id">,
+  existingSkills: ReadonlyArray<Pick<Skill, "sequence">>,
+  form: {
     name: string;
     description: string;
     is_required: boolean;
-    scoring_type: string;
-    pass_threshold_pct?: number;
+    scoring_type: SkillScoringType;
   },
+): CreateSkillBody {
+  const lastSequence = existingSkills.reduce(
+    (max, s) => Math.max(max, s.sequence),
+    0,
+  );
+  return {
+    program_id: level.program_id,
+    sequence: lastSequence + 1,
+    name: form.name.trim(),
+    description: form.description.trim(),
+    is_required: form.is_required,
+    scoring_type: form.scoring_type,
+  };
+}
+
+export function createSkill(
+  levelId: string,
+  body: CreateSkillBody,
 ): Promise<Skill> {
   return apiFetch<Skill>(
     `/admin/levels/${encodeURIComponent(levelId)}/skills`,
@@ -285,7 +358,10 @@ export function addExternalRef(
 // other program-scoped routes, but the use case ignores it: it seeds (or
 // returns the existing) academy-wide badminton program regardless of which
 // id is passed. Safe to call before any program exists.
-export function seedBadmintonPathway(): Promise<{ program_id: string; name: string }> {
+export function seedBadmintonPathway(): Promise<{
+  program_id: string;
+  name: string;
+}> {
   return apiFetch<{ program_id: string; name: string }>(
     `/admin/programs/_/seed-badminton`,
     { method: "POST" },
@@ -328,7 +404,9 @@ export function listLessonCards(programId: string): Promise<LessonCardsList> {
   );
 }
 
-export function seedLessonCards(programId: string): Promise<SeedLessonCardsResult> {
+export function seedLessonCards(
+  programId: string,
+): Promise<SeedLessonCardsResult> {
   return apiFetch<SeedLessonCardsResult>(
     `/admin/programs/${encodeURIComponent(programId)}/lesson-cards/seed`,
     { method: "POST" },
@@ -400,11 +478,16 @@ export function recordAdminTestAttempt(
   );
 }
 
-export function getLevelUpQueue(programId?: string): Promise<LevelUpRecommendation[]> {
+export function getLevelUpQueue(
+  programId?: string,
+): Promise<LevelUpRecommendation[]> {
   const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ queue: LevelUpRecommendation[] }>(`/admin/level-up-queue${q}`, {
-    method: "GET",
-  }).then((d) => d.queue);
+  return apiFetch<{ queue: LevelUpRecommendation[] }>(
+    `/admin/level-up-queue${q}`,
+    {
+      method: "GET",
+    },
+  ).then((d) => d.queue);
 }
 
 export function approveLevelUp(recId: string): Promise<{ approved: boolean }> {
@@ -424,7 +507,19 @@ export function rejectLevelUp(
   );
 }
 
-export function getAdminStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
+export function getAdminCertificateDetail(
+  studentId: string,
+  certId: string,
+): Promise<CertificateDetail> {
+  return apiFetch<CertificateDetail>(
+    `/admin/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}`,
+    { method: "GET" },
+  );
+}
+
+export function getAdminStudentCertificates(
+  studentId: string,
+): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/admin/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
@@ -445,6 +540,72 @@ export function getAdminPathwayProgress(
     `/admin/pathway/progress?${params.toString()}`,
     { method: "GET" },
   ).then((d) => d.rows);
+}
+
+export type LevelUpRule = "automatic" | "approve_first" | "mixed";
+
+export interface PathwayDashboard {
+  program_id: string;
+  program_name: string;
+  skills_mastered_this_week: number;
+  level_ups_this_month: number;
+  levels: {
+    level_id: string;
+    name: string;
+    sequence: number;
+    player_count: number;
+    requires_admin_approval: boolean;
+    color?: string | null;
+  }[];
+  level_up_rule: LevelUpRule;
+  almost_there: {
+    student_id: string;
+    student_name: string;
+    parent_id: string | null;
+    level_name: string;
+    level_sequence: number;
+    missing_skill_name: string;
+  }[];
+  stuck: {
+    student_id: string;
+    student_name: string;
+    parent_id: string | null;
+    level_name: string;
+    level_sequence: number;
+    skills_passed: number;
+    skills_total: number;
+    last_win_at: string | null;
+    level_started_at: string;
+  }[];
+  unplaced_count: number;
+  coaches: { coach_id: string; coach_name: string; skills_ticked: number }[];
+}
+
+export function getAdminPathwayDashboard(): Promise<PathwayDashboard> {
+  return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", {
+    method: "GET",
+  });
+}
+
+/** A hex colour for the level, or "" to go back to its default. */
+export function setLevelColor(levelId: string, color: string): Promise<Level> {
+  return apiFetch<Level>(`/admin/levels/${encodeURIComponent(levelId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ color }),
+  });
+}
+
+/** The level-up rule is each level's requires_admin_approval; set it on every level. */
+export async function setLevelUpRule(
+  levelIds: string[],
+  approveFirst: boolean,
+): Promise<void> {
+  for (const levelId of levelIds) {
+    await apiFetch(`/admin/levels/${encodeURIComponent(levelId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ requires_admin_approval: approveFirst }),
+    });
+  }
 }
 
 export function getCoachSessionStudentsProgress(
@@ -518,7 +679,10 @@ export function recommendLevelUp(
 ): Promise<LevelUpRecommendation> {
   return apiFetch<LevelUpRecommendation>(
     `/coach/students/${encodeURIComponent(studentId)}/level-up`,
-    { method: "POST", body: JSON.stringify(programId ? { program_id: programId } : {}) },
+    {
+      method: "POST",
+      body: JSON.stringify(programId ? { program_id: programId } : {}),
+    },
   );
 }
 
@@ -526,18 +690,19 @@ export function recommendLevelUp(
 // Parent
 // ---------------------------------------------------------------------------
 
-export function getParentStudentPassport(
+export function getParentCertificateDetail(
   studentId: string,
-  programId?: string,
-): Promise<SkillPassportEntry[]> {
-  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ passport: SkillPassportEntry[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/skill-progress${q}`,
+  certId: string,
+): Promise<CertificateDetail> {
+  return apiFetch<CertificateDetail>(
+    `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}`,
     { method: "GET" },
-  ).then((d) => d.passport);
+  );
 }
 
-export function getParentStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
+export function getParentStudentCertificates(
+  studentId: string,
+): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/parent/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
@@ -551,6 +716,7 @@ export function getParentStudentCertificates(studentId: string): Promise<SkillCe
 export interface SkillBoardCell {
   status: SkillStatus;
   last_updated_at: string | null;
+  coach_note?: string | null;
 }
 
 export interface SkillBoardSkill {
@@ -558,6 +724,9 @@ export interface SkillBoardSkill {
   name: string;
   sequence: number;
   is_required: boolean;
+  /** Observable criterion descriptions, in display order: the coach's quick-tags.
+   *  Absent on boards cached before the field shipped (persisted for 24h). */
+  criteria?: string[];
 }
 
 export interface SkillBoardStudentRow {
@@ -575,6 +744,7 @@ export interface SkillBoardLevelGroup {
   level_id: string;
   level_name: string;
   sequence: number;
+  color?: string | null;
   skills: SkillBoardSkill[];
   students: SkillBoardStudentRow[];
 }

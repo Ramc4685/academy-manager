@@ -20,6 +20,16 @@ from backend.v2.shared.tenancy import TenantScopedRepository
 class MongoHoldRepository(TenantScopedRepository):
     collection_name = "enrollments"
 
+    async def count_reclaimable(self, session_id: str) -> int:
+        # Same filter claim_longest_held claims against, as a read.
+        return int(
+            await self.collection.count_documents(
+                self._scoped(
+                    {"session_id": session_id, "status": "held", "hold_reclaim_claimed_at": None}
+                )
+            )
+        )
+
     async def claim_longest_held(
         self, *, session_id: str, now: datetime, requested_by: str
     ) -> Enrollment | None:

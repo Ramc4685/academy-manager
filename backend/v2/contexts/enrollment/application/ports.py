@@ -34,6 +34,7 @@ class SessionOccurrenceRepository(Protocol):
         *,
         coach_id: str,
         on_date: date,
+        include_cancelled: bool = False,
     ) -> list[SessionOccurrence]: ...
 
     async def list_for_coach_upcoming(
@@ -47,7 +48,9 @@ class SessionOccurrenceRepository(Protocol):
     # Academy-wide variants of the two coach queries above, for coach
     # supervisors (admin/owner covering any session). Same tenant scope,
     # same cancelled filter, no coach filter.
-    async def list_on_date(self, *, on_date: date) -> list[SessionOccurrence]: ...
+    async def list_on_date(
+        self, *, on_date: date, include_cancelled: bool = False
+    ) -> list[SessionOccurrence]: ...
 
     async def list_upcoming(
         self,
@@ -104,6 +107,17 @@ class EnrollmentQuery(Protocol):
 
     async def is_active(self, session_id: str, student_id: str) -> bool: ...
     async def active_for_student(self, student_id: str) -> list[Enrollment]: ...
+
+    async def seat_holding_for_student(self, student_id: str) -> list[Enrollment]:
+        """Rows in ``SEAT_HOLDING`` (``active`` or ``held``) for one student.
+
+        Distinct from ``active_for_student`` (active only) and
+        ``active_or_paused_for_student`` (active + paused, never held): a
+        ``held`` enrollment is a seat-holding re-enrollment (e.g. a
+        reclaim-pending / held student) and must count as "the series is
+        back on" for any caller — such as win-back outreach (issue #778) —
+        that needs to know whether a student currently occupies a seat.
+        """
 
     async def departable_for_student(self, student_id: str) -> list[Enrollment]:
         """Every row for one student that a Drop can still act on (issue #698).
@@ -270,6 +284,44 @@ class WaitlistRepository(Protocol):
         self, session_id: str, student_id: str
     ) -> None: ...
 
+    # --- Offer window (issue #828) --------------------------------------
+
+    async def get(self, waitlist_id: str) -> WaitlistEntry | None:
+        """One entry by id, whatever its status — the confirm route's read."""
+
+    async def mark_offered(
+        self, waitlist_id: str, *, offer_expires_at: datetime, holds_seat: bool = True
+    ) -> None:
+        """``waiting`` -> ``offered``, stamping the confirmation deadline.
+
+        With ``holds_seat`` the seat is already reserved when this is called:
+        the entry's ``offered`` status and the session's reserved-seat counter
+        together ARE the hold (``SeatAcquisition`` is an in-memory value, not
+        a row), so the sweep releases the counter when the window closes.
+        Without it (X2) nothing is reserved and nothing may be released.
+        """
+
+    async def count_seatless_offers(self, session_id: str) -> int:
+        """Open ``offered`` rows on the session that hold no seat yet (X2)."""
+
+    async def give_seat_to_seatless_offer(self, session_id: str) -> WaitlistEntry | None:
+        """Atomically flip the oldest open seatless offer to seat-holding and
+        return it; ``None`` when there is none (X2). The caller has already
+        reserved the seat."""
+
+    async def find_expired_offers(self, *, before: datetime) -> list[WaitlistEntry]:
+        """Every ``offered`` entry whose ``offer_expires_at`` is at or before
+        ``before`` — the sweep's work list."""
+
+    async def transition_status(self, waitlist_id: str, *, expected: str, to: str) -> bool:
+        """Compare-and-set ``expected`` -> ``to``; ``False`` when the row had
+        already moved on. Closing an offer (decline, expiry) releases a seat,
+        so exactly one closer may win — a blind ``update_status`` would let an
+        expiry overwrite a confirmation and hand the same seat out twice."""
+
+    async def list_for_parent(self, parent_id: str) -> list[WaitlistEntry]:
+        """Every entry one family owns, oldest first — the parent's own read."""
+
 
 class EnrollmentEventRepository(Protocol):
     async def record(self, event: EnrollmentLifecycleEvent) -> None: ...
@@ -334,6 +386,17 @@ class OccurrenceRosterCleanup(Protocol):
         self, *, session_id: str, student_id: str, after: datetime
     ) -> int: ...
 
+    async def remove_future_for_session(self, *, session_id: str, after: datetime) -> int:
+        """Drop every one-time row for FUTURE occurrences of ``session_id``,
+        regardless of student (issue #694).
+
+        A whole-session cancel only walks enrolled students, so make-up and
+        trial students — who hold no enrollment row on the session — would
+        otherwise keep their one-time rows and render unmarkable on the
+        coach roster. Best-effort, like ``remove_future_for_student``.
+        """
+        ...
+
 
 class OccurrenceRosterPurge(Protocol):
     """Drop every one-time roster row for ONE cancelled date (issue #671).
@@ -370,6 +433,18 @@ class MakeupPolicyLookup(Protocol):
     """The academy's self-service policy, for the re-opened make-up window."""
 
     async def get_or_default(self) -> Any: ...
+
+
+class PayoutPeriodLock(Protocol):
+    """Is the coach's payroll for this instant already frozen? (#787)
+
+    Finance owns ``PayoutPeriod``; Enrollment must not import it, so the
+    composition layer reshapes it into this one question. Returns the
+    blocking period's status (``"approved"`` / ``"paid"``), or ``None``
+    when the window is still editable.
+    """
+
+    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None: ...
 
 
 class OccurrenceBillingSync(Protocol):
@@ -562,6 +637,36 @@ class RosterChangeNotifier(Protocol):
     ) -> None: ...
 
 
+class WaitlistOfferNotifier(Protocol):
+    """Tells one family that a seat is theirs to claim, or that it moved on.
+
+    A sibling of :class:`RosterChangeNotifier` rather than another ``change``
+    kind on it: these two mails are addressed to exactly one family and carry a
+    deadline, where ``roster_changed`` fans out to staff. Same contract as
+    every notifier port here — best-effort, and never allowed to fail the
+    write it follows (issue #828).
+    """
+
+    async def waitlist_offer_made(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+        offer_expires_at: datetime,
+    ) -> None: ...
+
+    async def waitlist_offer_expired(
+        self,
+        *,
+        waitlist_id: str,
+        session_id: str,
+        student_id: str,
+        parent_user_id: str,
+    ) -> None: ...
+
+
 # --- Hold / departure ports (issue #697) --------------------------------
 
 
@@ -580,6 +685,11 @@ class HoldRepository(Protocol):
     is what let the fake enforce "never return the same document twice"
     without also having to fake every other enrollment-writer method.
     """
+
+    async def count_reclaimable(self, session_id: str) -> int:
+        """Held rows on the session that ``claim_longest_held`` could still
+        take. A read only — nothing is claimed (X2: a seatless waitlist offer
+        is made only while one of these exists)."""
 
     async def claim_longest_held(
         self, *, session_id: str, now: datetime, requested_by: str

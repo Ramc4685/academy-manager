@@ -119,6 +119,67 @@ async def test_utilization_rate_calculated_correctly():
     assert point.utilization_rate == Decimal("0.5000")
 
 
+class _ComplianceRow:
+    def __init__(
+        self, coach_id: str, marked_within_24h_count: int, total_marked_count: int
+    ) -> None:
+        self.coach_id = coach_id
+        self.marked_within_24h_count = marked_within_24h_count
+        self.total_marked_count = total_marked_count
+
+
+class StubComplianceReader:
+    """Stub implementation of MarkedWithin24hReader for unit tests."""
+
+    def __init__(self, rows: list[_ComplianceRow]) -> None:
+        self._rows = rows
+
+    async def compliance_for_periods(
+        self, *, academy_id: str, periods: list[str]
+    ) -> list[_ComplianceRow]:
+        return self._rows
+
+
+@pytest.mark.asyncio
+async def test_compliance_within_24h_rate_from_reader():
+    """compliance_within_24h_rate = marked_within_24h_count / total_marked_count, 4dp."""
+    uc = GetCoachUtilization(
+        snapshot_repo=StubSnapshotReader(
+            [_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]
+        ),
+        compliance_reader=StubComplianceReader([_ComplianceRow("coach-1", 3, 4)]),
+        academy_id="test-academy",
+    )
+    result = await uc.execute(["2026-05"])
+
+    assert len(result.coaches) == 1
+    assert result.coaches[0].compliance_within_24h_rate == Decimal("0.7500")
+
+
+@pytest.mark.asyncio
+async def test_compliance_within_24h_rate_none_without_reader():
+    """Without a compliance_reader, the field stays None rather than defaulting to 0."""
+    uc = _use_case([_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)])
+    result = await uc.execute(["2026-05"])
+
+    assert result.coaches[0].compliance_within_24h_rate is None
+
+
+@pytest.mark.asyncio
+async def test_compliance_within_24h_rate_none_when_no_marks_yet():
+    """A coach with zero marked occurrences yet has no rate to report (avoid 0/0)."""
+    uc = GetCoachUtilization(
+        snapshot_repo=StubSnapshotReader(
+            [_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]
+        ),
+        compliance_reader=StubComplianceReader([_ComplianceRow("coach-1", 0, 0)]),
+        academy_id="test-academy",
+    )
+    result = await uc.execute(["2026-05"])
+
+    assert result.coaches[0].compliance_within_24h_rate is None
+
+
 @pytest.mark.asyncio
 async def test_empty_periods_returns_empty_coaches():
     """Passing an empty periods list returns a result with no coaches and payout 0."""

@@ -388,7 +388,7 @@ REACT_APP_BACKEND_URL="http://127.0.0.1:8001"
 1. **MongoDB:** `mongod --dbpath /tmp/academy-manager-mongo-local --bind_ip 127.0.0.1 --port 27017`
 2. **Backend:** `cd backend && source .venv/bin/activate && uvicorn server:app --host 127.0.0.1 --port 8001 --reload`
 3. **Frontend:** `cd frontend && yarn start` — listens on `:3000`
-4. **Reimport BLno data:** `cd backend && BLNO_XLSX="/Users/ramc/Downloads/BLno-Badmintion-Training.xlsx" python scripts/import_blno.py`
+4. **Reimport BLno data (historical, single-tenant only; #881):** `cd backend && BLNO_IMPORT_SINGLE_TENANT_ACK=1 BLNO_XLSX="/Users/ramc/Downloads/BLno-Badmintion-Training.xlsx" python scripts/import_blno.py` — refuses to run unless the ack is set and the DB has exactly one `academies` row; never use it to onboard a second academy.
 5. **Run pytest:** `cd backend && pytest` — iteration tests live in `backend/tests/iter*_test.py`
 
 ---

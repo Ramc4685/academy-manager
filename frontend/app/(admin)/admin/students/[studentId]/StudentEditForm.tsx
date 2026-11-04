@@ -15,6 +15,7 @@ import {
   type UpdateAdminStudentRequest,
 } from "@/lib/api/v2/students";
 import { Button } from "@/components/ds/button";
+import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 
 import { DetailList } from "./DetailList";
 
@@ -52,6 +53,12 @@ function StudentEditForm({
   const [reason, setReason] = useState("Admin profile update");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
+  // UI-2: true from the first keystroke until a save succeeds or Reset is
+  // pressed. The unsaved-changes guard reads `dirty && edited`, so a
+  // successful save is clean at once — it does not wait for the refetch to
+  // bring the saved values back — and a field typed back to its loaded value
+  // is clean too.
+  const [edited, setEdited] = useState(false);
 
   // Keep local state in sync if the server-side data refreshes.
   useEffect(() => {
@@ -80,6 +87,7 @@ function StudentEditForm({
     onSuccess: () => {
       setSubmitError(null);
       setSubmitOk(true);
+      setEdited(false);
       onSaved();
     },
     onError: (err: unknown) => {
@@ -116,6 +124,10 @@ function StudentEditForm({
           dirtyFields.emergencyContactPhone
         : dirtyFields.tShirtSize;
 
+  // UI-2: tab switches, in-app links and a reload confirm before this
+  // draft is thrown away (the shell guard, #893).
+  useReportUnsavedChanges(`admin-student-edit-${mode}`, dirty && edited);
+
   const reset = () => {
     setFullName(student.full_name);
     setDateOfBirth(student.date_of_birth ?? "");
@@ -127,12 +139,15 @@ function StudentEditForm({
     setTShirtSize(student.t_shirt_size ?? "");
     setSubmitError(null);
     setSubmitOk(false);
+    setEdited(false);
   };
 
   return (
     <form
       className="mt-3 space-y-4"
       data-testid={`admin-student-${mode}-edit-form`}
+      // React's onChange bubbles per keystroke from every field below.
+      onChange={() => setEdited(true)}
       onSubmit={(e) => {
         e.preventDefault();
         setSubmitOk(false);
@@ -375,6 +390,13 @@ function ChangeParentPanel({
     setSubmitOk(false);
     setWarnings([]);
   }, [student.student_id, student.parent_id]);
+
+  // UI-2: a picked-but-unsubmitted parent is a draft worth a confirm. The
+  // search box alone is not — it only filters the list.
+  useReportUnsavedChanges(
+    "admin-student-change-parent",
+    Boolean(parentId && parentId !== student.parent_id),
+  );
 
   const selectedParent = activeParents.find(
     (parent) => parent.user_id === parentId,

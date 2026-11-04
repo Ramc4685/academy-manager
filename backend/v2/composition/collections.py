@@ -25,6 +25,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
+from backend.v2.shared.comms.phone_country import academy_calling_code_lookup
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
@@ -59,4 +60,5 @@ def compose_admin_collections(db: Any) -> MongoCollectionsReadModel:
         billing_settings=MongoBillingSettingsRepository(db),
         customers=MongoParentBillingCustomerRepository(db),
         parent_payments_link=_parent_payments_link(db),
+        phone_calling_code=academy_calling_code_lookup(db),
     )

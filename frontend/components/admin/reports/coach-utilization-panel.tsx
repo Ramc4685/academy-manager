@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { getCoachUtilization, listAdminUsers } from "@/lib/api/admin";
+import { formatRatePercent } from "@/components/admin/reports/coach-utilization.logic";
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
@@ -71,6 +72,7 @@ export function CoachUtilizationPanel({ periods }: { periods: string[] }) {
                 <th className="px-2 py-2">Hours</th>
                 <th className="px-2 py-2">Payout</th>
                 <th className="px-2 py-2">Utilization</th>
+                <th className="px-2 py-2">Marked within 24h</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-rally-line">
@@ -82,7 +84,12 @@ export function CoachUtilizationPanel({ periods }: { periods: string[] }) {
                   <td className="px-2 py-2 text-rally-muted">{row.period}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatHours(row.hours)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatCurrency(row.payout_minor)}</td>
-                  <td className="px-2 py-2 text-rally-muted">{formatPercent(row.utilization_rate)}</td>
+                  <td className="px-2 py-2 text-rally-muted">
+                    {formatRatePercent(row.utilization_rate)}
+                  </td>
+                  <td className="px-2 py-2 text-rally-muted">
+                    {formatRatePercent(row.compliance_within_24h_rate)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -99,10 +106,4 @@ function formatHours(value: number): string {
 
 function formatCurrency(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-}
-
-function formatPercent(value: number): string {
-  return new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 0 }).format(
-    value,
-  );
 }

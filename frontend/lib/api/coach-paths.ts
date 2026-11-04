@@ -18,6 +18,29 @@ export function coachSessionBulkSkillStatusPath(occurrenceId: string, date?: str
   });
 }
 
+export function coachSkillMasteredPath(
+  occurrenceId: string,
+  skillId: string,
+  date?: string,
+): string {
+  return withParams(
+    `/coach/sessions/${encodeURIComponent(occurrenceId)}/skills/${encodeURIComponent(skillId)}/mastered`,
+    { date },
+  );
+}
+
+export function coachStudentSkillMasteredPath(
+  occurrenceId: string,
+  studentId: string,
+  skillId: string,
+  options: { programId: string; date?: string },
+): string {
+  return withParams(
+    `/coach/sessions/${encodeURIComponent(occurrenceId)}/students/${encodeURIComponent(studentId)}/skills/${encodeURIComponent(skillId)}/mastered`,
+    { program_id: options.programId, date: options.date },
+  );
+}
+
 export function coachStudentPassportPath(studentId: string, programId?: string): string {
   return withParams(`/coach/students/${encodeURIComponent(studentId)}/passport`, {
     program_id: programId,

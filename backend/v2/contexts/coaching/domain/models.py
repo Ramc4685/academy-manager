@@ -10,7 +10,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-AttendanceStatus = Literal["present", "absent", "late"]
+# The three marks a coach can record. Kept separate from ``AttendanceStatus``
+# because nothing may be *marked* or *corrected to* "voided" — a void goes
+# through VoidAttendance (#554).
+RecordedAttendanceStatus = Literal["present", "absent", "late"]
+# ``voided`` (#554) is an admin annulment of a mark: the row stays for its
+# audit trail but counts as UNMARKED everywhere downstream — attendance rate,
+# payroll and absence policy all enumerate the statuses they count, and none
+# of them list "voided".
+AttendanceStatus = Literal["present", "absent", "late", "voided"]
 # How the student got onto the occurrence's roster: a standing enrollment, or
 # an approved one-time make-up / trial entry (issue #672). Missing on
 # documents written before the field existed, which read as ``enrollment``.
@@ -65,6 +73,34 @@ class CoachAttendance(BaseModel):
     marked_at: datetime
     rate_override_minor: int | None = Field(default=None, ge=0)
     note: str = ""
+
+
+class CoachAttendanceAuditEntry(BaseModel):
+    """Before/after record of one edit to a coach's payroll attendance mark.
+
+    Written only when an existing mark's status or rate_override_minor
+    actually changes — creation of the first mark and no-op resubmits are
+    not audited (see #539).
+
+    The one exception is an owner override of a frozen payout period (#821):
+    *every* such write is audited, including the first mark for a coach, so
+    that money moved inside an approved or paid period always leaves a trace.
+    ``before_status`` is then ``None`` (there was nothing to change) and
+    ``override_reason`` carries the owner's stated justification."""
+
+    model_config = {"frozen": True}
+
+    audit_id: str
+    academy_id: str
+    occurrence_id: str
+    coach_id: str
+    actor_id: str
+    at: datetime
+    before_status: CoachAttendanceStatus | None = None
+    after_status: CoachAttendanceStatus
+    before_rate_override_minor: int | None = Field(default=None, ge=0)
+    after_rate_override_minor: int | None = Field(default=None, ge=0)
+    override_reason: str | None = None
 
 
 class SessionFeedback(BaseModel):

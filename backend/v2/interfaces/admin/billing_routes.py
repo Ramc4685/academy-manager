@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+from backend.v2.contexts.billing.application.charge_admin_invoice import ChargeRequiresOwner
 from backend.v2.contexts.billing.application.first_month_quote_presentation import (
     first_month_quote_formula,
 )
@@ -17,10 +18,6 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     GenerateMonthlyPaymentsCommand,
     MarkPaymentPaidCommand,
     UndoPaymentPaidCommand,
-)
-from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
-    SetInvoiceScheduleCommand,
-    SetPlatformChargeFallbackCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.finance import (  # FINANCE
     DeleteExpenseCommand,
@@ -42,6 +39,7 @@ from backend.v2.contexts.billing.application.use_cases.withdrawal_credit import 
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_invoice_void
+from backend.v2.interfaces.admin.staff_tier import require_staff_tier
 from backend.v2.interfaces.admin.views import (
     AdminEnrollmentQuoteRequest,
     AdminEnrollmentQuoteResponse,
@@ -83,6 +81,7 @@ from backend.v2.interfaces.admin.views import (
     WithdrawalCreditPreviewResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.comms.email_theme import format_money
 from backend.v2.shared.http import require_owner, require_persona
 from backend.v2.shared.ids import new_ulid
 
@@ -99,15 +98,10 @@ class PlatformChargeFallbackResponse(BaseModel):
     allow_platform_charge_fallback: bool
 
 
-class SetPlatformChargeFallbackRequest(BaseModel):
-    enabled: bool
-    reason: str | None = None
-
-
 @router.get(
     "/billing/settings/platform-fallback",
     response_model=PlatformChargeFallbackResponse,
-    summary="Read the platform-charge fallback escape hatch",
+    summary="Read whether this academy charges on the platform Stripe account (house academy)",
 )
 async def get_platform_charge_fallback(
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -122,40 +116,9 @@ async def get_platform_charge_fallback(
     )
 
 
-@router.put(
-    "/billing/settings/platform-fallback",
-    response_model=PlatformChargeFallbackResponse,
-    summary="Toggle the platform-charge fallback escape hatch (audited)",
-)
-async def set_platform_charge_fallback(
-    body: SetPlatformChargeFallbackRequest,
-    claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> PlatformChargeFallbackResponse:
-    use_case = _required_callable(
-        use_cases.set_platform_charge_fallback, "set_platform_charge_fallback"
-    )
-    result = await use_case.execute(  # type: ignore[attr-defined]
-        SetPlatformChargeFallbackCommand(
-            enabled=body.enabled,
-            actor_id=claims.user_id,
-            reason=body.reason,
-        )
-    )
-    return PlatformChargeFallbackResponse(
-        allow_platform_charge_fallback=result.allow_platform_charge_fallback
-    )
-
-
 class InvoiceScheduleResponse(BaseModel):
     billing_day: int
     invoice_due_days: int
-
-
-class SetInvoiceScheduleRequest(BaseModel):
-    billing_day: int = Field(ge=1, le=28)
-    invoice_due_days: int = Field(ge=0, le=60)
-    reason: str | None = None
 
 
 @router.get(
@@ -175,29 +138,12 @@ async def get_invoice_schedule(
     )
 
 
-@router.put(
-    "/billing/settings/invoice-schedule",
-    response_model=InvoiceScheduleResponse,
-    summary="Set the automated monthly-invoicing schedule (audited)",
-)
-async def set_invoice_schedule(
-    body: SetInvoiceScheduleRequest,
-    claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> InvoiceScheduleResponse:
-    use_case = _required_callable(use_cases.set_invoice_schedule, "set_invoice_schedule")
-    result = await use_case.execute(  # type: ignore[attr-defined]
-        SetInvoiceScheduleCommand(
-            billing_day=body.billing_day,
-            invoice_due_days=body.invoice_due_days,
-            actor_id=claims.user_id,
-            reason=body.reason,
-        )
-    )
-    return InvoiceScheduleResponse(
-        billing_day=result.billing_day,
-        invoice_due_days=result.invoice_due_days,
-    )
+# `PUT /billing/settings/invoice-schedule` (the write side of this legacy
+# route) was retired in the Settings overhaul (Lane D, PR 7): nothing calls
+# it any more — the Billing rules panel writes through
+# `POST /admin/billing/rules` instead (`billing_rules_routes.py`), which
+# reuses the same `SetInvoiceScheduleCommand` use case underneath. The GET
+# above stays; `BillingTab.tsx` still reads it.
 
 
 @router.get("/billing/invoices", response_model=InvoicesResponse, response_model_exclude_none=True)
@@ -454,12 +400,18 @@ async def refund(
     body: IssueRefundRequest,
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
 ) -> dict[str, object]:
+    """Send an ``Idempotency-Key`` (one per refund attempt, reused on retry) so
+    a retry replays while a second real refund is still issued (#930). Without
+    it an identical repeat inside the TTL is a 409 to confirm; a key reused for
+    a different refund is a 422."""
     result = await use_cases.issue_refund.execute(
         IssueRefundCommand(
             payment_id=body.payment_id,
             amount_cents=body.amount_cents,
             reason=body.reason,
+            idempotency_key=idempotency_key or None,
         )
     )
     return result.model_dump()
@@ -481,7 +433,7 @@ async def generate_monthly_payments(
 async def mark_payment_paid(
     payment_id: str,
     body: MarkPaymentPaidRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_staff_tier("billing")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> dict[str, bool]:
     await use_cases.mark_payment_paid.execute(
@@ -883,10 +835,14 @@ async def send_billing_invoice(
 async def charge_invoice_via_autopay(
     invoice_id: str,
     body: ChargeAutopayRequest | None = None,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> ChargeAutopayResponse:
     """Charge the invoice balance via the parent's saved Stripe payment method (off-session).
+
+    Owner-only (#928): a card charge moves money (staff tiers, roadmap
+    2026-09-22 section 6 item 2). Non-owners get 404 like every owner route; the
+    use case also refuses a non-owner (``ChargeRequiresOwner`` -> 404).
 
     - Returns success=True when the PI succeeds immediately and the ledger is updated.
     - Returns success=False with decline_code on card declines (invoice status unchanged).
@@ -908,9 +864,12 @@ async def charge_invoice_via_autopay(
         result = await charge_as_admin(  # type: ignore[operator]
             invoice_id=invoice_id,
             actor_id=claims.user_id,
+            actor_roles=claims.roles,
             reason=(body.reason if body and body.reason else "Charged by admin"),
             request_id=(body.request_id if body and body.request_id else str(uuid4())),
         )
+    except ChargeRequiresOwner as exc:
+        raise HTTPException(status_code=404, detail="Not found") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1058,7 +1017,9 @@ async def void_invoice_route(
         )
     void_invoice_ = _required_callable(use_cases.void_billing_invoice, "Invoice voiding")
     try:
-        await void_invoice_(invoice_id=invoice_id, reason=body.reason)  # type: ignore[operator]
+        await void_invoice_(  # type: ignore[operator]
+            invoice_id=invoice_id, reason=body.reason, actor_id=claims.user_id
+        )
     except ValueError as exc:
         msg = str(exc)
         if "not found" in msg:
@@ -1079,6 +1040,8 @@ class RecordManualPaymentResponse(BaseModel):
     payment_id: str
     invoice_status: str
     balance_due_cents: int
+    previous_balance_applied_cents: int = 0
+    overpayment_credit_cents: int = 0
 
 
 class InvoiceRefundRequest(BaseModel):
@@ -1102,14 +1065,16 @@ class InvoiceRefundResponse(BaseModel):
 async def record_manual_payment(
     invoice_id: str,
     body: RecordManualPaymentRequest,
-    claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_staff_tier("billing")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> RecordManualPaymentResponse:
     """Record a manual payment (cash, check, etc.) against a ledger invoice.
 
     Creates a LedgerPayment and allocates it to the invoice balance.
-    Partial payments are allowed; the invoice status updates accordingly.
+    Partial payments are allowed; the invoice status updates accordingly. Any
+    amount over the balance pays the family's other open invoices oldest-first,
+    and only the rest becomes account credit.
 
     Send an ``Idempotency-Key`` header (any unique string per submission) so
     retries of the same submission replay safely while legitimate repeat
@@ -1142,6 +1107,8 @@ async def record_manual_payment(
         payment_id=str(result["payment_id"]),
         invoice_status=str(result["invoice_status"]),
         balance_due_cents=int(result["balance_due_cents"]),
+        previous_balance_applied_cents=int(result.get("previous_balance_applied_cents") or 0),
+        overpayment_credit_cents=int(result.get("overpayment_credit_cents") or 0),
     )
 
 
@@ -1154,7 +1121,9 @@ async def refund_invoice(
     body: InvoiceRefundRequest,
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
 ) -> InvoiceRefundResponse:
+    """Same ``Idempotency-Key`` contract as ``POST /payments/refund`` (#930)."""
     issue_refund = _required_callable(use_cases.issue_invoice_refund, "Invoice refund")
     try:
         result = await issue_refund(  # type: ignore[operator]
@@ -1162,6 +1131,7 @@ async def refund_invoice(
             amount_cents=body.amount_cents,
             reason=body.reason,
             actor_id=claims.user_id,
+            idempotency_key=idempotency_key or None,
         )
     except ValueError as exc:
         msg = str(exc)
@@ -1281,7 +1251,9 @@ def _payment_view(row: object) -> AdminPaymentView:
 
 
 def _format_cents(cents: int) -> str:
-    return f"${cents / 100:.2f}"
+    # USD is locked today; ungrouped ("$1234.56") is what this preview has
+    # always returned, so the admin UI's string does not change.
+    return format_money(cents, "USD", group_thousands=False)
 
 
 # --------------------------------------------------------------------------- #

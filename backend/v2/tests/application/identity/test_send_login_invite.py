@@ -222,3 +222,36 @@ def test_invite_body_uses_shared_shell() -> None:
     assert FONT_STACK in body
     assert "Sent by A" in body
     assert 'href="https://x.test"' in body
+
+
+@pytest.mark.asyncio
+async def test_invite_carries_the_academy_brand_and_survives_a_failing_lookup():
+    from backend.v2.shared.comms.email_theme import EmailBrand
+
+    users = AsyncMock()
+    users.get_admin_user.return_value = _user()
+    brands = AsyncMock()
+    brands.get_academy_brand.return_value = EmailBrand(
+        academy_name="Smash Academy",
+        logo_url="https://cdn.test/smash.png",
+        contact_email="desk@smash.test",
+    )
+    use_case, _, sender = _use_case(users)
+    use_case._brands = brands
+    await use_case.execute("parent-1", academy_id="acad")
+    brands.get_academy_brand.assert_awaited_once_with("acad")
+    body = sender.send_invite_email.await_args.kwargs["body"]
+    assert '<img src="https://cdn.test/smash.png" alt="Smash Academy"' in body
+    assert "desk@smash.test" in body
+
+    plain_case, _, plain_sender = _use_case(users)
+    await plain_case.execute("parent-1", academy_id="acad")
+    broken = AsyncMock()
+    broken.get_academy_brand.side_effect = RuntimeError("down")
+    broken_case, _, broken_sender = _use_case(users)
+    broken_case._brands = broken
+    await broken_case.execute("parent-1", academy_id="acad")
+    assert (
+        broken_sender.send_invite_email.await_args.kwargs["body"]
+        == plain_sender.send_invite_email.await_args.kwargs["body"]
+    )

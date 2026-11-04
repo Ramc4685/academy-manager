@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
@@ -12,10 +15,12 @@ from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import
 )
 from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import (
     CreateTenantCommand,
+    RecordAgreementAcceptanceCommand,
     TenantLifecycleService,
     UpdateTenantPlanCommand,
 )
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+from backend.v2.shared.config.settings import get_settings
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -38,6 +43,7 @@ class BootstrapAcademyResponse(BaseModel):
     owner_role: str
     created: bool
     default_records: tuple[str, ...]
+    invoice_prefix: str | None = None
 
 
 class TenantLimitsPayload(BaseModel):
@@ -66,6 +72,14 @@ class TenantLifecycleResponse(BaseModel):
     limits: TenantLimitsPayload
     status_reason: str | None = None
     updated_by: str
+    fee_model: str
+    platform_agreement_version: str | None = None
+    platform_agreement_accepted_at: datetime | None = None
+    platform_agreement_accepted_by: str | None = None
+    #: Platform landing page with ``?ref=<referral_code>``; nothing reads
+    #: ``ref`` yet. Null until the tenant has been read once (lazy code) or
+    #: when the deployment has no ``frontend_url``.
+    referral_url: str | None = None
 
 
 class TenantHealthResponse(BaseModel):
@@ -79,6 +93,19 @@ class TenantHealthResponse(BaseModel):
 
 class LifecycleReasonRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
+
+
+class RecordAgreementAcceptanceRequest(BaseModel):
+    agreement_version: str = Field(min_length=1, max_length=64)
+    # Free text by design (a name or an email): the signatory is whoever the
+    # academy says signed, not necessarily an account holder. Only a platform
+    # admin can write it; each write replaces the tenant's current acceptance
+    # and the previous one is kept in the tenant.agreement_accepted audit row.
+    accepted_by: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Academy signatory, free text (name or email).",
+    )
 
 
 class UpdateTenantPlanRequest(BaseModel):
@@ -116,6 +143,13 @@ def get_tenant_lifecycle(request: Request) -> TenantLifecycleService:
     raise HTTPException(status_code=503, detail="Tenant lifecycle is not configured")
 
 
+def _referral_url(referral_code: str | None) -> str | None:
+    base = (get_settings().frontend_url or "").rstrip("/")
+    if not base or not referral_code:
+        return None
+    return f"{base}/?{urlencode({'ref': referral_code})}"
+
+
 def _tenant_response(tenant) -> TenantLifecycleResponse:
     health = tenant.health()
     return TenantLifecycleResponse(
@@ -130,6 +164,11 @@ def _tenant_response(tenant) -> TenantLifecycleResponse:
         limits=TenantLimitsPayload(**tenant.limits.model_dump()),
         status_reason=tenant.status_reason,
         updated_by=tenant.updated_by,
+        fee_model=tenant.fee_model,
+        platform_agreement_version=tenant.platform_agreement_version,
+        platform_agreement_accepted_at=tenant.platform_agreement_accepted_at,
+        platform_agreement_accepted_by=tenant.platform_agreement_accepted_by,
+        referral_url=_referral_url(tenant.referral_code),
     )
 
 
@@ -197,6 +236,25 @@ async def activate_tenant(
 ) -> TenantLifecycleResponse:
     return _tenant_response(
         await use_case.activate_tenant(academy_id, actor_user_id=claims.user_id)
+    )
+
+
+@router.post("/tenants/{academy_id}/agreement", response_model=TenantLifecycleResponse)
+async def record_agreement_acceptance(
+    academy_id: str,
+    payload: RecordAgreementAcceptanceRequest,
+    claims: AuthClaims = Depends(require_platform_admin),
+    use_case: TenantLifecycleService = Depends(get_tenant_lifecycle),
+) -> TenantLifecycleResponse:
+    """Record the academy's acceptance of a platform agreement version (L9c)."""
+    return _tenant_response(
+        await use_case.record_agreement_acceptance(
+            academy_id,
+            RecordAgreementAcceptanceCommand(
+                **payload.model_dump(),
+                actor_user_id=claims.user_id,
+            ),
+        )
     )
 
 

@@ -703,12 +703,17 @@ def test_full_levelup_and_certificate_flow(env):
     # Recommendation appears in the admin level-up queue.
     queue = env.client.get("/api/v2/admin/level-up-queue").json()["queue"]
     assert any(item["rec_id"] == rec.rec_id for item in queue)
+    # Issue #841: the queue is read by a human, so it carries names, not ids.
+    row = next(item for item in queue if item["rec_id"] == rec.rec_id)
+    assert row["student_name"] == "Alice Flow"
+    assert row["program_name"] == "Badminton Skill Pathway"
+    assert row["from_level_name"] == env.level1.name
 
     # 8. Admin approves level-up.
     approve = env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve")
     assert approve.status_code == 200, approve.text
     approved = approve.json()
-    assert approved["status"] == "APPROVED"
+    assert approved["status"] == "COMPLETED"
     assert approved["cert_id"]
 
     # 9 & 10. Current level completed, next level progress created & active.
@@ -780,7 +785,7 @@ def test_replayed_approve_is_conflict_and_performs_no_writes(env):
     # Surfaced through the registered DomainError handler, so the UI gets the
     # structured envelope rather than a free-text detail string.
     assert second.json()["error"]["code"] == "StudentProgress.RecommendationAlreadyReviewed"
-    assert second.json()["error"]["details"]["status"] == "APPROVED"
+    assert second.json()["error"]["details"]["status"] == "COMPLETED"
     # No second certificate.
     certs = env.client.get(f"/api/v2/admin/students/{student_id}/certificates").json()[
         "certificates"
@@ -1144,3 +1149,83 @@ def test_non_admin_persona_gets_404(env):
         params={"program_id": env.program_id},
     )
     assert r.status_code == 404, r.text
+
+
+def test_pathway_dashboard_route_shapes_owner_view() -> None:
+    from backend.v2.contexts.student_progress.application.use_cases.get_pathway_dashboard import (
+        PathwayDashboard,
+    )
+
+    dashboard = PathwayDashboard(
+        program_id="prog-1",
+        skills_mastered_this_week=3,
+        level_ups_this_month=1,
+        levels=[],
+        level_up_rule="automatic",
+        almost_there=[],
+        stuck=[],
+        unplaced_count=0,
+    )
+    execute = AsyncMock(return_value=dashboard)
+    engagement = AsyncMock(return_value=[{"coach_id": "coach-2", "outcomes_recorded": 5}])
+    use_cases = SimpleNamespace(
+        student_progress=SimpleNamespace(get_pathway_dashboard=SimpleNamespace(execute=execute)),
+        curriculum=SimpleNamespace(
+            resolve_default_program=SimpleNamespace(
+                execute=AsyncMock(return_value=SimpleNamespace(program_id="prog-1"))
+            ),
+            get_program=SimpleNamespace(
+                execute=AsyncMock(return_value=SimpleNamespace(name="Badminton"))
+            ),
+        ),
+        list_admin_students=SimpleNamespace(
+            execute=AsyncMock(
+                return_value=SimpleNamespace(
+                    students=[
+                        SimpleNamespace(student_id="st-1", full_name="Ava", parent_id="par-1")
+                    ],
+                    next_cursor=None,
+                )
+            )
+        ),
+        list_admin_users=SimpleNamespace(
+            execute=AsyncMock(
+                return_value=[
+                    SimpleNamespace(user_id="coach-1", display_name="Ann", status="active"),
+                    SimpleNamespace(user_id="coach-2", display_name="Ben", status="active"),
+                    SimpleNamespace(user_id="coach-3", display_name="Old", status="disabled"),
+                ]
+            )
+        ),
+        get_coach_engagement_stats=SimpleNamespace(execute=engagement),
+        get_academy_timezone=AsyncMock(return_value="America/Chicago"),
+    )
+    client = TestClient(_build_app(use_cases, _admin_claims()))
+
+    response = client.get("/api/v2/admin/pathway/dashboard")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["program_name"] == "Badminton"
+    assert body["skills_mastered_this_week"] == 3
+    # Most ticks first; a coach with none still shows; a disabled one with none does not.
+    assert body["coaches"] == [
+        {"coach_id": "coach-2", "coach_name": "Ben", "skills_ticked": 5},
+        {"coach_id": "coach-1", "coach_name": "Ann", "skills_ticked": 0},
+    ]
+    request = execute.await_args.args[0]
+    assert request.program_id == "prog-1"
+    assert request.timezone == "America/Chicago"
+    assert [s.student_name for s in request.students] == ["Ava"]
+    assert [s.parent_id for s in request.students] == ["par-1"]
+    start = engagement.await_args.kwargs["start_date"]
+    assert start.weekday() == 0
+
+
+def test_pathway_dashboard_route_is_not_found_for_coach() -> None:
+    claims = AuthClaims(
+        user_id="coach-1", email="c@example.com", academy_id=ACADEMY_ID, roles=("coach",)
+    )
+    client = TestClient(_build_app(SimpleNamespace(), claims))
+
+    assert client.get("/api/v2/admin/pathway/dashboard").status_code == 404

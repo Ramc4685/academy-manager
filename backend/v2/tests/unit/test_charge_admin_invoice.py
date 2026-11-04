@@ -10,6 +10,7 @@ import pytest
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.charge_admin_invoice import (
+    ChargeRequiresOwner,
     charge_invoice_as_admin,
 )
 
@@ -103,6 +104,7 @@ async def _run(**over):
         parent_id="p-1",
         invoice_id="inv-1",
         actor_id="admin-1",
+        actor_roles=("admin", "owner"),
         request_id="req-1",
         reason="parent asked on the phone",
         source="admin_manual",
@@ -173,3 +175,50 @@ async def test_a_charge_still_in_flight_is_not_duplicated() -> None:
     with pytest.raises(ValueError, match="charge_in_progress"):
         await _run(idempotency=idem, charge=_charger(calls))
     assert calls == []
+
+
+# ------------------------------------------------------------------ owner gate (#928)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("roles", [(), ("admin",), ("coach",), ("parent",)])
+async def test_a_non_owner_is_refused_before_anything_is_touched(roles: tuple[str, ...]) -> None:
+    """Card charges are owner-only (2026-09-22 staff tiers), below the route too."""
+    idem, audit = _Idem(), _Audit()
+    calls: list[dict[str, Any]] = []
+    with pytest.raises(ChargeRequiresOwner):
+        await _run(actor_roles=roles, idempotency=idem, audit=audit, charge=_charger(calls))
+    assert calls == []
+    assert audit.entries == []
+    assert idem.store == {}
+
+
+@pytest.mark.asyncio
+async def test_a_non_owner_cannot_replay_an_owners_cached_charge() -> None:
+    idem = _Idem()
+    await _run(idempotency=idem)
+    with pytest.raises(ChargeRequiresOwner):
+        await _run(idempotency=idem, actor_roles=("admin",))
+
+
+@pytest.mark.asyncio
+async def test_actor_roles_are_required() -> None:
+    """Fail closed: a caller that forgets the roles cannot charge."""
+    with pytest.raises(TypeError):
+        await charge_invoice_as_admin(  # type: ignore[call-arg]
+            idempotency=_Idem(),
+            customers=_Customers(),
+            ledger=_Ledger(_Invoice(parent_id="p-1")),
+            attempts=_Attempts(),
+            charge=_charger([]),
+            audit=_Audit(),
+            academy_id="acad",
+            parent_id="p-1",
+            invoice_id="inv-1",
+            actor_id="admin-1",
+            request_id="req-1",
+            reason="r",
+            source="admin_manual",
+            audit_kind="admin-charge",
+            idem_prefix="admin_charge",
+        )

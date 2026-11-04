@@ -46,6 +46,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     OccurrenceBillingSync,
     OccurrenceCancellationNotifier,
     OccurrenceRosterPurge,
+    PayoutPeriodLock,
     SessionOccurrenceRepository,
     SessionQuery,
     TrialReopener,
@@ -53,6 +54,7 @@ from backend.v2.contexts.enrollment.application.ports import (
 from backend.v2.contexts.enrollment.domain.errors import (
     OccurrenceAlreadyCancelled,
     OccurrenceNotFound,
+    PayoutPeriodFrozen,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
 from backend.v2.contexts.enrollment.domain.models import ACTIVE_OR_PAUSED, SessionOccurrence
@@ -119,6 +121,7 @@ class CancelSessionOccurrence:
         makeup_policies: MakeupPolicyLookup | None = None,
         billing_sync: OccurrenceBillingSync | None = None,
         notifier: OccurrenceCancellationNotifier | None = None,
+        payout_lock: PayoutPeriodLock | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._occurrences = occurrences
@@ -131,6 +134,7 @@ class CancelSessionOccurrence:
         self._makeup_policies = makeup_policies
         self._billing = billing_sync
         self._notifier = notifier
+        self._payout_lock = payout_lock
         self._now = clock
 
     async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
@@ -141,6 +145,11 @@ class CancelSessionOccurrence:
         session_id = occurrence.template_session_id or occurrence.session_id
         session = await self._sessions.get(session_id)
         assert_occurrence_cancellable(occurrence, session=session, now=now)
+        # #787: cancelling clears ``is_payable``, which an approved/paid
+        # payout period will never re-read. Refuse before the CAS commit
+        # point rather than leave payroll silently disagreeing with the
+        # schedule.
+        await self._assert_payout_window_open(occurrence)
 
         cancelled = await self._occurrences.cancel_scheduled(
             occurrence_id=cmd.occurrence_id,
@@ -216,6 +225,26 @@ class CancelSessionOccurrence:
             credits_issued=sum(1 for value in credits.values() if value),
             billing_result=billing_result,
             notified=notified,
+        )
+
+    async def _assert_payout_window_open(self, occurrence: SessionOccurrence) -> None:
+        if self._payout_lock is None:
+            return
+        coach_id = occurrence.actual_coach_id or occurrence.scheduled_coach_id
+        if not coach_id:
+            return
+        status = await self._payout_lock.locked_status_for(
+            coach_id=coach_id,
+            at=occurrence.start_at,
+        )
+        if status is None:
+            return
+        raise PayoutPeriodFrozen(
+            "this class date is inside a payout period that is already "
+            "approved or paid; reopen the payout period first",
+            occurrence_id=occurrence.occurrence_id,
+            coach_id=coach_id,
+            payout_status=status,
         )
 
     async def _purge_roster(self, occurrence_id: str) -> list[Any]:

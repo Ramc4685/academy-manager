@@ -14,6 +14,10 @@ function statusPill(status: string): { bg: string; color: string } {
     case "late":
     case "excused":
       return { bg: "#faeeda", color: "#854f0b" };
+    // #554: the academy voided this mark. It stays in the history so the
+    // change is visible, but it no longer says the child was there or absent.
+    case "voided":
+      return { bg: "#f1efe8", color: "#5f5e5a" };
     default:
       return { bg: "#f1efe8", color: "#5f5e5a" };
   }
@@ -105,9 +109,22 @@ export default function ParentAttendancePage() {
                       className="shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize"
                       style={{ background: pill.bg, color: pill.color }}
                     >
-                      {record.status}
+                      {record.status === "voided" ? "Removed" : record.status}
                     </span>
                   </div>
+                  {record.status === "voided" && (
+                    <p
+                      className="mt-2 text-xs"
+                      style={{ color: "var(--rally-muted)" }}
+                      data-testid="attendance-voided-note"
+                    >
+                      The academy removed this mark
+                      {record.previous_status
+                        ? ` (previously ${record.previous_status})`
+                        : ""}
+                      . It no longer counts towards attendance.
+                    </p>
+                  )}
                   <p
                     className="mt-2 text-xs"
                     style={{ color: "var(--rally-muted)" }}

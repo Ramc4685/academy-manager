@@ -1,0 +1,31 @@
+{
+  "brand": "CourtMastr Academy",
+  "tagline": "Your academy, on one court.",
+  "brief": "One system that runs a racket-sport academy: schedules, enrollments, attendance, billing, coach payouts and parent messages. The logo has to feel like an academy where players earn their level, energetic and sporty, for any racket sport.",
+  "adjectives": ["energetic", "sporty", "academy", "progress"],
+  "criteria": "Success: reads as an academy, fits any racket sport, recognisable at 16 px, works in one colour, uses the Rally palette.",
+  "mockups": ["app-icon", "website", "tshirt", "badge", "social", "favicon-tab"],
+  "nav": ["Programs", "Schedule", "Sign in"],
+  "brand_color": "#0a0f1c",
+  "greyscale": false,
+  "designer": "Marvy Labs",
+  "round": 4,
+  "concepts": [
+    {
+      "name": "Earned Stripes",
+      "symbol": "symbol-on-light.svg",
+      "symbol_on_tile": "symbol-on-dark.svg",
+      "lockup": "lockup-horizontal-light.svg",
+      "lockup_on_dark": "lockup-horizontal-dark.svg",
+      "tile_color": "#0a0f1c",
+      "idea": "Levels earned, stacked like stripes; the newest one is volt.",
+      "rationale": [
+        "Says academy: progression players earn, the way the app tracks skill levels",
+        "No racket or ball drawn, so tennis, badminton, pickleball and squash all fit",
+        "Three strokes on a 3:4 slope: holds at 16 px and in one colour"
+      ]
+    }
+  ],
+  "recommendation": "Earned Stripes, chosen by the owner on 2026-11-03.",
+  "next_steps": ["Use on the website and PWA icons", "Trademark search", "Embroidery and print proof"]
+}

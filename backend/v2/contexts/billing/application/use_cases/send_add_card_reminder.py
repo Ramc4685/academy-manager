@@ -13,20 +13,29 @@ context does not import identity directly.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from html import escape
 from urllib.parse import urlsplit
 
 from backend.v2.contexts.billing.application.ports import (
+    AcademyBrandLookup,
     AcademyNameLookup,
     CardSetupLinkPort,
     InviteEmailOutcome,
     InviteEmailPort,
     ParentContactLookup,
 )
+from backend.v2.shared.comms.email_brand import branded_as
 from backend.v2.shared.comms.email_theme import INK, EmailBrand, button, shell
 
 
-def _reminder_body(*, display_name: str, academy_name: str, setup_link: str) -> str:
+def _reminder_body(
+    *,
+    display_name: str,
+    academy_name: str,
+    setup_link: str,
+    brand: EmailBrand | None = None,
+) -> str:
     safe_display_name = escape(display_name)
     safe_academy_name = escape(academy_name)
     inner = (
@@ -37,7 +46,7 @@ def _reminder_body(*, display_name: str, academy_name: str, setup_link: str) -> 
         f"a payment method on file yet. Add one to keep your children's enrollment current.</p>"
         f'<p style="margin:24px 0;">{button("Add payment method", setup_link)}</p>'
     )
-    return shell(brand=EmailBrand(academy_name=academy_name), inner_html=inner)
+    return shell(brand=branded_as(brand, academy_name), inner_html=inner)
 
 
 class SendAddCardReminder:
@@ -48,23 +57,28 @@ class SendAddCardReminder:
         links: CardSetupLinkPort,
         sender: InviteEmailPort,
         academies: AcademyNameLookup,
-        return_url: str,
+        return_url_for: Callable[[str], Awaitable[str]],
+        brands: AcademyBrandLookup | None = None,
     ) -> None:
         self._contacts = contacts
         self._links = links
         self._sender = sender
         self._academies = academies
-        self._return_url = return_url
+        # Built per call for the academy being reminded, so the parent lands
+        # on that academy's own host (row 9), not a boot-time platform URL.
+        self._return_url_for = return_url_for
+        self._brands = brands
 
     async def execute(self, *, academy_id: str, parent_id: str) -> InviteEmailOutcome:
         contact = await self._contacts.get_parent_contact(parent_id, academy_id=academy_id)
         if contact is None:
             return InviteEmailOutcome(ok=False, failed_reason="parent_not_found")
 
+        return_url = await self._return_url_for(academy_id)
         setup_link = await self._links.create_card_setup_link(
-            parent_id=parent_id, academy_id=academy_id, return_url=self._return_url
+            parent_id=parent_id, academy_id=academy_id, return_url=return_url
         )
-        expected = urlsplit(self._return_url)
+        expected = urlsplit(return_url)
         actual = urlsplit(setup_link)
         if (
             actual.scheme not in {"http", "https"}
@@ -73,6 +87,13 @@ class SendAddCardReminder:
         ):
             return InviteEmailOutcome(ok=False, failed_reason="card_setup_link_unavailable")
         academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
+        brand: EmailBrand | None = None
+        if self._brands is not None:
+            try:
+                brand = await self._brands.get_academy_brand(academy_id)
+            except Exception:
+                # The logo is never worth a lost reminder.
+                brand = None
 
         return await self._sender.send_invite_email(
             user_id=contact.parent_id,
@@ -83,5 +104,6 @@ class SendAddCardReminder:
                 display_name=contact.display_name,
                 academy_name=academy_name,
                 setup_link=setup_link,
+                brand=brand,
             ),
         )

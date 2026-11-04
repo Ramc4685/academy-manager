@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from backend.v2.contexts.communications.domain.models import AcademyAudience, PaymentRiskAudience
+from backend.v2.contexts.communications.domain.models import (
+    AcademyAudience,
+    PaymentRiskAudience,
+    SessionAudience,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
+    SESSION_AUDIENCE_ENROLLMENT_STATUSES,
     MongoAudienceResolver,
 )
+from backend.v2.contexts.enrollment.domain.models import ENROLLMENT_STATUSES, ROSTER_VISIBLE
 from backend.v2.shared.tenancy.context import tenant_scope
 from mongomock_motor import AsyncMongoMockClient
 
@@ -397,3 +403,172 @@ async def test_payment_risk_audience_excludes_draft_invoices() -> None:
 
     assert [recipient.user_id for recipient in recipients] == ["parent-open"]
     assert recipients[0].email == "open@example.com"
+
+
+# --------------------------------------------------------------------------- session audience
+#
+# People CRM engineering spec, section 3.2 "Session campaigns (fix)": the
+# session audience used to resolve only enrollments whose status was the
+# literal "active", and looked parents up by ``user_id`` only. It now follows
+# ROSTER_VISIBLE (the roster's own definition of "in this class") and resolves
+# parents alias-aware (``user_id`` or ``auth_uid``), like every other audience.
+
+
+def test_session_audience_statuses_mirror_roster_visible() -> None:
+    """Communications cannot import contexts.enrollment (Rule 5, no
+    cross-context imports), so the resolver carries its own copy of the set.
+    This is the thing that notices when the two stop agreeing."""
+    assert SESSION_AUDIENCE_ENROLLMENT_STATUSES == ROSTER_VISIBLE
+
+
+async def _seed_session(db, enrollments: list[tuple[str, str]]) -> None:
+    """Seed one student + parent per (suffix, status) enrollment in sess-1."""
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": f"enr-{suffix}",
+                "session_id": "sess-1",
+                "student_id": f"stu-{suffix}",
+                "status": status,
+            }
+            for suffix, status in enrollments
+        ]
+    )
+    await db["students"].insert_many(
+        [
+            {"academy_id": "acad-1", "student_id": f"stu-{suffix}", "parent_id": f"par-{suffix}"}
+            for suffix, _ in enrollments
+        ]
+    )
+    await db["users"].insert_many(
+        [
+            {
+                "academy_id": "acad-1",
+                "user_id": f"par-{suffix}",
+                "email": f"{suffix}@example.com",
+                "display_name": f"Parent {suffix}",
+            }
+            for suffix, _ in enrollments
+        ]
+    )
+
+
+async def test_session_audience_includes_every_roster_visible_status_and_nothing_else() -> None:
+    db = AsyncMongoMockClient()["audience-resolver-session-statuses"]
+    statuses = sorted(ENROLLMENT_STATUSES)
+    await _seed_session(db, [(status, status) for status in statuses])
+
+    with tenant_scope("acad-1"):
+        recipients = await MongoAudienceResolver(db).resolve_session_audience(
+            SessionAudience(session_id="sess-1")
+        )
+
+    assert sorted(r.user_id for r in recipients) == sorted(
+        f"par-{status}" for status in ROSTER_VISIBLE
+    )
+    # The widening that motivated the fix: a held student's parent hears
+    # about their class. Paused and ended enrollments still do not.
+    ids = {r.user_id for r in recipients}
+    assert "par-held" in ids
+    assert "par-paused" not in ids
+    assert "par-dropped" not in ids
+
+
+async def test_session_audience_resolves_parent_linked_by_auth_uid_alias() -> None:
+    db = AsyncMongoMockClient()["audience-resolver-session-alias"]
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "enrollment_id": "enr-1",
+            "session_id": "sess-1",
+            "student_id": "stu-1",
+            "status": "active",
+        }
+    )
+    # The student carries the parent's Firebase uid, not their user_id.
+    await db["students"].insert_one(
+        {"academy_id": "acad-1", "student_id": "stu-1", "parent_id": "firebase-uid-1"}
+    )
+    await db["users"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "user_id": "parent-1",
+            "auth_uid": "firebase-uid-1",
+            "email": "alias@example.com",
+            "display_name": "Alias Parent",
+        }
+    )
+
+    with tenant_scope("acad-1"):
+        recipients = await MongoAudienceResolver(db).resolve_session_audience(
+            SessionAudience(session_id="sess-1")
+        )
+
+    assert [(r.user_id, r.email) for r in recipients] == [("parent-1", "alias@example.com")]
+
+
+async def test_session_audience_dedupes_and_never_reads_another_tenant() -> None:
+    db = AsyncMongoMockClient()["audience-resolver-session-tenancy"]
+    await db["enrollments"].insert_many(
+        [
+            # Two siblings in the same class, same parent: one recipient.
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": "enr-1",
+                "session_id": "sess-1",
+                "student_id": "stu-1",
+                "status": "active",
+            },
+            {
+                "academy_id": "acad-1",
+                "enrollment_id": "enr-2",
+                "session_id": "sess-1",
+                "student_id": "stu-2",
+                "status": "held",
+            },
+            # Same session id in another academy: never in this audience.
+            {
+                "academy_id": "acad-2",
+                "enrollment_id": "enr-x",
+                "session_id": "sess-1",
+                "student_id": "stu-x",
+                "status": "active",
+            },
+        ]
+    )
+    await db["students"].insert_many(
+        [
+            {"academy_id": "acad-1", "student_id": "stu-1", "parent_id": "parent-1"},
+            {"academy_id": "acad-1", "student_id": "stu-2", "parent_id": "parent-1"},
+            {"academy_id": "acad-2", "student_id": "stu-x", "parent_id": "parent-x"},
+        ]
+    )
+    await db["users"].insert_many(
+        [
+            # A legacy global doc and the tenant-scoped doc for the same
+            # parent: the tenant-scoped one wins.
+            {"user_id": "parent-1", "email": "global@example.com", "display_name": "Global"},
+            {
+                "academy_id": "acad-1",
+                "user_id": "parent-1",
+                "email": "tenant@example.com",
+                "display_name": "Tenant",
+            },
+            # Another academy's copy of the same user id is never read.
+            {
+                "academy_id": "acad-2",
+                "user_id": "parent-1",
+                "email": "other-tenant@example.com",
+                "display_name": "Other",
+            },
+            {"academy_id": "acad-2", "user_id": "parent-x", "email": "x@example.com"},
+        ]
+    )
+
+    with tenant_scope("acad-1"):
+        recipients = await MongoAudienceResolver(db).resolve_session_audience(
+            SessionAudience(session_id="sess-1")
+        )
+
+    assert [(r.user_id, r.email) for r in recipients] == [("parent-1", "tenant@example.com")]

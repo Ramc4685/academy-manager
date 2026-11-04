@@ -6,7 +6,7 @@ export type SessionDetailTab = "attendance" | "skills" | "progress";
 
 const TAB_BUTTON_BASE =
   "whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600";
-const TAB_BUTTON_SELECTED = "border-rally-blue text-rally-ink";
+const TAB_BUTTON_SELECTED = "border-rally-cobalt-600 text-rally-ink";
 const TAB_BUTTON_UNSELECTED = "border-transparent text-rally-muted hover:text-rally-ink";
 
 /**

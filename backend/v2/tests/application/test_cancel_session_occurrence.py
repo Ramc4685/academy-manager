@@ -22,6 +22,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     OccurrenceAlreadyCancelled,
     OccurrenceNotCancellable,
     OccurrenceNotFound,
+    PayoutPeriodFrozen,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, SessionOccurrence
 
@@ -448,3 +449,37 @@ async def test_notify_false_skips_the_mail() -> None:
     )
     assert result.notified is False
     assert notifier.calls == []
+
+
+class FakePayoutLock:
+    """Finance's frozen-payout window, seen through the enrollment port (#787)."""
+
+    def __init__(self, status: str | None) -> None:
+        self._status = status
+        self.calls: list[tuple[str, datetime]] = []
+
+    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+        self.calls.append((coach_id, at))
+        return self._status
+
+
+@pytest.mark.asyncio
+async def test_cancel_is_refused_once_the_coach_payout_period_is_paid() -> None:
+    """#787: a paid date must not be cancelled behind a frozen payout snapshot."""
+    occurrences = FakeOccurrences({"occ-1": _occurrence()})
+    lock = FakePayoutLock("paid")
+    use_case = CancelSessionOccurrence(
+        occurrences=occurrences,  # type: ignore[arg-type]
+        sessions=FakeSessions({"sess-1": _session()}),  # type: ignore[arg-type]
+        enrollments=FakeEnrollments(),  # type: ignore[arg-type]
+        payout_lock=lock,  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(PayoutPeriodFrozen):
+        await use_case.execute(
+            CancelSessionOccurrenceCommand(occurrence_id="occ-1", reason="rain", actor_id="u-1")
+        )
+
+    assert occurrences.rows["occ-1"].status != "cancelled"
+    assert lock.calls == [("coach-1", START)]

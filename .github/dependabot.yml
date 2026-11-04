@@ -4,31 +4,65 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
     open-pull-requests-limit: 5
-    # One combined PR per run instead of one per dependency. Dependabot cannot
-    # author release notes, so each separate PR fails the release-notes check
-    # and has to be consolidated by hand (see #444, #446).
+    labels: [dependencies, python]
+    commit-message:
+      prefix: build
+      include: scope
+    # One combined PR per ecosystem instead of one per dependency (see #444,
+    # #446). Security updates get their own single group.
     groups:
       backend-deps:
-        patterns:
-          - "*"
+        applies-to: version-updates
+        patterns: ["*"]
+      backend-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
     open-pull-requests-limit: 5
+    labels: [dependencies, javascript]
+    commit-message:
+      prefix: build
+      include: scope
     groups:
       frontend-deps:
-        patterns:
-          - "*"
+        applies-to: version-updates
+        patterns: ["*"]
+      frontend-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories: [/backend, /frontend]
+    schedule:
+      interval: monthly
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      docker-deps:
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
     open-pull-requests-limit: 10
+    labels: [dependencies, github_actions]
+    commit-message:
+      prefix: ci
+      include: scope
     groups:
       actions-deps:
-        patterns:
-          - "*"
+        patterns: ["*"]

@@ -171,3 +171,37 @@ class DunningNoticeRequested(DomainEvent):
     name: Literal["Billing.DunningNoticeRequested"] = "Billing.DunningNoticeRequested"
     schema_version: Literal[1] = 1
     payload: DunningNoticeRequestedPayload
+
+
+class PaymentDisputeNoticePayload(BaseModel):
+    """The "a parent disputed a payment" e-mail to the academy owner.
+
+    Captured at the moment the dispute event was recorded, like the dunning
+    notice: the dispute moves on (closes) while the notice waits in the outbox,
+    and the owner should read the facts of the transition that triggered it.
+    """
+
+    model_config = {"frozen": True}
+
+    dispute_id: str
+    kind: Literal["opened", "closed"]
+    payment_id: str | None = None
+    amount_cents: int
+    currency: str
+    reason: str
+    status: str
+    outcome: str | None = None
+    evidence_due_by: datetime | None = None
+
+
+class PaymentDisputeNoticeRequested(DomainEvent):
+    """A dispute opened or closed on one of the academy's charges.
+
+    ``event_id`` is deterministic per (academy, dispute, kind), so the outbox's
+    unique ``event_id`` index makes the notice exactly-once however often the
+    Stripe event is redelivered or replayed.
+    """
+
+    name: Literal["Billing.PaymentDisputeNoticeRequested"] = "Billing.PaymentDisputeNoticeRequested"
+    schema_version: Literal[1] = 1
+    payload: PaymentDisputeNoticePayload

@@ -5,8 +5,8 @@ mis-taps need an explicit correction path instead of loosening the conflict
 rule:
 
 - A **coach** assigned to the occurrence may correct within a grace window
-  (48h from when the mark was recorded). Outside the window
-  ``CorrectionWindowExpired`` (403).
+  (24h from when the mark was recorded — owner decision 2026-09-12, #554).
+  Outside the window ``CorrectionWindowExpired`` (403).
 - An **admin** may correct at any time.
 
 Every correction keeps an audit trail on the row (``corrected_by`` /
@@ -40,7 +40,7 @@ from backend.v2.contexts.coaching.domain.events import (
 from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.events import Outbox
 
-COACH_CORRECTION_WINDOW = timedelta(hours=48)
+COACH_CORRECTION_WINDOW = timedelta(hours=24)
 
 ActorRole = Literal["coach", "admin"]
 
@@ -62,7 +62,9 @@ class CorrectAttendanceResult(BaseModel):
     session_id: str
     student_id: str
     status: Literal["present", "absent", "late"]
-    previous_status: Literal["present", "absent", "late"] | None
+    # A correction can follow a void (#554), so the status it replaced may be
+    # "voided" even though nothing can be corrected *to* "voided".
+    previous_status: Literal["present", "absent", "late", "voided"] | None
     corrected_by: str | None
     corrected_at: datetime | None
 

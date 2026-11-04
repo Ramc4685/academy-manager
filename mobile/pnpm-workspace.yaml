@@ -1,0 +1,13 @@
+allowBuilds:
+  # The shell bundles none of this JS; firebase is only a peer of the auth plugin.
+  '@firebase/util': false
+  protobufjs: false
+  # @capacitor/assets renders icons and splash screens with sharp's native binary.
+  sharp: true
+# Security floors for transitive deps Dependabot cannot bump through a pnpm lockfile.
+overrides:
+  tar: '>=7.5.22'
+  sharp: '>=0.35.5'
+  minimatch: '>=11.0.1'
+  '@grpc/grpc-js': '>=1.13.6'
+  uuid: '^11.1.1'

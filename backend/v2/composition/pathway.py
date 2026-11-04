@@ -54,14 +54,26 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import Mongo
 from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
     MongoCurriculumVideoRefRepository,
 )
+from backend.v2.contexts.student_progress.application.use_cases.auto_approve_level_ups import (
+    AutoApproveLevelUps,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
+    GetCertificateDetail,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
     GetLevelUpQueue,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_parent_journey import (
+    GetParentJourney,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassport,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_pathway_dashboard import (
+    GetPathwayDashboard,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_pathway_placement import (
     GetStudentPathwayPlacement,
@@ -82,6 +94,9 @@ from backend.v2.contexts.student_progress.application.use_cases.get_student_prog
 from backend.v2.contexts.student_progress.application.use_cases.get_teaching_focus import (
     GetTeachingFocus,
 )
+from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
+    MarkSkillMastered,
+)
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevel,
 )
@@ -93,6 +108,12 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 )
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpRecommendation,
+)
+from backend.v2.contexts.student_progress.application.use_cases.set_mastery_note import (
+    SetMasteryNote,
+)
+from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
+    UnmarkSkillMastered,
 )
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     UpdateSkillStatus,
@@ -226,10 +247,17 @@ class StudentProgressComposition:
     get_passport: GetStudentPassport
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
+    get_certificate_detail: GetCertificateDetail
     get_skill_board: GetSkillBoard
     get_teaching_focus: GetTeachingFocus
     get_recent_skill_updates: GetRecentSkillUpdates
     get_in_progress_skills: GetInProgressSkills
+    get_parent_journey: GetParentJourney
+    mark_skill_mastered: MarkSkillMastered
+    unmark_skill_mastered: UnmarkSkillMastered
+    set_mastery_note: SetMasteryNote
+    auto_approve_level_ups: AutoApproveLevelUps
+    get_pathway_dashboard: GetPathwayDashboard
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +330,31 @@ def compose_student_progress(
     )
     # Issue #673: recommend / approve / queue consult enrollment lifecycle.
     enrollment_lookup = enrollment_status_lookup(db)
+    record_test_attempt = RecordTestAttempt(
+        test_attempts=test_attempt_repo,
+        skill_progress=skill_progress_repo,
+        level_progress=level_progress_repo,
+        skill_lookup=skill_lookup,
+        outbox=outbox,
+        idempotency_store=idempotency_store,
+    )
+    recommend_level_up = RecommendLevelUp(
+        level_progress=level_progress_repo,
+        skill_progress=skill_progress_repo,
+        recommendations=recommendation_repo,
+        skill_lookup=skill_lookup,
+        enrollment_lookup=enrollment_lookup,
+        outbox=outbox,
+    )
+    review_level_up = ReviewLevelUpRecommendation(
+        recommendations=recommendation_repo,
+        level_progress=level_progress_repo,
+        skill_progress=skill_progress_repo,
+        certificates=certificate_repo,
+        skill_lookup=skill_lookup,
+        enrollment_lookup=enrollment_lookup,
+        outbox=outbox,
+    )
 
     return StudentProgressComposition(
         place_student=PlaceStudentInLevel(
@@ -315,31 +368,9 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             outbox=outbox,
         ),
-        record_test_attempt=RecordTestAttempt(
-            test_attempts=test_attempt_repo,
-            skill_progress=skill_progress_repo,
-            level_progress=level_progress_repo,
-            skill_lookup=skill_lookup,
-            outbox=outbox,
-            idempotency_store=idempotency_store,
-        ),
-        recommend_level_up=RecommendLevelUp(
-            level_progress=level_progress_repo,
-            skill_progress=skill_progress_repo,
-            recommendations=recommendation_repo,
-            skill_lookup=skill_lookup,
-            enrollment_lookup=enrollment_lookup,
-            outbox=outbox,
-        ),
-        review_level_up=ReviewLevelUpRecommendation(
-            recommendations=recommendation_repo,
-            level_progress=level_progress_repo,
-            skill_progress=skill_progress_repo,
-            certificates=certificate_repo,
-            skill_lookup=skill_lookup,
-            enrollment_lookup=enrollment_lookup,
-            outbox=outbox,
-        ),
+        record_test_attempt=record_test_attempt,
+        recommend_level_up=recommend_level_up,
+        review_level_up=review_level_up,
         get_pathway_placement=GetStudentPathwayPlacement(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
@@ -373,11 +404,15 @@ def compose_student_progress(
             enrollment_lookup=enrollment_lookup,
         ),
         get_certificates=GetStudentCertificates(certificates=certificate_repo),
+        get_certificate_detail=GetCertificateDetail(
+            certificates=certificate_repo, skill_lookup=skill_lookup
+        ),
         get_skill_board=GetSkillBoard(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
             skill_lookup=skill_lookup,
+            criteria=MongoCriterionRepository(db),
         ),
         get_teaching_focus=GetTeachingFocus(
             level_progress=level_progress_repo,
@@ -391,5 +426,40 @@ def compose_student_progress(
         get_in_progress_skills=GetInProgressSkills(
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
+        ),
+        get_parent_journey=GetParentJourney(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
+            certificates=certificate_repo,
+            test_attempts=test_attempt_repo,
+        ),
+        mark_skill_mastered=MarkSkillMastered(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
+            record_test_attempt=record_test_attempt,
+            recommend_level_up=recommend_level_up,
+        ),
+        unmark_skill_mastered=UnmarkSkillMastered(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            recommendations=recommendation_repo,
+            skill_lookup=skill_lookup,
+            outbox=outbox,
+        ),
+        set_mastery_note=SetMasteryNote(skill_progress=skill_progress_repo),
+        auto_approve_level_ups=AutoApproveLevelUps(
+            recommendations=recommendation_repo,
+            skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
+            review_level_up=review_level_up,
+        ),
+        get_pathway_dashboard=GetPathwayDashboard(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            recommendations=recommendation_repo,
+            certificates=certificate_repo,
+            levels=skill_lookup,
         ),
     )

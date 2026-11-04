@@ -98,3 +98,36 @@ async def test_list_tenants_skips_invalid_legacy_docs_and_warns_with_academy_id(
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "acad_legacy_no_domain" in warnings[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_referral_code_round_trips_and_survives_a_slug_change(db) -> None:
+    repo = MongoTenantLifecycleRepository(db)
+    await repo.create(_tenant(referral_code="x"))
+
+    stored = await repo.get_by_id("tenant_north")
+    assert stored is not None and stored.referral_code == "x"
+
+    renamed = await repo.save(stored.model_copy(update={"slug": "north-renamed"}))
+    assert renamed.referral_code == "x"
+
+
+@pytest.mark.asyncio
+async def test_set_referral_code_if_absent_touches_only_that_field(db) -> None:
+    """Legacy docs (no field) and null codes get one; an existing code is kept,
+    and a concurrent status change written before the backfill is not undone."""
+    repo = MongoTenantLifecycleRepository(db)
+    await repo.create(_tenant())  # referral_code written as null
+    await db["academies"].update_one(
+        {"academy_id": "tenant_north"}, {"$unset": {"referral_code": ""}}
+    )
+    await db["academies"].update_one(
+        {"academy_id": "tenant_north"}, {"$set": {"status": "suspended"}}
+    )
+
+    await repo.set_referral_code_if_absent("tenant_north", "north")
+    await repo.set_referral_code_if_absent("tenant_north", "other")
+
+    doc = await db["academies"].find_one({"academy_id": "tenant_north"})
+    assert doc["referral_code"] == "north"
+    assert doc["status"] == "suspended"

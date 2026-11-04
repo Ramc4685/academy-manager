@@ -35,6 +35,7 @@ import { resolveDepartureActions } from "./departure-actions.logic";
 import type { DepartureAction } from "./departure-actions.logic";
 
 export {
+  DEPARTURE_ACTION_DESCRIPTION,
   DEPARTURE_ACTION_LABEL,
   holdActionsFor,
   resolveDepartureActions,
@@ -87,6 +88,10 @@ export function DepartureActions({
     ...overflow.map((entry) => ({
       key: entry.action,
       label: entry.label,
+      // #859: the verbs alone never said what happens to the seat, to billing
+      // or to the family. Only the menu path carries it — an inline layout's
+      // buttons sit in a row cell with no room for a second line.
+      description: entry.description,
       disabled: entry.disabled,
       danger: entry.danger,
       hint: entry.ownerGated ? <OwnerOnlyHint /> : undefined,

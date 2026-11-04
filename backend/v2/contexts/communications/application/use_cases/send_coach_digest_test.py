@@ -135,13 +135,15 @@ class SendCoachDigestTest:
         try:
             plan: Any | None = await self.plan_provider.execute(recipient.user_id, command.on_date)
         except Exception as exc:  # plan generation must never crash the test send
-            await self.digests.mark_failed(send.digest_id, f"plan generation failed: {exc}")
+            await self.digests.mark_failed(
+                command.academy_id, send.digest_id, f"plan generation failed: {exc}"
+            )
             return SendCoachDigestTestResult(
                 status="failed", coach_id=recipient.user_id, email=recipient.email, detail=str(exc)
             )
 
         if plan_is_empty(plan):
-            await self.digests.mark_skipped_empty(send.digest_id)
+            await self.digests.mark_skipped_empty(command.academy_id, send.digest_id)
             return SendCoachDigestTestResult(
                 status="skipped_empty",
                 coach_id=recipient.user_id,
@@ -150,7 +152,7 @@ class SendCoachDigestTest:
             )
 
         if not recipient.email:
-            await self.digests.mark_failed(send.digest_id, "no email address")
+            await self.digests.mark_failed(command.academy_id, send.digest_id, "no email address")
             return SendCoachDigestTestResult(
                 status="failed",
                 coach_id=recipient.user_id,
@@ -158,9 +160,10 @@ class SendCoachDigestTest:
                 detail="Recipient has no email address.",
             )
 
+        brand = await self._brand(command.academy_id)
         subject, body = render_coach_digest(
             plan,
-            brand=await self._brand(command.academy_id),
+            brand=brand,
             whatsapp_groups=await self._groups(recipient.user_id),
             unsubscribe_url=self.unsubscribe_links.build(
                 academy_id=command.academy_id,
@@ -180,13 +183,19 @@ class SendCoachDigestTest:
             # bounce and an opt-out rather than being the one path that mails a
             # recipient who asked us to stop.
             category=EmailCategory.DIGEST,
+            reply_to=brand.reply_to if brand else None,
+            sender_name=brand.sender_name if brand else None,
         )
         if outcome.ok:
-            await self.digests.mark_sent(send.digest_id, outcome.provider_message_id)
+            await self.digests.mark_sent(
+                command.academy_id, send.digest_id, outcome.provider_message_id
+            )
             return SendCoachDigestTestResult(
                 status="sent", coach_id=recipient.user_id, email=recipient.email
             )
-        await self.digests.mark_failed(send.digest_id, outcome.failed_reason or "unknown")
+        await self.digests.mark_failed(
+            command.academy_id, send.digest_id, outcome.failed_reason or "unknown"
+        )
         return SendCoachDigestTestResult(
             status="failed",
             coach_id=recipient.user_id,

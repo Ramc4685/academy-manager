@@ -44,6 +44,43 @@ def test_is_ready_only_when_charges_enabled() -> None:
     assert ready.is_ready_for_charges() is True
 
 
+def _active(capabilities: dict[str, str]) -> ConnectedAccount:
+    return ConnectedAccount.new(academy_id="acad-1", stripe_account_id="acct_123").with_status(
+        status="active", charges_enabled=True, capabilities=capabilities
+    )
+
+
+def test_direct_charge_account_is_ready_without_the_transfers_capability() -> None:
+    # Direct-charge accounts never request stripe_transfers / v1 transfers.
+    account = _active({"card_payments": "active", "us_bank_account_ach_payments": "active"})
+    assert account.is_ready_for_charges() is True
+
+
+def test_destination_era_account_with_transfers_stays_ready() -> None:
+    account = _active({"card_payments": "active", "transfers": "active"})
+    assert account.is_ready_for_charges() is True
+
+
+def test_account_without_a_card_payments_snapshot_falls_back_to_charges_enabled() -> None:
+    # Rows written before capabilities were tracked, or last touched by a
+    # capability.* event for another capability, carry no card_payments key.
+    assert _active({}).is_ready_for_charges() is True
+    assert _active({"transfers": "active"}).is_ready_for_charges() is True
+
+
+@pytest.mark.parametrize("state", ["inactive", "pending", "unrequested"])
+def test_card_payments_not_active_blocks_charges(state: str) -> None:
+    account = _active({"card_payments": state})
+    assert account.is_ready_for_charges() is False
+
+
+def test_charges_disabled_blocks_even_with_card_payments_active() -> None:
+    account = _active({"card_payments": "active"}).with_status(
+        status="restricted", charges_enabled=False
+    )
+    assert account.is_ready_for_charges() is False
+
+
 def test_with_status_updates_status_and_capabilities_and_timestamp() -> None:
     created = datetime(2026, 1, 1, tzinfo=UTC)
     updated_at = datetime(2026, 2, 1, tzinfo=UTC)

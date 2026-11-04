@@ -8,7 +8,7 @@ export type ChipVariant =
   | "waitlist" | "offered" | "expired" | "enrolled" | "approval"
   | "paused" | "transferred" | "present" | "absent" | "late"
   | "excused" | "makeup" | "full" | "open" | "closing" | "approved" | "draft"
-  | "denied" | "converted";
+  | "denied" | "converted" | "trial";
 
 interface ChipSpec {
   box: string;
@@ -16,7 +16,7 @@ interface ChipSpec {
   label: string;
 }
 
-// Shared color families — 30 semantic variants collapse onto these classes.
+// Shared color families — 31 semantic variants collapse onto these classes.
 const GREEN = "bg-status-green-50 text-status-green-800";
 const AMBER = "bg-status-amber-50 text-status-amber-800";
 const RED = "bg-status-red-50 text-status-red-800";
@@ -62,6 +62,8 @@ export const CHIP_VARIANTS: Record<ChipVariant, ChipSpec> = {
   draft:       { box: SLATE_MID, dot: FAINT_DOT, label: "DRAFT" },
   denied:      { box: RED, dot: RED_DOT, label: "DENIED" },
   converted:   { box: GREEN, dot: GREEN_DOT, label: "CONVERTED" },
+  // #1038: a one-time trial class, told apart from a (blue) make-up by colour.
+  trial:       { box: YELLOW, dot: "bg-rally-volt-700", label: "TRIAL" },
 };
 
 interface ChipProps {

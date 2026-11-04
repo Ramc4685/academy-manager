@@ -12,7 +12,7 @@ State machine (mirrors legacy):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
@@ -64,6 +64,17 @@ class WaiverAcceptance(BaseModel):
     content_hash: str
     accepted_at: datetime
     waiver_template_id: str | None = None  # ADR-0007: pins acceptance to immutable template version
+    # Which waiver (across versions) this accepts; ``None`` reads as the legacy
+    # lineage, the one every pre-lineage template belongs to.
+    lineage_key: str | None = None
+    # Signing evidence, copied onto the student's signature at approval.
+    # ``None`` on acceptances made before the explicit signing step.
+    signer_name: str | None = None
+    consent_text: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+    initials: dict[str, str] = Field(default_factory=dict)
+    signing_path: Literal["adult", "minor"] | None = None
 
 
 class Application(BaseModel):
@@ -78,6 +89,10 @@ class Application(BaseModel):
     child_profile: ChildProfile = Field(default_factory=ChildProfile)
     selected_session_id: str | None = None
     waiver_acceptance: WaiverAcceptance | None = None
+    # The other waivers accepted alongside ``waiver_acceptance`` when the chosen
+    # class's program adds required waivers (Settings Phase 6). Empty for an
+    # academy with a single waiver, which is every application today.
+    additional_waiver_acceptances: list[WaiverAcceptance] = Field(default_factory=list)
     stripe_checkout_session_id: str | None = None
     payment_id: str | None = None
     # Payment ids this application used to point at, oldest first. A re-stamp
@@ -98,6 +113,11 @@ class Application(BaseModel):
     decision_reason: str | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
+    # When the family was actually told the outcome (issue #776). Stamped only
+    # after a send succeeds, so the admin queue never claims a parent was
+    # informed of a waitlist or a decline (which refunds money) when the mail
+    # never left. Absent on approvals, which have their own #613 welcome path.
+    family_notified_at: datetime | None = None
     review_claimed_at: datetime | None = None
     review_claim_token: str | None = None
     # "YYYY-MM" billed $0 at checkout; see admin_registration_review
@@ -105,6 +125,34 @@ class Application(BaseModel):
     expires_at: datetime  # 7d TTL after creation
     created_at: datetime
     updated_at: datetime
+
+    @property
+    def all_waiver_acceptances(self) -> list[WaiverAcceptance]:
+        if self.waiver_acceptance is None:
+            return []
+        return [self.waiver_acceptance, *self.additional_waiver_acceptances]
+
+    def is_expired(self, now: datetime) -> bool:
+        """True once the 7-day TTL has passed on an application that is still
+        sitting in an editable-ish state (issue #537).
+
+        DRAFT and CHECKOUT_PENDING both carry `expires_at` and both must stop
+        being editable/startable once it passes — otherwise an abandoned draft
+        (or a checkout the parent never returned to) stays live forever.
+
+        Naive datetimes (some seeded/legacy rows carry them — see the Session
+        Timezone repair) are treated as UTC rather than raising, so a stray
+        naive `expires_at` fails closed as "editable" instead of 500ing the
+        whole request.
+        """
+        if self.status not in {"DRAFT", "CHECKOUT_PENDING"}:
+            return False
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        return now >= expires_at
 
 
 class Waiver(BaseModel):
@@ -116,6 +164,9 @@ class Waiver(BaseModel):
     text: str
     content_hash: str
     effective_from: datetime
+    # The waiver this version belongs to (all versions share it).
+    lineage_key: str = "legacy"
+    title: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -188,3 +239,24 @@ class WaiverSignature(BaseModel):
     user_agent: str | None = None
     artifact_id: str | None = None
     expires_at: datetime | None = None
+    # Section key -> the signer's initials, for sections marked [initials].
+    initials: dict[str, str] = Field(default_factory=dict)
+    # "adult" or "minor" when the waiver has age-specific sections.
+    signing_path: Literal["adult", "minor"] | None = None
+    # The e-signature consent statement the signer ticked; ``None`` on rows
+    # signed before the explicit signing step existed.
+    consent_text: str | None = None
+
+
+# Shown next to the consent checkbox and stored on every signature, so a
+# signed copy can show exactly what the signer agreed to.
+ESIGN_CONSENT_TEXT = (
+    "I agree to sign electronically. Typing my full name is my signature and "
+    "has the same effect as a handwritten signature."
+)
+
+
+def clean_signer_name(name: str | None) -> str | None:
+    """A full legal name: at least two words, or ``None`` when it is not one."""
+    words = " ".join((name or "").split())
+    return words if len(words.split(" ")) >= 2 else None

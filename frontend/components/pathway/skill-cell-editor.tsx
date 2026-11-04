@@ -4,14 +4,11 @@ import { useState } from "react";
 import { X } from "lucide-react";
 
 import type { SkillBoardSkill, SkillStatus } from "@/lib/api/curriculum";
+import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 
-const SETTABLE_STATUSES: { value: SkillStatus; label: string }[] = [
-  { value: "INTRODUCED", label: "Introduced" },
-  { value: "LEARNING", label: "Learning" },
-  { value: "PRACTICING", label: "Practicing" },
-  { value: "TEST_READY", label: "Test ready" },
-  { value: "NEEDS_REVIEW", label: "Needs review" },
-];
+const SETTABLE_STATUSES: { value: SkillStatus; label: string }[] = (
+  ["INTRODUCED", "LEARNING", "PRACTICING", "TEST_READY", "NEEDS_REVIEW"] as const
+).map((value) => ({ value, label: SKILL_STATUS_LABELS[value] }));
 
 export interface SkillCellTarget {
   studentId: string;

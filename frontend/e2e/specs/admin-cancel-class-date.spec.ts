@@ -201,6 +201,7 @@ test.describe("admin cancels one class date (#671)", () => {
 
     await page.goto("/admin/sessions/series-thu");
 
+    await page.getByRole("button", { name: "Class dates", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Class dates" })).toBeVisible();
     await expect(page.getByTestId("occurrence-cancelled-chip")).toHaveCount(0);
     // The past date is listed, labelled Past, and offers no cancel action.

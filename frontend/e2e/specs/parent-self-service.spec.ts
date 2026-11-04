@@ -34,6 +34,17 @@ async function stubParentIdentity(page: import("@playwright/test").Page): Promis
 }
 
 async function stubAcademyAndChildren(page: import("@playwright/test").Page): Promise<void> {
+  // X2: the Requests page also reads the family's waitlist offers. None
+  // here, so the section stays hidden and these specs see the page as before.
+  await page.route("**/api/v2/parent/waitlist", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ entries: [] }),
+    });
+  });
+
   await page.route("**/api/v2/parent/academy", async (route: Route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return route.fulfill({
@@ -174,6 +185,63 @@ test.describe("parent self-service — absences", () => {
     await expect(page.getByRole("status")).toContainText("Absence notice submitted.");
   });
 
+  test("shows the child's name on an absence notice row", async ({ page }) => {
+    const CHILD_B_ID = "st-2";
+    const CHILD_B_NAME = "Priya Nair";
+    await page.route("**/api/v2/parent/children", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          children: [
+            {
+              student_id: STUDENT_ID,
+              full_name: STUDENT_NAME,
+              lifecycle: "active",
+              active_session_count: 1,
+              attended_count: 5,
+              absent_count: 1,
+            },
+            {
+              student_id: CHILD_B_ID,
+              full_name: CHILD_B_NAME,
+              lifecycle: "active",
+              active_session_count: 1,
+              attended_count: 3,
+              absent_count: 0,
+            },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/v2/parent/absences", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          notices: [
+            {
+              notice_id: "notice-2",
+              student_id: CHILD_B_ID,
+              occurrence_id: "occ-051",
+              session_id: "sess-2",
+              submitted_by: "parent-1",
+              submitted_at: "2026-07-11T12:00:00Z",
+              notice_window_met: true,
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/parent/requests");
+    await expect(page.getByText("My absence notices")).toBeVisible();
+    const noticeRow = page.locator("ul li").first();
+    await expect(noticeRow).toContainText(CHILD_B_NAME);
+  });
+
   test("submitting an absence inside the notice window shows a warning banner", async ({
     page,
   }) => {
@@ -214,6 +282,65 @@ test.describe("parent self-service — absences", () => {
     await expect(
       page.getByRole("alert").filter({ hasText: "Submitted inside the notice window" }),
     ).toContainText("Submitted inside the notice window — makeup eligibility may be affected.");
+  });
+});
+
+test.describe("parent self-service — all switches off", () => {
+  test("shows an empty state instead of the Absences panel when every request tab is hidden", async ({
+    page,
+  }) => {
+    await stubParentIdentity(page);
+    await page.route("**/api/v2/parent/waitlist", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ entries: [] }),
+      });
+    });
+    // can_report_absence and can_request_makeup off, and the Public page's
+    // trials_open toggle (can_request_trial) also off: TABS is empty, and
+    // the page must not fall back to rendering the Absences form (#P2).
+    await page.route("**/api/v2/parent/academy", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          display_name: "Aces Academy",
+          timezone: "America/Chicago",
+          contact_email: null,
+          contact_phone: null,
+          hours_text: null,
+          address: null,
+          logo_url: null,
+          self_service: {
+            can_report_absence: false,
+            can_request_makeup: false,
+            can_request_pause: false,
+            can_request_cancel: false,
+            can_claim_waitlist_offer: false,
+            can_request_trial: false,
+          },
+        }),
+      });
+    });
+    await page.route("**/api/v2/parent/children", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ children: [] }),
+      });
+    });
+
+    await page.goto("/parent/requests");
+    await expect(page.getByTestId("parent-requests")).toBeVisible();
+
+    // No tab strip and no Absences form.
+    await expect(page.getByRole("tablist")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Report absence" })).toHaveCount(0);
+    await expect(page.getByText("No requests available")).toBeVisible();
   });
 });
 
@@ -307,6 +434,7 @@ test.describe("parent self-service — makeups", () => {
 
     const makeupsList = page.locator("ul").filter({ hasText: "Requested" });
     await expect(makeupsList.getByText("PENDING")).toBeVisible();
+    await expect(makeupsList).toContainText(STUDENT_NAME);
   });
 });
 
@@ -455,5 +583,67 @@ test.describe("parent self-service — progress", () => {
 
     await expect(page.getByTestId("parent-progress")).toBeVisible();
     await expect(page.getByText("Great footwork this week.")).toBeVisible();
+  });
+});
+
+test.describe("parent self-service — re-enrol a departed child (#827)", () => {
+  test("offers 'Enroll in a class' on the departed row, with the child pre-bound", async ({
+    page,
+  }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+
+    await page.route("**/api/v2/parent/attendance", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ records: [] }),
+      });
+    });
+    await page.route(`**/api/v2/parent/children/${STUDENT_ID}/schedule`, async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ entries: [], total: 0, limit: 20, offset: 0 }),
+      });
+    });
+    // #826: the parent enrollments feed carries the latest departure per child.
+    await page.route("**/api/v2/parent/enrollments", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          enrollments: [
+            {
+              enrollment_id: ENROLLMENT_ID,
+              student_id: STUDENT_ID,
+              student_name: STUDENT_NAME,
+              session_id: "sess-1",
+              session_title: SESSION_TITLE,
+              status: "dropped",
+              departed: true,
+              left_on: "2026-06-01T12:00:00Z",
+              departure_reason: "Moved away",
+              payment_mode: null,
+              subscription_status: null,
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/parent/children");
+    await expect(page.getByTestId("parent-children")).toBeVisible();
+    await expect(page.getByTestId(`enrollment-departed-${ENROLLMENT_ID}`)).toBeVisible();
+
+    // A departed row is history: it must never offer a cancel (money) control.
+    await expect(page.getByRole("button", { name: "Cancel enrollment…" })).toHaveCount(0);
+
+    const reEnroll = page.getByTestId(`enrollment-re-enroll-${ENROLLMENT_ID}`);
+    await expect(reEnroll).toBeVisible();
+    await expect(reEnroll).toHaveAttribute("href", `/parent/onboarding?child=${STUDENT_ID}`);
   });
 });

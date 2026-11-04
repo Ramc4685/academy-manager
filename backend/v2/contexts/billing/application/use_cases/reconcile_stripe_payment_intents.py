@@ -136,7 +136,9 @@ class ReconcileStripePaymentIntents:
                     if pi_id and pi_id in seen_ids:
                         continue
                     seen_ids.add(pi_id)
-                    payment_intents.append(pi)
+                    # Found ON the connected account: a direct charge. Carry
+                    # the account so the recorded payment is refunded there.
+                    payment_intents.append({**pi, _ON_ACCOUNT_KEY: stripe_account_id})
 
         return payment_intents
 
@@ -256,6 +258,7 @@ class ReconcileStripePaymentIntents:
                 status="succeeded",
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
+                stripe_account_id=_payment_intent_account(payment_intent),
                 stripe_invoice_id=str(metadata.get("stripe_invoice_id") or "") or None,
                 paid_at=now,
                 recorded_by="stripe_reconciliation",
@@ -328,6 +331,7 @@ class ReconcileStripePaymentIntents:
                 status="succeeded",
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=pi_id,
+                stripe_account_id=_payment_intent_account(payment_intent),
                 stripe_invoice_id=str(metadata.get("stripe_invoice_id") or "") or None,
                 paid_at=now,
                 recorded_by="stripe_reconciliation",
@@ -373,6 +377,15 @@ class ReconcileStripePaymentIntents:
 
 class _QuarantineReconciliation(Exception):
     pass
+
+
+#: Key the connected-account search adds to each PaymentIntent it found.
+_ON_ACCOUNT_KEY = "_stripe_account"
+
+
+def _payment_intent_account(payment_intent: dict[str, Any]) -> str | None:
+    """The connected account a PaymentIntent was found on (None = platform)."""
+    return str(payment_intent.get(_ON_ACCOUNT_KEY) or "") or None
 
 
 def _payment_intent_is_ach(payment_intent: dict[str, Any]) -> bool:

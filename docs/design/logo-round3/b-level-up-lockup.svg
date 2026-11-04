@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 256">
+  <!-- exploration only: live <text> in a system font stands in for the outlined wordmark -->
+  <image href="b-level-up.svg" x="0" y="28" width="200" height="200"/>
+  <text x="236" y="140" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-weight="800" font-size="96" letter-spacing="-3" fill="#0f172a">CourtMastr</text>
+  <text x="240" y="198" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-weight="700" font-size="34" letter-spacing="14" fill="#a16207">ACADEMY</text>
+</svg>

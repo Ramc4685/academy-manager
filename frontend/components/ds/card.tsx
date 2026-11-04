@@ -8,11 +8,13 @@ interface CardProps {
   accent?: string;
   style?: CSSProperties;
   className?: string;
+  /** Fragment anchor, for in-page jump links. */
+  id?: string;
   /** Test hook for cards whose presence is itself the assertion. */
   "data-testid"?: string;
 }
 
-export function Card({ children, p = 24, accent, style, className, ...rest }: CardProps) {
+export function Card({ children, p = 24, accent, style, className, id, ...rest }: CardProps) {
   const inline: CSSProperties = {
     padding: p,
     // accent is an arbitrary caller-supplied color, so it stays inline.
@@ -21,6 +23,7 @@ export function Card({ children, p = 24, accent, style, className, ...rest }: Ca
   };
   return (
     <div
+      id={id}
       className={`relative overflow-hidden rounded-xl border border-rally-line bg-white ${className ?? ""}`}
       style={inline}
       data-testid={rest["data-testid"]}

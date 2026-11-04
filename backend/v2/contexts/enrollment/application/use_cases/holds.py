@@ -25,6 +25,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     SessionWriter,
 )
 from backend.v2.contexts.enrollment.application.seat_broker import finalize_reclaim
+from backend.v2.contexts.enrollment.application.terminal_dependents import TerminalDependents
 from backend.v2.contexts.enrollment.application.use_cases.billing_deferrals import (
     BillingDeferral,
     BillingDeferralRepository,
@@ -414,6 +415,8 @@ class ExpireDueHolds:
         notifier: HoldNotifier | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
         scheduled_actions: ScheduledEnrollmentActionRepository | None = None,
+        # Issue #782: an expired hold is a terminal drop like any other.
+        dependents: TerminalDependents | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._holds = holds
@@ -423,6 +426,7 @@ class ExpireDueHolds:
         self._notifier = notifier
         self._enrollment_events = enrollment_events
         self._scheduled_actions = scheduled_actions
+        self._dependents = dependents
         self._now = clock
 
     async def execute(self) -> ExpireDueHoldsResult:
@@ -455,6 +459,7 @@ class ExpireDueHolds:
                     reason="expired",
                     seat_disposition="release",
                     now=now,
+                    dependents=self._dependents,
                 )
                 result.expired += 1
             except Exception:
@@ -509,6 +514,8 @@ class ProcessStalledReclaims:
         billing_sync: EnrollmentBillingSync | None = None,
         notifier: HoldNotifier | None = None,
         enrollment_events: EnrollmentEventRepository | None = None,
+        # Issue #782: a recovered stalled reclaim ends the row too.
+        dependents: TerminalDependents | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._holds = holds
@@ -516,6 +523,7 @@ class ProcessStalledReclaims:
         self._billing_sync = billing_sync
         self._notifier = notifier
         self._enrollment_events = enrollment_events
+        self._dependents = dependents
         self._now = clock
 
     async def execute(self) -> int:
@@ -552,6 +560,7 @@ class ProcessStalledReclaims:
                 reason=reason,
                 seat_disposition=seat_disposition,
                 now=now,
+                dependents=self._dependents,
             )
             finalized += 1
         return finalized

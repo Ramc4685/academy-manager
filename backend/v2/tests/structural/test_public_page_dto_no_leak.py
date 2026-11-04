@@ -1,0 +1,402 @@
+"""The anonymous public page can never carry private data (Lane B2).
+
+Two passes, both required by the public tenant page brief (section 5,
+"never on the public surface"):
+
+1. **Static.** Every pydantic model the ``interfaces/public`` persona can
+   serialise is walked recursively (nested models, lists, unions); a field
+   whose name says email, phone, an internal id (academy, session, program,
+   coach, student, parent, user), notes, capacity or enrolled counts fails
+   the build. Every route in the package must declare a response model from
+   the allow-listed set, so a new route cannot bypass the walk.
+2. **Behavioural.** A seeded academy with private values planted everywhere
+   (contact details, coach email, student and parent ids, notes, group
+   links, an unpublished class, another academy's class) is fetched through
+   the real route, and none of those values may appear in the raw response.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import pkgutil
+import re
+import types
+import typing
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+
+import backend.v2.interfaces.public as public_pkg
+from backend.v2.interfaces.public.dtos import PUBLIC_REQUEST_MODELS, PUBLIC_RESPONSE_MODELS
+from backend.v2.tests.fixtures.public_page import (
+    ACADEMY,
+    RIVERSIDE_HOST,
+    SECRETS,
+    build_app,
+    seed,
+)
+
+#: Substrings no public field name may contain.
+BANNED_FIELD_FRAGMENTS = (
+    "email",
+    "phone",
+    "academy_id",
+    "session_id",
+    "program_id",
+    "coach_id",
+    "student",
+    "parent",
+    "user_id",
+    "uid",
+    "note",
+    "capacity",
+    "enrolled",
+    "occupied",
+    "whatsapp",
+    "parking",
+    "stripe",
+    "internal",
+    "policy",
+    "status_reason",
+    "plan",
+    # Gallery consent record and uploader (content lane): never public.
+    "consent",
+    "confirmed",
+    "uploaded",
+    "uploader",
+)
+#: The deliberately allowed public identifiers (opaque digests) and the one
+#: intentionally public contact field: a support email only, never a phone
+#: (owner decision, row 21 of the hardcoded-values sweep). ``refund_policy_url``
+#: is the academy's published refund-policy link for the footer (Phase 4
+#: PR 13): "policy" here names a public page, not private data.
+ALLOWED_FIELDS = {"public_id", "support_email", "refund_policy_url"}
+
+
+def _models_in(annotation: Any) -> list[type[BaseModel]]:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    found: list[type[BaseModel]] = []
+    for arg in typing.get_args(annotation):
+        found.extend(_models_in(arg))
+    if isinstance(annotation, types.UnionType):
+        for arg in annotation.__args__:
+            found.extend(_models_in(arg))
+    return found
+
+
+def _walk(model: type[BaseModel], path: str, seen: set[type[BaseModel]]) -> list[str]:
+    if model in seen:
+        return []
+    seen.add(model)
+    fields: list[str] = []
+    for name, info in model.model_fields.items():
+        fields.append(f"{path}.{name}")
+        for nested in _models_in(info.annotation):
+            fields.extend(_walk(nested, f"{path}.{name}", seen))
+    return fields
+
+
+def _public_modules() -> list[types.ModuleType]:
+    modules = [public_pkg]
+    for info in pkgutil.walk_packages(public_pkg.__path__, public_pkg.__name__ + "."):
+        modules.append(importlib.import_module(info.name))
+    return modules
+
+
+def _all_public_field_paths() -> list[str]:
+    seen: set[type[BaseModel]] = set()
+    paths: list[str] = []
+    for model in PUBLIC_RESPONSE_MODELS:
+        paths.extend(_walk(model, model.__name__, seen))
+    return paths
+
+
+def test_walk_actually_reaches_nested_class_fields() -> None:
+    paths = _all_public_field_paths()
+    assert "PublicAcademyPageDto.programs.classes.seats.band" in paths
+    assert "PublicAcademyPageDto.academy.venue.address" in paths
+    assert "PublicAcademyPageDto.gallery.url" in paths
+    assert "PublicAcademyPageDto.coaches.photo_url" in paths
+
+
+def test_gallery_dto_is_url_and_caption_only() -> None:
+    from backend.v2.interfaces.public.dtos import PublicCoachDto, PublicGalleryPhotoDto
+
+    assert set(PublicGalleryPhotoDto.model_fields) == {"url", "caption"}
+    assert set(PublicCoachDto.model_fields) == {"name", "photo_url", "bio"}
+
+
+def test_no_public_dto_field_names_private_data() -> None:
+    offenders = []
+    for path in _all_public_field_paths():
+        leaf = path.rsplit(".", 1)[-1].lower()
+        if leaf in ALLOWED_FIELDS:
+            continue
+        hits = [frag for frag in BANNED_FIELD_FRAGMENTS if frag in leaf]
+        if hits or re.fullmatch(r"(.*_)?id", leaf):
+            offenders.append(f"{path} ({', '.join(hits) or 'internal id'})")
+    assert not offenders, "public page DTO carries private fields:\n" + "\n".join(offenders)
+
+
+def test_every_pydantic_model_in_the_public_package_is_walked() -> None:
+    walked: set[type[BaseModel]] = set()
+    for model in PUBLIC_RESPONSE_MODELS:
+        _walk(model, model.__name__, walked)
+    defined = {
+        obj
+        for module in _public_modules()
+        for obj in vars(module).values()
+        if isinstance(obj, type)
+        and issubclass(obj, BaseModel)
+        and obj.__module__.startswith(public_pkg.__name__)
+    }
+    request_models = {m for m in defined if m.__name__.endswith("Request")}
+    assert request_models == set(PUBLIC_REQUEST_MODELS), (
+        "every public request body must be listed in PUBLIC_REQUEST_MODELS"
+    )
+    unwalked = sorted(m.__name__ for m in defined - walked - request_models)
+    assert not unwalked, f"public DTOs outside PUBLIC_RESPONSE_MODELS: {unwalked}"
+
+
+def test_every_public_route_declares_an_allow_listed_response_model() -> None:
+    routes = [
+        route
+        for module in _public_modules()
+        for route in getattr(getattr(module, "router", None), "routes", [])
+        if isinstance(route, APIRoute)
+    ]
+    assert routes, "no public routes found"
+    allowed = set(PUBLIC_RESPONSE_MODELS)
+    for route in routes:
+        declared = set(_models_in(route.response_model))
+        assert declared, f"{route.path} has no response_model"
+        assert declared <= allowed, f"{route.path} returns {declared - allowed}"
+
+
+def test_seeded_private_values_never_reach_the_response() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-page-leak"]
+    asyncio.run(seed(db))
+    response = TestClient(build_app(db)).get(
+        "/api/v2/public/academy", headers={"host": RIVERSIDE_HOST}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "published"
+    raw = response.text
+    # contact_email is the one deliberately public field (support_email, row
+    # 21): it must appear, at exactly that path, and never as a phone number.
+    assert body["academy"]["support_email"] == SECRETS["contact_email"]
+    still_private = {k: v for k, v in SECRETS.items() if k != "contact_email"}
+    leaked = {key: value for key, value in still_private.items() if value in raw}
+    assert not leaked, f"private values in the public page response: {leaked}"
+    assert SECRETS["contact_phone"] not in raw
+    # Seat counts: capacity 10 and 2 must not appear as numbers either.
+    body = response.json()
+    for cls in [c for p in body["programs"] for c in p["classes"]] + body["ungrouped_classes"]:
+        assert set(cls["seats"]) == {"band", "seats_left"}
+        assert cls["seats"]["seats_left"] is None or cls["seats"]["seats_left"] <= 3
+
+
+def test_gallery_consent_record_and_coach_id_never_reach_the_response() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-page-content-leak"]
+    asyncio.run(seed(db))
+    uploader = "u-secret-uploader-77"
+    asyncio.run(
+        db["academies"].update_one(
+            {"academy_id": ACADEMY},
+            {
+                "$set": {
+                    "public_page.hero_photo_url": "https://cdn.example.test/hero.jpg",
+                    "public_page.about_text": "Est. 2019.",
+                    "public_page.highlights": ["Small groups"],
+                    "public_page.gallery": [
+                        {
+                            "url": "https://cdn.example.test/g1.jpg",
+                            "caption": "Saturday juniors",
+                            "consent_confirmed": True,
+                            "consent_confirmed_by": uploader,
+                            "consent_confirmed_at": datetime(2026, 9, 30, tzinfo=UTC),
+                        }
+                    ],
+                    "public_page.coach_profiles": [
+                        {
+                            "coach_id": SECRETS["coach_id"],
+                            "photo_url": "https://cdn.example.test/coach.jpg",
+                            "bio": "Level 2 BWF.",
+                            "shown": True,
+                        },
+                        {"coach_id": "coach-hidden", "bio": "Not shown.", "shown": False},
+                    ],
+                    "public_page.faqs": [{"question": "Cost?", "answer": "See classes."}],
+                }
+            },
+        )
+    )
+    response = TestClient(build_app(db)).get(
+        "/api/v2/public/academy", headers={"host": RIVERSIDE_HOST}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["hero_photo_url"] == "https://cdn.example.test/hero.jpg"
+    assert body["about_text"] == "Est. 2019."
+    assert body["highlights"] == ["Small groups"]
+    assert body["gallery"] == [
+        {"url": "https://cdn.example.test/g1.jpg", "caption": "Saturday juniors"}
+    ]
+    assert body["coaches"] == [
+        {
+            "name": "Alex Morgan",
+            "photo_url": "https://cdn.example.test/coach.jpg",
+            "bio": "Level 2 BWF.",
+        }
+    ]
+    assert body["faqs"] == [{"question": "Cost?", "answer": "See classes."}]
+    raw = response.text
+    for private in (uploader, "consent", "coach-hidden", "Not shown", SECRETS["coach_id"]):
+        assert private not in raw, f"content lane leaked {private!r}"
+
+
+@pytest.mark.parametrize(
+    "membership_change",
+    [
+        {"status": "inactive"},
+        {"roles": ["parent"]},
+    ],
+    ids=["deactivated", "lost-coach-role"],
+)
+def test_a_coach_who_left_or_lost_the_role_is_not_published(
+    membership_change: dict[str, object],
+) -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-page-content-left"]
+    asyncio.run(seed(db))
+    asyncio.run(
+        db["academies"].update_one(
+            {"academy_id": ACADEMY},
+            {
+                "$set": {
+                    "public_page.coach_profiles": [
+                        {
+                            "coach_id": SECRETS["coach_id"],
+                            "photo_url": "https://cdn.example.test/coach.jpg",
+                            "bio": "Level 2 BWF.",
+                            "shown": True,
+                        }
+                    ]
+                }
+            },
+        )
+    )
+
+    def coaches() -> list[dict[str, object]]:
+        response = TestClient(build_app(db)).get(
+            "/api/v2/public/academy", headers={"host": RIVERSIDE_HOST}
+        )
+        assert response.status_code == 200
+        return response.json()["coaches"]
+
+    assert [c["name"] for c in coaches()] == ["Alex Morgan"]
+    asyncio.run(
+        db["academy_memberships"].update_one(
+            {"academy_id": ACADEMY, "user_id": SECRETS["coach_id"]}, {"$set": membership_change}
+        )
+    )
+    assert coaches() == []
+
+
+def test_an_academy_with_no_content_reads_todays_page() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-page-content-default"]
+    asyncio.run(seed(db))
+    body = (
+        TestClient(build_app(db))
+        .get("/api/v2/public/academy", headers={"host": RIVERSIDE_HOST})
+        .json()
+    )
+    assert body["hero_photo_url"] is None and body["about_text"] == ""
+    assert body["highlights"] == [] and body["gallery"] == []
+    assert body["coaches"] == [] and body["faqs"] == []
+
+
+# --- Lane B4: the anonymous trial form (the only public write) ---------------
+
+#: Exactly what a stranger may submit. Contact details are the point of the
+#: form; everything else a record could hold (the child's name, any academy,
+#: tenant, slug or internal id, staff attribution, pipeline stage) is absent,
+#: so no future field can quietly widen the public write.
+ALLOWED_TRIAL_FORM_FIELDS = {
+    "name",
+    "email",
+    "phone",
+    "player_age",
+    "class_id",
+    "message",
+    "contact_about_request",
+    "marketing_opt_in",
+    "website",  # honeypot
+}
+
+
+def test_trial_form_request_accepts_only_the_allow_listed_fields() -> None:
+    fields = {name for model in PUBLIC_REQUEST_MODELS for name in model.model_fields}
+    assert fields == ALLOWED_TRIAL_FORM_FIELDS
+    for banned in ("child_name", "academy_id", "tenant", "slug", "created_by", "pipeline_status"):
+        assert banned not in fields
+
+
+def test_trial_acknowledgement_carries_nothing_about_the_row() -> None:
+    from backend.v2.interfaces.public.dtos import PublicTrialRequestAckDto
+
+    assert set(PublicTrialRequestAckDto.model_fields) == {"state"}
+    assert PublicTrialRequestAckDto in PUBLIC_RESPONSE_MODELS
+
+
+def test_trial_request_responses_never_echo_submitted_private_values() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-trial-leak"]
+    asyncio.run(seed(db))
+    client = TestClient(build_app(db))
+    secret_email = "private.family@example.test"
+    secret_phone = "5550199887"
+    bodies = [
+        # accepted
+        {
+            "name": "Casey Example",
+            "email": secret_email,
+            "phone": secret_phone,
+            "player_age": "8",
+            "contact_about_request": True,
+        },
+        # rejected (bad class id + missing consent)
+        {
+            "name": "Casey Example",
+            "email": secret_email,
+            "phone": secret_phone,
+            "player_age": "8",
+            "class_id": "c_" + "x" * 16,
+        },
+    ]
+    for body in bodies:
+        response = client.post(
+            "/api/v2/public/trial-requests", json=body, headers={"host": RIVERSIDE_HOST}
+        )
+        assert response.status_code in {200, 422}
+        raw = response.text
+        for value in (secret_email, secret_phone, "Casey", *SECRETS.values()):
+            assert value not in raw, f"trial response echoed {value!r}"
+
+
+def test_render_settings_reach_the_public_page_as_two_plain_fields() -> None:
+    paths = _all_public_field_paths()
+    assert "PublicAcademyPageDto.page.theme" in paths
+    assert "PublicAcademyPageDto.page.seats_left_threshold" in paths
+    # Contact on the page is the support email only (owner decision 10).
+    assert not [p for p in paths if "phone" in p.lower()]

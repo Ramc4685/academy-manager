@@ -1403,3 +1403,52 @@ async def test_pause_enrollment_autopay_gateway_uses_port_method_through_real_re
     # Resume + approve wire the SAME gateway instance, so they share the fix.
     assert admin.resume_enrollment._autopay_status is admin.pause_enrollment._autopay_status
     assert admin.approve_pause_request._autopay_status is admin.pause_enrollment._autopay_status
+
+
+@pytest.mark.asyncio
+async def test_admin_dues_followup_whatsapp_uses_the_request_academys_country(
+    mongo_db, monkeypatch
+) -> None:
+    """Row 11: the bare number takes the calling code of the REQUEST academy's
+    ``country``, never the boot academy's. Only US/CA are mapped today, so a
+    test-only mapping stands in for a second country."""
+    from backend.v2.shared.comms import phone_country
+
+    monkeypatch.setitem(phone_country._CALLING_CODES, "IN", "91")
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    await mongo_db["academies"].insert_many(
+        [
+            {"academy_id": "request-acad", "display_name": "Request", "country": "IN"},
+            {"academy_id": "default-academy", "display_name": "Default", "country": "US"},
+        ]
+    )
+    await mongo_db["invoices"].insert_one(
+        {
+            "invoice_id": "inv-in",
+            "academy_id": "request-acad",
+            "parent_id": "parent-request",
+            "student_id": "student-request",
+            "period": "2026-06",
+            "status": "open",
+            "total_cents": 12000,
+            "balance_due_cents": 12000,
+            "currency": "usd",
+            "due_date": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    await mongo_db["users"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "user_id": "parent-request",
+            "display_name": "Request Parent",
+            "phone": "98765 43210",
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope("request-acad"):
+        rows = await admin.list_dues_followup()
+
+    assert rows[0]["whatsapp_url"].startswith("https://wa.me/919876543210?text=")

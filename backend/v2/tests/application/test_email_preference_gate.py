@@ -161,13 +161,17 @@ class _DigestSends:
     async def record_test_send(self, academy_id: str, coach_id: str, digest_date: str) -> Any:
         return SimpleNamespace(digest_id=f"dg-test-{coach_id}")
 
-    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
+    async def mark_sent(
+        self, academy_id: str, digest_id: str, provider_message_id: str | None
+    ) -> None:
         self.sent.append(digest_id)
 
-    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None:
+    async def mark_failed(
+        self, academy_id: str, digest_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         self.failures.append({"digest_id": digest_id, "reason": reason, "retryable": retryable})
 
-    async def mark_skipped_empty(self, digest_id: str) -> None:
+    async def mark_skipped_empty(self, academy_id: str, digest_id: str) -> None:
         self.skipped.append(digest_id)
 
     async def list_recent(self, academy_id: str, limit: int) -> list[Any]:

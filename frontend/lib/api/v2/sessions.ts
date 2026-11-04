@@ -6,6 +6,8 @@ export interface UpdateCoachAttendanceInput {
   role?: "lead" | "assistant";
   rate_override_minor?: number | null;
   note?: string;
+  /** Owner-only: force the edit through an approved or paid payout period (#821). */
+  override_reason?: string;
 }
 
 export interface UpdateSessionCoachInput {

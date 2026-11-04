@@ -166,6 +166,23 @@ class _FakeOccurrenceRoster:
         return 0
 
 
+@dataclass
+class _FakeBillingDeferrals:
+    closed: list[dict[str, Any]] = field(default_factory=list)
+
+    async def close_active_for_enrollment(
+        self, enrollment_id: str, *, closed_at: datetime, closed_by: str, reason: str
+    ) -> None:
+        self.closed.append(
+            {
+                "enrollment_id": enrollment_id,
+                "closed_at": closed_at,
+                "closed_by": closed_by,
+                "reason": reason,
+            }
+        )
+
+
 def _use_case(actions, enrollments, **kw):
     defaults = dict(
         sessions=_FakeSessions(),
@@ -434,3 +451,27 @@ async def test_resume_actions_are_left_to_the_resume_worker() -> None:
     assert result.processed == 0
     assert actions.statuses == []
     assert enrollments.rows["enr-1"].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_paused_enrollment_with_open_deferral_closes_it() -> None:
+    """Issue #782 review follow-up: an admin pause (or hold) keeps the pending
+    cancellation AND writes a ``BillingDeferral``. When this worker is the
+    transition that finally ends the row, nothing else will ever close that
+    deferral — it would sit in the admin warnings list forever for a child who
+    has left. The shared terminal bundle closes it, so this path must be wired
+    with the ``billing_deferrals`` port like every other terminal path."""
+    for status in ("paused", "held"):
+        actions = _FakeScheduledActions([_action()])
+        enrollments = _FakeEnrollments({"enr-1": _enrollment(status)})
+        deferrals = _FakeBillingDeferrals()
+
+        result = await _use_case(actions, enrollments, billing_deferrals=deferrals).execute()
+
+        assert result.succeeded == 1, status
+        assert enrollments.rows["enr-1"].status == "cancelled"
+        [closed] = deferrals.closed
+        assert closed["enrollment_id"] == "enr-1"
+        assert closed["closed_at"] == MONTH_END
+        assert closed["closed_by"] == "system"
+        assert closed["reason"] == "moving"

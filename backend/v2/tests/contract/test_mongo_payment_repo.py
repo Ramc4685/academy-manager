@@ -15,6 +15,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+    mark_monthly_invoice_key_reviewed,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 
 
@@ -1408,6 +1411,208 @@ async def test_generate_monthly_reports_failed_repair_for_conflicting_monthly_li
     )
     assert invoice_key is not None
     assert invoice_key["status"] == "repair_failed"
+
+
+async def _seed_unrepairable_monthly_key(db, acad, *, suffix: str, now: datetime) -> None:
+    """A key whose invoice can never be repaired in place (#599 prod shape).
+
+    The tuition line disagrees with the gross charge, and invoice lines are
+    written with ``$setOnInsert``, so recovery bails and marks the key
+    ``repair_failed`` on this run and on every run after it.
+    """
+    await _seed_monthly_enrollment(
+        db,
+        acad,
+        enrollment_id=f"enroll-{suffix}",
+        session_id=f"sess-{suffix}",
+        student_id=f"student-{suffix}",
+        parent_id=f"parent-{suffix}",
+    )
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": f"key-{suffix}",
+            "payment_id": f"pay-{suffix}",
+            "enrollment_id": f"enroll-{suffix}",
+            "period": "2026-06",
+            "status": "claimed",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    invoice_id = f"inv-monthly-enroll-{suffix}-2026-06"
+    await db["invoices"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": invoice_id,
+            "parent_id": f"parent-{suffix}",
+            "student_id": f"student-{suffix}",
+            "enrollment_id": f"enroll-{suffix}",
+            "period": "2026-06",
+            "status": "open",
+            "subtotal_cents": 1_000,
+            "discount_cents": 0,
+            "total_cents": 1_000,
+            "balance_due_cents": 1_000,
+            "currency": "usd",
+            "due_date": datetime(2026, 6, 30, tzinfo=UTC),
+            "delivery_status": "not_sent",
+            "sent_at": None,
+            "last_sent_at": None,
+            "finalized_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "idempotency_key": f"monthly-ledger-enroll-{suffix}-2026-06",
+        }
+    )
+    await db["invoice_lines"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": invoice_id,
+            "line_id": f"line-monthly-enroll-{suffix}-2026-06",
+            "line_type": "tuition",
+            "description": "Monthly tuition 2026-06",
+            "quantity": 1,
+            "unit_amount_cents": 1_000,
+            "amount_cents": 1_000,
+            "source_type": "payment",
+            "source_id": f"pay-{suffix}",
+            "created_at": now,
+            "idempotency_key": f"monthly-ledger-enroll-{suffix}-2026-06",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_skips_a_reviewed_repair_failed_key(db, acad) -> None:
+    """An operator-reviewed key is left alone on later runs (#599).
+
+    Keys recovered before PR #494 can never be repaired in place, so without
+    this the same four keys report ``repair_failed`` on every generation run
+    forever and the signal stops meaning anything.
+    """
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=MongoBillingLedgerRepository(db),
+    )
+    await _seed_unrepairable_monthly_key(
+        db, acad, suffix="reviewed", now=datetime(2026, 5, 20, tzinfo=UTC)
+    )
+
+    first = await repo.generate_monthly_payments("2026-06")
+    assert first.failed_repair == 1
+
+    marked = await mark_monthly_invoice_key_reviewed(
+        db,
+        academy_id=acad,
+        enrollment_id="enroll-reviewed",
+        period="2026-06",
+        reason="pre-#494 shape; invoice is correct, accepted as-is",
+        reviewed_by="ops@example.com",
+        now=datetime(2026, 5, 25, tzinfo=UTC),
+    )
+    assert marked is True
+
+    second = await repo.generate_monthly_payments("2026-06")
+
+    assert second.failed_repair == 0
+    assert second.skipped_reviewed == 1
+    invoice_key = await db["billing_invoice_keys"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-reviewed", "period": "2026-06"}
+    )
+    assert invoice_key is not None
+    assert invoice_key["status"] == "reviewed"
+    assert invoice_key["reviewed"]["reason"] == (
+        "pre-#494 shape; invoice is correct, accepted as-is"
+    )
+    assert invoice_key["reviewed"]["reviewed_by"] == "ops@example.com"
+
+
+@pytest.mark.asyncio
+async def test_generate_monthly_reflags_a_reviewed_key_when_the_invoice_changed(db, acad) -> None:
+    """A review only covers the invoice as it stood when it was made (#599).
+
+    If the invoice behind the key is touched after the review, the operator's
+    judgement no longer describes it, so the key goes back to ``repair_failed``.
+    """
+    await db["billing_invoice_keys"].create_index(
+        [("academy_id", 1), ("enrollment_id", 1), ("period", 1)],
+        unique=True,
+        name="uniq_monthly_invoice_key",
+    )
+    repo = MongoPaymentRepository(
+        db,
+        clock=lambda: datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+        ledger_repo=MongoBillingLedgerRepository(db),
+    )
+    await _seed_unrepairable_monthly_key(
+        db, acad, suffix="stale", now=datetime(2026, 5, 20, tzinfo=UTC)
+    )
+    await repo.generate_monthly_payments("2026-06")
+    await mark_monthly_invoice_key_reviewed(
+        db,
+        academy_id=acad,
+        enrollment_id="enroll-stale",
+        period="2026-06",
+        reason="accepted as-is",
+        reviewed_by="ops@example.com",
+        now=datetime(2026, 5, 25, tzinfo=UTC),
+    )
+    await db["invoices"].update_one(
+        {"academy_id": acad, "invoice_id": "inv-monthly-enroll-stale-2026-06"},
+        {"$set": {"updated_at": datetime(2026, 5, 26, tzinfo=UTC)}},
+    )
+
+    result = await repo.generate_monthly_payments("2026-06")
+
+    assert result.skipped_reviewed == 0
+    assert result.failed_repair == 1
+    invoice_key = await db["billing_invoice_keys"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-stale", "period": "2026-06"}
+    )
+    assert invoice_key is not None
+    assert invoice_key["status"] == "repair_failed"
+    assert "reviewed" not in invoice_key
+
+
+@pytest.mark.asyncio
+async def test_mark_monthly_invoice_key_reviewed_ignores_keys_that_did_not_fail(db, acad) -> None:
+    """Only a ``repair_failed`` key can be reviewed (#599)."""
+    await db["billing_invoice_keys"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_key_id": "key-complete",
+            "payment_id": "pay-complete",
+            "enrollment_id": "enroll-complete",
+            "period": "2026-06",
+            "status": "complete",
+            "created_at": datetime(2026, 5, 20, tzinfo=UTC),
+            "updated_at": datetime(2026, 5, 20, tzinfo=UTC),
+        }
+    )
+
+    marked = await mark_monthly_invoice_key_reviewed(
+        db,
+        academy_id=acad,
+        enrollment_id="enroll-complete",
+        period="2026-06",
+        reason="nothing to review",
+        reviewed_by="ops@example.com",
+        now=datetime(2026, 5, 25, tzinfo=UTC),
+    )
+
+    assert marked is False
+    invoice_key = await db["billing_invoice_keys"].find_one(
+        {"academy_id": acad, "enrollment_id": "enroll-complete", "period": "2026-06"}
+    )
+    assert invoice_key is not None
+    assert invoice_key["status"] == "complete"
 
 
 @pytest.mark.asyncio

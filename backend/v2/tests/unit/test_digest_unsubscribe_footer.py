@@ -74,4 +74,8 @@ def test_without_a_secret_the_footer_points_at_the_portal_and_carries_no_token()
     for body in (parent_body, coach_body, campaign_body):
         assert "email preferences" in body
         assert "/unsubscribe?t=" not in body
-        assert "<a " not in body.rsplit("border-top", 1)[-1]
+        # Only the notice paragraph itself: the shell footer after it carries
+        # the "Powered by CourtMastr" link, which is not an unsubscribe link.
+        start = body.index("email preferences")
+        notice = body[body.rfind("<p", 0, start) : body.index("</p>", start)]
+        assert "<a " not in notice

@@ -190,6 +190,29 @@ async def test_cancel_pending_for_enrollment_retires_both_action_types() -> None
 
 
 @pytest.mark.asyncio
+async def test_typed_cancel_retires_only_its_own_action_type() -> None:
+    """Issue #820: undoing a scheduled admin drop leaves the enrollment live,
+    so the untyped sweep would strand a paused family by cancelling their
+    pending ``resume_from_pause`` as a side effect."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["scheduled-actions-retire-typed"]
+    repo = MongoScheduledEnrollmentActionRepository(db)
+
+    with tenant_scope("acad-1"):
+        await repo.add(_action("resume", pause_request_id="pause-1"))
+        await repo.add(_cancel_action("cancel-1"))
+        count = await repo.cancel_pending_for_enrollment_and_type(
+            "enr-1",
+            action_type="cancel_at_period_end",
+            reason="admin_cancelled_scheduled_drop:admin-1",
+        )
+        due = await repo.list_due(now=datetime(2026, 12, 1, tzinfo=UTC), limit=50)
+
+    assert count == 1
+    assert [row.action_id for row in due] == ["resume"]
+
+
+@pytest.mark.asyncio
 async def test_list_due_filters_by_action_type_in_the_store() -> None:
     """Issue #675 follow-up (P1): the resume worker and the cancellation worker
     drain the SAME collection. If ``list_due`` hands a worker the other type's

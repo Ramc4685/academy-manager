@@ -41,6 +41,10 @@ class UpdateAcademyNotificationsUseCase:
                 hour = fields[hour_key]
                 if not isinstance(hour, int) or isinstance(hour, bool) or not (0 <= hour <= 23):
                     raise ValueError(f"{hour_key} must be an integer between 0 and 23")
+        for switch_key in ("win_back_enabled", "trial_nudges_enabled"):
+            switch = fields.get(switch_key)
+            if switch is not None and not isinstance(switch, bool):
+                raise ValueError(f"{switch_key} must be true or false")
         # Nest under "notifications" subdocument.
         patch = {f"notifications.{k}": v for k, v in fields.items() if v is not None}
         if not patch:

@@ -94,6 +94,11 @@ class _FakeSkillLookup:
         return self._skills.get(level_id, [])
 
 
+class _FakeCriteria:
+    async def list_for_skill(self, skill_id: str) -> list[object]:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -117,6 +122,7 @@ def _build_app(*, admin_persona: bool = True) -> FastAPI:
         skill_progress=_FakeSkillProgressRepo(),  # type: ignore[arg-type]
         recommendations=_FakeRecommendationRepo(),  # type: ignore[arg-type]
         skill_lookup=_FakeSkillLookup(),  # type: ignore[arg-type]
+        criteria=_FakeCriteria(),
     )
 
     student_progress = SimpleNamespace(

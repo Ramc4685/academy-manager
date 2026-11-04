@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -30,7 +29,8 @@ from backend.v2.interfaces.parent.views import (
     StartCheckoutResponse,
 )
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.comms.email_theme import format_money
+from backend.v2.shared.http import request_ip, require_persona
 
 router = APIRouter(tags=["parent.payments"])
 
@@ -41,6 +41,13 @@ def _quote_response(snapshot) -> EnrollmentQuoteResponse:
     total = snapshot.total_eligible_classes
     remaining = snapshot.billable_remaining_classes
     billable = billable_classes_charged(snapshot)
+    # The next monthly invoice's fee: a scheduled plan price change may move
+    # it (PR 26). Absent (a stored quote, old wiring) means the same fee.
+    next_monthly = getattr(snapshot, "next_monthly_price_cents", None)
+    if next_monthly is None:
+        next_monthly = monthly
+    # USD is locked; ungrouped ("$1500.00") is the string parents already see.
+    next_price = format_money(next_monthly, "USD", group_thousands=False)
     return EnrollmentQuoteResponse(
         snapshot_id=snapshot.snapshot_id or "",
         quote_expires_at=snapshot.expires_at,
@@ -51,8 +58,8 @@ def _quote_response(snapshot) -> EnrollmentQuoteResponse:
         billable_remaining_classes_this_month=remaining,
         formula=first_month_quote_formula(snapshot),
         message=first_month_charge_description(billable, billable_classes_denominator(snapshot)),
-        next_billing_amount_cents=monthly,
-        next_billing_message=f"Starting next month, tuition is ${monthly / 100:.2f}/month.",
+        next_billing_amount_cents=next_monthly,
+        next_billing_message=f"Starting next month, tuition is {next_price}/month.",
     )
 
 
@@ -155,43 +162,10 @@ async def checkout_status(
         checkout_session_id=checkout_session_id,
         source="parent_checkout_status",
         actor_id=claims.user_id,
-        ip=_request_ip(request),
+        ip=request_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
     return CheckoutStatusResponse(**result)
-
-
-def _request_ip(request: Request) -> str | None:
-    direct_host = request.client.host if request.client else None
-    if _trusted_proxy_host(direct_host):
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            first_hop = forwarded_for.split(",", 1)[0].strip()
-            if _valid_ip(first_hop):
-                return first_hop
-        for header_name in ("fly-client-ip", "cf-connecting-ip", "x-real-ip"):
-            candidate = request.headers.get(header_name)
-            if candidate and _valid_ip(candidate.strip()):
-                return candidate.strip()
-    return direct_host
-
-
-def _trusted_proxy_host(host: str | None) -> bool:
-    if not host:
-        return False
-    try:
-        parsed = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return parsed.is_loopback or parsed.is_private
-
-
-def _valid_ip(host: str) -> bool:
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return True
 
 
 @router.get(

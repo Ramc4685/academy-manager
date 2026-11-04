@@ -35,6 +35,9 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
 from backend.v2.contexts.enrollment.application.use_cases.promote_from_waitlist import (
     PromoteFromWaitlist,
 )
+from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import (
+    ConfirmWaitlistOffer,
+)
 from backend.v2.contexts.enrollment.domain.errors import SessionNotEnrollable
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
@@ -124,6 +127,7 @@ class RecordingScheduledActions:
 @dataclass
 class RecordingOccurrenceRoster:
     calls: list[dict[str, Any]] = field(default_factory=list)
+    session_calls: list[dict[str, Any]] = field(default_factory=list)
     fail: bool = False
 
     async def remove_future_for_student(
@@ -132,6 +136,12 @@ class RecordingOccurrenceRoster:
         if self.fail:
             raise RuntimeError("roster store down")
         self.calls.append({"session_id": session_id, "student_id": student_id, "after": after})
+        return 1
+
+    async def remove_future_for_session(self, *, session_id: str, after: datetime) -> int:
+        if self.fail:
+            raise RuntimeError("roster store down")
+        self.session_calls.append({"session_id": session_id, "after": after})
         return 1
 
 
@@ -567,6 +577,36 @@ async def test_cancel_session_sweeps_paused_rows_without_double_releasing() -> N
 
 
 @pytest.mark.asyncio
+async def test_cancel_session_sweeps_one_time_rows_for_non_enrolled_students() -> None:
+    """Issue #694: make-up/trial students hold no enrollment on the session,
+    so the per-enrolled-student sweep never reaches their one-time roster
+    rows. Cancelling the whole session must sweep those too."""
+    enrollments = DatedEnrollments(rows={"enr-1": _enrollment()})
+    sessions = FakeSessionWriter(reserved={"sess-1": 1})
+    sync = RecordingBillingSync()
+    roster = RecordingRoster()
+    cleanup = RecordingOccurrenceRoster()
+    outbox = FakeOutbox()
+    await CancelSession(
+        sessions=sessions,
+        enrollments_query=FakeQuery(list(enrollments.rows.values())),
+        enrollments_writer=enrollments,
+        outbox=outbox,
+        academy_id="acad",
+        roster_notifier=roster,
+        billing_sync=sync,
+        occurrence_roster=cleanup,
+        clock=_now,
+    ).execute(CancelSessionCommand(session_id="sess-1"))
+
+    # The per-enrolled-student sweep still runs for enr-1's own rows...
+    assert cleanup.calls == [{"session_id": "sess-1", "student_id": "stu-1", "after": _now()}]
+    # ...and a whole-session sweep also runs, catching make-up/trial rows
+    # for students who never held an enrollment on this session.
+    assert cleanup.session_calls == [{"session_id": "sess-1", "after": _now()}]
+
+
+@pytest.mark.asyncio
 async def test_withdraw_releases_seat_drops_makeups_and_signals_the_waitlist() -> None:
     """Item 3 + 7: a withdrawn student no longer holds a seat, loses future
     make-up rows, and the seat is offered to the waitlist."""
@@ -689,7 +729,7 @@ async def test_pause_promotes_the_family_that_was_already_waiting_not_the_paused
     assert [e.student_id for e in waiting] == ["stu-9", "stu-1"]
 
     # What the on_enrollment_cancelled handler does with that signal:
-    promoted = await PromoteFromWaitlist(
+    offered = await PromoteFromWaitlist(
         waitlist=waitlist,
         sessions=sessions,
         enrollments=enrollments,
@@ -697,10 +737,21 @@ async def test_pause_promotes_the_family_that_was_already_waiting_not_the_paused
         academy_id=lambda: "acad",
         clock=_now,
     ).execute("sess-1")
-    assert promoted == "wl-other"
+    assert offered == "wl-other"
     assert enrollments.rows["enr-1"].status == "paused"
-    assert {e.student_id for e in enrollments.rows.values() if e.status == "active"} == {"stu-9"}
+    # #828: the seat is offered to the family that waited longest and held for
+    # them — the paused student is still behind them in the queue either way.
+    assert next(e for e in waitlist.entries if e.student_id == "stu-9").status == "offered"
     assert next(e for e in waitlist.entries if e.student_id == "stu-1").status == "waiting"
+
+    await ConfirmWaitlistOffer(
+        waitlist=waitlist,
+        enrollments=enrollments,
+        outbox=outbox,
+        academy_id=lambda: "acad",
+        clock=_now,
+    ).execute("wl-other", parent_id="parent-stu-9")
+    assert {e.student_id for e in enrollments.rows.values() if e.status == "active"} == {"stu-9"}
 
 
 @pytest.mark.asyncio

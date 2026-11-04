@@ -17,8 +17,11 @@
           "attendance_status": null,
           "expected_absence": false,
           "entry_source": "enrollment",
+          "trial_request_id": null,
+          "trial_outcome": null,
           "pending_cancellation_at": null,
-          "hold_return_on": null
+          "hold_return_on": null,
+          "payment_due_cents": null
         },
         {
           "student_id": "st2",
@@ -27,12 +30,17 @@
           "attendance_status": null,
           "expected_absence": false,
           "entry_source": "enrollment",
+          "trial_request_id": null,
+          "trial_outcome": null,
           "pending_cancellation_at": null,
-          "hold_return_on": null
+          "hold_return_on": null,
+          "payment_due_cents": null
         }
       ],
       "coach_id": "coach-1",
-      "coach_name": null
+      "coach_name": null,
+      "status": "scheduled",
+      "cancellation_reason": null
     },
     {
       "session_id": "s-today-2",
@@ -44,7 +52,9 @@
       "end_at": "2026-05-16T19:30:00Z",
       "roster": [],
       "coach_id": "coach-1",
-      "coach_name": null
+      "coach_name": null,
+      "status": "scheduled",
+      "cancellation_reason": null
     }
   ]
 }

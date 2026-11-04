@@ -31,6 +31,21 @@ export interface QueueMarkInput {
   student_id: string;
   status: AttendanceStatus;
   client_app_version: string;
+  /**
+   * Issue #841: what this mark is ABOUT, in words the coach recognises. Kept
+   * off the payload so it is never sent to the server; the Needs-review tray
+   * reads it so a failed mark reads "Marked Jane Doe present in U10 Tuesday"
+   * instead of "Mark present for stu-204 in sess-101".
+   */
+  student_full_name?: string;
+  session_title?: string;
+}
+
+function labelsOf(input: QueueMarkInput): QueuedMutation["labels"] {
+  const labels: NonNullable<QueuedMutation["labels"]> = {};
+  if (input.student_full_name) labels.student_full_name = input.student_full_name;
+  if (input.session_title) labels.session_title = input.session_title;
+  return Object.keys(labels).length > 0 ? labels : undefined;
 }
 
 export interface QueuedMark {
@@ -65,6 +80,7 @@ export async function queueMark(input: QueueMarkInput): Promise<QueuedMutation> 
     // Provably un-sent: safe to rewrite in place under the same id.
     const rewritten: QueuedMutation = {
       ...existing,
+      labels: labelsOf(input) ?? existing.labels,
       payload: {
         ...existing.payload,
         session_id: input.session_id,
@@ -92,7 +108,12 @@ export async function queueMark(input: QueueMarkInput): Promise<QueuedMutation> 
     marked_at_client,
     client_app_version: input.client_app_version,
   };
-  return enqueue({ mutation_id, endpoint: "/coach/attendance", payload });
+  return enqueue({
+    mutation_id,
+    endpoint: "/coach/attendance",
+    payload,
+    labels: labelsOf(input),
+  });
 }
 
 /** Marks still waiting on the device for one occurrence, keyed by student. */

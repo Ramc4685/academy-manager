@@ -567,3 +567,159 @@ def test_apply_settlement_keeps_real_stripe_method_over_older_settlement() -> No
     )
     assert row["payment_method"] == "stripe"
     assert row["paid_at"] == datetime(2026, 9, 3, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_ledger_row_resolves_student_from_its_invoice_allocation(mongo_db) -> None:
+    """#618: a payment allocated to an invoice the list did not fetch still names the student.
+
+    A voided/waived invoice is excluded from ``invoice_rows``, so its manual or
+    Stripe-checkout payment survives as a ledger row — and used to render as
+    "Unassigned" because enrichment only ever ran over the invoice rows.
+    """
+    await _seed_parents(mongo_db)
+    await mongo_db["invoices"].insert_one(
+        {
+            **_invoice(
+                "inv-void",
+                parent_id="parent-1",
+                total_cents=6000,
+                created_at=datetime(2026, 9, 1, tzinfo=UTC),
+            ),
+            "status": "void",
+            "student_id": "stu-1",
+        }
+    )
+    await mongo_db["students"].insert_one(
+        {
+            "academy_id": ACADEMY,
+            "student_id": "stu-1",
+            "parent_id": "parent-1",
+            "full_name": "Mia Rao",
+        }
+    )
+    ledger = _ledger_payment(
+        "pay-manual",
+        parent_id="parent-1",
+        amount_cents=6000,
+        paid_at=datetime(2026, 9, 3, tzinfo=UTC),
+    )
+    ledger["payment_method"] = "zelle"
+    await mongo_db["ledger_payments"].insert_one(ledger)
+    await mongo_db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-manual", "invoice_id": "inv-void"}
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    assert [r["payment_id"] for r in rows] == ["pay-manual"]
+    assert rows[0]["student_name"] == "Mia Rao"
+
+
+@pytest.mark.asyncio
+async def test_invoiceless_ledger_row_resolves_the_parents_only_child(mongo_db) -> None:
+    """#618: a registration checkout has no invoice; an only child is unambiguous."""
+    await _seed_parents(mongo_db)
+    await mongo_db["students"].insert_one(
+        {
+            "academy_id": ACADEMY,
+            "student_id": "stu-solo",
+            "parent_id": "parent-1",
+            "full_name": "Mia Rao",
+        }
+    )
+    ledger = _ledger_payment(
+        "pay-reg",
+        parent_id="parent-1",
+        amount_cents=7000,
+        paid_at=datetime(2026, 9, 1, tzinfo=UTC),
+        stripe_payment_intent_id="pi_reg_618",
+    )
+    await mongo_db["ledger_payments"].insert_one(ledger)
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    assert rows[0]["student_name"] == "Mia Rao"
+
+
+@pytest.mark.asyncio
+async def test_invoiceless_ledger_row_for_multi_child_family_is_labelled_family_payment(
+    mongo_db,
+) -> None:
+    """#618: two children means no single attribution — name the family, not "Unassigned"."""
+    await _seed_parents(mongo_db)
+    await mongo_db["students"].insert_many(
+        [
+            {
+                "academy_id": ACADEMY,
+                "student_id": "stu-a",
+                "parent_id": "parent-1",
+                "full_name": "Mia Rao",
+            },
+            {
+                "academy_id": ACADEMY,
+                "student_id": "stu-b",
+                "parent_id": "parent-1",
+                "full_name": "Nik Rao",
+            },
+        ]
+    )
+    ledger = _ledger_payment(
+        "pay-family",
+        parent_id="parent-1",
+        amount_cents=12000,
+        paid_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    ledger["payment_method"] = "cash"
+    await mongo_db["ledger_payments"].insert_one(ledger)
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    assert rows[0]["student_name"] == "Asha Rao (family payment)"
+
+
+@pytest.mark.asyncio
+async def test_student_name_resolution_never_overwrites_a_legacy_row(mongo_db) -> None:
+    """#618: legacy `payments` rows already carry a resolved name; leave them alone."""
+    await _seed_parents(mongo_db)
+    await mongo_db["students"].insert_many(
+        [
+            {
+                "academy_id": ACADEMY,
+                "student_id": "stu-legacy",
+                "parent_id": "parent-1",
+                "full_name": "Mia Rao",
+            },
+            {
+                "academy_id": ACADEMY,
+                "student_id": "stu-other",
+                "parent_id": "parent-1",
+                "full_name": "Nik Rao",
+            },
+        ]
+    )
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "pay-legacy",
+            "academy_id": ACADEMY,
+            "parent_id": "parent-1",
+            "student_id": "stu-legacy",
+            "amount_cents": 5000,
+            "currency": "usd",
+            "status": "succeeded",
+            "created_at": datetime(2026, 9, 4, tzinfo=UTC),
+        }
+    )
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = await admin.list_payments_recent()
+
+    legacy_row = next(r for r in rows if r["payment_id"] == "pay-legacy")
+    assert legacy_row["student_name"] == "Mia Rao"

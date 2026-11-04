@@ -52,14 +52,19 @@ class _RecordingStripe:
     def __init__(self) -> None:
         self.created: list[dict[str, Any]] = []
         self.expired: list[str] = []
+        self.expired_on: list[str | None] = []
 
     async def create_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
         self.created.append(kwargs)
         checkout_id = f"cs_new_{len(self.created)}"
         return checkout_id, f"https://checkout.stripe.test/{checkout_id}"
 
-    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+    async def expire_checkout_session(
+        self, checkout_session_id: str, *, stripe_account: str | None = None
+    ) -> None:
+        # A direct-charge session is expired on the academy's account.
         self.expired.append(checkout_session_id)
+        self.expired_on.append(stripe_account)
 
 
 def _pinned_quote_clock() -> datetime:
@@ -170,9 +175,12 @@ def seeded_db(allow_app_origin):
 async def _seed(db: Any, quote_now: datetime, *, status: str, **app_extra: Any) -> None:
     await db["onboarding_applications"].insert_one(_application_doc(status, **app_extra))
     await db["sessions"].insert_one(_session_doc(quote_now))
-    account = ConnectedAccount.new(academy_id="acad", stripe_account_id="acct_ready").with_status(
-        status="active", charges_enabled=True
-    )
+    account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id="acad",
+        stripe_account_id="acct_ready",
+    ).with_status(status="active", charges_enabled=True)
     await db["academy_connected_accounts"].insert_one(account.model_dump(mode="python"))
 
 
@@ -226,6 +234,7 @@ async def test_restarting_checkout_over_http_repoints_the_application(seeded_db)
     assert app_doc["stripe_checkout_session_id"] == "cs_new_1"
     # ...and only one payable session may remain.
     assert stripe.expired == ["cs_first"]
+    assert stripe.expired_on == ["acct_ready"]
     first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
     assert first_payment["status"] == "expired"
 
@@ -301,6 +310,7 @@ async def test_wizard_start_resumes_the_abandoned_checkout_over_http(seeded_db) 
     assert body["parent_profile"]["phone"] == "+1 555 0100"
     assert body["selected_session_id"] == "sess-1"
     assert stripe.expired == ["cs_first"]
+    assert stripe.expired_on == ["acct_ready"]
     first_payment = await db["ledger_payments"].find_one({"payment_id": "pay-first"})
     assert first_payment["status"] == "expired"
     assert await db["onboarding_applications"].count_documents({}) == 1

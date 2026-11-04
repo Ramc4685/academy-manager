@@ -22,8 +22,6 @@ from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from bson import ObjectId
-
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
@@ -34,26 +32,34 @@ from backend.v2.contexts.billing.application.family_billing import (
     CreditFacts,
     CustomerFacts,
     DunningFacts,
+    EmailDeliveryFacts,
     EnrollmentFacts,
     EventFacts,
     FamilyBillingUnavailable,
     FamilyFacts,
     InvoiceFacts,
+    ManualPaymentFacts,
     ParentFacts,
     StudentFacts,
     build_family_billing_view,
 )
+from backend.v2.contexts.billing.domain.charge_route import decide_charge_route
 from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
     exclude_non_charge_attempts,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import session_amount_cents
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
 
 INVOICE_CAP = 200
+#: Fields a student or invoice may store its parent reference under.
+_STUDENT_PARENT_FIELDS = ("parent_id", "parent_user_id")
+_INVOICE_PARENT_FIELDS = ("parent_id", "parent_user_id")
 _UTC_NAME = "UTC"
 _WEEKDAY_SHORT = {
     "monday": "Mon",
@@ -157,6 +163,7 @@ class MongoFamilyBillingReadModel:
         credits: Any,
         users: Any,
         audit: Any,
+        suppressions: Any = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._db = db
@@ -167,6 +174,11 @@ class MongoFamilyBillingReadModel:
         self._credits = credits
         self._users = users
         self._audit = audit
+        #: #778: the suppression list (#556) knows the address is dead. Optional
+        #: so the many test constructions of this read model keep working, and
+        #: read through ``_secondary`` so a lookup failure is a warning, never
+        #: a 503 on the whole family page.
+        self._suppressions = suppressions
         self._clock = clock
 
     # ------------------------------------------------------------------ entry
@@ -179,11 +191,12 @@ class MongoFamilyBillingReadModel:
         warnings: list[str] = []
 
         try:
-            parent = await self._parent(academy_id, parent_id)
-            if parent is None:
+            resolved = await self._parent(academy_id, parent_id)
+            if resolved is None:
                 return None
-            student_docs = await self._students(academy_id, parent_id)
-            invoice_docs = await self._invoices(academy_id, parent_id)
+            parent, aliases = resolved
+            student_docs = await self._students(academy_id, aliases)
+            invoice_docs = await self._invoices(academy_id, aliases)
         except Exception as exc:  # primary sources
             raise FamilyBillingUnavailable(str(exc)) from exc
 
@@ -224,10 +237,13 @@ class MongoFamilyBillingReadModel:
         events = await self._secondary(
             "events_unavailable", warnings, self._events(academy_id, enrollment_ids), []
         )
-        available_credit = await self._secondary(
-            "credits_unavailable", warnings, self._credits.balance_for_parent(parent_id), 0
+        manual_payments = await self._secondary(
+            "payments_unavailable", warnings, self._manual_payments(academy_id, payment_ids), []
         )
-        customer = await self._customer(academy_id, parent_id, warnings)
+        available_credit = await self._secondary(
+            "credits_unavailable", warnings, self._available_credit(aliases), 0
+        )
+        customer = await self._customer(academy_id, parent_id, aliases, warnings)
         connected_ready = await self._connected_account_ready()
 
         name_by_student = {s["student_id"]: _student_name(s) for s in student_docs}
@@ -269,6 +285,7 @@ class MongoFamilyBillingReadModel:
             )
             for inv in invoice_docs
         )
+        email_delivery = await self._email_delivery(parent.email, warnings)
         facts = FamilyFacts(
             parent=parent,
             students=students,
@@ -306,6 +323,8 @@ class MongoFamilyBillingReadModel:
             available_credit_cents=_int(available_credit),
             connected_account_ready=connected_ready,
             warnings=tuple(dict.fromkeys(warnings)),
+            email_delivery=email_delivery,
+            manual_payments=tuple(manual_payments),
         )
         if warnings:
             log.warning("family billing read model: %s for parent %s", warnings, parent_id)
@@ -335,6 +354,7 @@ class MongoFamilyBillingReadModel:
             autopay_status=_opt_str(billing.get("autopay_enrollment_status")),
             recurring_discount=discount,
             resume_on=_to_date((deferral or {}).get("resume_on")),
+            class_fee_cents=session_amount_cents(session) if session else None,
         )
 
     @staticmethod
@@ -367,10 +387,36 @@ class MongoFamilyBillingReadModel:
             autopay_status=autopay_status,
             allocations=tuple(allocations),
             credits=tuple(credits),
+            refunded_cents=max(_int(inv.get("refunded_cents")), 0),
         )
 
     # ------------------------------------------------------------------ queries
     # Every query carries ``academy_id`` except ``users`` (global, keyed by user id).
+
+    async def _email_delivery(
+        self, email: str | None, warnings: list[str]
+    ) -> EmailDeliveryFacts | None:
+        """Translate one suppression into billing's own flat shape (#778).
+
+        The billing context never imports communications, so the provider's
+        ``EmailSuppression`` is read here and only three plain fields cross.
+        """
+        if not email or self._suppressions is None:
+            return None
+        record = await self._secondary(
+            "email_delivery_unavailable",
+            warnings,
+            self._suppressions.get_active(email),
+            None,
+        )
+        if record is None:
+            return None
+        reason = getattr(record, "reason", None)
+        return EmailDeliveryFacts(
+            email=email,
+            reason=getattr(reason, "value", None) or (str(reason) if reason else None),
+            since=_to_datetime(getattr(record, "first_seen_at", None)),
+        )
 
     async def _secondary(
         self, warning: str, warnings: list[str], coro: Awaitable[Any], fallback: Any
@@ -396,45 +442,53 @@ class MongoFamilyBillingReadModel:
             return _UTC_NAME
         return name
 
-    async def _parent(self, academy_id: str, parent_id: str) -> ParentFacts | None:
-        raw_ids: list[Any] = [parent_id]
-        if ObjectId.is_valid(parent_id):
-            raw_ids.append(ObjectId(parent_id))
-        doc = await self._db["users"].find_one(
-            {"$or": [{"user_id": parent_id}, {"auth_uid": parent_id}, {"_id": {"$in": raw_ids}}]},
-            {
-                "user_id": 1,
-                "display_name": 1,
-                "name": 1,
-                "email": 1,
-                "phone": 1,
-                "roles": 1,
-                "role": 1,
-                "academy_id": 1,
-            },
-        )
-        if doc is None:
+    async def _parent(
+        self, academy_id: str, parent_id: str
+    ) -> tuple[ParentFacts, tuple[str, ...]] | None:
+        """The parent and every id their family's rows may be stored under.
+
+        People CRM spec §1: a student's ``parent_id`` may hold the roster
+        ``user_id``, the ``firebase_uid``, an ``auth_uid`` or the users
+        ``_id``. The users repository resolves them with one equality lookup
+        per field (never an ``$or`` across fields, #878/#894); every tenant
+        read below then asks one equality question per alias and merges.
+        """
+        found = (await self._users.resolve_parent_aliases([parent_id])).get(parent_id)
+        if found is None:
             return None
+        # The requested id first, then the canonical one, then the rest in a
+        # stable order: reads merge in this order, so results are deterministic.
+        aliases = tuple(dict.fromkeys([parent_id, found.canonical_id, *sorted(found.aliases)]))
         # A parent belongs to this tenant when they have a student here or a
         # membership here; the students query below is tenant-scoped, so a
         # user with no student AND no membership in this academy is a 404.
-        if not await self._belongs_to_tenant(academy_id, parent_id):
+        if not await self._belongs_to_tenant(academy_id, aliases):
             return None
         # ...and they must actually BE a parent (spec §3: "a user who is not a
         # parent" is a 404). Membership alone admits coaches, admins and owners,
         # whose PII and family actions this page must never expose. A user with
         # a student in this tenant counts even if the role is missing (legacy
         # rows), and a coach who is also a parent keeps access via the role.
-        if not await self._is_parent(academy_id, parent_id, doc):
+        if not await self._is_parent(
+            academy_id, aliases, home_academy_id=found.home_academy_id, roles=found.roles
+        ):
             return None
-        return ParentFacts(
+        parent = ParentFacts(
             parent_id=parent_id,
-            name=_opt_str(doc.get("display_name")) or _opt_str(doc.get("name")),
-            email=_opt_str(doc.get("email")),
-            phone=_opt_str(doc.get("phone")),
+            name=found.display_name,
+            email=found.email,
+            phone=found.phone,
         )
+        return parent, aliases
 
-    async def _is_parent(self, academy_id: str, parent_id: str, doc: dict[str, Any]) -> bool:
+    async def _is_parent(
+        self,
+        academy_id: str,
+        aliases: Sequence[str],
+        *,
+        home_academy_id: str | None,
+        roles: Sequence[str],
+    ) -> bool:
         """Is this user a parent *of this academy*?
 
         The role must come from the membership in the request tenant, never from
@@ -442,62 +496,74 @@ class MongoFamilyBillingReadModel:
         and coaches at academy B would otherwise pass B's gate on A's role, and
         B's admin would see their contact details and family actions.
         """
-        if await self._db["academy_memberships"].find_one(
-            {"academy_id": academy_id, "user_id": parent_id, "roles": "parent"}, {"_id": 1}
-        ):
-            return True
+        for alias in aliases:
+            if await self._db["academy_memberships"].find_one(
+                {"academy_id": academy_id, "user_id": alias, "roles": "parent"}, {"_id": 1}
+            ):
+                return True
         # A student of THIS academy is proof regardless of how roles are recorded.
-        if await self._db["students"].find_one(
-            {"academy_id": academy_id, "parent_id": parent_id}, {"_id": 1}
-        ):
+        if await self._has_student(academy_id, aliases):
             return True
         # Legacy fallback for rows predating per-academy membership roles. Gated
         # on the user's OWN academy stamp, so it stays tenant-scoped: a coach of
         # this academy whose home academy is another one cannot pass on a parent
         # role earned there.
-        if _opt_str(doc.get("academy_id")) != academy_id:
+        if home_academy_id != academy_id:
             return False
-        roles: list[str] = []
-        raw_roles = doc.get("roles")
-        if isinstance(raw_roles, str):
-            roles.append(raw_roles)
-        elif isinstance(raw_roles, list):
-            roles.extend(str(r) for r in raw_roles)
-        single = _opt_str(doc.get("role"))
-        if single:
-            roles.append(single)
         return "parent" in roles
 
-    async def _belongs_to_tenant(self, academy_id: str, parent_id: str) -> bool:
-        if await self._db["students"].find_one(
-            {"academy_id": academy_id, "parent_id": parent_id}, {"_id": 1}
-        ):
-            return True
-        if await self._db["academy_memberships"].find_one(
-            {"academy_id": academy_id, "user_id": parent_id}, {"_id": 1}
-        ):
-            return True
-        return bool(
-            await self._db["users"].find_one(
-                {"user_id": parent_id, "academy_id": academy_id}, {"_id": 1}
-            )
-        )
+    async def _has_student(self, academy_id: str, aliases: Sequence[str]) -> bool:
+        for alias in aliases:
+            for field_name in _STUDENT_PARENT_FIELDS:
+                if await self._db["students"].find_one(
+                    {"academy_id": academy_id, field_name: alias}, {"_id": 1}
+                ):
+                    return True
+        return False
 
-    async def _students(self, academy_id: str, parent_id: str) -> list[dict[str, Any]]:
-        cursor = self._db["students"].find(
-            {"academy_id": academy_id, "parent_id": parent_id, "is_deleted": {"$ne": True}},
-            {
-                "_id": 0,
-                "student_id": 1,
-                "full_name": 1,
-                "first_name": 1,
-                "last_name": 1,
-                "status": 1,
-            },
-        )
-        docs = [doc async for doc in cursor if doc.get("student_id")]
-        for doc in docs:
-            doc["student_id"] = str(doc["student_id"])
+    async def _belongs_to_tenant(self, academy_id: str, aliases: Sequence[str]) -> bool:
+        if await self._has_student(academy_id, aliases):
+            return True
+        for alias in aliases:
+            if await self._db["academy_memberships"].find_one(
+                {"academy_id": academy_id, "user_id": alias}, {"_id": 1}
+            ):
+                return True
+        for alias in aliases:
+            if await self._db["users"].find_one(
+                {"user_id": alias, "academy_id": academy_id}, {"_id": 1}
+            ):
+                return True
+        return False
+
+    async def _available_credit(self, aliases: Sequence[str]) -> int:
+        """Credit is keyed by whichever parent reference wrote it; sum them all."""
+        total = 0
+        for alias in aliases:
+            total += _int(await self._credits.balance_for_parent(alias))
+        return total
+
+    async def _students(self, academy_id: str, aliases: Sequence[str]) -> list[dict[str, Any]]:
+        """The family's children, stored under any alias (one equality read each)."""
+        by_id: dict[str, dict[str, Any]] = {}
+        for alias in aliases:
+            for field_name in _STUDENT_PARENT_FIELDS:
+                cursor = self._db["students"].find(
+                    {"academy_id": academy_id, field_name: alias, "is_deleted": {"$ne": True}},
+                    {
+                        "_id": 0,
+                        "student_id": 1,
+                        "full_name": 1,
+                        "first_name": 1,
+                        "last_name": 1,
+                        "status": 1,
+                    },
+                )
+                async for doc in cursor:
+                    if doc.get("student_id"):
+                        doc["student_id"] = str(doc["student_id"])
+                        by_id.setdefault(doc["student_id"], doc)
+        docs = list(by_id.values())
         docs.sort(key=lambda d: (_student_name(d), d["student_id"]))
         return docs
 
@@ -528,6 +594,10 @@ class MongoFamilyBillingReadModel:
                 "days_of_week": 1,
                 "start_time": 1,
                 "monthly_price_cents": 1,
+                # The class fee as billed (PR 11b display fix): the generator
+                # reads amount_cents first, then the legacy fields.
+                "amount_cents": 1,
+                "monthly_price": 1,
             },
         )
         return {str(doc["session_id"]): doc async for doc in cursor}
@@ -590,13 +660,27 @@ class MongoFamilyBillingReadModel:
         )
         return {str(doc["enrollment_id"]): doc async for doc in cursor}
 
-    async def _invoices(self, academy_id: str, parent_id: str) -> list[dict[str, Any]]:
-        cursor = self._db["invoices"].find(
-            {
-                "academy_id": academy_id,
-                "$or": [{"parent_id": parent_id}, {"parent_user_id": parent_id}],
-                "is_deleted": {"$ne": True},
-            },
+    async def _invoices(self, academy_id: str, aliases: Sequence[str]) -> list[dict[str, Any]]:
+        """The family's invoices under any alias and either parent field.
+
+        People CRM spec §1: this used to be ONE query with
+        ``$or: [{parent_id}, {parent_user_id}]`` on the exact id, the #878/#894
+        shape MongoDB 8.0 scans, and it missed every invoice stored under
+        another alias. Now one equality read per (alias, field), merged by
+        ``invoice_id``.
+        """
+        by_id: dict[str, dict[str, Any]] = {}
+        for alias in aliases:
+            for field_name in _INVOICE_PARENT_FIELDS:
+                async for doc in self._invoice_cursor(academy_id, field_name, alias):
+                    if doc.get("invoice_id"):
+                        doc["invoice_id"] = str(doc["invoice_id"])
+                        by_id.setdefault(doc["invoice_id"], doc)
+        return self._cap_invoices(list(by_id.values()))
+
+    def _invoice_cursor(self, academy_id: str, field_name: str, alias: str) -> Any:
+        return self._db["invoices"].find(
+            {"academy_id": academy_id, field_name: alias, "is_deleted": {"$ne": True}},
             {
                 "_id": 0,
                 "invoice_id": 1,
@@ -607,6 +691,7 @@ class MongoFamilyBillingReadModel:
                 "status": 1,
                 "total_cents": 1,
                 "balance_due_cents": 1,
+                "refunded_cents": 1,
                 "due_date": 1,
                 "created_at": 1,
                 "paid_at": 1,
@@ -617,9 +702,9 @@ class MongoFamilyBillingReadModel:
                 "last_sent_at": 1,
             },
         )
-        docs = [doc async for doc in cursor if doc.get("invoice_id")]
-        for doc in docs:
-            doc["invoice_id"] = str(doc["invoice_id"])
+
+    @staticmethod
+    def _cap_invoices(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Period desc, then created desc; ties keep invoice_id ascending (reverse
         # sort is stable, so the ascending pre-sort survives).
         docs.sort(key=lambda d: d["invoice_id"])
@@ -664,9 +749,11 @@ class MongoFamilyBillingReadModel:
                     "paid_at": 1,
                     "created_at": 1,
                     "stripe_payment_intent_id": 1,
+                    "refunded_cents": 1,
                 },
             )
             payments = {str(doc["payment_id"]): doc async for doc in pay_cursor}
+        refunded_by_payment = await self._payment_refunds(academy_id, payment_ids, payments)
         out: dict[str, list[AllocationFacts]] = {}
         for a in allocations:
             payment = payments.get(str(a["payment_id"]), {})
@@ -678,9 +765,125 @@ class MongoFamilyBillingReadModel:
                     paid_at=_to_datetime(payment.get("paid_at"))
                     or _to_datetime(payment.get("created_at")),
                     stripe_payment_intent_id=_opt_str(payment.get("stripe_payment_intent_id")),
+                    payment_refunded_cents=refunded_by_payment.get(str(a["payment_id"]), 0),
                 )
             )
         return out, payment_ids
+
+    async def _manual_payments(
+        self, academy_id: str, payment_ids: list[str]
+    ) -> list[ManualPaymentFacts]:
+        """Live non-Stripe payments behind this family's invoices, newest first.
+
+        Each one's FULL allocation set and the OVERPAYMENT credit it minted are
+        read, not just the rows on this family's invoices, because voiding it
+        reverses all of them.
+        """
+        if not payment_ids:
+            return []
+        payments = [
+            doc
+            async for doc in self._db["ledger_payments"].find(
+                {
+                    "academy_id": academy_id,
+                    "payment_id": {"$in": payment_ids},
+                    "status": {"$ne": "voided"},
+                },
+                {"_id": 0},
+            )
+            # Stripe-linked money is refunded, never voided (domain void_payment).
+            if not doc.get("stripe_payment_intent_id") and not doc.get("stripe_invoice_id")
+        ]
+        if not payments:
+            return []
+        allocations = [
+            doc
+            async for doc in self._db["payment_allocations"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "payment_id": {"$in": [str(p["payment_id"]) for p in payments]},
+                },
+                {
+                    "_id": 0,
+                    "allocation_id": 1,
+                    "payment_id": 1,
+                    "invoice_id": 1,
+                    "amount_cents": 1,
+                    "idempotency_key": 1,
+                    "created_at": 1,
+                },
+            )
+            .sort("created_at", 1)
+        ]
+        payment_by_allocation = {str(a["allocation_id"]): str(a["payment_id"]) for a in allocations}
+        credit: dict[str, int] = {}
+        spent: dict[str, int] = {}
+        async for doc in self._db["account_credit_ledger"].find(
+            {
+                "academy_id": academy_id,
+                "source_type": "OVERPAYMENT",
+                "source_id": {"$in": list(payment_by_allocation)},
+                "status": {"$ne": "VOIDED"},
+            },
+            {"_id": 0, "source_id": 1, "amount_cents": 1, "remaining_amount_cents": 1},
+        ):
+            pid = payment_by_allocation[str(doc["source_id"])]
+            amount = _int(doc.get("amount_cents"))
+            credit[pid] = credit.get(pid, 0) + amount
+            spent[pid] = spent.get(pid, 0) + max(
+                amount - _int(doc.get("remaining_amount_cents")), 0
+            )
+        out = []
+        for p in payments:
+            pid = str(p["payment_id"])
+            mine = [a for a in allocations if str(a["payment_id"]) == pid]
+            out.append(
+                ManualPaymentFacts(
+                    payment_id=pid,
+                    method=_opt_str(p.get("payment_method")),
+                    amount_cents=_int(p.get("amount_cents")),
+                    paid_at=_to_datetime(p.get("paid_at")) or _to_datetime(p.get("created_at")),
+                    allocations=tuple(
+                        (str(a["invoice_id"]), _int(a.get("amount_cents")))
+                        for a in mine
+                        if _int(a.get("amount_cents")) > 0
+                    ),
+                    credit_cents=credit.get(pid, 0),
+                    credit_spent_cents=spent.get(pid, 0),
+                    has_legacy_allocation=any(not a.get("idempotency_key") for a in mine),
+                )
+            )
+        out.sort(key=lambda f: f.paid_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return out
+
+    async def _payment_refunds(
+        self,
+        academy_id: str,
+        payment_ids: list[str],
+        ledger_payments: dict[str, dict[str, Any]],
+    ) -> dict[str, int]:
+        """Each payment's cumulative refund (#929), from BOTH payment stores.
+
+        The admin refund route records the payment side on the legacy
+        ``payments`` row (``IssueRefund``); a Stripe-dashboard refund of a
+        ledger-only charge lands on ``ledger_payments`` (webhook). Both hold the
+        same Stripe payment intent's running total, so the larger one wins —
+        they are never added.
+        """
+        out = {pid: max(_int(doc.get("refunded_cents")), 0) for pid, doc in ledger_payments.items()}
+        if not payment_ids:
+            return out
+        cursor = self._db["payments"].find(
+            {"academy_id": academy_id, "payment_id": {"$in": payment_ids}},
+            {"_id": 0, "payment_id": 1, "refunded_cents": 1, "refunded_amount": 1},
+        )
+        async for doc in cursor:
+            pid = str(doc.get("payment_id") or "")
+            if pid:
+                legacy = max(MongoPaymentRepository._refunded_cents(doc), 0)
+                out[pid] = max(out.get(pid, 0), legacy)
+        return out
 
     async def _credit_applications(
         self, academy_id: str, invoice_ids: list[str]
@@ -779,7 +982,7 @@ class MongoFamilyBillingReadModel:
         return [doc async for doc in cursor]
 
     async def _customer(
-        self, academy_id: str, parent_id: str, warnings: list[str]
+        self, academy_id: str, parent_id: str, aliases: Sequence[str], warnings: list[str]
     ) -> CustomerFacts:
         has_login = False
         try:
@@ -789,9 +992,13 @@ class MongoFamilyBillingReadModel:
         except Exception:
             log.warning("family billing read model: login lookup failed", exc_info=True)
         try:
-            doc = await self._db["parent_billing_customers"].find_one(
-                {"academy_id": academy_id, "parent_id": parent_id}
-            )
+            doc = None
+            for alias in aliases:
+                doc = await self._db["parent_billing_customers"].find_one(
+                    {"academy_id": academy_id, "parent_id": alias}
+                )
+                if doc is not None:
+                    break
         except Exception:
             log.warning("family billing read model: customer lookup failed", exc_info=True)
             warnings.append("customer_unavailable")
@@ -826,5 +1033,8 @@ class MongoFamilyBillingReadModel:
         except Exception:
             log.warning("family billing read model: connected-account lookup failed", exc_info=True)
             return None
-        ready = account is not None and account.is_ready_for_charges()
-        return bool(ready or getattr(settings, "allow_platform_charge_fallback", False))
+        # Same routing rule the charge paths use (domain/charge_route.py).
+        return decide_charge_route(
+            is_house_academy=bool(getattr(settings, "allow_platform_charge_fallback", False)),
+            account=account,
+        ).payments_possible

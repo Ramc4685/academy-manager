@@ -9,7 +9,11 @@ from typing import Any
 from pydantic import ValidationError
 from pymongo import ReturnDocument
 
-from backend.v2.contexts.platform.domain.models import Tenant, TenantLimits
+from backend.v2.contexts.platform.domain.models import (
+    DEFAULT_FEE_MODEL,
+    Tenant,
+    TenantLimits,
+)
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +90,14 @@ class MongoTenantLifecycleRepository:
         )
         return self._to_tenant(doc) if doc else tenant
 
+    async def set_referral_code_if_absent(self, academy_id: str, code: str) -> None:
+        # One targeted $set, never a whole-document save from a read path:
+        # a concurrent status or fee change must not be overwritten.
+        await self._collection.update_one(
+            {"academy_id": academy_id, "referral_code": {"$in": [None]}},
+            {"$set": {"referral_code": code}},
+        )
+
     def _to_tenant(self, doc: dict[str, Any]) -> Tenant:
         now = datetime.now(UTC)
         return Tenant(
@@ -105,6 +117,13 @@ class MongoTenantLifecycleRepository:
             suspended_at=doc.get("suspended_at"),
             cancelled_at=doc.get("cancelled_at"),
             reactivated_at=doc.get("reactivated_at"),
+            # Docs written before L9c (migration 0200 backfills) carry no fee
+            # model: they read as the platform default, never as accepted.
+            fee_model=doc.get("fee_model") or DEFAULT_FEE_MODEL,
+            platform_agreement_version=doc.get("platform_agreement_version"),
+            platform_agreement_accepted_at=doc.get("platform_agreement_accepted_at"),
+            platform_agreement_accepted_by=doc.get("platform_agreement_accepted_by"),
+            referral_code=doc.get("referral_code"),
         )
 
     @staticmethod

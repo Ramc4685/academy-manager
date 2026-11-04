@@ -517,3 +517,23 @@ async def test_enrollment_repo_active_or_paused_for_student_excludes_ended_rows(
 
     assert sorted(e.session_id for e in live) == ["sess-active", "sess-paused"]
     assert [e.session_id for e in active_only] == ["sess-active"]
+
+
+@pytest.mark.asyncio
+async def test_self_service_policy_update_fields_is_partial_and_tenant_scoped(db) -> None:
+    """Money audit X5: two Settings panels write this one document. A partial
+    ``$set`` must leave the other panel's fields, and the other tenant, alone."""
+    repo = MongoSelfServicePolicyRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.update_fields({"cancellation_fee_cents": 2_500})
+        await repo.update_fields({"absence_notice_min_hours": 6, "academy_id": "academy-b"})
+        policy_a = await repo.get_or_default()
+    with tenant_scope("academy-b"):
+        policy_b = await repo.get_or_default()
+
+    assert policy_a.academy_id == "academy-a"
+    assert policy_a.cancellation_fee_cents == 2_500
+    assert policy_a.absence_notice_min_hours == 6
+    assert policy_b.cancellation_fee_cents == 0
+    assert policy_b.absence_notice_min_hours == 2

@@ -531,6 +531,24 @@ class MongoDunningStateRepository(TenantScopedRepository):
             )
         return rows
 
+    async def has_active_retry(self, invoice_id: str) -> bool:
+        """Is this invoice still being retried by the autopay ladder? (#552)
+
+        Read-only, and deliberately the *only* thing the late-fee pass is
+        allowed to ask the dunning store: a family whose card we are still
+        charging on our own schedule has not ignored us, so no late fee is due
+        until the ladder reaches a terminal status.
+        """
+        doc = await self.collection.find_one(
+            {
+                "academy_id": current_academy_id(),
+                "invoice_id": invoice_id,
+                "status": {"$in": ["active", "processing"]},
+            },
+            {"_id": 1},
+        )
+        return doc is not None
+
     async def suppress_for_invoice(self, *, invoice_id: str, reason: str, now: datetime) -> bool:
         """Stop the ladder for one invoice (voided / no longer collectable).
 

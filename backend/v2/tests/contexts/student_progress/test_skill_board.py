@@ -141,6 +141,18 @@ class _FakeSkillLookup:
         return self._skills.get(level_id, [])
 
 
+class _FakeCriteria:
+    """Criterion descriptions keyed by skill_id, in display order."""
+
+    async def list_for_skill(self, skill_id: str) -> list[object]:
+        if skill_id != "skill-a":
+            return []
+        return [
+            SimpleNamespace(description="Thumb is flat on back of handle"),
+            SimpleNamespace(description="Elbow in front of body"),
+        ]
+
+
 def _use_case(
     level_rows: list[StudentLevelProgress],
     skill_rows: list[StudentSkillProgress],
@@ -151,6 +163,7 @@ def _use_case(
         skill_progress=_FakeSkillProgressRepo(skill_rows),
         recommendations=_FakeRecommendationRepo(recs),
         skill_lookup=_FakeSkillLookup(),
+        criteria=_FakeCriteria(),
     )
 
 
@@ -180,6 +193,12 @@ async def test_groups_students_by_level_with_statuses() -> None:
     assert group.level_id == LEVEL_1
     assert group.level_name == "Grip and Control"
     assert [s.skill_id for s in group.skills] == ["skill-a", "skill-b", "skill-c"]
+    # Criteria ride on the skill column so the coach can tap them into the note.
+    assert group.skills[0].criteria == [
+        "Thumb is flat on back of handle",
+        "Elbow in front of body",
+    ]
+    assert group.skills[1].criteria == []
 
     row1 = next(r for r in group.students if r.student_id == "stu-1")
     assert row1.statuses["skill-a"].status == "PASSED"
@@ -237,6 +256,7 @@ async def test_board_batches_lookups_instead_of_querying_per_student() -> None:
         skill_progress=_FakeSkillProgressRepo([]),
         recommendations=recommendations,
         skill_lookup=_FakeSkillLookup(),
+        criteria=_FakeCriteria(),
     )
 
     board = await use_case.execute(

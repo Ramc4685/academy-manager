@@ -5,10 +5,12 @@ import { useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 
 import { getCoachSchedule } from "@/lib/api/coach";
+import { coachScheduleToCalendar } from "@/lib/coach/schedule-links";
 import { queryKeys } from "@/lib/query/keys";
-import type { CalendarViewEvent } from "@/components/calendar/PersonaCalendarView";
 import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
+import { RetryButton } from "@/components/coach/RetryButton";
+import { CalendarTimeZoneUnavailable } from "@/components/calendar/CalendarTimeZoneUnavailable";
 
 // FullCalendar (~250 KB) is loaded client-side only, out of the initial
 // coach bundle — same pattern as AdminCalendarView.
@@ -23,17 +25,12 @@ export default function CoachCalendarPage() {
     queryFn: getCoachSchedule,
   });
 
-  const sessions = data?.sessions ?? [];
-
-  const events: CalendarViewEvent[] = useMemo(
-    () =>
-      (data?.sessions ?? []).map((s) => ({
-        id: s.occurrence_id,
-        title: s.title,
-        start: s.start_at,
-        end: s.end_at,
-        url: `/coach/sessions/${encodeURIComponent(s.session_id)}`,
-      })),
+  // #1043: the grid runs on the session/academy zone every coach detail
+  // screen formats in. Issue #777: each event links to its occurrence on the
+  // class's LOCAL date — a session-id link with no date landed on "Session
+  // not found."
+  const { events, timeZone } = useMemo(
+    () => coachScheduleToCalendar(data?.sessions ?? []),
     [data],
   );
 
@@ -45,9 +42,7 @@ export default function CoachCalendarPage() {
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
           <div role="alert" className="flex items-center justify-between gap-3">
             <p className="text-sm text-red-800">Failed to load your schedule.</p>
-            <button onClick={() => void refetch()} className="text-sm font-medium text-rally-cobalt">
-              Retry
-            </button>
+            <RetryButton onClick={() => void refetch()} />
           </div>
         </Card>
       )}
@@ -56,8 +51,14 @@ export default function CoachCalendarPage() {
         <Card p={16}>
           <Skeleton variant="block" height={280} />
         </Card>
+      ) : isError && !data ? null : timeZone.status === "ready" ? (
+        <PersonaCalendarView events={events} timeZone={timeZone.timeZone} />
+      ) : events.length === 0 ? (
+        <Card p={16}>
+          <p className="text-sm text-rally-muted">No upcoming sessions.</p>
+        </Card>
       ) : (
-        <PersonaCalendarView events={events} />
+        <CalendarTimeZoneUnavailable listHref="/coach/sessions" listLabel="Sessions" />
       )}
     </section>
   );

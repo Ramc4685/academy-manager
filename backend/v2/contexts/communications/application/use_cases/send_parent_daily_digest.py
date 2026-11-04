@@ -118,19 +118,23 @@ class SendParentDailyDigest:
             try:
                 view = await self.provider.build_view(parent.user_id, command.digest_date)
             except Exception as exc:  # view assembly must never crash the run
-                await self.digests.mark_failed(claim.digest_id, f"view build failed: {exc}")
+                await self.digests.mark_failed(
+                    command.academy_id, claim.digest_id, f"view build failed: {exc}"
+                )
                 failed += 1
                 continue
 
             if view is None or not view.has_children():
-                await self.digests.mark_skipped_empty(claim.digest_id)
+                await self.digests.mark_skipped_empty(command.academy_id, claim.digest_id)
                 skipped_empty += 1
                 continue
 
             if not parent.email:
                 # Not retryable — see the coach digest: a missing address is a
                 # data problem, and retrying only rebuilds the view to fail again.
-                await self.digests.mark_failed(claim.digest_id, "no email address", retryable=False)
+                await self.digests.mark_failed(
+                    command.academy_id, claim.digest_id, "no email address", retryable=False
+                )
                 failed += 1
                 continue
 
@@ -154,9 +158,12 @@ class SendParentDailyDigest:
                 body=body,
                 reply_to=view.reply_to,
                 category=EmailCategory.DIGEST,
+                sender_name=brand.sender_name if brand else None,
             )
             if outcome.ok:
-                await self.digests.mark_sent(claim.digest_id, outcome.provider_message_id)
+                await self.digests.mark_sent(
+                    command.academy_id, claim.digest_id, outcome.provider_message_id
+                )
                 sent += 1
             elif outcome.suppressed:
                 # NOT retryable. A FAILED row with attempts left is re-claimed
@@ -166,7 +173,10 @@ class SendParentDailyDigest:
                 # digest's "lost digests" count. Non-retryable rows are
                 # excluded from that count by design — the right bucket.
                 await self.digests.mark_failed(
-                    claim.digest_id, outcome.failed_reason or "blocked", retryable=False
+                    command.academy_id,
+                    claim.digest_id,
+                    outcome.failed_reason or "blocked",
+                    retryable=False,
                 )
                 failed += 1
             else:
@@ -174,6 +184,7 @@ class SendParentDailyDigest:
                 # failure: retrying it just re-hits the same suppression on
                 # every subsequent run. Same reasoning as "no email address".
                 await self.digests.mark_failed(
+                    command.academy_id,
                     claim.digest_id,
                     outcome.failed_reason or "unknown",
                     retryable=not outcome.suppressed,

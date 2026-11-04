@@ -26,6 +26,7 @@ from backend.v2.contexts.billing.application.ports import (
     EnrollmentBillingIdentityRepository,
     LedgerRepository,
     ParentStripeCustomerRepository,
+    PaymentDisputeRepository,
     PaymentRepository,
     StripeEventDedup,
     StripeGateway,
@@ -44,9 +45,21 @@ from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     AutopayConsentCaptureContext,
     CompleteAutopaySetup,
 )
+from backend.v2.contexts.billing.application.use_cases.record_payment_dispute import (
+    RecordPaymentDispute,
+)
 from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
 from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_hold
-from backend.v2.contexts.billing.domain.errors import InvalidWebhookSignature, PaymentNotFound
+from backend.v2.contexts.billing.domain.connected_account import (
+    ConnectedAccount,
+    liability_from_stripe_account,
+)
+from backend.v2.contexts.billing.domain.errors import (
+    InvalidWebhookSignature,
+    PaymentNotFound,
+    StripeAccountMismatch,
+    WebhookAccountLookupUnavailable,
+)
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
     CheckoutExpiredPayload,
@@ -136,8 +149,33 @@ class _QuarantineStripeEvent(Exception):
     """Stored event is valid Stripe input but unsafe to project into Mongo."""
 
 
+# Storage bucket for events that carry no tenant marker at all in multi-academy
+# mode. It is not a real academy: no per-academy drain ever calls ``claim_next``
+# with it, so an event stored here can never be processed, and it never inflates
+# a real academy's billing-health quarantine counts.
+UNATTRIBUTED_QUARANTINE_ACADEMY = "__unattributed__"
+
+# ``quarantine_reason`` recorded for those events (kept distinct from the
+# store's ``rejected_by_guard`` / ``retry_limit_exceeded`` so an ops sweep can
+# select exactly "nobody could tell whose event this was").
+QUARANTINE_UNATTRIBUTED = "unattributed_no_tenant_marker"
+
+# ``quarantine_reason`` for a Connect event whose ``metadata.academy_id`` names
+# a different academy than the one that owns the event's ``account``. The
+# account is Stripe's own statement of where the money moved; metadata is text
+# our code (or anyone able to edit the object on that account) wrote. The two
+# disagreeing means something is wrong, so neither is trusted to project.
+QUARANTINE_ACCOUNT_METADATA_CONFLICT = "connect_account_metadata_conflict"
+
+
 class AccountAcademyResolver(Protocol):
     """Resolves a Stripe Connect account id to its owning academy id.
+
+    ``academy_id_for_account`` must answer across EVERY academy (composition
+    backs it with the platform-scoped ``ConnectedAccountDirectory``): ingest
+    attributes direct-charge events for accounts the boot academy does not
+    own. ``get_by_stripe_account_id`` / ``update_status`` stay scoped to the
+    handler's own academy.
 
     Typed against this Protocol (rather than ``Any``) so a composition-root
     mismatch — e.g. passing the raw ``ConnectedAccountRepository`` instead of
@@ -148,6 +186,8 @@ class AccountAcademyResolver(Protocol):
 
     async def academy_id_for_account(self, stripe_account_id: str) -> str | None: ...
 
+    async def get_by_stripe_account_id(self, stripe_account_id: str) -> ConnectedAccount | None: ...
+
     async def update_status(
         self,
         *,
@@ -156,7 +196,9 @@ class AccountAcademyResolver(Protocol):
         charges_enabled: bool | None,
         payouts_enabled: bool | None,
         capabilities: dict[str, str],
-    ) -> None: ...
+        skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
+    ) -> bool: ...
 
 
 class HandleWebhookEvent:
@@ -180,7 +222,9 @@ class HandleWebhookEvent:
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
+        payment_disputes: PaymentDisputeRepository | None = None,
         expected_livemode: bool | None = None,
+        tenancy_mode: str = "single_academy",
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
@@ -199,9 +243,20 @@ class HandleWebhookEvent:
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
         self._expected_livemode = expected_livemode
+        self._tenancy_mode = tenancy_mode
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
+        self._record_dispute: RecordPaymentDispute | None = None
+        if payment_disputes is not None:
+            self._record_dispute = RecordPaymentDispute(
+                disputes=payment_disputes,
+                payments=payments,
+                ledger=billing_ledger,
+                outbox=outbox,
+                academy_id=academy_id,
+                clock=clock,
+            )
         self._complete_autopay_setup: CompleteAutopaySetup | None = None
         if parent_customers is not None and enrollment_autopay is not None:
             self._complete_autopay_setup = CompleteAutopaySetup(
@@ -224,54 +279,133 @@ class HandleWebhookEvent:
         event = self._verify(payload, signature)
         event_id, event_type = self._event_identity(event)
 
-        academy_id = await self._ingest_academy_id(event)
+        academy_id, quarantine_reason, reason_code = await self._ingest_academy_id(event)
         with tenant_scope(academy_id):
             stored = await self._dedup.store_received(
                 event,
                 raw_payload=payload,
                 academy_id=academy_id,
             )
-        if not stored:
-            log.info("stripe_webhook_already_stored event_id=%s", event_id)
-        return {"received": True, "stored": stored, "type": event_type}
+            if not stored:
+                # Also covers a Stripe retry of an event we already quarantined:
+                # the insert-first store is the dedup, so there is no second
+                # row, no second quarantine mark and no second alert.
+                log.info("stripe_webhook_already_stored event_id=%s", event_id)
+                return {"received": True, "stored": False, "type": event_type}
+            if quarantine_reason is None:
+                return {"received": True, "stored": True, "type": event_type}
+            await self._dedup.mark_quarantined(event_id, quarantine_reason, reason_code=reason_code)
+        log.warning(
+            "stripe_webhook_event_unattributed"
+            if reason_code == QUARANTINE_UNATTRIBUTED
+            else "stripe_webhook_event_account_metadata_conflict",
+            extra={
+                "event_id": event_id,
+                "event_type": event_type,
+                "tenancy_mode": self._tenancy_mode,
+            },
+        )
+        self._alert_quarantined(
+            event_id=event_id,
+            event_type=event_type,
+            reason=reason_code,
+            error=quarantine_reason,
+            # The row lives under the sentinel bucket, not the boot academy;
+            # the alert must point ops at the same academy_id as the row.
+            academy_id=academy_id,
+        )
+        # 200 on purpose: the event is persisted and needs a human, not a retry.
+        return {
+            "received": True,
+            "stored": True,
+            "type": event_type,
+            "status": "quarantined",
+        }
 
-    async def _ingest_academy_id(self, event: dict[str, Any]) -> str:
-        """Best-effort tenant attribution at INGEST time (issue #532).
+    async def _ingest_academy_id(self, event: dict[str, Any]) -> tuple[str, str | None, str]:
+        """Tenant attribution at INGEST time (issues #532 and the unattributed
+        follow-up; Connect ownership for direct charges).
 
         The /webhooks/stripe endpoint is served by the boot-academy handler,
         but the drain claims stored events per academy — an event stamped with
         the wrong academy would be claimed by the wrong per-academy processor
         and quarantined by its cross-academy guard instead of reaching its own.
 
-        Resolution order:
-        1. ``metadata.academy_id`` — stamped by our own checkout/subscription
-           creation, delivered back inside the signature-verified payload.
-        2. Top-level ``account`` (Connect events) resolved via the
-           connected-account repo.
-        3. This handler's academy — platform events with neither marker.
+        Returns ``(academy_id_to_store_under, quarantine_reason, reason_code)``;
+        the reason is ``None`` whenever the event may be processed normally.
 
-        Never raises past signature verification: a resolution failure falls
-        back to this handler's academy, and the processing-side guards
-        (``_validate_event_guards_async``) remain the authority — they
-        quarantine, with alerting, anything stored under the wrong tenant.
+        Resolution order:
+        1. Top-level ``account`` (Connect events: every direct charge on a
+           non-house academy's connected account) resolved to its OWNER across
+           all academies. The account is authoritative:
+           - owner found, ``metadata.academy_id`` absent or equal: the owner.
+           - owner found, ``metadata.academy_id`` names ANOTHER academy:
+             quarantined under the owner (``QUARANTINE_ACCOUNT_METADATA_CONFLICT``).
+             Metadata never overrides the account. The owner's processing
+             guard would reject it too (metadata != its academy), so a drain
+             racing the quarantine mark cannot project it either.
+           - no owner (unknown account): stored under this handler's
+             academy, where the processing-side guard
+             (``resolve_academy_for_event``) re-resolves and quarantines with
+             its own alert. Deferring keeps an account row written a moment
+             after Stripe emitted its first event from becoming a terminal
+             ingest quarantine.
+           - the lookup itself FAILED: ``WebhookAccountLookupUnavailable``
+             (503). Nothing is stored, so Stripe redelivers the event later;
+             storing it under the boot academy would strand it there as a
+             quarantined row the owner's processor never claims.
+        2. No ``account`` (a platform event — the house academy, and legacy
+           destination charges): ``metadata.academy_id`` exactly as before.
+        3. Neither marker:
+           - ``single_academy`` mode: this handler's academy. There is exactly
+             one tenant (``primary_academy_id``) by construction, so a platform
+             event with no marker cannot belong to anyone else; every event
+             type the platform account emits is safe to attribute here.
+           - ``multi_academy`` mode: nobody. One endpoint ingests every
+             academy's traffic, so attributing to the boot academy would credit
+             a tenant at random. The event is stored under
+             ``UNATTRIBUTED_QUARANTINE_ACADEMY`` and quarantined by ``accept``.
+
+        Raises only ``WebhookAccountLookupUnavailable`` past signature
+        verification, and only when the owner lookup errors.
         """
         metadata_academy = self._event_metadata(event).get("academy_id")
-        if metadata_academy:
-            return metadata_academy
         account_id = str(event.get("account") or "")
-        if account_id and self._connected_accounts is not None:
-            try:
-                resolved = await self._connected_accounts.academy_id_for_account(account_id)
-            except Exception as exc:
-                log.warning(
-                    "stripe_webhook_ingest_account_resolution_failed account=%s err=%s",
-                    account_id,
-                    exc,
+        if account_id:
+            owner: str | None = None
+            if self._connected_accounts is not None:
+                try:
+                    owner = await self._connected_accounts.academy_id_for_account(account_id)
+                except Exception as exc:
+                    log.warning(
+                        "stripe_webhook_ingest_account_resolution_failed account=%s err=%s",
+                        account_id,
+                        exc,
+                    )
+                    raise WebhookAccountLookupUnavailable(
+                        "Connected-account owner lookup failed; retry the delivery."
+                    ) from exc
+            if not owner:
+                return self._academy_id, None, QUARANTINE_UNATTRIBUTED
+            if metadata_academy and metadata_academy != owner:
+                return (
+                    owner,
+                    f"metadata.academy_id={metadata_academy} conflicts with the owner "
+                    f"{owner} of connected account {account_id}; the account wins and "
+                    "the event is not projected",
+                    QUARANTINE_ACCOUNT_METADATA_CONFLICT,
                 )
-                resolved = None
-            if resolved:
-                return resolved
-        return self._academy_id
+            return owner, None, QUARANTINE_UNATTRIBUTED
+        if metadata_academy:
+            return metadata_academy, None, QUARANTINE_UNATTRIBUTED
+        if self._tenancy_mode == "single_academy":
+            return self._academy_id, None, QUARANTINE_UNATTRIBUTED
+        return (
+            UNATTRIBUTED_QUARANTINE_ACADEMY,
+            "no metadata.academy_id and no Connect account on the event; "
+            f"refusing to attribute to boot academy {self._academy_id} in multi_academy mode",
+            QUARANTINE_UNATTRIBUTED,
+        )
 
     async def process_next(
         self,
@@ -294,8 +428,14 @@ class HandleWebhookEvent:
                 event = self._event_from_stored_payload(event_doc)
                 event_type = event_type or str(event.get("type", ""))
                 self._validate_livemode(event)
+                # Account ownership BEFORE hydration: hydrating reads the
+                # object from Stripe with the event's ``Stripe-Account``
+                # header, which must never happen for an account this
+                # academy does not own (or no academy owns).
+                await self.resolve_academy_for_event(event)
                 event = await self._hydrate_current_stripe_object(event_type, event)
-                await self._validate_event_guards_async(event)
+                # Metadata guards run on the hydrated object, as before.
+                self._validate_event_guards(event)
                 await self._dispatch(event_type, event)
                 await self._dedup.mark_processed(event_id)
                 return {"processed": True, "event_id": event_id, "type": event_type}
@@ -335,7 +475,13 @@ class HandleWebhookEvent:
                 }
 
     def _alert_quarantined(
-        self, *, event_id: str, event_type: str, reason: str, error: str
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        reason: str,
+        error: str,
+        academy_id: str | None = None,
     ) -> None:
         """Tell someone an event has stopped being retried (issues #437, #428).
 
@@ -349,7 +495,10 @@ class HandleWebhookEvent:
         extra = {
             "event_id": event_id,
             "event_type": event_type,
-            "academy_id": self._academy_id,
+            # Default to the handler's academy (processing-side quarantines are
+            # always its own rows); ingest passes the bucket the row was stored
+            # under so the log never re-attributes an unattributed event.
+            "academy_id": academy_id if academy_id is not None else self._academy_id,
             "quarantine_reason": reason,
         }
         try:
@@ -513,13 +662,16 @@ class HandleWebhookEvent:
         if not object_id:
             return event
         current: dict[str, Any] | None = None
+        # A direct charge's objects live on the connected account the event
+        # names; a platform event carries no account and reads the platform.
+        on_account = _on_account_kwargs(_event_account(event))
         if event_type in (
             "checkout.session.completed",
             "checkout.session.expired",
             "checkout.session.async_payment_succeeded",
             "checkout.session.async_payment_failed",
         ):
-            current = await self._stripe.retrieve_checkout_session(object_id)
+            current = await self._stripe.retrieve_checkout_session(object_id, **on_account)
         elif event_type in ("invoice.paid", "invoice.payment_failed"):
             current = await self._stripe.retrieve_invoice(object_id)
         elif event_type in (
@@ -533,9 +685,9 @@ class HandleWebhookEvent:
             "payment_intent.payment_failed",
             "payment_intent.processing",
         ):
-            current = await self._stripe.retrieve_payment_intent(object_id)
+            current = await self._stripe.retrieve_payment_intent(object_id, **on_account)
         elif event_type == "setup_intent.succeeded":
-            current = await self._stripe.retrieve_setup_intent(object_id)
+            current = await self._stripe.retrieve_setup_intent(object_id, **on_account)
         if not current:
             return event
         merged = dict(obj)
@@ -681,6 +833,8 @@ class HandleWebhookEvent:
             await self._on_invoice_payment_failed(event)
         elif event_type == "charge.refunded":
             await self._on_charge_refunded(event)
+        elif event_type in ("charge.dispute.created", "charge.dispute.closed"):
+            await self._on_charge_dispute(event)
         elif event_type == "setup_intent.succeeded":
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay_setup":
@@ -741,13 +895,28 @@ class HandleWebhookEvent:
         if str(obj.get("disabled_reason") or ""):
             status = "disabled"
 
-        await self._connected_accounts.update_status(
+        # An owner disconnect is local: Stripe keeps the account and keeps
+        # emitting account.updated for it. Until an explicit reconnect, those
+        # events must not flip it back to active (the write is conditional on
+        # the row not being disconnected, atomically).
+        applied = await self._connected_accounts.update_status(
             stripe_account_id=stripe_account_id,
             status=status,
             charges_enabled=charges_enabled,
             payouts_enabled=payouts_enabled,
             capabilities=capabilities,
+            skip_if_disconnected=True,
+            # The account's fee/loss responsibilities as this payload reports
+            # them (v1 ``controller``); the charge route refuses direct
+            # charges unless both are Stripe's.
+            liability=liability_from_stripe_account(obj),
         )
+        if applied is False:
+            log.info(
+                "connect_account_status_ignored_disconnected account=%s type=%s",
+                stripe_account_id,
+                event_type,
+            )
 
     async def _handle_autopay_setup_checkout_completed(self, event: dict[str, Any]) -> None:
         if self._complete_autopay_setup is None:
@@ -757,6 +926,9 @@ class HandleWebhookEvent:
             await self._complete_autopay_setup.execute_from_checkout(
                 checkout,
                 consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+                # A direct-charge checkout ran ON the academy's connected
+                # account; the event names it. Platform events carry none.
+                **_on_account_kwargs(_event_account(event)),
             )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
@@ -771,6 +943,7 @@ class HandleWebhookEvent:
             await self._complete_autopay_setup.execute_from_setup_intent(
                 setup_intent,
                 consent_context=AutopayConsentCaptureContext(source="setup_intent_webhook"),
+                **_on_account_kwargs(_event_account(event)),
             )
         except PaymentNotFound as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
@@ -815,7 +988,7 @@ class HandleWebhookEvent:
                 currency=currency,
                 payment_intent_id=payment_intent_id,
             )
-            await self._maybe_activate_autopay_optin(obj)
+            await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
             return
 
         now = self._now()
@@ -839,6 +1012,7 @@ class HandleWebhookEvent:
                 status="succeeded",
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
+                stripe_account_id=_event_account(event),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -860,9 +1034,11 @@ class HandleWebhookEvent:
                 amount_total,
             )
 
-        await self._maybe_activate_autopay_optin(obj)
+        await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
 
-    async def _maybe_activate_autopay_optin(self, checkout: dict[str, Any]) -> None:
+    async def _maybe_activate_autopay_optin(
+        self, checkout: dict[str, Any], *, stripe_account: str | None = None
+    ) -> None:
         """Autopay activation for an opted-in payment checkout.
 
         Runs after the ledger bookkeeping, whose writes are idempotent, so it
@@ -884,6 +1060,7 @@ class HandleWebhookEvent:
             await self._complete_autopay_setup.execute_from_payment_checkout(
                 checkout,
                 consent_context=AutopayConsentCaptureContext(source="stripe_webhook"),
+                **_on_account_kwargs(stripe_account),
             )
         except (PaymentNotFound, ValueError) as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
@@ -949,7 +1126,7 @@ class HandleWebhookEvent:
                 currency=currency,
                 payment_intent_id=payment_intent_id,
             )
-            await self._maybe_activate_autopay_optin(obj)
+            await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
             return
 
         if await self._payment_intent_already_credited(
@@ -969,6 +1146,7 @@ class HandleWebhookEvent:
                 status="succeeded",
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
+                stripe_account_id=_event_account(event),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -990,7 +1168,7 @@ class HandleWebhookEvent:
             allocated,
         )
 
-        await self._maybe_activate_autopay_optin(obj)
+        await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
 
     async def _payment_intent_already_credited(
         self,
@@ -1023,7 +1201,9 @@ class HandleWebhookEvent:
         )
         return True
 
-    async def _async_failure_detail(self, payment_intent_id: str | None) -> tuple[str, str]:
+    async def _async_failure_detail(
+        self, payment_intent_id: str | None, *, stripe_account: str | None = None
+    ) -> tuple[str, str]:
         """Failure code/message for a Checkout session whose async payment failed.
 
         The session object carries no ``last_payment_error``, so read it off the
@@ -1035,7 +1215,9 @@ class HandleWebhookEvent:
         if not payment_intent_id:
             return fallback
         try:
-            pi = await self._stripe.retrieve_payment_intent(payment_intent_id)
+            pi = await self._stripe.retrieve_payment_intent(
+                payment_intent_id, **_on_account_kwargs(stripe_account)
+            )
         except Exception as exc:  # detail is best-effort; never fail the event over it
             log.warning(
                 "checkout_async_payment_failed: could not read pi=%s for failure detail: %s",
@@ -1163,7 +1345,9 @@ class HandleWebhookEvent:
         amount_total = int(obj.get("amount_total") or 0)
         currency = str(obj.get("currency") or "usd").lower()
         parent_id = str(metadata.get("parent_id") or "unknown")
-        failure_code, failure_message = await self._async_failure_detail(payment_intent_id)
+        failure_code, failure_message = await self._async_failure_detail(
+            payment_intent_id, stripe_account=_event_account(event)
+        )
 
         for invoice_id, share_cents in await self._checkout_attempt_shares(
             invoice_ids=invoice_ids,
@@ -1198,7 +1382,12 @@ class HandleWebhookEvent:
         checkout_id = obj["id"]
         payment = await self._payments.get_by_checkout_session(checkout_id)
         subscription = await self._sync_subscription_from_checkout(obj)
-        await self._persist_checkout_customer(obj, payment=payment, subscription=subscription)
+        await self._persist_checkout_customer(
+            obj,
+            payment=payment,
+            subscription=subscription,
+            stripe_account=_event_account(event),
+        )
         if payment is None:
             log.warning("checkout.completed for unknown checkout_id=%s", checkout_id)
             return
@@ -1208,6 +1397,9 @@ class HandleWebhookEvent:
             update={
                 "status": "succeeded",
                 "stripe_payment_intent_id": obj.get("payment_intent"),
+                # The account the charge settled on (None = platform), so a
+                # refund is later issued on the same account.
+                "stripe_account_id": _event_account(event) or payment.stripe_account_id,
                 "updated_at": self._now(),
             }
         )
@@ -1233,7 +1425,10 @@ class HandleWebhookEvent:
         *,
         payment: Payment | None,
         subscription: Any | None,
+        stripe_account: str | None = None,
     ) -> None:
+        """Record the checkout's customer on the account the checkout ran on
+        (``stripe_account``; None = the platform)."""
         if self._parent_customers is None:
             return
         stripe_customer_id = str(checkout.get("customer") or "")
@@ -1255,6 +1450,7 @@ class HandleWebhookEvent:
         await self._parent_customers.set_stripe_customer_id(
             parent_id=parent_id,
             stripe_customer_id=stripe_customer_id,
+            **({"stripe_account_id": stripe_account} if stripe_account else {}),
         )
 
     async def _sync_subscription_from_checkout(self, checkout: dict[str, Any]) -> Any | None:
@@ -1405,6 +1601,7 @@ class HandleWebhookEvent:
                 status="succeeded",
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
+                stripe_account_id=_event_account(event),
                 paid_at=now,
                 metadata=payment_metadata or None,
                 created_at=now,
@@ -1606,7 +1803,11 @@ class HandleWebhookEvent:
         if not checkout_session_id:
             return False
 
-        checkout = await self._stripe.retrieve_checkout_session(checkout_session_id)
+        # The session lives on the same account as the PaymentIntent the
+        # event names (the connected account for a direct charge).
+        checkout = await self._stripe.retrieve_checkout_session(
+            checkout_session_id, **_on_account_kwargs(_event_account(event))
+        )
         metadata = checkout.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
@@ -1681,6 +1882,7 @@ class HandleWebhookEvent:
         updated = payment.model_copy(
             update={
                 "status": "succeeded",
+                "stripe_account_id": _event_account(event) or payment.stripe_account_id,
                 "updated_at": self._now(),
             }
         )
@@ -1846,6 +2048,30 @@ class HandleWebhookEvent:
             legacy_payment_id=payment.payment_id,
         )
 
+    async def _on_charge_dispute(self, event: dict[str, Any]) -> None:
+        """``charge.dispute.created`` / ``charge.dispute.closed``.
+
+        On a direct charge the dispute arrives as a Connect event (``account``
+        = the academy's connected account, already verified to belong to this
+        academy by the processing guard); a house-academy dispute is a
+        platform event. Either way it is recorded, mirrored onto the payment
+        and the owner is notified, with no money moved: the dispute is the
+        academy's to answer, and Stripe (not the platform) debits its account.
+        """
+        if self._record_dispute is None:
+            log.warning(
+                "charge_dispute: dispute store not configured; event %s not recorded",
+                event.get("id"),
+            )
+            return
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            return
+        try:
+            await self._record_dispute.execute(obj, stripe_account_id=_event_account(event))
+        except StripeAccountMismatch as exc:
+            raise _QuarantineStripeEvent(str(exc)) from exc
+
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
         ch["_event_id"] = str(event.get("id") or "")
@@ -1857,8 +2083,11 @@ class HandleWebhookEvent:
             # Autopay / invoice pay-link / balance-checkout charges are recorded
             # only in the ledger (no legacy `payments` row), so fall back to the
             # ledger; otherwise the refund is silently dropped.
-            await self._on_charge_refunded_ledger(str(pi_id), ch)
+            await self._on_charge_refunded_ledger(str(pi_id), ch, event=event)
             return
+        _require_same_account(
+            event, payment.stripe_account_id, what=f"payment {payment.payment_id}"
+        )
         total_refunded = int(ch.get("amount_refunded", 0))
         if total_refunded == 0 or total_refunded == payment.refunded_cents:
             return
@@ -1885,7 +2114,9 @@ class HandleWebhookEvent:
             )
         )
 
-    async def _on_charge_refunded_ledger(self, pi_id: str, ch: dict[str, Any]) -> None:
+    async def _on_charge_refunded_ledger(
+        self, pi_id: str, ch: dict[str, Any], *, event: dict[str, Any] | None = None
+    ) -> None:
         """Record a refund for a charge that exists only in the ledger.
 
         Autopay direct charges, invoice pay-link checkouts, and balance
@@ -1902,6 +2133,10 @@ class HandleWebhookEvent:
         payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
         if payment is None:
             return
+        if event is not None:
+            _require_same_account(
+                event, payment.stripe_account_id, what=f"payment {payment.payment_id}"
+            )
         total_refunded = int(ch.get("amount_refunded", 0))
         if total_refunded == 0:
             return
@@ -2823,3 +3058,30 @@ def _identity_value(
     else:
         value = getattr(identity, key)
     return str(value) if value else None
+
+
+def _event_account(event: dict[str, Any]) -> str | None:
+    """The connected account a Stripe event occurred on (Connect events carry
+    a top-level ``account``); None for a platform event."""
+    account = event.get("account")
+    return str(account) if account else None
+
+
+def _on_account_kwargs(stripe_account: str | None) -> dict[str, Any]:
+    """``stripe_account`` kwarg for a completion on a connected account; empty
+    for the platform so a house-academy call is unchanged."""
+    return {"stripe_account": stripe_account} if stripe_account else {}
+
+
+def _require_same_account(
+    event: dict[str, Any], recorded_account: str | None, *, what: str
+) -> None:
+    """Refuse an event whose Connect ``account`` contradicts the account the
+    app recorded the payment on. Stripe object ids are global, so this cannot
+    happen honestly; if it does, neither side is trusted to project."""
+    event_account = _event_account(event)
+    if event_account and recorded_account and event_account != recorded_account:
+        raise _QuarantineStripeEvent(
+            f"stripe account mismatch: event account={event_account} but {what} "
+            f"lives on {recorded_account}"
+        )

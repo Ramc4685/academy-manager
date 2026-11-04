@@ -94,6 +94,11 @@ def _ensure_firebase_app() -> Any:
     return _firebase_app
 
 
+def firebase_app() -> Any:
+    """The shared Firebase Admin app, initialised on first use (FCM push reuses it)."""
+    return _ensure_firebase_app()
+
+
 def _get_google_public_cert_request() -> Any:
     global _google_public_cert_request
     if google_auth_requests is None:
@@ -379,11 +384,32 @@ class FirebaseAdminAdapter:
             email_verified=False,
         )
 
+    async def set_user_disabled(self, uid: str, disabled: bool) -> None:
+        """Flip the Firebase account's own sign-in switch (#785).
+
+        Suspending the membership stops this API issuing claims, but Firebase
+        is a separate door: without this the account keeps authenticating and
+        keeps a valid ID token. ``disabled=True`` also invalidates refresh
+        tokens, so an existing session cannot be silently renewed.
+        """
+        if firebase_admin_auth is None:
+            raise RuntimeError("firebase-admin is required for Firebase auth")
+        _ensure_firebase_app()
+        await asyncio.to_thread(firebase_admin_auth.update_user, uid, disabled=disabled)
+
     async def delete_user(self, uid: str) -> None:
         if firebase_admin_auth is None:
             raise RuntimeError("firebase-admin is required for Firebase auth")
         _ensure_firebase_app()
         await asyncio.to_thread(firebase_admin_auth.delete_user, uid)
+
+    async def delete_user_if_present(self, uid: str) -> None:
+        """``delete_user`` that treats an account already gone as done (job retries)."""
+        try:
+            await self.delete_user(uid)
+        except Exception as exc:
+            if not _is_firebase_auth_error(exc, "UserNotFoundError"):
+                raise
 
     async def create_custom_token(self, uid: str) -> str:
         """Mint a Firebase custom token for ``uid``.

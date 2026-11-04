@@ -18,6 +18,8 @@ import { useAdminAction } from "@/components/admin/admin-action-slot";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 const CATEGORIES: CreateExpenseRequest["category"][] = [
   "rent",
@@ -113,6 +115,50 @@ function ExpensesTable({
   onEdit: (expense: AdminExpenseView) => void;
   onDelete: (expense: AdminExpenseView) => void;
 }) {
+  const isPhone = useIsPhone();
+  if (isPhone) {
+    /* #857: five columns over a 720px minimum put the amount and Edit/Delete
+       off a phone screen. Same `money()` the table renders; Delete still goes
+       through the same confirm dialog the desktop button opens. */
+    return (
+      <PhoneList aria-label="Expenses" data-testid="admin-expenses-phone-list">
+        {expenses.map((expense) => {
+          const label = `${expense.category} ${money(expense.amount_cents)}`;
+          return (
+            <PhoneListRow
+              key={expense.expense_id}
+              data-testid={`admin-expenses-row-${expense.expense_id}`}
+              title={<Chip variant="manual" label={expense.category.toUpperCase()} />}
+              primary={
+                <span className="font-mono text-sm font-semibold tabular-nums text-rally-base">
+                  {money(expense.amount_cents)}
+                </span>
+              }
+              actionsLabel={`Actions for ${label}`}
+              actionsTestId={`admin-expenses-actions-${expense.expense_id}`}
+              actions={[
+                { key: "edit", label: "Edit", onSelect: () => onEdit(expense) },
+                {
+                  key: "delete",
+                  label: "Delete",
+                  danger: true,
+                  onSelect: () => onDelete(expense),
+                },
+              ]}
+              secondary={
+                <>
+                  <div className="break-words">{expense.note || "No note"}</div>
+                  <div className="font-mono text-[11px]">
+                    {new Date(expense.incurred_on).toLocaleDateString()}
+                  </div>
+                </>
+              }
+            />
+          );
+        })}
+      </PhoneList>
+    );
+  }
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[720px] text-sm">

@@ -18,7 +18,8 @@ function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-function isValidTimeZone(tz: string): boolean {
+/** True when `tz` is an IANA zone name this runtime's Intl accepts. */
+export function isValidTimeZone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
     return true;

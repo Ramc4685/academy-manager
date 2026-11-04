@@ -86,16 +86,32 @@ class FakeDigestSendRepository:
         self.by_id[digest.digest_id] = digest
         return digest
 
-    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
-        d = self.by_id[digest_id]
+    def _owned(self, academy_id: str, digest_id: str) -> DigestSend | None:
+        # Mirror Mongo: an update filtered on (academy_id, digest_id) that
+        # matches no row is a silent no-op, never a cross-academy write (#880).
+        d = self.by_id.get(digest_id)
+        return d if d is not None and d.academy_id == academy_id else None
+
+    async def mark_sent(
+        self, academy_id: str, digest_id: str, provider_message_id: str | None
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_sent(provider_message_id=provider_message_id, sent_at="now")
 
-    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None:
-        d = self.by_id[digest_id]
+    async def mark_failed(
+        self, academy_id: str, digest_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_failed(reason=reason, retryable=retryable)
 
-    async def mark_skipped_empty(self, digest_id: str) -> None:
-        d = self.by_id[digest_id]
+    async def mark_skipped_empty(self, academy_id: str, digest_id: str) -> None:
+        d = self._owned(academy_id, digest_id)
+        if d is None:
+            return
         self.by_id[digest_id] = d.mark_skipped_empty()
 
 
@@ -135,6 +151,7 @@ class StubSendPort:
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
+        sender_name: str | None = None,
     ) -> SendOutcome:
         self.sent.append(
             {
@@ -144,6 +161,7 @@ class StubSendPort:
                 "cc": cc or [],
                 "bcc": bcc or [],
                 "category": category,
+                "sender_name": sender_name,
             }
         )
         return SendOutcome(
@@ -520,3 +538,41 @@ async def test_expected_absence_provider_failure_does_not_block_send() -> None:
     )
     assert result.sent == 1
     assert EXPECTED_ABSENCES_HEADING not in sender.sent[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
+    """Fake fidelity (#880): the real repo filters on ``(academy_id, digest_id)``,
+    so a mark issued with another academy's id must leave the row untouched."""
+    repo = FakeDigestSendRepository()
+    own = await repo.try_claim(ACADEMY_ID, "coach-1", "2026-06-12")
+    assert own is not None
+
+    await repo.mark_sent("acad-2", own.digest_id, "prov-x")
+    await repo.mark_failed("acad-2", own.digest_id, "boom")
+    await repo.mark_skipped_empty("acad-2", own.digest_id)
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.QUEUED
+
+    await repo.mark_sent(ACADEMY_ID, own.digest_id, "prov-x")
+    assert repo.by_id[own.digest_id].status == DigestSendStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_coach_digest_carries_the_academy_sender_identity() -> None:
+    """L9a: display name + reply-to come from the academy brand lookup."""
+    use_case, _digests, sender, _ = _build(
+        coaches=[ResolvedRecipient(user_id="coach-1", email="c1@example.test")],
+        plans={"coach-1": _populated_plan()},
+    )
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(
+            return_value=EmailBrand(
+                academy_name="Brand Co", sender_name="Brand Co Desk", reply_to="desk@example.com"
+            )
+        )
+    )
+    await use_case.execute(
+        SendCoachDailyDigestCommand(academy_id=ACADEMY_ID, digest_date=DIGEST_DATE)
+    )
+    assert sender.sent[0]["sender_name"] == "Brand Co Desk"
+    use_case.brands.brand_for.assert_awaited_with(ACADEMY_ID)

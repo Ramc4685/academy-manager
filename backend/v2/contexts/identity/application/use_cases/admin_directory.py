@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Literal, Protocol
 
@@ -22,15 +23,22 @@ class AdminUserSummary(BaseModel):
     role: Role
     status: str
     phone: str | None = None
+    # Every role the user holds, primary first. The list payload used to carry
+    # only ``role`` (== ``roles[0]``), which hid a coach whose first role is
+    # parent from any client-side "staff" filter (sidebar regroup spec 4.1).
+    roles: tuple[Role, ...] = ()
 
 
 class AdminUserDetail(AdminUserSummary):
     model_config = {"frozen": True}
 
-    roles: tuple[Role, ...] = ()
     linked_student_count: int = 0
     session_count: int = 0
     login_invite_sent_at: datetime | None = None
+    # Roles on the tenant's `academy_memberships` row, which is what auth
+    # grants from. `roles` above mirrors the `users` doc and can drift (0165
+    # skips the mirror in some cases), so rank checks use both (X3).
+    membership_roles: tuple[str, ...] = ()
 
 
 class CreateAdminUserCommand(BaseModel):
@@ -52,12 +60,22 @@ class UpdateAdminUserCommand(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     status: str | None = Field(default=None, max_length=32)
     actor_id: str = Field(min_length=1)
+    # The caller's academy roles at the time of the edit, stamped on the
+    # `user.edited` audit row so "who changed an owner's email" can be
+    # answered without joining today's memberships (X3). Empty for the
+    # coach/parent self-service paths.
+    actor_roles: tuple[str, ...] = ()
     reason: str = Field(min_length=1, max_length=500)
 
 
 class AdminUserDirectoryQuery(Protocol):
     async def list_users(
-        self, role: Role | None = None, academy_id: str | None = None
+        self,
+        role: Role | None = None,
+        academy_id: str | None = None,
+        *,
+        exclude_role: Role | None = None,
+        roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]: ...
 
 
@@ -121,10 +139,23 @@ class ListAdminUsers:
 
     async def execute(
         self,
-        role: Literal["admin", "coach", "assistant_coach", "parent", "owner"] | None = None,
+        role: Role | None = None,
         academy_id: str | None = None,
+        *,
+        exclude_role: Role | None = None,
+        roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]:
-        return await self._users.list_users(role, academy_id=academy_id)
+        """List the academy's users.
+
+        ``role`` keeps its historical single-role semantics. ``roles`` is a
+        union filter (any held role in the set). ``exclude_role`` drops a user
+        only when they hold no role other than the excluded one, so a parent
+        who is also a coach survives ``exclude_role="parent"``. All three
+        combine with AND.
+        """
+        return await self._users.list_users(
+            role, academy_id=academy_id, exclude_role=exclude_role, roles=roles
+        )
 
 
 class GetAdminUser:

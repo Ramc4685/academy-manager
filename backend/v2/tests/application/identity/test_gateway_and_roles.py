@@ -23,7 +23,22 @@ async def test_gateway_masks_stripe_account_and_defaults_manual_methods():
 
     assert output.stripe_connected is True
     assert output.stripe_account_id_masked == "acct...7890"
-    assert output.manual_methods == ["cash", "check"]
+    # Row 22: all six, in the dialogs' order, until the owner saves a choice.
+    assert output.manual_methods == ["cash", "check", "zelle", "venmo", "bank_transfer", "other"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_blno_legacy_default_list_still_reads_all_six():
+    """BLNO pin: the old upsert default ["cash", "check"] was never a choice."""
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {
+        "academy_id": "acad_blno_badminton",
+        "manual_methods": ["cash", "check"],
+    }
+
+    output = await GetAcademyGatewayUseCase(repo).execute("acad_blno_badminton")
+
+    assert output.manual_methods == ["cash", "check", "zelle", "venmo", "bank_transfer", "other"]
 
 
 @pytest.mark.asyncio

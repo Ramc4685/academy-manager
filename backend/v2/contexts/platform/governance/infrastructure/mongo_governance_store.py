@@ -18,6 +18,8 @@ class MongoGovernanceStore:
         self._support_access = db["support_access_grants"]
         self._support_impersonation = db["support_impersonation_requests"]
         self._audit_logs = db["platform_governance_audit_logs"]
+        self._academies = db["academies"]
+        self._students = db["students"]
 
     async def create_tenant_export_request(self, request: dict[str, Any]) -> dict[str, Any]:
         await self._tenant_exports.insert_one(dict(request))
@@ -51,6 +53,25 @@ class MongoGovernanceStore:
         await self._tenant_deletions.insert_one(dict(request))
         return self._clean(request)
 
+    async def mark_tenant_deletion_requested(
+        self, academy_id: str, status: str, requested_at: datetime
+    ) -> None:
+        """Stamp the academy so readers can see a deletion request is pending.
+
+        Additive only: the tenant's own lifecycle status is left untouched and
+        an existing stamp is never rewritten. No cascade — see
+        ``docs/policy/governance-deletion-cascade.md``.
+        """
+        await self._academies.update_one(
+            {"academy_id": academy_id, "governance_deletion_status": {"$ne": status}},
+            {
+                "$set": {
+                    "governance_deletion_status": status,
+                    "governance_deletion_requested_at": requested_at,
+                }
+            },
+        )
+
     async def list_tenant_deletion_requests(
         self, academy_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -62,6 +83,29 @@ class MongoGovernanceStore:
     async def create_student_data_deletion_request(self, request: dict[str, Any]) -> dict[str, Any]:
         await self._student_deletions.insert_one(dict(request))
         return self._clean(request)
+
+    async def mark_student_deletion_requested(
+        self, academy_id: str, student_id: str, status: str, requested_at: datetime
+    ) -> None:
+        """Stamp the student so rosters and admin reads can show the request.
+
+        Tenant-scoped by ``academy_id``, additive only (the student's own
+        lifecycle status is left untouched), and never rewrites an existing
+        stamp. No cascade — see ``docs/policy/governance-deletion-cascade.md``.
+        """
+        await self._students.update_one(
+            {
+                "academy_id": academy_id,
+                "student_id": student_id,
+                "governance_deletion_status": {"$ne": status},
+            },
+            {
+                "$set": {
+                    "governance_deletion_status": status,
+                    "governance_deletion_requested_at": requested_at,
+                }
+            },
+        )
 
     async def list_student_data_deletion_requests(
         self, academy_id: str | None = None

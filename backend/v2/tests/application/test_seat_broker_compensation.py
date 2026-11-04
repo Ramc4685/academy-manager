@@ -179,7 +179,12 @@ async def test_resume_enrollment_compensates_via_broker_when_update_status_fails
 
 
 @pytest.mark.asyncio
-async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() -> None:
+async def test_a_failed_offer_write_on_a_class_full_of_holds_touches_no_hold() -> None:
+    """Issue #828 made ``mark_offered`` the failure point after a reclaim, and
+    this test used to pin the broker compensation for it. X2 (owner decision
+    2026-09-25) removed the reclaim from the offer: a class full only of holds
+    gets a SEATLESS offer, so a failed offer write has nothing to give back —
+    the held family is still held and no seat moved."""
     enrollments = _RaisingOnCreate(
         rows={
             "held-1": make_enrollment(
@@ -203,7 +208,16 @@ async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() 
             return self.entry
 
         async def update_status(self, waitlist_id: str, status: str) -> None:
-            raise AssertionError("must not be reached — the enrollment write failed first")
+            raise AssertionError("must not be reached — the offer write failed first")
+
+        async def mark_offered(
+            self, waitlist_id: str, *, offer_expires_at, holds_seat=True
+        ) -> None:
+            assert holds_seat is False  # full of holds: nothing reserved
+            raise _Boom("offer write failed")
+
+        async def count_seatless_offers(self, session_id: str) -> int:
+            return 0
 
     waitlist = _Waitlist(
         entry=WaitlistEntry(
@@ -220,7 +234,7 @@ async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() 
     @dataclass
     class _Outbox:
         async def append(self, event) -> None:
-            raise AssertionError("must not be reached — the enrollment write failed first")
+            raise AssertionError("must not be reached — the offer write failed first")
 
     promote = PromoteFromWaitlist(
         waitlist=waitlist,
@@ -235,10 +249,8 @@ async def test_promote_from_waitlist_compensates_via_broker_when_create_fails() 
     with pytest.raises(_Boom):
         await promote.execute("sess-1")
 
-    assert enrollments.rows["held-1"].status == "dropped"
-    assert sessions.release_calls == ["sess-1"]
-    assert sessions.reserved_seats["sess-1"] == 0
-    event_types = [e.event_type for e in events.rows]
-    assert "hold_reclaim_orphaned" in event_types
-    # The new enrollment row was never created.
+    assert enrollments.rows["held-1"].status == "held"
+    assert sessions.release_calls == []
+    assert sessions.reserved_seats["sess-1"] == 1
+    assert events.rows == []
     assert "wl-1" not in enrollments.rows

@@ -1548,8 +1548,6 @@ async def main() -> None:
                 },
                 "manual_methods": ["cash", "check", "zelle"],
                 "notifications": {
-                    "dues_reminders": True,
-                    "attendance_alerts": True,
                     "daily_digest_to_admin": True,
                 },
                 "created_at": utcnow(),
@@ -2200,14 +2198,11 @@ async def main() -> None:
     print(f"Memberships: {membership_count}")
 
     print("\n✓ Seed complete.")
-    print(f"\nLogin credentials:")
-    print(f"  Admin (platform_admin):  {admin_email} / {ADMIN_PASSWORD}")
-    if FIREBASE_MODE:
-        print(f"  Coach:  gowtham@blno.academy | kishore@blno.academy  /  {COACH_PASSWORD}")
-        print(f"  Parent: <any parent email>  /  {PARENT_PASSWORD}")
-    else:
-        print(f"  Coach:  gowtham@blno.academy | kishore@blno.academy  /  {COACH_PASSWORD}")
-        print(f"  Parent: <any parent email>  /  {PARENT_PASSWORD}")
+    # Passwords come from SEED_*_PASSWORD env vars; name them, never echo the values.
+    print("\nLogin credentials:")
+    print(f"  Admin (platform_admin):  {admin_email} / $SEED_ADMIN_PASSWORD")
+    print("  Coach:  gowtham@blno.academy | kishore@blno.academy  /  $SEED_COACH_PASSWORD")
+    print("  Parent: <any parent email>  /  $SEED_PARENT_PASSWORD")
 
 
 if __name__ == "__main__":

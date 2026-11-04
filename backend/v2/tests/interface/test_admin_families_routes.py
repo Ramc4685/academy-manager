@@ -203,7 +203,8 @@ def test_owner_gets_every_action(owner: TestClient, services: FakeServices) -> N
 
 def test_admin_loses_owner_only_actions(admin: TestClient) -> None:
     body = admin.get("/api/v2/admin/families/p-1/billing").json()
-    assert body["invoices"][0]["actions"] == ["send", "record_payment", "charge_card"]
+    # Card charges are owner-only (#928); billing staff still record payments.
+    assert body["invoices"][0]["actions"] == ["send", "record_payment"]
     assert body["students"][0]["enrollments"][0]["actions"] == []
     assert body["actions"] == ["autopay_off", "send_invoice", "record_payment"]
 

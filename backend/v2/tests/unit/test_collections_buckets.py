@@ -688,3 +688,16 @@ def test_no_whatsapp_context_means_no_link_anywhere() -> None:
     )
     assert row is not None
     assert row.payload["whatsapp_url"] is None
+
+
+def test_whatsapp_link_uses_the_academy_calling_code() -> None:
+    """Row 11: the bare national number takes the academy's code (default "1")."""
+    family = _family(parent_phone="9876543210", invoices=(_invoice(due_date=date(2026, 9, 1)),))
+    assert _WA.country_code == "1"
+    default_row = classify_family(family, today=TODAY, whatsapp=_WA)
+    assert default_row is not None
+    assert default_row.payload["whatsapp_url"].startswith("https://wa.me/19876543210?text=")
+    india = WhatsAppContext(pay_url=_WA.pay_url, academy_name="BLNO", country_code="91")
+    row = classify_family(family, today=TODAY, whatsapp=india)
+    assert row is not None
+    assert row.payload["whatsapp_url"].startswith("https://wa.me/919876543210?text=")

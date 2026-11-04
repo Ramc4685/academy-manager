@@ -325,15 +325,24 @@ class _DigestSends:
     ) -> DigestSend:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
-        self.rows[digest_id] = self.rows[digest_id].mark_sent(
+    async def mark_sent(
+        self, academy_id: str, digest_id: str, provider_message_id: str | None
+    ) -> None:
+        row = self.rows[digest_id]
+        if row.academy_id != academy_id:  # (academy_id, digest_id) filter, as Mongo
+            return
+        self.rows[digest_id] = row.mark_sent(
             provider_message_id=provider_message_id, sent_at=datetime.now(UTC)
         )
 
-    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None:
+    async def mark_failed(
+        self, academy_id: str, digest_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         self.failures.append((digest_id, reason, retryable))
 
-    async def mark_skipped_empty(self, digest_id: str) -> None:  # pragma: no cover - unused
+    async def mark_skipped_empty(
+        self, academy_id: str, digest_id: str
+    ) -> None:  # pragma: no cover - unused
         raise NotImplementedError
 
     async def list_recent(self, academy_id: str, limit: int) -> list[DigestSend]:

@@ -19,10 +19,10 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import MongoSessionRepository
 from backend.v2.contexts.onboarding.domain.errors import MissingSelectedSession
 from backend.v2.interfaces.parent.deps import get_parent_use_cases
-from backend.v2.interfaces.parent.payment_routes import _request_ip
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.shared.http import request_ip as _request_ip
 from backend.v2.shared.tenancy.context import tenant_scope
 
 
@@ -358,22 +358,26 @@ def test_parent_reads_checkout_status_with_request_consent_metadata() -> None:
     ]
 
 
-def test_request_ip_uses_forwarded_for_from_trusted_proxy() -> None:
-    request = SimpleNamespace(
-        client=SimpleNamespace(host="127.0.0.1"),
-        headers={"x-forwarded-for": "203.0.113.10, 10.0.0.5"},
+def _ip_request(headers: dict[str, str], secret: str | None = "s3cret") -> SimpleNamespace:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(proxy_shared_secret=secret)),
+        client=SimpleNamespace(host="10.0.0.2"),
+        headers=headers,
     )
 
-    assert _request_ip(request) == "203.0.113.10"
+
+def test_request_ip_trusts_cf_connecting_ip_only_from_the_vouched_proxy() -> None:
+    vouched = {"x-cm-proxy-auth": "s3cret", "cf-connecting-ip": "203.0.113.10"}
+    assert _request_ip(_ip_request({**vouched, "fly-client-ip": "198.51.100.1"})) == "203.0.113.10"
+
+    forged = {"x-cm-proxy-auth": "wrong", "cf-connecting-ip": "6.6.6.6"}
+    assert _request_ip(_ip_request({**forged, "fly-client-ip": "198.51.100.1"})) == "198.51.100.1"
 
 
-def test_request_ip_ignores_forwarded_for_from_untrusted_peer() -> None:
-    request = SimpleNamespace(
-        client=SimpleNamespace(host="8.8.8.8"),
-        headers={"x-forwarded-for": "203.0.113.10"},
-    )
-
-    assert _request_ip(request) == "8.8.8.8"
+def test_request_ip_never_reads_a_forgeable_forwarded_for() -> None:
+    headers = {"x-forwarded-for": "6.6.6.6", "cf-connecting-ip": "6.6.6.6"}
+    assert _request_ip(_ip_request(headers, secret="")) == "10.0.0.2"
+    assert _request_ip(_ip_request({**headers, "fly-client-ip": "203.0.113.10"})) == "203.0.113.10"
 
 
 @pytest.mark.asyncio
@@ -540,6 +544,9 @@ async def test_parent_available_catalog_includes_available_recurring_templates(
     assert by_id["tpl-not-started"].start_at == datetime(2026, 6, 15, 21, 30, tzinfo=UTC)
     assert by_id["tpl-prod-shaped"].start_at == datetime(2026, 6, 1, 16, 0, tzinfo=UTC)
     assert by_id["tpl-prod-shaped"].amount_cents == 8800
+    # PR 11b: a class with no fee is billed at 0, so the catalog shows 0, not
+    # the old $150 placeholder no charge path ever used.
+    assert by_id["tpl-not-started"].amount_cents == 0
 
 
 @pytest.mark.asyncio
@@ -592,3 +599,111 @@ async def test_parent_available_catalog_filters_full_sessions_before_capping(
         rows = await MongoSessionRepository(db).available_for_parent_catalog()
 
     assert [row.session_id for row in rows] == ["available-after-full"]
+
+
+@pytest.mark.asyncio
+async def test_parent_available_catalog_batches_enrolled_counts_in_one_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N+1 regression guard: `enrolled_count` must come from a single
+    aggregate over all sessions in the page, not one `count_documents`
+    call per session."""
+    monkeypatch.setattr(session_repo_module, "datetime", _FrozenCatalogDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-available-batched-counts"]
+    sessions = [
+        {
+            "academy_id": "academy-a",
+            "session_id": f"sess-{index}",
+            "title": f"Session {index}",
+            "capacity": 10,
+            "status": "scheduled",
+            "start_at": datetime(2026, 6, 2, 10, index % 60, tzinfo=UTC),
+            "end_at": datetime(2026, 6, 2, 11, index % 60, tzinfo=UTC),
+        }
+        for index in range(5)
+    ]
+    await db.sessions.insert_many(sessions)
+    # Give sessions a mix of active/inactive/cancelled enrollment counts,
+    # plus one session (sess-4) with zero enrollments to exercise the
+    # $group-omits-missing-keys fallback to 0.
+    await db.enrollments.insert_many(
+        [
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-0-a",
+                "session_id": "sess-0",
+                "student_id": "st-0a",
+                "status": "active",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-0-b",
+                "session_id": "sess-0",
+                "student_id": "st-0b",
+                "status": "active",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-1-a",
+                "session_id": "sess-1",
+                "student_id": "st-1a",
+                "status": "active",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-1-b",
+                "session_id": "sess-1",
+                "student_id": "st-1b",
+                "status": "cancelled",
+            },
+            {
+                "academy_id": "academy-a",
+                "enrollment_id": "enr-2-a",
+                "session_id": "sess-2",
+                "student_id": "st-2a",
+                "status": "active",
+            },
+            {
+                "academy_id": "other-academy",
+                "enrollment_id": "enr-3-other",
+                "session_id": "sess-3",
+                "student_id": "st-3-other",
+                "status": "active",
+            },
+        ]
+    )
+
+    # `db["enrollments"]` returns a fresh wrapper object per access (mongomock
+    # does not cache collection handles), so spy on the shared class instead.
+    collection_cls = type(db["enrollments"])
+    original_count_documents = collection_cls.count_documents
+    count_documents_calls: list[dict] = []
+
+    async def _spy_count_documents(self, *args, **kwargs):
+        count_documents_calls.append({"args": args, "kwargs": kwargs})
+        return await original_count_documents(self, *args, **kwargs)
+
+    monkeypatch.setattr(collection_cls, "count_documents", _spy_count_documents)
+
+    original_aggregate = collection_cls.aggregate
+    aggregate_calls: list[list] = []
+
+    def _spy_aggregate(self, pipeline, *args, **kwargs):
+        aggregate_calls.append(pipeline)
+        return original_aggregate(self, pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(collection_cls, "aggregate", _spy_aggregate)
+
+    with tenant_scope("academy-a"):
+        rows = await MongoSessionRepository(db).available_for_parent_catalog()
+
+    assert count_documents_calls == []
+    assert len(aggregate_calls) == 1
+
+    by_id = {row.session_id: row for row in rows}
+    assert by_id["sess-0"].enrolled_count == 2
+    assert by_id["sess-1"].enrolled_count == 1
+    assert by_id["sess-2"].enrolled_count == 1
+    assert by_id["sess-3"].enrolled_count == 0
+    assert by_id["sess-4"].enrolled_count == 0

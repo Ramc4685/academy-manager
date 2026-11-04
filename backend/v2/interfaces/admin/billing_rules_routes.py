@@ -9,13 +9,14 @@ values. The use cases are attached at ``app.state.admin_billing_rules`` by
 ``composition/billing_rules.py`` — ``composition/admin.py`` is at its line
 budget — so this module only knows their protocol.
 
-The existing ``/academy/fees`` and ``/billing/settings/invoice-schedule``
-routes are untouched and keep serving their other callers.
+The ``/academy/fees`` routes (GET/PATCH) and the ``/billing/settings/
+invoice-schedule`` PUT were retired in Lane D (Settings overhaul Phase 2);
+only the invoice-schedule GET still serves its other callers.
 """
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -34,11 +35,21 @@ class BillingRuleRowView(BaseModel):
     label: str
     editable: bool
     value: int | None = None
+    #: Issue #774: ``reminder_days`` only. An empty list is a real value
+    #: ("send none"); ``None`` marks every other, numeric row.
+    values: list[int] | None = None
     unit: str | None = None
     min_value: int | None = None
     max_value: int | None = None
     display: str | None = None
     detail: str | None = None
+    #: ``ach_discount`` only.
+    enabled: bool | None = None
+    percent: float | None = None
+    max_percent: float | None = None
+    #: ``cancellation_effective_timing`` only.
+    choice: str | None = None
+    choices: list[str] | None = None
 
 
 class BillingRuleGroupView(BaseModel):
@@ -50,6 +61,17 @@ class BillingRuleGroupView(BaseModel):
 
 class BillingRulesResponse(BaseModel):
     groups: list[BillingRuleGroupView]
+
+
+class AchDiscountRequest(BaseModel):
+    """Settings overhaul Phase 4 PR 13. The ceiling is deliberately absent:
+    ``max_ach_discount_percent`` is platform-owned, and any key here that is
+    not ``enabled`` or ``percent`` is rejected."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool | None = None
+    percent: float | None = None
 
 
 class UpdateBillingRulesRequest(BaseModel):
@@ -66,6 +88,16 @@ class UpdateBillingRulesRequest(BaseModel):
     late_fee_cents: int | None = None
     cancellation_minimum_notice_days: int | None = None
     cancellation_fee_cents: int | None = None
+    #: Issue #774. ``None`` leaves the stored offsets alone; ``[]`` turns
+    #: past-due reminders off.
+    reminder_days: list[int] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from Self-service.
+    cancellation_effective_timing: Literal["immediate", "end_of_period"] | None = None
+    #: Settings overhaul Phase 3 PR 10, moved from the Holds card.
+    drop_default_outcome: (
+        Literal["no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period"] | None
+    ) = None
+    ach_discount: AchDiscountRequest | None = None
     reason: str | None = None
 
 

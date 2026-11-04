@@ -751,10 +751,10 @@ async def test_approval_that_fails_before_the_certificate_can_be_retried() -> No
 
         result = await use_case.execute(_approve_command())
 
-    assert result.status == "APPROVED"
+    assert result.status == "COMPLETED"
     reviewed = await recommendations.get("rec-1")
     assert reviewed is not None
-    assert reviewed.status == "APPROVED"
+    assert reviewed.status == "COMPLETED"
     assert reviewed.reviewed_by == "admin-1"
     # The retry converges instead of duplicating: one certificate, one active
     # level-2 row, and the skill passed in between is not reset.
@@ -1020,7 +1020,7 @@ async def test_pre_read_replay_guard_is_load_bearing() -> None:
 
     with tenant_scope("academy-1"):
         first = await use_case.execute(_approve_command())
-        assert first.status == "APPROVED"
+        assert first.status == "COMPLETED"
 
         # Defeat the CAS: it now reports success no matter what status it
         # expected, so the pre-read guard is the only thing left that can

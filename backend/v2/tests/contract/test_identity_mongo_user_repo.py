@@ -88,6 +88,182 @@ async def test_admin_user_listing_is_scoped_to_academy(db) -> None:
     assert [u.user_id for u in users] == ["u-a"]
 
 
+async def _seed_role_shapes(db, academy_id: str = "academy-a") -> None:
+    """Every document shape ``_to_domain`` understands, plus one other tenant.
+
+    Names are invented fixtures, never real people.
+    """
+    await db["users"].insert_many(
+        [
+            {
+                "user_id": "parent-only",
+                "email": "parent-only@example.com",
+                "display_name": "Parent Only",
+                "roles": ["parent"],
+                "role": "parent",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                "user_id": "parent-coach",
+                "email": "parent-coach@example.com",
+                "display_name": "Parent Coach",
+                "roles": ["parent", "coach"],
+                "role": "parent",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Legacy shape: scalar ``role`` and no ``roles`` array.
+                "user_id": "legacy-coach",
+                "email": "legacy-coach@example.com",
+                "display_name": "Legacy Coach",
+                "role": "coach",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Null array with a scalar: ``_to_domain`` falls back to ``role``.
+                "user_id": "null-roles-coach",
+                "email": "null-roles-coach@example.com",
+                "display_name": "Null Roles Coach",
+                "roles": None,
+                "role": "coach",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                "user_id": "legacy-parent",
+                "email": "legacy-parent@example.com",
+                "display_name": "Legacy Parent",
+                "role": "parent",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Neither field: ``_to_admin_summary`` reports this as a parent.
+                "user_id": "roleless",
+                "email": "roleless@example.com",
+                "display_name": "Roleless",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                "user_id": "admin-a",
+                "email": "admin-a@example.com",
+                "display_name": "Admin A",
+                "roles": ["admin", "owner"],
+                "role": "admin",
+                "status": "active",
+                "academy_id": academy_id,
+            },
+            {
+                # Other tenant, would match every filter below if scope leaked.
+                "user_id": "coach-b",
+                "email": "coach-b@example.com",
+                "display_name": "Coach B",
+                "roles": ["coach"],
+                "role": "coach",
+                "status": "active",
+                "academy_id": "academy-b",
+            },
+        ]
+    )
+
+
+def _ids(users) -> set[str]:
+    return {u.user_id for u in users}
+
+
+@pytest.mark.asyncio
+async def test_list_users_exclude_role_parent_drops_parent_only_keeps_parent_coach(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    users = await repo.list_users(academy_id="academy-a", exclude_role="parent")
+
+    assert _ids(users) == {"parent-coach", "legacy-coach", "null-roles-coach", "admin-a"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_exclude_role_treats_legacy_and_roleless_docs_like_to_domain(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    excluded = await repo.list_users(academy_id="academy-a", exclude_role="parent")
+    everyone = await repo.list_users(academy_id="academy-a")
+
+    # Legacy scalar ``role`` counts; a doc with neither field is a parent.
+    assert "legacy-coach" in _ids(excluded)
+    assert "null-roles-coach" in _ids(excluded)
+    assert "legacy-parent" not in _ids(excluded)
+    assert "roleless" not in _ids(excluded)
+    assert {u.user_id: u.role for u in everyone}["roleless"] == "parent"
+
+
+@pytest.mark.asyncio
+async def test_list_users_role_combined_with_exclude_role(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    coaches = await repo.list_users(role="coach", academy_id="academy-a", exclude_role="parent")
+
+    # ``role=coach`` alone lists parent-coach (secondary role); the exclusion
+    # keeps them because they hold a non-parent role. Nothing parent-only.
+    assert _ids(coaches) == {"parent-coach", "legacy-coach", "null-roles-coach"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_roles_is_a_union_over_array_and_legacy_scalar(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    users = await repo.list_users(academy_id="academy-a", roles=["coach", "owner"])
+
+    assert _ids(users) == {"parent-coach", "legacy-coach", "null-roles-coach", "admin-a"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_roles_with_exclude_role(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    users = await repo.list_users(academy_id="academy-a", roles=["parent"], exclude_role="parent")
+
+    assert _ids(users) == {"parent-coach"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_new_filters_never_cross_the_tenant_boundary(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    for kwargs in (
+        {"exclude_role": "parent"},
+        {"roles": ["coach"]},
+        {"role": "coach", "exclude_role": "parent", "roles": ["coach"]},
+    ):
+        users = await repo.list_users(academy_id="academy-a", **kwargs)
+        assert "coach-b" not in _ids(users), kwargs
+
+    other = await repo.list_users(academy_id="academy-b", exclude_role="parent", roles=["coach"])
+    assert _ids(other) == {"coach-b"}
+
+
+@pytest.mark.asyncio
+async def test_list_users_summary_carries_every_held_role(db) -> None:
+    await _seed_role_shapes(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-a")
+
+    by_id = {u.user_id: u for u in await repo.list_users(academy_id="academy-a")}
+
+    assert by_id["parent-coach"].role == "parent"
+    assert by_id["parent-coach"].roles == ("parent", "coach")
+    assert by_id["legacy-coach"].roles == ("coach",)
+    assert by_id["null-roles-coach"].roles == ("coach",)
+    assert by_id["roleless"].roles == ()
+
+
 @pytest.mark.asyncio
 async def test_user_repo_bootstraps_new_public_parent(db) -> None:
     repo = MongoUserRepository(db, default_academy_id="academy-a")
@@ -1117,3 +1293,237 @@ async def test_role_removal_reports_when_no_membership_row_matched(db, caplog) -
         )
 
     assert "role removal matched no membership row to revoke" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_user_edit_audit_row_carries_the_actor_roles(db, monkeypatch) -> None:
+    """X3: "which non-owner changed an owner's email" must be answerable from
+    the audit row itself, not from memberships as they are today."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", _RecordingFirebase)
+    await _seed_editable_parent(db)
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    await repo.update_admin_user(
+        "roster-parent-9",
+        UpdateAdminUserCommand(
+            display_name="Parent Renamed",
+            actor_id="admin-1",
+            actor_roles=("admin",),
+            reason="name fix",
+        ),
+        academy_id="academy-b",
+    )
+
+    row = await db["audit_logs"].find_one({"action": "user.edited"})
+    assert row["actor_id"] == "admin-1"
+    assert row["metadata"] == {"actor_roles": ["admin"]}
+
+
+@pytest.mark.asyncio
+async def test_governance_audit_records_both_sides_roles(db) -> None:
+    from backend.v2.contexts.identity.infrastructure.mongo_user_governance_audit import (
+        MongoUserGovernanceAudit,
+    )
+
+    await MongoUserGovernanceAudit(db).record(
+        academy_id="academy-b",
+        actor_id="admin-1",
+        actor_roles=("admin",),
+        action="user.change_denied",
+        target_id="owner-1",
+        target_roles=("owner", "admin"),
+        reason="takeover",
+        detail={"attempted": "edit:email"},
+    )
+
+    row = await db["audit_logs"].find_one({"action": "user.change_denied"})
+    assert row["academy_id"] == "academy-b"
+    assert row["entity_type"] == "user"
+    assert row["entity_id"] == "owner-1"
+    assert row["metadata"] == {
+        "actor_roles": ["admin"],
+        "target_roles": ["owner", "admin"],
+        "attempted": "edit:email",
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_detail_carries_the_membership_roles(db) -> None:
+    """X3 review: the rank check needs the roles auth actually grants, which
+    live on the membership, not only the directory doc's `roles`."""
+    await _seed_editable_parent(db)
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"}, {"$set": {"roles": ["parent", "owner"]}}
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    detail = await repo.get_admin_user("roster-parent-9", academy_id="academy-b")
+
+    assert detail is not None
+    assert "owner" not in detail.roles
+    assert detail.membership_roles == ("parent", "owner")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["scheduled", "running"])
+async def test_an_academy_admin_cannot_restore_a_pending_self_deletion(
+    db, monkeypatch, status
+) -> None:
+    """Support-only restore (PR #1115): the person's request covers every
+    academy, so an academy's Enable is refused before any write, in both."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+
+    class _Firebase:
+        async def set_user_disabled(self, uid: str, disabled: bool) -> None:
+            raise AssertionError("a refused restore must not touch Firebase")
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await _seed_editable_parent(db)
+    await db["users"].update_one({"user_id": "roster-parent-9"}, {"$set": {"status": "disabled"}})
+    await db["users"].insert_one(
+        {
+            "user_id": "fb-uid-9",
+            "academy_id": "academy-a",
+            "email": "parent@example.com",
+            "status": "disabled",
+            "role": "parent",
+        }
+    )
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"}, {"$set": {"status": "removed"}}
+    )
+    await db["academy_memberships"].insert_one(
+        {"academy_id": "academy-a", "user_id": "fb-uid-9", "roles": ["parent"], "status": "removed"}
+    )
+    request_row = {
+        "request_id": "r-9",
+        "user_id": "roster-parent-9",
+        "status": status,
+        "aliases": ["roster-parent-9", "fb-uid-9"],
+        "academy_ids": ["academy-a", "academy-b"],
+    }
+    await db["account_deletion_requests"].insert_one(dict(request_row))
+
+    for academy_id, user_id in (("academy-b", "roster-parent-9"), ("academy-a", "fb-uid-9")):
+        repo = MongoUserRepository(db, default_academy_id=academy_id)
+        with pytest.raises(AccountDeletionPending):
+            await repo.update_admin_user(
+                user_id,
+                UpdateAdminUserCommand(status="active", actor_id="admin-1", reason="asked us"),
+                academy_id=academy_id,
+            )
+
+    assert {d["status"] async for d in db["users"].find({})} == {"disabled"}
+    assert {d["status"] async for d in db["academy_memberships"].find({})} == {"removed"}
+    row = await db["account_deletion_requests"].find_one({"request_id": "r-9"}, {"_id": 0})
+    assert row == request_row
+    assert await db["audit_logs"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["parent_login", "student_login"])
+async def test_an_academy_login_invite_cannot_restore_a_pending_self_deletion(
+    db, monkeypatch, door
+) -> None:
+    """Support-only restore (PR #1115): the Billing Setup login invite and the
+    student login both upsert the membership as 'active', so they are refused
+    before Firebase or any write while the person's deletion is pending."""
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+
+    class _Firebase:
+        async def ensure_user(self, **kwargs):
+            raise AssertionError("a refused invite must not touch Firebase")
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await _seed_editable_parent(db)
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"},
+        {"$set": {"status": "removed", "status_before_deletion": "active"}},
+    )
+    await db["account_deletion_requests"].insert_one(
+        {
+            "request_id": "r-9",
+            "user_id": "roster-parent-9",
+            "status": "scheduled",
+            "aliases": ["roster-parent-9", "fb-uid-9"],
+            "academy_ids": ["academy-b"],
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    with pytest.raises(AccountDeletionPending):
+        if door == "parent_login":
+            await repo.ensure_parent_login(
+                parent_id="roster-parent-9",
+                email="parent@example.com",
+                display_name="Parent Nine",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+        else:
+            await repo.ensure_student_login(
+                student_id="s-9",
+                email="parent@example.com",
+                display_name="Parent Nine",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+
+    row = await db["academy_memberships"].find_one({"user_id": "fb-uid-9"}, {"_id": 0})
+    assert row["status"] == "removed" and row["status_before_deletion"] == "active"
+    assert "login_invite_pending" not in row
+    assert await db["audit_logs"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["parent_login", "student_login"])
+async def test_a_login_invite_is_refused_when_firebase_returns_a_pending_deletion_uid(
+    db, monkeypatch, door
+) -> None:
+    """Firebase matches by email, so it can return a uid no Mongo doc links to
+    this email. That uid's pending deletion must still block the invite."""
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+
+    class _Firebase:
+        async def ensure_user(self, **kwargs):
+            return "fb-pending", False
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await db["account_deletion_requests"].insert_one(
+        {
+            "request_id": "r-10",
+            "user_id": "fb-pending",
+            "status": "scheduled",
+            "aliases": ["fb-pending"],
+            "academy_ids": ["academy-a"],
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    with pytest.raises(AccountDeletionPending):
+        if door == "parent_login":
+            await repo.ensure_parent_login(
+                parent_id="roster-new",
+                email="moved@example.com",
+                display_name="Moved Parent",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+        else:
+            await repo.ensure_student_login(
+                student_id="s-10",
+                email="moved@example.com",
+                display_name="Moved Student",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+
+    assert await db["academy_memberships"].count_documents({"user_id": "fb-pending"}) == 0
+    assert await db["users"].count_documents({"firebase_uid": "fb-pending"}) == 0

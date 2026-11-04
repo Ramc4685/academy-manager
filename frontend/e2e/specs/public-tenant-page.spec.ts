@@ -1,0 +1,288 @@
+/**
+ * Lane B3: the public academy page at `/` on a tenant host.
+ *
+ * The page is server-rendered, so its backend read is answered by the stub
+ * server playwright.config.ts starts (e2e/fixtures/public-academy-stub.mjs),
+ * not by browser-side page.route. Each describe block picks a fixture from
+ * e2e/fixtures/public-academy-pages.json through its user agent. The
+ * academy is fictional ("Riverside Shuttle Club").
+ *
+ * localhost is not a product host (lib/public-page/host.ts), so `/` here is
+ * a tenant host; the product-host branch is covered by host.test.ts.
+ */
+
+import { expect, test, type Page } from "@playwright/test";
+
+const STUB = `http://127.0.0.1:${process.env.PUBLIC_ACADEMY_STUB_PORT}`;
+
+function fixtureAgent(name: string): string {
+  return `Mozilla/5.0 (Playwright e2e) cm-e2e-public-fixture/${name}`;
+}
+
+async function robotsMeta(page: Page): Promise<string | null> {
+  return page.locator('meta[name="robots"]').first().getAttribute("content");
+}
+
+test.describe("published page", () => {
+  test.use({ userAgent: fixtureAgent("published") });
+
+  test("renders hero, programs, price and seat bands with brand buttons", async ({ page }) => {
+    const response = await page.goto("/");
+    expect(response?.status()).toBe(200);
+
+    await expect(page.getByTestId("public-academy-page")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      "Coaching for ages 6 and up at Riverside Shuttle Club.",
+    );
+    await expect(page.locator("header")).toHaveCount(1);
+    await expect(page.locator("main")).toHaveCount(1);
+    await expect(page.locator("footer")).toHaveCount(1);
+    // The brandmark is a home link; the separate skip link targets #main.
+    await expect(
+      page.locator("header").getByRole("link", { name: "Riverside Shuttle Club" }),
+    ).toHaveAttribute("href", "/");
+
+    const primary = page.getByTestId("hero-primary-action");
+    await expect(primary).toHaveText("Book a free trial");
+    await expect(primary).toHaveAttribute("href", "#trial");
+    // Brand colours come straight from the backend fields.
+    await expect(primary).toHaveCSS("background-color", "rgb(15, 118, 110)");
+    await expect(primary).toHaveCSS("color", "rgb(255, 255, 255)");
+
+    await expect(page.getByRole("heading", { level: 3, name: "Shuttle Starters" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 3, name: "Match Play" })).toBeVisible();
+    await expect(page.getByTestId("public-class-row")).toHaveCount(4);
+
+    const seats = page.getByTestId("public-class-seats");
+    await expect(seats).toHaveText(["Open", "Only 2 seats left", "Full, join waitlist", "Open"]);
+    await expect(page.getByTestId("public-class-price").first()).toHaveText("$120 per month");
+
+    const fullRow = page
+      .getByTestId("public-class-row")
+      .filter({ hasText: "Full, join waitlist" });
+    await expect(fullRow.getByRole("link", { name: /^Join waitlist/ })).toBeVisible();
+    await expect(fullRow.getByRole("link", { name: /^Register/ })).toHaveCount(0);
+
+    await expect(page.getByTestId("public-coaches")).toContainText("Coach Alex Rivera");
+    await expect(page.getByTestId("trial-section")).toBeVisible();
+    await expect(page.getByText("214 Millbrook Road, Riverside").first()).toBeVisible();
+    await expect(page.getByTestId("courtmastr-credit")).toHaveText(
+      "Bookings and payments by CourtMastr",
+    );
+    // Landing render (Settings Phase 6): BLNO-style academy with no content
+    // and no theme set is today's page: Floodlit, no content sections, the
+    // built-in FAQ, today's seat chips, its own support email only.
+    await expect(page.getByTestId("public-academy-page")).toHaveAttribute("data-theme", "floodlit");
+    await expect(page.getByTestId("public-hero-photo")).toHaveCount(0);
+    await expect(page.getByTestId("public-about")).toHaveCount(0);
+    await expect(page.getByTestId("public-gallery")).toHaveCount(0);
+    await expect(page.getByTestId("public-coach-card")).toHaveCount(0);
+    await expect(page.getByText("What happens at a free trial?")).toBeVisible();
+    await expect(page.getByTestId("academy-support-email")).toHaveText(
+      "hello@riverside.example.test",
+    );
+    await expect(page.getByText("lakeside", { exact: false })).toHaveCount(0);
+    // Legal links the academy set (Settings overhaul Phase 4 PR 13).
+    await expect(page.getByTestId("academy-terms-link")).toHaveAttribute(
+      "href",
+      "https://riverside.example.test/terms",
+    );
+    await expect(page.getByTestId("academy-refund-link")).toHaveAttribute(
+      "href",
+      "https://riverside.example.test/refunds",
+    );
+  });
+
+  test("ships per-tenant metadata and JSON-LD without personal data", async ({ page }) => {
+    await page.goto("/");
+    await expect(page).toHaveTitle("Riverside Shuttle Club: classes and a free trial");
+    expect(await robotsMeta(page)).not.toContain("noindex");
+    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+      "content",
+      /\/og-card$/,
+    );
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", /\/$/);
+
+    const blocks = await page.locator('script[type="application/ld+json"]').allTextContents();
+    const graph = JSON.parse(blocks.join("")) as Array<Record<string, unknown>>;
+    expect(graph[0]["@type"]).toBe("SportsActivityLocation");
+    expect(graph[0].name).toBe("Riverside Shuttle Club");
+    expect(JSON.stringify(graph)).not.toContain("Coach");
+  });
+
+  test("the server read forwards host and proxy secret but no credentials", async ({
+    page,
+    context,
+    request,
+    baseURL,
+  }) => {
+    // A signed-in visitor: the anonymous read must still carry no identity.
+    await context.addCookies([
+      { name: "__cm_identity", value: "e2e-secret-token", url: baseURL ?? "http://localhost" },
+    ]);
+    await page.goto("/");
+    await expect(page.getByTestId("public-academy-page")).toBeVisible();
+
+    const seen = (await (
+      await request.get(`${STUB}/__last-request?fixture=published`)
+    ).json()) as Record<string, string>;
+    expect(seen["x-forwarded-host"]).toMatch(/^localhost:\d+$/);
+    expect(seen["x-cm-proxy-auth"]).toBe(process.env.E2E_PROXY_SECRET);
+    expect(seen.cookie).toBeUndefined();
+    expect(seen.authorization).toBeUndefined();
+  });
+
+  test("serves the OG card, robots.txt and sitemap.xml for the host", async ({ request }) => {
+    const headers = { "user-agent": fixtureAgent("published") };
+    const og = await request.get("/og-card", { headers });
+    expect(og.status()).toBe(200);
+    expect(og.headers()["content-type"]).toContain("image/png");
+
+    const robots = await request.get("/robots.txt", { headers });
+    expect(robots.status()).toBe(200);
+    const robotsBody = await robots.text();
+    expect(robotsBody).toContain("Disallow: /admin");
+    expect(robotsBody).toMatch(/Sitemap: http:\/\/localhost:\d+\/sitemap\.xml/);
+
+    const sitemap = await request.get("/sitemap.xml", { headers });
+    expect(sitemap.status()).toBe(200);
+    expect(await sitemap.text()).toMatch(/<loc>http:\/\/localhost:\d+\/<\/loc>/);
+  });
+});
+
+test.describe("a second academy on its own host (tenancy)", () => {
+  test.use({ userAgent: fixtureAgent("lakeside") });
+
+  test("shows only its own name, colours, content and support email", async ({ page }) => {
+    await page.goto("/");
+    const root = page.getByTestId("public-academy-page");
+    await expect(root).toHaveAttribute("data-theme", "daylight");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Lakeside Racquet Academy");
+
+    // Its own colour, with readable text: pale yellow fill, dark ink.
+    const primary = page.getByTestId("hero-primary-action");
+    await expect(primary).toHaveCSS("background-color", "rgb(250, 204, 21)");
+    await expect(primary).toHaveCSS("color", "rgb(15, 23, 42)");
+    // Daylight is a light page.
+    await expect(root).toHaveCSS("background-color", "rgb(248, 250, 252)");
+
+    // Its own content.
+    await expect(page.getByTestId("public-about")).toContainText("Lakeside opened in 2019");
+    await expect(page.getByTestId("public-highlights")).toContainText("Small groups");
+    await expect(page.getByTestId("public-gallery").locator("img")).toHaveCount(2);
+    await expect(
+      page.getByTestId("public-gallery").locator("img").first(),
+    ).toHaveAttribute("loading", "lazy");
+    await expect(page.getByTestId("public-coach-card")).toContainText("Former state champion");
+    await expect(page.getByText("Do you loan rackets?")).toBeVisible();
+    // The built-in FAQ is replaced when the academy wrote its own.
+    await expect(page.getByText("What happens at a free trial?")).toHaveCount(0);
+
+    // Threshold 5: four seats left reads as a few-seats chip.
+    await expect(page.getByTestId("public-class-seats").first()).toHaveText("Only 4 seats left");
+
+    // Support email only, and it is this academy's.
+    await expect(page.getByTestId("academy-support-email")).toHaveText(
+      "front-desk@lakeside.example.test",
+    );
+    const html = await page.content();
+    expect(html).not.toContain("riverside");
+    expect(html).not.toContain("Riverside");
+    expect(html).not.toMatch(/tel:|\+1 ?555/);
+  });
+});
+
+test.describe("nothing published yet", () => {
+  test.use({ userAgent: fixtureAgent("empty") });
+
+  test("shows the timetable-on-its-way notice and is not indexed", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("no-classes-published")).toContainText(
+      "The new timetable is on its way",
+    );
+    await expect(page.getByTestId("hero-primary-action")).toHaveText("Tell me when classes open");
+    await expect(page.getByTestId("public-class-row")).toHaveCount(0);
+    expect(await robotsMeta(page)).toContain("noindex");
+  });
+});
+
+test.describe("trials closed", () => {
+  test.use({ userAgent: fixtureAgent("trials_closed") });
+
+  test("swaps the trial actions for open classes and Register", async ({ page }) => {
+    await page.goto("/");
+    const primary = page.getByTestId("hero-primary-action");
+    await expect(primary).toHaveText("See open classes");
+    await expect(primary).toHaveAttribute("href", "#classes");
+    await expect(page.getByTestId("trial-closed")).toContainText("Free trials are paused");
+    await expect(page.getByRole("link", { name: /^Try a class free/ })).toHaveCount(0);
+    await expect(page.getByText("First class free")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^Register for/ })).toHaveCount(3);
+  });
+});
+
+test.describe("every class full", () => {
+  test.use({ userAgent: fixtureAgent("all_full") });
+
+  test("explains the waitlist and leads with it", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("all-classes-full")).toBeVisible();
+    await expect(page.getByTestId("hero-primary-action")).toHaveText("Join the waitlist");
+    await expect(page.getByTestId("public-class-seats")).toHaveText(
+      Array(4).fill("Full, join waitlist"),
+    );
+  });
+});
+
+test.describe("page not published", () => {
+  test.use({ userAgent: fixtureAgent("not_published") });
+
+  test("shows branding and parent login only", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("public-page-not-published")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Riverside Shuttle Club");
+    await expect(page.getByRole("main").getByRole("link", { name: "Parent login" })).toBeVisible();
+    await expect(page.getByTestId("public-class-row")).toHaveCount(0);
+    await expect(page.getByTestId("courtmastr-credit")).toBeVisible();
+    expect(await robotsMeta(page)).toContain("noindex");
+  });
+});
+
+test.describe("unknown host", () => {
+  test.use({ userAgent: fixtureAgent("unknown") });
+
+  test("renders the app 404", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
+    await expect(page.getByTestId("public-academy-page")).toHaveCount(0);
+  });
+});
+
+test.describe("backend unavailable", () => {
+  test.use({ userAgent: fixtureAgent("down") });
+
+  test("shows a plain retry notice, never a blank page", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("public-page-unavailable")).toContainText(
+      "This page is having trouble",
+    );
+    await expect(page.getByRole("link", { name: "Try again" })).toBeVisible();
+  });
+});
+
+test.describe("published page on a phone", () => {
+  test.use({ userAgent: fixtureAgent("published"), viewport: { width: 390, height: 844 } });
+
+  test("keeps a tappable Sign in in the header while scrolling", async ({ page }) => {
+    await page.goto("/");
+    const signIn = page.getByTestId("public-header-sign-in");
+    await expect(signIn).toBeVisible();
+    await expect(signIn).toHaveText("Sign in");
+    await expect(signIn).toHaveAttribute("href", "/login");
+    expect((await signIn.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+
+    // The header is sticky, so Sign in stays on screen at the bottom of the page.
+    await page.getByTestId("courtmastr-credit").scrollIntoViewIfNeeded();
+    await expect(signIn).toBeInViewport();
+  });
+});

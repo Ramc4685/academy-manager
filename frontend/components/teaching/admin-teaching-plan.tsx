@@ -4,10 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 
-import { listSessionOccurrences, type AdminSessionOccurrenceView } from "@/lib/api/admin";
+import {
+  getAdminAcademy,
+  listSessionOccurrences,
+  type AdminSessionOccurrenceView,
+} from "@/lib/api/admin";
 import { getAdminOccurrenceTeachingPlan } from "@/lib/api/admin-teaching";
 import { queryKeys } from "@/lib/query/keys";
-import { formatSessionTimeRange } from "@/lib/time/session-time";
+import { formatSessionTimeRange, sessionTimezone } from "@/lib/time/session-time";
 import type { LevelTeachingGroup } from "@/components/teaching/types";
 import { LessonCardView } from "@/components/teaching/lesson-card";
 import { StudentFocusReadOnlyRow } from "@/components/teaching/student-focus-row";
@@ -15,11 +19,20 @@ import { StudentFocusReadOnlyRow } from "@/components/teaching/student-focus-row
 export function AdminTeachingPlan({
   sessionId,
   programId,
+  timezone,
 }: {
   sessionId: string;
   programId?: string | null;
+  /** The session's own zone; a zoneless session reads the academy's. */
+  timezone?: string | null;
 }) {
   const [occurrenceId, setOccurrenceId] = useState("");
+  // Same cache key as the admin shell, so this is normally a cache hit.
+  const academyQuery = useQuery({
+    queryKey: queryKeys.admin.academy(),
+    queryFn: getAdminAcademy,
+  });
+  const zone = sessionTimezone(timezone, academyQuery.data?.timezone);
   const occurrencesQuery = useQuery({
     queryKey: queryKeys.admin.sessionOccurrences(sessionId),
     queryFn: () => listSessionOccurrences(sessionId),
@@ -77,7 +90,7 @@ export function AdminTeachingPlan({
           >
             {occurrences.map((occurrence) => (
               <option key={occurrence.occurrence_id} value={occurrence.occurrence_id}>
-                {occurrenceLabel(occurrence)}
+                {occurrenceLabel(occurrence, zone)}
               </option>
             ))}
           </select>
@@ -184,12 +197,13 @@ function LevelSection({ group }: { group: LevelTeachingGroup }) {
   );
 }
 
-function occurrenceLabel(occurrence: AdminSessionOccurrenceView): string {
+function occurrenceLabel(occurrence: AdminSessionOccurrenceView, timeZone: string): string {
   const date = new Date(occurrence.start_at).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
+    timeZone,
   });
-  return `${date} · ${formatSessionTimeRange(occurrence.start_at, occurrence.end_at)}`;
+  return `${date} · ${formatSessionTimeRange(occurrence.start_at, occurrence.end_at, timeZone)}`;
 }
 
 function PlanSkeleton() {

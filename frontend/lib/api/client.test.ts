@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const observability = vi.hoisted(() => ({ captureError: vi.fn() }));
+const observability = vi.hoisted(() => ({ captureError: vi.fn(), addBreadcrumb: vi.fn() }));
 
 vi.mock("@/lib/auth/firebase", () => ({ getIdToken: vi.fn(async () => null) }));
 vi.mock("@/lib/api/auth-token", () => ({ resolveApiAuthToken: vi.fn(async () => null) }));
@@ -9,7 +9,11 @@ vi.mock("@/lib/observability/sentry", async () => {
   const actual = await vi.importActual<typeof import("@/lib/observability/sentry")>(
     "@/lib/observability/sentry",
   );
-  return { ...actual, captureError: observability.captureError };
+  return {
+    ...actual,
+    captureError: observability.captureError,
+    addBreadcrumb: observability.addBreadcrumb,
+  };
 });
 
 import { apiFetch, apiRouteTemplate, type ApiError } from "./client";
@@ -87,7 +91,7 @@ describe("apiFetch Sentry capture (#707)", () => {
     expect(observability.captureError).not.toHaveBeenCalled();
   });
 
-  it("captures a network failure as api.failure=network and re-throws it", async () => {
+  it("captures a network failure as api.failure=network, warning level, with a route-agnostic fingerprint", async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
 
     await expect(apiFetch("/parent/home")).rejects.toBeInstanceOf(TypeError);
@@ -101,7 +105,37 @@ describe("apiFetch Sentry capture (#707)", () => {
       "api.failure": "network",
     });
     expect(context.tags["api.status"]).toBeUndefined();
-    expect(context.fingerprint).toEqual(["api-failure", "GET", "/parent/home", "network"]);
+    expect(context.fingerprint).toEqual(["api-network-failure"]);
+    expect(context.level).toBe("warning");
+  });
+
+  it("collapses network failures across routes into one fingerprint (#754)", async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(apiFetch("/parent/home")).rejects.toBeInstanceOf(TypeError);
+    await expect(apiFetch("/admin/roster")).rejects.toBeInstanceOf(TypeError);
+
+    expect(observability.captureError).toHaveBeenCalledTimes(2);
+    for (const [, context] of observability.captureError.mock.calls) {
+      expect(context.fingerprint).toEqual(["api-network-failure"]);
+      expect(context.level).toBe("warning");
+    }
+  });
+
+  it("records a breadcrumb instead of capturing when the browser is offline (#754)", async () => {
+    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    try {
+      vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
+
+      await expect(apiFetch("/parent/home")).rejects.toBeInstanceOf(TypeError);
+
+      expect(observability.captureError).not.toHaveBeenCalled();
+      expect(observability.addBreadcrumb).toHaveBeenCalledTimes(1);
+      const [message] = observability.addBreadcrumb.mock.calls[0];
+      expect(message).toContain("/parent/home");
+    } finally {
+      Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    }
   });
 
   it("captures the 20 s abort as api.failure=timeout", async () => {
@@ -126,5 +160,30 @@ describe("apiFetch Sentry capture (#707)", () => {
     const [, context] = observability.captureError.mock.calls[0];
     expect(String(context.extra.message).length).toBeLessThanOrEqual(200);
     expect(context.tags["api.status"]).toBe(502);
+  });
+});
+
+describe("apiFetch FormData bodies", () => {
+  it("leaves Content-Type to the browser so the multipart boundary is set", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, { logo_url: "https://x" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const body = new FormData();
+    body.append("file", new File(["x"], "a.png", { type: "image/png" }));
+
+    await apiFetch("/admin/academy/media", { method: "POST", body });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(init.headers).has("Content-Type")).toBe(false);
+    expect(init.body).toBe(body);
+    vi.unstubAllGlobals();
+  });
+
+  it("still sends JSON bodies as application/json", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    await apiFetch("/admin/academy", { method: "PATCH", body: "{}" });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    vi.unstubAllGlobals();
   });
 });

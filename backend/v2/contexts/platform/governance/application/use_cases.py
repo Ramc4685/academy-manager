@@ -48,12 +48,18 @@ class TenantGovernanceStore(Protocol):
         self, request_id: str, updates: dict[str, Any]
     ) -> dict[str, Any]: ...
     async def create_tenant_deletion_request(self, request: dict[str, Any]) -> dict[str, Any]: ...
+    async def mark_tenant_deletion_requested(
+        self, academy_id: str, status: str, requested_at: datetime
+    ) -> None: ...
     async def list_tenant_deletion_requests(
         self, academy_id: str | None = None
     ) -> list[dict[str, Any]]: ...
     async def create_student_data_deletion_request(
         self, request: dict[str, Any]
     ) -> dict[str, Any]: ...
+    async def mark_student_deletion_requested(
+        self, academy_id: str, student_id: str, status: str, requested_at: datetime
+    ) -> None: ...
     async def list_student_data_deletion_requests(
         self, academy_id: str | None = None
     ) -> list[dict[str, Any]]: ...
@@ -147,7 +153,15 @@ class RevokeSupportAccessCommand(BaseModel):
 
 
 class TenantGovernanceService:
-    """Coordinates SaaS governance requests and required audit rows."""
+    """Coordinates SaaS governance requests and required audit rows.
+
+    Deletion is request-only. Requesting deletion stamps ``deletion_requested``
+    on the subject (academy or student) so readers can surface the pending
+    request, but nothing is deleted, redacted or cascaded here. The full
+    cascade/anonymisation checklist a future executor owes — attendance,
+    absence, makeup, roster, progress, certificates, waivers, messages, digest
+    and audit rows — is documented in ``docs/policy/governance-deletion-cascade.md``.
+    """
 
     def __init__(
         self,
@@ -221,6 +235,11 @@ class TenantGovernanceService:
             created_at=now,
         )
         created = await self._store.create_tenant_deletion_request(request.model_dump())
+        await self._store.mark_tenant_deletion_requested(
+            command.academy_id,
+            soft_delete.tenant_status_after_request,
+            now,
+        )
         await self._append_audit(
             actor=command.actor,
             academy_id=command.academy_id,
@@ -245,6 +264,7 @@ class TenantGovernanceService:
         self, command: RequestStudentDataDeletionCommand
     ) -> StudentDataDeletionRequest:
         now = self._clock()
+        soft_delete = SoftDeletePolicy()
         request = StudentDataDeletionRequest(
             student_deletion_request_id=self._id_factory("student_deletion_"),
             academy_id=command.academy_id,
@@ -252,12 +272,18 @@ class TenantGovernanceService:
             requested_by_user_id=command.actor.actor_user_id,
             requested_by_membership_id=command.actor.actor_membership_id,
             reason=command.reason,
-            soft_delete_policy=SoftDeletePolicy().model_dump(),
+            soft_delete_policy=soft_delete.model_dump(),
             retention_policy=RetentionPolicy().model_dump(),
             pii_handling_policy=PIIHandlingPolicy().model_dump(),
             created_at=now,
         )
         created = await self._store.create_student_data_deletion_request(request.model_dump())
+        await self._store.mark_student_deletion_requested(
+            command.academy_id,
+            command.student_id,
+            soft_delete.student_status_after_request,
+            now,
+        )
         await self._append_audit(
             actor=command.actor,
             academy_id=command.academy_id,

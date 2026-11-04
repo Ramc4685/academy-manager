@@ -32,6 +32,8 @@ class FamilyParent(_View):
 
 class FamilyLastPayment(_View):
     amount_cents: int
+    refunded_cents: int = 0
+    net_cents: int | None = None
     method: str | None = None
     paid_at: str | None = None
     invoice_ids: list[str] = []
@@ -69,6 +71,9 @@ class FamilyHeader(_View):
     balance_cents: int
     open_invoice_count: int
     available_credit_cents: int
+    paid_cents: int = 0
+    refunded_cents: int = 0
+    net_paid_cents: int = 0
     last_payment: FamilyLastPayment | None = None
     autopay: FamilyAutopay
     registration: FamilyRegistration
@@ -83,6 +88,9 @@ class FamilyEnrollment(_View):
     status: str
     monthly_price_cents: int | None = None
     override_price_cents: int | None = None
+    # What the class is billed per month (the class fee as the monthly
+    # invoice reads it). The override above is saved but never charged.
+    class_fee_cents: int | None = None
     autopay_status: str | None = None
     recurring_discount: dict[str, Any] | None = None
     resume_on: str | None = None
@@ -125,6 +133,8 @@ class FamilyInvoice(_View):
     status: str
     total_cents: int
     paid_cents: int
+    refunded_cents: int = 0
+    net_paid_cents: int = 0
     balance_due_cents: int
     due_date: str | None = None
     created_at: str | None = None
@@ -151,7 +161,26 @@ class FamilyTimelineEntry(_View):
     actor_id: str | None = None
     reason: str | None = None
     amount_cents: int | None = None
+    refunded_cents: int | None = None
     muted: bool = False
+
+
+class FamilyManualPaymentAllocation(_View):
+    invoice_id: str
+    amount_cents: int
+
+
+class FamilyManualPayment(_View):
+    """A live cash/check/Zelle/... payment an owner may void if it was a mistake."""
+
+    payment_id: str
+    method: str | None = None
+    amount_cents: int
+    paid_at: str | None = None
+    allocations: list[FamilyManualPaymentAllocation] = []
+    credit_cents: int = 0
+    credit_spent_cents: int = 0
+    void_blocked_reason: Literal["credit_spent", "legacy_allocation"] | None = None
 
 
 class AdminFamilyBillingView(_View):
@@ -162,6 +191,7 @@ class AdminFamilyBillingView(_View):
     header: FamilyHeader
     students: list[FamilyStudent] = []
     invoices: list[FamilyInvoice] = []
+    manual_payments: list[FamilyManualPayment] = []
     timeline: list[FamilyTimelineEntry] = []
     actions: list[FamilyAction] = []
     warnings: list[str] = []

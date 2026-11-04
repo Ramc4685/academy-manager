@@ -28,12 +28,25 @@ from backend.v2.contexts.enrollment.domain.models import Session, Student
 #: ``deleted`` covers session-cancellation cascades and the legacy default
 #: cancel event_type. ``hold_reclaimed``/``hold_expired``/
 #: ``hold_reclaim_orphaned`` are the system-initiated departures from the
-#: hold/reclaim machinery.
+#: hold/reclaim machinery. ``cancelled`` is what a parent's own self-cancel
+#: taking effect (``self_cancel.py``) and a previously-scheduled cancel being
+#: processed (``process_scheduled_cancellation_actions.py``) record — without
+#: it, every family that left BY THEIR OWN ACTION was invisible to this
+#: report (#775). Scope note, because the first pass at #775 overstated this:
+#: the People directory's Left tab is NOT built on this report. That tab is
+#: ``derive_lifecycle`` (``domain/lifecycle.py``, rule R5: every enrollment
+#: row terminal) and reads no events at all, so a self-cancelled family
+#: already appeared there. #775's acceptance criteria ask for the Left tab to
+#: be rebuilt on this report and for a Re-enroll action on Left rows; neither
+#: is built yet and both remain open scope of that issue. The sibling
+#: ``cancellation_scheduled`` stays out on purpose: it is a promise with a
+#: future date, and the real departure row follows when it runs.
 DEPARTURE_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "withdrawn",
         "dropped",
         "removed",
+        "cancelled",
         "hold_reclaimed",
         "hold_expired",
         "hold_reclaim_orphaned",
@@ -69,6 +82,9 @@ class LeavingReportRow(BaseModel):
     effective_at: datetime
     event_type: str
     reason: str | None = None
+    #: Issue #775: the structured departure reason, when the action that
+    #: ended the enrollment recorded one.
+    reason_code: str | None = None
     actor_id: str | None = None
     #: A system action (reclaim, expiry) has no human actor.
     is_system_action: bool
@@ -133,6 +149,7 @@ class GetLeavingReport:
                     effective_at=e.effective_at,
                     event_type=e.event_type,
                     reason=e.reason,
+                    reason_code=e.reason_code,
                     actor_id=e.actor_id,
                     is_system_action=e.actor_id is None,
                     billing_result=e.billing_result,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
@@ -10,6 +11,7 @@ import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
 import { useToast } from "@/components/ds/toast";
+import { PauseEnrollmentForm } from "@/components/parent/pause-enrollment-form";
 import { queryKeys } from "@/lib/query/keys";
 import {
   getCancellationPreview,
@@ -33,12 +35,20 @@ import {
   pendingCancellationLabel,
 } from "@/lib/format/cancellation-copy";
 import {
+  departureLabel,
+  departureReasonNote,
+  isDepartedEnrollment,
+} from "@/lib/format/departure-copy";
+import {
   holdReturnLabel,
   holdScheduleNote,
   isHeldEnrollment,
   partitionByHold,
 } from "@/lib/format/hold-copy";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
+import { reEnrollHref } from "@/lib/parent/re-enroll";
+import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import { OneTimeClassChip } from "@/components/parent/one-time-class";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -69,6 +79,12 @@ export default function ParentChildrenPage() {
   const allAttendance = attendanceData?.records ?? [];
   const allEnrollments = enrollmentsData?.enrollments ?? [];
   const academyTimezone = academy?.timezone ?? null;
+  // Settings overhaul Phase 1 Lane C: hide (not just disable) an action the
+  // academy has switched off. Undefined (still loading) defaults true.
+  const selfService = academy?.self_service;
+  const canReportAbsence = selfService?.can_report_absence ?? true;
+  const canRequestPause = selfService?.can_request_pause ?? true;
+  const canRequestCancel = selfService?.can_request_cancel ?? true;
 
   return (
     <section data-testid="parent-children">
@@ -104,6 +120,9 @@ export default function ParentChildrenPage() {
               attendance={allAttendance.filter((r) => r.student_id === child.student_id)}
               enrollments={allEnrollments.filter((e) => e.student_id === child.student_id)}
               academyTimezone={academyTimezone}
+              canReportAbsence={canReportAbsence}
+              canRequestPause={canRequestPause}
+              canRequestCancel={canRequestCancel}
             />
           ))}
         </div>
@@ -117,11 +136,17 @@ function ChildCard({
   attendance,
   enrollments,
   academyTimezone,
+  canReportAbsence,
+  canRequestPause,
+  canRequestCancel,
 }: {
   child: ParentChild;
   attendance: ParentAttendanceRecord[];
   enrollments: ParentEnrollment[];
   academyTimezone: string | null;
+  canReportAbsence: boolean;
+  canRequestPause: boolean;
+  canRequestCancel: boolean;
 }) {
   const { data: scheduleData } = useQuery({
     queryKey: ["parent", "child-schedule", child.student_id],
@@ -187,7 +212,13 @@ function ChildCard({
         ) : (
           <ul className="space-y-2">
             {sessions.map((s) => (
-              <SessionRow key={s.occurrence_id} studentId={child.student_id} entry={s} academyTimezone={academyTimezone} />
+              <SessionRow
+                key={s.occurrence_id}
+                studentId={child.student_id}
+                entry={s}
+                academyTimezone={academyTimezone}
+                canReportAbsence={canReportAbsence}
+              />
             ))}
           </ul>
         )}
@@ -201,7 +232,13 @@ function ChildCard({
           </p>
           <ul className="space-y-2">
             {listedEnrollments.map((e) => (
-              <EnrollmentRow key={e.enrollment_id} enrollment={e} academyTimezone={academyTimezone} />
+              <EnrollmentRow
+                key={e.enrollment_id}
+                enrollment={e}
+                academyTimezone={academyTimezone}
+                canRequestPause={canRequestPause}
+                canRequestCancel={canRequestCancel}
+              />
             ))}
           </ul>
         </div>
@@ -230,10 +267,12 @@ function SessionRow({
   studentId,
   entry,
   academyTimezone,
+  canReportAbsence,
 }: {
   studentId: string;
   entry: ParentScheduleEntry;
   academyTimezone: string | null;
+  canReportAbsence: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -243,6 +282,8 @@ function SessionRow({
   // Showing it as a normal upcoming class contradicts the cancellation email
   // — and reporting an absence for a class that will not run makes no sense.
   const cancelled = entry.status === "cancelled";
+  // #1038: an approved make-up / trial sits alongside regular classes.
+  const sourceLabel = scheduleSourceLabel(entry.source);
 
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
@@ -265,21 +306,26 @@ function SessionRow({
           <p
             className={
               cancelled
-                ? "text-sm font-semibold truncate text-rally-muted line-through"
+                ? "text-sm font-semibold truncate text-status-slate-600 line-through"
                 : "text-sm font-semibold truncate text-rally-ink"
             }
           >
             {entry.session_title}
           </p>
-          <p className="text-xs mt-0.5 text-rally-muted">{whenStr}</p>
+          <p className="text-xs mt-0.5 text-status-slate-600">{whenStr}</p>
+          {sourceLabel && (
+            <div className="mt-1">
+              <OneTimeClassChip source={entry.source} />
+            </div>
+          )}
           {cancelled && (
-            <p className="text-[11px] mt-0.5 font-semibold text-status-red-600">
+            <p className="text-[11px] mt-0.5 font-semibold text-status-red-800">
               Cancelled — this class will not run
             </p>
           )}
           {(entry.location || entry.coach_name) && (
             <div className="flex flex-wrap gap-1.5 mt-1">
-              {entry.location && <span className="text-[11px] text-rally-muted">{entry.location}</span>}
+              {entry.location && <span className="text-[11px] text-status-slate-600">{entry.location}</span>}
               {entry.coach_name && (
                 <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-rally-cobalt-600/10 text-rally-cobalt-600">
                   {entry.coach_name}
@@ -291,12 +337,12 @@ function SessionRow({
       </div>
 
       {absenceMutation.isError && (
-        <p role="alert" className="text-xs text-status-red-600">
+        <p role="alert" className="text-xs text-status-red-800">
           {absenceMutation.error instanceof Error ? absenceMutation.error.message : "Could not report absence."}
         </p>
       )}
 
-      {cancelled ? null : submitted ? (
+      {cancelled || !canReportAbsence ? null : submitted ? (
         <p role="status" className="text-xs font-semibold text-status-green-800">
           Absence reported
         </p>
@@ -319,15 +365,26 @@ function SessionRow({
 function EnrollmentRow({
   enrollment,
   academyTimezone,
+  canRequestPause,
+  canRequestCancel,
 }: {
   enrollment: ParentEnrollment;
   academyTimezone: string | null;
+  canRequestPause: boolean;
+  canRequestCancel: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  // #843: pausing moved here from the Payments page — it belongs with the
+  // class, next to cancel, not next to autopay setup.
+  const [pausing, setPausing] = useState(false);
   const pendingLabel = pendingCancellationLabel(enrollment.pending_cancellation_at, academyTimezone);
   // #740: a held enrollment cannot be self-cancelled (the API allows it only
   // while active), so offering the button here would only produce an error.
   const held = isHeldEnrollment(enrollment);
+  // #775: a terminal row carried for history. It is not a seat and not money,
+  // so it gets a date and a reason — never a cancel button.
+  const departed = isDepartedEnrollment(enrollment);
+  const departureNote = departureReasonNote(enrollment.departure_reason);
 
   return (
     <li className="rounded-xl p-3 bg-rally-paper">
@@ -335,30 +392,78 @@ function EnrollmentRow({
         <div className="min-w-0">
           <p className="text-sm font-semibold truncate text-rally-ink">{enrollment.session_title}</p>
           <p className="text-xs mt-0.5 text-rally-muted">
-            {held
-              ? "Your child's place is being kept"
-              : pendingLabel
-                ? "Cancellation scheduled"
-                : "Active enrollment"}
+            {departed
+              ? "Your child has left this class"
+              : held
+                ? "Your child's place is being kept"
+                : pendingLabel
+                  ? "Cancellation scheduled"
+                  : "Active enrollment"}
           </p>
-          {held && (
+          {departed && (
+            <div className="mt-1" data-testid={`enrollment-departed-${enrollment.enrollment_id}`}>
+              <Chip
+                variant="expired"
+                label={departureLabel(enrollment.left_on, (iso) =>
+                  formatAcademyDate(iso, academyTimezone),
+                )}
+              />
+              {departureNote && (
+                <p className="text-[11px] mt-1 text-rally-muted">{departureNote}</p>
+              )}
+            </div>
+          )}
+          {!departed && held && (
             <div className="mt-1">
               <Chip variant="paused" label={holdReturnLabel(enrollment.hold_return_on)} />
             </div>
           )}
-          {!held && pendingLabel && (
+          {!departed && !held && pendingLabel && (
             <div className="mt-1">
               <Chip variant="pending" label={pendingLabel} />
             </div>
           )}
         </div>
-        {!held && !pendingLabel && (
-          <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
-            Cancel enrollment…
-          </Button>
+        {/* #827: the way back in. A departed row is still history — this is a
+            link into onboarding with the child pinned, never an action on the
+            dead enrollment, and never a payment control. */}
+        {departed && (
+          <Link
+            href={reEnrollHref(enrollment.student_id) as Parameters<typeof Link>[0]["href"]}
+            data-testid={`enrollment-re-enroll-${enrollment.enrollment_id}`}
+            className="inline-flex h-[30px] shrink-0 items-center justify-center rounded-lg border border-rally-line bg-white px-3 text-xs font-semibold text-rally-ink transition-colors hover:bg-rally-paper"
+          >
+            Enroll in a class
+          </Link>
+        )}
+        {!departed && !held && !pendingLabel && (canRequestPause || canRequestCancel) && (
+          <div className="flex shrink-0 items-center gap-2">
+            {canRequestPause && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid={`enrollment-pause-${enrollment.enrollment_id}`}
+                aria-expanded={pausing}
+                onClick={() => setPausing((open) => !open)}
+              >
+                Pause enrollment
+              </Button>
+            )}
+            {canRequestCancel && (
+              <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
+                Cancel enrollment…
+              </Button>
+            )}
+          </div>
         )}
       </div>
-      {confirming && (
+      {pausing && canRequestPause && (
+        <PauseEnrollmentForm
+          enrollmentId={enrollment.enrollment_id}
+          onCancel={() => setPausing(false)}
+        />
+      )}
+      {confirming && canRequestCancel && (
         <CancelEnrollmentDialog
           enrollment={enrollment}
           academyTimezone={academyTimezone}

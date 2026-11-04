@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { listAuditLogs } from "@/lib/api/admin";
+import { listAuditLogs, type AdminAuditActorType } from "@/lib/api/admin";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant, CHIP_VARIANTS } from "@/components/ds/chip";
 import { Avatar } from "@/components/ds/avatar";
@@ -25,10 +26,34 @@ function getActionVariant(action: string): ChipVariant {
   return "manual";
 }
 
+const ACTOR_TYPE_FILTERS: { value: AdminAuditActorType | null; label: string }[] = [
+  { value: null, label: "Everyone" },
+  { value: "owner", label: "Owners" },
+  { value: "admin", label: "Admins" },
+  { value: "coach", label: "Coaches" },
+  { value: "parent", label: "Parents" },
+  { value: "system", label: "System" },
+];
+
+function getActorVariant(actorType: AdminAuditActorType | null): ChipVariant {
+  if (actorType === "system") return "manual";
+  if (actorType === "owner" || actorType === "admin") return "approval";
+  if (actorType === "coach") return "enrolled";
+  if (actorType === "parent") return "open";
+  return "manual";
+}
+
+function formatActorType(actorType: AdminAuditActorType | null) {
+  if (!actorType) return "Unknown";
+  return actorType.charAt(0).toUpperCase() + actorType.slice(1);
+}
+
 export default function AdminAuditLogsPage() {
+  const [actorType, setActorType] = useState<AdminAuditActorType | null>(null);
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["admin", "audit-logs"],
-    queryFn: listAuditLogs,
+    queryKey: ["admin", "audit-logs", actorType],
+    queryFn: () => listAuditLogs(actorType),
   });
 
   const logs = data?.logs ?? [];
@@ -36,6 +61,28 @@ export default function AdminAuditLogsPage() {
   return (
     <section data-testid="admin-audit-logs" className="space-y-6">
       <LaneHeader index="01" title="Operational audit trail" />
+
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by actor type">
+        {ACTOR_TYPE_FILTERS.map((filter) => {
+          const active = filter.value === actorType;
+          return (
+            <button
+              key={filter.label}
+              type="button"
+              data-testid={`admin-audit-logs-filter-${filter.value ?? "all"}`}
+              aria-pressed={active}
+              onClick={() => setActorType(filter.value)}
+              className={`rounded-full border px-3 py-1 font-mono text-[11px] uppercase tracking-overline transition-colors ${
+                active
+                  ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900"
+                  : "border-slate-200 text-rally-muted hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              }`}
+            >
+              {filter.label}
+            </button>
+          );
+        })}
+      </div>
 
       {isError ? (
         <Card p={16} accent="#ef4444" className="bg-red-50/50">
@@ -48,7 +95,7 @@ export default function AdminAuditLogsPage() {
       ) : logs.length === 0 ? (
         <Card p={24}>
           <p className="text-sm text-slate-500 text-center py-8" data-testid="admin-audit-logs-empty">
-            No audit events recorded yet.
+            {actorType ? "No audit events for this kind of actor." : "No audit events recorded yet."}
           </p>
         </Card>
       ) : (
@@ -65,7 +112,8 @@ export default function AdminAuditLogsPage() {
             <tbody>
               {logs.map((log) => {
                 const actionVariant = getActionVariant(log.action);
-                const actorName = log.actor_id ? "Admin or system actor" : "System event";
+                const actorName =
+                  log.actor_name ?? (log.actor_id ? "Unknown actor" : "System event");
                 return (
                   <tr 
                     key={log.audit_id} 
@@ -81,6 +129,12 @@ export default function AdminAuditLogsPage() {
                         <div>
                           <div className="font-medium text-slate-700 dark:text-slate-200">
                             {actorName}
+                          </div>
+                          <div className="mt-1 flex items-center gap-2">
+                            <Chip
+                              variant={getActorVariant(log.actor_type)}
+                              label={log.actor_role ?? formatActorType(log.actor_type)}
+                            />
                           </div>
                           {log.actor_id ? (
                             <div className="font-mono text-[11px] text-slate-400">

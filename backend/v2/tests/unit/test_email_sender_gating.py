@@ -54,3 +54,42 @@ def test_sender_built_without_a_db_is_ungated() -> None:
 def test_gating_does_not_disarm_the_local_test_safety_block() -> None:
     sender = _build_email_sender(_settings(), db=_FakeDb())
     assert isinstance(unwrap_send_port(sender), StubEmailSendPort)
+
+
+def test_no_hardcoded_fallback_sender_for_the_real_adapter() -> None:
+    """``noreply@academy.app`` is not our domain; nothing may fall back to it."""
+    import pytest
+
+    with pytest.raises(RuntimeError, match="no sender address resolves"):
+        _build_email_sender(
+            _settings(
+                env="prod",
+                email_delivery_enabled=True,
+                resend_api_key="re_placeholder",
+                sender_email=None,
+                frontend_url=None,
+            )
+        )
+
+
+def test_the_stub_needs_no_sender_address() -> None:
+    sender = _build_email_sender(_settings(sender_email=None, frontend_url=None))
+    assert isinstance(sender, StubEmailSendPort)
+
+
+def test_real_adapter_uses_the_frontend_host_when_no_sender_email() -> None:
+    from backend.v2.contexts.communications.infrastructure.resend_send_port import (
+        ResendEmailSendPort,
+    )
+
+    sender = _build_email_sender(
+        _settings(
+            env="prod",
+            email_delivery_enabled=True,
+            resend_api_key="re_placeholder",
+            sender_email=None,
+            frontend_url="https://academy.courtmastr.com",
+        )
+    )
+    assert isinstance(sender, ResendEmailSendPort)
+    assert sender._from_address == "noreply@academy.courtmastr.com"

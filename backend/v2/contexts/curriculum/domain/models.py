@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 LevelCompletionRule = Literal["ALL_REQUIRED_SKILLS", "POINTS_BASED", "COACH_APPROVAL_ONLY"]
 ScoringType = Literal[
@@ -17,6 +17,36 @@ ScoringType = Literal[
     "POINTS_BASED",
 ]
 ExternalSource = Literal["BWF_SHUTTLE_TIME", "ACADEMY_CUSTOM", "COACH_CREATED"]
+
+#: Belt-style default colour per level number (1-6; 7+ stay Black). Each passes
+#: AA with its black/white label and they step >= 11 L* apart in grayscale.
+DEFAULT_LEVEL_COLORS: tuple[tuple[str, str], ...] = (
+    ("Yellow", "#FDE047"),
+    ("Orange", "#FB923C"),
+    ("Green", "#16A34A"),
+    ("Blue", "#2563EB"),
+    ("Purple", "#5B21B6"),
+    ("Black", "#111827"),
+)
+HEX_COLOR_PATTERN = r"^#[0-9A-Fa-f]{6}$"
+
+
+def default_level_color(sequence: int) -> str:
+    return DEFAULT_LEVEL_COLORS[min(max(sequence, 1), len(DEFAULT_LEVEL_COLORS)) - 1][1]
+
+
+def _relative_luminance(hex_color: str) -> float:
+    def channel(i: int) -> float:
+        c = int(hex_color[i : i + 2], 16) / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+
+
+def level_label_color(hex_color: str) -> str:
+    """Black or white, whichever reads better on ``hex_color`` (always >= 4.58:1)."""
+    lum = _relative_luminance(hex_color)
+    return "#000000" if (lum + 0.05) / 0.05 >= 1.05 / (lum + 0.05) else "#FFFFFF"
 
 
 class Program(BaseModel):
@@ -46,10 +76,17 @@ class Level(BaseModel):
     points_threshold: int | None = None
     requires_coach_recommendation: bool = True
     requires_admin_approval: bool = False
+    #: Owner-chosen colour; ``None`` falls back to the default for ``sequence``.
+    color: str | None = Field(default=None, pattern=HEX_COLOR_PATTERN)
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
     created_by: str
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def display_color(self) -> str:
+        return self.color or default_level_color(self.sequence)
 
 
 class Skill(BaseModel):

@@ -189,12 +189,3 @@ export function ReasonDialog({
     </RallyModal>
   );
 }
-
-export function DisabledFixItem({ label, hint }: { label: string; hint: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border border-dashed border-rally-line px-3 py-2 text-sm text-rally-muted">
-      <span>{label}</span>
-      <span className="text-xs">{hint}</span>
-    </div>
-  );
-}

@@ -16,8 +16,85 @@ def test_admin_lists_coaches(admin_client):
             "display_name": "Coach One",
             "role": "coach",
             "status": "active",
+            "roles": ["coach"],
         }
     ]
+
+
+def _ids(response) -> list[str]:
+    assert response.status_code == 200, response.text
+    return [u["user_id"] for u in response.json()["users"]]
+
+
+def test_admin_users_exclude_role_parent_keeps_parent_who_also_coaches(admin_client):
+    """Sidebar regroup spec 4.1: drop a user only when they hold no role other
+    than the excluded one. ``pc-1`` is primary-role parent but also a coach."""
+    ids = _ids(admin_client.get("/api/v2/admin/users?exclude_role=parent"))
+
+    assert "p-1" not in ids
+    assert set(ids) == {"coach-1", "adm", "pc-1", "ps-1"}
+
+
+def test_admin_users_roles_is_a_union_filter(admin_client):
+    ids = _ids(admin_client.get("/api/v2/admin/users?roles=coach&roles=admin"))
+
+    assert set(ids) == {"coach-1", "adm", "pc-1"}
+    assert "p-1" not in ids
+
+
+def test_admin_users_roles_and_exclude_role_combine_with_and(admin_client):
+    ids = _ids(admin_client.get("/api/v2/admin/users?roles=parent&exclude_role=parent"))
+
+    # Hold parent, but are kept only because they hold another role too.
+    assert ids == ["pc-1", "ps-1"]
+
+
+def test_admin_users_role_and_exclude_role_combine_with_and(admin_client):
+    # Primary role parent, excluded unless another role is held.
+    ids = _ids(admin_client.get("/api/v2/admin/users?role=parent&exclude_role=parent"))
+
+    assert ids == ["pc-1", "ps-1"]
+
+
+def test_admin_users_list_payload_carries_every_held_role(admin_client):
+    r = admin_client.get("/api/v2/admin/users")
+    assert r.status_code == 200, r.text
+    by_id = {u["user_id"]: u for u in r.json()["users"]}
+
+    assert by_id["pc-1"]["role"] == "parent"
+    assert by_id["pc-1"]["roles"] == ["parent", "coach"]
+
+
+def test_admin_users_list_survives_a_row_holding_the_student_role(admin_client):
+    """A ``users`` doc can hold ``student`` next to ``parent`` (a former student
+    who later registered as a parent). ``student`` is not a role an admin can
+    assign, but the read model must still render the row instead of failing
+    the whole list with a validation error."""
+    r = admin_client.get("/api/v2/admin/users")
+    assert r.status_code == 200, r.text
+    by_id = {u["user_id"]: u for u in r.json()["users"]}
+
+    assert by_id["ps-1"]["role"] == "parent"
+    assert by_id["ps-1"]["roles"] == ["parent", "student"]
+
+    # Filters that an admin can express still refuse ``student`` as input.
+    assert admin_client.get("/api/v2/admin/users?roles=student").status_code == 422
+    assert admin_client.get("/api/v2/admin/users?role=student").status_code == 422
+
+
+def test_admin_users_rejects_unknown_exclude_role(admin_client):
+    assert admin_client.get("/api/v2/admin/users?exclude_role=coach").status_code == 422
+    assert admin_client.get("/api/v2/admin/users?exclude_role=nope").status_code == 422
+
+
+def test_admin_users_rejects_unknown_roles_value(admin_client):
+    assert admin_client.get("/api/v2/admin/users?roles=coach&roles=janitor").status_code == 422
+
+
+def test_admin_users_new_params_still_404_for_wrong_persona(coach_on_admin_client):
+    r = coach_on_admin_client.get("/api/v2/admin/users?exclude_role=parent&roles=coach")
+
+    assert r.status_code == 404
 
 
 def test_admin_lists_students(admin_client):

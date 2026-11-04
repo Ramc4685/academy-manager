@@ -30,6 +30,22 @@ HandlerEntry = tuple[str, HandlerFn, type[DomainEvent]]
 
 _REGISTRY: dict[tuple[str, int], list[HandlerEntry]] = {}
 
+# Events published as an audit record with no consumer yet. With no handler
+# they are marked processed instead of dead-lettered: dead-lettering them made
+# every attendance mark look like a failure in the ops digest. Kept explicit so
+# a typo'd name or a lost handler for any OTHER event still dead-letters.
+# Adding a handler for one of these later just works; drop it from here then.
+AUDIT_ONLY_EVENTS: frozenset[tuple[str, int]] = frozenset(
+    {
+        ("Billing.AutopayConsentCaptured", 1),
+        ("Billing.SubscriptionUpdated", 1),
+        ("Coaching.AttendanceCorrected", 1),
+        ("Coaching.AttendanceMarked", 1),
+        ("Enrollment.WaitlistPromoted", 1),
+        ("StudentProgress.SkillStatusUpdated", 1),
+    }
+)
+
 
 def handler(*, event: type[DomainEvent], schema_version: int) -> Callable[[HandlerFn], HandlerFn]:
     """Register an async function as a handler for ``(event.name, schema_version)``.
@@ -184,6 +200,9 @@ class EventDispatcher:
     async def _process_event(self, doc: dict[str, Any]) -> None:
         key = (doc["name"], doc["schema_version"])
         handlers = _REGISTRY.get(key)
+        if handlers is None and key in AUDIT_ONLY_EVENTS:
+            await self._mark_event_processed(doc)
+            return
         if handlers is None:
             # Unknown event or schema version: move to dead-letter and stop trying.
             await self._dead_letter(doc, reason="unregistered_schema_version", error=None)

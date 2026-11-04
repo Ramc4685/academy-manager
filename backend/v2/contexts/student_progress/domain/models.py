@@ -25,12 +25,15 @@ LevelUpStatus = Literal[
     # RECOMMENDED -> APPROVING/REJECTING before running any side effect, so a
     # second reviewer with the opposite decision loses the claim instead of
     # racing past a half-applied approval. Both are transient: the reviewer
-    # moves them on to APPROVED/REJECTED, or releases them back to
+    # moves them on to COMPLETED/REJECTED, or releases them back to
     # RECOMMENDED. They still count as an active recommendation everywhere
     # RECOMMENDED does. Any change here must be mirrored in the
     # ``level_up_recommendations`` status enum (migration 0176).
     "APPROVING",
     "REJECTING",
+    # Issue #786: kept as a legal value for historical rows written before
+    # the fix (the review use case writes "COMPLETED" on approve now); no
+    # code path writes "APPROVED" going forward.
     "APPROVED",
     "REJECTED",
     "COMPLETED",
@@ -41,9 +44,13 @@ LevelUpStatus = Literal[
 #: expires (see ``LevelUpRecommendationRepository.claim``).
 CLAIMABLE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING"})
 
-#: Statuses that hold a student's recommendation slot: a pending review, a
-#: claim in flight, or an approval already recorded.
-ACTIVE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING", "APPROVED"})
+#: Statuses that hold a student's recommendation slot: a pending review or a
+#: claim in flight. ``APPROVED`` is deliberately excluded (issue #786): the
+#: review use case now writes ``COMPLETED`` on approve, so a row never lands
+#: in ``APPROVED`` going forward. ``APPROVED`` stays a legal historical value
+#: (for any pre-existing rows) but must not block a student's next level-up
+#: forever, so it is not treated as active here.
+ACTIVE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING"})
 
 LevelProgressStatus = Literal["active", "completed", "withdrawn"]
 
@@ -90,6 +97,8 @@ class StudentSkillProgress(BaseModel):
     introduced_at: datetime | None = None
     last_updated_at: datetime
     last_updated_by: str
+    #: Optional one-line coach message to the parent about this mastery.
+    coach_note: str | None = None
 
 
 class TestAttempt(BaseModel):
@@ -252,6 +261,8 @@ class SkillBoardStudentRef(BaseModel):
 
     student_id: str
     student_name: str
+    # Only the pathway dashboard fills this: its row actions message the family.
+    parent_id: str | None = None
 
 
 class SkillBoardCell(BaseModel):
@@ -261,6 +272,7 @@ class SkillBoardCell(BaseModel):
 
     status: SkillStatus = "NOT_STARTED"
     last_updated_at: datetime | None = None
+    coach_note: str | None = None
 
 
 class SkillBoardSkill(BaseModel):
@@ -272,6 +284,8 @@ class SkillBoardSkill(BaseModel):
     name: str
     sequence: int
     is_required: bool
+    #: Observable criterion descriptions, in display order: the coach's quick-tags.
+    criteria: list[str] = Field(default_factory=list)
 
 
 class SkillBoardStudentRow(BaseModel):
@@ -297,6 +311,7 @@ class SkillBoardLevelGroup(BaseModel):
     level_id: str
     level_name: str
     sequence: int
+    color: str | None = None
     skills: list[SkillBoardSkill]
     students: list[SkillBoardStudentRow]
 

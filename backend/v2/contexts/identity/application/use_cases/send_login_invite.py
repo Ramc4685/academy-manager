@@ -22,6 +22,7 @@ from backend.v2.contexts.identity.domain.errors import (
     LoginInviteSendFailed,
     UserNotFound,
 )
+from backend.v2.shared.comms.email_brand import branded_as
 from backend.v2.shared.comms.email_theme import INK, MUTED, EmailBrand, button, shell
 
 
@@ -75,6 +76,29 @@ class AcademyNameLookup(Protocol):
     async def get_academy_name(self, academy_id: str) -> str | None: ...
 
 
+class AcademyBrandLookup(Protocol):
+    """The academy's full email brand (logo, colour, contact footer), or
+    ``None`` when it has none on file. Composition implements it with
+    ``shared.comms.email_brand.AcademyEmailBrands``."""
+
+    async def get_academy_brand(self, academy_id: str) -> EmailBrand | None: ...
+
+
+async def resolve_email_brand(
+    brands: AcademyBrandLookup | None, academy_id: str, *, academy_name: str
+) -> EmailBrand:
+    """The brand for an account email, named ``academy_name`` (the subject's
+    name). A missing or failing lookup degrades to the name-only brand: the
+    logo is never worth a lost invite."""
+    if brands is None:
+        return EmailBrand(academy_name=academy_name)
+    try:
+        found = await brands.get_academy_brand(academy_id)
+    except Exception:
+        found = None
+    return branded_as(found, academy_name)
+
+
 class AcademyPortalUrlLookup(Protocol):
     """Resolves an academy's own portal origin, e.g.
     ``https://blno-academy.courtmastr.com``.
@@ -96,7 +120,13 @@ class LoginInviteResult(BaseModel):
     sent_at: datetime
 
 
-def _invite_body(*, display_name: str, academy_name: str, reset_link: str) -> str:
+def _invite_body(
+    *,
+    display_name: str,
+    academy_name: str,
+    reset_link: str,
+    brand: EmailBrand | None = None,
+) -> str:
     safe_display_name = escape(display_name)
     safe_academy_name = escape(academy_name)
     inner = (
@@ -110,7 +140,7 @@ def _invite_body(*, display_name: str, academy_name: str, reset_link: str) -> st
         f"If it has expired, ask your academy to send a new one, or use "
         f"&ldquo;Forgot password&rdquo; on the login page with this email address.</p>"
     )
-    return shell(brand=EmailBrand(academy_name=academy_name), inner_html=inner)
+    return shell(brand=branded_as(brand, academy_name), inner_html=inner)
 
 
 class SendLoginInvite:
@@ -122,12 +152,14 @@ class SendLoginInvite:
         sender: InviteEmailPort,
         academies: AcademyNameLookup,
         portals: AcademyPortalUrlLookup | None = None,
+        brands: AcademyBrandLookup | None = None,
     ) -> None:
         self._users = users
         self._links = links
         self._sender = sender
         self._academies = academies
         self._portals = portals
+        self._brands = brands
 
     async def execute(self, user_id: str, *, academy_id: str) -> LoginInviteResult:
         user = await self._users.get_admin_user(user_id, academy_id=academy_id)
@@ -150,6 +182,7 @@ class SendLoginInvite:
         except Exception as exc:
             raise LoginInviteSendFailed(f"could not prepare invite: {exc}") from exc
 
+        brand = await resolve_email_brand(self._brands, academy_id, academy_name=academy_name)
         outcome = await self._sender.send_invite_email(
             user_id=user.user_id,
             email=str(user.email),
@@ -159,6 +192,7 @@ class SendLoginInvite:
                 display_name=user.display_name,
                 academy_name=academy_name,
                 reset_link=reset_link,
+                brand=brand,
             ),
         )
         if not outcome.ok:

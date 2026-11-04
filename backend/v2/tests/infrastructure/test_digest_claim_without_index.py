@@ -65,7 +65,7 @@ async def test_sent_row_is_not_reclaimed_without_the_index(repo_cls: Any, collec
         repo = repo_cls(db)
         first = await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE)
         assert first is not None
-        await repo.mark_sent(first.digest_id, "prov-1")
+        await repo.mark_sent(ACADEMY_ID, first.digest_id, "prov-1")
 
         assert await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE) is None
         assert await db[collection].count_documents({}) == 1
@@ -82,7 +82,7 @@ async def test_skipped_row_is_not_reclaimed_without_the_index(
         repo = repo_cls(db)
         first = await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE)
         assert first is not None
-        await repo.mark_skipped_empty(first.digest_id)
+        await repo.mark_skipped_empty(ACADEMY_ID, first.digest_id)
 
         assert await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE) is None
         assert await db[collection].count_documents({}) == 1
@@ -115,7 +115,7 @@ async def test_failed_row_is_still_retried_without_the_index(
         repo = repo_cls(db)
         first = await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE)
         assert first is not None
-        await repo.mark_failed(first.digest_id, "resend timeout")
+        await repo.mark_failed(ACADEMY_ID, first.digest_id, "resend timeout")
 
         retry = await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE)
         assert retry is not None
@@ -136,7 +136,7 @@ async def test_test_send_rows_do_not_block_the_daily_claim_without_the_index(
     with tenant_scope(ACADEMY_ID):
         repo = repo_cls(db)
         test_send = await repo.record_test_send(ACADEMY_ID, "recipient-1", DIGEST_DATE)
-        await repo.mark_sent(test_send.digest_id, "prov-test")
+        await repo.mark_sent(ACADEMY_ID, test_send.digest_id, "prov-test")
 
         daily = await repo.try_claim(ACADEMY_ID, "recipient-1", DIGEST_DATE)
         assert daily is not None

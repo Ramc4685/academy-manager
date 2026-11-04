@@ -19,9 +19,11 @@ import html
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date
+from typing import Any
 
 from pydantic import BaseModel
 
+from backend.v2.composition.invoice_contact_copies import InvoiceContactCopies
 from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome as AddCardReminderEmailOutcome,
 )
@@ -43,6 +45,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+from backend.v2.shared.comms.email_brand import branded_as, lookup_academy_brand
 from backend.v2.shared.comms.email_theme import (
     COBALT,
     FONT_STACK,
@@ -53,6 +56,7 @@ from backend.v2.shared.comms.email_theme import (
     format_money,
     shell,
 )
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -65,11 +69,20 @@ _BRAND_MUTED = MUTED
 _BRAND_FONT = FONT_STACK
 
 
-def _branded_shell(*, academy_name: str, inner_html: str, footer_note: str | None = None) -> str:
+def _branded_shell(
+    *,
+    academy_name: str,
+    inner_html: str,
+    footer_note: str | None = None,
+    brand: EmailBrand | None = None,
+) -> str:
     """The academy-branded shell shared by every transactional email.
 
     ``footer_note`` is for reminders only ("if you've already paid, please
     disregard"); a welcome or a fresh invoice must not carry it.
+
+    ``brand`` is the academy's full brand (logo, colour, contact footer; see
+    ``shared.comms.email_brand``). Omitted, the shell shows the name only.
     """
     note_html = (
         f'<p style="font-size:12px;color:{MUTED};margin:20px 0 0;">{html.escape(footer_note)}</p>'
@@ -77,8 +90,14 @@ def _branded_shell(*, academy_name: str, inner_html: str, footer_note: str | Non
         else ""
     )
     return shell(
-        brand=EmailBrand(academy_name=academy_name), inner_html=inner_html, footer_html=note_html
+        brand=branded_as(brand, academy_name), inner_html=inner_html, footer_html=note_html
     )
+
+
+async def _academy_brand(academies: Any, academy_name: str) -> EmailBrand:
+    """The request academy's full email brand, named ``academy_name`` so the
+    shell matches the subject line. Never raises (row 6)."""
+    return branded_as(await lookup_academy_brand(academies, current_academy_id()), academy_name)
 
 
 def _branded_button(*, label: str, url: str) -> str:
@@ -93,8 +112,11 @@ class LoginInviteEmailAdapter:
     `send_login_invite.py`.
     """
 
-    def __init__(self, *, sender: EmailSendPort) -> None:
+    def __init__(self, *, sender: EmailSendPort, academies: Any | None = None) -> None:
         self._sender = sender
+        # Sender display name / reply-to (L9a); ``None`` keeps the bare
+        # platform From header.
+        self._academies = academies
 
     async def send_invite_email(
         self,
@@ -105,6 +127,7 @@ class LoginInviteEmailAdapter:
         subject: str,
         body: str,
     ) -> InviteEmailOutcome:
+        identity = await sender_identity_for_current_academy(self._academies)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=user_id,
@@ -113,6 +136,8 @@ class LoginInviteEmailAdapter:
             ),
             subject=subject,
             body=body,
+            reply_to=identity.reply_to,
+            sender_name=identity.sender_name,
         )
         return InviteEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)
 
@@ -158,7 +183,11 @@ class UndeliverableInviteEmailAdapter:
 
 
 def build_user_facing_invite_sender(
-    *, sender: EmailSendPort, env: str, real_email_envs: frozenset[str]
+    *,
+    sender: EmailSendPort,
+    env: str,
+    real_email_envs: frozenset[str],
+    academies: Any | None = None,
 ) -> LoginInviteEmailAdapter | UndeliverableInviteEmailAdapter:
     """Wrap `sender` for a message a *user* is waiting on.
 
@@ -172,7 +201,7 @@ def build_user_facing_invite_sender(
         return UndeliverableInviteEmailAdapter(
             reason="email delivery is not configured for this environment"
         )
-    return LoginInviteEmailAdapter(sender=sender)
+    return LoginInviteEmailAdapter(sender=sender, academies=academies)
 
 
 class LastCharge(BaseModel):
@@ -214,6 +243,39 @@ class InvoiceNaming(BaseModel):
     last_charge: LastCharge | None = None
 
 
+def tuition_for(period: str, naming: InvoiceNaming) -> str:
+    """Plain-text subject lead: ``"September 2026 tuition for Arjun"``.
+
+    Module level, not a method, because both the invoice emails and the
+    automated past-due reminder (issue #774) must name a month identically —
+    a second copy of this sentence is how ``2026-09`` leaks back into a
+    parent's inbox.
+    """
+    lead = f"{format_tuition_month(period)} tuition"
+    if naming.student_name:
+        lead = f"{lead} for {naming.student_name}"
+    return lead
+
+
+def tuition_html(period: str, naming: InvoiceNaming) -> str:
+    """Escaped body lead naming the month, the student and the class."""
+    parts = [f"<strong>{html.escape(format_tuition_month(period))} tuition</strong>"]
+    if naming.student_name:
+        parts.append(f"for <strong>{html.escape(naming.student_name)}</strong>")
+    if naming.session_label:
+        parts.append(f"({html.escape(naming.session_label)})")
+    return " ".join(parts)
+
+
+def invoice_number_html(naming: InvoiceNaming) -> str:
+    if not naming.invoice_number:
+        return ""
+    return (
+        f"<p style='color: {_BRAND_MUTED};'>Invoice "
+        f"<strong>{html.escape(naming.invoice_number)}</strong></p>"
+    )
+
+
 class InvoiceEmailAdapter:
     def __init__(
         self,
@@ -223,6 +285,8 @@ class InvoiceEmailAdapter:
         academies: MongoAcademyRepository,
         sender: EmailSendPort,
         naming: Callable[[str], Awaitable[InvoiceNaming | None]] | None = None,
+        contact_copies: InvoiceContactCopies | None = None,
+        self_service_policies: Any | None = None,
     ) -> None:
         self._memberships = memberships
         self._users = users
@@ -231,6 +295,27 @@ class InvoiceEmailAdapter:
         # Issue #659: resolves student / class / invoice number for one
         # invoice id. Unwired (or failing) degrades to month-only copy.
         self._naming = naming
+        # L1b2: copies for family contacts with "Gets invoices" on. Unwired
+        # means the parent is the only recipient, exactly as before.
+        self._contact_copies = contact_copies
+        # Settings overhaul Phase 1 Lane C item 5: owner-edited plain text
+        # for manual payers, shown when non-empty. Unwired (or a read
+        # failure) means the email is exactly as before — no instructions.
+        self._self_service_policies = self_service_policies
+
+    async def _payment_instructions_html(self) -> str:
+        if self._self_service_policies is None:
+            return ""
+        try:
+            policy = await self._self_service_policies.get_or_default()
+        except Exception:
+            log.warning("invoice_email_payment_instructions_unresolved", exc_info=True)
+            return ""
+        text = (getattr(policy, "payment_instructions", "") or "").strip()
+        if not text:
+            return ""
+        # Escaped, whitespace preserved (spec item 5).
+        return f"<p style='color: {_BRAND_MUTED}; white-space: pre-wrap;'>{html.escape(text)}</p>"
 
     async def _naming_for(self, invoice_id: str) -> InvoiceNaming:
         if self._naming is None:
@@ -245,23 +330,8 @@ class InvoiceEmailAdapter:
             )
             return InvoiceNaming()
 
-    @staticmethod
-    def _tuition_for(period: str, naming: InvoiceNaming) -> str:
-        """Plain-text subject lead: ``"September 2026 tuition for Arjun"``."""
-        lead = f"{format_tuition_month(period)} tuition"
-        if naming.student_name:
-            lead = f"{lead} for {naming.student_name}"
-        return lead
-
-    @staticmethod
-    def _tuition_html(period: str, naming: InvoiceNaming) -> str:
-        """Escaped body lead naming the month, the student and the class."""
-        parts = [f"<strong>{html.escape(format_tuition_month(period))} tuition</strong>"]
-        if naming.student_name:
-            parts.append(f"for <strong>{html.escape(naming.student_name)}</strong>")
-        if naming.session_label:
-            parts.append(f"({html.escape(naming.session_label)})")
-        return " ".join(parts)
+    _tuition_for = staticmethod(tuition_for)
+    _tuition_html = staticmethod(tuition_html)
 
     @staticmethod
     def _last_charge_html(naming: InvoiceNaming) -> str:
@@ -280,14 +350,7 @@ class InvoiceEmailAdapter:
         )
         return f"<p>Your last charge was <strong>{html.escape(line)}</strong>.</p>"
 
-    @staticmethod
-    def _invoice_number_html(naming: InvoiceNaming) -> str:
-        if not naming.invoice_number:
-            return ""
-        return (
-            f"<p style='color: {_BRAND_MUTED};'>Invoice "
-            f"<strong>{html.escape(naming.invoice_number)}</strong></p>"
-        )
+    _invoice_number_html = staticmethod(invoice_number_html)
 
     async def send_invoice_email(
         self,
@@ -326,6 +389,7 @@ class InvoiceEmailAdapter:
         subject = self._tuition_for(period, naming)
         if naming.session_label:
             subject = f"{subject} — {naming.session_label}"
+        payment_instructions_html = await self._payment_instructions_html()
         inner = (
             f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
             f"{html.escape(month)} tuition</h2>"
@@ -333,9 +397,11 @@ class InvoiceEmailAdapter:
             f"<p>Balance due: <strong>{safe_amount}</strong> "
             f"(invoice total {safe_total}).</p>"
             f"{pay_line}"
+            f"{payment_instructions_html}"
             f"{self._invoice_number_html(naming)}"
         )
-        body = _branded_shell(academy_name=academy_name, inner_html=inner)
+        brand = await _academy_brand(self._academies, academy_name)
+        body = _branded_shell(academy_name=academy_name, inner_html=inner, brand=brand)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -347,6 +413,34 @@ class InvoiceEmailAdapter:
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
+        if self._contact_copies is not None:
+            # Only after the parent's copy landed: a failed parent send is
+            # retried as a whole, and the contacts' claims keep that retry
+            # from mailing anyone twice. The copy never carries the pay link.
+            copy_inner = (
+                f"<p style='color: {_BRAND_MUTED};'>You are receiving a copy of this "
+                "invoice because the academy added you as a contact for this family.</p>"
+                f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
+                f"{html.escape(month)} tuition</h2>"
+                f"<p>{self._tuition_html(period, naming)} is ready.</p>"
+                f"<p>Balance due: <strong>{safe_amount}</strong> "
+                f"(invoice total {safe_total}).</p>"
+                + (
+                    f"<p style='color: {_BRAND_MUTED};'>The payment link was sent to the "
+                    "family's primary email.</p>"
+                    if checkout_url
+                    else f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to "
+                    "arrange payment.</p>"
+                )
+                + self._invoice_number_html(naming)
+            )
+            await self._contact_copies.send_copies(
+                family_ids=[parent_id, str(user.user_id if user else "")],
+                primary_email=email,
+                invoice_id=invoice_id,
+                subject=subject,
+                body=_branded_shell(academy_name=academy_name, inner_html=copy_inner, brand=brand),
+            )
         return outcome.provider_message_id
 
     async def send_dunning_notice(
@@ -395,7 +489,11 @@ class InvoiceEmailAdapter:
                 "We will retry automatically on the published retry schedule.</p>"
                 f"{number_html}"
             )
-        body = _branded_shell(academy_name=academy_name, inner_html=inner)
+        body = _branded_shell(
+            academy_name=academy_name,
+            inner_html=inner,
+            brand=await _academy_brand(self._academies, academy_name),
+        )
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -470,7 +568,11 @@ class InvoiceEmailAdapter:
                 f"{self._tuition_for(period, naming)}: {amount} will be charged on "
                 f"{charge_on.strftime('%b')} {charge_on.day}"
             ),
-            body=_branded_shell(academy_name=academy_name, inner_html=inner),
+            body=_branded_shell(
+                academy_name=academy_name,
+                inner_html=inner,
+                brand=await _academy_brand(self._academies, academy_name),
+            ),
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "autopay notice delivery failed")
@@ -504,18 +606,106 @@ class InvoiceEmailAdapter:
         outcome = await self._sender.send(
             recipient=recipient,
             subject=f"Receipt: {amount} paid — {self._tuition_for(period, naming)}",
-            body=_branded_shell(academy_name=academy_name, inner_html=inner),
+            body=_branded_shell(
+                academy_name=academy_name,
+                inner_html=inner,
+                brand=await _academy_brand(self._academies, academy_name),
+            ),
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "autopay receipt delivery failed")
 
 
 class DuesReminderEmailAdapter:
-    """Bridges the admin dues-followup action to communications' `EmailSendPort`."""
+    """Bridges the admin dues-followup action to communications' `EmailSendPort`.
 
-    def __init__(self, *, academies: MongoAcademyRepository, sender: EmailSendPort) -> None:
+    Two shapes of reminder live here. ``send_reminder`` is the admin's manual
+    aggregate ("you have N open invoices totaling $X"), unchanged.
+    ``send_past_due_reminder`` (issue #774) is the automated due+N email, and
+    it is per-invoice: it names the tuition month in words via the same
+    ``composition.invoice_naming`` resolver and ``format_tuition_month`` that
+    PR #795 gave the invoice emails, so a parent never reads a raw ``2026-09``
+    period code — the 2026-09-05 incident this naming rework exists to prevent.
+    """
+
+    def __init__(
+        self,
+        *,
+        academies: MongoAcademyRepository,
+        sender: EmailSendPort,
+        naming: Callable[[str], Awaitable[InvoiceNaming | None]] | None = None,
+    ) -> None:
         self._academies = academies
         self._sender = sender
+        self._naming = naming
+
+    async def _naming_for(self, invoice_id: str) -> InvoiceNaming:
+        if self._naming is None:
+            return InvoiceNaming()
+        try:
+            return await self._naming(invoice_id) or InvoiceNaming()
+        except Exception:
+            log.warning(
+                "dues_reminder_naming_unresolved",
+                extra={"invoice_id": invoice_id},
+                exc_info=True,
+            )
+            return InvoiceNaming()
+
+    async def send_past_due_reminder(
+        self,
+        *,
+        parent_id: str,
+        email: str,
+        display_name: str | None,
+        invoice_id: str,
+        period: str,
+        balance_due_cents: int,
+        currency: str,
+        days_past_due: int,
+        pay_url: str | None,
+    ) -> bool:
+        """One overdue invoice, named by month/student/class (issue #774)."""
+        academy_name = (
+            await self._academies.get_academy_name(current_academy_id()) or "Your academy"
+        )
+        naming = await self._naming_for(invoice_id)
+        tuition = tuition_for(period, naming)
+        lead_html = tuition_html(period, naming)
+        number_html = invoice_number_html(naming)
+        safe_name = html.escape(display_name or "there")
+        safe_amount = html.escape(format_money(balance_due_cents, currency))
+        day_word = "day" if days_past_due == 1 else "days"
+        pay_line = (
+            _branded_button(label="Pay now", url=pay_url)
+            if pay_url
+            else f"<p style='color: {_BRAND_MUTED};'>Please log in to the parent portal to pay.</p>"
+        )
+        inner = (
+            f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+            "Payment reminder</h2>"
+            f"<p>Hi {safe_name},</p>"
+            f"<p>{lead_html} is <strong>{safe_amount}</strong> and is now "
+            f"<strong>{days_past_due} {day_word}</strong> past its due date.</p>"
+            f"{number_html}"
+            f"{pay_line}"
+        )
+        body = _branded_shell(
+            academy_name=academy_name,
+            inner_html=inner,
+            footer_note="If you've already taken care of this, please disregard this message.",
+            brand=await _academy_brand(self._academies, academy_name),
+        )
+        outcome = await self._sender.send(
+            recipient=ResolvedRecipient(
+                user_id=parent_id,
+                email=email,
+                display_name=display_name or None,
+            ),
+            subject=f"Payment reminder: {tuition}",
+            body=body,
+        )
+        return outcome.ok
 
     async def send_reminder(
         self,
@@ -551,6 +741,7 @@ class DuesReminderEmailAdapter:
             academy_name=academy_name,
             inner_html=inner,
             footer_note="If you've already taken care of this, please disregard this message.",
+            brand=await _academy_brand(self._academies, academy_name),
         )
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(

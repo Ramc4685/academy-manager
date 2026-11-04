@@ -19,6 +19,9 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.enrollment.application.use_cases.departure_reasons import (
+    DepartureReasonCode,
+)
 from backend.v2.contexts.enrollment.application.use_cases.leaving_report import (
     GetLeavingReport,
     LeavingReportRequest,
@@ -77,6 +80,8 @@ class StopAllClassesRequest(BaseModel):
     #: Omitted → resolved from the academy's ``drop_default_outcome``.
     outcome: Literal["credit", "refund", "adjustment"] | None = None
     reason: str = Field(min_length=1, max_length=500)
+    #: Issue #775: one structured reason for the whole departure.
+    reason_code: DepartureReasonCode | None = None
 
 
 class EnrollmentStopResultView(BaseModel):
@@ -112,6 +117,7 @@ async def stop_all_classes(
             effective_at=_start_of_day_utc(body.effective_date),
             outcome=outcome,
             reason=body.reason,
+            reason_code=body.reason_code,
             actor_id=claims.user_id,
         )
     )
@@ -142,6 +148,7 @@ class LeavingReportRowView(BaseModel):
     effective_at: datetime
     event_type: str
     reason: str | None
+    reason_code: str | None
     actor_id: str | None
     is_system_action: bool
     billing_result: str | None
@@ -179,6 +186,7 @@ async def get_leaving_report(
                 effective_at=r.effective_at,
                 event_type=r.event_type,
                 reason=r.reason,
+                reason_code=r.reason_code,
                 actor_id=r.actor_id,
                 is_system_action=r.is_system_action,
                 billing_result=r.billing_result,

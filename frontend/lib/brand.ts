@@ -1,12 +1,19 @@
+const COPYRIGHT_START_YEAR = 2024;
+
+function copyrightYears(): string {
+  const endYear = Math.max(COPYRIGHT_START_YEAR, new Date().getFullYear());
+  return `${COPYRIGHT_START_YEAR}-${endYear}`;
+}
+
 export const brand = {
   companyName: "Marvy Labs",
-  productName: "Academy Manager",
-  productFullName: "Academy Manager",
-  productDescriptor: "Badminton academy operations platform",
-  copyrightYears: "2024-2026",
+  productName: "CourtMastr",
+  productFullName: "CourtMastr",
+  productDescriptor: "Academy operations platform",
+  copyrightYears: copyrightYears(),
   legalOwner: "Marvy Labs",
-  supportEmail: "support@marvylabs.com",
-  securityEmail: "security@marvylabs.com",
+  supportEmail: "support@marvy-labs.com",
+  securityEmail: "security@marvy-labs.com",
   publicSiteUrl: "https://academy.courtmastr.com",
   statusUrl: "https://api.academy.courtmastr.com/api/v2/healthz",
   legalLinks: {

@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.domain.autopay_status import (
     AutopayAttemptOutcome,
     AutopayEnrollmentStatus,
 )
+from backend.v2.contexts.billing.domain.class_pricing import DEFAULT_PLAN_TYPE, PlanType
 
 BillingPeriodType = Literal["monthly", "per_session"]
 StudentBillingEnrollmentStatus = Literal["active", "paused", "cancelled", "transferred_out"]
@@ -38,6 +39,11 @@ class SessionType(BaseModel):
     billing_period: BillingPeriodType = "monthly"
     overage_rate_cents: int | None = Field(default=None, ge=0)
     is_active: bool = True
+    # Pricing page (Settings overhaul PR 11b): how the plan charges. Every
+    # stored plan predates the field and reads as "monthly" (4 classes per
+    # weekly slot, 5th date free: today's rule). Display only; billing code
+    # does not read it.
+    plan_type: PlanType = DEFAULT_PLAN_TYPE
     created_at: datetime
     updated_at: datetime
 

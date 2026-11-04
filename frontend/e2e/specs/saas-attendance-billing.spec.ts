@@ -24,6 +24,7 @@ import {
   COACH_USER_B,
   fulfillJson,
   stubAcademy,
+  stubCoachAcademy,
   stubCoachMessages,
   stubMe,
   stubMemberships,
@@ -56,6 +57,7 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
       { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "coach" },
     ]);
     await stubCoachMessages(page);
+    await stubCoachAcademy(page);
 
     const today = "2026-05-22";
     await page.route("**/api/v2/coach/today*", (route) => {
@@ -135,6 +137,7 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
 
     await stubMe(page, COACH_USER_B);
     await stubCoachMessages(page);
+    await stubCoachAcademy(page);
 
     // Tenant B's /coach/today is empty — they cannot see Asha (academy A).
     await page.route("**/api/v2/coach/today*", (route) => {
@@ -257,6 +260,14 @@ test.describe("SaaS v2 — admin billing ledger idempotency", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, { events: [] });
     });
+    // Issue #842: AdminLayout feeds the Inbox nav badge from this endpoint on
+    // every admin page. Unstubbed, its background poll intermittently fires
+    // before the assertions below run, reaches the (absent) real backend,
+    // and fails the clean-console check with an unrelated 500 — flaky only
+    // under load, since the poll's timing decides whether it fires in time.
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
 
     await page.goto("/admin/payments");
     await expect(page.getByTestId("admin-payments")).toBeVisible();

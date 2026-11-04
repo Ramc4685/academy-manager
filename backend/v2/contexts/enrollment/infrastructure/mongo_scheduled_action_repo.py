@@ -26,6 +26,12 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
                 str(doc["pause_request_id"]) if doc.get("pause_request_id") is not None else None
             ),
             run_at=doc["run_at"],
+            # Issue #820: admin-drop fields; absent (and therefore None) on
+            # every pause-resume / parent-cancel row ever written.
+            outcome=doc.get("outcome"),
+            actor_id=doc.get("actor_id"),
+            reason=doc.get("reason"),
+            reason_code=doc.get("reason_code"),
             status=doc.get("status", "pending"),
             attempt_count=int(doc.get("attempt_count") or 0),
             last_attempt_at=doc.get("last_attempt_at"),
@@ -47,6 +53,10 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
                 "action_type": action.action_type,
             }
         else:
+            # Both period-end types (parent ``cancel_at_period_end`` and admin
+            # ``admin_drop_at_period_end``, issue #820) are one PENDING row per
+            # enrollment PER TYPE — ``action_type`` is part of the key, so the
+            # two never collide on the partial unique indexes.
             key = {
                 "enrollment_id": action.enrollment_id,
                 "action_type": action.action_type,
@@ -168,6 +178,29 @@ class MongoScheduledEnrollmentActionRepository(TenantScopedRepository):
         now = datetime.now(UTC)
         result = await self.collection.update_many(
             self._scoped({"enrollment_id": enrollment_id, "status": "pending"}),
+            {"$set": {"status": "cancelled", "last_error": reason, "updated_at": now}},
+        )
+        return int(result.modified_count or 0)
+
+    async def cancel_pending_for_enrollment_and_type(
+        self,
+        enrollment_id: str,
+        *,
+        action_type: ScheduledActionType,
+        reason: str,
+    ) -> int:
+        # Issue #820: undoing a scheduled admin drop leaves the enrollment
+        # LIVE, so it must retire ONLY its own action type — a paused family's
+        # pending resume for the same enrollment has to survive.
+        now = datetime.now(UTC)
+        result = await self.collection.update_many(
+            self._scoped(
+                {
+                    "enrollment_id": enrollment_id,
+                    "action_type": action_type,
+                    "status": "pending",
+                }
+            ),
             {"$set": {"status": "cancelled", "last_error": reason, "updated_at": now}},
         )
         return int(result.modified_count or 0)

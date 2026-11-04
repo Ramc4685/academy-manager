@@ -37,6 +37,8 @@ from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 class _Schedule:
     billing_day: int
     invoice_due_days: int
+    #: Issue #774: the past-due reminder offsets, stored beside the schedule.
+    reminder_days: tuple[int, ...] = (15, 20)
 
 
 @dataclass
@@ -49,11 +51,17 @@ class _Fees:
 class _Policy:
     cancellation_minimum_notice_days: int
     cancellation_fee_cents: int
+    cancellation_effective_timing: str = "end_of_period"
 
 
 class _FakeSchedule:
-    def __init__(self, billing_day: int = 1, invoice_due_days: int = 7) -> None:
-        self.current = _Schedule(billing_day, invoice_due_days)
+    def __init__(
+        self,
+        billing_day: int = 1,
+        invoice_due_days: int = 7,
+        reminder_days: tuple[int, ...] = (15, 20),
+    ) -> None:
+        self.current = _Schedule(billing_day, invoice_due_days, reminder_days)
         self.commands: list[SetInvoiceScheduleCommand] = []
         self.fail = False
 
@@ -64,7 +72,11 @@ class _FakeSchedule:
         if self.fail:
             raise RuntimeError("schedule store down")
         self.commands.append(cmd)
-        self.current = _Schedule(cmd.billing_day, cmd.invoice_due_days)
+        self.current = _Schedule(
+            cmd.billing_day,
+            cmd.invoice_due_days,
+            self.current.reminder_days if cmd.reminder_days is None else cmd.reminder_days,
+        )
         return self.current
 
 
@@ -90,21 +102,90 @@ class _FakeFees:
 
 
 class _FakePolicy:
-    def __init__(self, notice_days: int = 14, fee_cents: int = 0) -> None:
-        self.current = _Policy(notice_days, fee_cents)
-        self.writes: list[tuple[int, int]] = []
+    def __init__(
+        self, notice_days: int = 14, fee_cents: int = 0, timing: str = "end_of_period"
+    ) -> None:
+        self.current = _Policy(notice_days, fee_cents, timing)
+        self.writes: list[tuple[int | None, int | None, str | None]] = []
         self.fail = False
 
     async def read(self) -> _Policy:
         return self.current
 
     async def write(
-        self, *, cancellation_minimum_notice_days: int, cancellation_fee_cents: int
+        self,
+        *,
+        cancellation_minimum_notice_days: int | None = None,
+        cancellation_fee_cents: int | None = None,
+        cancellation_effective_timing: str | None = None,
     ) -> _Policy:
+        """Partial, like the real adapter: ``None`` leaves the stored value."""
         if self.fail:
             raise RuntimeError("policy store down")
-        self.writes.append((cancellation_minimum_notice_days, cancellation_fee_cents))
-        self.current = _Policy(cancellation_minimum_notice_days, cancellation_fee_cents)
+        self.writes.append(
+            (
+                cancellation_minimum_notice_days,
+                cancellation_fee_cents,
+                cancellation_effective_timing,
+            )
+        )
+        self.current = _Policy(
+            self.current.cancellation_minimum_notice_days
+            if cancellation_minimum_notice_days is None
+            else cancellation_minimum_notice_days,
+            self.current.cancellation_fee_cents
+            if cancellation_fee_cents is None
+            else cancellation_fee_cents,
+            self.current.cancellation_effective_timing
+            if cancellation_effective_timing is None
+            else cancellation_effective_timing,
+        )
+        return self.current
+
+
+@dataclass
+class _Departure:
+    drop_default_outcome: str = "no_credit_mid_month"
+
+
+class _FakeDropOutcome:
+    def __init__(self, drop_default_outcome: str = "no_credit_mid_month") -> None:
+        self.current = _Departure(drop_default_outcome)
+        self.writes: list[str | None] = []
+        self.fail = False
+
+    async def read(self) -> _Departure:
+        return self.current
+
+    async def write(self, *, drop_default_outcome: str | None = None) -> _Departure:
+        """Partial, like the real adapter: ``None`` leaves the stored value."""
+        if self.fail:
+            raise RuntimeError("departure policy store down")
+        self.writes.append(drop_default_outcome)
+        if drop_default_outcome is not None:
+            self.current = _Departure(drop_default_outcome)
+        return self.current
+
+
+@dataclass
+class _Ach:
+    ach_discount_enabled: bool = False
+    ach_discount_percent: float = 0
+    max_ach_discount_percent: float = 3.0
+
+
+class _FakeAch:
+    def __init__(self, current: _Ach | None = None) -> None:
+        self.current = current or _Ach()
+        self.writes: list[tuple[bool, float]] = []
+
+    async def read(self) -> _Ach:
+        return self.current
+
+    async def write(self, *, enabled: bool, percent: float) -> _Ach:
+        self.writes.append((enabled, percent))
+        # Like the real adapter: the ceiling is never touched by a write.
+        self.current = _Ach(enabled, percent, self.current.max_ach_discount_percent)
         return self.current
 
 
@@ -124,11 +205,19 @@ class _FakeAudit:
         self.entries.append(entry)
 
 
-def _build(schedule: _FakeSchedule, fees: _FakeFees, policy: _FakePolicy) -> BuildBillingRulesView:
+def _build(
+    schedule: _FakeSchedule,
+    fees: _FakeFees,
+    policy: _FakePolicy,
+    drop: _FakeDropOutcome | None = None,
+    ach: _FakeAch | None = None,
+) -> BuildBillingRulesView:
     return BuildBillingRulesView(
         schedule=_Reader(schedule.read),
         fees=_Reader(fees.read),
         cancellation=_Reader(policy.read),
+        drop_outcome=_Reader((drop or _FakeDropOutcome()).read),
+        ach=_Reader((ach or _FakeAch()).read),
     )
 
 
@@ -137,7 +226,11 @@ def _update(
     fees: _FakeFees,
     policy: _FakePolicy,
     audit: _FakeAudit | None = None,
+    drop: _FakeDropOutcome | None = None,
+    ach: _FakeAch | None = None,
 ) -> UpdateBillingRules:
+    drop = drop or _FakeDropOutcome()
+    ach = ach or _FakeAch()
     return UpdateBillingRules(
         schedule_reader=_Reader(schedule.read),
         schedule_writer=_Reader(schedule.write),
@@ -145,6 +238,10 @@ def _update(
         fees_writer=_Reader(fees.write),
         cancellation_reader=_Reader(policy.read),
         cancellation_writer=_Reader(policy.write),
+        drop_outcome_reader=_Reader(drop.read),
+        drop_outcome_writer=_Reader(drop.write),
+        ach_reader=_Reader(ach.read),
+        ach_writer=_Reader(ach.write),
         audit=audit,
         clock=lambda: datetime(2026, 9, 7, tzinfo=UTC),
     )
@@ -205,11 +302,16 @@ async def test_fixed_rows_are_not_editable_and_state_a_value() -> None:
 
 
 @pytest.mark.asyncio
-async def test_late_payments_box_carries_the_not_applied_note() -> None:
+async def test_late_payments_box_says_the_fee_is_applied_automatically() -> None:
+    """Money audit X4: the note said "Not applied automatically yet" while the
+    hourly pass (#803) was charging the fee. The note must describe the pass,
+    including that turning the fee on does not back-charge."""
     view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy()).execute("acad-1")
     late = next(group for group in view.groups if group.key == "late_payments")
     assert late.note == LATE_FEE_NOTE
-    assert "Not applied automatically yet" in LATE_FEE_NOTE
+    assert "Not applied" not in LATE_FEE_NOTE
+    assert LATE_FEE_NOTE.startswith("Applied automatically.")
+    assert "already overdue are not charged" in LATE_FEE_NOTE
 
 
 @pytest.mark.asyncio
@@ -292,13 +394,75 @@ async def test_schedule_write_carries_the_unchanged_half_through() -> None:
 
 
 @pytest.mark.asyncio
-async def test_policy_write_carries_the_unchanged_half_through() -> None:
+async def test_policy_write_sends_only_the_changed_field() -> None:
+    """Money audit X5: re-sending the unchanged half from an earlier read could
+    put back a value another panel had just saved."""
     policy = _FakePolicy(14, 500)
     await _update(_FakeSchedule(), _FakeFees(), policy).execute(
         "acad-1",
         UpdateBillingRulesCommand(cancellation_fee_cents=900, actor_id="user-1"),
     )
-    assert policy.writes == [(14, 900)]
+    assert policy.writes == [(None, 900, None)]
+    assert policy.current == _Policy(14, 900)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_timing_row_carries_the_stored_choice_and_options() -> None:
+    view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy(timing="immediate")).execute(
+        "acad-1"
+    )
+    row = view.row("cancellation_effective_timing")
+    assert row.editable is True
+    assert row.choice == "immediate"
+    assert row.choices == ("immediate", "end_of_period")
+
+
+@pytest.mark.asyncio
+async def test_cancellation_timing_write_lands_and_is_audited() -> None:
+    policy = _FakePolicy(14, 500, timing="end_of_period")
+    audit = _FakeAudit()
+    result = await _update(_FakeSchedule(), _FakeFees(), policy, audit).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(cancellation_effective_timing="immediate", actor_id="user-1"),
+    )
+    assert result.changed_fields == ("cancellation_effective_timing",)
+    assert policy.current.cancellation_effective_timing == "immediate"
+    assert audit.entries[0].after == {"cancellation_effective_timing": "immediate"}
+
+
+@pytest.mark.asyncio
+async def test_drop_default_outcome_row_carries_the_stored_choice_and_options() -> None:
+    drop = _FakeDropOutcome("credit_mid_month")
+    view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy(), drop).execute("acad-1")
+    row = view.row("drop_default_outcome")
+    assert row.editable is True
+    assert row.choice == "credit_mid_month"
+    assert row.choices == ("no_credit_mid_month", "credit_mid_month", "no_credit_end_of_period")
+
+
+@pytest.mark.asyncio
+async def test_drop_default_outcome_write_lands_and_is_audited() -> None:
+    drop = _FakeDropOutcome("no_credit_mid_month")
+    audit = _FakeAudit()
+    result = await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), audit, drop).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(drop_default_outcome="credit_mid_month", actor_id="user-1"),
+    )
+    assert result.changed_fields == ("drop_default_outcome",)
+    assert drop.current.drop_default_outcome == "credit_mid_month"
+    assert drop.writes == ["credit_mid_month"]
+    assert audit.entries[0].after == {"drop_default_outcome": "credit_mid_month"}
+
+
+@pytest.mark.asyncio
+async def test_drop_default_outcome_unchanged_writes_nothing() -> None:
+    drop = _FakeDropOutcome("no_credit_mid_month")
+    result = await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), None, drop).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(drop_default_outcome="no_credit_mid_month", actor_id="user-1"),
+    )
+    assert result.changed_fields == ()
+    assert drop.writes == []
 
 
 @pytest.mark.asyncio
@@ -464,3 +628,183 @@ async def test_the_invoice_schedule_audit_names_the_real_owner() -> None:
 
     assert schedule.commands[-1].actor_id == "usr_owner"
     assert schedule.commands[-1].reason == "moving to mid-month"
+
+
+# --- reminder_days: the one list-valued rule (issue #774) -------------------
+
+
+@pytest.mark.asyncio
+async def test_reminder_days_is_an_editable_row_carrying_its_offsets() -> None:
+    view = await _build(_FakeSchedule(reminder_days=(15, 20)), _FakeFees(), _FakePolicy()).execute(
+        "acad-1"
+    )
+
+    row = view.row("reminder_days")
+    assert row.editable is True
+    assert row.values == (15, 20)
+    assert (row.min_value, row.max_value) == rules.REMINDER_DAY_BOUNDS
+
+
+@pytest.mark.asyncio
+async def test_reminder_days_round_trips_through_the_write() -> None:
+    schedule = _FakeSchedule(reminder_days=(15, 20))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    result = await uc.execute(
+        "acad-1", UpdateBillingRulesCommand(reminder_days=[20, 10], actor_id="admin-1")
+    )
+
+    assert result.changed_fields == ("reminder_days",)
+    assert schedule.commands[-1].reminder_days == (10, 20)
+    assert schedule.current.reminder_days == (10, 20)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reminder_days_list_turns_reminders_off() -> None:
+    """Empty is the off switch, and it is a real change — not "leave alone"."""
+    schedule = _FakeSchedule(reminder_days=(15, 20))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    result = await uc.execute(
+        "acad-1", UpdateBillingRulesCommand(reminder_days=[], actor_id="admin-1")
+    )
+
+    assert result.changed_fields == ("reminder_days",)
+    assert schedule.current.reminder_days == ()
+
+
+@pytest.mark.asyncio
+async def test_omitting_reminder_days_leaves_the_stored_offsets_alone() -> None:
+    schedule = _FakeSchedule(billing_day=1, reminder_days=(15, 20))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    await uc.execute("acad-1", UpdateBillingRulesCommand(billing_day=9, actor_id="admin-1"))
+
+    assert schedule.current.reminder_days == (15, 20)
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_range_reminder_day_is_refused_naming_the_field() -> None:
+    schedule = _FakeSchedule(reminder_days=(15,))
+    uc = _update(schedule, _FakeFees(), _FakePolicy())
+
+    with pytest.raises(BillingRulesValidationError) as exc:
+        await uc.execute(
+            "acad-1", UpdateBillingRulesCommand(reminder_days=[15, 90], actor_id="admin-1")
+        )
+
+    assert exc.value.field == "reminder_days"
+    # Nothing was written: validation runs before any store is touched.
+    assert schedule.current.reminder_days == (15,)
+
+
+# --- Bank (ACH) discount (Settings overhaul Phase 4 PR 13) --------------
+
+
+@pytest.mark.asyncio
+async def test_ach_row_reads_stored_values_and_ceiling() -> None:
+    ach = _FakeAch(_Ach(True, 2.0, 3.0))
+    view = await _build(_FakeSchedule(), _FakeFees(), _FakePolicy(), ach=ach).execute("acad-1")
+    row = view.row("ach_discount")
+    assert row.editable is True
+    assert (row.enabled, row.percent, row.max_percent) == (True, 2.0, 3.0)
+    assert row.detail is not None and "autopay" in row.detail.lower()
+    assert "after any tuition discount" in row.detail
+
+
+@pytest.mark.asyncio
+async def test_ach_write_saves_and_audits_before_and_after() -> None:
+    ach, audit = _FakeAch(), _FakeAudit()
+    result = await _update(
+        _FakeSchedule(), _FakeFees(), _FakePolicy(), audit=audit, ach=ach
+    ).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": True, "percent": 2.5},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert result.changed_fields == ("ach_discount",)
+    assert ach.writes == [(True, 2.5)]
+    entry = audit.entries[0]
+    assert entry.before == {"ach_discount": {"enabled": False, "percent": 0.0}}
+    assert entry.after == {"ach_discount": {"enabled": True, "percent": 2.5}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("percent", [0, -1, 3.01, 50])
+async def test_ach_percent_is_bounded_by_the_ceiling(percent: float) -> None:
+    ach, audit = _FakeAch(), _FakeAudit()
+    with pytest.raises(BillingRulesValidationError) as err:
+        await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), audit=audit, ach=ach).execute(
+            "acad-1",
+            UpdateBillingRulesCommand(
+                ach_discount={"enabled": True, "percent": percent},  # type: ignore[arg-type]
+                actor_id="owner-1",
+            ),
+        )
+    assert err.value.field == "ach_discount_percent"
+    assert ach.writes == [] and audit.entries == []
+
+
+@pytest.mark.asyncio
+async def test_ach_turning_on_at_zero_percent_is_rejected() -> None:
+    with pytest.raises(BillingRulesValidationError):
+        await _update(_FakeSchedule(), _FakeFees(), _FakePolicy()).execute(
+            "acad-1",
+            UpdateBillingRulesCommand(
+                ach_discount={"enabled": True},  # type: ignore[arg-type]
+                actor_id="owner-1",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_ach_ceiling_is_the_stored_max_and_a_write_never_moves_it() -> None:
+    ach = _FakeAch(_Ach(False, 0, 1.5))
+    update = _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), ach=ach)
+    with pytest.raises(BillingRulesValidationError):
+        await update.execute(
+            "acad-1",
+            UpdateBillingRulesCommand(
+                ach_discount={"enabled": True, "percent": 2.0},  # type: ignore[arg-type]
+                actor_id="owner-1",
+            ),
+        )
+    await update.execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": True, "percent": 1.5},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert ach.current.max_ach_discount_percent == 1.5
+
+
+@pytest.mark.asyncio
+async def test_ach_unchanged_is_a_no_op_with_no_audit() -> None:
+    ach, audit = _FakeAch(_Ach(True, 2.0, 3.0)), _FakeAudit()
+    result = await _update(
+        _FakeSchedule(), _FakeFees(), _FakePolicy(), audit=audit, ach=ach
+    ).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": True, "percent": 2.0},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert result.changed_fields == ()
+    assert ach.writes == [] and audit.entries == []
+
+
+@pytest.mark.asyncio
+async def test_ach_turn_off_keeps_the_stored_percent() -> None:
+    ach = _FakeAch(_Ach(True, 2.0, 3.0))
+    await _update(_FakeSchedule(), _FakeFees(), _FakePolicy(), ach=ach).execute(
+        "acad-1",
+        UpdateBillingRulesCommand(
+            ach_discount={"enabled": False},  # type: ignore[arg-type]
+            actor_id="owner-1",
+        ),
+    )
+    assert ach.writes == [(False, 2.0)]

@@ -92,19 +92,35 @@ def test_platform_bootstrap_route_creates_membership_and_settings_records(
         "academy",
         "owner_user",
         "owner_membership",
-        "academy_settings",
-        "billing_policy",
         "waiver_template",
-        "roles",
-        "feature_flags",
     ]
 
     owner = store.users["owner@example.com"]
     assert store.memberships[(body["academy_id"], owner["user_id"])]["roles"] == ["admin"]
-    assert body["academy_id"] in store.settings
-    assert body["academy_id"] in store.billing_policies
     assert body["academy_id"] in store.waivers
-    assert body["academy_id"] in store.feature_flags
+    # Settings overhaul Phase 2: the four setup-only collections nothing read
+    # (academy_settings, billing_policies, academy_roles, academy_feature_flags)
+    # are no longer written.
+    # (the fake store no longer even has places to put them)
+
+
+def test_platform_bootstrap_requires_timezone(platform_client: TestClient) -> None:
+    # A missing or blank timezone must never silently default to UTC — the
+    # operator has to pick one (see BootstrapAcademyDialog's own comment).
+    payload = _payload()
+    del payload["timezone"]
+
+    response = platform_client.post("/api/v2/platform/academies/bootstrap", json=payload)
+
+    assert response.status_code == 422, response.text
+
+
+def test_platform_bootstrap_rejects_blank_timezone(platform_client: TestClient) -> None:
+    response = platform_client.post(
+        "/api/v2/platform/academies/bootstrap", json=_payload(timezone="")
+    )
+
+    assert response.status_code == 422, response.text
 
 
 def test_platform_bootstrap_route_is_idempotent(platform_client: TestClient) -> None:

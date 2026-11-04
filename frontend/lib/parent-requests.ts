@@ -1,4 +1,6 @@
 import type { ChipVariant } from "@/components/ds/chip";
+import type { AssignedClassView } from "@/lib/api/parent";
+import { formatAcademyTimeRange } from "@/lib/format/academy-time";
 
 /**
  * Maps backend request-status strings to Chip variants for the parent
@@ -22,4 +24,35 @@ export function requestStatusChipVariant(status: string): ChipVariant {
     default:
       return "pending";
   }
+}
+
+export interface AssignedClassCopy {
+  title: string;
+  /** Academy-local date + time range with an explicit timezone label. */
+  when: string;
+  where: string;
+  /** The class was called off after approval (#671) — never "attend here". */
+  cancelled: boolean;
+}
+
+/**
+ * Display copy for the class an approved make-up / trial puts the child in
+ * (#1038). Formats in the academy timezone the backend resolved, falling
+ * back to the page's academy timezone, never a hard-coded offset.
+ */
+export function assignedClassCopy(
+  assigned: AssignedClassView | null | undefined,
+  fallbackTimezone: string | null | undefined,
+): AssignedClassCopy | null {
+  if (!assigned) return null;
+  return {
+    title: assigned.session_title,
+    when: formatAcademyTimeRange(
+      assigned.start_at,
+      assigned.end_at,
+      assigned.timezone ?? fallbackTimezone,
+    ),
+    where: assigned.location ?? "Venue to be confirmed",
+    cancelled: assigned.status === "cancelled",
+  };
 }

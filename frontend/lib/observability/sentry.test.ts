@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sentryMock = vi.hoisted(() => {
-  const scope = { setTag: vi.fn(), setContext: vi.fn(), setFingerprint: vi.fn() };
+  const scope = { setTag: vi.fn(), setContext: vi.fn(), setFingerprint: vi.fn(), setLevel: vi.fn() };
   const browserTracingIntegration = { name: "browserTracingIntegration" };
   return {
     scope,
@@ -9,6 +9,9 @@ const sentryMock = vi.hoisted(() => {
     captureException: vi.fn(),
     withScope: vi.fn((cb: (s: typeof scope) => void) => cb(scope)),
     metrics: { distribution: vi.fn() },
+    setUser: vi.fn(),
+    setTag: vi.fn(),
+    addBreadcrumb: vi.fn(),
     browserTracingIntegration: vi.fn(() => browserTracingIntegration),
   };
 });
@@ -16,8 +19,10 @@ const sentryMock = vi.hoisted(() => {
 vi.mock("@sentry/browser", () => sentryMock);
 
 import {
+  addBreadcrumb,
   captureError,
   initSentry,
+  setSentryUser,
   recordVital,
   resetSentryForTests,
   scrubBreadcrumbUrls,
@@ -126,7 +131,7 @@ describe("lib/observability/sentry", () => {
     });
   });
 
-  it("defaults the environment to production and omits an unset release", async () => {
+  it("defaults the environment to development and omits an unset release", async () => {
     vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
     vi.stubEnv("NEXT_PUBLIC_APP_ENV", "");
     vi.stubEnv("NEXT_PUBLIC_SENTRY_RELEASE", "");
@@ -134,9 +139,36 @@ describe("lib/observability/sentry", () => {
     await initSentry();
 
     expect(sentryMock.init.mock.calls[0][0]).toMatchObject({
-      environment: "production",
+      environment: "development",
       release: undefined,
     });
+  });
+
+  it("does not load the SDK on localhost unless force-local is set (#753)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+    vi.stubGlobal("window", { location: { hostname: "localhost" } });
+
+    expect(await initSentry()).toBeNull();
+    expect(sentryMock.init).not.toHaveBeenCalled();
+  });
+
+  it("loads the SDK on localhost when NEXT_PUBLIC_SENTRY_FORCE_LOCAL=1 (#753)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_FORCE_LOCAL", "1");
+    vi.stubGlobal("window", { location: { hostname: "127.0.0.1" } });
+
+    await initSentry();
+
+    expect(sentryMock.init).toHaveBeenCalledTimes(1);
+  });
+
+  it("initialises normally on a real deployed hostname (#753)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+    vi.stubGlobal("window", { location: { hostname: "app.example.com" } });
+
+    await initSentry();
+
+    expect(sentryMock.init).toHaveBeenCalledTimes(1);
   });
 
   it("captures errors with the Next digest as a tag", async () => {
@@ -186,5 +218,78 @@ describe("lib/observability/sentry", () => {
       unit: "none",
       attributes: { rating: "good", route: "coach.today", id: "v2" },
     });
+  });
+
+  it("attaches the signed-in identity and academy tag, never email or name (#750)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+
+    setSentryUser({ id: "u1", segment: "coach", academyId: "acad-1" });
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.setUser).toHaveBeenCalledWith({ id: "u1", segment: "coach" });
+    const identity = sentryMock.setUser.mock.calls[0][0] as Record<string, unknown>;
+    expect(Object.keys(identity).sort()).toEqual(["id", "segment"]);
+    expect(sentryMock.setTag).toHaveBeenCalledWith("academy_id", "acad-1");
+  });
+
+  it("clears the Sentry user on sign-out (#750)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+
+    setSentryUser(null);
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.setUser).toHaveBeenCalledWith(null);
+    expect(sentryMock.setTag).toHaveBeenCalledWith("academy_id", undefined);
+  });
+
+  it("never identifies anyone when the DSN is unset (#750)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "");
+
+    setSentryUser({ id: "u1", segment: "parent", academyId: "acad-1" });
+    setSentryUser(null);
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.setUser).not.toHaveBeenCalled();
+    expect(sentryMock.setTag).not.toHaveBeenCalled();
+  });
+
+  it("applies a custom severity level only when one is given (#754)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+
+    captureError(new Error("plain"));
+    captureError(new Error("network"), { level: "warning" });
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.scope.setLevel).toHaveBeenCalledTimes(1);
+    expect(sentryMock.scope.setLevel).toHaveBeenCalledWith("warning");
+  });
+
+  it("records a breadcrumb when the DSN is set (#754)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://key@o1.ingest.us.sentry.io/1");
+
+    addBreadcrumb("GET /parent/home -> offline", { "api.path": "/parent/home" });
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.addBreadcrumb).toHaveBeenCalledWith({
+      category: "api",
+      level: "info",
+      message: "GET /parent/home -> offline",
+      data: { "api.path": "/parent/home" },
+    });
+  });
+
+  it("never records a breadcrumb when the DSN is unset (#754)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "");
+
+    addBreadcrumb("GET /parent/home -> offline");
+    await initSentry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sentryMock.addBreadcrumb).not.toHaveBeenCalled();
   });
 });

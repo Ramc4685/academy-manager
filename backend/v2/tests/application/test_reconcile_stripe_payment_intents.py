@@ -772,6 +772,12 @@ async def test_reconciler_searches_per_connected_account_with_stripe_account_sco
     assert len(stripe.searched) == 2
     stripe_account_args = {call["stripe_account"] for call in stripe.searched}
     assert stripe_account_args == {None, "acct_connected_acad"}
+    # A PaymentIntent found ON the connected account is a direct charge: the
+    # repaired payment records that account so a refund is issued there. The
+    # platform one records none (its row shape is unchanged).
+    by_pi = {p.stripe_payment_intent_id: p for p in ledger.payments.values()}
+    assert by_pi["pi_connected_1"].stripe_account_id == "acct_connected_acad"
+    assert by_pi["pi_platform_1"].stripe_account_id is None
 
 
 @pytest.mark.asyncio

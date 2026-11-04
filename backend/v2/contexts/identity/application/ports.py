@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from backend.v2.contexts.identity.domain.models import (
     AcademyMembership,
@@ -173,3 +173,46 @@ class CustomTokenPort(Protocol):
     """
 
     async def create_custom_token(self, uid: str) -> str: ...
+
+
+class LoginAuditRecorder(Protocol):
+    """Append one sign-in to the academy's audit trail (#468).
+
+    Implementations MUST be idempotent per ``dedupe_key``: every authenticated
+    request re-runs ``LoadAuthClaims``, so the key (derived from the token's
+    ``iat``) is what turns "one token" into "one audit row".
+    """
+
+    async def record_login(
+        self,
+        *,
+        user_id: str,
+        academy_id: str,
+        membership_id: str,
+        roles: Sequence[str],
+        provider: str | None,
+        persona: str | None,
+        dedupe_key: str,
+    ) -> None: ...
+
+
+class UserGovernanceAudit(Protocol):
+    """Append a staff-governance event the user repo does not record (X3).
+
+    Used for refused changes to a user who outranks or equals the caller
+    (``user.change_denied``) and for set-password links sent
+    (``user.login_invite_sent``). Rows carry both sides' roles.
+    """
+
+    async def record(
+        self,
+        *,
+        academy_id: str,
+        actor_id: str,
+        actor_roles: Sequence[str],
+        action: str,
+        target_id: str,
+        target_roles: Sequence[str],
+        reason: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None: ...

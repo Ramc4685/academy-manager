@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from backend.v2.contexts.billing.domain.connected_account import (
+    LIABILITY_FIELDS,
     ConnectedAccount,
     ConnectedAccountStatus,
 )
@@ -49,7 +50,15 @@ class MongoConnectedAccountRepository(TenantScopedRepository):
         capabilities: dict[str, str] | None = None,
         charges_enabled: bool | None = None,
         payouts_enabled: bool | None = None,
-    ) -> None:
+        skip_if_disconnected: bool = False,
+        liability: dict[str, str] | None = None,
+    ) -> bool:
+        """Apply a status change; returns False when no row was updated.
+
+        ``skip_if_disconnected`` makes the write conditional on the row not
+        being owner-disconnected, in the same atomic update, so a Stripe webhook
+        racing a disconnect can never re-activate it.
+        """
         update: dict[str, object] = {
             "status": status,
             "updated_at": datetime.now(UTC),
@@ -60,9 +69,33 @@ class MongoConnectedAccountRepository(TenantScopedRepository):
             update["charges_enabled"] = charges_enabled
         if payouts_enabled is not None:
             update["payouts_enabled"] = payouts_enabled
+        # Only the liability fields the Stripe payload reported; a payload
+        # without them (capability.*) leaves the stored model untouched.
+        for key, value in (liability or {}).items():
+            if key in LIABILITY_FIELDS and value:
+                update[key] = value
+        filter_: dict[str, object] = {"stripe_account_id": stripe_account_id}
+        if skip_if_disconnected:
+            # Matches a missing field too, so rows written before the marker
+            # existed stay webhook-updatable.
+            filter_["disconnected_at"] = None
+        result = await self._update_one(filter_, {"$set": update})
+        return bool(result.matched_count)
+
+    async def mark_disconnected(self, *, stripe_account_id: str) -> None:
+        """Owner disconnect: disable the account and stamp the sticky marker."""
+        now = datetime.now(UTC)
         await self._update_one(
             {"stripe_account_id": stripe_account_id},
-            {"$set": update},
+            {
+                "$set": {
+                    "status": "disabled",
+                    "charges_enabled": False,
+                    "payouts_enabled": False,
+                    "disconnected_at": now,
+                    "updated_at": now,
+                }
+            },
         )
 
     @staticmethod

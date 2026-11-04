@@ -62,7 +62,9 @@ class FakeReader:
     #: enrollment_id (or "student:session") -> what was priced for the period.
     bases: dict[str, PeriodChargeBasis] = field(default_factory=dict)
 
-    async def session_pricing(self, session_id: str) -> SessionPricing | None:
+    async def session_pricing(
+        self, session_id: str, *, period: str | None = None
+    ) -> SessionPricing | None:
         return self.pricing
 
     async def occurrences_for_period(
@@ -75,7 +77,9 @@ class FakeReader:
     ) -> PeriodChargeBasis | None:
         return self.bases.get(enrollment_id) or self.bases.get(f"{student_id}:{session_id}")
 
-    async def enrollments_for_session(self, session_id: str) -> list[BillableEnrollment]:
+    async def enrollments_for_session(
+        self, session_id: str, *, period: str | None = None
+    ) -> list[BillableEnrollment]:
         return list(self.enrollments)
 
 
@@ -123,6 +127,27 @@ class FakeCredits:
             if row.source_type == source_type and row.source_id == source_id:
                 return row
         return None
+
+    async def resize_unapplied(
+        self, credit_id: str, *, from_cents: int, to_cents: int, now: datetime
+    ) -> bool:
+        """Compare-and-set like the real store: only an untouched, approved credit."""
+        for index, row in enumerate(self.rows):
+            if (
+                row.credit_id == credit_id
+                and row.status == "APPROVED"
+                and row.amount_cents == from_cents
+                and row.remaining_amount_cents == from_cents
+            ):
+                self.rows[index] = row.model_copy(
+                    update={
+                        "amount_cents": to_cents,
+                        "remaining_amount_cents": to_cents,
+                        "updated_at": now,
+                    }
+                )
+                return True
+        return False
 
 
 def _invoice(enrollment_id: str, *, subtotal: int, discount: int = 0, status: str = "open"):

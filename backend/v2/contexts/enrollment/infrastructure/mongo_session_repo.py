@@ -12,9 +12,13 @@ from bson import ObjectId
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ParentAvailableSession,
 )
-from backend.v2.contexts.enrollment.domain.models import Session
+from backend.v2.contexts.enrollment.application.use_cases.public_catalog import (
+    MAX_PUBLIC_CLASSES,
+    PublicCatalogSession,
+)
+from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Session
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
-from backend.v2.shared.time import academy_timezone_lookup, ensure_utc
+from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE, academy_timezone_lookup, ensure_utc
 
 
 def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
@@ -25,11 +29,11 @@ def _day_bounds_utc(on_date: date) -> tuple[datetime, datetime]:
 
 log = logging.getLogger(__name__)
 
-# Last-resort zone for LEGACY rows that carry neither their own `timezone` nor
-# a resolvable tenant zone. Reads must never raise, so this rung stays — but it
-# is a single-tenant guess, so reaching it is logged rather than silent. Writes
-# fail closed instead (see admin_writes._resolve_session_timezone).
-LEGACY_FALLBACK_TIMEZONE = "America/Chicago"
+# ``LEGACY_FALLBACK_TIMEZONE`` (shared/time) is the last-resort zone for LEGACY
+# rows that carry neither their own `timezone` nor a resolvable tenant zone.
+# Reads must never raise, so this rung stays — but it is a single-tenant guess,
+# so reaching it is logged rather than silent. Writes fail closed instead (see
+# admin_writes._resolve_session_timezone).
 
 
 def _template_timezone(template: dict[str, Any], fallback: str | None) -> str:
@@ -249,19 +253,24 @@ def _coerce_template_date(value: object) -> date | None:
 class MongoSessionRepository(TenantScopedRepository):
     collection_name = "sessions"
 
-    def __init__(self, db: Any, *, default_amount_cents: int = 15000) -> None:
+    # The parent catalog price of a class with no fee stored. It was a $150
+    # placeholder that no charge path used: checkout quotes and monthly
+    # invoices bill an unpriced class at 0 (``quote_enrollment`` and
+    # ``session_amount_cents``), so the catalog now shows that real amount
+    # (Settings overhaul PR 11b, display fix only).
+    def __init__(self, db: Any, *, default_amount_cents: int = 0) -> None:
         super().__init__(db)
         self._default_amount_cents = default_amount_cents
 
     @staticmethod
-    def _to_domain(doc: dict[str, object]) -> Session:
+    def _to_domain(doc: dict[str, object], fallback_timezone: str | None = None) -> Session:
         status = str(doc.get("status") or "scheduled")
         if status in {"active", "open"}:
             status = "scheduled"
         start_at = doc.get("start_at")
         end_at = doc.get("end_at")
         if start_at is None or end_at is None:
-            start_at, end_at = _representative_template_times(doc)
+            start_at, end_at = _representative_template_times(doc, fallback_timezone)
         # Normalise legacy schema (name/max_students) to v2 schema (title/capacity).
         return Session(
             session_id=str(doc.get("session_id") or doc.get("_id")),
@@ -298,7 +307,7 @@ class MongoSessionRepository(TenantScopedRepository):
             {**_coach_or_assistant_filter(coach_id), "start_at": {"$gte": start, "$lte": end}},
             sort=[("start_at", 1)],
         )
-        return [self._to_domain(doc) async for doc in cursor]
+        return await sessions_to_domain(self._db, [doc async for doc in cursor])
 
     async def assigned_session_ids_for_coach(
         self, coach_id: str, *, include_assistant: bool = True
@@ -332,17 +341,17 @@ class MongoSessionRepository(TenantScopedRepository):
             {**_coach_or_assistant_filter(coach_id), "start_at": {"$gte": now}},
             sort=[("start_at", 1)],
         )
-        return [self._to_domain(doc) async for doc in cursor]
+        return await sessions_to_domain(self._db, [doc async for doc in cursor])
 
     async def get(self, session_id: str) -> Session | None:
         doc = await self._find_one(_session_filter(session_id))
-        return self._to_domain(doc) if doc else None
+        return (await sessions_to_domain(self._db, [doc]))[0] if doc else None
 
     async def get_many(self, session_ids: list[str]) -> list[Session]:
         if not session_ids:
             return []
         cursor = self._find_many(_session_ids_filter(session_ids))
-        return [self._to_domain(doc) async for doc in cursor]
+        return await sessions_to_domain(self._db, [doc async for doc in cursor])
 
     async def available_for_parent_catalog(self) -> list[ParentAvailableSession]:
         now = datetime.now(UTC)
@@ -378,15 +387,13 @@ class MongoSessionRepository(TenantScopedRepository):
             seen_template_sessions.add(session_id)
             docs.append(doc)
         docs.sort(key=session_start_sort_key)
+        session_ids = [str(doc["session_id"]) for doc in docs]
+        enrolled_counts = await self._enrolled_counts_by_session(session_ids)
         rows: list[ParentAvailableSession] = []
         for doc in docs:
             capacity = int(doc.get("capacity") or doc.get("max_students") or 1)
             session_id = str(doc["session_id"])
-            enrolled_count = int(
-                await self._db["enrollments"].count_documents(
-                    self._scoped({"session_id": session_id, "status": "active"})
-                )
-            )
+            enrolled_count = enrolled_counts.get(session_id, 0)
             reserved_seats = int(doc.get("reserved_seats") or enrolled_count)
             occupied = max(enrolled_count, reserved_seats)
             available_seats = max(capacity - occupied, 0)
@@ -412,6 +419,131 @@ class MongoSessionRepository(TenantScopedRepository):
                 break
         return rows
 
+    async def available_for_public_catalog(self) -> list[PublicCatalogSession]:
+        """Published classes for the anonymous public page, FULL ONES INCLUDED.
+
+        Sibling of :meth:`available_for_parent_catalog`, deliberately not a
+        flag on it (public tenant page brief, "two things the parent catalog
+        cannot be reused for"): that read drops full classes and lists dated
+        occurrences 30 days ahead, whereas the public page lists the class
+        itself (a weekly class once, with its days and times) and shows a
+        full class as "Full, join waitlist".
+
+        Listable: ``published`` literally ``True``; not cancelled or
+        completed; a weekly class whose ``end_date`` has not passed; a one-off
+        class that has not started yet. Occupied seats count every
+        seat-holding enrollment (``SEAT_HOLDING``: active and held) and never
+        drop below ``reserved_seats``, the same floor the parent catalog uses.
+        The exact numbers stay inside Enrollment: the use case turns them
+        into a band before anything is serialised.
+        """
+        # Imported here: that module imports ``_session_filter`` from this one.
+        from backend.v2.contexts.enrollment.infrastructure.mongo_class_public_profile_repo import (
+            class_public_profile_from_doc,
+        )
+
+        now = datetime.now(UTC)
+        cursor = self._find_many(
+            {"published": True, "status": {"$nin": ["cancelled", "completed"]}},
+        )
+        docs = [doc async for doc in cursor]
+        academy_timezone = await academy_timezone_lookup(self._db)(current_academy_id())
+        listable: list[tuple[dict[str, Any], str | None, date | None, str | None, str | None]] = []
+        for doc in docs:
+            recurring = "days_of_week" in doc
+            zone = str(doc.get("timezone") or "").strip() or academy_timezone or None
+            if recurring:
+                end_date = _safe_template_date(doc.get("end_date"))
+                today = now.astimezone(_zone(zone)).date()
+                if end_date is not None and end_date < today:
+                    continue
+                listable.append(
+                    (
+                        doc,
+                        zone,
+                        None,
+                        _optional_str(doc.get("start_time")),
+                        _optional_str(doc.get("end_time")),
+                    )
+                )
+                continue
+            start_at = doc.get("start_at")
+            end_at = doc.get("end_at")
+            if not isinstance(start_at, datetime) or ensure_utc(start_at) < now:
+                continue
+            local_start = ensure_utc(start_at).astimezone(_zone(zone))
+            local_end = (
+                ensure_utc(end_at).astimezone(_zone(zone)) if isinstance(end_at, datetime) else None
+            )
+            listable.append(
+                (
+                    doc,
+                    zone,
+                    local_start.date(),
+                    _optional_str(doc.get("start_time")) or local_start.strftime("%H:%M"),
+                    _optional_str(doc.get("end_time"))
+                    or (local_end.strftime("%H:%M") if local_end else None),
+                )
+            )
+        listable = listable[:MAX_PUBLIC_CLASSES]
+        session_ids = [str(doc.get("session_id") or doc.get("_id")) for doc, *_ in listable]
+        held = await self._enrolled_counts_by_session(session_ids, statuses=SEAT_HOLDING)
+        rows: list[PublicCatalogSession] = []
+        for (doc, zone, starts_on, start_time, end_time), session_id in zip(
+            listable, session_ids, strict=True
+        ):
+            capacity = int(doc.get("capacity") or doc.get("max_students") or 1)
+            occupied = max(held.get(session_id, 0), int(doc.get("reserved_seats") or 0))
+            rows.append(
+                PublicCatalogSession(
+                    profile=class_public_profile_from_doc(doc),
+                    coach_id=_optional_str(doc.get("coach_id")),
+                    title=str(doc.get("title") or doc.get("name") or "Class").strip()[:120]
+                    or "Class",
+                    location=_optional_str(doc.get("location")),
+                    venue_address=_optional_str(doc.get("venue_address")),
+                    days_of_week=_string_tuple(doc.get("days_of_week")),
+                    start_time=start_time,
+                    end_time=end_time,
+                    timezone=zone,
+                    starts_on=starts_on,
+                    capacity=max(capacity, 0),
+                    occupied_seats=max(occupied, 0),
+                    amount_cents=_optional_amount_cents(doc),
+                )
+            )
+        return rows
+
+    async def _enrolled_counts_by_session(
+        self,
+        session_ids: list[str],
+        *,
+        statuses: frozenset[str] | None = None,
+    ) -> dict[str, int]:
+        """Active-enrollment counts for every given session, in one query.
+
+        Replaces the previous per-session ``count_documents`` fan with a
+        single ``$group`` aggregation. ``$group`` omits keys with no
+        matching documents, so callers must default missing session ids
+        to 0 (via ``.get(session_id, 0)``) rather than treating absence as
+        an error."""
+        if not session_ids:
+            return {}
+        cursor = self._db["enrollments"].aggregate(
+            [
+                {
+                    "$match": self._scoped(
+                        {
+                            "session_id": {"$in": session_ids},
+                            "status": ("active" if statuses is None else {"$in": sorted(statuses)}),
+                        }
+                    )
+                },
+                {"$group": {"_id": "$session_id", "n": {"$sum": 1}}},
+            ]
+        )
+        return {str(doc["_id"]): int(doc["n"]) async for doc in cursor}
+
 
 def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     if doc.get("amount_cents") is not None:
@@ -421,6 +553,20 @@ def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
     if doc.get("monthly_price") is not None:
         return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
     return default_amount_cents
+
+
+def _zone(name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or LEGACY_FALLBACK_TIMEZONE)
+    except (ValueError, KeyError):
+        return ZoneInfo(LEGACY_FALLBACK_TIMEZONE)
+
+
+def _safe_template_date(value: object) -> date | None:
+    try:
+        return _coerce_template_date(value)
+    except ValueError:
+        return None
 
 
 def _coach_or_assistant_filter(coach_id: str) -> dict[str, object]:
@@ -501,8 +647,28 @@ def _optional_amount_cents(doc: dict[str, object]) -> int | None:
     return None
 
 
-def _representative_template_times(doc: dict[str, object]) -> tuple[datetime, datetime]:
-    timezone_name = str(doc.get("timezone") or "America/Chicago")
+def _needs_template_zone(doc: dict[str, object]) -> bool:
+    """A template row with no dates and no zone of its own (legacy data)."""
+    missing_dates = doc.get("start_at") is None or doc.get("end_at") is None
+    return missing_dates and not str(doc.get("timezone") or "").strip()
+
+
+async def sessions_to_domain(db: Any, docs: list[dict[str, Any]]) -> list[Session]:
+    """Map session docs to ``Session``, expanding zoneless templates in the tenant's zone.
+
+    The academy zone is read (once) only when some row actually needs it, so
+    the usual dated or zoned rows cost no extra query.
+    """
+    fallback: str | None = None
+    if any(_needs_template_zone(doc) for doc in docs):
+        fallback = await academy_timezone_lookup(db)(current_academy_id())
+    return [MongoSessionRepository._to_domain(doc, fallback) for doc in docs]
+
+
+def _representative_template_times(
+    doc: dict[str, object], fallback_timezone: str | None = None
+) -> tuple[datetime, datetime]:
+    timezone_name = _template_timezone(doc, fallback_timezone)
     tz = ZoneInfo(timezone_name)
     current_date = datetime.now(UTC).astimezone(tz).date()
     active_start = _coerce_template_date(doc.get("start_date"))

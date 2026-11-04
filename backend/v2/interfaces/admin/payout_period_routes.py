@@ -305,6 +305,7 @@ async def generate_payout_period(
             academy_id=claims.academy_id,
             period_start=body.period_start,
             period_end=body.period_end,
+            actor_id=claims.user_id,
         )
     except OverlappingPayoutPeriodError as exc:
         raise PayoutPeriodOverlap(str(exc)) from exc
@@ -323,11 +324,13 @@ async def get_payout_period(
 @router.post("/payout-periods/{period_id}/approve", response_model=AdminPayoutPeriodView)
 async def approve_payout_period(
     period_id: str,
-    _claims: AuthClaims = Depends(require_owner()),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
-        period = await _approve_payout_period(use_cases).execute(period_id=period_id)
+        period = await _approve_payout_period(use_cases).execute(
+            period_id=period_id, actor_id=claims.user_id
+        )
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
     except ValueError as exc:
@@ -339,7 +342,7 @@ async def approve_payout_period(
 async def mark_payout_period_paid(
     period_id: str,
     body: MarkPayoutPeriodPaidRequest,
-    _claims: AuthClaims = Depends(require_owner()),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     try:
@@ -350,7 +353,8 @@ async def mark_payout_period_paid(
                 paid_at=body.paid_at,
                 amount_minor=body.amount_cents,
                 reference=body.reference,
-            )
+            ),
+            actor_id=claims.user_id,
         )
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
@@ -385,7 +389,10 @@ async def reopen_payout_period(
 ) -> AdminPayoutPeriodView:
     try:
         period = await _reopen_payout_period(use_cases).execute(
-            period_id=period_id, actor_id=claims.user_id, reason=body.reason
+            period_id=period_id,
+            actor_id=claims.user_id,
+            reason=body.reason,
+            acknowledge_paid_clawback=body.acknowledge_paid_clawback,
         )
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc

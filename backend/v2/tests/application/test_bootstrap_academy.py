@@ -22,11 +22,7 @@ class FakeBootstrapStore:
         self.academies: dict[str, dict[str, Any]] = {}
         self.users: dict[str, dict[str, Any]] = {}
         self.memberships: dict[tuple[str, str], dict[str, Any]] = {}
-        self.settings: dict[str, dict[str, Any]] = {}
-        self.billing_policies: dict[str, dict[str, Any]] = {}
         self.waivers: dict[str, dict[str, Any]] = {}
-        self.roles: dict[str, list[dict[str, Any]]] = {}
-        self.feature_flags: dict[str, dict[str, Any]] = {}
         self.legacy_writes: list[dict[str, Any]] = []
 
     async def find_academy_by_slug(self, slug: str) -> dict[str, Any] | None:
@@ -55,27 +51,9 @@ class FakeBootstrapStore:
         self.memberships.setdefault(key, dict(membership))
         return dict(self.memberships[key])
 
-    async def ensure_academy_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
-        self.settings.setdefault(settings["academy_id"], dict(settings))
-        return dict(self.settings[settings["academy_id"]])
-
-    async def ensure_billing_policy(self, policy: dict[str, Any]) -> dict[str, Any]:
-        self.billing_policies.setdefault(policy["academy_id"], dict(policy))
-        return dict(self.billing_policies[policy["academy_id"]])
-
     async def ensure_waiver_template(self, waiver: dict[str, Any]) -> dict[str, Any]:
         self.waivers.setdefault(waiver["academy_id"], dict(waiver))
         return dict(self.waivers[waiver["academy_id"]])
-
-    async def ensure_default_roles(
-        self, academy_id: str, roles: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        self.roles.setdefault(academy_id, [dict(role) for role in roles])
-        return [dict(role) for role in self.roles[academy_id]]
-
-    async def ensure_feature_flags(self, flags: dict[str, Any]) -> dict[str, Any]:
-        self.feature_flags.setdefault(flags["academy_id"], dict(flags))
-        return dict(self.feature_flags[flags["academy_id"]])
 
 
 def _command(**overrides: object) -> BootstrapAcademyCommand:
@@ -116,6 +94,8 @@ async def test_bootstrap_creates_tenant_owner_membership_and_defaults() -> None:
     academy = store.academies[result.academy_id]
     assert academy["display_name"] == "North Shore Badminton"
     assert academy["owner_email"] == "owner@example.com"
+    # Row 13: every academy bootstrapped today is badminton by default.
+    assert academy["sport"] == "badminton"
 
     owner = store.users["owner@example.com"]
     assert owner["email"] == "owner@example.com"
@@ -126,20 +106,25 @@ async def test_bootstrap_creates_tenant_owner_membership_and_defaults() -> None:
     assert membership["roles"] == ["admin"]
     assert membership["status"] == "active"
 
-    assert store.settings[result.academy_id]["timezone"] == "America/Chicago"
-    assert store.billing_policies[result.academy_id]["currency"] == "usd"
     waiver = store.waivers[result.academy_id]
     assert waiver["version"] == "1"
     assert waiver["status"] == "active"
     assert waiver["assigned_to_registration"] is True
     assert waiver["body"]
-    assert [role["role"] for role in store.roles[result.academy_id]] == [
-        "admin",
-        "coach",
-        "parent",
-    ]
-    assert store.feature_flags[result.academy_id]["saas_v2_enabled"] is True
     assert store.legacy_writes == []
+
+
+def test_bootstrap_no_longer_writes_the_four_unread_collections() -> None:
+    """Settings overhaul Lane D: nothing under `backend/v2` reads
+    `academy_settings`, `billing_policies`, `academy_roles` or
+    `academy_feature_flags`, so bootstrap must not write them either. The
+    store protocol no longer even exposes the methods that used to.
+    """
+    store = FakeBootstrapStore()
+    assert not hasattr(store, "ensure_academy_settings")
+    assert not hasattr(store, "ensure_billing_policy")
+    assert not hasattr(store, "ensure_default_roles")
+    assert not hasattr(store, "ensure_feature_flags")
 
 
 @pytest.mark.asyncio
@@ -209,3 +194,67 @@ def test_bootstrap_requires_a_timezone() -> None:
 def test_bootstrap_rejects_a_non_iana_timezone() -> None:
     with pytest.raises(ValidationError):
         _command(timezone="Central Time")
+
+
+class FakeInvoicePrefixAssigner:
+    """Mirrors AssignInvoicePrefix: idempotent per academy, unique across academies."""
+
+    def __init__(self) -> None:
+        self.prefixes: dict[str, str] = {}
+        self.calls: list[tuple[str, str]] = []
+
+    async def execute(self, *, academy_id: str, slug: str) -> str:
+        self.calls.append((academy_id, slug))
+        if academy_id in self.prefixes:
+            return self.prefixes[academy_id]
+        base = slug.split("-")[0].upper()[:6]
+        prefix, n = base, 2
+        while prefix in self.prefixes.values():
+            prefix, n = f"{base[:5]}{n}", n + 1
+        self.prefixes[academy_id] = prefix
+        return prefix
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_assigns_an_invoice_prefix_from_the_slug() -> None:
+    store = FakeBootstrapStore()
+    assigner = FakeInvoicePrefixAssigner()
+    use_case = BootstrapAcademy(
+        store=store,
+        id_factory=lambda prefix: f"{prefix}001",
+        invoice_prefix_assigner=assigner,
+    )
+
+    result = await use_case.execute(_command())
+
+    assert assigner.calls == [(result.academy_id, "north-shore")]
+    assert result.invoice_prefix == "NORTH"
+
+
+@pytest.mark.asyncio
+async def test_rebootstrap_keeps_the_invoice_prefix() -> None:
+    store = FakeBootstrapStore()
+    assigner = FakeInvoicePrefixAssigner()
+    use_case = BootstrapAcademy(store=store, invoice_prefix_assigner=assigner)
+
+    first = await use_case.execute(_command())
+    second = await use_case.execute(_command())
+
+    assert second.created is False
+    assert second.invoice_prefix == first.invoice_prefix == "NORTH"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_without_an_assigner_reports_no_prefix() -> None:
+    result = await _use_case(FakeBootstrapStore()).execute(_command())
+
+    assert result.invoice_prefix is None
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_accepts_an_explicit_sport() -> None:
+    store = FakeBootstrapStore()
+
+    result = await _use_case(store).execute(_command(sport="tennis"))
+
+    assert store.academies[result.academy_id]["sport"] == "tennis"

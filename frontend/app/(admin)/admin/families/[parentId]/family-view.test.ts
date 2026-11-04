@@ -6,15 +6,33 @@ import {
   defaultDueDate,
   enrollmentOptions,
   enrollmentPriceCents,
+  familyRefundLine,
   invoiceActionLabel,
   invoiceDueDays,
+  invoiceRefundLabel,
   periodLabel,
-  registrationChip,
+  refundableCents,
+  refundLabel,
+  registrationChips,
   shortDate,
+  timelineEmphasis,
+  timelineKindLabel,
   timelineTone,
   tuitionLineDescription,
+  undeliverableChip,
 } from "./family-view";
-import type { FamilyEnrollment, FamilyStudent } from "@/lib/api/admin-families";
+import type {
+  FamilyEnrollment,
+  FamilyHeader,
+  FamilyInvoice,
+  FamilyStudent,
+} from "@/lib/api/admin-families";
+import {
+  CARD_LABELS,
+  LOGIN_LABELS,
+  cardChip,
+  cardStateFromRegistration,
+} from "@/lib/people-status";
 
 describe("autopayToggle", () => {
   const base = {
@@ -80,14 +98,43 @@ describe("labels and chips", () => {
     expect(invoiceActionLabel("charge_card")).toBe("Charge card now");
     expect(invoiceActionLabel("discount_once")).toBe("One-time discount");
   });
-  it("maps registration states onto real Chip variants", () => {
-    expect(registrationChip("registered")).toEqual({ label: "Card on file", variant: "paid" });
-    expect(registrationChip("invited")).toEqual({ label: "Invited", variant: "pending" });
-    expect(registrationChip("not_invited")).toEqual({ label: "Not invited", variant: "manual" });
+  it("splits registration into the two shared People facts (#840)", () => {
+    expect(registrationChips("registered")).toEqual({
+      login: { label: "Active", variant: "enrolled" },
+      card: { label: "Card on file", variant: "paid" },
+    });
+    expect(registrationChips("invited")).toEqual({
+      login: { label: "Invited", variant: "pending" },
+      card: { label: "No card", variant: "manual" },
+    });
+    expect(registrationChips("not_invited")).toEqual({
+      login: { label: "Not invited", variant: "manual" },
+      card: { label: "No card", variant: "manual" },
+    });
+  });
+  it("takes its wording from the one map the families list uses", () => {
+    // The guarantee the issue asks for: the list page and this page cannot
+    // drift because neither owns the strings.
+    expect(registrationChips("registered").card.label).toBe(CARD_LABELS.on_file);
+    expect(registrationChips("invited").card.label).toBe(CARD_LABELS.no_card);
+    expect(registrationChips("not_invited").login.label).toBe(LOGIN_LABELS.not_invited);
+    expect(registrationChips("registered").card).toEqual(
+      cardChip(cardStateFromRegistration("card_on_file")),
+    );
   });
   it("mutes comms rows", () => {
     expect(timelineTone({ kind: "comms", muted: true })).toBe("muted");
     expect(timelineTone({ kind: "money", muted: false })).toBe("money");
+    expect(timelineTone({ kind: "coach", muted: false })).toBe("coach");
+  });
+  it("labels every unified timeline kind and emphasises money and admin rows", () => {
+    expect(timelineKindLabel("coach")).toBe("Coach");
+    expect(timelineKindLabel("crm")).toBe("Team");
+    expect(timelineKindLabel("requests")).toBe("Request");
+    expect(timelineKindLabel("something-new")).toBe("Activity");
+    expect(timelineEmphasis("money")).toBe(true);
+    expect(timelineEmphasis("admin")).toBe(true);
+    expect(timelineEmphasis("attendance")).toBe(false);
   });
 });
 
@@ -168,5 +215,116 @@ describe("enrollment pricing", () => {
       },
     ];
     expect(enrollmentOptions(students)[0].label).toBe("Arjun · Class");
+  });
+});
+
+
+describe("undeliverableChip", () => {
+  it("is silent when the address is deliverable, missing or not reported", () => {
+    expect(undeliverableChip(undefined)).toBeNull();
+    expect(
+      undeliverableChip({ undeliverable: false, since: null, reason: null, email: "a@b.com" }),
+    ).toBeNull();
+    // Flagged but with no date: nothing honest to show, so show nothing.
+    expect(
+      undeliverableChip({ undeliverable: true, since: null, reason: "hard_bounce", email: null }),
+    ).toBeNull();
+  });
+
+  it("names the date the address went dead, so the chip is actionable", () => {
+    const chip = undeliverableChip({
+      undeliverable: true,
+      since: "2026-09-02T08:30:00+00:00",
+      reason: "hard_bounce",
+      email: "s@example.com",
+    });
+    expect(chip).toEqual({
+      label: "Email undeliverable since Sep 2",
+      variant: "failed",
+      detail: "Nothing we send reaches s@example.com. Ask for a new address.",
+    });
+  });
+
+  it("says what a spam complaint actually blocks, rather than overstating it", () => {
+    const chip = undeliverableChip({
+      undeliverable: true,
+      since: "2026-09-04T09:00:00+00:00",
+      reason: "complaint",
+      email: "s@example.com",
+    });
+    expect(chip?.label).toBe("Marked as spam on Sep 4");
+    expect(chip?.variant).toBe("pending");
+    expect(chip?.detail).toContain("Invoices still send");
+  });
+});
+
+describe("refunds (#929)", () => {
+  function invoice(overrides: Partial<FamilyInvoice> = {}): FamilyInvoice {
+    return {
+      invoice_id: "inv-1",
+      invoice_number: null,
+      period: "2026-09",
+      student_id: null,
+      student_name: null,
+      enrollment_id: null,
+      status: "paid",
+      total_cents: 6000,
+      paid_cents: 6000,
+      balance_due_cents: 0,
+      due_date: null,
+      created_at: null,
+      paid_at: null,
+      voided_at: null,
+      void_reason: null,
+      settlement_unlinked: false,
+      delivery: { status: "sent", last_sent_at: null, kind: "invoice" },
+      allocations: [
+        {
+          payment_id: "pay-1",
+          amount_cents: 4000,
+          method: "card",
+          paid_at: null,
+          stripe_payment_intent_id: "pi_1",
+        },
+        {
+          payment_id: "pay-2",
+          amount_cents: 2000,
+          method: "cash",
+          paid_at: null,
+          stripe_payment_intent_id: null,
+        },
+      ],
+      credits: [],
+      chargeable: false,
+      actions: [],
+      ...overrides,
+    };
+  }
+
+  it("says nothing when nothing came back", () => {
+    expect(refundLabel(6000, 0)).toBeNull();
+    expect(refundLabel(6000, undefined)).toBeNull();
+    expect(invoiceRefundLabel(invoice())).toBeNull();
+  });
+
+  it("shows refunded and net, preferring the backend's net", () => {
+    expect(invoiceRefundLabel(invoice({ refunded_cents: 2500, net_paid_cents: 3500 }))).toBe(
+      "$25.00 refunded · $35.00 net",
+    );
+    // Older payload without a net: paid minus refunded, never negative.
+    expect(refundLabel(1000, 2500)).toBe("$25.00 refunded · $0.00 net");
+  });
+
+  it("family totals line only when the family had a refund", () => {
+    const header = { paid_cents: 7000, refunded_cents: 5000, net_paid_cents: 2000 } as FamilyHeader;
+    expect(familyRefundLine(header)).toBe("Paid $70.00 · $50.00 refunded · $20.00 net");
+    expect(familyRefundLine({ ...header, refunded_cents: 0 })).toBeNull();
+    expect(familyRefundLine({} as FamilyHeader)).toBeNull();
+  });
+
+  it("refund ceiling is card money minus what was already refunded", () => {
+    expect(refundableCents(invoice())).toBe(4000);
+    expect(refundableCents(invoice({ refunded_cents: 1500 }))).toBe(2500);
+    expect(refundableCents(invoice({ refunded_cents: 9000 }))).toBe(0);
   });
 });

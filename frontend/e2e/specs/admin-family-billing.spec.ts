@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { rowActionControl } from "../helpers/row-actions";
 import { collectConsoleErrors, installTenantGuard } from "../fixtures/tenant-isolation";
 import {
   ACADEMY_A,
@@ -9,6 +10,7 @@ import {
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
+import { familyIndexRow, stubFamilyIndex } from "../fixtures/family-index";
 
 /** Family billing page (spec 2026-09-05-family-billing §6, §8) with a stubbed family. */
 
@@ -16,7 +18,7 @@ const FAMILY = {
   generated_at: "2026-09-10T15:00:00Z",
   timezone: "America/Chicago",
   today: "2026-09-10",
-  parent: { parent_id: "parent-1", name: "Sahaya Vinodh", email: "sahaya@example.com", phone: null },
+  parent: { parent_id: "parent-1", name: "Test Parent One", email: "parent.one@example.test", phone: null },
   header: {
     balance_cents: 7000,
     open_invoice_count: 1,
@@ -248,6 +250,11 @@ async function stubShell(page: Page, owner: boolean): Promise<void> {
   ]);
   await stubAcademy(page, ACADEMY_A);
   await page.route("**/api/v2/admin/messages/**", (route) => fulfillJson(route, { messages: [] }));
+  // Issue #842: AdminLayout now feeds the Inbox nav badge from this endpoint
+  // on every admin page, so every shell stub must cover it.
+  await page.route("**/api/v2/admin/inbox/counts", (route) =>
+    fulfillJson(route, { counts: {}, total: 0 }),
+  );
 }
 
 async function setup(
@@ -262,6 +269,35 @@ async function setup(
   let view: unknown = opts.view ?? FAMILY;
   await page.route("**/api/v2/admin/families/**", (route) => {
     const req = route.request();
+    // The family record shell (People CRM A4) also reads the index row.
+    if (req.method() === "GET" && new URL(req.url()).pathname.endsWith("/record")) {
+      return fulfillJson(route, {
+        generated_at: "2026-09-10T15:00:00Z",
+        family: familyIndexRow({ family_id: "parent-1", parent_name: "Test Parent One" }),
+        money_visible: true,
+        warnings: [],
+      });
+    }
+    // People CRM Phase 5: the Timeline tab reads the unified feed, which
+    // carries billing's own timeline as one source.
+    if (req.method() === "GET" && new URL(req.url()).pathname.endsWith("/timeline")) {
+      const billingView = view as { timeline?: Array<Record<string, unknown>> };
+      return fulfillJson(route, {
+        family_id: "parent-1",
+        entries: (billingView.timeline ?? []).map((e, i) => ({
+          entry_id: `billing:${i}`,
+          source: "billing",
+          detail: null,
+          student_id: null,
+          actor_name: null,
+          collapsed_codes: [],
+          ...e,
+        })),
+        next_cursor: null,
+        money_visible: true,
+        warnings: [],
+      });
+    }
     if (req.method() === "POST") {
       posts.push({ url: req.url(), body: req.postDataJSON() });
       return fulfillJson(route, { paused_count: 1, active_count_before: 1, warnings: [] });
@@ -317,7 +353,8 @@ async function setup(
       }),
     );
   });
-  await page.goto("/admin/families/parent-1");
+  // The billing page is now the family record's Billing tab (People CRM A4).
+  await page.goto("/admin/families/parent-1?tab=billing");
   await expect(page.getByTestId("admin-family-billing")).toBeVisible();
   return {
     errors,
@@ -341,6 +378,9 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("invoice-row-inv-sep")).toContainText("Sep 2026 · Arjun");
     await page.getByTestId("invoice-expand-inv-aug").click();
     await expect(page.getByTestId("invoice-allocations-inv-aug")).toContainText("pi_aug");
+    // The timeline has its own tab; billing's rows arrive through the unified feed.
+    await page.getByTestId("family-tab-timeline").click();
+    await expect(page).toHaveURL(/\?tab=timeline$/);
     await expect(page.getByTestId("timeline-entry-autopay_notice_emailed")).toHaveAttribute(
       "data-tone",
       "muted",
@@ -386,9 +426,80 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("family-send-invite")).toBeVisible();
   });
 
+  // #890: void, refund, one-time discount and charge-card-now used to render
+  // BOTH as invoice-row buttons and inside "Fix something". The Fix panel is
+  // now their single home, so the row never offers them.
+  test("each money action has exactly one home", async ({ page }) => {
+    await setup(page, { owner: true });
+    for (const testId of [
+      "invoice-action-void-inv-sep",
+      "invoice-action-discount_once-inv-sep",
+      "invoice-action-charge_card-inv-sep",
+      "invoice-action-refund-inv-aug",
+    ]) {
+      await expect(page.getByTestId(testId)).toHaveCount(0);
+    }
+    for (const testId of [
+      "fix-void-inv-sep",
+      "fix-discount_once-inv-sep",
+      "fix-charge_card-inv-sep",
+      "fix-refund-inv-aug",
+    ]) {
+      await expect(page.getByTestId(testId)).toBeVisible();
+    }
+    // The two row-specific actions stay on the row.
+    await expect(page.getByTestId("invoice-action-record_payment-inv-sep")).toBeVisible();
+    await expect(page.getByTestId("invoice-action-send-inv-sep")).toBeVisible();
+  });
+
+  // #890: the autopay-failure card carried a second "Record payment" wired to
+  // the same handler as the header's, so the page offered it three times.
+  test("Record payment is offered once in the header and once per invoice", async ({ page }) => {
+    const view = {
+      ...FAMILY,
+      header: {
+        ...FAMILY.header,
+        autopay: {
+          ...FAMILY.header.autopay,
+          last_failure: { code: "card_declined", at: "2026-09-08T06:00:00Z" },
+        },
+      },
+    };
+    await setup(page, { owner: true, view });
+    await expect(page.getByTestId("family-autopay-failure")).toBeVisible();
+    await expect(page.getByTestId("family-failure-resend-invite")).toBeVisible();
+    await expect(page.getByTestId("family-failure-record-payment")).toHaveCount(0);
+    await expect(page.getByTestId("family-record-payment")).toBeVisible();
+    await expect(page.getByTestId("invoice-action-record_payment-inv-sep")).toBeVisible();
+  });
+
+  // #890: the Fix panel advertised two actions that do not exist yet.
+  test("Fix something has no coming-later placeholders", async ({ page }) => {
+    await setup(page, { owner: true });
+    await expect(page.getByTestId("family-fix")).toBeVisible();
+    await expect(page.getByTestId("family-fix")).not.toContainText("coming later");
+    await expect(page.getByTestId("family-fix")).not.toContainText("Account credit");
+    await expect(page.getByTestId("family-fix")).not.toContainText("Undo manual payment");
+  });
+
+  // #890: Add charge is row-specific, so it moves behind the row's More menu
+  // rather than sitting on the row as a third direct button.
+  test("Add charge lives behind the invoice row's More menu", async ({ page }) => {
+    const view = { ...FAMILY, invoices: [DRAFT_UNTIED, ...FAMILY.invoices] };
+    await setup(page, { owner: true, view });
+    await expect(page.getByTestId("invoice-add-charge-inv-draft")).toHaveCount(0);
+    const addCharge = await rowActionControl(page, {
+      rowTestId: "invoice-row-inv-draft",
+      actionsTestId: "invoice-more-inv-draft",
+      label: "Add charge",
+    });
+    await addCharge.click();
+    await expect(page.getByTestId("add-charge-dialog")).toBeVisible();
+  });
+
   test("void requires a reason and posts it; refund hidden for a plain admin", async ({ page }) => {
     const { posts } = await setup(page, { owner: true });
-    await page.getByTestId("invoice-action-void-inv-sep").click();
+    await page.getByTestId("fix-void-inv-sep").click();
     await expect(page.getByRole("button", { name: "Void invoice" }).last()).toBeDisabled();
     await page.getByTestId("reason-input").fill("duplicate invoice");
     await page.getByRole("button", { name: "Void invoice" }).last().click();
@@ -397,19 +508,66 @@ test.describe("Family billing", () => {
     expect(posts[0].body).toEqual({ reason: "duplicate invoice" });
   });
 
+  // A $300 Zelle recorded on one $60 invoice: voiding the PAYMENT (not the
+  // invoice) is how it comes off the books.
+  test("owner voids a mistaken manual payment with a reason", async ({ page }) => {
+    const zelle = {
+      payment_id: "manual-k1",
+      method: "zelle",
+      amount_cents: 30000,
+      paid_at: "2026-09-08T15:00:00Z",
+      allocations: [{ invoice_id: "inv-sep", amount_cents: 6000 }],
+      credit_cents: 24000,
+      credit_spent_cents: 0,
+      void_blocked_reason: null,
+    };
+    const { setView } = await setup(page, {
+      owner: true,
+      view: { ...FAMILY, manual_payments: [zelle] },
+    });
+    const voids: { url: string; body: unknown }[] = [];
+    await page.route("**/api/v2/admin/payments/*/void", (route) => {
+      voids.push({ url: route.request().url(), body: route.request().postDataJSON() });
+      return fulfillJson(route, { ok: true });
+    });
+    const row = page.getByTestId("manual-payment-manual-k1");
+    await expect(row).toContainText("Zelle $300.00");
+    await expect(row).toContainText("$240.00 account credit");
+    await page.getByTestId("void-payment-manual-k1").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("voids the payment, not an invoice");
+    await expect(dialog).toContainText("$240.00 account credit it created is cancelled");
+    setView({ ...FAMILY, manual_payments: [] });
+    await page.getByTestId("void-payment-reason").fill("entered on the wrong invoice");
+    await dialog.getByRole("button", { name: "Void payment" }).click();
+    await expect.poll(() => voids.length).toBe(1);
+    expect(voids[0].url).toContain("/admin/payments/manual-k1/void");
+    expect(voids[0].body).toEqual({ reason: "entered on the wrong invoice" });
+    await expect(page.getByTestId("manual-payment-manual-k1")).toHaveCount(0);
+  });
+
   test("admin without owner scope sees no owner-only buttons", async ({ page }) => {
     const view = {
       ...FAMILY,
       invoices: FAMILY.invoices.map((i) => ({
         ...i,
-        actions: i.actions.filter((a) => !["void", "refund", "discount_once"].includes(a)),
+        // Mirrors the backend's strip for a non-owner (#928 added charge_card).
+        actions: i.actions.filter(
+          (a) => !["void", "refund", "discount_once", "charge_card"].includes(a),
+        ),
       })),
     };
     await setup(page, { owner: false, view });
     await expect(page.getByTestId("invoice-action-void-inv-sep")).toHaveCount(0);
     await expect(page.getByTestId("invoice-action-refund-inv-aug")).toHaveCount(0);
-    await expect(page.getByTestId("family-fix")).not.toContainText("Refund");
-    await expect(page.getByTestId("family-fix")).toContainText("Charge card now");
+    // #928: every Fix-something action moves money, card charges included, so
+    // a plain admin gets no Fix panel at all.
+    await expect(page.getByTestId("fix-charge_card-inv-sep")).toHaveCount(0);
+    await expect(page.getByTestId("family-fix")).toHaveCount(0);
+    // #890: the owner-only actions live only in the Fix panel now, so what a
+    // plain admin still gets on the row is the two row-specific actions.
+    await expect(page.getByTestId("invoice-action-record_payment-inv-sep")).toBeVisible();
+    await expect(page.getByTestId("invoice-action-send-inv-sep")).toBeVisible();
   });
 
   test("full audit calls the audit route", async ({ page }) => {
@@ -427,8 +585,8 @@ test.describe("Family billing", () => {
         rows: [
           {
             parent_id: "parent-1",
-            parent_name: "Sahaya Vinodh",
-            parent_email: "sahaya@example.com",
+            parent_name: "Test Parent One",
+            parent_email: "parent.one@example.test",
             students: [{ student_id: "stu-arjun", full_name: "Arjun" }],
             registration_state: "card_on_file",
             card_label: "Visa",
@@ -451,6 +609,11 @@ test.describe("Family billing", () => {
         next_cursor: null,
       }),
     );
+    // The Families view lists the family index; Billing Setup (stubbed
+    // above) now only feeds its bulk invite.
+    await stubFamilyIndex(page, {
+      families: [familyIndexRow({ family_id: "parent-1", parent_name: "Test Parent One" })],
+    });
     await page.goto("/admin/billing-setup");
     // Mobile redirects are slow under load in this suite (the same 5s
     // toHaveURL flake the /admin/parents and /admin/coaches redirect tests
@@ -540,7 +703,13 @@ test.describe("Family billing", () => {
     const view = { ...FAMILY, invoices: [DRAFT_UNTIED, ...FAMILY.invoices] };
     const { posts } = await setup(page, { owner: true, view });
 
-    await page.getByTestId("invoice-add-charge-inv-draft").click();
+    // #890: reached through the row's More menu on both layouts.
+    const addCharge = await rowActionControl(page, {
+      rowTestId: "invoice-row-inv-draft",
+      actionsTestId: "invoice-more-inv-draft",
+      label: "Add charge",
+    });
+    await addCharge.click();
     await expect(page.getByTestId("add-charge-subject")).toHaveText("Sep 2026 · Arjun · $0.00");
     // No class behind this draft, so there is nothing to prefill and the
     // submit stays shut until the admin says what the charge is.

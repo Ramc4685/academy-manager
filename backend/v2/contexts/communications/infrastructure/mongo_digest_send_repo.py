@@ -77,9 +77,11 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
         await self.collection.insert_one(self._to_doc(digest))
         return digest
 
-    async def mark_sent(self, digest_id: str, provider_message_id: str | None) -> None:
+    async def mark_sent(
+        self, academy_id: str, digest_id: str, provider_message_id: str | None
+    ) -> None:
         await self.collection.update_one(
-            {"digest_id": digest_id},
+            {"academy_id": academy_id, "digest_id": digest_id},
             {
                 "$set": {
                     "status": str(DigestSendStatus.SENT),
@@ -90,9 +92,11 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             },
         )
 
-    async def mark_failed(self, digest_id: str, reason: str, *, retryable: bool = True) -> None:
+    async def mark_failed(
+        self, academy_id: str, digest_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         await self.collection.update_one(
-            {"digest_id": digest_id},
+            {"academy_id": academy_id, "digest_id": digest_id},
             {
                 "$set": {
                     "status": str(DigestSendStatus.FAILED),
@@ -103,9 +107,9 @@ class MongoDigestSendRepository(TenantScopedRepository, DigestSendRepository):
             },
         )
 
-    async def mark_skipped_empty(self, digest_id: str) -> None:
+    async def mark_skipped_empty(self, academy_id: str, digest_id: str) -> None:
         await self.collection.update_one(
-            {"digest_id": digest_id},
+            {"academy_id": academy_id, "digest_id": digest_id},
             {"$set": {"status": str(DigestSendStatus.SKIPPED_EMPTY)}},
         )
 

@@ -9,6 +9,7 @@
 import { FirebaseApp, getApps, initializeApp } from "firebase/app";
 import {
   Auth,
+  EmailAuthProvider,
   GoogleAuthProvider,
   confirmPasswordReset,
   connectAuthEmulator,
@@ -16,7 +17,10 @@ import {
   getAuth,
   getRedirectResult,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   sendPasswordResetEmail,
+  signInWithCredential,
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -27,8 +31,17 @@ import {
 } from "firebase/auth";
 import { resolveAuthDomain } from "@/lib/auth/auth-domain";
 import { shouldUseRedirectForGoogleSignIn } from "@/lib/auth/google-sign-in-mode";
+import {
+  canUseNativeSignIn,
+  nativeCredential,
+  shouldOfferAppleSignIn,
+  shouldOfferGoogleSignIn,
+  type NativeProvider,
+} from "@/lib/auth/native-sign-in";
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
+import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
+import { stopPushNotifications } from "@/lib/auth/native-push";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -192,7 +205,18 @@ function consumeGoogleRedirectPending(): boolean {
   }
 }
 
+async function signInNatively(provider: NativeProvider): Promise<User> {
+  const { user } = await signInWithCredential(auth(), await nativeCredential(provider));
+  return user;
+}
+
+/** iOS app only; see shouldOfferAppleSignIn. */
+export async function signInWithApple(): Promise<User> {
+  return signInNatively("apple");
+}
+
 export async function signInWithGoogle(): Promise<User | null> {
+  if (canUseNativeSignIn()) return signInNatively("google");
   const provider = googleProvider();
   if (shouldUseGoogleRedirect()) {
     markGoogleRedirectPending();
@@ -258,8 +282,46 @@ export async function confirmPasswordResetValue(
   await confirmPasswordReset(auth(), oobCode, newPassword);
 }
 
+export type ReauthMethod = "password" | "google" | "apple";
+
+/** How the signed-in account can prove itself again, in the order to offer them. */
+export function reauthMethods(): ReauthMethod[] {
+  if (E2E_BYPASS) return ["password"];
+  const ids = new Set(auth().currentUser?.providerData.map((p) => p.providerId) ?? []);
+  const methods: ReauthMethod[] = [];
+  if (ids.has("password")) methods.push("password");
+  if (ids.has("google.com") && shouldOfferGoogleSignIn()) methods.push("google");
+  if (ids.has("apple.com") && shouldOfferAppleSignIn()) methods.push("apple");
+  return methods;
+}
+
+/**
+ * Sign in again for a sensitive action (account deletion). The backend checks
+ * the ID token's `auth_time`, so the token is force-refreshed afterwards.
+ */
+export async function reauthenticate(method: ReauthMethod, password = ""): Promise<void> {
+  if (E2E_BYPASS) return;
+  const user = auth().currentUser;
+  if (!user) throw new Error("You are signed out. Sign in again to continue.");
+  if (method === "password") {
+    if (!user.email) throw new Error("This account has no email address.");
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
+  } else if (canUseNativeSignIn()) {
+    await reauthenticateWithCredential(user, await nativeCredential(method));
+  } else {
+    // shortcut: popup only (no redirect fallback); a browser that blocks the
+    // popup shows its error and the person can use the app or another browser.
+    await reauthenticateWithPopup(user, googleProvider());
+  }
+  await user.getIdToken(true);
+}
+
 export async function signOutCurrent(): Promise<void> {
+  // App shell only (no-op in browsers); needs the session, so it runs first.
+  await stopPushNotifications();
   clearBffIdentityCookie();
+  // Leave no persona hint behind for the next user of a shared device (#451).
+  clearPersonaHintCookie();
   if (E2E_BYPASS) return;
   await signOut(auth());
 }

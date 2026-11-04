@@ -128,7 +128,7 @@ def test_dashboard_attention_includes_blocked_scheduled_resume(admin_client) -> 
     assert response.status_code == 200, response.text
     assert any(
         item["kind"] == "scheduled_resume_blocked"
-        and item["href"] == "/admin/pause-requests"
+        and item["href"] == "/admin/inbox?tab=pauses"
         and item["count"] == 1
         for item in response.json()["items"]
     )
@@ -155,4 +155,4 @@ def test_dashboard_attention_surfaces_failed_scheduled_cancellations(admin_clien
     failed = items["scheduled_action_failed"]
     assert failed["count"] == 1
     assert failed["severity"] == "high"
-    assert failed["href"] == "/admin/requests"
+    assert failed["href"] == "/admin/inbox?tab=cancellations"

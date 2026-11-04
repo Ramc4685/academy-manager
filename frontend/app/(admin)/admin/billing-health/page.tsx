@@ -36,13 +36,20 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
-import { healthPillTone, truncationLine } from "@/lib/billing-health";
+import {
+  healthPillTone,
+  invoiceStatusLabel,
+  truncationLine,
+  webhookEventLabel,
+} from "@/lib/billing-health";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Field } from "@/components/ds/dialog-chrome";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { BigNum, Overline } from "@/components/ds/typography";
+import { useIsPhone } from "@/lib/use-is-phone";
 
 import { ReconciliationLookupPanel } from "./ReconciliationLookupPanel";
 
@@ -85,6 +92,7 @@ function runStatusDot(run: ReconciliationRun): string {
 
 export default function BillingHealthPage() {
   const queryClient = useQueryClient();
+  const isPhone = useIsPhone();
   const [replayState, setReplayState] = useState<Record<string, string>>({});
 
   const readinessQuery = useQuery({
@@ -135,7 +143,8 @@ export default function BillingHealthPage() {
   if (readinessQuery.isError) {
     return (
       <div className="space-y-4 p-4 sm:p-6" data-testid="billing-health-page">
-        <h1 className="font-display text-2xl font-semibold tracking-[-0.01em]">Billing Health</h1>
+        {/* UI-5: the admin topbar already prints "Billing Health" as the
+            page's h1; a second one here read as the title printed twice. */}
         <Card p={20}>
           <div data-testid="billing-health-fatal" className="space-y-3">
             <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
@@ -169,8 +178,9 @@ export default function BillingHealthPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold tracking-[-0.01em]">Billing Health</h1>
-          <p className="mt-1 text-sm text-rally-muted">
+          {/* UI-5: no page h1 — the admin topbar owns the "Billing Health"
+              title, and repeating it made the page say its name twice. */}
+          <p className="text-sm text-rally-muted">
             Last reconciliation run: {relativeFromNow(latestRun?.finished_at ?? null)}
           </p>
         </div>
@@ -264,14 +274,59 @@ export default function BillingHealthPage() {
             <Alert tone="green">No quarantined webhook events.</Alert>
           ) : (
             <>
-              <div className="overflow-x-auto">
+              {/* #857: the testid lives on the wrapper, not the <table>, so
+                  `billing-health.spec.ts` resolves it under chromium-mobile
+                  too, where the table is not mounted at all. */}
+              <div data-testid="quarantined-events-table">
+                {isPhone ? (
+                  <PhoneList aria-label="Quarantined webhook events">
+                    {quarantined.map((evt) => {
+                      const state = replayState[evt.event_id];
+                      return (
+                        <PhoneListRow
+                          key={evt.event_id}
+                          data-testid={`quarantined-row-${evt.event_id}`}
+                          title={
+                            <Chip variant="manual" label={webhookEventLabel(evt.event_type)} />
+                          }
+                          secondary={
+                            <>
+                              <StripeEventIdDetails eventId={evt.event_id} />
+                              <div className="break-words">{evt.error_message ?? "—"}</div>
+                              {/* Replay stays a direct 44px button rather than
+                                  a menu item: it is the row's only action, and
+                                  keeping the id on a button keeps the spec's
+                                  `replay-<id>` click working at both widths. */}
+                              <div className="pt-1">
+                                {state ? (
+                                  <span className="text-xs text-rally-muted">{state}</span>
+                                ) : (
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    className="min-h-touch"
+                                    onClick={() => replayMutation.mutate(evt.event_id)}
+                                    disabled={replayMutation.isPending}
+                                    data-testid={`replay-${evt.event_id}`}
+                                  >
+                                    Replay
+                                  </Button>
+                                )}
+                              </div>
+                            </>
+                          }
+                        />
+                      );
+                    })}
+                  </PhoneList>
+                ) : (
+                  <div className="overflow-x-auto">
                 <table
                   className="w-full min-w-[720px] text-sm"
-                  data-testid="quarantined-events-table"
                 >
                   <thead>
                     <tr className="border-b border-rally-line text-left">
-                      <Th>Event ID</Th>
+                      <Th>Stripe id</Th>
                       <Th>Type</Th>
                       <Th>Reason quarantined</Th>
                       <Th>
@@ -289,12 +344,10 @@ export default function BillingHealthPage() {
                           data-testid={`quarantined-row-${evt.event_id}`}
                         >
                           <Td>
-                            <span className="font-mono text-xs text-rally-muted">
-                              {truncate(evt.event_id)}
-                            </span>
+                            <StripeEventIdDetails eventId={evt.event_id} />
                           </Td>
                           <Td>
-                            <Chip variant="manual" label={evt.event_type} />
+                            <Chip variant="manual" label={webhookEventLabel(evt.event_type)} />
                           </Td>
                           <Td>
                             <span className="text-xs text-rally-muted">
@@ -321,6 +374,8 @@ export default function BillingHealthPage() {
                     })}
                   </tbody>
                 </table>
+                  </div>
+                )}
               </div>
               {truncationNotice && (
                 <p className="px-4 py-3 text-xs text-rally-muted" data-testid="webhook-truncation">
@@ -529,7 +584,8 @@ function LinkChargeForm({ onLinked }: { onLinked: () => void }) {
           </Button>
           {mutation.isSuccess && !confirming && (
             <span className="text-sm text-green-700" data-testid="link-charge-success">
-              Linked. Invoice {mutation.data?.invoice_id} is now {mutation.data?.invoice_status}.
+              Linked. Invoice {mutation.data?.invoice_id} is now{" "}
+              {invoiceStatusLabel(mutation.data?.invoice_status)}.
             </span>
           )}
         </div>
@@ -692,8 +748,8 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
           <Row label="Charges enabled" value={account.charges_enabled ? "Yes" : "No"} />
           <Row label="Payouts enabled" value={account.payouts_enabled ? "Yes" : "No"} />
           <Row
-            label="Platform charge fallback"
-            value={data.allow_platform_charge_fallback ? "On" : "Off"}
+            label="Charges settle on"
+            value={data.allow_platform_charge_fallback ? "Platform account (house academy)" : "Connected account"}
           />
           <Row
             label="Stuck webhook events"
@@ -810,3 +866,20 @@ function TableSkeleton() {
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
+
+/**
+ * #892: the raw Stripe event id behind a disclosure, mirroring
+ * `StripeIdDetails` on the Payments invoices table. The id is the only handle
+ * support has in the Stripe dashboard, so it stays on the row and in the DOM —
+ * it just stops being the first thing Billing Health says.
+ */
+function StripeEventIdDetails({ eventId }: { eventId: string }) {
+  return (
+    <details data-testid={`event-id-${eventId}`}>
+      <summary className="cursor-pointer text-xs text-rally-subtle">Stripe id</summary>
+      <div className="mt-1 break-all font-mono text-[11px] text-rally-muted" title={eventId}>
+        {eventId}
+      </div>
+    </details>
+  );
+}

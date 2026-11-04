@@ -317,7 +317,7 @@ function BootstrapAcademyDialog({ onClose }: { onClose: () => void }) {
         primary_domain: primaryDomain.trim(),
         owner_email: ownerEmail.trim(),
         owner_display_name: ownerName.trim(),
-        timezone: timezone.trim() || "UTC",
+        timezone: timezone.trim(),
       }),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.platform.tenants() });
@@ -338,7 +338,8 @@ function BootstrapAcademyDialog({ onClose }: { onClose: () => void }) {
       slug.trim() &&
       primaryDomain.trim() &&
       ownerEmail.trim() &&
-      ownerName.trim(),
+      ownerName.trim() &&
+      timezone.trim(),
   );
 
   return (
@@ -407,13 +408,31 @@ function BootstrapAcademyDialog({ onClose }: { onClose: () => void }) {
             onChange={(e) => setOwnerName(e.target.value)}
           />
         </FormField>
-        <FormField label="Timezone" htmlFor="bootstrap-timezone">
-          <input
+        <FormField
+          label="Timezone"
+          htmlFor="bootstrap-timezone"
+          hint="Required. Sessions resolve their time from the academy's zone, so a wrong or missing one shows the wrong class time to parents."
+          required
+        >
+          <select
             id="bootstrap-timezone"
             className={INPUT_CLASS}
             value={timezone}
             onChange={(e) => setTimezone(e.target.value)}
-          />
+          >
+            <option value="" disabled>
+              Select a timezone…
+            </option>
+            {TIMEZONE_OPTIONS.map((group) => (
+              <optgroup key={group.group} label={group.group}>
+                {group.zones.map((zone) => (
+                  <option key={zone.value} value={zone.value}>
+                    {zone.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
         </FormField>
       </div>
     </Modal>

@@ -67,7 +67,9 @@ def approved_env(monkeypatch):
     """Staging/prod with delivery enabled -- the only combination that should
     ever pick the real ``ResendEmailSendPort``. The outbound network call
     itself is stubbed so the test stays hermetic."""
-    import resend
+    import httpx
+
+    from backend.v2.contexts.communications.infrastructure import resend_send_port
 
     # V2_ENV wins over the APP_ENV fallback whenever it's present (e.g. CI
     # sets V2_ENV=test at the job level), so set it directly rather than
@@ -76,7 +78,14 @@ def approved_env(monkeypatch):
     monkeypatch.setenv("APP_ENV", "staging")
     monkeypatch.setenv("EMAIL_DELIVERY_ENABLED", "true")
     monkeypatch.setenv("V2_RESEND_API_KEY", "test-key")
-    monkeypatch.setattr(resend.Emails, "send", lambda params: {"id": "resend-msg-1"})
+    # The real adapter refuses to be built without a From address (no more
+    # hardcoded fallback), exactly as a real staging/prod deploy would.
+    monkeypatch.setenv("V2_SENDER_EMAIL", "noreply@example.test")
+    monkeypatch.setattr(
+        resend_send_port,
+        "default_transport",
+        httpx.MockTransport(lambda request: httpx.Response(200, json={"id": "resend-msg-1"})),
+    )
     get_settings.cache_clear()
 
 
