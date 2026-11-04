@@ -55,7 +55,7 @@ from backend.v2.contexts.crm.application.use_cases.create_contact import CreateC
 from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import (
     SubmitWebsiteInquiry,
 )
-from backend.v2.contexts.crm.domain.models import CrmContact, canonical_mailbox
+from backend.v2.contexts.crm.domain.models import CrmContact
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
 )
@@ -75,6 +75,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand, shell
+from backend.v2.shared.comms.mailbox import canonical_mailbox
 from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.tenancy.context import tenant_scope
 

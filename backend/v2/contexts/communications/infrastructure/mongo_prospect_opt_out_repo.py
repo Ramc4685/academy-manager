@@ -3,7 +3,8 @@
 A prospect (``crm_contacts`` row) is not a user, and the same person may file
 several contacts (a second inquiry with a different phone or age makes a new
 row), so a prospect's "stop emailing me" is stored by ``(academy_id, email)``
-rather than by recipient id. Tenant-scoped like ``email_preferences``: an
+rather than by recipient id. The key is the canonical inbox, so stopping
+``jamie@gmail.com`` also stops ``j.amie+x@googlemail.com``. Tenant-scoped like ``email_preferences``: an
 opt-out from one academy's inquiry mail must not silence another academy.
 
 The gate applies to every category, transactional included: a prospect has
@@ -25,7 +26,7 @@ from backend.v2.contexts.communications.application.send_gate import (
     RecipientGate,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
-from backend.v2.contexts.communications.domain.email_preferences import normalize_email
+from backend.v2.shared.comms.mailbox import canonical_mailbox
 from backend.v2.shared.tenancy.repository import TenantScopedRepository
 
 log = logging.getLogger(__name__)
@@ -40,11 +41,11 @@ class MongoProspectOptOutRepository(TenantScopedRepository):
     collection_name = "email_prospect_opt_outs"
 
     async def is_opted_out(self, email: str) -> bool:
-        key = normalize_email(email)
+        key = canonical_mailbox(email)
         return bool(key) and await self._find_one({"email": key}) is not None
 
     async def opt_out(self, *, email: str, recipient_id: str, source: str = "link") -> None:
-        key = normalize_email(email)
+        key = canonical_mailbox(email)
         if not key:
             return
         await self._update_one(

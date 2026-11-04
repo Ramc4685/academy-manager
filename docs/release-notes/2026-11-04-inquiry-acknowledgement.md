@@ -1,6 +1,6 @@
 # inquiry-acknowledgement
 
-PR: #PRNUM
+PR: #1123
 
 ## What changed
 Every new website trial request or inquiry now gets one acknowledgement email to the family: the class they chose, whether a seat is available or they are on the waitlist / will be told when classes open, and that the academy will be in touch. It is sent from the same background task as the owner alert (after it), under the academy's display name, with a lead-facing unsubscribe link (`/api/v2/unsubscribe/prospect`) and the CAN-SPAM footer. The form takes any address unverified, so the body carries nothing the submitter typed, one inbox gets at most one acknowledgement per academy per UTC day (`+tag` spellings and Gmail dot / googlemail.com variants count as the same inbox, and the claim is a single insert under a unique index so concurrent submissions send once), an academy sends at most 20 acknowledgements an hour, and replies go only to the academy's configured reply-to (with none, there is no reply line). An address that opts out gets nothing further while the owner is still alerted; a provider failure, an opt-out store outage or a render error gives both the per-contact and the per-inbox claim back so the contact row says no email went out.

@@ -17,7 +17,6 @@ from typing import Any
 from backend.v2.contexts.crm.domain.models import (
     ContactConsent,
     CrmContact,
-    canonical_mailbox,
 )
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
@@ -25,6 +24,7 @@ from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
 from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo import (
     MongoInquiryAckThrottleRepository,
 )
+from backend.v2.shared.comms.mailbox import canonical_mailbox
 from backend.v2.shared.tenancy import tenant_scope
 
 ACADEMY = "acad-ack-claim"

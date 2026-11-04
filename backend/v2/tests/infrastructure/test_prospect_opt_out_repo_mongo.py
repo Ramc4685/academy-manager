@@ -41,6 +41,20 @@ def test_opt_out_is_stored_by_normalised_address_for_one_academy_only(db: Any) -
     assert asyncio.run(_run()) == (True, False, 1)
 
 
+def test_an_opt_out_covers_every_alias_of_the_same_inbox(db: Any) -> None:
+    repo = MongoProspectOptOutRepository(db)
+
+    async def _run() -> list[bool]:
+        with tenant_scope("acad-a"):
+            await repo.opt_out(email="victim@gmail.com", recipient_id="crm_contact:c1")
+            return [
+                await repo.is_opted_out(a)
+                for a in ("victim+tag@gmail.com", "v.ictim@googlemail.com", "other@gmail.com")
+            ]
+
+    assert asyncio.run(_run()) == [True, True, False]
+
+
 def test_gate_blocks_only_prospect_recipients_and_fails_closed_on_store_errors(db: Any) -> None:
     repo = MongoProspectOptOutRepository(db)
     gate = ProspectOptOutGate(repo)

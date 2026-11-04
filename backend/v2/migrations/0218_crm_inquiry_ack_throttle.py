@@ -2,7 +2,7 @@
 acknowledgement claim (AI strategy Phase 1 #2, security follow-up).
 
 One row per ``(academy_id, mailbox, day)``: ``mailbox`` is the canonical inbox
-(``crm.domain.models.canonical_mailbox``: no ``+tag``, Gmail dots folded) and
+(``shared.comms.mailbox.canonical_mailbox``: no ``+tag``, Gmail dots folded) and
 ``day`` the UTC ``YYYY-MM-DD`` of the claim. Two indexes:
 
 * ``crm_inquiry_ack_throttle_academy_mailbox_day_unique``: the claim itself.
