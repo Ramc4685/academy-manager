@@ -23,7 +23,10 @@ The same task also sends the family ONE acknowledgement (AI strategy Phase 1
 #2) through the prospect send path in ``composition/prospect_email.py``:
 class named, seat available or waitlisted, what happens next. It is a
 TRANSACTIONAL reply to their own request under the mandatory
-``contact_about_request`` tick, claimed once per contact on the row itself.
+``contact_about_request`` tick, claimed once per contact on the row itself
+and at most once per inbox per academy per UTC day (the form takes any address
+unverified, so a stranger's inbox must not be fillable from here; ``+tag`` and
+Gmail-dot variants count as the same inbox).
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from __future__ import annotations
 import html
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
 
 from backend.v2.composition.prospect_email import ProspectEmailer, academy_brand
@@ -49,9 +52,12 @@ from backend.v2.contexts.crm.application.use_cases.create_contact import CreateC
 from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import (
     SubmitWebsiteInquiry,
 )
-from backend.v2.contexts.crm.domain.models import CrmContact
+from backend.v2.contexts.crm.domain.models import CrmContact, canonical_mailbox
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
+)
+from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo import (
+    MongoInquiryAckThrottleRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.public_class_choice import (
     ResolvePublicClassChoice,
@@ -77,6 +83,11 @@ logger = logging.getLogger(__name__)
 #: contact email (brief section 5, "a lead must still reach a human").
 _RECIPIENT_ROLE: Final[AudienceRole] = "owner"
 
+#: Most acknowledgements one academy sends in any hour, whatever the inboxes:
+#: a bot cycling fresh addresses through the form cannot turn the academy's
+#: sender name into a spam cannon. Far above a real academy's inquiry rate.
+_ACK_ACADEMY_HOURLY_CAP: Final = 20
+
 
 class AcademyLookup(Protocol):
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
@@ -84,6 +95,16 @@ class AcademyLookup(Protocol):
 
 class AcknowledgementClaims(Protocol):
     async def try_claim_acknowledgement(self, contact_id: str, *, at: datetime) -> bool: ...
+
+    async def release_acknowledgement(self, contact_id: str) -> None: ...
+
+
+class InboxAcknowledgementClaims(Protocol):
+    async def try_claim(self, mailbox: str, *, at: datetime) -> bool: ...
+
+    async def release(self, mailbox: str, *, at: datetime) -> None: ...
+
+    async def count_since(self, since: datetime) -> int: ...
 
 
 def _row(label: str, value: str | None) -> str:
@@ -155,7 +176,9 @@ def render_inquiry_acknowledgement(
 
     Trial (a seat is there): the academy will confirm a date. Lead: the
     chosen class is full (waitlist) or nothing is open yet (we will tell you).
-    User-supplied text is HTML-escaped and never placed in a link.
+    Nothing the submitter typed appears in it: the form takes any address
+    unverified, so the greeting carries no name a stranger could be made to
+    read. The class title and academy name are the academy's own, escaped.
     """
     is_trial = contact.pipeline_status == "trial"
     safe_academy = html.escape(academy_name)
@@ -188,7 +211,7 @@ def render_inquiry_acknowledgement(
     reply = " Reply to this email if you have a question." if can_reply else ""
     inner = "".join(
         [
-            f'<h2 style="margin:0 0 12px;">Hi {html.escape(contact.name)},</h2>',
+            '<h2 style="margin:0 0 12px;">Hello,</h2>',
             f'<p style="margin:0 0 14px;">{asked}</p>',
             f'<p style="margin:0 0 14px;">{status}{reply}</p>',
             '<p style="margin:18px 0 0;font-size:13px;color:#64748b;">'
@@ -210,12 +233,14 @@ class TrialRequestOwnerEmail:
         audiences: AudienceResolver,
         sender: EmailSendPort,
         contacts: AcknowledgementClaims,
+        inboxes: InboxAcknowledgementClaims,
         prospects: ProspectEmailer,
     ) -> None:
         self._academies = academies
         self._audiences = audiences
         self._sender = sender
         self._contacts = contacts
+        self._inboxes = inboxes
         self._prospects = prospects
 
     async def notify(
@@ -251,12 +276,7 @@ class TrialRequestOwnerEmail:
         )
         identity = resolve_sender(doc)
         sender_name = identity.sender_name
-        recipients = await self._recipients(doc)
-        # Replies to the family's acknowledgement go to the academy's reply-to,
-        # else to the first owner address the alert itself went to.
-        reply_to = identity.reply_to or next((r.email for r in recipients if r.email), None)
-        await self._acknowledge(contact, doc, brand.academy_name, class_title, reply_to)
-        for recipient in recipients:
+        for recipient in await self._recipients(doc):
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
@@ -274,6 +294,11 @@ class TrialRequestOwnerEmail:
                     "public.trial_request_alert_send_failed",
                     extra={"contact_id": contact.contact_id, "reason": outcome.failed_reason},
                 )
+        # The owner alert is the message that must land, so it went first;
+        # whatever the acknowledgement raises is logged by notify() after it.
+        # Replies go only to the academy's configured reply-to: an owner's
+        # own address is never shown to an anonymous submitter.
+        await self._acknowledge(contact, doc, brand.academy_name, class_title, identity.reply_to)
 
     async def _acknowledge(
         self,
@@ -283,15 +308,33 @@ class TrialRequestOwnerEmail:
         class_title: str | None,
         reply_to: str | None,
     ) -> None:
-        if not contact.consent.contact_about_request or not contact.email:
+        mailbox = canonical_mailbox(contact.email)
+        if not contact.consent.contact_about_request or not mailbox:
             return
-        # Claim first, on the contact row: a second run for the same contact
-        # finds the claim taken and sends nothing.
-        # shortcut: a provider failure after the claim loses the acknowledgement
-        # (logged below); add a retryable claim if that ever shows in the logs.
-        if not await self._contacts.try_claim_acknowledgement(
-            contact.contact_id, at=datetime.now(UTC)
-        ):
+        now = datetime.now(UTC)
+        # shortcut: count-then-claim is not atomic, so concurrent tasks can
+        # overshoot the hourly cap by a few; make it a counter doc if that matters.
+        if await self._inboxes.count_since(now - timedelta(hours=1)) >= _ACK_ACADEMY_HOURLY_CAP:
+            logger.warning(
+                "public.trial_request_ack_academy_capped",
+                extra={"contact_id": contact.contact_id},
+            )
+            return
+        # A different child name files a new contact for the same address, and
+        # victim+1@ or v.i.c.t.i.m@gmail.com are new addresses for the same
+        # inbox, so the per-contact claim alone would let a resubmitter fill a
+        # stranger's inbox from the academy's name. One insert under a unique
+        # (academy, canonical inbox, UTC day) index: exactly one task wins.
+        if not await self._inboxes.try_claim(mailbox, at=now):
+            logger.info("public.trial_request_ack_capped", extra={"contact_id": contact.contact_id})
+            return
+        # Claim on the contact row: a second run for the same contact finds the
+        # claim taken and sends nothing. A hard provider failure gives both
+        # claims back, so the row says truthfully that no email went out.
+        # shortcut: nothing re-sends a released claim yet; add a sweep when the
+        # logs show misses.
+        if not await self._contacts.try_claim_acknowledgement(contact.contact_id, at=now):
+            await self._inboxes.release(mailbox, at=now)
             return
         subject, inner = render_inquiry_acknowledgement(
             academy_name=academy_name,
@@ -299,21 +342,30 @@ class TrialRequestOwnerEmail:
             class_title=class_title,
             can_reply=reply_to is not None,
         )
-        outcome = await self._prospects.send(
-            contact=contact,
-            academy_doc=doc,
-            subject=subject,
-            inner_html=inner,
-            # TRANSACTIONAL: the reply to a request this family made, under the
-            # consent tick the form requires. Nothing here is marketing.
-            category=EmailCategory.TRANSACTIONAL,
-            reply_to=reply_to,
-        )
-        if not outcome.ok and not outcome.suppressed:
-            logger.warning(
-                "public.trial_request_ack_send_failed",
-                extra={"contact_id": contact.contact_id, "reason": outcome.failed_reason},
+        settled = False
+        try:
+            outcome = await self._prospects.send(
+                contact=contact,
+                academy_doc=doc,
+                subject=subject,
+                inner_html=inner,
+                # TRANSACTIONAL: the reply to a request this family made, under
+                # the consent tick the form requires. Nothing here is marketing.
+                category=EmailCategory.TRANSACTIONAL,
+                reply_to=reply_to,
             )
+            # A gate refusal is terminal (retrying re-hits the gate), so it
+            # keeps the claim; only a provider failure releases it.
+            settled = outcome.ok or outcome.suppressed
+            if not settled:
+                logger.warning(
+                    "public.trial_request_ack_send_failed",
+                    extra={"contact_id": contact.contact_id, "reason": outcome.failed_reason},
+                )
+        finally:
+            if not settled:
+                await self._contacts.release_acknowledgement(contact.contact_id)
+                await self._inboxes.release(mailbox, at=now)
 
     async def _recipients(self, academy_doc: dict[str, Any]) -> list[ResolvedRecipient]:
         found = await self._audiences.resolve_academy_audience(
@@ -370,6 +422,7 @@ def compose_public_trial_requests(db: Any, settings: Any) -> PublicTrialRequests
             audiences=MongoAudienceResolver(db=db),
             sender=sender,
             contacts=contacts,
+            inboxes=MongoInquiryAckThrottleRepository(db),
             prospects=ProspectEmailer(
                 sender=sender,
                 unsubscribe_links=compose_unsubscribe_link_builder(settings),

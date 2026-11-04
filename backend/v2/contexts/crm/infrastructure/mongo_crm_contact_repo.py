@@ -102,6 +102,10 @@ class MongoCrmContactRepository(TenantScopedRepository):
         )
         return doc is not None
 
+    async def release_acknowledgement(self, contact_id: str) -> None:
+        """Give a claim back after the email provably did not go out."""
+        await self._update_one({"contact_id": contact_id}, {"$unset": {"acknowledged_at": ""}})
+
     async def set_pipeline_override(
         self,
         contact_id: str,

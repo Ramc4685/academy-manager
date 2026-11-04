@@ -1,8 +1,10 @@
 """The family's instant acknowledgement for a website inquiry (AI strategy Phase 1 #2).
 
 Template: trial vs lead wording, class named, footer and unsubscribe link,
-user text escaped. Send path: one email per contact (the claim on the row),
-nothing to an address that opted out, and the owner alert untouched by either.
+no submitter text in the body. Send path: one email per contact (the claim on
+the row), one per inbox per day (``+tag`` and Gmail-dot spellings included),
+a per-academy hourly cap, a provider failure gives both claims back,
+nothing to an address that opted out, and the owner alert untouched by any.
 """
 
 from __future__ import annotations
@@ -19,7 +21,10 @@ from backend.v2.composition.public_trial_requests import (
     TrialRequestOwnerEmail,
     render_inquiry_acknowledgement,
 )
-from backend.v2.contexts.communications.application.ports import ResolvedRecipient
+from backend.v2.contexts.communications.application.ports import (
+    ResolvedRecipient,
+    SendOutcome,
+)
 from backend.v2.contexts.communications.application.unsubscribe_token import (
     UnsubscribeLinkBuilder,
 )
@@ -32,9 +37,16 @@ from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_re
     ProspectOptOutGate,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import StubEmailSendPort
-from backend.v2.contexts.crm.domain.models import ContactConsent, CrmContact
+from backend.v2.contexts.crm.domain.models import (
+    ContactConsent,
+    CrmContact,
+    canonical_mailbox,
+)
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
+)
+from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo import (
+    MongoInquiryAckThrottleRepository,
 )
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -49,6 +61,7 @@ DOC = {
 }
 _M0192 = importlib.import_module("backend.v2.migrations.0192_crm_contacts")
 _M0215 = importlib.import_module("backend.v2.migrations.0215_email_prospect_opt_outs")
+_M0217 = importlib.import_module("backend.v2.migrations.0217_crm_inquiry_ack_throttle")
 
 
 def _contact(**overrides: Any) -> CrmContact:
@@ -69,8 +82,23 @@ def _contact(**overrides: Any) -> CrmContact:
 
 
 class _Academies:
+    def __init__(self, doc: dict[str, Any] = DOC) -> None:
+        self.doc = doc
+
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None:
-        return dict(DOC)
+        return dict(self.doc)
+
+
+class _ProspectsFail:
+    """The provider refuses every prospect send; owner sends reach the stub."""
+
+    def __init__(self, stub: StubEmailSendPort) -> None:
+        self.stub = stub
+
+    async def send(self, *, recipient: ResolvedRecipient, **kwargs: Any) -> SendOutcome:
+        if recipient.user_id.startswith("crm_contact:"):
+            return SendOutcome(ok=False, provider_message_id=None, failed_reason="provider_5xx")
+        return await self.stub.send(recipient=recipient, **kwargs)
 
 
 class _Audiences:
@@ -84,18 +112,27 @@ def db() -> Any:
     db = mongomock_motor.AsyncMongoMockClient()["inquiry-ack"]
     asyncio.run(_M0192.up(db))
     asyncio.run(_M0215.up(db))
+    asyncio.run(_M0217.up(db))
     return db
 
 
-def _adapter(db: Any, *, secret: str | None = "s3cret") -> tuple[TrialRequestOwnerEmail, Any]:
+def _adapter(
+    db: Any,
+    *,
+    secret: str | None = "s3cret",
+    doc: dict[str, Any] = DOC,
+    prospects_fail: bool = False,
+) -> tuple[TrialRequestOwnerEmail, Any]:
     stub = StubEmailSendPort()
     opt_outs = MongoProspectOptOutRepository(db)
-    sender = GatedEmailSendPort(inner=stub, prospects=ProspectOptOutGate(opt_outs))
+    inner: Any = _ProspectsFail(stub) if prospects_fail else stub
+    sender = GatedEmailSendPort(inner=inner, prospects=ProspectOptOutGate(opt_outs))
     adapter = TrialRequestOwnerEmail(
-        academies=_Academies(),
+        academies=_Academies(doc),
         audiences=_Audiences(),
         sender=sender,
         contacts=MongoCrmContactRepository(db),
+        inboxes=MongoInquiryAckThrottleRepository(db),
         prospects=ProspectEmailer(
             sender=sender,
             unsubscribe_links=UnsubscribeLinkBuilder(
@@ -116,6 +153,27 @@ def _prospect_sends(stub: StubEmailSendPort) -> list[dict[str, Any]]:
     return [s for s in stub.sent if s["user_id"].startswith("crm_contact:")]
 
 
+# --- canonical inbox --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "inbox"),
+    [
+        ("Jamie@Example.test", "jamie@example.test"),
+        ("jamie+promo@example.test", "jamie@example.test"),
+        ("j.amie@example.test", "j.amie@example.test"),  # dots matter off Gmail
+        ("V.I.C.T.I.M+1@Gmail.com", "victim@gmail.com"),
+        ("vic.tim@googlemail.com", "victim@gmail.com"),
+        ("  victim@gmail.com ", "victim@gmail.com"),
+        ("a+b+c@x.test", "a@x.test"),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_canonical_mailbox_folds_spellings_of_one_inbox(raw: str | None, inbox: str | None) -> None:
+    assert canonical_mailbox(raw) == inbox
+
+
 # --- template -----------------------------------------------------------------
 
 
@@ -127,7 +185,7 @@ def test_trial_names_the_class_and_says_a_seat_is_there() -> None:
         can_reply=True,
     )
     assert subject == "Your free trial request at Riverside Shuttle Club"
-    assert "Hi Jamie Testparent," in inner
+    assert "Hello," in inner and "Jamie" not in inner
     assert "<strong>Juniors Saturday</strong>" in inner
     assert "A seat is available" in inner
     assert "Reply to this email" in inner
@@ -154,14 +212,15 @@ def test_lead_with_a_full_class_is_the_waitlist_and_without_one_is_tell_me() -> 
     assert "waitlist" not in notify
 
 
-def test_template_escapes_user_and_class_text() -> None:
+def test_template_carries_no_submitter_text_and_escapes_academy_text() -> None:
     _, inner = render_inquiry_acknowledgement(
         academy_name="Riverside <b>",
-        contact=_contact(name="Jo <script>"),
+        contact=_contact(name="Jo <script>", message="call 555-0100 now"),
         class_title="Juniors & <i>Co</i>",
         can_reply=False,
     )
-    assert "Jo <script>" not in inner and "Jo &lt;script&gt;" in inner
+    # The address is unverified, so nothing a submitter typed reaches the inbox.
+    assert "Jo" not in inner and "555-0100" not in inner
     assert "<i>Co</i>" not in inner and "Juniors &amp; &lt;i&gt;Co&lt;/i&gt;" in inner
     assert "Riverside &lt;b&gt;" in inner
 
@@ -183,8 +242,9 @@ def test_new_contact_gets_one_themed_transactional_email_with_an_unsubscribe_lin
     assert ack["email"] == "jamie@example.test"
     assert ack["category"] == EmailCategory.TRANSACTIONAL
     assert ack["sender_name"] == "Riverside Shuttle Club"
-    # No academy reply-to: replies go to the owner the alert went to.
-    assert ack["reply_to"] == OWNER.email
+    # No academy reply-to: no reply line, and never an owner's own address.
+    assert ack["reply_to"] is None
+    assert "Reply to this email" not in ack["body"]
     assert "Sent by Riverside Shuttle Club" in ack["body"]  # the shared shell
     assert (
         'href="https://riverside-academy.courtmastr.test/api/v2/unsubscribe/prospect?t=u1.'
@@ -193,6 +253,15 @@ def test_new_contact_gets_one_themed_transactional_email_with_an_unsubscribe_lin
     assert "Unsubscribe from these emails" in ack["body"]
     # The owner alert still goes out, once, as before.
     assert [s["email"] for s in stub.sent if s is not ack] == [OWNER.email]
+
+
+def test_a_configured_reply_to_is_used_and_invites_a_reply(db: Any) -> None:
+    adapter, stub = _adapter(db, doc={**DOC, "email_reply_to": "desk@example.com"})
+    contact = asyncio.run(_file(db, _contact()))
+    asyncio.run(adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None))
+    [ack] = _prospect_sends(stub)
+    assert ack["reply_to"] == "desk@example.com"
+    assert "Reply to this email" in ack["body"]
 
 
 def test_without_a_secret_the_footer_still_ships_as_plain_text(db: Any) -> None:
@@ -215,6 +284,65 @@ def test_second_notify_for_the_same_contact_sends_no_second_acknowledgement(db: 
         return await db["crm_contacts"].find_one({"contact_id": contact.contact_id})
 
     assert asyncio.run(_row())["acknowledged_at"] is not None
+
+
+def test_a_second_contact_for_the_same_address_within_a_day_is_not_acknowledged(db: Any) -> None:
+    adapter, stub = _adapter(db)
+    first = asyncio.run(_file(db, _contact()))
+    # A different child age is a new contact row for the same address.
+    second = asyncio.run(_file(db, _contact(contact_id="contact-2", child_age="11")))
+    asyncio.run(adapter.notify(academy_id=ACADEMY, contact=first, created=True, class_title=None))
+    asyncio.run(adapter.notify(academy_id=ACADEMY, contact=second, created=True, class_title=None))
+
+    assert [s["user_id"] for s in _prospect_sends(stub)] == ["crm_contact:contact-1"]
+    assert [s["email"] for s in stub.sent if s["user_id"] == OWNER.user_id] == [OWNER.email] * 2
+
+    async def _row(contact_id: str) -> dict[str, Any]:
+        return await db["crm_contacts"].find_one({"contact_id": contact_id})
+
+    assert asyncio.run(_row("contact-2")).get("acknowledged_at") is None
+
+
+def test_plus_tag_and_gmail_dot_spellings_share_the_one_daily_acknowledgement(db: Any) -> None:
+    adapter, stub = _adapter(db)
+    spellings = ["victim@gmail.com", "victim+1@gmail.com", "v.i.c.t.i.m@googlemail.com"]
+    for n, email in enumerate(spellings):
+        contact = asyncio.run(_file(db, _contact(contact_id=f"c{n}", email=email)))
+        asyncio.run(
+            adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None)
+        )
+    assert [s["email"] for s in _prospect_sends(stub)] == ["victim@gmail.com"]
+
+
+def test_the_academy_hourly_cap_stops_acknowledgements_to_fresh_inboxes(
+    db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("backend.v2.composition.public_trial_requests._ACK_ACADEMY_HOURLY_CAP", 2)
+    adapter, stub = _adapter(db)
+    for n in range(3):
+        contact = asyncio.run(_file(db, _contact(contact_id=f"c{n}", email=f"p{n}@example.test")))
+        asyncio.run(
+            adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None)
+        )
+    assert [s["email"] for s in _prospect_sends(stub)] == ["p0@example.test", "p1@example.test"]
+    # The owner still hears about every lead.
+    assert len([s for s in stub.sent if s["user_id"] == OWNER.user_id]) == 3
+
+
+def test_a_provider_failure_gives_the_claim_back_and_the_owner_is_still_alerted(db: Any) -> None:
+    adapter, stub = _adapter(db, prospects_fail=True)
+    contact = asyncio.run(_file(db, _contact()))
+    asyncio.run(adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None))
+
+    assert [s["email"] for s in stub.sent] == [OWNER.email]
+
+    async def _rows() -> tuple[dict[str, Any], int]:
+        row = await db["crm_contacts"].find_one({"contact_id": contact.contact_id})
+        return row, await db["crm_inquiry_ack_throttle"].count_documents({})
+
+    row, inbox_claims = asyncio.run(_rows())
+    assert "acknowledged_at" not in row
+    assert inbox_claims == 0
 
 
 def test_an_opted_out_address_gets_nothing_but_the_owner_is_still_alerted(db: Any) -> None:

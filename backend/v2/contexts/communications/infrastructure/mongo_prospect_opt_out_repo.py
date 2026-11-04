@@ -58,7 +58,9 @@ class ProspectOptOutGate(RecipientGate):
     """Vetoes any send to a prospect recipient whose address has opted out.
 
     Ignores non-prospect recipients (their choices live in ``email_preferences``)
-    and never raises: a store outage logs and allows, like the other gates.
+    and never raises. Unlike the other gates it fails CLOSED on a store outage:
+    a prospect has nothing they must receive, so a dropped lead email is
+    cheaper than mailing someone who said stop.
     """
 
     def __init__(self, repo: MongoProspectOptOutRepository) -> None:
@@ -73,7 +75,7 @@ class ProspectOptOutGate(RecipientGate):
             opted_out = await self._repo.is_opted_out(email)
         except Exception as exc:
             log.error("prospect_opt_out_gate_unavailable: %s", exc)
-            return ALLOW
+            return GateVerdict(allowed=False, reason="unsubscribe_check_unavailable")
         if not opted_out:
             return ALLOW
         return GateVerdict(allowed=False, reason="unsubscribed:prospect")
