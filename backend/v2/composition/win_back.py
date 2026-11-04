@@ -140,10 +140,14 @@ class AcademyWinBackSwitch:
     academy that never saved the setting (BLNO today) keeps the outreach it
     always had. Only an explicit ``False`` turns it off. The read is for the
     one academy the job is running, never another tenant's document.
+
+    ``key`` names another switch under ``notifications`` with the same
+    default-on reading (the trial nudges use ``trial_nudges_enabled``).
     """
 
-    def __init__(self, academies: Any) -> None:
+    def __init__(self, academies: Any, *, key: str = "win_back_enabled") -> None:
         self._academies = academies
+        self._key = key
 
     async def is_enabled(self, academy_id: str) -> bool:
         try:
@@ -159,7 +163,7 @@ class AcademyWinBackSwitch:
         notifications = (doc or {}).get("notifications") if isinstance(doc, dict) else None
         if not isinstance(notifications, dict):
             return True
-        return notifications.get("win_back_enabled", True) is not False
+        return notifications.get(self._key, True) is not False
 
 
 @dataclass

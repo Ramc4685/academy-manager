@@ -111,6 +111,8 @@ TENANT_OWNED_COLLECTIONS = {
     "invoice_contact_email_sends",
     # Prospect email opt-outs keyed by address (migration 0215, inquiry ack)
     "email_prospect_opt_outs",
+    # Trial nudge send claims (migration 0216, AI strategy Phase 1 #3)
+    "trial_nudge_sends",
     # CSV family and student import batches (migration 0199, roadmap L8a)
     "import_batches",
     # Uploaded academy media audit rows (logo upload, Settings overhaul P4)
