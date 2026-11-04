@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
@@ -201,6 +202,21 @@ class AccountAcademyResolver(Protocol):
     ) -> bool: ...
 
 
+#: ``async (event_type, event) -> None``: the platform billing context's
+#: ``SyncTenantSubscriptionFromStripe``. An academy paying CourtMastr for a
+#: plan (``metadata.source == "platform_plan"``) is not parent tuition, so
+#: those events never reach the tuition handlers.
+PlatformPlanSync = Callable[[str, dict[str, Any]], Awaitable[None]]
+PLATFORM_PLAN_EVENT_TYPES = frozenset(
+    {
+        "checkout.session.completed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    }
+)
+
+
 class HandleWebhookEvent:
     def __init__(
         self,
@@ -223,6 +239,7 @@ class HandleWebhookEvent:
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
         payment_disputes: PaymentDisputeRepository | None = None,
+        platform_plan_sync: PlatformPlanSync | None = None,
         expected_livemode: bool | None = None,
         tenancy_mode: str = "single_academy",
         clock=lambda: datetime.now(UTC),
@@ -242,6 +259,7 @@ class HandleWebhookEvent:
         self._enrollment_identity = enrollment_identity
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
+        self._platform_plan_sync = platform_plan_sync
         self._expected_livemode = expected_livemode
         self._tenancy_mode = tenancy_mode
         self._outbox = outbox
@@ -754,6 +772,15 @@ class HandleWebhookEvent:
                 )
 
     async def _dispatch_event(self, event_type: str, event: dict[str, Any]) -> None:
+        if (
+            event_type in PLATFORM_PLAN_EVENT_TYPES
+            and self._event_metadata(event).get("source") == "platform_plan"
+        ):
+            if self._platform_plan_sync is None:
+                log.warning("platform_plan event ignored: no sync wired type=%s", event_type)
+                return
+            await self._platform_plan_sync(event_type, event)
+            return
         if event_type == "checkout.session.completed":
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay_setup":
