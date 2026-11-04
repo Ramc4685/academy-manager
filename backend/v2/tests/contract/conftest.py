@@ -1,13 +1,15 @@
 """Contract-test fixtures.
 
-Uses ``mongomock-motor`` (already pinned in requirements.txt) to give us an
-in-process async Mongo. Faster than testcontainers, sufficient for repo
-tests that exercise filters, indexes intentionally not asserted here —
-those are covered by the migration smoke test.
+``db`` is a real MongoDB database when ``CONTRACT_TESTS_MONGO_URL`` is set
+(CI sets it against the native mongod 8.0, the production major), so repo
+tests exercise the real query planner and index semantics. Without it the
+fixture falls back to ``mongomock-motor`` for a fast local run.
 """
 
 from __future__ import annotations
 
+import os
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -17,6 +19,19 @@ import pytest_asyncio
 
 @pytest_asyncio.fixture
 async def db() -> AsyncIterator[object]:
+    url = os.environ.get("CONTRACT_TESTS_MONGO_URL")
+    if url:
+        from motor.motor_asyncio import AsyncIOMotorClient
+
+        client = AsyncIOMotorClient(url, serverSelectionTimeoutMS=5000)
+        # Unique name per test so xdist workers never share state.
+        name = f"contract_{uuid.uuid4().hex}"
+        try:
+            yield client[name]
+        finally:
+            await client.drop_database(name)
+            client.close()
+        return
     try:
         from mongomock_motor import AsyncMongoMockClient  # type: ignore[import-not-found]
     except ImportError:  # pragma: no cover
