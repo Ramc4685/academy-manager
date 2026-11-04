@@ -12,6 +12,7 @@ import { CertificatePreview } from "@/components/progress/level-certificate";
 import { getAdminAcademy } from "@/lib/api/admin";
 import { getAdminCertificateDetail } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsNativeApp } from "@/lib/use-native-app";
 
 /** The same certificate a parent sees, for the front desk to print. */
 export default function AdminCertificatePage() {
@@ -19,6 +20,7 @@ export default function AdminCertificatePage() {
     studentId: string;
     certId: string;
   }>();
+  const isNativeApp = useIsNativeApp();
   const backHref = `/admin/students/${encodeURIComponent(studentId)}/progress` as Route;
   const detail = useQuery({
     queryKey: ["admin", "certificate", studentId, certId],
@@ -52,7 +54,7 @@ export default function AdminCertificatePage() {
             <h1 className="font-display text-xl font-bold text-rally-ink">
               {detail.data.certificate.student_name}: {detail.data.certificate.level_name}
             </h1>
-            <Button onClick={() => window.print()}>Print or save as PDF</Button>
+            {!isNativeApp && <Button onClick={() => window.print()}>Print or save as PDF</Button>}
           </div>
           <CertificatePreview
             detail={detail.data}

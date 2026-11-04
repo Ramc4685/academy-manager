@@ -228,3 +228,11 @@ class MagicLinkRecord(BaseModel):
 
     def is_expired(self, *, now: datetime) -> bool:
         return now >= self.expires_at
+
+
+#: `academy_memberships.status` spellings that mean the membership grants
+#: nothing. Anything else (including a legacy row with no status at all) is
+#: treated as live, so a shared Firebase account is never disabled on a guess.
+SUSPENDED_MEMBERSHIP_STATUSES: frozenset[str] = frozenset(
+    {"suspended", "revoked", "removed", "disabled", "inactive"}
+)

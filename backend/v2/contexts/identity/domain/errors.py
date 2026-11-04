@@ -209,3 +209,42 @@ class InvalidManualPaymentMethods(DomainError):
 
     code = "Identity.InvalidManualPaymentMethods"
     status_code = 422
+
+
+class AccountDeletionPending(DomainError):
+    """An academy admin tried to re-enable someone who asked to delete their account.
+
+    The request is the person's and covers every academy, so no single
+    academy may undo it; only platform support can, after confirming with
+    the person (support-only restore, PR #1115).
+    """
+
+    code = "Identity.AccountDeletionPending"
+    status_code = 409
+
+
+class AccountDeletionInProgress(DomainError):
+    """Support tried to cancel a deletion the erasure job has already started.
+
+    Once a run claimed the request, or any attempt began, some records may be
+    gone: the request stays non-restorable and the job retries it to the end.
+    """
+
+    code = "Identity.AccountDeletionInProgress"
+    status_code = 409
+
+
+class AccountDeletionRequestNotFound(DomainError):
+    code = "Identity.AccountDeletionRequestNotFound"
+    status_code = 404
+
+
+class RecentSignInRequired(DomainError):
+    """Account deletion needs a sign-in from the last few minutes (mobile M5).
+
+    The client re-authenticates (password, Google or Apple) and retries with
+    the fresh ID token, whose ``auth_time`` proves the person is at the phone.
+    """
+
+    code = "Identity.RecentSignInRequired"
+    status_code = 403

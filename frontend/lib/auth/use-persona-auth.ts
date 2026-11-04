@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/me";
 import { isOwner as holdsOwnerScope } from "@/lib/auth/coach-supervisor";
 import { onAuthChange } from "@/lib/auth/firebase";
+import { startPushNotifications } from "@/lib/auth/native-push";
 import { loginPathForError } from "@/lib/auth/login-error";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
 import {
@@ -98,6 +99,7 @@ export function usePersonaAuth(
               segment: requiredRole,
               academyId: currentUser.academy_id,
             });
+            void startPushNotifications();
             return;
           }
           setState({ checked: true, authorized: false, user: null });

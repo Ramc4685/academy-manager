@@ -75,6 +75,7 @@ from backend.v2.composition.pathway import (
 )
 from backend.v2.composition.payment_student_resolver import resolve_student_names
 from backend.v2.composition.payout_input_lock import PayoutInputLock
+from backend.v2.composition.push import compose_send_push_to_user
 from backend.v2.composition.replacement_payout_snapshots import (
     draft_payout_periods_for_occurrence,
     recompute_draft_payout_periods,
@@ -4076,6 +4077,7 @@ def compose_admin(
         parent_payments_link=_parent_payments_link,
         list_dues_followup=list_dues_followup,
         generate_invoice_artifact=generate_billing_invoice_artifact,
+        push=compose_send_push_to_user(db, settings),
     )
     send_dues_reminders = dues.send_dues_reminders
     send_past_due_reminders = dues.send_past_due_reminders

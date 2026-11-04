@@ -2,6 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const shell = vi.hoisted(() => ({ native: false }));
+vi.mock("@/lib/use-native-app", () => ({ useIsNativeApp: () => shell.native }));
+
 import { certificateAccent } from "@/components/progress/level-certificate";
 import type { CertificateDetail } from "@/lib/api/curriculum";
 
@@ -85,6 +88,18 @@ describe("CertificateScreen", () => {
     expect(html).toContain("certificate-print");
     expect(text(html)).toContain("Print or save as PDF");
     expect(text(html)).toContain("Share with family");
+  });
+
+  it("drops print and its save-as-PDF hint in the app shell but keeps share", () => {
+    shell.native = true;
+    try {
+      const out = text(render());
+      expect(out).not.toContain("Print or save as PDF");
+      expect(out).not.toContain("save it as a PDF");
+      expect(out).toContain("Share with family");
+    } finally {
+      shell.native = false;
+    }
   });
 
   it("links up next to the child's progress", () => {

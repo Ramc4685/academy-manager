@@ -1,4 +1,4 @@
-"""``ai_calls`` audit rows, tenant-scoped (migration 0218)."""
+"""``ai_calls`` audit rows, tenant-scoped (migration 0220)."""
 
 from __future__ import annotations
 

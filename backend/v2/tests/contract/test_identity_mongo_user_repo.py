@@ -1366,3 +1366,117 @@ async def test_admin_detail_carries_the_membership_roles(db) -> None:
     assert detail is not None
     assert "owner" not in detail.roles
     assert detail.membership_roles == ("parent", "owner")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["scheduled", "running"])
+async def test_an_academy_admin_cannot_restore_a_pending_self_deletion(
+    db, monkeypatch, status
+) -> None:
+    """Support-only restore (PR #1115): the person's request covers every
+    academy, so an academy's Enable is refused before any write, in both."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+
+    class _Firebase:
+        async def set_user_disabled(self, uid: str, disabled: bool) -> None:
+            raise AssertionError("a refused restore must not touch Firebase")
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await _seed_editable_parent(db)
+    await db["users"].update_one({"user_id": "roster-parent-9"}, {"$set": {"status": "disabled"}})
+    await db["users"].insert_one(
+        {
+            "user_id": "fb-uid-9",
+            "academy_id": "academy-a",
+            "email": "parent@example.com",
+            "status": "disabled",
+            "role": "parent",
+        }
+    )
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"}, {"$set": {"status": "removed"}}
+    )
+    await db["academy_memberships"].insert_one(
+        {"academy_id": "academy-a", "user_id": "fb-uid-9", "roles": ["parent"], "status": "removed"}
+    )
+    request_row = {
+        "request_id": "r-9",
+        "user_id": "roster-parent-9",
+        "status": status,
+        "aliases": ["roster-parent-9", "fb-uid-9"],
+        "academy_ids": ["academy-a", "academy-b"],
+    }
+    await db["account_deletion_requests"].insert_one(dict(request_row))
+
+    for academy_id, user_id in (("academy-b", "roster-parent-9"), ("academy-a", "fb-uid-9")):
+        repo = MongoUserRepository(db, default_academy_id=academy_id)
+        with pytest.raises(AccountDeletionPending):
+            await repo.update_admin_user(
+                user_id,
+                UpdateAdminUserCommand(status="active", actor_id="admin-1", reason="asked us"),
+                academy_id=academy_id,
+            )
+
+    assert {d["status"] async for d in db["users"].find({})} == {"disabled"}
+    assert {d["status"] async for d in db["academy_memberships"].find({})} == {"removed"}
+    row = await db["account_deletion_requests"].find_one({"request_id": "r-9"}, {"_id": 0})
+    assert row == request_row
+    assert await db["audit_logs"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["parent_login", "student_login"])
+async def test_an_academy_login_invite_cannot_restore_a_pending_self_deletion(
+    db, monkeypatch, door
+) -> None:
+    """Support-only restore (PR #1115): the Billing Setup login invite and the
+    student login both upsert the membership as 'active', so they are refused
+    before Firebase or any write while the person's deletion is pending."""
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+
+    class _Firebase:
+        async def ensure_user(self, **kwargs):
+            raise AssertionError("a refused invite must not touch Firebase")
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await _seed_editable_parent(db)
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"},
+        {"$set": {"status": "removed", "status_before_deletion": "active"}},
+    )
+    await db["account_deletion_requests"].insert_one(
+        {
+            "request_id": "r-9",
+            "user_id": "roster-parent-9",
+            "status": "scheduled",
+            "aliases": ["roster-parent-9", "fb-uid-9"],
+            "academy_ids": ["academy-b"],
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    with pytest.raises(AccountDeletionPending):
+        if door == "parent_login":
+            await repo.ensure_parent_login(
+                parent_id="roster-parent-9",
+                email="parent@example.com",
+                display_name="Parent Nine",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+        else:
+            await repo.ensure_student_login(
+                student_id="s-9",
+                email="parent@example.com",
+                display_name="Parent Nine",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+
+    row = await db["academy_memberships"].find_one({"user_id": "fb-uid-9"}, {"_id": 0})
+    assert row["status"] == "removed" and row["status_before_deletion"] == "active"
+    assert "login_invite_pending" not in row
+    assert await db["audit_logs"].count_documents({}) == 0

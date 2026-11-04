@@ -34,9 +34,13 @@ from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders i
     PastDueInvoice,
     SendPastDueReminders,
 )
+from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
+    SendPushToUser,
+)
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
+from backend.v2.shared.comms.email_theme import format_money
 from backend.v2.shared.tenancy import current_academy_id
 
 #: Statuses a reminder may chase. ``draft`` is excluded on purpose: an invoice
@@ -64,6 +68,7 @@ def compose_dues_reminders(
     parent_payments_link: Callable[[str], Awaitable[tuple[str | None, str]]],
     list_dues_followup: Callable[[], Awaitable[list[dict[str, Any]]]],
     generate_invoice_artifact: Callable[[str, str], Awaitable[dict[str, Any]]],
+    push: SendPushToUser | None = None,
 ) -> DuesReminderBundle:
     reminder_email = DuesReminderEmailAdapter(
         academies=academies,
@@ -91,6 +96,17 @@ def compose_dues_reminders(
         if not email:
             return None
         return email, str(user.display_name if user else "") or None
+
+    async def _push_dues(parent_id: str, *, academy_name: str, body: str) -> None:
+        # Mobile M3: a phone nudge after a reminder email that went out.
+        if push is not None:
+            await push.execute(
+                academy_id=current_academy_id(),
+                user_id=parent_id,
+                title=academy_name or "Payment reminder",
+                body=body,
+                data={"url": "/parent/payments"},
+            )
 
     # --- the admin's manual aggregate send ---------------------------------
 
@@ -144,7 +160,7 @@ def compose_dues_reminders(
                     "generated_invoice_artifacts": generated,
                 }
 
-            pay_url, _academy_name = await parent_payments_link(request_academy_id)
+            pay_url, academy_name = await parent_payments_link(request_academy_id)
             sent = 0
             skipped = 0
             for row in rows:
@@ -165,6 +181,12 @@ def compose_dues_reminders(
                 )
                 if ok:
                     sent += 1
+                    due = format_money(int(row["total_due_cents"]), "usd")
+                    await _push_dues(
+                        parent_id,
+                        academy_name=academy_name,
+                        body=f"You have {due} due. Tap to pay.",
+                    )
                 else:
                     skipped += 1
 
@@ -237,8 +259,8 @@ def compose_dues_reminders(
             if recipient is None:
                 return False
             email, display_name = recipient
-            pay_url, _academy_name = await parent_payments_link(current_academy_id())
-            return await reminder_email.send_past_due_reminder(
+            pay_url, academy_name = await parent_payments_link(current_academy_id())
+            ok = await reminder_email.send_past_due_reminder(
                 parent_id=invoice.parent_id,
                 email=email,
                 display_name=display_name,
@@ -249,6 +271,14 @@ def compose_dues_reminders(
                 days_past_due=days_past_due,
                 pay_url=pay_url,
             )
+            if ok:
+                due = format_money(invoice.balance_due_cents, invoice.currency)
+                await _push_dues(
+                    invoice.parent_id,
+                    academy_name=academy_name,
+                    body=f"{due} is {days_past_due} days past due. Tap to pay.",
+                )
+            return ok
 
     class _ReminderStampWriter:
         async def stamp_reminder(self, *, invoice_id: str, days_past_due: int) -> None:

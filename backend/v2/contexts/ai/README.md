@@ -18,7 +18,7 @@ or child data goes to any model.** This README is the contract; the tests in
 | `infrastructure/anthropic_llm_port.py` | the one `LlmPort` adapter: Anthropic Messages API over plain `httpx`, no SDK |
 | `infrastructure/disabled_llm_port.py` | wired whenever AI is off; every call raises `AiDisabled` |
 | `infrastructure/mongo_ai_call_repo.py` | `MongoAiCallRepository(TenantScopedRepository)`, collection `ai_calls` |
-| `backend/v2/migrations/0218_ai_calls.py` | `(academy_id, created_at)` and `(academy_id, feature, created_at)` indexes |
+| `backend/v2/migrations/0220_ai_calls.py` | `(academy_id, created_at)` and `(academy_id, feature, created_at)` indexes |
 | `backend/v2/composition/ai.py` | `compose_ai(db, settings)`: the gate and the cap lookup; attached at `app.state.ai` |
 
 ## Gating

@@ -82,3 +82,17 @@ export function homeForRoles(roles: UserRole[]): RoleHome {
   if (roles.includes("owner")) return "/owner";
   return "/login";
 }
+
+export interface AccountDeletion {
+  status: "scheduled" | "completed";
+  requested_at: string;
+  execute_after: string;
+}
+
+/** Delete the signed-in account (needs a sign-in from the last 5 minutes). */
+export async function requestAccountDeletion(): Promise<AccountDeletion> {
+  return apiFetch<AccountDeletion>("/me/account-deletion", {
+    method: "POST",
+    body: JSON.stringify({ confirm: "DELETE" }),
+  });
+}
