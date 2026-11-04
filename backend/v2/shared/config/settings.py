@@ -10,7 +10,7 @@ import os
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -187,6 +187,15 @@ class Settings(BaseSettings):
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
     )
+    ai_enabled: bool = Field(
+        default=False,
+        description=(
+            "When True and anthropic_api_key is set, composition.ai wires the real "
+            "Anthropic LlmPort. Otherwise the disabled port raises AiDisabled."
+        ),
+    )
+    anthropic_api_key: SecretStr | None = Field(default=None)
+
     push_delivery_enabled: bool = Field(
         default=False,
         description=(

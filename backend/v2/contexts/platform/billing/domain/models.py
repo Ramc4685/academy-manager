@@ -44,6 +44,9 @@ class PlatformPlan(BaseModel):
     limits: PlanLimits
     status: PlanStatus = "active"
     stripe_price_id: str | None = None
+    # Entitlements this plan grants (platform README: PlatformPlan wins over
+    # Tenant.plan_code). The first feature name is "ai".
+    features: frozenset[str] = frozenset()
     created_at: datetime
     updated_at: datetime
 

@@ -902,6 +902,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.win_back import compose_win_back
 
     app.state.win_back = compose_win_back(db, settings)
+    # AI foundation (plan 2026-11-04 Phase 1): the gated LlmPort and the
+    # ai_calls cap. Plumbing only; no feature reads it yet.
+    from backend.v2.composition.ai import compose_ai
+
+    app.state.ai = compose_ai(db, settings)
     from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
 
     app.state.parent_evening_wins = compose_send_parent_evening_wins(db)

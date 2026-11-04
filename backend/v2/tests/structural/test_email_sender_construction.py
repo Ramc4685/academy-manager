@@ -18,24 +18,30 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 V2_ROOT = Path(__file__).resolve().parents[2]
 COMPOSITION_ROOT = V2_ROOT / "composition"
 
-PORT_NAME = "ResendEmailSendPort"
-
-# ``module::function`` sites allowed to construct the real adapter.
+# Port name -> ``module::function`` sites allowed to construct the real adapter.
 #
 # * ``_build_email_sender`` is THE env-gated factory every send path uses.
 # * ``compose_email_credential_probe`` deliberately follows the credential
 #   rather than the environment (issue #435): it only ever issues a read
 #   (``Domains.list``) with an unusable from-address, so no send path is
 #   reachable from it. See its docstring.
-ALLOWED_CONSTRUCTION_SITES = frozenset(
-    {
-        "digests.py::_build_email_sender",
-        "digests.py::compose_email_credential_probe",
-    }
-)
+# * ``compose_ai`` is the one site for the Anthropic adapter, gated on
+#   ``V2_AI_ENABLED`` + ``V2_ANTHROPIC_API_KEY`` (AI foundation, plan
+#   2026-11-04 Phase 1).
+GATED_PORTS: dict[str, frozenset[str]] = {
+    "ResendEmailSendPort": frozenset(
+        {
+            "digests.py::_build_email_sender",
+            "digests.py::compose_email_credential_probe",
+        }
+    ),
+    "AnthropicLlmPort": frozenset({"ai.py::compose_ai"}),
+}
 
 
 def _enclosing_function(tree: ast.Module, node: ast.AST) -> str:
@@ -50,7 +56,7 @@ def _enclosing_function(tree: ast.Module, node: ast.AST) -> str:
     return name
 
 
-def _construction_sites() -> set[str]:
+def _construction_sites(port_name: str) -> set[str]:
     sites: set[str] = set()
     for path in sorted(COMPOSITION_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -65,23 +71,25 @@ def _construction_sites() -> set[str]:
                 if isinstance(func, ast.Attribute)
                 else ""
             )
-            if called != PORT_NAME:
+            if called != port_name:
                 continue
             sites.add(f"{path.name}::{_enclosing_function(tree, node)}")
     return sites
 
 
-def test_resend_port_is_only_constructed_behind_the_env_gate() -> None:
-    unexpected = _construction_sites() - ALLOWED_CONSTRUCTION_SITES
+@pytest.mark.parametrize("port_name", sorted(GATED_PORTS))
+def test_gated_port_is_only_constructed_behind_the_env_gate(port_name: str) -> None:
+    unexpected = _construction_sites(port_name) - GATED_PORTS[port_name]
     assert not unexpected, (
-        f"{PORT_NAME} is constructed outside the env-gated factory at: "
+        f"{port_name} is constructed outside the env-gated factory at: "
         f"{sorted(unexpected)}. Real email must only be wired in staging/prod "
-        "(AGENTS.md: 'Do not send real email from local/test environments'); "
-        "call composition.digests._build_email_sender instead of instantiating "
-        "the adapter directly."
+        "(AGENTS.md: 'Do not send real email from local/test environments') and "
+        "the real model port only behind V2_AI_ENABLED; call the gated factory "
+        "instead of instantiating the adapter directly."
     )
 
 
-def test_allowed_construction_sites_still_exist() -> None:
+@pytest.mark.parametrize("port_name", sorted(GATED_PORTS))
+def test_allowed_construction_sites_still_exist(port_name: str) -> None:
     """Guards the allowlist against silently going stale on a rename."""
-    assert _construction_sites() == set(ALLOWED_CONSTRUCTION_SITES)
+    assert _construction_sites(port_name) == set(GATED_PORTS[port_name])
