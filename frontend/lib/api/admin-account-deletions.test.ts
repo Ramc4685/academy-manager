@@ -33,6 +33,12 @@ describe("deletionSummary", () => {
     );
   });
 
+  it("stops offering a restore once the removal is under way", () => {
+    const text = deletionSummary(row({ status: "running" }));
+    expect(text).toContain("being removed now");
+    expect(text).not.toContain("can still restore");
+  });
+
   it("says when the removal keeps failing", () => {
     expect(deletionSummary(row({ attempts: 2 }))).toContain("failed 2 times");
     expect(deletionSummary(row({ attempts: 1 }))).toContain("failed 1 time ");

@@ -53,7 +53,9 @@ class AccountDeletionStore(Protocol):
         self, *, academy_id: str, aliases: tuple[str, ...]
     ) -> int: ...
 
-    async def remove_memberships(self, *, aliases: tuple[str, ...], now: datetime) -> None: ...
+    async def remove_memberships(
+        self, *, aliases: tuple[str, ...], academy_ids: tuple[str, ...], now: datetime
+    ) -> None: ...
 
     async def record_audit(
         self, *, academy_id: str, request: AccountDeletionRequest, roles: tuple[str, ...]
@@ -90,9 +92,14 @@ class RequestAccountDeletion:
         if existing is not None:
             if existing.status == "scheduled":
                 # A retry after a crash between insert and lockout must finish the
-                # lockout; both steps are idempotent.
-                await self.store.remove_memberships(aliases=account.aliases, now=now)
-                await self._disable_firebase(existing.auth_uid)
+                # lockout; both steps are idempotent. Only the academies still on
+                # the request: one that restored the account keeps its member, and
+                # the shared Firebase login stays up for it.
+                await self.store.remove_memberships(
+                    aliases=account.aliases, academy_ids=existing.academy_ids, now=now
+                )
+                if not existing.restored_academy_ids:
+                    await self._disable_firebase(existing.auth_uid)
             return existing
 
         live = [m for m in account.memberships if m.status != "removed"]
@@ -129,7 +136,9 @@ class RequestAccountDeletion:
                 execute_after=now + GRACE_PERIOD,
             )
         )
-        await self.store.remove_memberships(aliases=account.aliases, now=now)
+        await self.store.remove_memberships(
+            aliases=account.aliases, academy_ids=request.academy_ids, now=now
+        )
         for m in live:
             await self.store.record_audit(academy_id=m.academy_id, request=request, roles=m.roles)
         await self._disable_firebase(request.auth_uid)

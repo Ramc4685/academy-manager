@@ -211,6 +211,17 @@ class InvalidManualPaymentMethods(DomainError):
     status_code = 422
 
 
+class AccountDeletionInProgress(DomainError):
+    """An admin restore lost the race to a self-service erasure already running.
+
+    The run has claimed the request with this academy in it; restoring now
+    would promise records the run is about to erase.
+    """
+
+    code = "Identity.AccountDeletionInProgress"
+    status_code = 409
+
+
 class RecentSignInRequired(DomainError):
     """Account deletion needs a sign-in from the last few minutes (mobile M5).
 

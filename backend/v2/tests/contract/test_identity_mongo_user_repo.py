@@ -1458,3 +1458,49 @@ async def test_restoring_in_one_academy_leaves_the_other_academys_erasure_schedu
     assert request["restored_academy_ids"] == ["academy-b"]
     other = await db["academy_memberships"].find_one({"academy_id": "academy-a"})
     assert other["status"] == "removed"
+
+
+@pytest.mark.asyncio
+async def test_restoring_while_the_erasure_runs_is_refused_before_any_write(
+    db, monkeypatch
+) -> None:
+    """Once the job claimed the request it erases every academy it names; a
+    restore that lands then would promise B's records and lose them."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionInProgress
+
+    class _Firebase:
+        async def set_user_disabled(self, uid: str, disabled: bool) -> None:
+            raise AssertionError("a refused restore must not touch Firebase")
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await _seed_editable_parent(db)
+    await db["users"].update_one({"user_id": "roster-parent-9"}, {"$set": {"status": "disabled"}})
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"}, {"$set": {"status": "removed"}}
+    )
+    await db["account_deletion_requests"].insert_one(
+        {
+            "request_id": "r-9",
+            "user_id": "roster-parent-9",
+            "status": "running",
+            "aliases": ["roster-parent-9", "fb-uid-9"],
+            "academy_ids": ["academy-a", "academy-b"],
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    with pytest.raises(AccountDeletionInProgress):
+        await repo.update_admin_user(
+            "roster-parent-9",
+            UpdateAdminUserCommand(status="active", actor_id="admin-1", reason="too late"),
+            academy_id="academy-b",
+        )
+
+    assert (await db["users"].find_one({"user_id": "roster-parent-9"}))["status"] == "disabled"
+    membership = await db["academy_memberships"].find_one({"user_id": "fb-uid-9"})
+    assert membership["status"] == "removed"
+    request = await db["account_deletion_requests"].find_one({"request_id": "r-9"})
+    assert request["academy_ids"] == ["academy-a", "academy-b"]

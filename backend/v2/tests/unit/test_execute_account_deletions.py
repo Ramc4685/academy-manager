@@ -42,7 +42,7 @@ class Store:
     async def anonymise_identity(self, request, *, now):
         self.calls.append(f"identity:{request.request_id}")
 
-    async def scheduled_request(self, request_id):
+    async def claim(self, request_id, *, now):
         if request_id in self.current:
             return self.current[request_id]
         return next(r for r in self.requests if r.request_id == request_id)

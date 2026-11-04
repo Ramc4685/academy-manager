@@ -122,14 +122,19 @@ async def test_remove_memberships_reaches_every_alias_and_academy_only(real_db) 
             _m("acad-a", "u1"),
             _m("acad-b", "fb-1", "suspended"),
             _m("acad-a", "other"),
+            _m("acad-c", "u1"),
         ]
     )
-    await MongoAccountDeletionStore(real_db).remove_memberships(aliases=("u1", "fb-1"), now=T0)
+    await MongoAccountDeletionStore(real_db).remove_memberships(
+        aliases=("u1", "fb-1"), academy_ids=("acad-a", "acad-b"), now=T0
+    )
     rows = await real_db["academy_memberships"].find({}, {"_id": 0}).to_list(None)
-    assert {(r["user_id"], r["status"]) for r in rows} == {
-        ("u1", "removed"),
-        ("fb-1", "removed"),
-        ("other", "active"),
+    assert {(r["academy_id"], r["user_id"], r["status"]) for r in rows} == {
+        ("acad-a", "u1", "removed"),
+        ("acad-b", "fb-1", "removed"),
+        ("acad-a", "other", "active"),
+        # An academy not on the request (one that restored the account) is left alone.
+        ("acad-c", "u1", "active"),
     }
 
 
@@ -157,19 +162,73 @@ async def test_release_academy_takes_out_only_that_academys_share(real_db) -> No
     # An academy the request never named changes nothing.
     assert not await store.release_academy(aliases=["fb-1"], academy_id="acad-c")
     assert await store.release_academy(aliases=["fb-1"], academy_id="acad-b")
-    request = await store.scheduled_request("r1")
+    request = await store.claim("r1", now=T0)
     assert request is not None
+    await real_db["account_deletion_requests"].update_one(
+        {"request_id": "r1"}, {"$set": {"status": "scheduled"}}
+    )
     assert request.academy_ids == ("acad-a",)
     assert request.restored_academy_ids == ("acad-b",)
 
     # A repeat restore in B is a no-op; A's share stays scheduled.
     assert not await store.release_academy(aliases=["u1"], academy_id="acad-b")
-    assert (await store.scheduled_request("r1")) is not None
+    assert (await real_db["account_deletion_requests"].find_one({"request_id": "r1"})) is not None
 
     # Once the last academy restores, nothing is left to erase and the row goes,
     # so a later request by the same person is not blocked by the unique user_id.
     assert await store.release_academy(aliases=["u1"], academy_id="acad-a")
     assert await real_db["account_deletion_requests"].count_documents({}) == 0
+
+
+async def test_a_claimed_request_cannot_be_restored_until_the_run_lets_go(real_db) -> None:
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionInProgress
+
+    store = MongoAccountDeletionStore(real_db)
+    await store.create_request(
+        replace(_request("r1", ("u1", "fb-1")), academy_ids=("acad-a", "acad-b"))
+    )
+    claimed = await store.claim("r1", now=T0)
+    assert claimed is not None and claimed.status == "running"
+    # A second run (or a second tick) does not get it while the claim is fresh.
+    assert await store.claim("r1", now=T0 + timedelta(minutes=5)) is None
+
+    # The run already holds B in its academies: B's restore is refused, not
+    # silently ignored while B's records are erased.
+    with pytest.raises(AccountDeletionInProgress):
+        await store.release_academy(aliases=["fb-1"], academy_id="acad-b")
+    row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
+    assert row["academy_ids"] == ["acad-a", "acad-b"]
+
+    # A failed run hands the request back; a restore can land again.
+    await store.record_failure("r1", step="family", error="boom", now=T0)
+    assert (await real_db["account_deletion_requests"].find_one({"request_id": "r1"}))[
+        "status"
+    ] == "scheduled"
+    assert await store.release_academy(aliases=["fb-1"], academy_id="acad-b")
+
+
+async def test_mark_completed_needs_the_runs_claim(real_db) -> None:
+    store = MongoAccountDeletionStore(real_db)
+    await store.create_request(_request("r1", ("u1",)))
+    await store.mark_completed("r1", now=T0)
+    row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
+    assert row["status"] == "scheduled"
+
+    await store.claim("r1", now=T0)
+    await store.mark_completed("r1", now=T0)
+    row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
+    assert row["status"] == "completed"
+
+
+async def test_a_claim_left_by_a_dead_run_is_picked_up_again(real_db) -> None:
+    store = MongoAccountDeletionStore(real_db)
+    await store.create_request(replace(_request("r1", ("u1",)), execute_after=T0))
+    await store.claim("r1", now=T0)
+
+    assert await store.due_requests(now=T0 + timedelta(minutes=30), limit=10) == []
+    later = T0 + timedelta(hours=2)
+    assert [r.request_id for r in await store.due_requests(now=later, limit=10)] == ["r1"]
+    assert await store.claim("r1", now=later) is not None
 
 
 async def test_anonymise_identity_keeps_a_restoring_academys_users_doc(real_db) -> None:

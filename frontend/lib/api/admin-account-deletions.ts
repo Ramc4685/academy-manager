@@ -7,7 +7,7 @@ export interface AccountDeletion {
   /** Every id the person was known by; a family page matches its parent id here. */
   aliases: string[];
   display_name: string;
-  status: "scheduled" | "completed";
+  status: "scheduled" | "running" | "completed";
   requested_at: string;
   execute_after: string;
   completed_at: string | null;
@@ -35,6 +35,9 @@ const day = (iso: string) =>
 export function deletionSummary(row: AccountDeletion): string {
   if (row.status === "completed") {
     return `Deleted by the parent on ${day(row.requested_at)}. Personal details were removed on ${day(row.completed_at ?? row.execute_after)}.`;
+  }
+  if (row.status === "running") {
+    return `Deleted by the parent on ${day(row.requested_at)}. Personal details are being removed now.`;
   }
   const stuck = row.attempts > 0 ? ` Removal has failed ${row.attempts} time${row.attempts === 1 ? "" : "s"} and is being retried.` : "";
   return `Deleted by the parent on ${day(row.requested_at)}. Personal details are removed on ${day(row.execute_after)}; until then support can still restore the account.${stuck}`;

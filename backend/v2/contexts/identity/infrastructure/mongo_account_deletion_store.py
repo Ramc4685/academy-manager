@@ -27,6 +27,7 @@ from backend.v2.contexts.identity.domain.account_deletion import (
     AccountMembership,
     DeletableAccount,
 )
+from backend.v2.contexts.identity.domain.errors import AccountDeletionInProgress
 from backend.v2.contexts.identity.domain.identity_aliases import (
     aliases_from_doc,
     identity_aliases,
@@ -37,6 +38,8 @@ from backend.v2.contexts.identity.infrastructure.mongo_verification_email_cooldo
 from backend.v2.shared.ids import new_ulid
 
 DELETED_NAME = "Deleted user"
+#: A ``running`` claim older than this belongs to a run that died; the next tick resumes it.
+STALE_CLAIM = timedelta(hours=1)
 
 
 def _aware(value: datetime) -> datetime:
@@ -171,9 +174,15 @@ class MongoAccountDeletionStore:
             )
         )
 
-    async def remove_memberships(self, *, aliases: tuple[str, ...], now: datetime) -> None:
+    async def remove_memberships(
+        self, *, aliases: tuple[str, ...], academy_ids: tuple[str, ...], now: datetime
+    ) -> None:
         await self._db["academy_memberships"].update_many(
-            {"user_id": {"$in": list(aliases)}, "status": {"$ne": "removed"}},
+            {
+                "user_id": {"$in": list(aliases)},
+                "academy_id": {"$in": list(academy_ids)},
+                "status": {"$ne": "removed"},
+            },
             {"$set": {"status": "removed", "updated_at": now}},
         )
 
@@ -202,7 +211,14 @@ class MongoAccountDeletionStore:
 
     async def due_requests(self, *, now: datetime, limit: int) -> list[AccountDeletionRequest]:
         cursor = (
-            self._requests.find({"status": "scheduled", "execute_after": {"$lte": now}})
+            self._requests.find(
+                {
+                    "$or": [
+                        {"status": "scheduled", "execute_after": {"$lte": now}},
+                        {"status": "running", "claimed_at": {"$lte": now - STALE_CLAIM}},
+                    ]
+                }
+            )
             .sort("execute_after", 1)
             .limit(limit)
         )
@@ -267,8 +283,23 @@ class MongoAccountDeletionStore:
                 upsert=True,
             )
 
-    async def scheduled_request(self, request_id: str) -> AccountDeletionRequest | None:
-        doc = await self._requests.find_one({"request_id": request_id, "status": "scheduled"})
+    async def claim(self, request_id: str, *, now: datetime) -> AccountDeletionRequest | None:
+        """Move the request to ``running`` and return it as it stands now.
+
+        ``release_academy`` only matches ``scheduled`` rows, so once this lands
+        no restore can change the academies the run is erasing.
+        """
+        doc = await self._requests.find_one_and_update(
+            {
+                "request_id": request_id,
+                "$or": [
+                    {"status": "scheduled"},
+                    {"status": "running", "claimed_at": {"$lte": now - STALE_CLAIM}},
+                ],
+            },
+            {"$set": {"status": "running", "claimed_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
         return _to_request(doc) if doc else None
 
     async def release_academy(self, *, aliases: list[str], academy_id: str) -> bool:
@@ -292,13 +323,21 @@ class MongoAccountDeletionStore:
             await self._requests.delete_many(
                 {**match, "academy_ids": {"$size": 0}, "restored_academy_ids": academy_id}
             )
+        elif await self._requests.count_documents(
+            {"status": "running", "aliases": {"$in": aliases}, "academy_ids": academy_id},
+            limit=1,
+        ):
+            raise AccountDeletionInProgress(
+                "this account's personal details are being removed right now and "
+                "can no longer be restored"
+            )
         return bool(released.modified_count)
 
     async def mark_completed(self, request_id: str, *, now: datetime) -> None:
         # The address was kept only so the person could be reached during the
         # grace window; the ids stay so admins can trace what was erased.
         await self._requests.update_one(
-            {"request_id": request_id},
+            {"request_id": request_id, "status": "running"},
             {
                 "$set": {"status": "completed", "completed_at": now},
                 "$unset": {"email": "", "last_error": ""},
@@ -311,9 +350,13 @@ class MongoAccountDeletionStore:
         # Back off (1h doubling, capped at a day) so a request that keeps
         # failing stops filling every batch and starving the rest of the queue.
         doc = await self._requests.find_one_and_update(
-            {"request_id": request_id},
+            {"request_id": request_id, "status": {"$ne": "completed"}},
             {
-                "$set": {"last_error": {"step": step, "error": error[:500], "at": now}},
+                # Back to scheduled: the claim is released so the retry can take it.
+                "$set": {
+                    "status": "scheduled",
+                    "last_error": {"step": step, "error": error[:500], "at": now},
+                },
                 "$inc": {"attempts": 1},
             },
             projection={"attempts": 1},

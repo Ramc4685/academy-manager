@@ -1053,6 +1053,20 @@ class MongoUserRepository:
             # role removal — it suspends the membership and the Firebase
             # account — so it has to clear at least the same bar.
             await self._assert_offboardable(before, academy_id=academy_id)
+        if status_change == "active":
+            # Restoring during the 14-day grace window takes THIS academy out
+            # of a pending self-service deletion (the promise on
+            # /account-deletion); other academies' share stays scheduled. It
+            # runs before any write: when an erasure already claimed the
+            # request it raises, and the restore must not half-apply.
+            aliases = list(self._membership_aliases(before))
+            if aliases and await MongoAccountDeletionStore(self._db).release_academy(
+                aliases=aliases, academy_id=academy_id
+            ):
+                _log.info(
+                    "identity.account_deletion_released_by_restore",
+                    extra={"academy_id": academy_id, "aliases": aliases},
+                )
         changed = [
             key
             for key, value in set_doc.items()
@@ -1328,18 +1342,6 @@ class MongoUserRepository:
                     }
                 },
             )
-            if not disabled:
-                # Restoring during the 14-day grace window takes THIS academy out
-                # of a pending self-service deletion (the promise on
-                # /account-deletion); other academies' share stays scheduled.
-                released = await MongoAccountDeletionStore(self._db).release_academy(
-                    aliases=aliases, academy_id=academy_id
-                )
-                if released:
-                    _log.info(
-                        "identity.account_deletion_released_by_restore",
-                        extra={"academy_id": academy_id, "aliases": aliases},
-                    )
         auth_uid = self._firebase_uid(doc)
         if not auth_uid:
             return

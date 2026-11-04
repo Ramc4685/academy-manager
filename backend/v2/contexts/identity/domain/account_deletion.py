@@ -18,7 +18,7 @@ REAUTH_WINDOW = timedelta(minutes=5)
 
 COACHING_ROLES = frozenset({"coach", "assistant_coach"})
 
-AccountDeletionStatus = Literal["scheduled", "completed"]
+AccountDeletionStatus = Literal["scheduled", "running", "completed"]
 
 
 @dataclass(frozen=True)
