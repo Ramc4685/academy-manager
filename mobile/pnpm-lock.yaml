@@ -21,8 +21,8 @@ importers:
         specifier: 8.5.0
         version: 8.5.0
       '@capacitor/ios':
-        specifier: 8.5.0
-        version: 8.5.0(@capacitor/core@8.5.0)
+        specifier: 8.5.1
+        version: 8.5.1(@capacitor/core@8.5.0)
       firebase:
         specifier: 12.18.0
         version: 12.18.0
@@ -80,8 +80,8 @@ packages:
   '@capacitor/core@8.5.0':
     resolution: {integrity: sha512-Ca4krtqH1hothjtBIwf2J2TW7IhYq1ujp8QeItTiJohNsqij8ja2DYYH3DU0l8RmxCWaBAFTGA2TgOgOMCSNsQ==}
 
-  '@capacitor/ios@8.5.0':
-    resolution: {integrity: sha512-7k1TfohJu5BzRXc1F3g04Q8QQ0fyQgms6h1AvhnHb04VaNr9EdHOx03hL8O+OigEKMQnyJd1ZOjTPPNHCqL5Yw==}
+  '@capacitor/ios@8.5.1':
+    resolution: {integrity: sha512-0EVqwCYf3RUp2JAjUGZ04xmG6dSpIsPmPacI9zKxn6mu9RSiHhmFF230ghe00HrkyB6ig6SfNdoADvVODxYhlQ==}
     peerDependencies:
       '@capacitor/core': ^8.5.0
 
@@ -1280,7 +1280,7 @@ snapshots:
     dependencies:
       tslib: 2.9.1
 
-  '@capacitor/ios@8.5.0(@capacitor/core@8.5.0)':
+  '@capacitor/ios@8.5.1(@capacitor/core@8.5.0)':
     dependencies:
       '@capacitor/core': 8.5.0
 
