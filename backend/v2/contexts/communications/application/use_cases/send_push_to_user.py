@@ -3,10 +3,10 @@
 Email stays the channel of record: push is an extra nudge, so this never
 raises into its caller. Tokens FCM reports dead are pruned here.
 
-Hook-up point: there is no ``ParentNotifier`` in main yet (it is proposed in
-``docs/design/whatsapp-channel/design.md`` §5). When it lands it should call
-``app.state.send_push_to_user`` after the email send, exactly as it would
-WhatsApp, so a push failure can never fail or retry the email.
+Callers (built by ``composition.push.compose_send_push_to_user``) send after
+their email, so a push failure can never fail or retry the email: class date
+cancelled and waitlist offer (``RosterAlertAdapter``), urgent announcements
+(``SessionAnnouncementService``) and dues reminders (``compose_dues_reminders``).
 """
 
 from __future__ import annotations

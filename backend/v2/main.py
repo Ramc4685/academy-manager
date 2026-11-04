@@ -729,8 +729,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # D4: GET /api/v2/admin/account-deletions.
     app.state.list_account_deletions = ListAccountDeletions(store=MongoAccountDeletionStore(db))
-    # Push sending (mobile M3). Stub unless PUSH_DELIVERY_ENABLED; no caller yet,
-    # the future ParentNotifier fans out to it after email.
+    # Push sending (mobile M3). Stub unless PUSH_DELIVERY_ENABLED. The parent
+    # notifiers build their own via composition.push.compose_send_push_to_user.
     app.state.send_push_to_user = SendPushToUser(
         devices=_push_device_repo, sender=_build_push_sender(settings)
     )
