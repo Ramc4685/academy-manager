@@ -284,6 +284,8 @@ class SkillBoardSkill(BaseModel):
     name: str
     sequence: int
     is_required: bool
+    #: Observable criterion descriptions, in display order: the coach's quick-tags.
+    criteria: list[str] = Field(default_factory=list)
 
 
 class SkillBoardStudentRow(BaseModel):
