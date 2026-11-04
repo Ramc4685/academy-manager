@@ -16,6 +16,7 @@ from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_
     ActivateTenantSubscription,
     CheckPlanLimits,
     GetTenantSubscription,
+    HasFeature,
     ListPlatformPlans,
     ScheduleTenantCancellation,
     StartTenantTrial,
@@ -123,6 +124,7 @@ def _billing_use_cases(
             audit_recorder=audit.record_event if audit else None,
         ),
         check_limits=CheckPlanLimits(plans=plans, subscriptions=subscriptions),
+        has_feature=HasFeature(plans=plans, subscriptions=subscriptions),
     )
 
 

@@ -820,8 +820,20 @@ export const test = base.extend<{
               sequence: 1,
               color: "#FDE047",
               skills: [
-                { skill_id: "skill-backhand", name: "Backhand clear", sequence: 1, is_required: true },
-                { skill_id: "skill-serve", name: "Low serve", sequence: 2, is_required: false },
+                {
+                  skill_id: "skill-backhand",
+                  name: "Backhand clear",
+                  sequence: 1,
+                  is_required: true,
+                  criteria: ["Thumb is flat on back of handle", "Elbow in front of body"],
+                },
+                {
+                  skill_id: "skill-serve",
+                  name: "Low serve",
+                  sequence: 2,
+                  is_required: false,
+                  criteria: [],
+                },
               ],
               students: state.today.sessions[0].roster.map((student) => ({
                 student_id: student.student_id,

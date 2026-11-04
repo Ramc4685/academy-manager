@@ -13,6 +13,7 @@ from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import 
 )
 from backend.v2.interfaces.platform.bootstrap_routes import router as platform_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.tests.application.test_tenant_lifecycle import FakeTenantRepository
 
@@ -349,3 +350,17 @@ def test_academy_roles_cannot_record_acceptance(repo: FakeTenantRepository) -> N
 
     assert response.status_code == 404
     assert repo.tenants["tenant_test"].platform_agreement_accepted_at is None
+
+
+def test_tenant_detail_carries_a_referral_url_on_the_platform_host(
+    platform_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("V2_FRONTEND_URL", "https://academy.example.test/")
+    get_settings.cache_clear()
+    try:
+        assert _create(platform_client)["referral_url"] is None  # code is lazy
+        detail = platform_client.get("/api/v2/platform/tenants/tenant_test/status").json()
+    finally:
+        get_settings.cache_clear()
+
+    assert detail["referral_url"] == "https://academy.example.test/?ref=north-shore"

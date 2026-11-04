@@ -37,6 +37,7 @@ class UpsertPlanRequest(BaseModel):
     limits: PlanLimitsPayload = Field(default_factory=PlanLimitsPayload)
     status: str = "active"
     stripe_price_id: str | None = None
+    features: list[str] = Field(default_factory=list)
 
 
 class PlatformPlanResponse(BaseModel):
@@ -48,6 +49,7 @@ class PlatformPlanResponse(BaseModel):
     limits: PlanLimitsPayload
     status: str
     stripe_price_id: str | None = None
+    features: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -261,8 +263,9 @@ async def check_plan_limits(
 
 def _plan_response(plan: Any) -> PlatformPlanResponse:
     return PlatformPlanResponse(
-        **plan.model_dump(exclude={"limits"}),
+        **plan.model_dump(exclude={"limits", "features"}),
         limits=PlanLimitsPayload(**plan.limits.model_dump()),
+        features=sorted(plan.features),
     )
 
 

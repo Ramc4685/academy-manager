@@ -18,10 +18,17 @@ from typing import Any
 
 from backend.v2.contexts.crm.application.pipeline_board import GetPipelineBoard
 from backend.v2.contexts.crm.application.use_cases.create_contact import CreateContact
+from backend.v2.contexts.crm.application.use_cases.lead_conversion import MarkLeadEnrolled
 from backend.v2.contexts.crm.application.use_cases.pipeline_moves import MoveCardOnPipeline
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
 )
+
+
+def compose_mark_lead_enrolled(db: Any) -> MarkLeadEnrolled:
+    """Attached to ``AdminRegistrationReview`` from ``main.py`` via
+    ``set_lead_conversion`` (``composition/admin.py`` is at its line cap)."""
+    return MarkLeadEnrolled(MongoCrmContactRepository(db))
 
 
 def compose_move_card_on_pipeline(db: Any) -> MoveCardOnPipeline:

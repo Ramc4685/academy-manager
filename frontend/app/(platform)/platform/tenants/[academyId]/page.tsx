@@ -138,6 +138,14 @@ export default function PlatformTenantDetailPage() {
                   {tenant.slug} · {tenant.primary_domain}
                 </p>
                 <p className="mt-1 font-mono text-xs text-rally-subtle">{tenant.academy_id}</p>
+                {tenant.referral_url && (
+                  <p className="mt-1 text-xs text-rally-subtle">
+                    Referral link:{" "}
+                    <a className="underline" href={tenant.referral_url}>
+                      {tenant.referral_url}
+                    </a>
+                  </p>
+                )}
               </div>
               <TenantStatusChip status={tenant.status} />
             </div>

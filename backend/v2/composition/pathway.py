@@ -412,6 +412,7 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
             skill_lookup=skill_lookup,
+            criteria=MongoCriterionRepository(db),
         ),
         get_teaching_focus=GetTeachingFocus(
             level_progress=level_progress_repo,

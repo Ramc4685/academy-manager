@@ -39,6 +39,8 @@ AMBER_BG, AMBER_FG = "#fffbeb", "#92400e"
 RED_BG, RED_FG, RED_BORDER = "#fef2f2", "#991b1b", "#fecaca"
 WHATSAPP_GREEN = "#25d366"
 MAX_WIDTH = 560
+#: The platform's own site, mirrored from frontend/lib/brand.ts publicSiteUrl.
+PLATFORM_SITE_URL = "https://academy.courtmastr.com"
 
 _HEX_COLOUR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
@@ -73,7 +75,8 @@ def shell(
     footer_html: str = "",
 ) -> str:
     """Header (logo or name + optional date), a brand rule with a volt accent,
-    the body, then a footer naming the academy with its contact details."""
+    the body, then a footer naming the academy with its contact details and
+    a "Powered by CourtMastr" link (AI strategy Phase 1, distribution)."""
     accent = brand.accent()
     safe_name = _html.escape(brand.academy_name)
     if brand.logo_url:
@@ -105,7 +108,8 @@ def shell(
         f"{inner_html}"
         f"{footer_html}"
         f'<p style="font-size:12px;color:{MUTED};margin:28px 0 0;border-top:1px solid {LINE};'
-        f'padding-top:12px;">Sent by {safe_name}{contact_html}</p>'
+        f'padding-top:12px;">Sent by {safe_name}{contact_html}<br />'
+        f'<a href="{PLATFORM_SITE_URL}" style="color:{MUTED};">Powered by CourtMastr</a></p>'
         "</div>"
     )
 

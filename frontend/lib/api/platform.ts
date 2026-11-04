@@ -35,6 +35,8 @@ export interface PlatformTenant {
   platform_agreement_version: string | null;
   platform_agreement_accepted_at: string | null;
   platform_agreement_accepted_by: string | null;
+  /** Platform landing page with ?ref=<code>; null until first read. Nothing consumes ref yet. */
+  referral_url: string | null;
 }
 
 export interface RecordAgreementAcceptancePayload {

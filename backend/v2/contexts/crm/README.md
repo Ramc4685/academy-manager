@@ -27,6 +27,7 @@ consumer adds its own.
 | `domain/errors.py` | `InvalidContact` (422, `Crm.InvalidContact`, `details["field"]` names the field) |
 | `application/ports.py` | `CrmContactRepository` protocol |
 | `application/use_cases/create_contact.py` | `CreateContact`, `CreateContactCommand`, `CreateContactResult` |
+| `application/use_cases/lead_conversion.py` | `MarkLeadEnrolled`: the registration-approval write of `enrolled` + `converted_parent_id` + `linked_family_id` by parent email (`mark_enrolled_by_email`); attached to `AdminRegistrationReview` from `main.py` via `composition/crm_pipeline.py` |
 | `infrastructure/mongo_crm_contact_repo.py` | `MongoCrmContactRepository(TenantScopedRepository)` |
 | `backend/v2/migrations/0192_crm_contacts.py` | the indexes |
 | `application/people_reports.py` | People reports (L5a): money owed by age band (billing's money rule asked at today, today-30, today-60) and inquiry conversion by source; read-only, routes in `interfaces/admin/people_reports_routes.py` |
@@ -59,9 +60,12 @@ Collection `crm_contacts`, one document per inquiry.
 | `dedupe_key` | str (64 hex) or absent | CreateContact | Idempotency key, see below. Set only for `website` rows; absent on staff quick-add rows. |
 | `created_at`, `updated_at` | UTC datetime (ms) | CreateContact | |
 
-The conversion fields (`converted_parent_id`, `linked_family_id`,
-`linked_user_id`) exist in the model and are read back by the repository, but
-no use case writes them yet. `pipeline_override` is written only by
+`converted_parent_id` and `linked_family_id` are written by `MarkLeadEnrolled`
+(`application/use_cases/lead_conversion.py`) when a registration is approved:
+every contact of the academy with the application's parent email (lower-cased)
+that is not already `enrolled` becomes `enrolled`, both ids set to the parent's
+user id (the family index key). No email or no match is a silent no-op.
+`linked_user_id` is not written yet. `pipeline_override` is written only by
 `MoveCardOnPipeline` (see "Pipeline moves" below).
 
 ### `ContactSource`

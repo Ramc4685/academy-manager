@@ -55,6 +55,7 @@ class UpsertPlatformPlanCommand(BaseModel):
     limits: PlanLimits
     status: PlanStatus = "active"
     stripe_price_id: str | None = None
+    features: frozenset[str] = frozenset()
     actor_user_id: str | None = Field(default=None, min_length=1)
     actor_membership_id: str | None = None
     platform_actor_role: str | None = None
@@ -146,6 +147,7 @@ class UpsertPlatformPlan:
             limits=command.limits,
             status=command.status,
             stripe_price_id=command.stripe_price_id,
+            features=command.features,
             created_at=existing.created_at if existing else now,
             updated_at=now,
         )
@@ -362,6 +364,57 @@ class CheckPlanLimits:
         )
 
 
+#: Subscription states that keep the plan's entitlements on. A scheduled
+#: cancellation stays active until the period ends; past_due and unpaid do not.
+ENTITLED_BILLING_STATUSES = frozenset({"trialing", "active"})
+
+
+class HasFeature:
+    """``has_feature(academy_id, feature)``: the entitlement read path.
+
+    Resolves the academy's subscription to its plan and answers from
+    ``PlatformPlan.features``. No subscription, a subscription outside
+    ``ENTITLED_BILLING_STATUSES``, a lapsed deadline, or a missing or archived
+    plan is ``False``. Deadlines are checked here because a local trial and a
+    scheduled cancellation keep their status after the date passes (no job
+    flips them yet).
+    """
+
+    def __init__(
+        self,
+        *,
+        plans: PlatformPlanRepository,
+        subscriptions: TenantSubscriptionRepository,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._plans = plans
+        self._subscriptions = subscriptions
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    async def execute(self, academy_id: str, feature: str) -> bool:
+        subscription = await self._subscriptions.get_for_academy(academy_id)
+        if subscription is None or subscription.billing_status not in ENTITLED_BILLING_STATUSES:
+            return False
+        if _lapsed(subscription, self._clock()):
+            return False
+        plan = await self._plans.get(subscription.plan_id)
+        if plan is None or not plan.is_active:
+            return False
+        return feature in plan.features
+
+
+def _lapsed(subscription: TenantSubscription, now: datetime) -> bool:
+    """A trial past ``trial_ends_at``, or a scheduled cancellation past
+    ``current_period_end``. Naive datetimes (Mongo reads) are UTC."""
+
+    def passed(at: datetime | None) -> bool:
+        return at is not None and (at if at.tzinfo else at.replace(tzinfo=UTC)) <= now
+
+    if subscription.billing_status == "trialing" and passed(subscription.trial_ends_at):
+        return True
+    return subscription.cancel_at_period_end and passed(subscription.current_period_end)
+
+
 class GetTenantSubscription:
     def __init__(self, *, subscriptions: TenantSubscriptionRepository) -> None:
         self._subscriptions = subscriptions
@@ -382,6 +435,7 @@ class PlatformBillingUseCases:
     activate_subscription: ActivateTenantSubscription
     schedule_cancellation: ScheduleTenantCancellation
     check_limits: CheckPlanLimits
+    has_feature: HasFeature
 
 
 async def _require_active_plan(plans: PlatformPlanRepository, plan_id: str) -> PlatformPlan:
