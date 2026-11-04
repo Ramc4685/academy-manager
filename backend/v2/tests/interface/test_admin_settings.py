@@ -335,6 +335,8 @@ def test_get_and_patch_notifications_contract(admin_client):
         "parent_digest_hour": 6,
         # Row 10: win-back emails default on (unchanged for BLNO).
         "win_back_enabled": True,
+        # Trial nudges default on the same way.
+        "trial_nudges_enabled": True,
     }
     assert patch_response.status_code == 200, patch_response.text
     admin_client.use_cases.update_academy_notifications_use_case.execute.assert_awaited_once_with(
