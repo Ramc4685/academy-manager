@@ -15,7 +15,8 @@ from typing import Any
 import pytest
 
 from backend.v2.composition import owner_brief as owner_brief_module
-from backend.v2.composition.owner_brief import send_owner_daily_briefs
+from backend.v2.composition.families_crm import compose_admin_family_index
+from backend.v2.composition.owner_brief import family_facts_source, send_owner_daily_briefs
 from backend.v2.contexts.communications.application.ports import (
     ResolvedRecipient,
     SendOutcome,
@@ -24,6 +25,7 @@ from backend.v2.shared.observability.owner_daily_brief import (
     collect_owner_daily_brief,
     render_owner_daily_brief,
 )
+from backend.v2.shared.tenancy.context import tenant_scope
 
 NOW = datetime(2026, 9, 28, 7, 30, tzinfo=UTC)
 RECENT = NOW - timedelta(hours=2)
@@ -32,6 +34,15 @@ OLD = NOW - timedelta(days=5)
 ACADEMY_A = "acad-brief-a"
 ACADEMY_B = "acad-brief-b"
 ACADEMY_C = "acad-brief-c"
+
+
+async def _collect(db: Any, academy_id: str) -> Any:
+    """The brief the way composition collects it: the real family index."""
+    facts = family_facts_source(compose_admin_family_index(db).index)
+    with tenant_scope(academy_id):
+        return await collect_owner_daily_brief(
+            db, academy_id=academy_id, family_facts=facts, now=NOW
+        )
 
 
 async def _seed_academy(db: Any, academy_id: str, name: str) -> None:
@@ -77,6 +88,7 @@ async def _seed_signals(db: Any, academy_id: str, n: int) -> None:
             {
                 "academy_id": academy_id,
                 "payment_id": f"{academy_id}-pay-{i}",
+                "parent_id": f"{academy_id}-parent-{i}",
                 "status": "failed",
                 "amount_cents": 1000,
                 "updated_at": RECENT,
@@ -101,8 +113,36 @@ async def _seed_signals(db: Any, academy_id: str, n: int) -> None:
             {
                 "user_id": parent_id,
                 "academy_id": academy_id,
+                "display_name": f"Testparent {academy_id} {i}",
                 "email": f"{parent_id}@example.test",
                 "role": "parent",
+            }
+        )
+        # Student i's trial passed and nobody registered (the L3c job's to-do).
+        await db["family_follow_ups"].insert_one(
+            {
+                "academy_id": academy_id,
+                "follow_up_id": f"{academy_id}-fu-{i}",
+                "parent_id": parent_id,
+                "title": "Trial passed, no registration",
+                "due_on": "2026-09-28",
+                "assignee_user_id": "",
+                "status": "open",
+                "created_by": "system:trial_follow_up",
+                "created_at": OLD,
+                "updated_at": OLD,
+                "source_key": f"trial_passed:{academy_id}-trial-{i}",
+            }
+        )
+        # Student i holds a seat in a class with three past dates and no mark.
+        await db["enrollments"].insert_one(
+            {
+                "academy_id": academy_id,
+                "enrollment_id": f"{academy_id}-enr-risk-{i}",
+                "student_id": f"{academy_id}-stu-{i}",
+                "session_id": f"{academy_id}-ses-risk",
+                "status": "active",
+                "enrolled_at": OLD,
             }
         )
         await db["students"].insert_one(
@@ -124,6 +164,53 @@ async def _seed_signals(db: Any, academy_id: str, n: int) -> None:
                 "last_seen_at": RECENT,
             }
         )
+    await db["sessions"].insert_one(
+        {"academy_id": academy_id, "session_id": f"{academy_id}-ses-risk", "title": "Risk Class"}
+    )
+    live_now = datetime.now(UTC)
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": academy_id,
+                "occurrence_id": f"{academy_id}-occ-{w}",
+                "session_id": f"{academy_id}-ses-risk",
+                "start_at": live_now - timedelta(days=w * 7),
+                "end_at": live_now - timedelta(days=w * 7) + timedelta(hours=1),
+                "status": "scheduled",
+            }
+            for w in range(1, 5)
+        ]
+    )
+    # Done and hand-written follow-ups are never "trial passed, not registered".
+    await db["family_follow_ups"].insert_many(
+        [
+            {
+                "academy_id": academy_id,
+                "follow_up_id": f"{academy_id}-fu-done",
+                "parent_id": f"{academy_id}-parent-0",
+                "title": "Trial passed, no registration",
+                "due_on": "2026-09-20",
+                "assignee_user_id": "",
+                "status": "done",
+                "created_by": "system:trial_follow_up",
+                "created_at": OLD,
+                "updated_at": OLD,
+                "source_key": f"trial_passed:{academy_id}-trial-done",
+            },
+            {
+                "academy_id": academy_id,
+                "follow_up_id": f"{academy_id}-fu-manual",
+                "parent_id": f"{academy_id}-parent-0",
+                "title": "Call about Saturday",
+                "due_on": "2026-09-28",
+                "assignee_user_id": "owner-a",
+                "status": "open",
+                "created_by": "owner-a",
+                "created_at": OLD,
+                "updated_at": OLD,
+            },
+        ]
+    )
     # A signed student: counted as a student, never as missing a waiver.
     await db["students"].insert_one(
         {
@@ -208,8 +295,8 @@ async def test_each_academy_brief_counts_only_its_own_rows(real_db: Any) -> None
         }
     )
 
-    brief_a = await collect_owner_daily_brief(real_db, academy_id=ACADEMY_A, now=NOW)
-    brief_b = await collect_owner_daily_brief(real_db, academy_id=ACADEMY_B, now=NOW)
+    brief_a = await _collect(real_db, ACADEMY_A)
+    brief_b = await _collect(real_db, ACADEMY_B)
 
     assert brief_a.errors == []
     assert brief_b.errors == []
@@ -231,13 +318,22 @@ async def test_each_academy_brief_counts_only_its_own_rows(real_db: Any) -> None
     assert brief_a.emails_undeliverable == 2  # parent + opted-in family contact
     assert brief_b.emails_undeliverable == 2
 
+    # Three things: one of each signal per student, named, this academy only.
+    for brief, academy_id, n in ((brief_a, ACADEMY_A, 1), (brief_b, ACADEMY_B, 2)):
+        failed, trial, at_risk = brief.three_things
+        assert (failed.count, trial.count, at_risk.count) == (n, n, n)
+        for row in brief.three_things:
+            names = [f.name for f in row.families]
+            assert len(names) == n
+            assert all(name.startswith(f"Testparent {academy_id} ") for name in names)
+
 
 @pytest.mark.asyncio
 async def test_brief_names_the_academy_in_subject_and_heading(real_db: Any) -> None:
     await _seed_academy(real_db, ACADEMY_A, "Alpha Academy")
     await _seed_signals(real_db, ACADEMY_A, 1)
 
-    brief = await collect_owner_daily_brief(real_db, academy_id=ACADEMY_A, now=NOW)
+    brief = await _collect(real_db, ACADEMY_A)
     subject, body = render_owner_daily_brief(brief)
 
     # The prefix is what existing inbox filters match on; keep it first.
@@ -264,7 +360,7 @@ async def test_legacy_waiver_acceptance_without_academy_id_still_counts(real_db:
         {"acceptance_id": "legacy-wa", "student_id": "legacy-stu", "accepted_at": OLD}
     )
 
-    brief = await collect_owner_daily_brief(real_db, academy_id=ACADEMY_A, now=NOW)
+    brief = await _collect(real_db, ACADEMY_A)
 
     assert brief.waivers_missing == 0
 
@@ -340,6 +436,7 @@ async def test_house_academy_keeps_env_recipient_and_others_go_to_their_owners(
     summary = await send_owner_daily_briefs(
         real_db,
         sender=sender,
+        family_index=compose_admin_family_index(real_db).index,
         academy_ids=[ACADEMY_A, ACADEMY_B],
         house_academy_id=ACADEMY_A,
         override_email="ops@blno.test",
@@ -370,6 +467,7 @@ async def test_house_academy_without_env_address_goes_to_its_owners(real_db: Any
     await send_owner_daily_briefs(
         real_db,
         sender=sender,
+        family_index=compose_admin_family_index(real_db).index,
         academy_ids=[ACADEMY_A, ACADEMY_B],
         house_academy_id=ACADEMY_A,
         override_email=None,
@@ -392,6 +490,7 @@ async def test_env_address_never_receives_a_non_house_academy_brief(real_db: Any
     await send_owner_daily_briefs(
         real_db,
         sender=sender,
+        family_index=compose_admin_family_index(real_db).index,
         academy_ids=[ACADEMY_A, ACADEMY_B],
         house_academy_id="the-house",
         override_email="ops@blno.test",
@@ -415,6 +514,7 @@ async def test_one_academy_failing_does_not_stop_the_others(
     summary = await send_owner_daily_briefs(
         real_db,
         sender=sender,
+        family_index=compose_admin_family_index(real_db).index,
         academy_ids=[ACADEMY_A, ACADEMY_B, ACADEMY_C],
         house_academy_id=ACADEMY_A,
         override_email=None,
@@ -437,6 +537,7 @@ async def test_academy_without_an_owner_is_skipped(real_db: Any) -> None:
     summary = await send_owner_daily_briefs(
         real_db,
         sender=sender,
+        family_index=compose_admin_family_index(real_db).index,
         academy_ids=[ACADEMY_B, ACADEMY_C],
         house_academy_id=ACADEMY_A,
         override_email="ops@blno.test",

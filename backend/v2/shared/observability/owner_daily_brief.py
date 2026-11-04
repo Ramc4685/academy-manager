@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from html import escape
@@ -57,6 +58,66 @@ DEPARTURE_EVENT_TYPES: tuple[str, ...] = (
 #: problem and ``void`` never was.
 OPEN_INVOICE_STATUSES: tuple[str, ...] = ("open", "partially_paid")
 
+#: ``source_key`` prefix of the job-created "trial passed, no registration"
+#: follow-up (``crm/domain/family_notes.py``; duplicated, ``shared/`` may not
+#: import ``contexts/``), pinned by ``test_trial_passed_prefix_matches_the_domain``.
+TRIAL_PASSED_SOURCE_PREFIX = "trial_passed:"
+
+#: The "three things today" lines, in the order they are rendered.
+THREE_THINGS_LABELS: tuple[str, str, str] = (
+    "Failed cards",
+    "Trial passed, not registered",
+    "At-risk families",
+)
+#: How many family names each line carries.
+THREE_THINGS_NAMES = 5
+
+
+@dataclass(frozen=True)
+class BriefFamily:
+    family_id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class FamilyFacts:
+    """What the three-things lines need from the People CRM family index.
+
+    Handed in by ``composition/owner_brief.py`` (``family_facts_source``):
+    a child's at_risk state is the enrollment context's derivation and the
+    family's name and aliases are the CRM's, neither of which ``shared/``
+    may import.
+    """
+
+    #: Any stored parent reference -> canonical family id.
+    family_by_alias: Mapping[str, str]
+    name_by_family: Mapping[str, str]
+    #: Families with at least one child whose lifecycle is ``at_risk``.
+    at_risk: tuple[BriefFamily, ...]
+
+    def family(self, parent_ref: str) -> BriefFamily:
+        family_id = self.family_by_alias.get(parent_ref, parent_ref)
+        return BriefFamily(
+            family_id=family_id, name=self.name_by_family.get(family_id) or family_id
+        )
+
+
+FamilyFactsSource = Callable[[str], Awaitable[FamilyFacts]]
+
+
+@dataclass(frozen=True)
+class ThingRow:
+    label: str
+    #: ``None`` when the probe failed: the line says "could not be read".
+    count: int | None
+    #: At most :data:`THREE_THINGS_NAMES` distinct families, first seen first.
+    families: tuple[BriefFamily, ...] = ()
+
+
+def _unread_things() -> tuple[ThingRow, ThingRow, ThingRow]:
+    a, b, c = (ThingRow(label=label, count=None) for label in THREE_THINGS_LABELS)
+    return (a, b, c)
+
 
 @dataclass(frozen=True)
 class DepartureReason:
@@ -78,6 +139,10 @@ class OwnerDailyBrief:
     invoices_open: int = 0
     waivers_missing: int = 0
     emails_undeliverable: int = 0
+    #: Failed cards, trial passed but not registered, at-risk families.
+    three_things: tuple[ThingRow, ThingRow, ThingRow] = field(default_factory=_unread_things)
+    #: Base URL of the academy's admin app for family links; empty = no links.
+    base_url: str = ""
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -92,12 +157,15 @@ class OwnerDailyBrief:
         reporting but must never be what makes the subject line say the owner
         has work waiting, or the flag stops meaning anything.
         """
+        trial_passed, at_risk = self.three_things[1], self.three_things[2]
         return bool(
             self.approvals_waiting
             or self.payments_failed
             or self.waivers_missing
             or self.emails_undeliverable
             or self.departures
+            or trial_passed.count
+            or at_risk.count
         )
 
 
@@ -105,13 +173,22 @@ async def collect_owner_daily_brief(
     db: AsyncIOMotorDatabase[Any],
     *,
     academy_id: str,
+    family_facts: FamilyFactsSource,
     now: datetime | None = None,
     lookback: timedelta = LOOKBACK,
+    base_url: str = "",
 ) -> OwnerDailyBrief:
     if not academy_id:
         raise ValueError("collect_owner_daily_brief requires an academy_id")
     generated_at = now or datetime.now(UTC)
     since = generated_at - lookback
+
+    errors: list[str] = []
+    try:
+        facts: FamilyFacts | None = await family_facts(academy_id)
+    except Exception as exc:  # names degrade to ids; only the at-risk line is lost
+        errors.append(f"families: {exc}")
+        facts = None
 
     probes: list[tuple[str, Any]] = [
         ("new_enrollments", _new_enrollments(db, academy_id, since)),
@@ -120,22 +197,32 @@ async def collect_owner_daily_brief(
         ("money", _money(db, academy_id, since)),
         ("waivers_missing", _waivers_missing(db, academy_id)),
         ("emails_undeliverable", _emails_undeliverable(db, academy_id, since)),
+        ("failed_cards", _failed_cards(db, academy_id, since, facts)),
+        ("trial_passed", _trial_passed(db, academy_id, facts)),
+        ("at_risk", _at_risk(facts)),
     ]
     results = await asyncio.gather(*(coro for _, coro in probes), return_exceptions=True)
 
     values: dict[str, Any] = {}
-    errors: list[str] = []
     for (label, _), result in zip(probes, results, strict=True):
         if isinstance(result, BaseException):
             errors.append(f"{label}: {result}")
             continue
         values.update(result)
 
+    unread = _unread_things()
+    three_things = (
+        values.pop("failed_cards", unread[0]),
+        values.pop("trial_passed", unread[1]),
+        values.pop("at_risk", unread[2]),
+    )
     return OwnerDailyBrief(
         generated_at=generated_at,
         lookback_hours=int(lookback.total_seconds() // 3600),
         academy_id=academy_id,
         academy_name=await _academy_name(db, academy_id),
+        three_things=three_things,
+        base_url=base_url.rstrip("/"),
         errors=errors,
         **values,
     )
@@ -219,6 +306,61 @@ async def _money(db: AsyncIOMotorDatabase[Any], academy_id: str, since: datetime
         }
     )
     return {"payments_failed": int(failed), "invoices_open": int(open_invoices)}
+
+
+def _named(
+    parent_refs: list[str], facts: FamilyFacts | None, *, count: int, label: str
+) -> ThingRow:
+    """One three-things line: ``count`` plus the first distinct families."""
+    families: list[BriefFamily] = []
+    for ref in parent_refs:
+        family = facts.family(ref) if facts is not None else BriefFamily(ref, ref)
+        if family not in families:
+            families.append(family)
+        if len(families) == THREE_THINGS_NAMES:
+            break
+    return ThingRow(label=label, count=count, families=tuple(families))
+
+
+async def _failed_cards(
+    db: AsyncIOMotorDatabase[Any], academy_id: str, since: datetime, facts: FamilyFacts | None
+) -> dict[str, Any]:
+    """Same rows as ``payments_failed``, with who they belong to."""
+    refs: list[str] = []
+    async for doc in db["payments"].find(
+        {"academy_id": academy_id, "status": "failed", "updated_at": {"$gte": since}},
+        {"parent_id": 1, "parent_user_id": 1},
+    ):
+        refs.append(str(doc.get("parent_id") or doc.get("parent_user_id") or ""))
+    row = _named([r for r in refs if r], facts, count=len(refs), label=THREE_THINGS_LABELS[0])
+    return {"failed_cards": row}
+
+
+async def _trial_passed(
+    db: AsyncIOMotorDatabase[Any], academy_id: str, facts: FamilyFacts | None
+) -> dict[str, Any]:
+    """Open job-created "trial passed, no registration" follow-ups."""
+    refs: list[str] = []
+    async for doc in db["family_follow_ups"].find(
+        {"academy_id": academy_id, "status": "open"}, {"parent_id": 1, "source_key": 1}
+    ):
+        # Prefix filtered here: open follow-ups are few and a $regex would
+        # need its own index for this once-a-day read.
+        if str(doc.get("source_key") or "").startswith(TRIAL_PASSED_SOURCE_PREFIX):
+            refs.append(str(doc.get("parent_id") or ""))
+    row = _named(refs, facts, count=len(refs), label=THREE_THINGS_LABELS[1])
+    return {"trial_passed": row}
+
+
+async def _at_risk(facts: FamilyFacts | None) -> dict[str, Any]:
+    if facts is None:
+        raise RuntimeError("family index unavailable")
+    row = ThingRow(
+        label=THREE_THINGS_LABELS[2],
+        count=len(facts.at_risk),
+        families=facts.at_risk[:THREE_THINGS_NAMES],
+    )
+    return {"at_risk": row}
 
 
 async def _waivers_missing(db: AsyncIOMotorDatabase[Any], academy_id: str) -> dict[str, Any]:
@@ -365,6 +507,7 @@ def render_owner_daily_brief(brief: OwnerDailyBrief) -> tuple[str, str]:
             if academy_label
             else f"<h2>Academy brief — {escape(date_label)}</h2>"
         ),
+        _render_three_things(brief),
         "<table cellpadding='6' cellspacing='0' border='0'>",
         "<tr><th align='left'>Signal</th><th align='right'>Count</th>",
         "<th align='left'>Window</th></tr>",
@@ -378,6 +521,29 @@ def render_owner_daily_brief(brief: OwnerDailyBrief) -> tuple[str, str]:
     if not brief.has_attention_items:
         parts.append("<p>Nothing is waiting on a decision today.</p>")
     return subject, "".join(parts)
+
+
+def _render_three_things(brief: OwnerDailyBrief) -> str:
+    """Always all three lines, in order; a failed probe says so on its line."""
+    items = []
+    for row in brief.three_things:
+        if row.count is None:
+            detail = "could not be read"
+        elif not row.count:
+            detail = "none"
+        else:
+            names = ", ".join(_family_link(brief.base_url, f) for f in row.families)
+            detail = f"{row.count}: {names}" if names else str(row.count)
+        items.append(f"<li><strong>{escape(row.label)}</strong> — {detail}</li>")
+    return f"<h3>Three things today</h3><ol>{''.join(items)}</ol>"
+
+
+def _family_link(base_url: str, family: BriefFamily) -> str:
+    name = escape(family.name)
+    if not base_url:
+        return name
+    href = escape(f"{base_url}/admin/families/{family.family_id}", quote=True)
+    return f"<a href='{href}'>{name}</a>"
 
 
 def _render_departures(brief: OwnerDailyBrief) -> str:

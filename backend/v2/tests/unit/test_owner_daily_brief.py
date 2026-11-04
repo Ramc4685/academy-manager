@@ -7,9 +7,14 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.crm.domain.family_notes import TRIAL_PASSED_SOURCE_PREFIX as DOMAIN_PREFIX
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEventType
 from backend.v2.shared.observability.owner_daily_brief import (
     DEPARTURE_EVENT_TYPES,
+    THREE_THINGS_LABELS,
+    TRIAL_PASSED_SOURCE_PREFIX,
+    BriefFamily,
+    FamilyFacts,
     collect_owner_daily_brief,
     render_owner_daily_brief,
 )
@@ -106,6 +111,26 @@ class _FakeDb:
         return self._collections.setdefault(name, _FakeCollection([]))
 
 
+async def _facts(academy_id: str) -> FamilyFacts:
+    """What composition hands the brief from the family index: ``ACADEMY``'s
+    families only (``fb-1`` is an alias of ``p-1``), ``p-2`` has an at-risk child."""
+    if academy_id != ACADEMY:
+        return FamilyFacts(family_by_alias={}, name_by_family={}, at_risk=())
+    return FamilyFacts(
+        family_by_alias={"p-1": "p-1", "fb-1": "p-1", "p-2": "p-2"},
+        name_by_family={"p-1": "Testparent One", "p-2": "Testparent Two"},
+        at_risk=(BriefFamily(family_id="p-2", name="Testparent Two"),),
+    )
+
+
+async def _quiet_facts(academy_id: str) -> FamilyFacts:
+    return FamilyFacts(family_by_alias={}, name_by_family={}, at_risk=())
+
+
+async def _no_facts(academy_id: str) -> FamilyFacts:
+    raise RuntimeError("index down")
+
+
 def _db(**overrides: _FakeCollection) -> Any:
     # ``Any``: the fake stands in for AsyncIOMotorDatabase at every call site.
     """One academy's signals, plus another academy's copy of every row that
@@ -137,10 +162,33 @@ def _db(**overrides: _FakeCollection) -> Any:
         ),
         "payments": _FakeCollection(
             [
-                {"academy_id": a, "status": "failed", "updated_at": RECENT},
-                {"academy_id": a, "status": "failed", "updated_at": OLD},
-                {"academy_id": a, "status": "succeeded", "updated_at": RECENT},
-                {"academy_id": o, "status": "failed", "updated_at": RECENT},
+                {"academy_id": a, "status": "failed", "updated_at": RECENT, "parent_id": "fb-1"},
+                {"academy_id": a, "status": "failed", "updated_at": OLD, "parent_id": "p-2"},
+                {"academy_id": a, "status": "succeeded", "updated_at": RECENT, "parent_id": "p-2"},
+                {"academy_id": o, "status": "failed", "updated_at": RECENT, "parent_id": "p-9"},
+            ]
+        ),
+        "family_follow_ups": _FakeCollection(
+            [
+                {
+                    "academy_id": a,
+                    "status": "open",
+                    "parent_id": "p-2",
+                    "source_key": "trial_passed:t1",
+                },
+                {
+                    "academy_id": a,
+                    "status": "done",
+                    "parent_id": "p-1",
+                    "source_key": "trial_passed:t2",
+                },
+                {"academy_id": a, "status": "open", "parent_id": "p-1", "source_key": None},
+                {
+                    "academy_id": o,
+                    "status": "open",
+                    "parent_id": "p-9",
+                    "source_key": "trial_passed:t9",
+                },
             ]
         ),
         "invoices": _FakeCollection(
@@ -182,7 +230,7 @@ def _db(**overrides: _FakeCollection) -> Any:
 
 @pytest.mark.asyncio
 async def test_brief_collects_every_owner_signal() -> None:
-    brief = await collect_owner_daily_brief(_db(), academy_id=ACADEMY, now=NOW)
+    brief = await collect_owner_daily_brief(_db(), academy_id=ACADEMY, family_facts=_facts, now=NOW)
 
     assert brief.new_enrollments == 1
     assert brief.departures_total == 3
@@ -199,13 +247,13 @@ async def test_brief_collects_every_owner_signal() -> None:
 @pytest.mark.asyncio
 async def test_brief_requires_an_academy() -> None:
     with pytest.raises(ValueError):
-        await collect_owner_daily_brief(_db(), academy_id="", now=NOW)
+        await collect_owner_daily_brief(_db(), academy_id="", family_facts=_facts, now=NOW)
 
 
 @pytest.mark.asyncio
 async def test_missing_academy_name_falls_back_to_the_id() -> None:
     brief = await collect_owner_daily_brief(
-        _db(academies=_FakeCollection([])), academy_id=ACADEMY, now=NOW
+        _db(academies=_FakeCollection([])), academy_id=ACADEMY, family_facts=_facts, now=NOW
     )
 
     assert brief.academy_name == ACADEMY
@@ -215,7 +263,7 @@ async def test_missing_academy_name_falls_back_to_the_id() -> None:
 
 @pytest.mark.asyncio
 async def test_departures_carry_their_reason() -> None:
-    brief = await collect_owner_daily_brief(_db(), academy_id=ACADEMY, now=NOW)
+    brief = await collect_owner_daily_brief(_db(), academy_id=ACADEMY, family_facts=_facts, now=NOW)
 
     assert [(row.reason, row.count) for row in brief.departures] == [
         ("moved away", 2),
@@ -228,7 +276,10 @@ async def test_departures_carry_their_reason() -> None:
 @pytest.mark.asyncio
 async def test_brief_degrades_when_one_collection_is_unreadable() -> None:
     brief = await collect_owner_daily_brief(
-        _db(payments=_FakeCollection([], fail=True)), academy_id=ACADEMY, now=NOW
+        _db(payments=_FakeCollection([], fail=True)),
+        academy_id=ACADEMY,
+        family_facts=_facts,
+        now=NOW,
     )
 
     assert brief.payments_failed == 0
@@ -246,8 +297,11 @@ async def test_a_quiet_day_does_not_claim_action_is_needed() -> None:
         students=_FakeCollection([]),
         waiver_acceptances=_FakeCollection([]),
         email_suppressions=_FakeCollection([]),
+        family_follow_ups=_FakeCollection([]),
     )
-    brief = await collect_owner_daily_brief(quiet, academy_id=ACADEMY, now=NOW)
+    brief = await collect_owner_daily_brief(
+        quiet, academy_id=ACADEMY, family_facts=_quiet_facts, now=NOW
+    )
 
     assert brief.has_attention_items is False
     subject, body = render_owner_daily_brief(brief)
@@ -264,8 +318,11 @@ async def test_new_enrollments_alone_never_flip_the_subject_line() -> None:
         students=_FakeCollection([]),
         waiver_acceptances=_FakeCollection([]),
         email_suppressions=_FakeCollection([]),
+        family_follow_ups=_FakeCollection([]),
     )
-    brief = await collect_owner_daily_brief(busy, academy_id=ACADEMY, now=NOW)
+    brief = await collect_owner_daily_brief(
+        busy, academy_id=ACADEMY, family_facts=_quiet_facts, now=NOW
+    )
 
     assert brief.new_enrollments == 1
     assert brief.has_attention_items is False
@@ -279,3 +336,97 @@ def test_departure_events_match_the_domain() -> None:
     """
     domain_types = set(EnrollmentLifecycleEventType.__args__)  # type: ignore[attr-defined]
     assert set(DEPARTURE_EVENT_TYPES) <= domain_types
+
+
+def test_trial_passed_prefix_matches_the_domain() -> None:
+    """``shared/`` may not import crm, so the prefix is duplicated."""
+    assert TRIAL_PASSED_SOURCE_PREFIX == DOMAIN_PREFIX
+
+
+@pytest.mark.asyncio
+async def test_three_things_count_and_name_only_this_academy() -> None:
+    brief = await collect_owner_daily_brief(_db(), academy_id=ACADEMY, family_facts=_facts, now=NOW)
+
+    failed, trial, at_risk = brief.three_things
+    assert [row.label for row in brief.three_things] == list(THREE_THINGS_LABELS)
+    # The in-window failed payment is stored under an alias; it names the family.
+    assert (failed.count, [f.name for f in failed.families]) == (1, ["Testparent One"])
+    # Open job-created follow-ups only: not the done one, not the manual one.
+    assert (trial.count, [f.name for f in trial.families]) == (1, ["Testparent Two"])
+    assert (at_risk.count, [f.family_id for f in at_risk.families]) == (1, ["p-2"])
+    assert brief.errors == []
+    assert brief.has_attention_items
+
+
+@pytest.mark.asyncio
+async def test_three_things_render_first_in_order_with_links() -> None:
+    brief = await collect_owner_daily_brief(
+        _db(), academy_id=ACADEMY, family_facts=_facts, now=NOW, base_url="https://a.test/"
+    )
+    _, body = render_owner_daily_brief(brief)
+
+    heading = body.index("Three things today")
+    positions = [body.index(label) for label in THREE_THINGS_LABELS]
+    assert heading < positions[0] < positions[1] < positions[2] < body.index("<table")
+    assert "<a href='https://a.test/admin/families/p-1'>Testparent One</a>" in body
+    assert "<a href='https://a.test/admin/families/p-2'>Testparent Two</a>" in body
+
+
+@pytest.mark.asyncio
+async def test_three_things_say_none_when_zero() -> None:
+    quiet = _db(payments=_FakeCollection([]), family_follow_ups=_FakeCollection([]))
+    brief = await collect_owner_daily_brief(
+        quiet, academy_id=ACADEMY, family_facts=_quiet_facts, now=NOW
+    )
+    _, body = render_owner_daily_brief(brief)
+
+    assert [row.count for row in brief.three_things] == [0, 0, 0]
+    assert body.count("</strong> — none</li>") == 3
+
+
+@pytest.mark.asyncio
+async def test_trial_passed_and_at_risk_alone_flip_the_subject_line() -> None:
+    quiet = _db(
+        enrollment_events=_FakeCollection([], aggregate_rows=[]),
+        onboarding_applications=_FakeCollection([]),
+        payments=_FakeCollection([]),
+        students=_FakeCollection([]),
+        waiver_acceptances=_FakeCollection([]),
+        email_suppressions=_FakeCollection([]),
+    )
+    brief = await collect_owner_daily_brief(quiet, academy_id=ACADEMY, family_facts=_facts, now=NOW)
+
+    assert brief.payments_failed == 0
+    assert brief.has_attention_items is True
+
+
+@pytest.mark.asyncio
+async def test_unreadable_family_index_loses_only_the_at_risk_line() -> None:
+    brief = await collect_owner_daily_brief(
+        _db(), academy_id=ACADEMY, family_facts=_no_facts, now=NOW
+    )
+    _, body = render_owner_daily_brief(brief)
+
+    failed, trial, at_risk = brief.three_things
+    assert at_risk.count is None
+    assert "<strong>At-risk families</strong> — could not be read" in body
+    # Names degrade to the stored parent reference; counts survive.
+    assert (failed.count, [f.name for f in failed.families]) == (1, ["fb-1"])
+    assert trial.count == 1
+    assert any(err.startswith("families:") for err in brief.errors)
+    assert any(err.startswith("at_risk:") for err in brief.errors)
+
+
+@pytest.mark.asyncio
+async def test_unreadable_follow_ups_say_so_on_their_line() -> None:
+    brief = await collect_owner_daily_brief(
+        _db(family_follow_ups=_FakeCollection([], fail=True)),
+        academy_id=ACADEMY,
+        family_facts=_facts,
+        now=NOW,
+    )
+    _, body = render_owner_daily_brief(brief)
+
+    assert brief.three_things[1].count is None
+    assert "<strong>Trial passed, not registered</strong> — could not be read" in body
+    assert any(err.startswith("trial_passed:") for err in brief.errors)
