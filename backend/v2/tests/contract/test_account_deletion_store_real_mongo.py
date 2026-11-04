@@ -140,6 +140,19 @@ async def test_remove_memberships_reaches_every_alias_and_keeps_the_prior_status
     }
 
 
+async def test_remove_memberships_treats_a_legacy_row_without_status_as_active(
+    real_db,
+) -> None:
+    legacy = _m("acad-a", "u1")
+    del legacy["status"]
+    # Only a row from before the schema validator can lack a status.
+    await real_db["academy_memberships"].insert_one(legacy, bypass_document_validation=True)
+    store = MongoAccountDeletionStore(real_db)
+    await store.remove_memberships(aliases=("u1",), now=T0)
+    row = await real_db["academy_memberships"].find_one({}, {"_id": 0})
+    assert row["status"] == "removed" and row["status_before_deletion"] == "active"
+
+
 async def test_upcoming_coaching_counts_future_live_occurrences_in_that_academy(real_db) -> None:
     now = datetime.now(UTC)
     await real_db["session_occurrences"].insert_many(

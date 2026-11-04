@@ -33,4 +33,6 @@ This cancels the whole request: every academy's memberships return to the status
 
 If the response says `"firebase_enabled": false`, the memberships are back but Firebase could not be reached: re-enable the user in the Firebase console (Authentication, the account's uid), because calling the route again finds no request.
 
+If the call fails with a 5xx, call it again with the same `request_id` until it succeeds. A failed cancel leaves the request marked as being cancelled. While that mark is there, the erasure job skips the request, so the person stays locked out and their data is not erased until a retry finishes the cancel.
+
 Anyone without a platform role gets 404, as on the other platform routes.

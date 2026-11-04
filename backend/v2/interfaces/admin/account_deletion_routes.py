@@ -30,7 +30,7 @@ class AccountDeletionView(BaseModel):
     user_id: str
     aliases: list[str]
     display_name: str
-    status: Literal["scheduled", "completed"]
+    status: Literal["scheduled", "running", "completed"]
     requested_at: datetime
     execute_after: datetime
     completed_at: datetime | None
