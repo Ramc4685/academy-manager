@@ -1425,3 +1425,58 @@ async def test_an_academy_admin_cannot_restore_a_pending_self_deletion(
     row = await db["account_deletion_requests"].find_one({"request_id": "r-9"}, {"_id": 0})
     assert row == request_row
     assert await db["audit_logs"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["parent_login", "student_login"])
+async def test_an_academy_login_invite_cannot_restore_a_pending_self_deletion(
+    db, monkeypatch, door
+) -> None:
+    """Support-only restore (PR #1115): the Billing Setup login invite and the
+    student login both upsert the membership as 'active', so they are refused
+    before Firebase or any write while the person's deletion is pending."""
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+
+    class _Firebase:
+        async def ensure_user(self, **kwargs):
+            raise AssertionError("a refused invite must not touch Firebase")
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await _seed_editable_parent(db)
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"},
+        {"$set": {"status": "removed", "status_before_deletion": "active"}},
+    )
+    await db["account_deletion_requests"].insert_one(
+        {
+            "request_id": "r-9",
+            "user_id": "roster-parent-9",
+            "status": "scheduled",
+            "aliases": ["roster-parent-9", "fb-uid-9"],
+            "academy_ids": ["academy-b"],
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    with pytest.raises(AccountDeletionPending):
+        if door == "parent_login":
+            await repo.ensure_parent_login(
+                parent_id="roster-parent-9",
+                email="parent@example.com",
+                display_name="Parent Nine",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+        else:
+            await repo.ensure_student_login(
+                student_id="s-9",
+                email="parent@example.com",
+                display_name="Parent Nine",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+
+    row = await db["academy_memberships"].find_one({"user_id": "fb-uid-9"}, {"_id": 0})
+    assert row["status"] == "removed" and row["status_before_deletion"] == "active"
+    assert "login_invite_pending" not in row
+    assert await db["audit_logs"].count_documents({}) == 0

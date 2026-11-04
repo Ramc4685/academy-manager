@@ -85,8 +85,11 @@ and payroll lines.
      `execute_after`, academy ids, status `scheduled`) and one audit row per academy;
    - email a confirmation to the address on file (sent *before* anonymisation).
    The person is signed out. From their side the account is gone.
-3. **Execute after a grace window [owner]** (proposal: 14 days, cancellable only by
-   contacting the academy, which re-enables via the existing admin path). A scheduled job
+3. **Execute after a grace window [owner]** (proposal: 14 days). Support-only restore
+   (owner decision on PR #1115): no academy admin can undo the request; the person
+   contacts CourtMastr support, which cancels the whole request (every academy's
+   memberships and the login) through the platform support route, and only before the
+   erasure job claims it or any attempt starts. A scheduled job
    (registered in `settings.sentry_cron_jobs`, per the cascade doc's rules) walks the
    table above: withdraw enrollments through enrollment use cases, cancel autopay and
    detach cards through billing, anonymise students per the decision, anonymise the

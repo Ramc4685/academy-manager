@@ -216,7 +216,11 @@ class MongoAccountDeletionStore:
             self._requests.find(
                 {
                     "$or": [
-                        {"status": "scheduled", "execute_after": {"$lte": now}},
+                        {
+                            "status": "scheduled",
+                            "execute_after": {"$lte": now},
+                            "cancelling_at": {"$exists": False},
+                        },
                         {"status": "running", "claimed_at": {"$lte": now - STALE_CLAIM}},
                     ]
                 }
@@ -294,7 +298,8 @@ class MongoAccountDeletionStore:
             {
                 "request_id": request_id,
                 "$or": [
-                    {"status": "scheduled"},
+                    # A support cancel under way owns the row (see begin_cancel).
+                    {"status": "scheduled", "cancelling_at": {"$exists": False}},
                     {"status": "running", "claimed_at": {"$lte": now - STALE_CLAIM}},
                 ],
             },
@@ -312,29 +317,48 @@ class MongoAccountDeletionStore:
             )
         )
 
-    async def cancel_request(self, request_id: str) -> AccountDeletionRequest | None:
-        """Support-only restore: remove a request no erasure has touched yet.
+    async def begin_cancel(
+        self, request_id: str, *, now: datetime
+    ) -> AccountDeletionRequest | None:
+        """Support-only restore, step 1: take a request no erasure has touched yet.
 
         Atomic against ``claim``: a request the job claimed, or one with any
         attempt behind it (``claimed_at`` stays set after a failure), is left
-        alone, because some of its records may already be gone. Deleted, not
-        flagged: ``user_id`` is unique, so a leftover row would block a later request.
+        alone, because some of its records may already be gone. Marked, not
+        deleted: the row has to outlive the membership restore so a failed
+        cancel can be retried (a retry matches the marked row again), and
+        ``claim`` skips a marked row so the erasure cannot start meanwhile.
         """
-        doc = await self._requests.find_one_and_delete(
+        doc = await self._requests.find_one_and_update(
             {
                 "request_id": request_id,
                 "status": "scheduled",
                 "claimed_at": {"$exists": False},
                 "attempts": {"$not": {"$gt": 0}},
-            }
+            },
+            {"$set": {"cancelling_at": now}},
+            return_document=ReturnDocument.AFTER,
         )
         return _to_request(doc) if doc else None
+
+    async def finish_cancel(self, request_id: str) -> None:
+        """Step 3, after the restore landed. Deleted, not flagged: ``user_id``
+        is unique, so a leftover row would block a later request."""
+        await self._requests.delete_one(
+            {"request_id": request_id, "cancelling_at": {"$exists": True}}
+        )
 
     async def request_exists(self, request_id: str) -> bool:
         return bool(await self._requests.count_documents({"request_id": request_id}, limit=1))
 
-    async def restore_memberships(self, *, aliases: tuple[str, ...], now: datetime) -> None:
-        """Undo ``remove_memberships`` in every academy, back to the prior status."""
+    async def restore_memberships(
+        self, *, aliases: tuple[str, ...], now: datetime
+    ) -> frozenset[str]:
+        """Undo ``remove_memberships`` in every academy, back to the prior status.
+
+        Idempotent. Returns the person's membership statuses afterwards, so the
+        caller can tell whether any academy still grants them anything.
+        """
         await self._db["academy_memberships"].update_many(
             {
                 "user_id": {"$in": list(aliases)},
@@ -345,6 +369,14 @@ class MongoAccountDeletionStore:
                 {"$set": {"status": "$status_before_deletion", "updated_at": now}},
                 {"$unset": "status_before_deletion"},
             ],
+        )
+        return frozenset(
+            {
+                str(row.get("status") or "active")
+                async for row in self._db["academy_memberships"].find(
+                    {"user_id": {"$in": list(aliases)}}, {"status": 1}
+                )
+            }
         )
 
     async def mark_completed(self, request_id: str, *, now: datetime) -> None:

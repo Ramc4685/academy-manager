@@ -32,19 +32,23 @@ REQUEST = AccountDeletionRequest(
 
 
 class Store:
-    """Mirrors MongoAccountDeletionStore: cancel only takes an unclaimed,
-    never-attempted scheduled row, and restore only reverses rows the
-    deletion removed (those carrying ``status_before_deletion``)."""
+    """Mirrors MongoAccountDeletionStore: cancel only marks an unclaimed,
+    never-attempted scheduled row (or re-takes an already marked one), the
+    row is deleted only by ``finish_cancel``, and restore only reverses rows
+    the deletion removed (those carrying ``status_before_deletion``)."""
 
-    def __init__(self, row: dict[str, Any] | None) -> None:
+    def __init__(self, row: dict[str, Any] | None, *, restore_fails: int = 0) -> None:
         self.rows = {row["request"].request_id: row} if row else {}
+        self.restore_fails = restore_fails
         self.memberships = [
             {"academy_id": "acad-a", "user_id": "u1", "status": "removed", "before": "active"},
             {"academy_id": "acad-b", "user_id": "fb1", "status": "removed", "before": "suspended"},
             {"academy_id": "acad-c", "user_id": "u1", "status": "removed", "before": None},
         ]
 
-    async def cancel_request(self, request_id: str) -> AccountDeletionRequest | None:
+    async def begin_cancel(
+        self, request_id: str, *, now: datetime
+    ) -> AccountDeletionRequest | None:
         row = self.rows.get(request_id)
         if (
             row is None
@@ -53,15 +57,26 @@ class Store:
             or row.get("attempts", 0) > 0
         ):
             return None
-        return self.rows.pop(request_id)["request"]  # type: ignore[no-any-return]
+        row["cancelling_at"] = now
+        return row["request"]  # type: ignore[no-any-return]
+
+    async def finish_cancel(self, request_id: str) -> None:
+        if self.rows.get(request_id, {}).get("cancelling_at"):
+            del self.rows[request_id]
 
     async def request_exists(self, request_id: str) -> bool:
         return request_id in self.rows
 
-    async def restore_memberships(self, *, aliases: tuple[str, ...], now: datetime) -> None:
+    async def restore_memberships(
+        self, *, aliases: tuple[str, ...], now: datetime
+    ) -> frozenset[str]:
+        if self.restore_fails:
+            self.restore_fails -= 1
+            raise TimeoutError("mongo blip")
         for m in self.memberships:
             if m["user_id"] in aliases and m["status"] == "removed" and m["before"]:
                 m["status"], m["before"] = m["before"], None
+        return frozenset(m["status"] for m in self.memberships if m["user_id"] in aliases)
 
 
 class Firebase:
@@ -126,3 +141,32 @@ async def test_a_firebase_outage_is_reported_not_raised() -> None:
 
     assert not result.firebase_enabled
     assert _statuses(store)["acad-a"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_restore_keeps_the_request_so_support_can_retry() -> None:
+    store, firebase = Store({"request": REQUEST}, restore_fails=1), Firebase()
+    use_case = CancelAccountDeletion(store=store, firebase=firebase)
+
+    with pytest.raises(TimeoutError):
+        await use_case.execute("r1", now=NOW)
+    assert "r1" in store.rows and firebase.calls == []
+
+    result = await use_case.execute("r1", now=NOW)
+
+    assert result.firebase_enabled and store.rows == {}
+    assert _statuses(store)["acad-a"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_the_login_stays_off_when_every_academy_had_suspended_the_person() -> None:
+    """The cascade rule: a shared login comes back only if some academy grants
+    something; the person had it off before the request too."""
+    store, firebase = Store({"request": REQUEST}), Firebase()
+    store.memberships[0]["before"] = "suspended"
+
+    result = await CancelAccountDeletion(store=store, firebase=firebase).execute("r1", now=NOW)
+
+    assert not result.firebase_enabled and firebase.calls == []
+    assert store.rows == {}
+    assert _statuses(store) == {"acad-a": "suspended", "acad-b": "suspended", "acad-c": "removed"}

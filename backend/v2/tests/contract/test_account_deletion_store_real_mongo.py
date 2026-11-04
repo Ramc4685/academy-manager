@@ -166,9 +166,16 @@ async def test_support_cancel_removes_the_request_and_restores_every_academy(rea
     await store.remove_memberships(aliases=("u1", "fb-1"), now=T0)
     assert await store.pending_request_exists(["fb-1"])
 
-    cancelled = await store.cancel_request("r1")
+    cancelled = await store.begin_cancel("r1", now=T0)
     assert cancelled is not None and cancelled.academy_ids == ("acad-a", "acad-b")
-    await store.restore_memberships(aliases=cancelled.aliases, now=T0)
+    # Marked, not gone: the erasure skips it, and a failed cancel can retry it.
+    assert await store.claim("r1", now=T0 + timedelta(days=30)) is None
+    assert await store.due_requests(now=T0 + timedelta(days=30), limit=10) == []
+    assert await store.pending_request_exists(["fb-1"])
+    assert await store.begin_cancel("r1", now=T0) is not None
+    statuses = await store.restore_memberships(aliases=cancelled.aliases, now=T0)
+    assert statuses == {"active", "suspended", "removed"}
+    await store.finish_cancel("r1")
 
     assert await real_db["account_deletion_requests"].count_documents({}) == 0
     assert not await store.pending_request_exists(["fb-1"])
@@ -193,7 +200,7 @@ async def test_support_cancel_is_refused_once_the_erasure_claimed_or_attempted_i
     assert claimed is not None and claimed.status == "running"
     # A second run (or a second tick) does not get it while the claim is fresh.
     assert await store.claim("r1", now=T0 + timedelta(minutes=5)) is None
-    assert await store.cancel_request("r1") is None
+    assert await store.begin_cancel("r1", now=T0) is None
     assert await store.pending_request_exists(["u1"])
 
     # A failed run hands the request back to the job, never to support: some
@@ -201,7 +208,7 @@ async def test_support_cancel_is_refused_once_the_erasure_claimed_or_attempted_i
     await store.record_failure("r1", step="family", error="boom", now=T0)
     row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
     assert row["status"] == "scheduled" and row["attempts"] == 1
-    assert await store.cancel_request("r1") is None
+    assert await store.begin_cancel("r1", now=T0) is None
     assert await store.request_exists("r1")
 
     # Even an attempt that left no claim marker behind (the claim itself failed).
@@ -209,7 +216,7 @@ async def test_support_cancel_is_refused_once_the_erasure_claimed_or_attempted_i
     await real_db["account_deletion_requests"].update_one(
         {"request_id": "r2"}, {"$set": {"attempts": 1}}
     )
-    assert await store.cancel_request("r2") is None
+    assert await store.begin_cancel("r2", now=T0) is None
 
 
 async def test_mark_completed_needs_the_runs_claim(real_db) -> None:
