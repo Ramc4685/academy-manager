@@ -1,6 +1,6 @@
 # mobile-push-in-app
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Inside the iOS and Android app, a signed-in admin, coach, parent or student is asked once for permission to receive notifications. If they allow it, the phone gets a Firebase Cloud Messaging token on both iOS and Android (`@capacitor-firebase/messaging`), which is saved to their account (`POST /api/v2/me/devices`). Signing out removes that phone from the account and deletes its token on the phone first (best-effort, at most three seconds), so the next person to use a shared family phone does not get the previous user's notifications. Tapping a notification opens the screen it points to; only links inside the app are followed. Nothing changes in a web browser: the push code only runs inside the app and is loaded on demand.

@@ -1,6 +1,6 @@
 # account-deletion-request
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Backend for self-service account deletion, which Apple and Google require before the mobile apps can ship (slice M5, part D1). Nothing in the web or app UI calls it yet; the Delete account screen is part D2.

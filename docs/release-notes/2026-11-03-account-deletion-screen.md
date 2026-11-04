@@ -1,6 +1,6 @@
 # account-deletion-screen
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Parents and coaches can now delete their own account from their profile page (slice M5, part D2). This is the in-app path Apple and Google require, and it uses the `POST /api/v2/me/account-deletion` endpoint from part D1.

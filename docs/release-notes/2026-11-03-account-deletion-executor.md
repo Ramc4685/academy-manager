@@ -1,6 +1,6 @@
 # account-deletion-executor
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Self-service account deletions are now carried out 14 days after the request (slice M5, part D3). Until now a request only locked the account.

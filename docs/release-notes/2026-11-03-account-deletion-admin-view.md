@@ -1,6 +1,6 @@
 # account-deletion-admin-view
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Admins can now see which families deleted their own account, and there is a public page explaining how deletion works (slice M5, part D4).

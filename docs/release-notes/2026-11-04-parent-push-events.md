@@ -1,6 +1,6 @@
 # parent-push-events
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Four parent emails now also send a push notification to the family's phones in the iOS and Android app, right after the email: a cancelled class date (to every affected family, including make-up and trial kids; opens the parent home), a waitlist seat offer with its claim deadline (opens Requests on that offer; the "offer expired" email does not push), an urgent class announcement (opens Messages; routine announcements do not push), and the dues reminders, both the admin's manual send and the automated past-due sweep (opens Payments; only for parents whose reminder email actually went out). Email stays the record: a push failure is logged and never fails, retries or delays the email.

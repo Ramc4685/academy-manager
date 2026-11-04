@@ -1,6 +1,6 @@
 # push-device-registration
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Backend groundwork for push notifications in the mobile apps (slices M2 and M3).

@@ -1,6 +1,6 @@
 # native-google-apple-sign-in-ios
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 The iOS app can now sign in with Google and Apple natively. The app bundles its Firebase config (`GoogleService-Info.plist`, from the new Firebase iOS app `1:953230788846:ios:e11694e0f21ba8d0860bff`), registers Google's reversed client ID as a URL scheme, and carries the Sign in with Apple entitlement. Google's own SDK signs the user in through the system sign-in sheet and hands its token to the web Firebase session, so sign-in no longer goes through Safari. That Safari detour is what caused the "missing initial state" error in TestFlight 1.0 (4).

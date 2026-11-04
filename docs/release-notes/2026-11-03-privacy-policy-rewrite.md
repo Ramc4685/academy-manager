@@ -1,6 +1,6 @@
 # privacy-policy-rewrite
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 The `/privacy` page is rewritten to match the App Store privacy label and Google Play data-safety answers (slice M5, part D5; source: `docs/plans/2026-11-03-store-listing.md` section 3).

@@ -1,6 +1,6 @@
 # hide-downloads-in-app
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Inside the iOS and Android app, actions that download a file or open the print dialog are hidden, because the app's web view has nowhere to put the file and ignores print: the CSV exports on Reports (QuickBooks journal, deposit slip, refunds, revenue by category), the coach "Export audit" button, the family import template download, and "Print or save as PDF" on certificates and signed waivers. The parent certificate keeps "Share with family". Uploading a CSV still works in the app. Nothing changes in a web browser.

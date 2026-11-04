@@ -1,6 +1,6 @@
 # mobile-release-sync
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 `pnpm sync:release` in `mobile/` runs `cap sync` with the store-build settings: `MOBILE_RELEASE=1` and the BLNO server (`https://blno-academy.courtmastr.com`, overridable with `MOBILE_SERVER_URL`), so a release sync can no longer point at localhost over cleartext. iOS Release builds now drop the dev-only `localhost` entry from `WKAppBoundDomains` in the built app through a new Xcode build phase (`mobile/scripts/strip-dev-bound-domains.sh`); the source `Info.plist` keeps it so simulator runs against `next dev` still work. `pnpm test` in `mobile/` checks the strip script, the build phase and the release script.
