@@ -6,8 +6,10 @@ claim, the win-back pattern):
 
 * ``SendTrialReminders`` (``send_trial_reminders``, 16:00 local): an
   ``approved`` trial whose assigned date is tomorrow on the academy's clock
-  gets a reminder the afternoon before. A cancelled date is skipped; a trial
-  reopened by a cancelled date comes back ``pending`` and is never reminded.
+  gets a reminder the afternoon before. The claim is per assigned date, so a
+  trial re-approved onto a new date after a cancellation is reminded again
+  for that date. A cancelled date is skipped. Known limit of a once-a-day
+  job: a trial approved for tomorrow after the 16:00 tick gets no reminder.
 * ``SendTrialNoShowFollowUps`` (``send_trial_no_show_follow_ups``, 10:00
   local): a trial marked "Didn't come" gets one re-engagement email a few
   days later, unless the family has since booked another trial or
@@ -26,7 +28,7 @@ from typing import Protocol
 
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
-from backend.v2.shared.comms.claimed_send import SendClaimRepository, send_once
+from backend.v2.shared.comms.claimed_send import SendClaimRepository, SendResult, send_once
 from backend.v2.shared.time import ensure_utc
 
 #: A "Didn't come" is followed up after this long...
@@ -39,6 +41,10 @@ TRIAL_REMINDER_KEY = "trial_reminder"
 TRIAL_NO_SHOW_KEY = "trial_no_show"
 
 
+def reminder_nudge_key(occurrence_id: str) -> str:
+    return f"{TRIAL_REMINDER_KEY}:{occurrence_id}"
+
+
 class TrialSource(Protocol):
     async def list_by_status(self, status: str | None) -> list[TrialRequest]: ...
 
@@ -46,7 +52,7 @@ class TrialSource(Protocol):
 
 
 class TrialOccurrenceLookup(Protocol):
-    async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
+    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]: ...
 
 
 class TrialNudgeSwitch(Protocol):
@@ -54,12 +60,9 @@ class TrialNudgeSwitch(Protocol):
 
 
 class TrialNudgeNotifier(Protocol):
-    """Returns True when nothing is left to do (sent, or the recipient has
-    opted out); False when the send should be retried on a later tick."""
+    async def trial_reminder(self, *, trial: TrialRequest, local_start: datetime) -> SendResult: ...
 
-    async def trial_reminder(self, *, trial: TrialRequest, local_start: datetime) -> bool: ...
-
-    async def trial_no_show(self, *, trial: TrialRequest) -> bool: ...
+    async def trial_no_show(self, *, trial: TrialRequest) -> SendResult: ...
 
 
 class SendTrialReminders:
@@ -85,11 +88,18 @@ class SendTrialReminders:
         if not await self._switch.is_enabled(academy_id):
             return 0
         tomorrow = local_now.date() + timedelta(days=1)
+        trials = [
+            t for t in await self._trials.list_by_status("approved") if t.assigned_occurrence_id
+        ]
+        occurrences = {
+            o.occurrence_id: o
+            for o in await self._occurrences.get_many(
+                sorted({str(t.assigned_occurrence_id) for t in trials})
+            )
+        }
         sent = 0
-        for trial in await self._trials.list_by_status("approved"):
-            if not trial.assigned_occurrence_id:
-                continue
-            occurrence = await self._occurrences.get(trial.assigned_occurrence_id)
+        for trial in trials:
+            occurrence = occurrences.get(str(trial.assigned_occurrence_id))
             if occurrence is None or occurrence.status == "cancelled":
                 continue
             local_start = ensure_utc(occurrence.start_at).astimezone(local_now.tzinfo)
@@ -99,7 +109,7 @@ class SendTrialReminders:
                 self._send_repo,
                 academy_id=academy_id,
                 subject_id=trial.request_id,
-                nudge_key=TRIAL_REMINDER_KEY,
+                nudge_key=reminder_nudge_key(occurrence.occurrence_id),
                 send=partial(self._notifier.trial_reminder, trial=trial, local_start=local_start),
             )
         return sent

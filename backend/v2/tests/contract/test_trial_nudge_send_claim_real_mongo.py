@@ -76,3 +76,19 @@ async def test_a_mark_from_another_academy_leaves_the_row_untouched(real_db) -> 
     assert row is not None
     assert row["status"] == "queued"
     assert row["academy_id"] == ACADEMY_ID
+
+
+@pytest.mark.asyncio
+async def test_a_failed_send_is_reclaimed_but_a_skipped_one_is_final(real_db) -> None:
+    # The fakes in the application tests mirror this: "failed" retries on a
+    # later tick, "skipped" (no address, opted out) never does.
+    with tenant_scope(ACADEMY_ID):
+        repo = MongoTrialNudgeSendRepository(real_db)
+        failed = await repo.try_claim(academy_id=ACADEMY_ID, subject_id="f1", nudge_key="k")
+        skipped = await repo.try_claim(academy_id=ACADEMY_ID, subject_id="s1", nudge_key="k")
+        assert failed is not None and skipped is not None
+        await repo.mark_failed(ACADEMY_ID, failed["send_id"], "send_failed")
+        await repo.mark_failed(ACADEMY_ID, skipped["send_id"], "skipped", retryable=False)
+
+        assert await repo.try_claim(academy_id=ACADEMY_ID, subject_id="f1", nudge_key="k")
+        assert await repo.try_claim(academy_id=ACADEMY_ID, subject_id="s1", nudge_key="k") is None

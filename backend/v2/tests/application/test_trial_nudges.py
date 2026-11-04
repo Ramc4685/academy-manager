@@ -85,8 +85,8 @@ class FakeOccurrences:
     def __init__(self, occurrences: list[SessionOccurrence]) -> None:
         self._by_id = {o.occurrence_id: o for o in occurrences}
 
-    async def get(self, occurrence_id: str) -> SessionOccurrence | None:
-        return self._by_id.get(occurrence_id)
+    async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]:
+        return [self._by_id[o] for o in occurrence_ids if o in self._by_id]
 
 
 class FakeSendClaimRepository:
@@ -116,29 +116,34 @@ class FakeSendClaimRepository:
             return  # Mongo: a filter that matches no row is a no-op (#880)
         row["status"] = "sent"
 
-    async def mark_failed(self, academy_id: str, send_id: str, reason: str) -> None:
+    async def mark_failed(
+        self, academy_id: str, send_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         row = self.rows.get(send_id)
         if row is None or row["key"][0] != academy_id:
             return
-        row["status"] = "failed"
+        # Mirror ``reclaim_retryable_send``: a non-retryable failed row is
+        # never re-claimed, so it reads as final here.
+        row["status"] = "failed" if retryable else "final"
+        row["reason"] = reason
 
     def statuses(self) -> list[tuple[tuple[str, str, str], str]]:
         return [(row["key"], row["status"]) for row in self.rows.values()]
 
 
 class FakeNotifier:
-    def __init__(self, *, ok: bool = True) -> None:
-        self.ok = ok
+    def __init__(self, *, result: str = "sent") -> None:
+        self.result = result
         self.reminders: list[tuple[str, datetime]] = []
         self.no_shows: list[str] = []
 
-    async def trial_reminder(self, *, trial: TrialRequest, local_start: datetime) -> bool:
+    async def trial_reminder(self, *, trial: TrialRequest, local_start: datetime) -> str:
         self.reminders.append((trial.request_id, local_start))
-        return self.ok
+        return self.result
 
-    async def trial_no_show(self, *, trial: TrialRequest) -> bool:
+    async def trial_no_show(self, *, trial: TrialRequest) -> str:
         self.no_shows.append(trial.request_id)
-        return self.ok
+        return self.result
 
 
 class FakeSwitch:
@@ -176,7 +181,7 @@ async def test_reminds_an_approved_trial_whose_date_is_tomorrow_local() -> None:
     assert await job.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW) == 1
 
     assert notifier.reminders == [("t1", tomorrow_9am)]
-    assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder"), "sent")]
+    assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder:occ-1"), "sent")]
 
 
 async def test_second_run_sends_nothing() -> None:
@@ -245,17 +250,60 @@ async def test_switch_off_sends_and_claims_nothing() -> None:
 
 async def test_a_failed_send_keeps_the_claim_retryable() -> None:
     send_repo = FakeSendClaimRepository()
-    broken = FakeNotifier(ok=False)
+    broken = FakeNotifier(result="failed")
     occurrences = [_occurrence("occ-1", start_local=datetime(2026, 11, 5, 9, 0, tzinfo=CHICAGO))]
     job = _reminders([_trial("t1")], occurrences, send_repo=send_repo, notifier=broken)
 
     assert await job.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW) == 0
-    assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder"), "failed")]
+    assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder:occ-1"), "failed")]
 
     working = FakeNotifier()
     retry = _reminders([_trial("t1")], occurrences, send_repo=send_repo, notifier=working)
     assert await retry.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW) == 1
-    assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder"), "sent")]
+    assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder:occ-1"), "sent")]
+
+
+async def test_a_skipped_send_is_final_and_not_counted() -> None:
+    # No address, or the parent opted out: nothing a retry could change.
+    send_repo = FakeSendClaimRepository()
+    occurrences = [_occurrence("occ-1", start_local=datetime(2026, 11, 5, 9, 0, tzinfo=CHICAGO))]
+    job = _reminders(
+        [_trial("t1")], occurrences, send_repo=send_repo, notifier=FakeNotifier(result="skipped")
+    )
+
+    assert await job.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW) == 0
+    assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder:occ-1"), "final")]
+
+    retry = _reminders([_trial("t1")], occurrences, send_repo=send_repo, notifier=FakeNotifier())
+    assert await retry.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW) == 0
+
+
+async def test_a_trial_re_approved_onto_a_new_date_is_reminded_again() -> None:
+    # Tue's date is cancelled after Mon's reminder; the trial is re-approved
+    # for Fri. The claim is per assigned date, so Thu reminds for Fri.
+    send_repo = FakeSendClaimRepository()
+    notifier = FakeNotifier()
+    tue = _occurrence("occ-tue", start_local=datetime(2026, 11, 5, 9, 0, tzinfo=CHICAGO))
+    fri = _occurrence("occ-fri", start_local=datetime(2026, 11, 7, 9, 0, tzinfo=CHICAGO))
+    monday = _reminders(
+        [_trial("t1", occurrence_id="occ-tue")], [tue, fri], send_repo=send_repo, notifier=notifier
+    )
+    assert await monday.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW) == 1
+
+    thursday = _reminders(
+        [_trial("t1", occurrence_id="occ-fri")], [tue, fri], send_repo=send_repo, notifier=notifier
+    )
+    assert (
+        await thursday.execute(
+            academy_id=ACADEMY_ID, local_now=datetime(2026, 11, 6, 16, 0, tzinfo=CHICAGO)
+        )
+        == 1
+    )
+    assert [r[0] for r in notifier.reminders] == ["t1", "t1"]
+    assert sorted(k[2] for k, _ in send_repo.statuses()) == [
+        "trial_reminder:occ-fri",
+        "trial_reminder:occ-tue",
+    ]
 
 
 async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
@@ -265,6 +313,7 @@ async def test_fake_mark_calls_from_another_academy_are_no_ops() -> None:
 
     await send_repo.mark_sent("acad-b", claim["send_id"])
     await send_repo.mark_failed("acad-b", claim["send_id"], "x")
+    await send_repo.mark_failed("acad-b", claim["send_id"], "x", retryable=False)
 
     assert send_repo.rows[claim["send_id"]]["status"] == "queued"
 

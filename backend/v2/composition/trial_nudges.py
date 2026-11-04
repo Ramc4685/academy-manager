@@ -48,6 +48,7 @@ from backend.v2.contexts.onboarding.application.use_cases.checkout_recovery impo
     SendCheckoutRecoveryNotices,
 )
 from backend.v2.contexts.onboarding.domain.models import Application
+from backend.v2.shared.comms.claimed_send import SendResult
 from backend.v2.shared.comms.email_theme import shell
 from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.ids import new_ulid
@@ -97,10 +98,18 @@ class MongoTrialNudgeSendRepository(TenantScopedRepository):
             {"$set": {"status": str(DigestSendStatus.SENT), "failed_reason": None}},
         )
 
-    async def mark_failed(self, academy_id: str, send_id: str, reason: str) -> None:
+    async def mark_failed(
+        self, academy_id: str, send_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         await self.collection.update_one(
             {"academy_id": academy_id, "send_id": send_id},
-            {"$set": {"status": str(DigestSendStatus.FAILED), "failed_reason": reason}},
+            {
+                "$set": {
+                    "status": str(DigestSendStatus.FAILED),
+                    "failed_reason": reason,
+                    "retryable": retryable,
+                }
+            },
         )
 
 
@@ -114,9 +123,9 @@ def _when(local_start: datetime) -> str:
 
 
 class TrialNudgeEmailAdapter:
-    """The three templated emails. Each returns True when there is nothing
-    left to do (sent, suppressed by the recipient's own choice, or no address
-    to send to) and False when a later tick should retry."""
+    """The three templated emails. Each reports ``"sent"``, ``"skipped"``
+    (no address, or the recipient opted out: final) or ``"failed"`` (retry
+    on a later tick). The academy document is read once per email."""
 
     def __init__(
         self,
@@ -135,23 +144,24 @@ class TrialNudgeEmailAdapter:
         self._sender = sender
         self._frontend_url = frontend_url
 
-    async def trial_reminder(self, *, trial: TrialRequest, local_start: datetime) -> bool:
+    async def trial_reminder(self, *, trial: TrialRequest, local_start: datetime) -> SendResult:
+        doc = await self._academy_doc()
         child = await self._child_name(trial)
         title, location = await self._session(trial.requested_session_id)
         where = f" at {html.escape(location)}" if location else ""
         return await self._send(
+            doc,
             trial.parent_user_id,
             subject=f"Reminder: {child}'s free trial is tomorrow",
             inner_html="".join(
                 [
                     _para(
-                        f"<strong>{html.escape(child)}</strong>'s free trial in "
+                        f"The free trial for <strong>{html.escape(child)}</strong> in "
                         f"{html.escape(title)} is tomorrow, {_when(local_start)}{where}."
                     ),
                     _para(
                         "Please arrive a few minutes early so the coach can say hello. "
-                        "Wear comfortable sports clothes and bring water; a racquet "
-                        "will be provided if you do not have one."
+                        "Wear comfortable sports clothes and bring water."
                     ),
                     _para("If you can no longer make it, just reply to this email."),
                 ]
@@ -159,11 +169,13 @@ class TrialNudgeEmailAdapter:
             category=EmailCategory.TRANSACTIONAL,
         )
 
-    async def trial_no_show(self, *, trial: TrialRequest) -> bool:
+    async def trial_no_show(self, *, trial: TrialRequest) -> SendResult:
+        doc = await self._academy_doc()
         child = await self._child_name(trial)
         title, _location = await self._session(trial.requested_session_id)
-        requests_url = await self._link("/parent/requests")
+        requests_url = self._link(doc, "/parent/requests")
         return await self._send(
+            doc,
             trial.parent_user_id,
             subject=f"We missed {child} at the trial",
             inner_html="".join(
@@ -187,14 +199,16 @@ class TrialNudgeEmailAdapter:
             category=EmailCategory.CAMPAIGN,
         )
 
-    async def checkout_recovery(self, *, application: Application) -> bool:
+    async def checkout_recovery(self, *, application: Application) -> SendResult:
+        doc = await self._academy_doc()
         child = application.child_profile.first_name.strip() or "your child"
         title = ""
         if application.selected_session_id:
             title, _location = await self._session(application.selected_session_id)
-        resume_url = await self._link("/parent/onboarding")
+        restart_url = self._link(doc, "/parent/onboarding")
         in_class = f" for {html.escape(title)}" if title else ""
         return await self._send(
+            doc,
             application.parent_user_id,
             subject=f"Finish {child}'s registration",
             inner_html="".join(
@@ -205,12 +219,15 @@ class TrialNudgeEmailAdapter:
                     ),
                     _para(
                         "No seat is held until it is finished. "
+                        # Neither an expired checkout nor an expired draft can
+                        # be resumed: the wizard starts a fresh registration.
                         + (
-                            f'<a href="{html.escape(resume_url)}">Pick up where you left off</a>'
-                            if resume_url
-                            else "Sign in to pick up where you left off"
+                            f'<a href="{html.escape(restart_url)}">Start the registration again</a>'
+                            if restart_url
+                            else "Sign in to start the registration again"
                         )
-                        + ", or reply to this email if something got in the way."
+                        + " (it only takes a few minutes), or reply to this email if "
+                        "something got in the way."
                     ),
                     _para("If this no longer applies, you can safely ignore this message."),
                 ]
@@ -218,12 +235,15 @@ class TrialNudgeEmailAdapter:
             category=EmailCategory.CAMPAIGN,
         )
 
+    async def _academy_doc(self) -> dict[str, Any]:
+        return await self._academies.find_by_id(current_academy_id()) or {}
+
     async def _child_name(self, trial: TrialRequest) -> str:
         if trial.student_id:
             students = await self._students.by_ids([trial.student_id])
             if students:
                 return str(students[0].full_name)
-        return (trial.prospective_child_name or "").strip() or "Your child"
+        return (trial.prospective_child_name or "").strip() or "your child"
 
     async def _session(self, session_id: str) -> tuple[str, str]:
         session = await self._sessions.get(session_id)
@@ -231,21 +251,25 @@ class TrialNudgeEmailAdapter:
             return "class", ""
         return str(session.title), str(session.location or "")
 
-    async def _link(self, path: str) -> str | None:
-        doc = await self._academies.find_by_id(current_academy_id()) or {}
+    def _link(self, doc: dict[str, Any], path: str) -> str | None:
         base = academy_frontend_url(
             frontend_url=self._frontend_url, academy_slug=str(doc.get("slug") or "") or None
         )
         return f"{base}{path}" if base else None
 
     async def _send(
-        self, parent_user_id: str, *, subject: str, inner_html: str, category: EmailCategory
-    ) -> bool:
+        self,
+        doc: dict[str, Any],
+        parent_user_id: str,
+        *,
+        subject: str,
+        inner_html: str,
+        category: EmailCategory,
+    ) -> SendResult:
         recipient = await self._resolve_parent(parent_user_id)
         if recipient is None or not recipient.email:
             logger.info("trial_nudge_no_recipient", extra={"parent_id": parent_user_id})
-            return True  # nothing a retry could fix
-        doc = await self._academies.find_by_id(current_academy_id()) or {}
+            return "skipped"
         identity = resolve_sender(doc)
         outcome = await self._sender.send(
             recipient=recipient,
@@ -255,13 +279,15 @@ class TrialNudgeEmailAdapter:
             reply_to=identity.reply_to,
             sender_name=identity.sender_name,
         )
-        if outcome.ok or outcome.suppressed:
-            return True
+        if outcome.ok:
+            return "sent"
+        if outcome.suppressed:
+            return "skipped"
         logger.warning(
             "trial_nudge_send_failed",
             extra={"parent_id": parent_user_id, "reason": outcome.failed_reason},
         )
-        return False
+        return "failed"
 
     async def _resolve_parent(self, parent_id: str) -> ResolvedRecipient | None:
         resolved = await self._audiences.resolve_selected_audience(

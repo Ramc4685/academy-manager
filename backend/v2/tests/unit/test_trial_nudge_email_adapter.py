@@ -124,7 +124,7 @@ async def test_reminder_names_child_class_local_time_and_place() -> None:
     local_start = datetime(2026, 11, 5, 9, 30, tzinfo=ZoneInfo("America/Chicago"))
 
     with tenant_scope(ACADEMY_ID):
-        assert await adapter.trial_reminder(trial=_trial(), local_start=local_start) is True
+        assert await adapter.trial_reminder(trial=_trial(), local_start=local_start) == "sent"
 
     (call,) = sender.calls
     assert call["recipient"].user_id == "parent-1"
@@ -150,7 +150,7 @@ async def test_reminder_uses_the_rostered_students_name() -> None:
 async def test_no_show_is_a_campaign_with_a_link_to_request_again() -> None:
     adapter, sender = _adapter()
     with tenant_scope(ACADEMY_ID):
-        assert await adapter.trial_no_show(trial=_trial(status="completed")) is True
+        assert await adapter.trial_no_show(trial=_trial(status="completed")) == "sent"
     (call,) = sender.calls
     assert call["category"] is EmailCategory.CAMPAIGN
     assert "We missed" in call["subject"]
@@ -172,15 +172,20 @@ async def test_checkout_recovery_links_back_to_the_wizard() -> None:
         updated_at=datetime(2026, 11, 2, tzinfo=UTC),
     )
     with tenant_scope(ACADEMY_ID):
-        assert await adapter.checkout_recovery(application=application) is True
+        assert await adapter.checkout_recovery(application=application) == "sent"
     (call,) = sender.calls
     assert call["subject"] == "Finish Leo's registration"
     assert call["category"] is EmailCategory.CAMPAIGN
     assert "Juniors Monday" in call["body"]
-    assert 'href="https://floodlit.courtmastr.com/parent/onboarding"' in call["body"]
+    # Neither state can be resumed, so the link says start again, not resume.
+    assert (
+        'href="https://floodlit.courtmastr.com/parent/onboarding">Start the registration again</a>'
+        in call["body"]
+    )
+    assert "where you left off" not in call["body"]
 
 
-async def test_provider_failure_asks_for_a_retry_but_suppression_does_not() -> None:
+async def test_provider_failure_is_retried_but_suppression_is_skipped() -> None:
     failed, failed_sender = _adapter(
         _Sender(SendOutcome(ok=False, provider_message_id=None, failed_reason="boom"))
     )
@@ -193,13 +198,21 @@ async def test_provider_failure_asks_for_a_retry_but_suppression_does_not() -> N
     )
     start = datetime(2026, 11, 5, 9, tzinfo=UTC)
     with tenant_scope(ACADEMY_ID):
-        assert await failed.trial_reminder(trial=_trial(), local_start=start) is False
-        assert await suppressed.trial_reminder(trial=_trial(), local_start=start) is True
+        assert await failed.trial_reminder(trial=_trial(), local_start=start) == "failed"
+        assert await suppressed.trial_reminder(trial=_trial(), local_start=start) == "skipped"
     assert len(failed_sender.calls) == 1
 
 
-async def test_a_parent_without_an_address_is_final_not_retried() -> None:
+async def test_a_parent_without_an_address_is_skipped_not_retried() -> None:
     adapter, sender = _adapter(recipients={})
     with tenant_scope(ACADEMY_ID):
-        assert await adapter.trial_no_show(trial=_trial(status="completed")) is True
+        assert await adapter.trial_no_show(trial=_trial(status="completed")) == "skipped"
     assert sender.calls == []
+
+
+async def test_a_nameless_prospective_child_reads_naturally_mid_sentence() -> None:
+    adapter, sender = _adapter()
+    with tenant_scope(ACADEMY_ID):
+        await adapter.trial_no_show(trial=_trial(status="completed", prospective_child_name=" "))
+    assert sender.calls[0]["subject"] == "We missed your child at the trial"
+    assert "racquet" not in sender.calls[0]["body"]

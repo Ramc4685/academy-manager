@@ -1,6 +1,6 @@
 """Abandoned-checkout recovery (AI strategy Phase 1 #3): one email per
-expired or abandoned application, only for the parent's latest one, never
-twice."""
+expired checkout or expired draft, only for the parent's latest application,
+never twice."""
 
 from __future__ import annotations
 
@@ -80,20 +80,22 @@ class FakeSendClaimRepository:
             return
         row["status"] = "sent"
 
-    async def mark_failed(self, academy_id: str, send_id: str, reason: str) -> None:
+    async def mark_failed(
+        self, academy_id: str, send_id: str, reason: str, *, retryable: bool = True
+    ) -> None:
         row = self.rows.get(send_id)
         if row is None or row["key"][0] != academy_id:
             return
-        row["status"] = "failed"
+        row["status"] = "failed" if retryable else "final"
 
 
 class FakeNotifier:
     def __init__(self) -> None:
         self.sent: list[str] = []
 
-    async def checkout_recovery(self, *, application: Application) -> bool:
+    async def checkout_recovery(self, *, application: Application) -> str:
         self.sent.append(application.application_id)
-        return True
+        return "sent"
 
 
 class FakeSwitch:
@@ -113,22 +115,27 @@ def _job(applications, *, send_repo=None, notifier=None, switch=None):
     )
 
 
-async def test_expired_and_abandoned_applications_get_one_notice_each() -> None:
+async def test_expired_checkouts_and_expired_drafts_get_one_notice_each() -> None:
     notifier = FakeNotifier()
     send_repo = FakeSendClaimRepository()
     job = _job(
         [
             _application("expired", status="CHECKOUT_EXPIRED", parent="p-1"),
-            _application("abandoned", status="ABANDONED", parent="p-2"),
-            _application("pending", status="PENDING_APPROVAL", parent="p-3"),
-            _application("draft", status="DRAFT", parent="p-4"),
+            # Created 8 days ago: past the 7-day draft TTL, never checked out.
+            _application("stale-draft", status="DRAFT", parent="p-2"),
+            # A live draft (inside its TTL) is still being filled in.
+            _application(
+                "live-draft", status="DRAFT", parent="p-3", created_at=NOW - timedelta(days=2)
+            ),
+            _application("pending", status="PENDING_APPROVAL", parent="p-4"),
+            _application("abandoned", status="ABANDONED", parent="p-5"),
         ],
         send_repo=send_repo,
         notifier=notifier,
     )
 
     assert await job.execute(academy_id=ACADEMY_ID, local_now=NOW) == 2
-    assert sorted(notifier.sent) == ["abandoned", "expired"]
+    assert sorted(notifier.sent) == ["expired", "stale-draft"]
     assert all(row["status"] == "sent" for row in send_repo.rows.values())
 
     # Second run: the claims are held, nothing goes out.
@@ -140,10 +147,10 @@ async def test_only_the_parents_latest_application_is_recovered() -> None:
     notifier = FakeNotifier()
     old = _application(
         "old",
-        status="ABANDONED",
+        status="CHECKOUT_EXPIRED",
         parent="p-1",
         created_at=NOW - timedelta(days=10),
-        updated_at=NOW - timedelta(hours=1),  # stamped ABANDONED when the parent came back
+        updated_at=NOW - timedelta(hours=1),
     )
     fresh_draft = _application(
         "fresh", status="DRAFT", parent="p-1", created_at=NOW - timedelta(hours=1)

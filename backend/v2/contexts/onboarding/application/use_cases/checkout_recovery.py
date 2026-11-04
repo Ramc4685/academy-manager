@@ -1,15 +1,21 @@
 """Abandoned-checkout recovery (AI strategy Phase 1, item 3): templated.
 
 Daily, academy-local job (``send_checkout_recovery_notices``, 10:10 local).
-A registration application in ``CHECKOUT_EXPIRED`` (Stripe Checkout lapsed)
-or ``ABANDONED`` (the 7-day draft TTL passed) gets ONE email inviting the
-family back to finish, claimed per application on ``trial_nudge_sends``.
+A registration application the family walked away from gets ONE email
+inviting them back, claimed per application on ``trial_nudge_sends``:
 
-Only the parent's latest application qualifies: ``ABANDONED`` is stamped
-when the parent returns and starts over (``StartApplication``), so a family
-with a newer application has already come back and must not be nudged about
-the old one. Applications stamped longer ago than ``RECOVERY_LOOKBACK`` are
-left alone, so switching the job on never mails the whole history.
+* ``CHECKOUT_EXPIRED``: Stripe Checkout lapsed after the parent reached it;
+* a ``DRAFT`` past its 7-day TTL (``Application.is_expired``): the wizard was
+  started and never finished. (``ABANDONED`` is not a candidate: it is
+  stamped only by ``StartApplication`` at the moment the parent comes back
+  and a newer application is minted, so it is never the parent's latest.)
+
+Only the parent's latest application qualifies, so a family that has since
+started over or registered is never nudged about the old one. Neither state
+can be resumed (``StartApplication`` retires it and mints a fresh draft), so
+the email says "start again", not "pick up where you left off". Applications
+touched longer ago than ``RECOVERY_LOOKBACK`` are left alone, so switching
+the job on never mails the whole history.
 
 Respects ``notifications.trial_nudges_enabled`` like the trial nudges.
 """
@@ -21,10 +27,10 @@ from functools import partial
 from typing import Protocol
 
 from backend.v2.contexts.onboarding.domain.models import Application
-from backend.v2.shared.comms.claimed_send import SendClaimRepository, send_once
+from backend.v2.shared.comms.claimed_send import SendClaimRepository, SendResult, send_once
 from backend.v2.shared.time import ensure_utc
 
-RECOVERABLE_STATUSES: tuple[str, ...] = ("CHECKOUT_EXPIRED", "ABANDONED")
+RECOVERABLE_STATUSES: tuple[str, ...] = ("CHECKOUT_EXPIRED", "DRAFT")
 RECOVERY_LOOKBACK = timedelta(days=14)
 CHECKOUT_RECOVERY_KEY = "checkout_recovery"
 
@@ -40,9 +46,13 @@ class CheckoutRecoverySwitch(Protocol):
 
 
 class CheckoutRecoveryNotifier(Protocol):
-    """True when nothing is left to do (sent, or opted out); False to retry."""
+    async def checkout_recovery(self, *, application: Application) -> SendResult: ...
 
-    async def checkout_recovery(self, *, application: Application) -> bool: ...
+
+def is_recoverable(application: Application, now: datetime) -> bool:
+    if application.status == "CHECKOUT_EXPIRED":
+        return True
+    return application.status == "DRAFT" and application.is_expired(now)
 
 
 class SendCheckoutRecoveryNotices:
@@ -65,6 +75,8 @@ class SendCheckoutRecoveryNotices:
             return 0
         sent = 0
         for application in await self._applications.list_by_status(list(RECOVERABLE_STATUSES)):
+            if not is_recoverable(application, local_now):
+                continue
             if ensure_utc(application.updated_at) < local_now - RECOVERY_LOOKBACK:
                 continue
             latest = await self._applications.latest_for_parent(application.parent_user_id)
