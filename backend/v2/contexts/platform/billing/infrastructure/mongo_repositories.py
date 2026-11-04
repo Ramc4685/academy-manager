@@ -29,6 +29,7 @@ class MongoPlatformPlanRepository:
 
     async def save(self, plan: PlatformPlan) -> None:
         doc = plan.model_dump(mode="python")
+        doc["features"] = sorted(plan.features)  # BSON has no set
         await self._collection.update_one(
             {"plan_id": plan.plan_id},
             {"$set": doc},
