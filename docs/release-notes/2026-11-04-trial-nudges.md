@@ -1,6 +1,6 @@
 # trial-nudges
 
-PR: #PRNUM
+PR: #1126
 
 ## What changed
 Three templated family emails now go out from the daily academy-local scheduler. A trial reminder goes the afternoon before an approved trial (16:00 local). It is claimed per assigned date, so a trial moved onto a new date after a cancellation is reminded again, and a cancelled date is skipped. A "we missed you" follow-up goes a few days after a trial marked "Didn't come" (10:00 local), unless the family has since booked another trial or enrolled. A "finish your registration" email goes for an expired Stripe checkout or a registration draft past its 7-day TTL (10:10 local), only for the parent's latest application and only if it was touched in the last 14 days. Each email is sent at most once per trial or application. A provider failure is retried on a later tick (bounded attempts); a parent with no address or who has opted out is skipped for good. The emails are under the academy's brand and go through the gated send path, so bounce suppression and unsubscribe preferences apply. All three follow a new Settings > Notifications switch, "Trial nudges" (`notifications.trial_nudges_enabled`), which is on by default and works like win-back.
