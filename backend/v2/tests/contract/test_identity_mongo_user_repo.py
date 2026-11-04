@@ -1480,3 +1480,50 @@ async def test_an_academy_login_invite_cannot_restore_a_pending_self_deletion(
     assert row["status"] == "removed" and row["status_before_deletion"] == "active"
     assert "login_invite_pending" not in row
     assert await db["audit_logs"].count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["parent_login", "student_login"])
+async def test_a_login_invite_is_refused_when_firebase_returns_a_pending_deletion_uid(
+    db, monkeypatch, door
+) -> None:
+    """Firebase matches by email, so it can return a uid no Mongo doc links to
+    this email. That uid's pending deletion must still block the invite."""
+    from backend.v2.contexts.identity.domain.errors import AccountDeletionPending
+
+    class _Firebase:
+        async def ensure_user(self, **kwargs):
+            return "fb-pending", False
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await db["account_deletion_requests"].insert_one(
+        {
+            "request_id": "r-10",
+            "user_id": "fb-pending",
+            "status": "scheduled",
+            "aliases": ["fb-pending"],
+            "academy_ids": ["academy-a"],
+        }
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    with pytest.raises(AccountDeletionPending):
+        if door == "parent_login":
+            await repo.ensure_parent_login(
+                parent_id="roster-new",
+                email="moved@example.com",
+                display_name="Moved Parent",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+        else:
+            await repo.ensure_student_login(
+                student_id="s-10",
+                email="moved@example.com",
+                display_name="Moved Student",
+                academy_id="academy-b",
+                actor_id="admin-1",
+            )
+
+    assert await db["academy_memberships"].count_documents({"user_id": "fb-pending"}) == 0
+    assert await db["users"].count_documents({"firebase_uid": "fb-pending"}) == 0

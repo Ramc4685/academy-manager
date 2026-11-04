@@ -180,7 +180,8 @@ class MongoAccountDeletionStore:
             [
                 {
                     "$set": {
-                        "status_before_deletion": "$status",
+                        # A legacy row with no status counts as active.
+                        "status_before_deletion": {"$ifNull": ["$status", "active"]},
                         "status": "removed",
                         "updated_at": now,
                     }

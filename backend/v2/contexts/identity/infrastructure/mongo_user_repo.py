@@ -555,6 +555,8 @@ class MongoUserRepository:
             )
         except Exception as exc:
             raise UserCreateFailed("could not provision Firebase parent login") from exc
+        # Firebase matches by email, so it can hand back a uid the check above never saw.
+        await self._assert_no_pending_deletion((firebase_uid,))
 
         try:
             if existing is None:
@@ -711,12 +713,14 @@ class MongoUserRepository:
         )
         if existing is not None:
             await self._require_member_of_academy(existing, academy_id=academy_id)
-            # The membership upsert below sets status 'active'.
-            await self._assert_no_pending_deletion(self._membership_aliases(existing))
         uid = (
             str(existing.get("firebase_uid") or existing.get("auth_uid") or existing.get("user_id"))
             if existing is not None
             else f"student-{student_id}"
+        )
+        # The membership upsert below sets status 'active'.
+        await self._assert_no_pending_deletion(
+            (uid, *(self._membership_aliases(existing) if existing is not None else ()))
         )
 
         try:
@@ -727,6 +731,8 @@ class MongoUserRepository:
             )
         except Exception as exc:
             raise UserCreateFailed("could not provision Firebase student login") from exc
+        # Firebase matches by email, so it can hand back a uid the check above never saw.
+        await self._assert_no_pending_deletion((firebase_uid,))
 
         try:
             if existing is None:
