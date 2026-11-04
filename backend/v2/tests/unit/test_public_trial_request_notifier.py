@@ -58,10 +58,16 @@ class _Academies:
 
 class _AlreadyAcknowledged:
     """The family acknowledgement is covered by test_inquiry_acknowledgement.py;
-    here its claim is already taken, so only the owner alert runs."""
+    here its inbox claim is already taken, so only the owner alert runs."""
 
-    async def acknowledged_since(self, email: str, *, since: datetime) -> bool:
+    async def count_since(self, since: datetime) -> int:
+        return 0
+
+    async def try_claim(self, mailbox: str, *, at: datetime) -> bool:
         return False
+
+    async def release(self, mailbox: str, *, at: datetime) -> None:
+        raise AssertionError("nothing to release: the claim was never taken")
 
     async def try_claim_acknowledgement(self, contact_id: str, *, at: datetime) -> bool:
         return False
@@ -100,6 +106,7 @@ def _adapter(
         audiences=audiences,
         sender=sender,
         contacts=_AlreadyAcknowledged(),
+        inboxes=_AlreadyAcknowledged(),
         prospects=ProspectEmailer(sender=sender, unsubscribe_links=UnsubscribeLinkBuilder()),
     )
     return adapter, sender, audiences, academies

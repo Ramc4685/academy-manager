@@ -106,14 +106,6 @@ class MongoCrmContactRepository(TenantScopedRepository):
         """Give a claim back after the email provably did not go out."""
         await self._update_one({"contact_id": contact_id}, {"$unset": {"acknowledged_at": ""}})
 
-    async def acknowledged_since(self, email: str, *, since: datetime) -> bool:
-        """Whether any contact with this (normalised) address was acknowledged
-        at or after ``since``. Served by ``crm_contacts_academy_email_lookup``."""
-        if not email:
-            return False
-        doc = await self._find_one({"email": email, "acknowledged_at": {"$gte": since}})
-        return doc is not None
-
     async def set_pipeline_override(
         self,
         contact_id: str,

@@ -2,7 +2,8 @@
 
 Template: trial vs lead wording, class named, footer and unsubscribe link,
 no submitter text in the body. Send path: one email per contact (the claim on
-the row), one per address per day, a provider failure gives the claim back,
+the row), one per inbox per day (``+tag`` and Gmail-dot spellings included),
+a per-academy hourly cap, a provider failure gives both claims back,
 nothing to an address that opted out, and the owner alert untouched by any.
 """
 
@@ -36,9 +37,16 @@ from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_re
     ProspectOptOutGate,
 )
 from backend.v2.contexts.communications.infrastructure.stub_send_port import StubEmailSendPort
-from backend.v2.contexts.crm.domain.models import ContactConsent, CrmContact
+from backend.v2.contexts.crm.domain.models import (
+    ContactConsent,
+    CrmContact,
+    canonical_mailbox,
+)
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
+)
+from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo import (
+    MongoInquiryAckThrottleRepository,
 )
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -53,6 +61,7 @@ DOC = {
 }
 _M0192 = importlib.import_module("backend.v2.migrations.0192_crm_contacts")
 _M0215 = importlib.import_module("backend.v2.migrations.0215_email_prospect_opt_outs")
+_M0217 = importlib.import_module("backend.v2.migrations.0217_crm_inquiry_ack_throttle")
 
 
 def _contact(**overrides: Any) -> CrmContact:
@@ -103,6 +112,7 @@ def db() -> Any:
     db = mongomock_motor.AsyncMongoMockClient()["inquiry-ack"]
     asyncio.run(_M0192.up(db))
     asyncio.run(_M0215.up(db))
+    asyncio.run(_M0217.up(db))
     return db
 
 
@@ -122,6 +132,7 @@ def _adapter(
         audiences=_Audiences(),
         sender=sender,
         contacts=MongoCrmContactRepository(db),
+        inboxes=MongoInquiryAckThrottleRepository(db),
         prospects=ProspectEmailer(
             sender=sender,
             unsubscribe_links=UnsubscribeLinkBuilder(
@@ -140,6 +151,27 @@ async def _file(db: Any, contact: CrmContact) -> CrmContact:
 
 def _prospect_sends(stub: StubEmailSendPort) -> list[dict[str, Any]]:
     return [s for s in stub.sent if s["user_id"].startswith("crm_contact:")]
+
+
+# --- canonical inbox --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "inbox"),
+    [
+        ("Jamie@Example.test", "jamie@example.test"),
+        ("jamie+promo@example.test", "jamie@example.test"),
+        ("j.amie@example.test", "j.amie@example.test"),  # dots matter off Gmail
+        ("V.I.C.T.I.M+1@Gmail.com", "victim@gmail.com"),
+        ("vic.tim@googlemail.com", "victim@gmail.com"),
+        ("  victim@gmail.com ", "victim@gmail.com"),
+        ("a+b+c@x.test", "a@x.test"),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_canonical_mailbox_folds_spellings_of_one_inbox(raw: str | None, inbox: str | None) -> None:
+    assert canonical_mailbox(raw) == inbox
 
 
 # --- template -----------------------------------------------------------------
@@ -271,6 +303,32 @@ def test_a_second_contact_for_the_same_address_within_a_day_is_not_acknowledged(
     assert asyncio.run(_row("contact-2")).get("acknowledged_at") is None
 
 
+def test_plus_tag_and_gmail_dot_spellings_share_the_one_daily_acknowledgement(db: Any) -> None:
+    adapter, stub = _adapter(db)
+    spellings = ["victim@gmail.com", "victim+1@gmail.com", "v.i.c.t.i.m@googlemail.com"]
+    for n, email in enumerate(spellings):
+        contact = asyncio.run(_file(db, _contact(contact_id=f"c{n}", email=email)))
+        asyncio.run(
+            adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None)
+        )
+    assert [s["email"] for s in _prospect_sends(stub)] == ["victim@gmail.com"]
+
+
+def test_the_academy_hourly_cap_stops_acknowledgements_to_fresh_inboxes(
+    db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("backend.v2.composition.public_trial_requests._ACK_ACADEMY_HOURLY_CAP", 2)
+    adapter, stub = _adapter(db)
+    for n in range(3):
+        contact = asyncio.run(_file(db, _contact(contact_id=f"c{n}", email=f"p{n}@example.test")))
+        asyncio.run(
+            adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None)
+        )
+    assert [s["email"] for s in _prospect_sends(stub)] == ["p0@example.test", "p1@example.test"]
+    # The owner still hears about every lead.
+    assert len([s for s in stub.sent if s["user_id"] == OWNER.user_id]) == 3
+
+
 def test_a_provider_failure_gives_the_claim_back_and_the_owner_is_still_alerted(db: Any) -> None:
     adapter, stub = _adapter(db, prospects_fail=True)
     contact = asyncio.run(_file(db, _contact()))
@@ -278,10 +336,13 @@ def test_a_provider_failure_gives_the_claim_back_and_the_owner_is_still_alerted(
 
     assert [s["email"] for s in stub.sent] == [OWNER.email]
 
-    async def _row() -> dict[str, Any]:
-        return await db["crm_contacts"].find_one({"contact_id": contact.contact_id})
+    async def _rows() -> tuple[dict[str, Any], int]:
+        row = await db["crm_contacts"].find_one({"contact_id": contact.contact_id})
+        return row, await db["crm_inquiry_ack_throttle"].count_documents({})
 
-    assert "acknowledged_at" not in asyncio.run(_row())
+    row, inbox_claims = asyncio.run(_rows())
+    assert "acknowledged_at" not in row
+    assert inbox_claims == 0
 
 
 def test_an_opted_out_address_gets_nothing_but_the_owner_is_still_alerted(db: Any) -> None:

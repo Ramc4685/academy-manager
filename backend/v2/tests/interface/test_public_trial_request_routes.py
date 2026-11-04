@@ -31,11 +31,13 @@ LAKESIDE_HOST = "lakeside-academy.courtmastr.test"
 OWNER_EMAIL = "owner.riverside@example.test"
 _M0192 = importlib.import_module("backend.v2.migrations.0192_crm_contacts")
 _M0215 = importlib.import_module("backend.v2.migrations.0215_email_prospect_opt_outs")
+_M0217 = importlib.import_module("backend.v2.migrations.0217_crm_inquiry_ack_throttle")
 
 
 async def _seed_all(db: Any, *, published: bool, owner: bool) -> None:
     await _M0192.up(db)
     await _M0215.up(db)
+    await _M0217.up(db)
     await seed(db, published=published)
     if owner:
         await db["academy_memberships"].insert_one(

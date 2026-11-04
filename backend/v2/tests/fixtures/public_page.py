@@ -44,6 +44,9 @@ from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
 )
+from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo import (
+    MongoInquiryAckThrottleRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.public_class_choice import (
     ResolvePublicClassChoice,
 )
@@ -321,6 +324,7 @@ def compose_trial_requests_for_test(db: Any, stub: StubEmailSendPort) -> PublicT
             audiences=MongoAudienceResolver(db=db),
             sender=sender,
             contacts=contacts,
+            inboxes=MongoInquiryAckThrottleRepository(db),
             prospects=ProspectEmailer(
                 sender=sender,
                 unsubscribe_links=UnsubscribeLinkBuilder(
