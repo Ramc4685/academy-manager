@@ -52,6 +52,12 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # paths-filter lists PR files through the API, which since 2026-11-04
+    # refuses a token without pull-requests: read ("Resource not accessible
+    # by integration"). Job permissions replace the workflow's, so keep contents.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
