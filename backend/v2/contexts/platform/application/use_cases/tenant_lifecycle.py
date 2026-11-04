@@ -204,6 +204,13 @@ class TenantLifecycleService:
         tenant = await self._tenants.get_by_id(academy_id)
         if tenant is None:
             raise TenantNotFound(f"tenant not found: {academy_id}")
+        if tenant.referral_code is None:
+            # Generated once, on first read, so tenants created before the
+            # field existed get one without a migration. Written as a targeted
+            # update, not save(): this is a read path and must not clobber a
+            # concurrent write to status, plan or agreement fields.
+            await self._tenants.set_referral_code_if_absent(tenant.academy_id, tenant.slug)
+            tenant = tenant.model_copy(update={"referral_code": tenant.slug})
         return tenant
 
     async def list_tenants(self) -> list[Tenant]:

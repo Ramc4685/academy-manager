@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
@@ -19,6 +20,7 @@ from backend.v2.contexts.platform.application.use_cases.tenant_lifecycle import 
     UpdateTenantPlanCommand,
 )
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+from backend.v2.shared.config.settings import get_settings
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -74,6 +76,10 @@ class TenantLifecycleResponse(BaseModel):
     platform_agreement_version: str | None = None
     platform_agreement_accepted_at: datetime | None = None
     platform_agreement_accepted_by: str | None = None
+    #: Platform landing page with ``?ref=<referral_code>``; nothing reads
+    #: ``ref`` yet. Null until the tenant has been read once (lazy code) or
+    #: when the deployment has no ``frontend_url``.
+    referral_url: str | None = None
 
 
 class TenantHealthResponse(BaseModel):
@@ -137,6 +143,13 @@ def get_tenant_lifecycle(request: Request) -> TenantLifecycleService:
     raise HTTPException(status_code=503, detail="Tenant lifecycle is not configured")
 
 
+def _referral_url(referral_code: str | None) -> str | None:
+    base = (get_settings().frontend_url or "").rstrip("/")
+    if not base or not referral_code:
+        return None
+    return f"{base}/?{urlencode({'ref': referral_code})}"
+
+
 def _tenant_response(tenant) -> TenantLifecycleResponse:
     health = tenant.health()
     return TenantLifecycleResponse(
@@ -155,6 +168,7 @@ def _tenant_response(tenant) -> TenantLifecycleResponse:
         platform_agreement_version=tenant.platform_agreement_version,
         platform_agreement_accepted_at=tenant.platform_agreement_accepted_at,
         platform_agreement_accepted_by=tenant.platform_agreement_accepted_by,
+        referral_url=_referral_url(tenant.referral_code),
     )
 
 

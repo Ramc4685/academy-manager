@@ -66,6 +66,10 @@ class Tenant(BaseModel, frozen=True):
     platform_agreement_version: str | None = None
     platform_agreement_accepted_at: datetime | None = None
     platform_agreement_accepted_by: str | None = None
+    #: Short stable code behind the academy's referral link (AI strategy Phase 1).
+    #: Derived from the slug on first read and then kept, so a later slug change
+    #: does not break links already shared. Nothing consumes it yet.
+    referral_code: str | None = None
 
     @field_validator(
         "display_name", "slug", "primary_domain", "plan_code", "created_by", "updated_by"

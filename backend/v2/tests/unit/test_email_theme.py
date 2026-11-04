@@ -24,6 +24,19 @@ def test_shell_escapes_and_wraps() -> None:
     assert t.FONT_STACK in out
 
 
+def test_shell_footer_ends_with_powered_by_courtmastr_link() -> None:
+    # Every family email that uses the shell carries the platform credit,
+    # after the academy's own contact details (AI strategy Phase 1).
+    out = t.shell(brand=t.EmailBrand(academy_name="Acme", contact_phone="555"), inner_html="")
+    assert (
+        "Sent by Acme<br />555<br />"
+        f'<a href="{t.PLATFORM_SITE_URL}" style="color:{t.MUTED};">Powered by CourtMastr</a></p>'
+        in out
+    )
+    assert t.PLATFORM_SITE_URL.startswith("https://")
+    assert "Powered by CourtMastr (https://academy.courtmastr.com)" in t.html_to_text(out)
+
+
 def test_shell_uses_logo_when_present() -> None:
     brand = t.EmailBrand(academy_name="Acme", logo_url='https://cdn.test/logo.png" onerror=x')
     out = t.shell(brand=brand, inner_html="")
