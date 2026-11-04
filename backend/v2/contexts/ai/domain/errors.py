@@ -26,3 +26,10 @@ class AiProviderError(DomainError):
 
     code = "Ai.ProviderError"
     status_code = 502
+
+
+class AiAcademyNotFound(DomainError):
+    """Platform admin asked for the AI usage of an unknown academy."""
+
+    code = "Ai.AcademyNotFound"
+    status_code = 404

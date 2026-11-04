@@ -23,3 +23,9 @@ class MonthlyCapSource(Protocol):
     """The academy in scope's monthly AI call cap."""
 
     async def monthly_cap(self) -> int: ...
+
+
+class EntitlementSource(Protocol):
+    """Whether the academy in scope holds a plan feature (``"ai"``)."""
+
+    async def has_feature(self, feature: str) -> bool: ...

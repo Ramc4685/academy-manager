@@ -930,6 +930,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.ai import compose_ai
 
     app.state.ai = compose_ai(db, settings)
+    # Phase 2 slice A3: the usage meter over ai_calls and the plan's cap.
+    from backend.v2.composition.ai_usage import compose_ai_usage
+
+    app.state.ai_usage = compose_ai_usage(db, app.state.platform_billing.has_feature)
     from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
 
     app.state.parent_evening_wins = compose_send_parent_evening_wins(db)
