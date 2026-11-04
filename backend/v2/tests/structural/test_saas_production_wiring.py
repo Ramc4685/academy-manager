@@ -179,3 +179,12 @@ def test_registered_business_routes_are_v2_only() -> None:
     assert all(path.startswith("/api/v2/") or path == "/api/v2/me" for path in business_paths)
     assert "/api/health" not in all_route_paths
     assert "/api/webhook/stripe" not in all_route_paths
+
+
+def test_v2_main_attaches_lead_conversion_to_registration_approval() -> None:
+    """AI strategy Phase 1 #1: without this attach, approval never marks the
+    crm inquiry ``enrolled`` and the conversion report silently reads 0%."""
+    source = (REPO_ROOT / "backend/v2/main.py").read_text(encoding="utf-8")
+
+    assert "compose_mark_lead_enrolled" in source
+    assert "admin_registration_review.set_lead_conversion(" in source

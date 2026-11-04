@@ -1407,6 +1407,74 @@ async def test_approve_idempotent_replay_does_not_call_trial_conversion_again() 
     assert trial_conversion.calls == [("parent-1", "app-1")]
 
 
+class _FakeLeadConversion:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None, str]] = []
+
+    async def execute(
+        self, *, parent_user_id: str, parent_email: str | None, application_id: str
+    ) -> int:
+        self.calls.append((parent_user_id, parent_email, application_id))
+        return 1
+
+
+class _FailingLeadConversion:
+    async def execute(
+        self, *, parent_user_id: str, parent_email: str | None, application_id: str
+    ) -> int:
+        raise RuntimeError("crm unavailable")
+
+
+@pytest.mark.asyncio
+async def test_approve_calls_lead_conversion_hook_with_parent_email_once() -> None:
+    app = _application(student_id="student-1")
+    apps = InMemoryApplications(app)
+    lead_conversion = _FakeLeadConversion()
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+    review.set_lead_conversion(lead_conversion)
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+    # The idempotent replay must not re-run the crm write.
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert lead_conversion.calls == [("parent-1", str(app.parent_email), "app-1")]
+
+
+@pytest.mark.asyncio
+async def test_approve_succeeds_when_optional_lead_conversion_fails() -> None:
+    app = _application(student_id="student-1")
+    apps = InMemoryApplications(app)
+    trial_conversion = _FakeTrialConversion()
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        trial_conversion=trial_conversion,
+        lead_conversion=_FailingLeadConversion(),
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "APPROVED"
+    assert apps.saved[-1].status == "APPROVED"
+    # The trial link still ran: each hook fails on its own.
+    assert trial_conversion.calls == [("parent-1", "app-1")]
+
+
 class RecordingRefunds:
     """Mirrors the real adapter: it records the attempt either way, but only
     reports ``True`` when money actually went back. ``issued=False`` models the

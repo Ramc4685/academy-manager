@@ -124,6 +124,28 @@ class MongoCrmContactRepository(TenantScopedRepository):
         )
         return self._to_domain(doc) if doc else None
 
+    async def mark_enrolled_by_email(
+        self, email: str, *, parent_user_id: str, updated_at: datetime
+    ) -> int:
+        """Lead conversion on registration approval (``MarkLeadEnrolled``).
+
+        Equality on the normalised email inside the tenant (served by
+        ``crm_contacts_academy_email_lookup``, 0198); rows already
+        ``enrolled`` are left as they are. Returns the number of rows changed.
+        """
+        result = await self.collection.update_many(
+            self._scoped({"email": email, "pipeline_status": {"$ne": "enrolled"}}),
+            {
+                "$set": {
+                    "pipeline_status": "enrolled",
+                    "converted_parent_id": parent_user_id,
+                    "linked_family_id": parent_user_id,
+                    "updated_at": updated_at,
+                }
+            },
+        )
+        return int(result.modified_count)
+
     async def find_by_dedupe_key(self, dedupe_key: str) -> CrmContact | None:
         # Equality on the partial index key: served by
         # crm_contacts_academy_dedupe_unique (partial filter {"$gt": ""}).

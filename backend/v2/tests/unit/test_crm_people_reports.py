@@ -22,6 +22,7 @@ from backend.v2.contexts.crm.application.people_reports import (
     age_family_money,
     summarize_inquiry_conversion,
 )
+from backend.v2.contexts.crm.application.use_cases.lead_conversion import MarkLeadEnrolled
 from backend.v2.contexts.crm.domain.family_index import FamilyIndex
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
 
@@ -203,3 +204,77 @@ async def test_contacts_are_counted_for_the_academy_the_run_was_asked_for() -> N
     assert contacts.academies == ["acad-a", "acad-b"]
     with pytest.raises(TenantContextUnset):
         current_academy_id()
+
+
+class _EnrollableContacts:
+    """Mirrors the Mongo repo: one row per inquiry, keyed by the tenant."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, object]] = []
+
+    async def mark_enrolled_by_email(
+        self, email: str, *, parent_user_id: str, updated_at: datetime
+    ) -> int:
+        changed = 0
+        for row in self.rows:
+            if (
+                row["academy_id"] == current_academy_id()
+                and row["email"] == email
+                and row["status"] != "enrolled"
+            ):
+                row.update(status="enrolled", converted_parent_id=parent_user_id)
+                changed += 1
+        return changed
+
+    async def count_by_source_and_status(
+        self, *, created_from: datetime, created_before: datetime
+    ) -> list[tuple[str, str, int]]:
+        counts: dict[tuple[str, str], int] = {}
+        for row in self.rows:
+            if row["academy_id"] != current_academy_id():
+                continue
+            key = (str(row["source"]), str(row["status"]))
+            counts[key] = counts.get(key, 0) + 1
+        return [(source, status, n) for (source, status), n in counts.items()]
+
+
+async def test_a_converted_lead_counts_as_enrolled_in_the_report() -> None:
+    contacts = _EnrollableContacts()
+    contacts.rows = [
+        {
+            "academy_id": "acad-a",
+            "email": "parent@example.com",
+            "source": "website",
+            "status": "lead",
+        },
+        {
+            "academy_id": "acad-a",
+            "email": "other@example.com",
+            "source": "website",
+            "status": "lead",
+        },
+        {
+            "academy_id": "acad-b",
+            "email": "parent@example.com",
+            "source": "website",
+            "status": "lead",
+        },
+    ]
+    report = InquiryConversionReport(
+        contacts=contacts, academy_timezone=await _tz("UTC"), clock=lambda: NOW
+    )
+    before = {r.source: r for r in (await report.run("acad-a")).sources}["website"]
+    assert (before.enrolled, before.conversion_rate) == (0, 0.0)
+
+    with tenant_scope("acad-a"):
+        changed = await MarkLeadEnrolled(contacts, clock=lambda: NOW).execute(
+            parent_user_id="parent-1", parent_email="Parent@Example.com", application_id="app-1"
+        )
+    assert changed == 1
+
+    after = {r.source: r for r in (await report.run("acad-a")).sources}["website"]
+    assert (after.inquiries, after.lead, after.enrolled, after.conversion_rate) == (2, 1, 1, 0.5)
+    assert contacts.rows[0]["converted_parent_id"] == "parent-1"
+    # The other academy's lead with the same email is still a lead.
+    other = {r.source: r for r in (await report.run("acad-b")).sources}["website"]
+    assert (other.lead, other.enrolled) == (1, 0)
