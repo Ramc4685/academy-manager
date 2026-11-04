@@ -1,4 +1,4 @@
-"""``trial_nudge_sends`` on a real ``mongod`` (migration 0216 applied by the
+"""``trial_nudge_sends`` on a real ``mongod`` (migration 0218 applied by the
 ``real_db`` fixture): one claim per ``(academy, subject, nudge key)``, the
 unique index refuses a duplicate row, and a mark from another academy leaves
 the row untouched. Skipped when no ``mongod`` is reachable."""

@@ -59,7 +59,7 @@ async function stub(page: Page): Promise<unknown[]> {
       const body = request.postDataJSON() as Record<string, unknown>;
       patches.push(body);
       notifications = { ...notifications, ...body };
-      return fulfillJson(route, { win_back_enabled: true, ...notifications });
+      return fulfillJson(route, { win_back_enabled: true, trial_nudges_enabled: true, ...notifications });
     }
     return route.fallback();
   });
@@ -81,6 +81,20 @@ test.describe("admin notify win-back switch", () => {
     await page.getByRole("button", { name: "Save changes" }).click();
 
     await expect.poll(() => patches).toEqual([{ win_back_enabled: false }]);
+    await expect(toggle).not.toBeChecked();
+  });
+
+  test("trial nudges default on and save only that switch when turned off", async ({ page }) => {
+    const patches = await stub(page);
+    await page.goto("/admin/settings?panel=notifications");
+
+    const toggle = page.getByTestId("notify-trial-nudges-enabled");
+    await expect(toggle).toBeChecked();
+
+    await toggle.uncheck();
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    await expect.poll(() => patches).toEqual([{ trial_nudges_enabled: false }]);
     await expect(toggle).not.toBeChecked();
   });
 });

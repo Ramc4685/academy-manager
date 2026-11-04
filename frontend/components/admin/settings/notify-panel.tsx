@@ -34,6 +34,7 @@ export function normalize(
     parent_digest_hour: data?.parent_digest_hour ?? 6,
     // On unless the academy switched it off: the backend reads it the same way.
     win_back_enabled: data?.win_back_enabled ?? true,
+    trial_nudges_enabled: data?.trial_nudges_enabled ?? true,
   };
 }
 
@@ -100,6 +101,15 @@ export function NotifyPanel() {
             checked={form.win_back_enabled}
             onChange={(checked) =>
               setForm((prev) => ({ ...prev, win_back_enabled: checked }))
+            }
+          />
+          <Toggle
+            label="Trial nudges"
+            helper="Trial reminder the day before, a follow-up after a missed trial, and a reminder to finish an abandoned registration."
+            testId="notify-trial-nudges-enabled"
+            checked={form.trial_nudges_enabled}
+            onChange={(checked) =>
+              setForm((prev) => ({ ...prev, trial_nudges_enabled: checked }))
             }
           />
           <Toggle

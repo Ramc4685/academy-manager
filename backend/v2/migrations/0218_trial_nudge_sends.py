@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0216_trial_nudge_sends"
+version = "0218_trial_nudge_sends"
 
 
 async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]

@@ -1686,6 +1686,8 @@ export interface AdminNotificationsView {
   parent_digest_hour: number;
   /** Win-back emails 30/60/90 days after a student leaves. Absent = on. */
   win_back_enabled: boolean;
+  /** Trial reminder, no-show follow-up and checkout-recovery emails. Absent = on. */
+  trial_nudges_enabled: boolean;
 }
 
 export type UpdateAdminNotificationsRequest = Partial<AdminNotificationsView>;

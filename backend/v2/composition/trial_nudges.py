@@ -63,7 +63,7 @@ TRIAL_NUDGES_SWITCH_KEY = "trial_nudges_enabled"
 
 class MongoTrialNudgeSendRepository(TenantScopedRepository):
     """``trial_nudge_sends``, unique on ``(academy_id, subject_id, digest_date)``
-    (migration 0216). ``digest_date`` holds the nudge key: it is the field
+    (migration 0218). ``digest_date`` holds the nudge key: it is the field
     ``claim_digest_send`` matches on, and a nudge is per subject, not per day."""
 
     collection_name = "trial_nudge_sends"
