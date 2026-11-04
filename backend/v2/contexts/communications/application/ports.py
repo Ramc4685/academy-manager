@@ -32,6 +32,11 @@ from backend.v2.contexts.communications.domain.models import (
     SelectedRecipientsAudience,
     SessionAudience,
 )
+from backend.v2.contexts.communications.domain.push_device import (
+    PushDevice,
+    PushSendResult,
+    PushTokenMove,
+)
 from backend.v2.shared.comms.email_theme import EmailBrand
 
 
@@ -149,6 +154,55 @@ class AcademySlugLookup(Protocol):
     """
 
     async def slug_for(self, academy_id: str) -> str | None: ...
+
+
+class PushDeviceRepository(Protocol):
+    """FCM device registrations (mobile M2). One row per token, tenant-stamped."""
+
+    async def register(self, device: PushDevice) -> tuple[PushDevice, PushTokenMove | None]:
+        """Upsert by token for the tenant in scope.
+
+        A token already held by another user (or by this user in another
+        academy) moves to ``device.user_id``; ``created_at`` is kept from the
+        first registration. Returns the stored row, plus the move when the
+        token changed hands (``None`` for a new token or a re-registration).
+        """
+        ...
+
+    async def delete(self, *, user_id: str, token: str) -> None:
+        """Remove ``token`` only if ``user_id`` holds it in this academy; else no-op."""
+        ...
+
+    async def tokens_for_user(self, academy_id: str, user_id: str) -> list[str]:
+        """Tokens ``user_id`` holds in ``academy_id`` (explicit: send paths may be cron)."""
+        ...
+
+    async def delete_tokens(self, academy_id: str, tokens: Sequence[str]) -> None:
+        """Drop dead ``tokens``, only where they are still held in ``academy_id``."""
+        ...
+
+
+class PushTokenAudit(Protocol):
+    """Append an ``audit_logs`` row when a token moves between users or academies."""
+
+    async def record_token_moved(self, move: PushTokenMove) -> None: ...
+
+
+class PushSendPort(Protocol):
+    """Send one notification to a set of FCM tokens (mobile M3).
+
+    Adapters report tokens FCM rejects as unregistered/invalid in
+    ``dead_tokens``; they never delete anything themselves.
+    """
+
+    async def send(
+        self,
+        *,
+        tokens: Sequence[str],
+        title: str,
+        body: str,
+        data: Mapping[str, str],
+    ) -> PushSendResult: ...
 
 
 class EmailPreferenceRepository(Protocol):

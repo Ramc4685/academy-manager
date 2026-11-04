@@ -885,6 +885,26 @@ class RealStripeGateway(StripeGateway):
         except self._stripe.StripeError as exc:
             raise ValueError(f"Stripe customer lookup failed: {exc}") from exc
 
+    async def detach_customer_payment_methods(
+        self, stripe_customer_id: str, *, stripe_account: str | None = None
+    ) -> int:
+        def _detach() -> int:
+            on = _on_account(stripe_account)
+            try:
+                methods = self._stripe.Customer.list_payment_methods(
+                    stripe_customer_id, limit=100, **on
+                )
+            except self._stripe.InvalidRequestError as exc:
+                if getattr(exc, "code", None) == "resource_missing":
+                    return 0
+                raise
+            ids = [str(pm["id"]) for pm in methods.auto_paging_iter()]
+            for pm_id in ids:
+                self._stripe.PaymentMethod.detach(pm_id, **on)
+            return len(ids)
+
+        return await asyncio.to_thread(_detach)
+
     async def create_off_session_payment_intent(
         self,
         *,

@@ -9,6 +9,7 @@ import {
   type UpdateCoachProfileRequest,
 } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
+import { DeleteAccountSection } from "@/components/persona/delete-account-section";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 
@@ -180,6 +181,12 @@ export default function CoachProfilePage() {
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {!isLoading && !editing && (
+        <div className="mt-4">
+          <DeleteAccountSection />
         </div>
       )}
 

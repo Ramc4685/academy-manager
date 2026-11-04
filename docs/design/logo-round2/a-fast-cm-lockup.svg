@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1000 256">
+  <!-- exploration only: live <text> in a system font stands in for the outlined wordmark -->
+  <image href="a-fast-cm.svg" x="0" y="28" width="200" height="200"/>
+  <text x="236" y="166" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-weight="800" font-style="italic" font-size="104" letter-spacing="-3" fill="#0f172a">CourtMastr</text>
+</svg>

@@ -746,6 +746,13 @@ class StripeGateway(Protocol):
         card on ``stripe_account`` (platform when None), or None."""
         ...
 
+    async def detach_customer_payment_methods(
+        self, stripe_customer_id: str, *, stripe_account: str | None = None
+    ) -> int:
+        """Detach every saved payment method from the customer (kept for refunds
+        and disputes). Returns how many were detached; a missing customer is 0."""
+        ...
+
 
 class CapacityReservation(Protocol):
     """Cross-context port: Billing uses this to ask Enrollment whether a

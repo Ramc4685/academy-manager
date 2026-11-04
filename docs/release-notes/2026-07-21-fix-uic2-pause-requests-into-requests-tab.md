@@ -1,6 +1,6 @@
 # fix-uic2-pause-requests-into-requests-tab
 
-PR: #TBD
+PR: #1115
 
 ## What changed
 Pause requests moved into **Requests → Pauses** tab. `/admin/requests`

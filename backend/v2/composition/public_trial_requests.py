@@ -48,6 +48,9 @@ from backend.v2.contexts.communications.domain.models import AcademyAudience, Au
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
 )
+from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_repo import (
+    GATE_UNAVAILABLE,
+)
 from backend.v2.contexts.crm.application.use_cases.create_contact import CreateContact
 from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import (
     SubmitWebsiteInquiry,
@@ -336,14 +339,14 @@ class TrialRequestOwnerEmail:
         if not await self._contacts.try_claim_acknowledgement(contact.contact_id, at=now):
             await self._inboxes.release(mailbox, at=now)
             return
-        subject, inner = render_inquiry_acknowledgement(
-            academy_name=academy_name,
-            contact=contact,
-            class_title=class_title,
-            can_reply=reply_to is not None,
-        )
         settled = False
         try:
+            subject, inner = render_inquiry_acknowledgement(
+                academy_name=academy_name,
+                contact=contact,
+                class_title=class_title,
+                can_reply=reply_to is not None,
+            )
             outcome = await self._prospects.send(
                 contact=contact,
                 academy_doc=doc,
@@ -354,9 +357,12 @@ class TrialRequestOwnerEmail:
                 category=EmailCategory.TRANSACTIONAL,
                 reply_to=reply_to,
             )
-            # A gate refusal is terminal (retrying re-hits the gate), so it
-            # keeps the claim; only a provider failure releases it.
-            settled = outcome.ok or outcome.suppressed
+            # An opt-out or bounce suppression is terminal (retrying re-hits
+            # the gate), so it keeps the claim; a provider failure or the
+            # opt-out store being down sent nothing, so it releases it.
+            settled = outcome.ok or (
+                outcome.suppressed and outcome.failed_reason != GATE_UNAVAILABLE
+            )
             if not settled:
                 logger.warning(
                     "public.trial_request_ack_send_failed",

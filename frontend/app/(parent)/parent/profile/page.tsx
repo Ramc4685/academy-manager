@@ -7,6 +7,7 @@ import { Button } from "@/components/ds/button";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Skeleton } from "@/components/ds/skeleton";
 import { useToast } from "@/components/ds/toast";
+import { DeleteAccountSection } from "@/components/persona/delete-account-section";
 import { queryKeys } from "@/lib/query/keys";
 import {
   confirmParentEmail,
@@ -64,6 +65,7 @@ export default function ParentProfilePage() {
           {data.children.map((child) => (
             <ChildCard key={child.student_id} child={child} />
           ))}
+          <DeleteAccountSection />
         </div>
       )}
     </section>

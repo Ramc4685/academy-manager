@@ -455,3 +455,22 @@ async def test_execute_requires_resolved_academy_id() -> None:
         # Empty academy must not be silently accepted, and must not fall back
         # to the user's legacy academy_id.
         await uc.execute("fake-token", resolved_academy_id="")
+
+
+@pytest.mark.asyncio
+async def test_claims_carry_the_tokens_sign_in_time() -> None:
+    """Account deletion checks how recently the person signed in (mobile M5)."""
+    from datetime import UTC, datetime
+
+    uc = _build(
+        token_claims={
+            "email": "coach@example.com",
+            "email_verified": True,
+            "auth_time": 1_793_000_000,
+        }
+    )
+    claims = await uc.execute("fake-token", resolved_academy_id="academy-court")
+    assert claims.signed_in_at == datetime.fromtimestamp(1_793_000_000, UTC)
+
+    claims = await _build().execute("fake-token", resolved_academy_id="academy-court")
+    assert claims.signed_in_at is None

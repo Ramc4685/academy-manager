@@ -187,6 +187,13 @@ class Settings(BaseSettings):
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
     )
+    push_delivery_enabled: bool = Field(
+        default=False,
+        description=(
+            "When True, mobile push notifications are sent through Firebase Cloud "
+            "Messaging. Off ⇒ an in-memory stub records them and nothing leaves the app."
+        ),
+    )
     ops_alert_email: str | None = Field(
         default=None,
         description=(
@@ -350,6 +357,10 @@ class Settings(BaseSettings):
             self.email_delivery_enabled = _env_bool(
                 "EMAIL_DELIVERY_ENABLED",
                 self.email_delivery_enabled,
+            )
+        if "V2_PUSH_DELIVERY_ENABLED" not in os.environ:
+            self.push_delivery_enabled = _env_bool(
+                "PUSH_DELIVERY_ENABLED", self.push_delivery_enabled
             )
         self._validate_launch_settings()
         self._validate_production_settings()

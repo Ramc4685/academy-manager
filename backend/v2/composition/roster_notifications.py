@@ -51,6 +51,7 @@ from backend.v2.composition.enrollment_welcome_email import (
     EnrollmentWelcomeEmailAdapter,
     format_session_when,
 )
+from backend.v2.composition.push import compose_send_push_to_user
 from backend.v2.composition.registration_decision_email import (
     RegistrationDecisionEmailAdapter,
     compose_registration_decision_notifier,
@@ -65,6 +66,9 @@ from backend.v2.contexts.communications.application.unsubscribe_footer import (
 )
 from backend.v2.contexts.communications.application.unsubscribe_token import (
     UnsubscribeLinkBuilder,
+)
+from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
+    SendPushToUser,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import (
@@ -502,6 +506,7 @@ class RosterAlertAdapter:
         sender: EmailSendPort,
         unsubscribe_links: UnsubscribeLinkBuilder | None = None,
         self_service_policies: Any | None = None,
+        push: SendPushToUser | None = None,
     ) -> None:
         self._sessions = sessions
         self._enrollments = enrollments
@@ -515,6 +520,9 @@ class RosterAlertAdapter:
         # so existing constructions/tests keep working; real composition
         # always sets it.
         self._self_service_policies = self_service_policies
+        # Mobile M3: a phone nudge after the family email. Optional so tests
+        # that only check mail keep building the adapter without it.
+        self._push = push
 
     async def roster_changed(
         self,
@@ -740,6 +748,12 @@ class RosterAlertAdapter:
                     category=EmailCategory.TRANSACTIONAL,
                     context=context,
                 )
+            await self._push_to(
+                parent_id,
+                title=academy_name,
+                body=f"{session.title} on {when} is cancelled.",
+                url="/parent",
+            )
 
         # The staff copy states the money outcome plainly, including when
         # billing did not run: an admin must not learn about a missing credit
@@ -1035,10 +1049,11 @@ class RosterAlertAdapter:
                     extra={"waitlist_id": waitlist_id},
                     exc_info=True,
                 )
+        student_name = await self._student_name(student_id) or "Your child"
         subject, body = render_waitlist_offer_email(
             session=session,
             academy_name=academy_name,
-            student_name=await self._student_name(student_id) or "Your child",
+            student_name=student_name,
             # The Requests page shows the family's offers (X2); the id lets it
             # scroll to and highlight this one. None when the app-claim
             # switch is off (item 4).
@@ -1061,6 +1076,30 @@ class RosterAlertAdapter:
                 "session_id": session_id,
                 "waitlist_id": waitlist_id,
             },
+        )
+        if offer_expires_at is not None:
+            deadline = format_deadline(offer_expires_at, academy_timezone=academy_timezone)
+            await self._push_to(
+                parent_user_id,
+                title=academy_name,
+                body=f"A seat opened in {session.title} for {student_name}. Claim it by {deadline}.",
+                url=(
+                    f"/parent/requests?offer={quote(waitlist_id)}"
+                    if can_claim
+                    else "/parent/requests"
+                ),
+            )
+
+    async def _push_to(self, user_id: str, *, title: str, body: str, url: str) -> None:
+        """Best-effort push after the email; ``SendPushToUser`` never raises."""
+        if self._push is None or not user_id:
+            return
+        await self._push.execute(
+            academy_id=current_academy_id(),
+            user_id=user_id,
+            title=title,
+            body=body,
+            data={"url": url},
         )
 
     async def _send_one(
@@ -1259,4 +1298,5 @@ def compose_roster_notifier(
         # Item 4: the "seat opened, claim it" email must not carry a claim
         # link when the waitlist-claim switch is off.
         self_service_policies=MongoSelfServicePolicyRepository(db),
+        push=compose_send_push_to_user(db, settings),
     )

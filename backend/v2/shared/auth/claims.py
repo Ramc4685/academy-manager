@@ -24,6 +24,7 @@ SaaS resolver lands; new SaaS code must populate them.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from fastapi import HTTPException, Request
@@ -65,6 +66,9 @@ class AuthClaims(BaseModel, frozen=True):
     membership_id: str | None = None
     roles: tuple[Role, ...] = Field(default_factory=tuple)
     platform_roles: tuple[PlatformRoleName, ...] = Field(default_factory=tuple)
+    # The ID token's ``auth_time``: when the person last actually signed in, not
+    # when the token was refreshed. Sensitive actions (account deletion) check it.
+    signed_in_at: datetime | None = None
 
     def has_role(self, role: Role) -> bool:
         """Check an **academy-scoped** role for the current `academy_id`.

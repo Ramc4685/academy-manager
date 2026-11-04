@@ -13,6 +13,7 @@ import {
 } from "@/lib/offline/queue";
 import { onSync, syncNow } from "@/lib/offline/sync";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { useIsNativeApp } from "@/lib/use-native-app";
 
 /**
  * Coach's "Needs review" tray.
@@ -26,6 +27,7 @@ import { RetryButton } from "@/components/coach/RetryButton";
 export default function NeedsReviewPage() {
   const [items, setItems] = useState<QueuedMutation[]>([]);
   const [loading, setLoading] = useState(true);
+  const isNativeApp = useIsNativeApp();
   const [retrying, setRetrying] = useState<string | null>(null);
 
   async function refresh() {
@@ -124,12 +126,14 @@ export default function NeedsReviewPage() {
     <section data-testid="needs-review">
       <header className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Needs review</h1>
-        <button
-          onClick={() => void exportCsv()}
-          className="min-h-touch rounded-md border border-neutral-300 px-3 text-sm dark:border-neutral-700"
-        >
-          Export audit
-        </button>
+        {!isNativeApp && (
+          <button
+            onClick={() => void exportCsv()}
+            className="min-h-touch rounded-md border border-neutral-300 px-3 text-sm dark:border-neutral-700"
+          >
+            Export audit
+          </button>
+        )}
       </header>
 
       {loading && <p className="text-neutral-500">Loading…</p>}

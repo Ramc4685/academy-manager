@@ -3,7 +3,7 @@
 ``try_claim_acknowledgement`` matches ``{"acknowledged_at": None}``, which on
 Mongo must also match a freshly inserted row where the field is absent;
 mongomock would pass either way. The per-inbox claim leans on the unique
-``(academy_id, mailbox, day)`` index from migration 0217, which only a real
+``(academy_id, mailbox, day)`` index from migration 0218, which only a real
 server enforces under a race: two concurrent submissions for spellings of one
 inbox must yield exactly one winner. Skipped without a ``mongod``.
 """

@@ -14,14 +14,14 @@ from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_re
 )
 from backend.v2.shared.tenancy import tenant_scope
 
-_M0215 = importlib.import_module("backend.v2.migrations.0215_email_prospect_opt_outs")
+_M0217 = importlib.import_module("backend.v2.migrations.0217_email_prospect_opt_outs")
 
 
 @pytest.fixture
 def db() -> Any:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["prospect-opt-outs"]
-    asyncio.run(_M0215.up(db))
+    asyncio.run(_M0217.up(db))
     return db
 
 

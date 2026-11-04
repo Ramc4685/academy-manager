@@ -1,9 +1,10 @@
-"""Mongo repository for ``crm_inquiry_ack_throttle`` (migration 0217).
+"""Mongo repository for ``crm_inquiry_ack_throttle`` (migration 0218).
 
 The per-inbox half of the inquiry acknowledgement claim: one row per academy,
 canonical mailbox and UTC day under a unique index, so claiming is a single
 insert and of any number of concurrent submissions for variants of one inbox
-exactly one wins. The per-contact half stays on ``crm_contacts``
+exactly one wins. A claim
+is an upsert, so a sequential repeat loses even without the index. The per-contact half stays on ``crm_contacts``
 (``MongoCrmContactRepository.try_claim_acknowledgement``).
 """
 
@@ -21,11 +22,17 @@ class MongoInquiryAckThrottleRepository(TenantScopedRepository):
 
     async def try_claim(self, mailbox: str, *, at: datetime) -> bool:
         """Claim this inbox's one acknowledgement for ``at``'s UTC day."""
+        # Upsert, not insert: a repeat claim loses even before the unique index
+        # exists; the index (migration 0218) closes the concurrent-upsert race.
         try:
-            await self._insert_one({"mailbox": mailbox, "day": _day(at), "claimed_at": at})
+            result = await self._update_one(
+                {"mailbox": mailbox, "day": _day(at)},
+                {"$setOnInsert": {"claimed_at": at}},
+                upsert=True,
+            )
         except DuplicateKeyError:
             return False
-        return True
+        return result.upserted_id is not None
 
     async def release(self, mailbox: str, *, at: datetime) -> None:
         """Give the claim made with the same ``at`` back (nothing was sent)."""

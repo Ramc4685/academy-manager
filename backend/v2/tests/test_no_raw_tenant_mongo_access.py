@@ -109,11 +109,11 @@ TENANT_OWNED_COLLECTIONS = {
     "family_details",
     # Invoice email copies to opted-in family contacts (migration 0197, L1b2)
     "invoice_contact_email_sends",
-    # Prospect email opt-outs keyed by address (migration 0215, inquiry ack)
+    # Prospect email opt-outs keyed by address (migration 0217, inquiry ack)
     "email_prospect_opt_outs",
-    # Trial nudge send claims (migration 0218, AI strategy Phase 1 #3)
+    # Trial nudge send claims (migration 0219, AI strategy Phase 1 #3)
     "trial_nudge_sends",
-    # Per-inbox inquiry acknowledgement claims (migration 0217)
+    # Per-inbox inquiry acknowledgement claims (migration 0218)
     "crm_inquiry_ack_throttle",
     # CSV family and student import batches (migration 0199, roadmap L8a)
     "import_batches",
@@ -131,6 +131,9 @@ TENANT_OWNED_COLLECTIONS = {
     # Scheduled plan price changes (migration 0212, Settings overhaul PR 26);
     # read by every charge path with an explicit academy_id filter.
     "plan_price_changes",
+    # FCM device tokens (migration 0215, mobile M2). Token is unique across
+    # academies; register re-stamps academy_id from the request scope.
+    "push_devices",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
@@ -148,6 +151,9 @@ GLOBAL_COLLECTIONS = {
     # Host -> academy mapping, resolved globally by hostname during request
     # tenant resolution (see shared/tenancy/resolver.py).
     "academy_domains",
+    # Self-service account deletion requests (migration 0216, mobile M5): one
+    # Firebase account spans academies, so its deletion request does too.
+    "account_deletion_requests",
 }
 
 assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (

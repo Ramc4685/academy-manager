@@ -1,6 +1,7 @@
 import { Button } from "@/components/ds/button";
 import { WaiverText } from "@/components/waivers/waiver-text";
 import type { SignedWaiverCopy } from "@/lib/api/parent";
+import { useIsNativeApp } from "@/lib/use-native-app";
 
 const PATH_LABEL = { adult: "Participant (18 or over)", minor: "Parent or guardian" } as const;
 
@@ -15,13 +16,16 @@ export function SignedWaiverDocument({
   copy: SignedWaiverCopy;
   print?: () => void;
 }) {
+  const isNativeApp = useIsNativeApp();
   return (
     <div className="space-y-4">
-      <div className="flex justify-end print:hidden">
-        <Button type="button" variant="secondary" onClick={print}>
-          Print or save as PDF
-        </Button>
-      </div>
+      {!isNativeApp && (
+        <div className="flex justify-end print:hidden">
+          <Button type="button" variant="secondary" onClick={print}>
+            Print or save as PDF
+          </Button>
+        </div>
+      )}
       <article
         data-testid="signed-waiver-document"
         className="waiver-print space-y-6 rounded-2xl border border-rally-line bg-white p-6 text-sm leading-6 text-rally-ink"
