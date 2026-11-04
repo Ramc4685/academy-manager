@@ -323,6 +323,27 @@ async def test_win_back_rejects_a_non_boolean():
 
 
 @pytest.mark.asyncio
+async def test_trial_nudges_default_on_and_round_trip_off():
+    repo = AsyncMock()
+    repo.find_by_id.return_value = {"academy_id": "acad-1", "notifications": {}}
+    output = await GetAcademyNotificationsUseCase(academy_repo=repo).execute("acad-1")
+    assert output.trial_nudges_enabled is True
+
+    repo.update_by_id.return_value = {
+        "academy_id": "acad-1",
+        "notifications": {"trial_nudges_enabled": False},
+    }
+    use_case = UpdateAcademyNotificationsUseCase(academy_repo=repo)
+    output = await use_case.execute("acad-1", {"trial_nudges_enabled": False})
+    assert output.trial_nudges_enabled is False
+    repo.update_by_id.assert_awaited_once_with(
+        "acad-1", {"notifications.trial_nudges_enabled": False}
+    )
+    with pytest.raises(ValueError):
+        await use_case.execute("acad-1", {"trial_nudges_enabled": "no"})
+
+
+@pytest.mark.asyncio
 async def test_a_zero_late_fee_reads_back_as_zero_not_none() -> None:
     """`or` collapsed a stored 0 to the legacy alias and then to None.
 

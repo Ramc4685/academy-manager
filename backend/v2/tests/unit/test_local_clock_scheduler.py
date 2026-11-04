@@ -76,6 +76,10 @@ OLD_CRON_TIMES = {
     "send_past_due_reminders": (9, 20),
     "auto_approve_level_ups": (18, 30),
     "send_parent_evening_wins": (19, 0),
+    # New in Phase 1 slice 3 (trial nudges), academy-local from the start.
+    "send_trial_no_show_follow_ups": (10, 0),
+    "send_checkout_recovery_notices": (10, 10),
+    "send_trial_reminders": (16, 0),
 }
 
 #: The zone the OLD code used for each academy. Every fixed-hour cron ran in
@@ -836,12 +840,26 @@ def test_each_local_daily_job_body_runs_through_the_academy_clock_runner() -> No
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id == "_run_local_daily"
+                # _send_trial_nudges(job, ...) forwards job to _run_local_daily.
+                and node.func.id in ("_run_local_daily", "_send_trial_nudges")
             ):
                 arg = node.args[0]
                 assert isinstance(arg, ast.Constant)
                 runner_jobs[arg.value] = name
     assert set(runner_jobs) == set(LOCAL_DAILY_JOBS)
+
+    helper = next(
+        node
+        for node in ast.walk(_lifespan_ast())
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_send_trial_nudges"
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_local_daily"
+        and ast.unparse(node.args[0]) == helper.args.args[0].arg
+        for node in ast.walk(helper)
+    ), "_send_trial_nudges must hand its job id to _run_local_daily"
 
     invoice_body = bodies[runner_jobs["generate_monthly_invoices"]]
     calls = [

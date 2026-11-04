@@ -336,6 +336,11 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "send_win_back_notices": LocalDailyTime(4, 30),
     "create_trial_follow_ups": LocalDailyTime(4, 50),
     "send_owner_daily_brief": LocalDailyTime(7, 30),
+    # Trial nudges (AI strategy Phase 1 #3): no-show follow-up and checkout
+    # recovery mid-morning; the reminder the afternoon before the trial.
+    "send_trial_no_show_follow_ups": LocalDailyTime(10, 0),
+    "send_checkout_recovery_notices": LocalDailyTime(10, 10),
+    "send_trial_reminders": LocalDailyTime(16, 0),
     # Monthly report card: the job runs daily but only sends on the 1st.
     "send_parent_report_cards": LocalDailyTime(9, 0),
     "send_past_due_reminders": LocalDailyTime(_PAST_DUE_REMINDER_LOCAL_HOUR, 20),
@@ -517,7 +522,25 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "schedule": {"type": "crontab", "value": "50 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
-    },  # Tap-to-master: queued level-ups on levels without owner approval land
+    },
+    # Trial nudges (AI strategy Phase 1 #3): daily, idempotent per trial or
+    # application (trial_nudge_sends claim), so an extra run sends nothing.
+    "send_trial_reminders": {
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "send_trial_no_show_follow_ups": {
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    "send_checkout_recovery_notices": {
+        "schedule": {"type": "crontab", "value": "10 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # Tap-to-master: queued level-ups on levels without owner approval land
     # once a day. Idempotent: an approved recommendation is never pending again.
     "auto_approve_level_ups": {
         "schedule": {"type": "crontab", "value": "30 * * * *"},
@@ -917,6 +940,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.trial_follow_ups import compose_trial_follow_ups
 
     app.state.trial_follow_ups = compose_trial_follow_ups(db)
+    # Trial nudges (AI strategy Phase 1 #3): reminder, no-show, checkout recovery.
+    from backend.v2.composition.trial_nudges import compose_trial_nudges
+
+    app.state.trial_nudges = compose_trial_nudges(db, settings)
     # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
     # which cannot see `_holds.hold_notifier` (built here, after
     # compose_admin runs) and is at its own wiring line-budget cap. Attach
@@ -1326,6 +1353,55 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         totals["failed"] = len(summary.failed)
         if totals["created"] or totals["failed"]:
             log.info("trial_follow_ups_created", extra=totals)
+
+    async def _send_trial_nudges(job: str, execute: Callable[..., Awaitable[int]]) -> None:
+        # One body for the three nudge jobs: each use case returns how many
+        # it sent for one academy, and a failing academy never stops the rest.
+        totals = {"academy_count": 0, "sent": 0}
+
+        async def _for_academy(academy_id: str, local_now: datetime) -> None:
+            totals["sent"] += await execute(academy_id=academy_id, local_now=local_now)
+            totals["academy_count"] += 1
+
+        await _run_local_daily(job, _for_academy)
+        if totals["sent"]:
+            log.info("trial_nudges_sent", extra={"job": job, **totals})
+
+    async def _send_trial_reminders() -> None:
+        await _run_leased_job(
+            "send_trial_reminders", timedelta(minutes=5), _send_trial_reminders_body
+        )
+
+    async def _send_trial_reminders_body() -> None:
+        await _send_trial_nudges(
+            "send_trial_reminders", app.state.trial_nudges.send_trial_reminders.execute
+        )
+
+    async def _send_trial_no_show_follow_ups() -> None:
+        await _run_leased_job(
+            "send_trial_no_show_follow_ups",
+            timedelta(minutes=5),
+            _send_trial_no_show_follow_ups_body,
+        )
+
+    async def _send_trial_no_show_follow_ups_body() -> None:
+        await _send_trial_nudges(
+            "send_trial_no_show_follow_ups",
+            app.state.trial_nudges.send_trial_no_show_follow_ups.execute,
+        )
+
+    async def _send_checkout_recovery_notices() -> None:
+        await _run_leased_job(
+            "send_checkout_recovery_notices",
+            timedelta(minutes=5),
+            _send_checkout_recovery_notices_body,
+        )
+
+    async def _send_checkout_recovery_notices_body() -> None:
+        await _send_trial_nudges(
+            "send_checkout_recovery_notices",
+            app.state.trial_nudges.send_checkout_recovery_notices.execute,
+        )
 
     async def _auto_approve_level_ups() -> None:
         await _run_leased_job(
@@ -2042,6 +2118,33 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=LOCAL_DAILY_JOBS["create_trial_follow_ups"].minute,
         timezone=UTC,
         id="create_trial_follow_ups",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_trial_reminders,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_trial_reminders"].minute,
+        timezone=UTC,
+        id="send_trial_reminders",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_trial_no_show_follow_ups,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_trial_no_show_follow_ups"].minute,
+        timezone=UTC,
+        id="send_trial_no_show_follow_ups",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_checkout_recovery_notices,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_checkout_recovery_notices"].minute,
+        timezone=UTC,
+        id="send_checkout_recovery_notices",
         replace_existing=True,
         max_instances=1,
     )

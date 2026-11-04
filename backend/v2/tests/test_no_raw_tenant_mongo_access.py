@@ -112,6 +112,8 @@ TENANT_OWNED_COLLECTIONS = {
     "invoice_contact_email_sends",
     # Prospect email opt-outs keyed by address (migration 0217, inquiry ack)
     "email_prospect_opt_outs",
+    # Trial nudge send claims (migration 0219, AI strategy Phase 1 #3)
+    "trial_nudge_sends",
     # Per-inbox inquiry acknowledgement claims (migration 0218)
     "crm_inquiry_ack_throttle",
     # CSV family and student import batches (migration 0199, roadmap L8a)

@@ -68,3 +68,17 @@ async def test_failed_read_skips_the_tick() -> None:
             raise RuntimeError("down")
 
     assert await AcademyWinBackSwitch(_Broken()).is_enabled("a") is False
+
+
+async def test_key_names_another_default_on_switch() -> None:
+    # The trial nudges read ``notifications.trial_nudges_enabled`` through the
+    # same switch; win-back's own value is not consulted.
+    academies = _Academies(
+        {
+            "off": {"notifications": {"trial_nudges_enabled": False, "win_back_enabled": True}},
+            "absent": {"notifications": {"win_back_enabled": False}},
+        }
+    )
+    switch = AcademyWinBackSwitch(academies, key="trial_nudges_enabled")
+    assert await switch.is_enabled("off") is False
+    assert await switch.is_enabled("absent") is True

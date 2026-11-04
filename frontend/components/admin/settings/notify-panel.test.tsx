@@ -17,3 +17,14 @@ describe("notify panel win-back switch (hardcoded-values row 10)", () => {
     expect(toPayload(original, original)).toEqual({});
   });
 });
+
+describe("notify panel trial nudges switch", () => {
+  it("reads a missing setting as on and sends only the switch", () => {
+    expect(normalize(null).trial_nudges_enabled).toBe(true);
+    expect(normalize({ trial_nudges_enabled: false }).trial_nudges_enabled).toBe(false);
+    const original = normalize({ daily_digest_to_admin: true });
+    expect(toPayload(original, { ...original, trial_nudges_enabled: false })).toEqual({
+      trial_nudges_enabled: false,
+    });
+  });
+});
