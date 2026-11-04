@@ -83,7 +83,12 @@ public records.
 
 **Done when** RamC has checked every field against the LLC paperwork.
 
-### Task B — Email addresses on marvy-labs.com (about 15 minutes)
+### Task B — Email addresses on marvy-labs.com — ALREADY DONE (checked 2026-11-03)
+
+Cloudflare Email Routing for marvy-labs.com has an active **catch-all** rule forwarding
+every `@marvy-labs.com` address to `ramc.venkatasamy@gmail.com`, so `ramc@`, `appstore@`
+and `support@` already receive mail. Only step 4 below (send a test to each) is left. The
+original steps are kept for reference.
 
 Apple wants the enrollment email on the company's own domain. The domain uses Cloudflare
 Email Routing, which forwards mail but does not host mailboxes. Forwarding is enough to
@@ -182,10 +187,9 @@ Connect; the app is free and does not need them.
 
 Needs the D-U-N-S number (task C).
 
-1. **Google Account to own it.** Recommended: a new Google Account for the business (for
-   example a new Gmail such as `marvylabs.apps@gmail.com`), rather than RamC's personal
-   Gmail. RamC creates it and sets the password and two-step verification. The account
-   email is not shown publicly.
+1. **Google Account to own it:** `ramc.venkatasamy@gmail.com` (RamC's decision,
+   2026-11-03). RamC signs in; check that two-step verification is on. The account email
+   is not shown publicly.
 2. Go to https://play.google.com/console/signup and sign in with that account.
 3. Account type: **An organization or a business**. Not "Yourself".
 4. **Google payments profile:** create a new one of type **Organization / Business**.
