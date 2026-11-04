@@ -124,15 +124,21 @@ class MongoMonthCloseReadModel:
         # --- primary sources: a failure here is a 500, never a wrong number.
         invoices = await self._period_invoices(academy_id, period)
         start, end = month_bounds(period, tz_name)
-        collected_cents = (
-            await cash_received_in_period(
-                self._db,
-                academy_id=academy_id,
-                start=start,
-                end=end,
-                timezone_name=tz_name,
-            )
-        ).net_cents
+        cash = await cash_received_in_period(
+            self._db,
+            academy_id=academy_id,
+            start=start,
+            end=end,
+            timezone_name=tz_name,
+        )
+        collected_cents = cash.net_cents
+        # The processing markup applies to Stripe-collected money only. Rows
+        # the app wrote carry a ``stripe_*`` method; a legacy row with Stripe
+        # ids but no method is missed, which is one reason the page says
+        # "estimated".
+        stripe_collected_cents = sum(
+            row.net_cents for row in cash.rows if (row.method or "").startswith("stripe")
+        )
 
         invoice_ids = [inv["invoice_id"] for inv in invoices]
         enrollment_ids = sorted({eid for inv in invoices if (eid := inv.get("enrollment_id"))})
@@ -154,6 +160,9 @@ class MongoMonthCloseReadModel:
         )
         if not ok:
             warnings.append("discounts_unavailable")
+        platform_fee_bps, ok = await self._secondary(self._platform_fee_bps(), None, "platform fee")
+        if not ok:
+            warnings.append("platform_fee_unavailable")
 
         autopay_by_enrollment = await self._autopay_by_enrollment(academy_id, enrollment_ids)
         enrollment_status = await self._enrollment_status(academy_id, enrollment_ids)
@@ -186,6 +195,8 @@ class MongoMonthCloseReadModel:
                 generated_at=now,
                 invoices=facts,
                 collected_cents=collected_cents,
+                stripe_collected_cents=stripe_collected_cents,
+                platform_fee_bps=platform_fee_bps,
                 tuition_discounts=discounts,
                 card_state_known=cards is not None,
                 warnings=tuple(warnings),
@@ -420,6 +431,15 @@ class MongoMonthCloseReadModel:
             label, last4 = MongoParentBillingCustomerRepository.display_payment_method(doc)
             cards[parent_id] = ((label, last4) != (None, None), last4)
         return cards
+
+    async def _platform_fee_bps(self) -> int:
+        """The markup rate the statement discloses: the academy's bps on a
+        connected route, 0 on the house academy (a platform charge carries
+        no application fee; see ``domain/charge_route.py``)."""
+        settings = await self._billing_settings.get()
+        if bool(getattr(settings, "allow_platform_charge_fallback", False)):
+            return 0
+        return int(getattr(settings, "application_fee_bps", 0) or 0)
 
     async def _connected_account_ready(self) -> bool | None:
         try:

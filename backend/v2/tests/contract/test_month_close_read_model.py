@@ -313,6 +313,61 @@ async def test_autopay_on_a_cancelled_enrollment_is_odd(db: Any, acad: str) -> N
 
 
 @pytest.mark.asyncio
+async def test_the_platform_fee_is_the_rate_on_the_stripe_share_only(db: Any, acad: str) -> None:
+    """Phase 2 A1: the statement discloses current bps x Stripe-collected net,
+    never the cash/check share; the house academy (platform charges) is 0."""
+    await db["billing_settings"].insert_one({"academy_id": acad, "application_fee_bps": 100})
+    for payment_id, method, cents in (
+        ("pay-card", "stripe_checkout", 40_001),
+        ("pay-ach", "stripe_autopay", 10_000),
+        ("pay-check", "check", 50_000),
+    ):
+        await db["ledger_payments"].insert_one(
+            {
+                "academy_id": acad,
+                "payment_id": payment_id,
+                "status": "succeeded",
+                "paid_at": datetime(2026, 9, 9, tzinfo=UTC),
+                "paid_amount_cents": cents,
+                "payment_method": method,
+            }
+        )
+
+    view = AdminMonthCloseView.model_validate(await reader(db).build(PERIOD))
+
+    assert view.money.collected_cents == 100_001
+    assert view.money.stripe_collected_cents == 50_001
+    assert view.money.platform_fee_bps == 100
+    assert view.money.platform_fee_cents == 500  # 1% of $500.01, floored
+    assert view.warnings == []
+
+    # The house academy charges on the platform account: no application fee.
+    await db["billing_settings"].update_one(
+        {"academy_id": acad}, {"$set": {"allow_platform_charge_fallback": True}}
+    )
+    house = AdminMonthCloseView.model_validate(await reader(db).build(PERIOD))
+    assert (house.money.platform_fee_bps, house.money.platform_fee_cents) == (0, 0)
+
+
+class _BrokenSettings:
+    async def get(self) -> Any:
+        raise RuntimeError("settings down")
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_fee_rate_warns_and_shows_no_number(db: Any, acad: str) -> None:
+    await seed_invoice(db, academy_id=acad, invoice_id="inv-open")
+
+    view = AdminMonthCloseView.model_validate(
+        await reader(db, billing_settings=_BrokenSettings()).build(PERIOD)
+    )
+
+    assert view.money.platform_fee_bps is None
+    assert view.money.platform_fee_cents is None
+    assert "platform_fee_unavailable" in view.warnings
+
+
+@pytest.mark.asyncio
 async def test_another_academys_month_is_never_visible(db: Any, acad: str) -> None:
     await seed_academy(db, acad)
     await seed_academy(db, "other-academy")

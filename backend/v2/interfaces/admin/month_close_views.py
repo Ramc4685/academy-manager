@@ -46,6 +46,12 @@ class AdminMonthCloseMoney(_View):
     # Null, never 0, when nothing was billed — the page renders "—" so an
     # empty month does not read as a total collection failure (spec §4.3).
     collection_rate: float | None = None
+    # CourtMastr processing markup disclosure (Phase 2 A1). ``platform_fee_cents``
+    # is an estimate (current bps x Stripe-collected net); both are null, never
+    # 0, when the rate could not be read (``platform_fee_unavailable``).
+    stripe_collected_cents: int = 0
+    platform_fee_bps: int | None = None
+    platform_fee_cents: int | None = None
 
 
 class AdminMonthCloseTally(_View):
