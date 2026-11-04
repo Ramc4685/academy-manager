@@ -131,6 +131,8 @@ class TrialNudgeEmailAdapter:
         self,
         *,
         audiences: Any,
+        memberships: Any,
+        users: Any,
         academies: Any,
         students: Any,
         sessions: Any,
@@ -138,6 +140,8 @@ class TrialNudgeEmailAdapter:
         frontend_url: str | None,
     ) -> None:
         self._audiences = audiences
+        self._memberships = memberships
+        self._users = users
         self._academies = academies
         self._students = students
         self._sessions = sessions
@@ -293,7 +297,21 @@ class TrialNudgeEmailAdapter:
         resolved = await self._audiences.resolve_selected_audience(
             SelectedRecipientsAudience(user_ids=(parent_id,))
         )
-        return resolved[0] if resolved else None
+        if resolved:
+            return resolved[0]
+        # A parent who joined this academy second keeps their first academy's
+        # users row (ensure_parent_user), so the tenant-local query misses
+        # them. An active parent membership here is the proof of the tie
+        # (AGENTS.md: membership-based identity); the user row is global.
+        membership = await self._memberships.get_membership(current_academy_id(), parent_id)
+        if membership is None or not membership.is_active() or "parent" not in membership.roles:
+            return None
+        user = await self._users.get_by_id(parent_id)
+        if user is None:
+            return None
+        return ResolvedRecipient(
+            user_id=user.user_id, email=user.email, display_name=user.display_name
+        )
 
 
 @dataclass
@@ -323,6 +341,10 @@ def compose_trial_nudges(db: Any, settings: Any) -> TrialNudgesComposition:
     from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
         MongoAcademyRepository,
     )
+    from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+        MongoMembershipRepository,
+    )
+    from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
     from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
         MongoApplicationRepository,
     )
@@ -330,6 +352,8 @@ def compose_trial_nudges(db: Any, settings: Any) -> TrialNudgesComposition:
     academies = MongoAcademyRepository(db)
     notifier = TrialNudgeEmailAdapter(
         audiences=MongoAudienceResolver(db=db),
+        memberships=MongoMembershipRepository(db),
+        users=MongoUserRepository(db),
         academies=academies,
         students=MongoStudentRepository(db),
         sessions=MongoSessionRepository(db),

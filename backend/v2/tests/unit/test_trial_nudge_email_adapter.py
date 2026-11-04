@@ -18,6 +18,7 @@ from backend.v2.contexts.communications.application.ports import (
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.enrollment.domain.models import Session, Student
 from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
+from backend.v2.contexts.identity.domain.models import AcademyMembership, User
 from backend.v2.contexts.onboarding.domain.models import Application, ChildProfile
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -38,6 +39,22 @@ class _Audiences:
 
     async def resolve_selected_audience(self, audience):
         return [self._recipients[u] for u in audience.user_ids if u in self._recipients]
+
+
+class _Memberships:
+    def __init__(self, rows: dict[tuple[str, str], AcademyMembership] | None = None) -> None:
+        self._rows = rows or {}
+
+    async def get_membership(self, academy_id: str, user_id: str):
+        return self._rows.get((academy_id, user_id))
+
+
+class _Users:
+    def __init__(self, users: dict[str, User] | None = None) -> None:
+        self._users = users or {}
+
+    async def get_by_id(self, user_id: str):
+        return self._users.get(user_id)
 
 
 class _Academies:
@@ -82,7 +99,12 @@ class _Sender:
         return self.outcome
 
 
-def _adapter(sender: _Sender | None = None, recipients: dict | None = None):
+def _adapter(
+    sender: _Sender | None = None,
+    recipients: dict | None = None,
+    memberships: _Memberships | None = None,
+    users: _Users | None = None,
+):
     sender = sender or _Sender()
     recipients = (
         {"parent-1": ResolvedRecipient(user_id="parent-1", email="p@example.com")}
@@ -92,6 +114,8 @@ def _adapter(sender: _Sender | None = None, recipients: dict | None = None):
     return (
         TrialNudgeEmailAdapter(
             audiences=_Audiences(recipients),
+            memberships=memberships or _Memberships(),
+            users=users or _Users(),
             academies=_Academies(),
             students=_Students(),
             sessions=_Sessions(),
@@ -216,3 +240,28 @@ async def test_a_nameless_prospective_child_reads_naturally_mid_sentence() -> No
         await adapter.trial_no_show(trial=_trial(status="completed", prospective_child_name=" "))
     assert sender.calls[0]["subject"] == "We missed your child at the trial"
     assert "racquet" not in sender.calls[0]["body"]
+
+
+async def test_a_parent_who_joined_this_academy_second_is_found_through_their_membership() -> None:
+    # ensure_parent_user keeps the first academy on the users row, so the
+    # tenant-local audience query finds nobody here; the membership proves the tie.
+    member = AcademyMembership(
+        membership_id="m1", academy_id=ACADEMY_ID, user_id="parent-2", roles=("parent",)
+    )
+    user = User(user_id="parent-2", email="second@example.com", display_name="Sam")
+    adapter, sender = _adapter(
+        recipients={},
+        memberships=_Memberships({(ACADEMY_ID, "parent-2"): member}),
+        users=_Users({"parent-2": user}),
+    )
+    with tenant_scope(ACADEMY_ID):
+        assert await adapter.trial_no_show(trial=_trial(parent_user_id="parent-2")) == "sent"
+    assert sender.calls[0]["recipient"].email == "second@example.com"
+
+
+async def test_a_user_with_no_membership_here_is_not_mailed() -> None:
+    user = User(user_id="parent-2", email="second@example.com", display_name="Sam")
+    adapter, sender = _adapter(recipients={}, users=_Users({"parent-2": user}))
+    with tenant_scope(ACADEMY_ID):
+        assert await adapter.trial_no_show(trial=_trial(parent_user_id="parent-2")) == "skipped"
+    assert sender.calls == []

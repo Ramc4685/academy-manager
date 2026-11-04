@@ -28,7 +28,12 @@ from typing import Protocol
 
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
-from backend.v2.shared.comms.claimed_send import SendClaimRepository, SendResult, send_once
+from backend.v2.shared.comms.claimed_send import (
+    SendClaimRepository,
+    SendResult,
+    send_once,
+    sent_count,
+)
 from backend.v2.shared.time import ensure_utc
 
 #: A "Didn't come" is followed up after this long...
@@ -97,7 +102,7 @@ class SendTrialReminders:
                 sorted({str(t.assigned_occurrence_id) for t in trials})
             )
         }
-        sent = 0
+        results: list[SendResult | None] = []
         for trial in trials:
             occurrence = occurrences.get(str(trial.assigned_occurrence_id))
             if occurrence is None or occurrence.status == "cancelled":
@@ -105,14 +110,18 @@ class SendTrialReminders:
             local_start = ensure_utc(occurrence.start_at).astimezone(local_now.tzinfo)
             if local_start.date() != tomorrow:
                 continue
-            sent += await send_once(
-                self._send_repo,
-                academy_id=academy_id,
-                subject_id=trial.request_id,
-                nudge_key=reminder_nudge_key(occurrence.occurrence_id),
-                send=partial(self._notifier.trial_reminder, trial=trial, local_start=local_start),
+            results.append(
+                await send_once(
+                    self._send_repo,
+                    academy_id=academy_id,
+                    subject_id=trial.request_id,
+                    nudge_key=reminder_nudge_key(occurrence.occurrence_id),
+                    send=partial(
+                        self._notifier.trial_reminder, trial=trial, local_start=local_start
+                    ),
+                )
             )
-        return sent
+        return sent_count(results)
 
 
 class SendTrialNoShowFollowUps:
@@ -132,7 +141,7 @@ class SendTrialNoShowFollowUps:
     async def execute(self, *, academy_id: str, local_now: datetime) -> int:
         if not await self._switch.is_enabled(academy_id):
             return 0
-        sent = 0
+        results: list[SendResult | None] = []
         for trial in await self._trials.list_by_status("completed"):
             if (
                 trial.outcome != "no_show"
@@ -147,14 +156,16 @@ class SendTrialNoShowFollowUps:
                 continue
             if await self._family_moved_on(trial):
                 continue
-            sent += await send_once(
-                self._send_repo,
-                academy_id=academy_id,
-                subject_id=trial.request_id,
-                nudge_key=TRIAL_NO_SHOW_KEY,
-                send=partial(self._notifier.trial_no_show, trial=trial),
+            results.append(
+                await send_once(
+                    self._send_repo,
+                    academy_id=academy_id,
+                    subject_id=trial.request_id,
+                    nudge_key=TRIAL_NO_SHOW_KEY,
+                    send=partial(self._notifier.trial_no_show, trial=trial),
+                )
             )
-        return sent
+        return sent_count(results)
 
     async def _family_moved_on(self, trial: TrialRequest) -> bool:
         """A later trial request by the same parent that was not denied: the

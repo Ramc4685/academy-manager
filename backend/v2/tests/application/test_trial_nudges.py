@@ -19,6 +19,7 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_nudges import (
 )
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
+from backend.v2.shared.comms.claimed_send import NudgeSendsFailed
 
 pytestmark = pytest.mark.asyncio
 
@@ -254,7 +255,10 @@ async def test_a_failed_send_keeps_the_claim_retryable() -> None:
     occurrences = [_occurrence("occ-1", start_local=datetime(2026, 11, 5, 9, 0, tzinfo=CHICAGO))]
     job = _reminders([_trial("t1")], occurrences, send_repo=send_repo, notifier=broken)
 
-    assert await job.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW) == 0
+    # The run fails so the academy-local daily runner retries it later today:
+    # tomorrow the reminder is out of its window and would never be retried.
+    with pytest.raises(NudgeSendsFailed):
+        await job.execute(academy_id=ACADEMY_ID, local_now=LOCAL_NOW)
     assert send_repo.statuses() == [((ACADEMY_ID, "t1", "trial_reminder:occ-1"), "failed")]
 
     working = FakeNotifier()

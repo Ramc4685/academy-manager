@@ -27,7 +27,12 @@ from functools import partial
 from typing import Protocol
 
 from backend.v2.contexts.onboarding.domain.models import Application
-from backend.v2.shared.comms.claimed_send import SendClaimRepository, SendResult, send_once
+from backend.v2.shared.comms.claimed_send import (
+    SendClaimRepository,
+    SendResult,
+    send_once,
+    sent_count,
+)
 from backend.v2.shared.time import ensure_utc
 
 RECOVERABLE_STATUSES: tuple[str, ...] = ("CHECKOUT_EXPIRED", "DRAFT")
@@ -73,7 +78,7 @@ class SendCheckoutRecoveryNotices:
         """Run for ONE academy inside its tenant scope."""
         if not await self._switch.is_enabled(academy_id):
             return 0
-        sent = 0
+        results: list[SendResult | None] = []
         for application in await self._applications.list_by_status(list(RECOVERABLE_STATUSES)):
             if not is_recoverable(application, local_now):
                 continue
@@ -82,11 +87,13 @@ class SendCheckoutRecoveryNotices:
             latest = await self._applications.latest_for_parent(application.parent_user_id)
             if latest is None or latest.application_id != application.application_id:
                 continue
-            sent += await send_once(
-                self._send_repo,
-                academy_id=academy_id,
-                subject_id=application.application_id,
-                nudge_key=CHECKOUT_RECOVERY_KEY,
-                send=partial(self._notifier.checkout_recovery, application=application),
+            results.append(
+                await send_once(
+                    self._send_repo,
+                    academy_id=academy_id,
+                    subject_id=application.application_id,
+                    nudge_key=CHECKOUT_RECOVERY_KEY,
+                    send=partial(self._notifier.checkout_recovery, application=application),
+                )
             )
-        return sent
+        return sent_count(results)
