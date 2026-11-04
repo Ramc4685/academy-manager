@@ -374,7 +374,10 @@ class HasFeature:
 
     Resolves the academy's subscription to its plan and answers from
     ``PlatformPlan.features``. No subscription, a subscription outside
-    ``ENTITLED_BILLING_STATUSES``, or a missing or archived plan is ``False``.
+    ``ENTITLED_BILLING_STATUSES``, a lapsed deadline, or a missing or archived
+    plan is ``False``. Deadlines are checked here because a local trial and a
+    scheduled cancellation keep their status after the date passes (no job
+    flips them yet).
     """
 
     def __init__(
@@ -382,18 +385,34 @@ class HasFeature:
         *,
         plans: PlatformPlanRepository,
         subscriptions: TenantSubscriptionRepository,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._plans = plans
         self._subscriptions = subscriptions
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     async def execute(self, academy_id: str, feature: str) -> bool:
         subscription = await self._subscriptions.get_for_academy(academy_id)
         if subscription is None or subscription.billing_status not in ENTITLED_BILLING_STATUSES:
             return False
+        if _lapsed(subscription, self._clock()):
+            return False
         plan = await self._plans.get(subscription.plan_id)
         if plan is None or not plan.is_active:
             return False
         return feature in plan.features
+
+
+def _lapsed(subscription: TenantSubscription, now: datetime) -> bool:
+    """A trial past ``trial_ends_at``, or a scheduled cancellation past
+    ``current_period_end``. Naive datetimes (Mongo reads) are UTC."""
+
+    def passed(at: datetime | None) -> bool:
+        return at is not None and (at if at.tzinfo else at.replace(tzinfo=UTC)) <= now
+
+    if subscription.billing_status == "trialing" and passed(subscription.trial_ends_at):
+        return True
+    return subscription.cancel_at_period_end and passed(subscription.current_period_end)
 
 
 class GetTenantSubscription:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from mongomock_motor import AsyncMongoMockClient
@@ -126,3 +126,26 @@ async def test_features_round_trip_through_mongo_and_upsert() -> None:
     subs = MongoTenantSubscriptionRepository(db)
     await subs.save(_sub("acad-1"))
     assert await HasFeature(plans=plans, subscriptions=subs).execute("acad-1", "ai") is True
+
+
+@pytest.mark.parametrize(
+    ("fields", "entitled"),
+    [
+        ({"billing_status": "trialing", "trial_ends_at": NOW + timedelta(days=1)}, True),
+        ({"billing_status": "trialing", "trial_ends_at": NOW - timedelta(seconds=1)}, False),
+        # naive, as Mongo returns it
+        ({"billing_status": "trialing", "trial_ends_at": datetime(2026, 11, 3)}, False),
+        ({"cancel_at_period_end": True, "current_period_end": NOW + timedelta(days=1)}, True),
+        ({"cancel_at_period_end": True, "current_period_end": NOW - timedelta(seconds=1)}, False),
+        # a renewing subscription is not cut off by a stale period end
+        ({"cancel_at_period_end": False, "current_period_end": NOW - timedelta(days=1)}, True),
+    ],
+)
+async def test_lapsed_trial_or_scheduled_cancellation_is_false(
+    fields: dict[str, object], entitled: bool
+) -> None:
+    sub = _sub("acad-1").model_copy(update=fields)
+    use_case = HasFeature(
+        plans=FakePlans(_plan()), subscriptions=FakeSubscriptions(sub), clock=lambda: NOW
+    )
+    assert await use_case.execute("acad-1", "ai") is entitled
