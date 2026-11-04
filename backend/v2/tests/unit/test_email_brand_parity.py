@@ -4,7 +4,10 @@ Golden pin for BLNO: an academy document that holds only a name (no logo,
 no brand colour, no contact details) must render every money/account email
 byte-for-byte as it did before the full brand was wired in. The fixtures in
 ``tests/fixtures/email_brand_parity/`` were captured from the pre-change code;
-never regenerate them to make this test pass.
+never regenerate them to make this test pass. One deliberate footer change
+since: the "Powered by CourtMastr" link (AI strategy Phase 1) was appended to
+every fixture by a literal substitution of the closing ``Sent by`` line, so
+the diff on each golden is that line only.
 
 The second half shows what the change adds: an academy with a logo, a colour
 and contact details gets them in the shell, and hostile values are escaped or
