@@ -264,13 +264,53 @@ def test_a_configured_reply_to_is_used_and_invites_a_reply(db: Any) -> None:
     assert "Reply to this email" in ack["body"]
 
 
-def test_without_a_secret_the_footer_still_ships_as_plain_text(db: Any) -> None:
+async def _claims(db: Any, contact_id: str) -> tuple[dict[str, Any], int]:
+    row = await db["crm_contacts"].find_one({"contact_id": contact_id})
+    return row, await db["crm_inquiry_ack_throttle"].count_documents({})
+
+
+def test_without_a_secret_nothing_is_sent_and_the_claims_are_given_back(db: Any) -> None:
+    # No unsubscribe link means no working opt-out for someone with no account.
     adapter, stub = _adapter(db, secret=None)
     contact = asyncio.run(_file(db, _contact()))
     asyncio.run(adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None))
-    [ack] = _prospect_sends(stub)
-    assert "/unsubscribe/prospect" not in ack["body"]
-    assert "Do not want these emails?" in ack["body"]
+    assert _prospect_sends(stub) == []
+    assert [s["email"] for s in stub.sent] == [OWNER.email]
+    row, inbox_claims = asyncio.run(_claims(db, contact.contact_id))
+    assert "acknowledged_at" not in row
+    assert inbox_claims == 0
+
+
+def test_an_opt_out_store_outage_sends_nothing_and_gives_the_claims_back(
+    db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _down(self: Any, email: str) -> bool:
+        raise RuntimeError("mongo down")
+
+    monkeypatch.setattr(MongoProspectOptOutRepository, "is_opted_out", _down)
+    adapter, stub = _adapter(db)
+    contact = asyncio.run(_file(db, _contact()))
+    asyncio.run(adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None))
+    assert _prospect_sends(stub) == []
+    row, inbox_claims = asyncio.run(_claims(db, contact.contact_id))
+    assert "acknowledged_at" not in row
+    assert inbox_claims == 0
+
+
+def test_a_render_error_gives_the_claims_back(db: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(**_: Any) -> tuple[str, str]:
+        raise ValueError("bad template")
+
+    monkeypatch.setattr(
+        "backend.v2.composition.public_trial_requests.render_inquiry_acknowledgement", _boom
+    )
+    adapter, stub = _adapter(db)
+    contact = asyncio.run(_file(db, _contact()))
+    asyncio.run(adapter.notify(academy_id=ACADEMY, contact=contact, created=True, class_title=None))
+    assert _prospect_sends(stub) == []
+    row, inbox_claims = asyncio.run(_claims(db, contact.contact_id))
+    assert "acknowledged_at" not in row
+    assert inbox_claims == 0
 
 
 def test_second_notify_for_the_same_contact_sends_no_second_acknowledgement(db: Any) -> None:

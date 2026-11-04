@@ -259,8 +259,11 @@ sent from the owner-alert background task): class named, seat available
 It is TRANSACTIONAL under the mandatory `contact_about_request` tick and
 claimed once per contact by
 `MongoCrmContactRepository.try_claim_acknowledgement` (`acknowledged_at` on
-the row), so a retry never sends twice; a provider failure gives the claim
-back (`release_acknowledgement`) so the row says no email went out (nothing
+the row), so a retry never sends twice; a provider failure, an opt-out
+store outage, a render error, or no unsubscribe link to mint (no
+`UNSUBSCRIBE_TOKEN_SECRET` / `FRONTEND_URL`: a prospect has no account
+preferences to fall back on, so nothing is sent) gives the claim back
+(`release_acknowledgement`) so the row says no email went out (nothing
 re-sends it yet). The form takes any address unverified, so the body carries
 nothing the submitter typed and one inbox gets at most one acknowledgement
 per academy per UTC day, whatever contact rows or address spellings it files:
@@ -268,8 +271,8 @@ per academy per UTC day, whatever contact rows or address spellings it files:
 per `(academy_id, mailbox, day)` under a unique index (migration 0217, 7-day
 TTL), where `mailbox` is `canonical_mailbox` (lower-cased, `+tag` dropped,
 Gmail dots and googlemail.com folded). The insert is the claim, so concurrent
-submissions for one inbox send once; a provider failure deletes it with the
-contact claim. An academy also sends at most 20 acknowledgements an hour
+submissions for one inbox send once; anything that sent nothing deletes it
+with the contact claim. An academy also sends at most 20 acknowledgements an hour
 (a soft count over the same rows).
 Replies go only to the academy's configured reply-to; with none, the email
 has no reply line rather than exposing an owner's address. Honeypot and

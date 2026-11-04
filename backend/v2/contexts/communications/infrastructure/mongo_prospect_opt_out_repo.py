@@ -30,6 +30,9 @@ from backend.v2.shared.tenancy.repository import TenantScopedRepository
 
 log = logging.getLogger(__name__)
 
+#: The gate's fail-closed reason: a transient store outage, not an opt-out.
+GATE_UNAVAILABLE = "unsubscribe_check_unavailable"
+
 
 class MongoProspectOptOutRepository(TenantScopedRepository):
     """``email_prospect_opt_outs``, unique on ``(academy_id, email)`` (migration 0215)."""
@@ -75,7 +78,7 @@ class ProspectOptOutGate(RecipientGate):
             opted_out = await self._repo.is_opted_out(email)
         except Exception as exc:
             log.error("prospect_opt_out_gate_unavailable: %s", exc)
-            return GateVerdict(allowed=False, reason="unsubscribe_check_unavailable")
+            return GateVerdict(allowed=False, reason=GATE_UNAVAILABLE)
         if not opted_out:
             return ALLOW
         return GateVerdict(allowed=False, reason="unsubscribed:prospect")

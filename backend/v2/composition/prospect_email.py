@@ -10,7 +10,9 @@ everything a prospect send needs and a user send already has elsewhere:
 * the email-keyed opt-out gate (``ProspectOptOutGate``, in the same seam);
 * the CAN-SPAM footer with a lead-facing unsubscribe link to the backend
   page ``GET /api/v2/unsubscribe/prospect`` (the token is the same HMAC
-  scheme as the user link, minted for the pseudo id);
+  scheme as the user link, minted for the pseudo id). With no link to mint
+  (no secret or frontend URL) nothing is sent: the account-preferences
+  fallback footer means nothing to someone without an account;
 * sender identity: platform From address under the academy's display name,
   replies to the academy (``resolve_sender``).
 
@@ -107,6 +109,13 @@ class ProspectEmailer:
             academy_slug=str(academy_doc.get("slug") or "") or None,
             path=PROSPECT_UNSUBSCRIBE_PATH,
         )
+        if unsubscribe_url is None:
+            # The shared fallback footer points at account preferences, which a
+            # prospect does not have; never mail a stranger without a working
+            # opt-out (no unsubscribe secret or frontend URL configured).
+            return SendOutcome(
+                ok=False, provider_message_id=None, failed_reason="no_unsubscribe_link"
+            )
         identity = resolve_sender(academy_doc)
         return await self.sender.send(
             recipient=ResolvedRecipient(
