@@ -18,6 +18,12 @@ alike, and the adapter itself decides whether anything is sent (only for a
 newly created contact). The HTTP response is therefore the same bytes and the
 same work whether or not the inquiry was already on file, and a mail outage
 can never fail or slow a submission.
+
+The same task also sends the family ONE acknowledgement (AI strategy Phase 1
+#2) through the prospect send path in ``composition/prospect_email.py``:
+class named, seat available or waitlisted, what happens next. It is a
+TRANSACTIONAL reply to their own request under the mandatory
+``contact_about_request`` tick, claimed once per contact on the row itself.
 """
 
 from __future__ import annotations
@@ -25,8 +31,10 @@ from __future__ import annotations
 import html
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
+from backend.v2.composition.prospect_email import ProspectEmailer, academy_brand
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     EmailSendPort,
@@ -72,6 +80,10 @@ _RECIPIENT_ROLE: Final[AudienceRole] = "owner"
 
 class AcademyLookup(Protocol):
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
+
+
+class AcknowledgementClaims(Protocol):
+    async def try_claim_acknowledgement(self, contact_id: str, *, at: datetime) -> bool: ...
 
 
 def _row(label: str, value: str | None) -> str:
@@ -132,8 +144,64 @@ def render_trial_request_alert(
     return subject, shell(brand=brand, inner_html=inner)
 
 
+def render_inquiry_acknowledgement(
+    *,
+    academy_name: str,
+    contact: CrmContact,
+    class_title: str | None,
+    can_reply: bool,
+) -> tuple[str, str]:
+    """Subject and inner HTML of the family's acknowledgement.
+
+    Trial (a seat is there): the academy will confirm a date. Lead: the
+    chosen class is full (waitlist) or nothing is open yet (we will tell you).
+    User-supplied text is HTML-escaped and never placed in a link.
+    """
+    is_trial = contact.pipeline_status == "trial"
+    safe_academy = html.escape(academy_name)
+    safe_class = html.escape(class_title) if class_title else None
+    if is_trial:
+        subject = f"Your free trial request at {academy_name}"
+        asked = (
+            f"Thanks for asking for a free trial in <strong>{safe_class}</strong>."
+            if safe_class
+            else "Thanks for asking for a free trial."
+        )
+        status = (
+            "A seat is available. The academy will be in touch to confirm a date and "
+            "time; nothing is booked or charged until then."
+        )
+    else:
+        subject = f"Your inquiry at {academy_name}"
+        asked = (
+            f"Thanks for asking about <strong>{safe_class}</strong>."
+            if safe_class
+            else f"Thanks for getting in touch with {safe_academy}."
+        )
+        status = (
+            f"{safe_class} is full right now, so you are on the waitlist. The academy "
+            "will tell you as soon as a seat opens."
+            if safe_class
+            else "Classes are not taking new players right now. The academy will tell "
+            "you as soon as they open."
+        )
+    reply = " Reply to this email if you have a question." if can_reply else ""
+    inner = "".join(
+        [
+            f'<h2 style="margin:0 0 12px;">Hi {html.escape(contact.name)},</h2>',
+            f'<p style="margin:0 0 14px;">{asked}</p>',
+            f'<p style="margin:0 0 14px;">{status}{reply}</p>',
+            '<p style="margin:18px 0 0;font-size:13px;color:#64748b;">'
+            f"You are getting this one email because you asked {safe_academy} to "
+            "contact you about this request.</p>",
+        ]
+    )
+    return subject, inner
+
+
 class TrialRequestOwnerEmail:
-    """Emails the academy's owners about a NEW website contact, once."""
+    """Emails the academy's owners about a NEW website contact, once, and
+    acknowledges the family once (``render_inquiry_acknowledgement``)."""
 
     def __init__(
         self,
@@ -141,10 +209,14 @@ class TrialRequestOwnerEmail:
         academies: AcademyLookup,
         audiences: AudienceResolver,
         sender: EmailSendPort,
+        contacts: AcknowledgementClaims,
+        prospects: ProspectEmailer,
     ) -> None:
         self._academies = academies
         self._audiences = audiences
         self._sender = sender
+        self._contacts = contacts
+        self._prospects = prospects
 
     async def notify(
         self,
@@ -173,16 +245,18 @@ class TrialRequestOwnerEmail:
 
     async def _send_all(self, contact: CrmContact, class_title: str | None) -> None:
         doc = await self._academies.find_by_id(contact.academy_id) or {}
-        brand = EmailBrand(
-            academy_name=str(doc.get("display_name") or doc.get("name") or "") or "Your academy",
-            brand_color=doc.get("brand_color"),
-            logo_url=doc.get("logo_url"),
-        )
+        brand = academy_brand(doc)
         subject, body = render_trial_request_alert(
             brand=brand, contact=contact, class_title=class_title
         )
-        sender_name = resolve_sender(doc).sender_name
-        for recipient in await self._recipients(doc):
+        identity = resolve_sender(doc)
+        sender_name = identity.sender_name
+        recipients = await self._recipients(doc)
+        # Replies to the family's acknowledgement go to the academy's reply-to,
+        # else to the first owner address the alert itself went to.
+        reply_to = identity.reply_to or next((r.email for r in recipients if r.email), None)
+        await self._acknowledge(contact, doc, brand.academy_name, class_title, reply_to)
+        for recipient in recipients:
             outcome = await self._sender.send(
                 recipient=recipient,
                 subject=subject,
@@ -200,6 +274,46 @@ class TrialRequestOwnerEmail:
                     "public.trial_request_alert_send_failed",
                     extra={"contact_id": contact.contact_id, "reason": outcome.failed_reason},
                 )
+
+    async def _acknowledge(
+        self,
+        contact: CrmContact,
+        doc: dict[str, Any],
+        academy_name: str,
+        class_title: str | None,
+        reply_to: str | None,
+    ) -> None:
+        if not contact.consent.contact_about_request or not contact.email:
+            return
+        # Claim first, on the contact row: a second run for the same contact
+        # finds the claim taken and sends nothing.
+        # shortcut: a provider failure after the claim loses the acknowledgement
+        # (logged below); add a retryable claim if that ever shows in the logs.
+        if not await self._contacts.try_claim_acknowledgement(
+            contact.contact_id, at=datetime.now(UTC)
+        ):
+            return
+        subject, inner = render_inquiry_acknowledgement(
+            academy_name=academy_name,
+            contact=contact,
+            class_title=class_title,
+            can_reply=reply_to is not None,
+        )
+        outcome = await self._prospects.send(
+            contact=contact,
+            academy_doc=doc,
+            subject=subject,
+            inner_html=inner,
+            # TRANSACTIONAL: the reply to a request this family made, under the
+            # consent tick the form requires. Nothing here is marketing.
+            category=EmailCategory.TRANSACTIONAL,
+            reply_to=reply_to,
+        )
+        if not outcome.ok and not outcome.suppressed:
+            logger.warning(
+                "public.trial_request_ack_send_failed",
+                extra={"contact_id": contact.contact_id, "reason": outcome.failed_reason},
+            )
 
     async def _recipients(self, academy_doc: dict[str, Any]) -> list[ResolvedRecipient]:
         found = await self._audiences.resolve_academy_audience(
@@ -239,16 +353,26 @@ class PublicTrialRequests:
 def compose_public_trial_requests(db: Any, settings: Any) -> PublicTrialRequests:
     """``_build_email_sender`` is the one construction site that hands dev and
     CI the stub port and production the gated Resend one."""
-    from backend.v2.composition.digests import _build_email_sender
+    from backend.v2.composition.digests import (
+        _build_email_sender,
+        compose_unsubscribe_link_builder,
+    )
 
     academies = MongoAcademyRepository(db)
+    contacts = MongoCrmContactRepository(db)
+    sender = _build_email_sender(settings, db)
     return PublicTrialRequests(
         get_academy_profile=GetPublicAcademyProfile(academies),
         resolve_class_choice=ResolvePublicClassChoice(MongoSessionRepository(db)),
-        submit_inquiry=SubmitWebsiteInquiry(CreateContact(MongoCrmContactRepository(db))),
+        submit_inquiry=SubmitWebsiteInquiry(CreateContact(contacts)),
         notifier=TrialRequestOwnerEmail(
             academies=academies,
             audiences=MongoAudienceResolver(db=db),
-            sender=_build_email_sender(settings, db),
+            sender=sender,
+            contacts=contacts,
+            prospects=ProspectEmailer(
+                sender=sender,
+                unsubscribe_links=compose_unsubscribe_link_builder(settings),
+            ),
         ),
     )

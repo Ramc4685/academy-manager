@@ -9,11 +9,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.v2.composition.prospect_email import ProspectEmailer
 from backend.v2.composition.public_trial_requests import (
     TrialRequestOwnerEmail,
     render_trial_request_alert,
 )
 from backend.v2.contexts.communications.application.ports import ResolvedRecipient
+from backend.v2.contexts.communications.application.unsubscribe_token import (
+    UnsubscribeLinkBuilder,
+)
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.infrastructure.stub_send_port import StubEmailSendPort
 from backend.v2.contexts.crm.domain.models import ContactConsent, CrmContact
@@ -52,6 +56,14 @@ class _Academies:
         return self.doc
 
 
+class _AlreadyAcknowledged:
+    """The family acknowledgement is covered by test_inquiry_acknowledgement.py;
+    here its claim is already taken, so only the owner alert runs."""
+
+    async def try_claim_acknowledgement(self, contact_id: str, *, at: datetime) -> bool:
+        return False
+
+
 class _Audiences:
     def __init__(self, recipients: list[ResolvedRecipient]) -> None:
         self.recipients = recipients
@@ -77,7 +89,13 @@ def _adapter(
             "contact_email": "desk@riverside.example.test",
         }
     )
-    adapter = TrialRequestOwnerEmail(academies=academies, audiences=audiences, sender=sender)
+    adapter = TrialRequestOwnerEmail(
+        academies=academies,
+        audiences=audiences,
+        sender=sender,
+        contacts=_AlreadyAcknowledged(),
+        prospects=ProspectEmailer(sender=sender, unsubscribe_links=UnsubscribeLinkBuilder()),
+    )
     return adapter, sender, audiences, academies
 
 
