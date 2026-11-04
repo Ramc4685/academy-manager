@@ -13,11 +13,11 @@ import {
   type SkillBoardCell,
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
+import { NOTE_MAX, pickedCriteria, toggleCriterion } from "@/lib/coach/mastery-note";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
 
-const NOTE_MAX = 140;
 // Matches the backend's MASTERY_NOTE_WINDOW: notes go on the day's wins.
 const NOTE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -314,6 +314,7 @@ export function TapSkillsWorkspace({
                 {has && noteOpen(cell) && (
                   <MasteryNote
                     studentName={student.student_name}
+                    criteria={skill.criteria}
                     note={note}
                     editing={editing}
                     draft={draft}
@@ -363,8 +364,9 @@ export function TapSkillsWorkspace({
 }
 
 /** The optional one-line note to the parent on today's win. */
-function MasteryNote({
+export function MasteryNote({
   studentName,
+  criteria,
   note,
   editing,
   draft,
@@ -376,6 +378,8 @@ function MasteryNote({
   onRemove,
 }: {
   studentName: string;
+  /** The skill's criteria: tap to write the note as one templated sentence. */
+  criteria: string[];
   note: string;
   editing: boolean;
   draft: string;
@@ -388,11 +392,38 @@ function MasteryNote({
 }) {
   if (editing) {
     const inputId = `mastery-note-${studentName.replace(/\W+/g, "-")}`;
+    const picked = pickedCriteria(draft, criteria);
     return (
       <div className="mt-1.5 space-y-1.5 px-1">
         <label htmlFor={inputId} className="block text-xs font-bold text-status-slate-600">
           One line for {studentName}&apos;s parents (optional)
         </label>
+        {criteria.length > 0 && (
+          <div
+            role="group"
+            aria-label={`Tap what ${studentName} nailed`}
+            className="flex flex-wrap gap-1.5"
+          >
+            {criteria.map((criterion) => {
+              const on = picked.includes(criterion);
+              return (
+                <button
+                  key={criterion}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => onDraft(toggleCriterion(draft, criteria, criterion))}
+                  className={`min-h-touch rounded-full border-2 px-3 text-left text-sm font-semibold ${
+                    on
+                      ? "border-rally-cobalt bg-rally-cobalt text-white"
+                      : "border-rally-line bg-white text-rally-ink"
+                  }`}
+                >
+                  {criterion}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <input
           id={inputId}
           value={draft}
