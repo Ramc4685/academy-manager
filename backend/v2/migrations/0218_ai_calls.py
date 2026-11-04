@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0215_ai_calls"
+version = "0218_ai_calls"
 
 
 async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
