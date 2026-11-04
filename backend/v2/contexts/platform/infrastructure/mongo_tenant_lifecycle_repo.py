@@ -90,6 +90,14 @@ class MongoTenantLifecycleRepository:
         )
         return self._to_tenant(doc) if doc else tenant
 
+    async def set_referral_code_if_absent(self, academy_id: str, code: str) -> None:
+        # One targeted $set, never a whole-document save from a read path:
+        # a concurrent status or fee change must not be overwritten.
+        await self._collection.update_one(
+            {"academy_id": academy_id, "referral_code": {"$in": [None]}},
+            {"$set": {"referral_code": code}},
+        )
+
     def _to_tenant(self, doc: dict[str, Any]) -> Tenant:
         now = datetime.now(UTC)
         return Tenant(

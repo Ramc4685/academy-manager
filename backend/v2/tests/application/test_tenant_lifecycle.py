@@ -56,6 +56,11 @@ class FakeTenantRepository:
         self.domain_index[tenant.primary_domain] = tenant.academy_id
         return tenant
 
+    async def set_referral_code_if_absent(self, academy_id: str, code: str) -> None:
+        tenant = self.tenants[academy_id]
+        if tenant.referral_code is None:
+            self.tenants[academy_id] = tenant.model_copy(update={"referral_code": code})
+
 
 def _clock() -> datetime:
     return datetime(2026, 5, 22, 12, 0, tzinfo=UTC)
