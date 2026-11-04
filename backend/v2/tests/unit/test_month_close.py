@@ -157,7 +157,11 @@ def test_platform_fee_is_the_rate_on_stripe_collected_money_only_or_null() -> No
     """Phase 2 A1: the disclosure line. Floored, on the Stripe share only, and
     null (never 0) when the rate could not be read."""
     section = build_money_section(
-        [], collected_cents=10_000, stripe_collected_cents=4_001, platform_fee_bps=100
+        [],
+        collected_cents=10_000,
+        stripe_collected_cents=4_001,
+        stripe_unrecorded_cents=4_001,
+        platform_fee_bps=100,
     )
     assert section["stripe_collected_cents"] == 4_001
     assert section["platform_fee_bps"] == 100
@@ -165,6 +169,18 @@ def test_platform_fee_is_the_rate_on_stripe_collected_money_only_or_null() -> No
 
     unread = build_money_section([], collected_cents=10_000, stripe_collected_cents=4_001)
     assert unread["platform_fee_bps"] is None and unread["platform_fee_cents"] is None
+
+    # Fees the webhook recorded are summed as stored; only the rows with no
+    # record are estimated from the current rate.
+    mixed = build_money_section(
+        [],
+        collected_cents=10_000,
+        stripe_collected_cents=9_001,
+        platform_fee_bps=100,
+        platform_fee_recorded_cents=37,  # recorded at an older 0.74% rate
+        stripe_unrecorded_cents=4_001,
+    )
+    assert mixed["platform_fee_cents"] == 37 + 40
 
 
 def test_collection_rate_is_capped_at_one() -> None:

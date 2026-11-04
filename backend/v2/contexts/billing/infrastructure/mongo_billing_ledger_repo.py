@@ -86,6 +86,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             stripe_payment_intent_id=doc.get("stripe_payment_intent_id"),
             stripe_account_id=doc.get("stripe_account_id"),
             stripe_invoice_id=doc.get("stripe_invoice_id"),
+            application_fee_cents=doc.get("application_fee_cents"),
             paid_at=doc.get("paid_at"),
             recorded_by=doc.get("recorded_by"),
             notes=doc.get("notes"),

@@ -1013,6 +1013,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
                 stripe_account_id=_event_account(event),
+                application_fee_cents=_application_fee_cents(obj),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -1147,6 +1148,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
                 stripe_account_id=_event_account(event),
+                application_fee_cents=_application_fee_cents(obj),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -1602,6 +1604,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
                 stripe_account_id=_event_account(event),
+                application_fee_cents=_application_fee_cents(pi),
                 paid_at=now,
                 metadata=payment_metadata or None,
                 created_at=now,
@@ -2551,6 +2554,7 @@ class HandleWebhookEvent:
                     status="succeeded",
                     payment_method="stripe",
                     stripe_payment_intent_id=stripe_pi,
+                    application_fee_cents=_application_fee_cents(invoice),
                     paid_at=now,
                     created_at=now,
                     updated_at=now,
@@ -2775,6 +2779,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_subscription",
                 stripe_payment_intent_id=stripe_payment_id,
                 stripe_invoice_id=stripe_invoice_id,
+                application_fee_cents=_application_fee_cents(invoice),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -3058,6 +3063,19 @@ def _identity_value(
     else:
         value = getattr(identity, key)
     return str(value) if value else None
+
+
+def _application_fee_cents(obj: dict[str, Any]) -> int | None:
+    """The platform fee Stripe reports on a PaymentIntent, Invoice or (as a
+    string we stamped ourselves) checkout-session metadata; None when absent,
+    never 0, so month close knows to estimate rather than trust a blank."""
+    raw = obj.get("application_fee_amount")
+    if raw is None:
+        raw = (obj.get("metadata") or {}).get("application_fee_cents")
+    try:
+        return int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _event_account(event: dict[str, Any]) -> str | None:

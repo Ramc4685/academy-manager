@@ -61,6 +61,7 @@ def _make_payment_with_metadata(payment_id: str, academy_id: str, now: datetime)
         update={
             "stripe_payment_intent_id": "pi_metadata_1",
             "metadata": {"disclosure_version": "cash-discount-v1"},
+            "application_fee_cents": 100,
         }
     )
 
@@ -128,6 +129,7 @@ async def test_record_payment_round_trips_metadata(db, acad) -> None:
     assert raw["metadata"] == {"disclosure_version": "cash-discount-v1"}
     assert fetched is not None
     assert fetched.metadata == {"disclosure_version": "cash-discount-v1"}
+    assert fetched.application_fee_cents == 100
 
 
 @pytest.mark.asyncio

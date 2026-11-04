@@ -88,6 +88,12 @@ def _invoice_parent_id(doc: dict[str, Any]) -> str | None:
     return _opt_str(doc.get("parent_id")) or _opt_str(doc.get("parent_user_id"))
 
 
+#: Ledger methods written by the charge-route paths (checkout pay link,
+#: autopay PaymentIntent), the only ones that carry ``application_fee_amount``;
+#: ``stripe_subscription`` and the bare ``stripe`` invoice rows do not.
+_FEE_BEARING_METHODS = frozenset({"stripe_checkout", "stripe_autopay"})
+
+
 class MongoMonthCloseReadModel:
     """Batched facts → ``build_month_close_view`` for the admin Month close page."""
 
@@ -132,12 +138,20 @@ class MongoMonthCloseReadModel:
             timezone_name=tz_name,
         )
         collected_cents = cash.net_cents
-        # The processing markup applies to Stripe-collected money only. Rows
-        # the app wrote carry a ``stripe_*`` method; a legacy row with Stripe
-        # ids but no method is missed, which is one reason the page says
-        # "estimated".
-        stripe_collected_cents = sum(
-            row.net_cents for row in cash.rows if (row.method or "").startswith("stripe")
+        # The processing markup applies to the rows that went through the
+        # charge route (``application_fee_amount`` is only set there) or that
+        # Stripe reported a fee on. Rows without a recorded fee are estimated
+        # from the current rate; a legacy row with Stripe ids but no method
+        # is missed, which is one reason the page says "estimated".
+        fee_rows = [
+            row
+            for row in cash.rows
+            if row.method in _FEE_BEARING_METHODS or row.application_fee_cents is not None
+        ]
+        stripe_collected_cents = sum(row.net_cents for row in fee_rows)
+        platform_fee_recorded_cents = sum(row.application_fee_cents or 0 for row in fee_rows)
+        stripe_unrecorded_cents = sum(
+            row.net_cents for row in fee_rows if row.application_fee_cents is None
         )
 
         invoice_ids = [inv["invoice_id"] for inv in invoices]
@@ -197,6 +211,8 @@ class MongoMonthCloseReadModel:
                 collected_cents=collected_cents,
                 stripe_collected_cents=stripe_collected_cents,
                 platform_fee_bps=platform_fee_bps,
+                platform_fee_recorded_cents=platform_fee_recorded_cents,
+                stripe_unrecorded_cents=stripe_unrecorded_cents,
                 tuition_discounts=discounts,
                 card_state_known=cards is not None,
                 warnings=tuple(warnings),

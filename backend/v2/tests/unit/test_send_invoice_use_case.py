@@ -1325,6 +1325,7 @@ async def test_pay_link_default_fee_keeps_the_call_byte_identical() -> None:
     call = stripe.calls[0]
     assert call["stripe_account"] == "acct_ready_1"
     assert "application_fee_cents" not in call
+    assert "application_fee_cents" not in call["metadata"]
     assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
@@ -1335,4 +1336,7 @@ async def test_pay_link_sends_the_academy_fee_and_scopes_the_idempotency_key() -
 
     call = stripe.calls[0]
     assert call["application_fee_cents"] == 125  # 1.25% of $100.00
+    # checkout.session.completed has no application_fee_amount; the webhook
+    # records the fee from this metadata key instead.
+    assert call["metadata"]["application_fee_cents"] == "125"
     assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:fee125:acct:acct_ready_1"

@@ -1468,6 +1468,7 @@ async def test_autopay_payment_intent_uses_invoice_parent_when_metadata_parent_m
                     "id": "pi_autopay_1",
                     "amount": 10000,
                     "currency": "usd",
+                    "application_fee_amount": 100,
                     "metadata": {
                         "academy_id": "acad",
                         "invoice_id": "inv-autopay",
@@ -1485,6 +1486,8 @@ async def test_autopay_payment_intent_uses_invoice_parent_when_metadata_parent_m
     payment = ledger.payments["ledger-pay-autopay:pi_autopay_1"]
     assert payment.parent_id == "parent-from-invoice"
     assert payment.academy_id == "acad"
+    # Phase 2 A1: the fee Stripe took is recorded on the row, not re-derived.
+    assert payment.application_fee_cents == 100
     assert ledger.allocations == [
         {
             "payment_id": "ledger-pay-autopay:pi_autopay_1",
@@ -2417,6 +2420,7 @@ async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> 
                         "parent_id": "parent-balance",
                         "invoice_ids": "inv-balance-1,inv-balance-2",
                         "type": "balance_payment",
+                        "application_fee_cents": "100",
                     },
                 }
             },
@@ -2434,6 +2438,7 @@ async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> 
     assert list(ledger.payments) == ["ledger-pay-cs:cs_balance"]
     assert ledger.payments["ledger-pay-cs:cs_balance"].stripe_payment_intent_id == "pi_balance"
     assert ledger.payments["ledger-pay-cs:cs_balance"].unapplied_amount_cents == 0
+    assert ledger.payments["ledger-pay-cs:cs_balance"].application_fee_cents == 100
     assert ledger.allocations == [
         {
             "payment_id": "ledger-pay-cs:cs_balance",

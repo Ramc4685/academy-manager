@@ -494,6 +494,10 @@ class SendInvoice:
                     "autopay_enrollment_ids": enrollment_ids,
                 }
             fee_cents = route.application_fee_cents(amount_cents) if route else 0
+            if fee_cents:
+                # checkout.session.completed carries no application_fee_amount
+                # (it lives on the PaymentIntent); the webhook reads it here.
+                checkout_metadata["application_fee_cents"] = str(fee_cents)
             idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
             # House academy -> platform: no account kwarg and the key is
             # unchanged. Otherwise a DIRECT charge on the academy's ready
