@@ -1,3 +1,4 @@
+from .client_ip import request_ip
 from .errors import DomainError, register_exception_handlers
 from .persona import (
     is_assistant_only,
@@ -16,6 +17,7 @@ __all__ = [
     "is_assistant_only",
     "is_coach_supervisor",
     "register_exception_handlers",
+    "request_ip",
     "require_coach_lead_surface",
     "require_coach_surface",
     "require_owner",

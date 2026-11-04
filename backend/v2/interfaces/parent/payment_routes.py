@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -31,7 +30,7 @@ from backend.v2.interfaces.parent.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.comms.email_theme import format_money
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import request_ip, require_persona
 
 router = APIRouter(tags=["parent.payments"])
 
@@ -163,43 +162,10 @@ async def checkout_status(
         checkout_session_id=checkout_session_id,
         source="parent_checkout_status",
         actor_id=claims.user_id,
-        ip=_request_ip(request),
+        ip=request_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
     return CheckoutStatusResponse(**result)
-
-
-def _request_ip(request: Request) -> str | None:
-    direct_host = request.client.host if request.client else None
-    if _trusted_proxy_host(direct_host):
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            first_hop = forwarded_for.split(",", 1)[0].strip()
-            if _valid_ip(first_hop):
-                return first_hop
-        for header_name in ("fly-client-ip", "cf-connecting-ip", "x-real-ip"):
-            candidate = request.headers.get(header_name)
-            if candidate and _valid_ip(candidate.strip()):
-                return candidate.strip()
-    return direct_host
-
-
-def _trusted_proxy_host(host: str | None) -> bool:
-    if not host:
-        return False
-    try:
-        parsed = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return parsed.is_loopback or parsed.is_private
-
-
-def _valid_ip(host: str) -> bool:
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return True
 
 
 @router.get(

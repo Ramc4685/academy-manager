@@ -921,15 +921,27 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 {"academy_id": academy_id, "payment_id": payment_id}
             )
         ]
+        # Every refusal runs before the first reversal, so a refused void
+        # leaves the payment exactly as it was.
+        if any(not allocation.get("idempotency_key") for allocation in allocation_docs):
+            # Pre-0130 rows carry no idempotency key, which is the handle
+            # reverse_payment_allocation reverses by. Refuse rather than
+            # void a payment whose invoice would stay wrongly settled.
+            raise ValueError("payment has an un-reversible legacy allocation; reconcile first")
+        spent = await self._spent_overpayment_credit_cents(
+            academy_id=academy_id,
+            allocation_ids=[str(a["allocation_id"]) for a in allocation_docs],
+        )
+        if spent > 0:
+            # Voiding would cancel the credit but cannot take back what it
+            # already paid, so the family would keep $spent of value for free.
+            raise ValueError(
+                f"${spent / 100:.2f} of the account credit this payment created was "
+                "already used on another invoice; undo that first"
+            )
         for allocation in allocation_docs:
-            allocation_key = allocation.get("idempotency_key")
-            if not allocation_key:
-                # Pre-0130 rows carry no idempotency key, which is the handle
-                # reverse_payment_allocation reverses by. Refuse rather than
-                # void a payment whose invoice would stay wrongly settled.
-                raise ValueError("payment has an un-reversible legacy allocation; reconcile first")
             await self.reverse_payment_allocation(
-                allocation_idempotency_key=str(allocation_key),
+                allocation_idempotency_key=str(allocation["idempotency_key"]),
                 reversal_idempotency_key=f"void:{payment_id}:{allocation['allocation_id']}",
                 reason=f"payment_voided:{reason}",
                 return_code=None,
@@ -1591,6 +1603,26 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 }
             },
         )
+
+    async def _spent_overpayment_credit_cents(
+        self, *, academy_id: str, allocation_ids: list[str]
+    ) -> int:
+        """Cents already applied from live OVERPAYMENT credits minted by these allocations."""
+        if not allocation_ids:
+            return 0
+        spent = 0
+        async for credit_doc in self._db["account_credit_ledger"].find(
+            {
+                "academy_id": academy_id,
+                "source_type": "OVERPAYMENT",
+                "source_id": {"$in": allocation_ids},
+                "status": {"$ne": "VOIDED"},
+            }
+        ):
+            amount = int(credit_doc.get("amount_cents") or 0)
+            remaining = int(credit_doc.get("remaining_amount_cents") or 0)
+            spent += max(amount - remaining, 0)
+        return spent
 
     async def _void_overpayment_credit_for_allocation(
         self,

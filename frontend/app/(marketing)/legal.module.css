@@ -8,7 +8,7 @@
 .shell {
   width: min(920px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 40px 0 64px;
+  padding: calc(40px + env(safe-area-inset-top, 0px)) 0 64px;
 }
 
 .nav {
@@ -42,6 +42,12 @@
 .backLink {
   color: #2563eb;
   text-decoration: none;
+}
+
+.navLinks a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 
 .header {

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono, Manrope, Outfit } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { brand } from "@/lib/brand";
 import { publicPageBrand } from "@/lib/public-page/metadata";
@@ -7,23 +7,28 @@ import { loadPublicAcademyPage } from "@/lib/public-page/server-fetch";
 import { Providers } from "@/lib/providers";
 import { SentryInit } from "@/components/observability/sentry-init";
 
-const manrope = Manrope({
-  subsets: ["latin"],
+// Self-hosted (latin subset of the Google Fonts variable files): next/font/google
+// fetched and parsed Google's CSS at build time, and an unparseable response
+// broke the 2026-10-29 production deploy and an E2E run.
+const manrope = localFont({
+  src: "./fonts/manrope-latin.woff2",
+  weight: "200 800",
   display: "swap",
   variable: "--font-manrope",
 });
 
-const outfit = Outfit({
-  subsets: ["latin"],
+const outfit = localFont({
+  src: "./fonts/outfit-latin.woff2",
+  weight: "100 900",
   display: "swap",
   variable: "--font-outfit",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
+const jetbrainsMono = localFont({
+  src: "./fonts/jetbrains-mono-latin.woff2",
+  weight: "500 700",
   display: "swap",
   variable: "--font-jetbrains-mono",
-  weight: ["500", "600", "700"],
 });
 
 /**

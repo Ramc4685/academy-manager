@@ -90,6 +90,8 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
             required=assignment.required,
             scope=assignment.scope,
             program_ids=list(assignment.program_ids),
+            renew_every_months=assignment.renew_every_months,
+            valid_until=assignment.valid_until,
             waiver_template_id=str(doc.get("waiver_template_id") or doc.get("_id")),
             title=str(doc.get("name") or doc.get("title") or ""),
             body=str(doc.get("body") or doc.get("text") or doc.get("waiver_text") or ""),
@@ -315,6 +317,8 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
             "scope": assignment.scope,
             "program_ids": list(assignment.program_ids),
             "assigned_to_registration": assignment.for_all_families,
+            "renew_every_months": assignment.renew_every_months,
+            "valid_until": assignment.valid_until.isoformat() if assignment.valid_until else None,
         }
 
     async def assign_to_registration(

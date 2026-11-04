@@ -33,6 +33,10 @@ export interface Level {
   completion_rule: string;
   requires_coach_recommendation: boolean;
   requires_admin_approval: boolean;
+  /** Owner-chosen colour; null means the default for the level number. */
+  color: string | null;
+  /** `color` or the default: what every surface paints. */
+  display_color: string;
   is_active: boolean;
 }
 
@@ -55,7 +59,8 @@ export interface SkillCriterion {
   display_order: number;
 }
 
-export type ExternalSource = "BWF_SHUTTLE_TIME" | "ACADEMY_CUSTOM" | "COACH_CREATED";
+export type ExternalSource =
+  "BWF_SHUTTLE_TIME" | "ACADEMY_CUSTOM" | "COACH_CREATED";
 
 export interface ExternalLessonReference {
   ref_id: string;
@@ -71,7 +76,11 @@ export interface ExternalLessonReference {
 
 export interface PathwayLevel {
   level: Level;
-  skills: { skill: Skill; criteria: SkillCriterion[]; external_refs: ExternalLessonReference[] }[];
+  skills: {
+    skill: Skill;
+    criteria: SkillCriterion[];
+    external_refs: ExternalLessonReference[];
+  }[];
 }
 
 export interface FullPathway {
@@ -149,10 +158,7 @@ export type ProgressNextAction =
   | "certificate_issued";
 
 export type LevelCompletionStatus =
-  | "not_started"
-  | "in_progress"
-  | "test_ready"
-  | "complete";
+  "not_started" | "in_progress" | "test_ready" | "complete";
 
 export interface StudentProgressOverview {
   student_id: string;
@@ -209,6 +215,18 @@ export interface SkillCertificate {
   program_name: string;
   completed_at: string;
   issued_at: string;
+}
+
+/** One certificate plus what the printable certificate shows (read from the curriculum). */
+export interface CertificateDetail {
+  certificate: SkillCertificate;
+  /** Position on the program's level ladder; null when the level was removed. */
+  level_number: number | null;
+  /** Names of the level's required skills, in curriculum order. */
+  skills: string[];
+  next_level: { level_id: string; name: string; number: number } | null;
+  /** The program's whole level ladder, in order, with each level's colour. */
+  levels: { name: string; color: string | null }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +312,10 @@ export function buildCreateSkillBody(
     scoring_type: SkillScoringType;
   },
 ): CreateSkillBody {
-  const lastSequence = existingSkills.reduce((max, s) => Math.max(max, s.sequence), 0);
+  const lastSequence = existingSkills.reduce(
+    (max, s) => Math.max(max, s.sequence),
+    0,
+  );
   return {
     program_id: level.program_id,
     sequence: lastSequence + 1,
@@ -305,7 +326,10 @@ export function buildCreateSkillBody(
   };
 }
 
-export function createSkill(levelId: string, body: CreateSkillBody): Promise<Skill> {
+export function createSkill(
+  levelId: string,
+  body: CreateSkillBody,
+): Promise<Skill> {
   return apiFetch<Skill>(
     `/admin/levels/${encodeURIComponent(levelId)}/skills`,
     { method: "POST", body: JSON.stringify(body) },
@@ -334,7 +358,10 @@ export function addExternalRef(
 // other program-scoped routes, but the use case ignores it: it seeds (or
 // returns the existing) academy-wide badminton program regardless of which
 // id is passed. Safe to call before any program exists.
-export function seedBadmintonPathway(): Promise<{ program_id: string; name: string }> {
+export function seedBadmintonPathway(): Promise<{
+  program_id: string;
+  name: string;
+}> {
   return apiFetch<{ program_id: string; name: string }>(
     `/admin/programs/_/seed-badminton`,
     { method: "POST" },
@@ -377,7 +404,9 @@ export function listLessonCards(programId: string): Promise<LessonCardsList> {
   );
 }
 
-export function seedLessonCards(programId: string): Promise<SeedLessonCardsResult> {
+export function seedLessonCards(
+  programId: string,
+): Promise<SeedLessonCardsResult> {
   return apiFetch<SeedLessonCardsResult>(
     `/admin/programs/${encodeURIComponent(programId)}/lesson-cards/seed`,
     { method: "POST" },
@@ -449,11 +478,16 @@ export function recordAdminTestAttempt(
   );
 }
 
-export function getLevelUpQueue(programId?: string): Promise<LevelUpRecommendation[]> {
+export function getLevelUpQueue(
+  programId?: string,
+): Promise<LevelUpRecommendation[]> {
   const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ queue: LevelUpRecommendation[] }>(`/admin/level-up-queue${q}`, {
-    method: "GET",
-  }).then((d) => d.queue);
+  return apiFetch<{ queue: LevelUpRecommendation[] }>(
+    `/admin/level-up-queue${q}`,
+    {
+      method: "GET",
+    },
+  ).then((d) => d.queue);
 }
 
 export function approveLevelUp(recId: string): Promise<{ approved: boolean }> {
@@ -473,7 +507,19 @@ export function rejectLevelUp(
   );
 }
 
-export function getAdminStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
+export function getAdminCertificateDetail(
+  studentId: string,
+  certId: string,
+): Promise<CertificateDetail> {
+  return apiFetch<CertificateDetail>(
+    `/admin/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}`,
+    { method: "GET" },
+  );
+}
+
+export function getAdminStudentCertificates(
+  studentId: string,
+): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/admin/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
@@ -494,6 +540,72 @@ export function getAdminPathwayProgress(
     `/admin/pathway/progress?${params.toString()}`,
     { method: "GET" },
   ).then((d) => d.rows);
+}
+
+export type LevelUpRule = "automatic" | "approve_first" | "mixed";
+
+export interface PathwayDashboard {
+  program_id: string;
+  program_name: string;
+  skills_mastered_this_week: number;
+  level_ups_this_month: number;
+  levels: {
+    level_id: string;
+    name: string;
+    sequence: number;
+    player_count: number;
+    requires_admin_approval: boolean;
+    color?: string | null;
+  }[];
+  level_up_rule: LevelUpRule;
+  almost_there: {
+    student_id: string;
+    student_name: string;
+    parent_id: string | null;
+    level_name: string;
+    level_sequence: number;
+    missing_skill_name: string;
+  }[];
+  stuck: {
+    student_id: string;
+    student_name: string;
+    parent_id: string | null;
+    level_name: string;
+    level_sequence: number;
+    skills_passed: number;
+    skills_total: number;
+    last_win_at: string | null;
+    level_started_at: string;
+  }[];
+  unplaced_count: number;
+  coaches: { coach_id: string; coach_name: string; skills_ticked: number }[];
+}
+
+export function getAdminPathwayDashboard(): Promise<PathwayDashboard> {
+  return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", {
+    method: "GET",
+  });
+}
+
+/** A hex colour for the level, or "" to go back to its default. */
+export function setLevelColor(levelId: string, color: string): Promise<Level> {
+  return apiFetch<Level>(`/admin/levels/${encodeURIComponent(levelId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ color }),
+  });
+}
+
+/** The level-up rule is each level's requires_admin_approval; set it on every level. */
+export async function setLevelUpRule(
+  levelIds: string[],
+  approveFirst: boolean,
+): Promise<void> {
+  for (const levelId of levelIds) {
+    await apiFetch(`/admin/levels/${encodeURIComponent(levelId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ requires_admin_approval: approveFirst }),
+    });
+  }
 }
 
 export function getCoachSessionStudentsProgress(
@@ -567,7 +679,10 @@ export function recommendLevelUp(
 ): Promise<LevelUpRecommendation> {
   return apiFetch<LevelUpRecommendation>(
     `/coach/students/${encodeURIComponent(studentId)}/level-up`,
-    { method: "POST", body: JSON.stringify(programId ? { program_id: programId } : {}) },
+    {
+      method: "POST",
+      body: JSON.stringify(programId ? { program_id: programId } : {}),
+    },
   );
 }
 
@@ -575,18 +690,19 @@ export function recommendLevelUp(
 // Parent
 // ---------------------------------------------------------------------------
 
-export function getParentStudentPassport(
+export function getParentCertificateDetail(
   studentId: string,
-  programId?: string,
-): Promise<SkillPassportEntry[]> {
-  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ passport: SkillPassportEntry[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/skill-progress${q}`,
+  certId: string,
+): Promise<CertificateDetail> {
+  return apiFetch<CertificateDetail>(
+    `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}`,
     { method: "GET" },
-  ).then((d) => d.passport);
+  );
 }
 
-export function getParentStudentCertificates(studentId: string): Promise<SkillCertificate[]> {
+export function getParentStudentCertificates(
+  studentId: string,
+): Promise<SkillCertificate[]> {
   return apiFetch<{ certificates: SkillCertificate[] }>(
     `/parent/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
@@ -600,6 +716,7 @@ export function getParentStudentCertificates(studentId: string): Promise<SkillCe
 export interface SkillBoardCell {
   status: SkillStatus;
   last_updated_at: string | null;
+  coach_note?: string | null;
 }
 
 export interface SkillBoardSkill {
@@ -624,6 +741,7 @@ export interface SkillBoardLevelGroup {
   level_id: string;
   level_name: string;
   sequence: number;
+  color?: string | null;
   skills: SkillBoardSkill[];
   students: SkillBoardStudentRow[];
 }

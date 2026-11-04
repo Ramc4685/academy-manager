@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import { getAdminWaiverSignature } from "@/lib/api/admin";
+import { getAdminSignedWaiverCopy, getAdminWaiverSignature } from "@/lib/api/admin";
 import { Card, LaneHeader, Overline } from "@/components/ds";
+import { SignedWaiverDocument } from "@/components/waivers/signed-waiver-document";
 
 export default function AdminSignedWaiverDetailPage() {
   const params = useParams<{ signatureId: string }>();
@@ -14,6 +15,11 @@ export default function AdminSignedWaiverDetailPage() {
   const signatureQuery = useQuery({
     queryKey: ["admin", "waivers", "signature", signatureId],
     queryFn: () => getAdminWaiverSignature(signatureId),
+    retry: false,
+  });
+  const copyQuery = useQuery({
+    queryKey: ["admin", "waivers", "signature", signatureId, "copy"],
+    queryFn: () => getAdminSignedWaiverCopy(signatureId),
     retry: false,
   });
 
@@ -62,6 +68,13 @@ export default function AdminSignedWaiverDetailPage() {
           <Card p={16} style={{ borderColor: "#fed7aa", background: "#fff7ed" }}>
             <p className="text-sm text-orange-900">{signatureQuery.data.gap_note}</p>
           </Card>
+
+          {copyQuery.data && (
+            <>
+              <LaneHeader index="03" title="Signed copy" />
+              <SignedWaiverDocument copy={copyQuery.data} />
+            </>
+          )}
         </>
       )}
     </section>

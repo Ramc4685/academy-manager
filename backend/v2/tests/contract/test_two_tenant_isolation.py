@@ -116,6 +116,7 @@ def _ids(academy: str) -> dict[str, str]:
         "skill_id": f"{academy}-skill-1",
         "level_id": f"{academy}-level-1",
         "rec_id": f"{academy}-levelup-rec-1",
+        "cert_id": f"{academy}-cert-1",
         "note_id": f"{academy}-note-1",
         "follow_up_id": f"{academy}-follow-up-1",
         # Seeded as an approved trial request with an assigned date (L3a:

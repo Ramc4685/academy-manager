@@ -10,6 +10,8 @@ import { apiFetch } from "./client";
 import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
+  coachSkillMasteredPath,
+  coachStudentSkillMasteredPath,
   coachSessionSkillsPath,
   coachSkillNotePath,
   coachSkillNotesPath,
@@ -303,6 +305,56 @@ export async function bulkUpdateCoachSessionSkillStatus(
   return apiFetch<BulkSkillStatusResponse>(coachSessionBulkSkillStatusPath(occurrenceId, date), {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export type SkillMasteredOutcome = "mastered" | "already_mastered" | "not_on_level" | "not_placed";
+
+export interface SkillMasteredResult {
+  student_id: string;
+  outcome: SkillMasteredOutcome;
+  level_up_queued: boolean;
+}
+
+/** Tap = got it: passes the skill for each student; the last skill of a level queues the level-up. */
+export async function markCoachSkillMastered(
+  occurrenceId: string,
+  skillId: string,
+  payload: { program_id: string; student_ids: string[] },
+  date?: string,
+): Promise<{ results: SkillMasteredResult[] }> {
+  return apiFetch<{ results: SkillMasteredResult[] }>(
+    coachSkillMasteredPath(occurrenceId, skillId, date),
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** Undo a tap; also withdraws a level-up still waiting for the evening run. */
+export async function unmarkCoachSkillMastered(
+  occurrenceId: string,
+  studentId: string,
+  skillId: string,
+  options: { programId: string; date?: string },
+): Promise<{ status: string; withdrawn_rec_ids: string[] }> {
+  return apiFetch<{ status: string; withdrawn_rec_ids: string[] }>(
+    coachStudentSkillMasteredPath(occurrenceId, studentId, skillId, options),
+    { method: "DELETE" },
+  );
+}
+
+/** The optional one-line note to the parent on today's win; null removes it. */
+export async function setCoachMasteryNote(
+  occurrenceId: string,
+  studentId: string,
+  skillId: string,
+  note: string | null,
+  options: { programId: string; date?: string },
+): Promise<{ student_id: string; skill_id: string; coach_note: string | null }> {
+  const path = coachStudentSkillMasteredPath(occurrenceId, studentId, skillId, options);
+  const [base, query] = path.split("?");
+  return apiFetch(`${base}/note${query ? `?${query}` : ""}`, {
+    method: "PUT",
+    body: JSON.stringify({ note }),
   });
 }
 

@@ -56,3 +56,29 @@ class ApplicationForPaymentNotFound(DomainError):
 
     code = "Onboarding.ApplicationForPaymentNotFound"
     status_code = 404
+
+
+class WaiverSignatureIncomplete(DomainError):
+    """The signer did not type a full name or did not tick the consent box."""
+
+    code = "Onboarding.WaiverSignatureIncomplete"
+    status_code = 422
+
+
+class WaiverDateOfBirthMissing(DomainError):
+    """A waiver with adult and minor sections needs each child's date of birth."""
+
+    code = "Onboarding.WaiverDateOfBirthMissing"
+    status_code = 422
+
+
+class WaiverSignatureNotFound(DomainError):
+    code = "Onboarding.WaiverSignatureNotFound"
+    status_code = 404
+
+
+class WaiverStudentNotFound(DomainError):
+    """A child id that is not one of the signing parent's children (404, no probing)."""
+
+    code = "Onboarding.WaiverStudentNotFound"
+    status_code = 404

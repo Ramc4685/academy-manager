@@ -156,6 +156,7 @@ export const queryKeys = {
     scheduledClassFees: () => ["admin", "pricing-scheduled-class-fees"] as const,
     sessionTypesList: (includeArchived: boolean) =>
       ["admin", "session-types", { includeArchived }] as const,
+    pathwayDashboard: () => ["admin", "pathway", "dashboard"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
@@ -211,6 +212,8 @@ export const queryKeys = {
     // Same arrays the Requests page and shell already use inline.
     academy: () => ["parent", "academy"] as const,
     children: () => ["parent", "children"] as const,
+    progressJourney: (studentId: string) =>
+      ["parent", "progress-journey", studentId] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
     messages: () => ["parent", "messages"] as const,

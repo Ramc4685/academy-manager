@@ -468,19 +468,32 @@ export function DiscountDialog({
   );
 }
 
+export interface VoidPaymentTarget {
+  paymentId: string;
+  description: string;
+}
+
+/** What the dialog says by default (the Payments list): the payment, not an invoice. */
+const VOID_PAYMENT_EXPLAINER =
+  "Nothing is deleted. The payment is kept for the audit trail, stops counting in " +
+  "revenue and deposit reports, and any invoice it settled reopens for its full " +
+  "balance. Use Refund instead if money actually reached Stripe.";
+
 export function VoidPaymentDialog({
-  payment,
+  target,
+  explainer = VOID_PAYMENT_EXPLAINER,
   onClose,
   onVoided,
 }: {
-  payment: AdminPaymentView | null;
+  target: VoidPaymentTarget | null;
+  explainer?: string;
   onClose: () => void;
   onVoided: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
-    mutationFn: () => voidPayment(payment!.payment_id, reason),
+    mutationFn: () => voidPayment(target!.paymentId, reason),
     onSuccess: () => {
       setReason("");
       setError(null);
@@ -491,11 +504,11 @@ export function VoidPaymentDialog({
 
   return (
     <RallyDialog
-      open={payment !== null}
+      open={target !== null}
       onOpenChange={(open) => !open && onClose()}
       overline="Void"
       title="Void this payment"
-      description={payment ? `${paymentDisplayLabel(payment)} · ${formatCents(finalCents(payment))}` : ""}
+      description={target?.description ?? ""}
     >
       <form
         className="space-y-3"
@@ -505,11 +518,7 @@ export function VoidPaymentDialog({
         }}
       >
         {error && <Alert tone="red">{error}</Alert>}
-        <p className="text-sm text-rally-subtle">
-          Nothing is deleted. The payment is kept for the audit trail, stops counting in
-          revenue and deposit reports, and any invoice it settled reopens for its full
-          balance. Use Refund instead if money actually reached Stripe.
-        </p>
+        <p className="text-sm text-rally-subtle">{explainer}</p>
         <Field label="Reason" required>
           <input
             type="text"

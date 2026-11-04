@@ -110,6 +110,7 @@ test.describe("SaaS v2 — several waivers to sign", () => {
     });
     const payload = (state: "pending" | "signed") => ({
       required: true,
+      consent_text: "I agree to sign electronically.",
       waiver_template_id: "wt-liability",
       title: "Liability waiver",
       version: "3",
@@ -137,8 +138,10 @@ test.describe("SaaS v2 — several waivers to sign", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, payload(accepted ? "signed" : "pending"));
     });
+    let acceptBody: Record<string, unknown> | null = null;
     await page.route("**/api/v2/parent/waivers/accept", (route) => {
       if (route.request().method() !== "POST") return route.fallback();
+      acceptBody = route.request().postDataJSON() as Record<string, unknown>;
       accepted = true;
       return fulfillJson(route, payload("signed"));
     });
@@ -151,10 +154,159 @@ test.describe("SaaS v2 — several waivers to sign", () => {
     // The photo waiver applies only to the child in that program.
     await expect(page.getByTestId("parent-waiver-wt-photo")).toContainText("Photo consent text");
     await expect(page.getByTestId("parent-waiver-wt-photo")).not.toContainText("Dev Rao");
-    await page.getByRole("button", { name: "Accept waivers for Asha Rao and Dev Rao" }).click();
+    // Signing needs a full name and the consent box before the button works.
+    const sign = page.getByRole("button", { name: "Sign waivers for Asha Rao and Dev Rao" });
+    await expect(sign).toBeDisabled();
+    await page.getByLabel("Full legal name").fill("Priya Rao");
+    await page.getByLabel("I agree to sign electronically.").check();
+    await sign.click();
     await expect(page.getByText("Current waivers are signed for all active children.")).toBeVisible();
+    expect(acceptBody).toEqual({
+      signer_name: "Priya Rao",
+      consent: true,
+      student_ids: ["st-1", "st-2"],
+      initials: {},
+    });
 
     guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("an agreement with sections asks for initials and holds a child without a birth date", async ({
+    page,
+  }) => {
+    const guard = installTenantGuard(page);
+    const errors = collectConsoleErrors(page);
+    await stubMe(page, {
+      user_id: "user-parent-w7",
+      email: "parent@example.com",
+      academy_id: ACADEMY_A,
+      roles: ["parent"],
+    });
+    await stubParentProfile(page, { user_id: "user-parent-w7" });
+    await stubParentMessages(page);
+    await stubParentAcademy(page);
+
+    const body =
+      "Welcome.\n## Assumption of risk [initials]\nSport has risks.\n## Adult release [adult] [initials]\nFor adults.\n## Parent release [minor] [initials]\nFor parents.";
+    const students = [
+      { student_id: "st-1", student_name: "Asha Rao", status: "pending", signed_at: null, waiver_version: null, signing_path: "minor" },
+      { student_id: "st-2", student_name: "Dev Rao", status: "pending", signed_at: null, waiver_version: null, date_of_birth_missing: true },
+    ];
+    await page.route("**/api/v2/parent/waivers/current", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        required: true,
+        consent_text: "I agree to sign electronically.",
+        waiver_template_id: "wt-agreement",
+        title: "Participation agreement",
+        version: "1",
+        body,
+        students,
+        waivers: [
+          { waiver_template_id: "wt-agreement", title: "Participation agreement", version: "1", body, students },
+        ],
+      });
+    });
+    let acceptBody: Record<string, unknown> | null = null;
+    await page.route("**/api/v2/parent/waivers/accept", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      acceptBody = route.request().postDataJSON() as Record<string, unknown>;
+      return fulfillJson(route, { required: false, consent_text: "", students: [], waivers: [] });
+    });
+
+    await page.goto("/parent/waivers");
+
+    await expect(page.getByText("Assumption of risk")).toBeVisible();
+    // Dev has no birth date, so only Asha can sign; the parent is told why.
+    await expect(page.getByText(/Add a date of birth for Dev Rao/)).toBeVisible();
+    await page.getByLabel("Full legal name").fill("Priya Rao");
+    await page.getByLabel("I agree to sign electronically.").check();
+    const sign = page.getByRole("button", { name: /^Sign waiver/ });
+    await expect(sign).toBeDisabled();
+    // A minor signs the shared and parent sections, never the adult one.
+    await expect(page.getByLabel("Initials for Adult release")).toHaveCount(0);
+    await page.getByLabel("Initials for Assumption of risk").fill("pr");
+    await page.getByLabel("Initials for Parent release").fill("PR");
+    await sign.click();
+    await expect.poll(() => acceptBody).not.toBeNull();
+    expect(acceptBody).toEqual({
+      signer_name: "Priya Rao",
+      consent: true,
+      student_ids: ["st-1"],
+      initials: { "wt-agreement": { s2: "PR", s4: "PR" } },
+    });
+
+    guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+});
+
+test.describe("SaaS v2 — signing for one child at a time", () => {
+  test("after signing for one child, the other child can still be signed without a reload", async ({
+    page,
+  }) => {
+    const errors = collectConsoleErrors(page);
+    await stubMe(page, {
+      user_id: "user-parent-w8",
+      email: "parent@example.com",
+      academy_id: ACADEMY_A,
+      roles: ["parent"],
+    });
+    await stubParentProfile(page, { user_id: "user-parent-w8" });
+    await stubParentMessages(page);
+    await stubParentAcademy(page);
+
+    const signed = new Set<string>();
+    const view = () => {
+      const students = [
+        { student_id: "st-1", student_name: "Asha Rao" },
+        { student_id: "st-2", student_name: "Dev Rao" },
+      ].map((s) => ({
+        ...s,
+        status: signed.has(s.student_id) ? "signed" : "pending",
+        signed_at: null,
+        waiver_version: null,
+      }));
+      return {
+        required: true,
+        consent_text: "I agree to sign electronically.",
+        waiver_template_id: "wt-liability",
+        title: "Liability waiver",
+        version: "3",
+        body: "Liability text",
+        students,
+        waivers: [
+          { waiver_template_id: "wt-liability", title: "Liability waiver", version: "3", body: "Liability text", students },
+        ],
+      };
+    };
+    const bodies: Record<string, unknown>[] = [];
+    await page.route("**/api/v2/parent/waivers/current", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, view());
+    });
+    await page.route("**/api/v2/parent/waivers/accept", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      const body = route.request().postDataJSON() as { student_ids: string[] };
+      bodies.push(body);
+      body.student_ids.forEach((id) => signed.add(id));
+      return fulfillJson(route, view());
+    });
+
+    await page.goto("/parent/waivers");
+    await page.getByLabel("Full legal name").fill("Priya Rao");
+    await page.getByLabel("I agree to sign electronically.").check();
+    await page.getByRole("checkbox", { name: "Dev Rao" }).uncheck();
+    await page.getByRole("button", { name: /^Sign waiver/ }).click();
+    await expect.poll(() => bodies.length).toBe(1);
+
+    // Dev is now the only child left; the checkbox list is gone but Dev is signable.
+    const signDev = page.getByRole("button", { name: /^Sign waiver.*Dev Rao/ });
+    await expect(signDev).toBeEnabled();
+    await signDev.click();
+    await expect.poll(() => bodies.length).toBe(2);
+    expect(bodies.map((b) => b.student_ids)).toEqual([["st-1"], ["st-2"]]);
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });

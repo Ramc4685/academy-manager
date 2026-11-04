@@ -272,6 +272,12 @@ function RecordPaymentDialog({
             className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
           />
         </Field>
+        {amountCents > balanceDueCents && (
+          <p className="text-xs text-rally-subtle" data-testid="billing-payment-overflow-hint">
+            The extra {formatCurrencyCents(amountCents - balanceDueCents)} pays this family&apos;s other
+            open invoices first, oldest first. Anything left becomes account credit.
+          </p>
+        )}
         <Field label="Method" htmlFor="billing-payment-method">
           <select
             id="billing-payment-method"

@@ -165,6 +165,24 @@ class FamilyTimelineEntry(_View):
     muted: bool = False
 
 
+class FamilyManualPaymentAllocation(_View):
+    invoice_id: str
+    amount_cents: int
+
+
+class FamilyManualPayment(_View):
+    """A live cash/check/Zelle/... payment an owner may void if it was a mistake."""
+
+    payment_id: str
+    method: str | None = None
+    amount_cents: int
+    paid_at: str | None = None
+    allocations: list[FamilyManualPaymentAllocation] = []
+    credit_cents: int = 0
+    credit_spent_cents: int = 0
+    void_blocked_reason: Literal["credit_spent", "legacy_allocation"] | None = None
+
+
 class AdminFamilyBillingView(_View):
     generated_at: str
     timezone: str
@@ -173,6 +191,7 @@ class AdminFamilyBillingView(_View):
     header: FamilyHeader
     students: list[FamilyStudent] = []
     invoices: list[FamilyInvoice] = []
+    manual_payments: list[FamilyManualPayment] = []
     timeline: list[FamilyTimelineEntry] = []
     actions: list[FamilyAction] = []
     warnings: list[str] = []

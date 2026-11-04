@@ -155,6 +155,7 @@ async function stubOnboarding(
     };
     return fulfillJson(route, {
       configured: true,
+      consent_text: "I agree to sign electronically.",
       version: liability.version,
       body: liability.body,
       class_first: classFirst,
@@ -212,7 +213,9 @@ test.describe("class-first onboarding order", () => {
     await expect(page.getByTestId("onboarding-waivers").or(page.getByText("Liability text"))).toBeVisible();
     expect(waiverRequests.every((url) => !url.includes("session_id"))).toBe(true);
 
-    await page.getByRole("button", { name: "I Accept" }).click();
+    await page.getByLabel("Full legal name").fill("Priya Rao");
+    await page.getByLabel("I agree to sign electronically.").check();
+    await page.getByRole("button", { name: "Sign and continue" }).click();
     await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
   });
 });

@@ -158,3 +158,39 @@ async def test_list_active_students_for_parent_requires_a_live_enrollment(db, ac
     students = await repo.list_active_students_for_parent("parent-1")
 
     assert sorted(s.student_id for s in students) == ["st-active", "st-paused"]
+
+
+@pytest.mark.asyncio
+async def test_signed_copy_reads_the_text_snapshot_taken_at_signing(db, acad) -> None:
+    await db["waiver_templates"].insert_one(
+        {
+            "academy_id": acad,
+            "waiver_template_id": "wt-1",
+            "title": "Annual waiver",
+            "version": "2026.1",
+            "content_hash": "hash-1",
+            "body": "Signed waiver text.",
+            "status": "active",
+            "effective_from": NOW,
+        }
+    )
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "st-1", "first_name": "Kid", "last_name": "One"}
+    )
+    repo = MongoParentWaiverRepository(db)
+    await repo.save_signature(_signature().model_copy(update={"consent_text": "I agree."}))
+    # Editing the template afterwards must not change what was signed.
+    await db["waiver_templates"].update_one(
+        {"academy_id": acad, "waiver_template_id": "wt-1"}, {"$set": {"body": "Changed."}}
+    )
+
+    copy = await repo.signed_copy("ws-1")
+
+    assert copy is not None
+    assert copy.body == "Signed waiver text."
+    assert (copy.title, copy.version) == ("Annual waiver", "2026.1")
+    assert copy.student_name == "Kid One"
+    assert copy.parent_user_id == "parent-1"
+    assert (copy.signer_name, copy.consent_text) == ("Parent One", "I agree.")
+    assert (copy.ip_address, copy.user_agent) == ("203.0.113.10", "Playwright")
+    assert await repo.signed_copy("ws-missing") is None

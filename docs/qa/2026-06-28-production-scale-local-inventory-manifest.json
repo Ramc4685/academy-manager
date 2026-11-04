@@ -764,6 +764,41 @@
       ]
     },
     {
+      "route": "/admin/pathway/dashboard",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/pathway/dashboard/page.tsx",
+      "workflows": [
+        "Review who is moving and who is stuck",
+        "Switch the level-up rule"
+      ],
+      "controls": {
+        "buttons": [
+          "Contact family",
+          "Offer a 1-on-1",
+          "All students"
+        ],
+        "inputs": [
+          "Level-up rule"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error state"
+      ],
+      "risk_edges": [
+        "Stuck list misses or wrongly flags a student",
+        "Rule change half-applied across levels"
+      ],
+      "acceptance": [
+        "Workflow evidence: \"Review who is moving and who is stuck\" completes for the admin route /admin/pathway/dashboard with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Switch the level-up rule\" completes for the admin route /admin/pathway/dashboard with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Stuck list misses or wrongly flags a student\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Rule change half-applied across levels\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/pathway/progress",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/pathway/progress/page.tsx",
@@ -1893,6 +1928,39 @@
       ]
     },
     {
+      "route": "/admin/students/[studentId]/progress/certificates/[certId]",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/students/[studentId]/progress/certificates/[certId]/page.tsx",
+      "workflows": [
+        "View level certificate",
+        "Print certificate"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to progress",
+          "Print or save as PDF"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "not found",
+        "error"
+      ],
+      "risk_edges": [
+        "Certificate id from another student",
+        "Print layout spills onto a second page"
+      ],
+      "acceptance": [
+        "Certificate shows the student name, level number and name, program, required skills, completion date and certificate number from the curriculum, with no invented data",
+        "Workflow evidence: \"View level certificate\" completes for the admin route /admin/students/[studentId]/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print certificate\" completes for the admin route /admin/students/[studentId]/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Certificate id from another student\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Print layout spills onto a second page\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin/users",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/users/page.tsx",
@@ -2158,7 +2226,8 @@
       "controls": {
         "buttons": [
           "Back",
-          "Download"
+          "Download",
+          "Print or save as PDF"
         ],
         "inputs": [],
         "modals": []
@@ -3179,6 +3248,43 @@
       ]
     },
     {
+      "route": "/parent/progress/certificates/[certId]",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/progress/certificates/[certId]/page.tsx",
+      "workflows": [
+        "View level certificate",
+        "Print or save certificate as PDF",
+        "Share certificate with family"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to progress",
+          "Print or save as PDF",
+          "Share with family",
+          "Up next"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "not found",
+        "error"
+      ],
+      "risk_edges": [
+        "Certificate of another family's child",
+        "Print layout spills onto a second page"
+      ],
+      "acceptance": [
+        "Certificate shows the student name, level number and name, program, required skills, completion date and certificate number from the curriculum, with no invented data",
+        "Workflow evidence: \"View level certificate\" completes for the parent route /parent/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print or save certificate as PDF\" completes for the parent route /parent/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Share certificate with family\" completes for the parent route /parent/progress/certificates/[certId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Certificate of another family's child\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Print layout spills onto a second page\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/parent/requests",
       "role": "parent",
       "source": "frontend/app/(parent)/parent/requests/page.tsx",
@@ -3231,11 +3337,14 @@
       ],
       "controls": {
         "buttons": [
-          "Accept waiver",
+          "Sign waiver",
+          "Signed copy",
           "Retry"
         ],
         "inputs": [
-          "Signer name"
+          "Full legal name",
+          "Consent checkbox",
+          "Sign for child checkbox"
         ],
         "modals": []
       },
@@ -3251,14 +3360,47 @@
       ],
       "risk_edges": [
         "Signer name blank",
+        "Consent not ticked",
         "Mixed outdated/current child states"
       ],
       "acceptance": [
         "Current waiver signature is required before dependent workflows",
         "Workflow evidence: \"Review waiver status\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Sign waiver\" completes for the parent route /parent/waivers with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Consent not ticked\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Signer name blank\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
         "Risk evidence: \"Mixed outdated/current child states\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/parent/waivers/signatures/[signatureId]",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/waivers/signatures/[signatureId]/page.tsx",
+      "workflows": [
+        "View signed waiver copy",
+        "Print signed waiver"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to waivers",
+          "Print or save as PDF"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "error",
+        "not found"
+      ],
+      "risk_edges": [
+        "Another family's signature id"
+      ],
+      "acceptance": [
+        "The signed copy shows the exact signed text and its audit trail",
+        "Workflow evidence: \"View signed waiver copy\" completes for the parent route /parent/waivers/signatures/[signatureId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print signed waiver\" completes for the parent route /parent/waivers/signatures/[signatureId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Another family's signature id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
       ]
     },
     {

@@ -66,7 +66,11 @@ def assert_staging_db_name(db_name: str) -> None:
 
 
 def build_inventory_env(
-    db: Any, *, academy_id: str = ACADEMY_ID, coach_email: str = DEFAULT_COACH_EMAIL
+    db: Any,
+    *,
+    academy_id: str = ACADEMY_ID,
+    coach_email: str = DEFAULT_COACH_EMAIL,
+    parent_email: str | None = None,
 ) -> InventoryEnvResult:
     values: dict[str, str] = {}
     missing: list[str] = []
@@ -154,6 +158,24 @@ def build_inventory_env(
         sort=[("created_at", -1)],
     )
     add("LOCAL_AUTH_ADMIN_PROGRAM_ID", program_id)
+    cert_sort = [("issued_at", -1), ("cert_id", 1)]
+    cert = _first_doc(db, "skill_certificates", {"academy_id": academy_id}, sort=cert_sort)
+    add("LOCAL_AUTH_CERT_ID", cert.get("cert_id") if cert else None)
+    add("LOCAL_AUTH_CERT_STUDENT_ID", cert.get("student_id") if cert else None)
+    # The parent certificate page only renders for the signed-in parent's own
+    # child, so it needs a certificate of the sample parent's child.
+    parent_cert = (
+        _parent_child_certificate(
+            db, academy_id=academy_id, parent_email=parent_email, sort=cert_sort
+        )
+        if parent_email
+        else None
+    )
+    add("LOCAL_AUTH_PARENT_CERT_ID", parent_cert.get("cert_id") if parent_cert else None)
+    add(
+        "LOCAL_AUTH_PARENT_CERT_STUDENT_ID",
+        parent_cert.get("student_id") if parent_cert else None,
+    )
 
     coach_id = _first_field(
         db,
@@ -263,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     assert_local_mongo_url(args.mongo_url)
     assert_staging_db_name(args.db_name)
+    credential_result = build_credential_env(args.credentials_file)
     client = MongoClient(args.mongo_url, serverSelectionTimeoutMS=5_000)
     try:
         client.admin.command("ping")
@@ -270,10 +293,11 @@ def main(argv: list[str] | None = None) -> int:
             client[args.db_name],
             academy_id=args.academy_id,
             coach_email=args.coach_email,
+            parent_email=credential_result.values.get("LOCAL_AUTH_PARENT_EMAIL"),
         )
     finally:
         client.close()
-    result = merge_results(inventory_result, build_credential_env(args.credentials_file))
+    result = merge_results(inventory_result, credential_result)
 
     if args.format == "json":
         print(
@@ -400,6 +424,39 @@ def _first_future_occurrence(
             "start_at": {"$gte": now},
         },
         sort=[("start_at", 1)],
+    )
+
+
+def _parent_child_certificate(
+    db: Any,
+    *,
+    academy_id: str,
+    parent_email: str,
+    sort: list[tuple[str, int]],
+) -> dict[str, Any] | None:
+    parent_id = _first_field(
+        db, "users", {"academy_id": academy_id, "email": parent_email}, ("user_id",)
+    )
+    if not parent_id:
+        return None
+    # Mirrors the parent portal's child lookup (parent_id or parent_user_id).
+    child_ids = sorted(
+        {
+            str(row["student_id"])
+            for field in ("parent_id", "parent_user_id")
+            for row in db["students"]
+            .find({"academy_id": academy_id, field: parent_id}, {"student_id": 1, "_id": 0})
+            .sort("student_id", 1)
+            if row.get("student_id")
+        }
+    )
+    if not child_ids:
+        return None
+    return _first_doc(
+        db,
+        "skill_certificates",
+        {"academy_id": academy_id, "student_id": {"$in": child_ids}},
+        sort=sort,
     )
 
 

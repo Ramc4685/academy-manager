@@ -155,6 +155,7 @@ def _make_use_cases(
         cancel_billing_enrollment=cancel_uc.execute,
         get_parent_waiver_requirement=None,  # type: ignore[arg-type]
         accept_parent_waiver=None,  # type: ignore[arg-type]
+        get_parent_signed_waiver=None,  # type: ignore[arg-type]
         get_academy_info=None,
         submit_trial_request=None,  # type: ignore[arg-type]
         list_parent_trial_requests=None,  # type: ignore[arg-type]

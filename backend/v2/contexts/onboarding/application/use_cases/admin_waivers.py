@@ -12,6 +12,9 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
+    ParentSignedWaiverCopy,
+)
 from backend.v2.contexts.onboarding.domain.waiver_assignment import (
     LEGACY_LINEAGE_KEY,
     WaiverAssignment,
@@ -199,9 +202,14 @@ class AdminWaiverQuery(Protocol):
     ) -> AdminWaiverSignatureDetail | None: ...
 
 
+class SignedWaiverCopies(Protocol):
+    async def signed_copy(self, waiver_signature_id: str) -> ParentSignedWaiverCopy | None: ...
+
+
 class ListAdminWaivers:
-    def __init__(self, waivers: AdminWaiverQuery) -> None:
+    def __init__(self, waivers: AdminWaiverQuery, copies: SignedWaiverCopies | None = None) -> None:
         self._waivers = waivers
+        self._copies = copies
 
     async def execute(self) -> AdminWaiverReport:
         data = await self._waivers.load_admin_waiver_data()
@@ -355,3 +363,9 @@ class ListAdminWaivers:
 
     async def signature_detail(self, signature_id: str) -> AdminWaiverSignatureDetail | None:
         return await self._waivers.get_signature_detail(signature_id)
+
+    async def signed_copy(self, signature_id: str) -> ParentSignedWaiverCopy | None:
+        """The printable signed copy, the same document the family sees."""
+        if self._copies is None:
+            return None
+        return await self._copies.signed_copy(signature_id)

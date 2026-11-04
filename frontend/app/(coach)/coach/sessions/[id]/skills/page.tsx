@@ -16,6 +16,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { TapSkillsWorkspace } from "@/components/coach/TapSkillsWorkspace";
 
 const STATUS_OPTIONS: SkillStatus[] = [
   "INTRODUCED",
@@ -44,7 +45,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
   const occurrenceId = decodeURIComponent(id);
   const date = dateParam ?? todayISO();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"skill" | "student">("skill");
+  const [mode, setMode] = useState<"tap" | "skill" | "student">("tap");
 
   const queryKey = queryKeys.coach.sessionSkills(occurrenceId, date, programId);
   const { data, isLoading, isError, refetch } = useQuery({
@@ -90,7 +91,10 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
 
       {data && (
         <>
-          <div className="grid grid-cols-2 gap-2 rounded-lg bg-neutral-100 p-1">
+          <div className="grid grid-cols-3 gap-2 rounded-lg bg-neutral-100 p-1">
+            <ModeButton active={mode === "tap"} onClick={() => setMode("tap")}>
+              Got it
+            </ModeButton>
             <ModeButton active={mode === "skill"} onClick={() => setMode("skill")}>
               By skill
             </ModeButton>
@@ -99,7 +103,15 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
             </ModeButton>
           </div>
 
-          {mode === "skill" ? (
+          {mode === "tap" ? (
+            <TapSkillsWorkspace
+              occurrenceId={occurrenceId}
+              sessionId={data.session_id}
+              date={date}
+              programId={programId}
+              onUpdated={() => void queryClient.invalidateQueries({ queryKey })}
+            />
+          ) : mode === "skill" ? (
             <BySkillWorkspace
               occurrenceId={occurrenceId}
               date={date}

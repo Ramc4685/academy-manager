@@ -5,8 +5,8 @@ import type { ParentWaiverStudentView } from "@/lib/api/parent";
  * waiver", so a parent with two children could not tell whom they were
  * signing for. Name the children whose signature is missing or out of date.
  */
-export function waiverAcceptLabel(
-  students: ReadonlyArray<ParentWaiverStudentView>,
+export function waiverSignLabel(
+  students: ReadonlyArray<Pick<ParentWaiverStudentView, "student_name" | "status">>,
   waiverCount = 1,
 ): string {
   // Several waivers on the page (Settings Phase 6): one button signs them all.
@@ -19,7 +19,7 @@ export function waiverAcceptLabel(
         .filter(Boolean),
     ),
   );
-  if (names.length === 0) return `Accept ${noun}`;
-  if (names.length === 1) return `Accept ${noun} for ${names[0]}`;
-  return `Accept ${noun} for ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  if (names.length === 0) return `Sign ${noun}`;
+  if (names.length === 1) return `Sign ${noun} for ${names[0]}`;
+  return `Sign ${noun} for ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }

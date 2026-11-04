@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -158,7 +159,9 @@ async def test_editing_a_recurring_series_persists_the_resolved_academy_zone() -
     )
 
     assert updated.timezone == "America/Chicago"
-    assert updated.start_at.astimezone(UTC).hour == 23
+    # Local wall-clock, not a fixed UTC hour: the next Thursday may fall either
+    # side of a DST change depending on when the suite runs.
+    assert updated.start_at.astimezone(ZoneInfo("America/Chicago")).hour == 18
 
 
 @pytest.mark.asyncio

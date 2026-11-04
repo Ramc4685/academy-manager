@@ -49,7 +49,11 @@ type DynamicRouteResolution = {
 
 type DynamicRouteEnvContract = {
   replacements: [string, string][];
+  /** Query parameters the page needs, as [param, env var]. */
+  query?: [string, string][];
   requiresCoachSessionDate?: boolean;
+  /** A test id that must be visible, for pages whose not-found state would otherwise pass. */
+  expectTestId?: string;
 };
 
 type InventoryManifest = {
@@ -102,6 +106,13 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   "/admin/students/[studentId]/progress": {
     replacements: [["[studentId]", "LOCAL_AUTH_ADMIN_STUDENT_ID"]],
   },
+  "/admin/students/[studentId]/progress/certificates/[certId]": {
+    replacements: [
+      ["[studentId]", "LOCAL_AUTH_CERT_STUDENT_ID"],
+      ["[certId]", "LOCAL_AUTH_CERT_ID"],
+    ],
+    expectTestId: "level-certificate",
+  },
   "/admin/users/[userId]": {
     replacements: [["[userId]", "LOCAL_AUTH_ADMIN_USER_ID"]],
   },
@@ -122,6 +133,15 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   },
   "/admin/families/[parentId]": {
     replacements: [["[parentId]", "LOCAL_AUTH_ADMIN_USER_ID"]],
+  },
+  // Seeded signature id; a parent who is not its signer sees the not-found state.
+  "/parent/waivers/signatures/[signatureId]": {
+    replacements: [["[signatureId]", "LOCAL_AUTH_ADMIN_WAIVER_SIGNATURE_ID"]],
+  },
+  "/parent/progress/certificates/[certId]": {
+    replacements: [["[certId]", "LOCAL_AUTH_PARENT_CERT_ID"]],
+    query: [["child", "LOCAL_AUTH_PARENT_CERT_STUDENT_ID"]],
+    expectTestId: "level-certificate",
   },
   "/coach/sessions/[id]": {
     replacements: [["[id]", "LOCAL_AUTH_COACH_SESSION_ID"]],
@@ -194,6 +214,8 @@ test.describe("local authenticated route inventory", () => {
         const runtimeIssues = collectRuntimeIssues(page);
         await signInForRole(page, entry.role);
         await assertRouteRenders(page, resolved.href!, runtimeIssues, testInfo);
+        const expectTestId = DYNAMIC_ROUTE_ENV_CONTRACT[entry.route]?.expectTestId;
+        if (expectTestId) await expect(page.getByTestId(expectTestId)).toBeVisible();
       });
     }
   });
@@ -259,6 +281,13 @@ function resolveDynamicRoute(route: string): DynamicRouteResolution {
     }
     href = href.replace(token, encodeURIComponent(value));
   }
+  const params = new URLSearchParams();
+  for (const [param, envName] of DYNAMIC_ROUTE_ENV_CONTRACT[route]?.query ?? []) {
+    const value = process.env[envName] ?? "";
+    if (value) params.set(param, value);
+    else missingEnvVars.push(envName);
+  }
+  if (params.size > 0) href = `${href}?${params}`;
 
   const dated = withSeededCoachDate(route, href);
   missingEnvVars.push(...dated.missingEnvVars);

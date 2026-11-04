@@ -81,7 +81,8 @@ async def test_omitted_timezone_resolves_from_the_tenant() -> None:
 
     created = writer.created[0]
     assert created.timezone == "America/Chicago"
-    assert created.start_at.astimezone(UTC).hour == 23
+    # Local wall-clock: the session may land either side of a DST change.
+    assert created.start_at.astimezone(ZoneInfo("America/Chicago")).hour == 18
 
 
 @pytest.mark.asyncio

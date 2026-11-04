@@ -308,6 +308,12 @@ function TemplateManagementPanel({
               placeholder="Paste the exact waiver text parents must sign."
             />
           </label>
+          <p className="text-[12px] leading-5 text-rally-subtle" data-testid="admin-waiver-markup-help">
+            Start a section with a line like <code>## Assumption of risk [initials]</code>. Add{" "}
+            <code>[initials]</code> to have the signer initial it, <code>[adult]</code> for a section only
+            participants 18 or over see as theirs, or <code>[minor]</code> for the parent or guardian
+            release. With [adult] or [minor] sections, a child&apos;s date of birth is needed to sign.
+          </p>
           {formError && <p role="alert" className="text-sm text-red-700">{formError}</p>}
           <div className="flex flex-wrap gap-2">
             <button
@@ -468,6 +474,7 @@ function TemplateManagementPanel({
 }
 
 type AssignChoice = "none" | "all" | "programs";
+type ValidityChoice = "never" | "until" | "renew";
 
 export function AssignPanel({
   template,
@@ -490,6 +497,16 @@ export function AssignPanel({
     !initialRequired ? "none" : template.scope === "programs" ? "programs" : "all",
   );
   const [selected, setSelected] = useState<string[]>(template.program_ids ?? []);
+  const [validity, setValidity] = useState<ValidityChoice>(
+    template.renew_every_months ? "renew" : template.valid_until ? "until" : "never",
+  );
+  const [months, setMonths] = useState(String(template.renew_every_months ?? 12));
+  const [until, setUntil] = useState(template.valid_until ?? "");
+  const monthsValue = Number(months);
+  const validityOk =
+    validity === "never" ||
+    (validity === "renew" && Number.isInteger(monthsValue) && monthsValue >= 1 && monthsValue <= 60) ||
+    (validity === "until" && /^\d{4}-\d{2}-\d{2}$/.test(until));
   // An archived program is not a new choice. It only shows while this waiver
   // is still assigned to it, so the admin can take it off.
   const livePrograms = programs.filter((program) => !program.archived);
@@ -497,7 +514,8 @@ export function AssignPanel({
     (program) => program.archived && selected.includes(program.program_id),
   );
   const canSave =
-    choice !== "programs" || (selected.length > 0 && archivedAssigned.length === 0);
+    (choice !== "programs" || (selected.length > 0 && archivedAssigned.length === 0)) &&
+    (choice === "none" || validityOk);
 
   const toggle = (programId: string) =>
     setSelected((prev) =>
@@ -510,6 +528,8 @@ export function AssignPanel({
       required: choice !== "none",
       scope: choice === "programs" ? "programs" : "all",
       program_ids: choice === "programs" ? selected : [],
+      renew_every_months: choice !== "none" && validity === "renew" ? monthsValue : null,
+      valid_until: choice !== "none" && validity === "until" ? until : null,
     });
   };
 
@@ -573,6 +593,71 @@ export function AssignPanel({
             </p>
           )}
         </div>
+      )}
+      {choice !== "none" && (
+        <fieldset className="mt-3" data-testid={`admin-waiver-validity-${id}`}>
+          <Overline>How long a signature lasts</Overline>
+          <div className="mt-2 space-y-1">
+            <label className="flex min-h-touch items-center gap-2 text-sm text-rally-ink">
+              <input
+                type="radio"
+                name={`validity-${id}`}
+                checked={validity === "never"}
+                onChange={() => setValidity("never")}
+                data-testid={`admin-waiver-validity-${id}-never`}
+              />
+              Until the waiver text changes
+            </label>
+            <label className="flex min-h-touch flex-wrap items-center gap-2 text-sm text-rally-ink">
+              <input
+                type="radio"
+                name={`validity-${id}`}
+                checked={validity === "renew"}
+                onChange={() => setValidity("renew")}
+                data-testid={`admin-waiver-validity-${id}-renew`}
+              />
+              Renew every
+              <input
+                type="number"
+                min={1}
+                max={60}
+                value={months}
+                onChange={(event) => {
+                  setMonths(event.target.value);
+                  setValidity("renew");
+                }}
+                aria-label="Months between renewals"
+                data-testid={`admin-waiver-validity-${id}-months`}
+                className="h-10 w-16 rounded-md border border-neutral-200 px-2 text-sm"
+              />
+              months
+            </label>
+            <label className="flex min-h-touch flex-wrap items-center gap-2 text-sm text-rally-ink">
+              <input
+                type="radio"
+                name={`validity-${id}`}
+                checked={validity === "until"}
+                onChange={() => setValidity("until")}
+                data-testid={`admin-waiver-validity-${id}-until`}
+              />
+              Valid until
+              <input
+                type="date"
+                value={until}
+                onChange={(event) => {
+                  setUntil(event.target.value);
+                  setValidity("until");
+                }}
+                aria-label="Signatures valid until"
+                data-testid={`admin-waiver-validity-${id}-date`}
+                className="h-10 rounded-md border border-neutral-200 px-2 text-sm"
+              />
+            </label>
+          </div>
+          <p className="mt-1 text-[12px] text-rally-subtle">
+            When a signature lapses, the family is asked to sign again.
+          </p>
+        </fieldset>
       )}
       <p className="mt-2 text-[12px] text-rally-subtle">
         A family that has not signed is flagged to staff. It never blocks enrollment.

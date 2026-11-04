@@ -1908,15 +1908,19 @@ def main() -> None:
     print("\n=== BLNO seed complete ===", file=sys.stderr)
     print(f"  Academy:        {ACADEMY_ID}  ({ACADEMY_DISPLAY_NAME})", file=sys.stderr)
     print(f"  Login URL:      http://{ACADEMY_DOMAIN}:3000/login", file=sys.stderr)
-    print(f"  Admin:          {ADMIN_EMAIL}  /  {ADMIN_PASSWORD}", file=sys.stderr)
     print(
-        f"  Coach Gowtham:  gowtham@blno.academy  /  {COACH_PASSWORD}", file=sys.stderr
+        f"  Admin:          {ADMIN_EMAIL}  /  (password in creds file)", file=sys.stderr
     )
     print(
-        f"  Coach Kishore:  kishore@blno.academy  /  {COACH_PASSWORD}", file=sys.stderr
+        "  Coach Gowtham:  gowtham@blno.academy  /  (password in creds file)",
+        file=sys.stderr,
     )
     print(
-        f"  Parent (eg):    manojedward.btech@gmail.com  /  {PARENT_PASSWORD}",
+        "  Coach Kishore:  kishore@blno.academy  /  (password in creds file)",
+        file=sys.stderr,
+    )
+    print(
+        "  Parent (eg):    manojedward.btech@gmail.com  /  (password in creds file)",
         file=sys.stderr,
     )
     print(

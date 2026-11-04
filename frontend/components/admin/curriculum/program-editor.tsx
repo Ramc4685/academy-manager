@@ -19,6 +19,8 @@ import {
   type Skill,
   type SkillScoringType,
 } from "@/lib/api/curriculum";
+import { LevelColorPicker } from "@/components/admin/curriculum/level-color-picker";
+import { levelSwatch } from "@/lib/level-color";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { queryKeys } from "@/lib/query/keys";
@@ -277,7 +279,13 @@ function LevelAccordion({
         aria-expanded={open}
       >
         <div className="flex items-center gap-3">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
+          <span
+            className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ring-1 ring-black/25"
+            style={{
+              background: levelSwatch(level.display_color).fill,
+              color: levelSwatch(level.display_color).on,
+            }}
+          >
             {level.sequence}
           </span>
           <div>
@@ -307,6 +315,7 @@ function LevelAccordion({
 
       {open && (
         <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
+          <LevelColorPicker level={level} onSaved={onSkillAdded} />
           {skills.length === 0 && !showAddSkill && (
             <p className="px-4 py-3 text-sm text-neutral-400">No skills yet.</p>
           )}

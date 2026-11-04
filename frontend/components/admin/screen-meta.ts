@@ -68,12 +68,11 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
     items: [
       { id: "sessions", href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
       // Settings overhaul Phase 3 PR 11: authoring moved to Settings ->
-      // Curriculum; this item is now student progress tracking.
-      // The overview page is behind a build-time flag; without it the page is
-      // a "not enabled" dead end, so the item is hidden instead.
-      ...(process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1"
-        ? [{ id: "progress", href: "/admin/pathway/progress", label: "Progress", icon: "trophy", match: startsWith("/admin/pathway") } as const]
-        : []),
+      // Curriculum; this item is now student progress tracking. It lands on
+      // the owner dashboard (who is moving, who is stuck), which needs no
+      // flag; the per-student table behind NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW
+      // is linked from there.
+      { id: "progress", href: "/admin/pathway/dashboard", label: "Progress", icon: "trophy", match: startsWith("/admin/pathway") },
     ],
   },
   {
@@ -202,6 +201,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
   "/admin/students": { title: "Students", subtitle: "Every child: classes, attendance, status", breadcrumbs: ["Admin", "People", "Students"] },
   "/admin/pathway": { title: "Progress", subtitle: "Where each student is on the skill pathway", breadcrumbs: ["Admin", "Progress"] },
+  "/admin/pathway/dashboard": { title: "Progress", subtitle: "Who is moving, who is stuck", breadcrumbs: ["Admin", "Progress"] },
   "/admin/pathway/progress": { title: "Progress", subtitle: "Where each student is on the skill pathway", breadcrumbs: ["Admin", "Progress"] },
   "/admin/users": { title: "Staff", subtitle: "Coaches and admins: logins, roles, pay", breadcrumbs: ["Admin", "People", "Staff"] },
   "/admin/inbox": { title: "Inbox", subtitle: "Registrations, waitlist, level-ups, and parent requests", breadcrumbs: ["Admin", "Inbox"] },

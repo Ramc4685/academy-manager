@@ -1040,6 +1040,8 @@ class RecordManualPaymentResponse(BaseModel):
     payment_id: str
     invoice_status: str
     balance_due_cents: int
+    previous_balance_applied_cents: int = 0
+    overpayment_credit_cents: int = 0
 
 
 class InvoiceRefundRequest(BaseModel):
@@ -1070,7 +1072,9 @@ async def record_manual_payment(
     """Record a manual payment (cash, check, etc.) against a ledger invoice.
 
     Creates a LedgerPayment and allocates it to the invoice balance.
-    Partial payments are allowed; the invoice status updates accordingly.
+    Partial payments are allowed; the invoice status updates accordingly. Any
+    amount over the balance pays the family's other open invoices oldest-first,
+    and only the rest becomes account credit.
 
     Send an ``Idempotency-Key`` header (any unique string per submission) so
     retries of the same submission replay safely while legitimate repeat
@@ -1103,6 +1107,8 @@ async def record_manual_payment(
         payment_id=str(result["payment_id"]),
         invoice_status=str(result["invoice_status"]),
         balance_due_cents=int(result["balance_due_cents"]),
+        previous_balance_applied_cents=int(result.get("previous_balance_applied_cents") or 0),
+        overpayment_credit_cents=int(result.get("overpayment_credit_cents") or 0),
     )
 
 

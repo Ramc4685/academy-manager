@@ -149,6 +149,13 @@ export function RecordPaymentDialog({
             Partial payment — {formatCents(selected.balance_due_cents - amountCents)} will stay open.
           </p>
         )}
+        {selected && amountCents > selected.balance_due_cents && (
+          <p className="text-xs text-rally-subtle" data-testid="record-payment-overflow-hint">
+            The extra {formatCents(amountCents - selected.balance_due_cents)} pays this
+            family&apos;s other open invoices first, oldest first. Anything left becomes
+            account credit.
+          </p>
+        )}
         <Field label="Method" required>
           <select
             value={method}

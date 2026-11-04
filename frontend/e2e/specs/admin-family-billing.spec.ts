@@ -508,6 +508,44 @@ test.describe("Family billing", () => {
     expect(posts[0].body).toEqual({ reason: "duplicate invoice" });
   });
 
+  // A $300 Zelle recorded on one $60 invoice: voiding the PAYMENT (not the
+  // invoice) is how it comes off the books.
+  test("owner voids a mistaken manual payment with a reason", async ({ page }) => {
+    const zelle = {
+      payment_id: "manual-k1",
+      method: "zelle",
+      amount_cents: 30000,
+      paid_at: "2026-09-08T15:00:00Z",
+      allocations: [{ invoice_id: "inv-sep", amount_cents: 6000 }],
+      credit_cents: 24000,
+      credit_spent_cents: 0,
+      void_blocked_reason: null,
+    };
+    const { setView } = await setup(page, {
+      owner: true,
+      view: { ...FAMILY, manual_payments: [zelle] },
+    });
+    const voids: { url: string; body: unknown }[] = [];
+    await page.route("**/api/v2/admin/payments/*/void", (route) => {
+      voids.push({ url: route.request().url(), body: route.request().postDataJSON() });
+      return fulfillJson(route, { ok: true });
+    });
+    const row = page.getByTestId("manual-payment-manual-k1");
+    await expect(row).toContainText("Zelle $300.00");
+    await expect(row).toContainText("$240.00 account credit");
+    await page.getByTestId("void-payment-manual-k1").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("voids the payment, not an invoice");
+    await expect(dialog).toContainText("$240.00 account credit it created is cancelled");
+    setView({ ...FAMILY, manual_payments: [] });
+    await page.getByTestId("void-payment-reason").fill("entered on the wrong invoice");
+    await dialog.getByRole("button", { name: "Void payment" }).click();
+    await expect.poll(() => voids.length).toBe(1);
+    expect(voids[0].url).toContain("/admin/payments/manual-k1/void");
+    expect(voids[0].body).toEqual({ reason: "entered on the wrong invoice" });
+    await expect(page.getByTestId("manual-payment-manual-k1")).toHaveCount(0);
+  });
+
   test("admin without owner scope sees no owner-only buttons", async ({ page }) => {
     const view = {
       ...FAMILY,

@@ -38,6 +38,7 @@ from backend.v2.contexts.billing.application.family_billing import (
     FamilyBillingUnavailable,
     FamilyFacts,
     InvoiceFacts,
+    ManualPaymentFacts,
     ParentFacts,
     StudentFacts,
     build_family_billing_view,
@@ -236,6 +237,9 @@ class MongoFamilyBillingReadModel:
         events = await self._secondary(
             "events_unavailable", warnings, self._events(academy_id, enrollment_ids), []
         )
+        manual_payments = await self._secondary(
+            "payments_unavailable", warnings, self._manual_payments(academy_id, payment_ids), []
+        )
         available_credit = await self._secondary(
             "credits_unavailable", warnings, self._available_credit(aliases), 0
         )
@@ -320,6 +324,7 @@ class MongoFamilyBillingReadModel:
             connected_account_ready=connected_ready,
             warnings=tuple(dict.fromkeys(warnings)),
             email_delivery=email_delivery,
+            manual_payments=tuple(manual_payments),
         )
         if warnings:
             log.warning("family billing read model: %s for parent %s", warnings, parent_id)
@@ -764,6 +769,93 @@ class MongoFamilyBillingReadModel:
                 )
             )
         return out, payment_ids
+
+    async def _manual_payments(
+        self, academy_id: str, payment_ids: list[str]
+    ) -> list[ManualPaymentFacts]:
+        """Live non-Stripe payments behind this family's invoices, newest first.
+
+        Each one's FULL allocation set and the OVERPAYMENT credit it minted are
+        read, not just the rows on this family's invoices, because voiding it
+        reverses all of them.
+        """
+        if not payment_ids:
+            return []
+        payments = [
+            doc
+            async for doc in self._db["ledger_payments"].find(
+                {
+                    "academy_id": academy_id,
+                    "payment_id": {"$in": payment_ids},
+                    "status": {"$ne": "voided"},
+                },
+                {"_id": 0},
+            )
+            # Stripe-linked money is refunded, never voided (domain void_payment).
+            if not doc.get("stripe_payment_intent_id") and not doc.get("stripe_invoice_id")
+        ]
+        if not payments:
+            return []
+        allocations = [
+            doc
+            async for doc in self._db["payment_allocations"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "payment_id": {"$in": [str(p["payment_id"]) for p in payments]},
+                },
+                {
+                    "_id": 0,
+                    "allocation_id": 1,
+                    "payment_id": 1,
+                    "invoice_id": 1,
+                    "amount_cents": 1,
+                    "idempotency_key": 1,
+                    "created_at": 1,
+                },
+            )
+            .sort("created_at", 1)
+        ]
+        payment_by_allocation = {str(a["allocation_id"]): str(a["payment_id"]) for a in allocations}
+        credit: dict[str, int] = {}
+        spent: dict[str, int] = {}
+        async for doc in self._db["account_credit_ledger"].find(
+            {
+                "academy_id": academy_id,
+                "source_type": "OVERPAYMENT",
+                "source_id": {"$in": list(payment_by_allocation)},
+                "status": {"$ne": "VOIDED"},
+            },
+            {"_id": 0, "source_id": 1, "amount_cents": 1, "remaining_amount_cents": 1},
+        ):
+            pid = payment_by_allocation[str(doc["source_id"])]
+            amount = _int(doc.get("amount_cents"))
+            credit[pid] = credit.get(pid, 0) + amount
+            spent[pid] = spent.get(pid, 0) + max(
+                amount - _int(doc.get("remaining_amount_cents")), 0
+            )
+        out = []
+        for p in payments:
+            pid = str(p["payment_id"])
+            mine = [a for a in allocations if str(a["payment_id"]) == pid]
+            out.append(
+                ManualPaymentFacts(
+                    payment_id=pid,
+                    method=_opt_str(p.get("payment_method")),
+                    amount_cents=_int(p.get("amount_cents")),
+                    paid_at=_to_datetime(p.get("paid_at")) or _to_datetime(p.get("created_at")),
+                    allocations=tuple(
+                        (str(a["invoice_id"]), _int(a.get("amount_cents")))
+                        for a in mine
+                        if _int(a.get("amount_cents")) > 0
+                    ),
+                    credit_cents=credit.get(pid, 0),
+                    credit_spent_cents=spent.get(pid, 0),
+                    has_legacy_allocation=any(not a.get("idempotency_key") for a in mine),
+                )
+            )
+        out.sort(key=lambda f: f.paid_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return out
 
     async def _payment_refunds(
         self,

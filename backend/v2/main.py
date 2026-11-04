@@ -110,6 +110,12 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_daily_d
 from backend.v2.contexts.communications.application.use_cases.send_parent_daily_digest import (
     SendParentDailyDigestCommand,
 )
+from backend.v2.contexts.communications.application.use_cases.send_parent_evening_wins import (
+    SendParentEveningWinsCommand,
+)
+from backend.v2.contexts.communications.application.use_cases.send_parent_report_cards import (
+    SendParentReportCardsCommand,
+)
 from backend.v2.contexts.communications.application.use_cases.set_email_preferences import (
     SetEmailPreferences,
 )
@@ -192,6 +198,7 @@ from backend.v2.contexts.platform.governance.infrastructure.mongo_governance_sto
 from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo import (
     MongoTenantLifecycleRepository,
 )
+from backend.v2.interfaces.admin.progress_routes import resolve_certificate_display
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
@@ -299,7 +306,14 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "send_win_back_notices": LocalDailyTime(4, 30),
     "create_trial_follow_ups": LocalDailyTime(4, 50),
     "send_owner_daily_brief": LocalDailyTime(7, 30),
+    # Monthly report card: the job runs daily but only sends on the 1st.
+    "send_parent_report_cards": LocalDailyTime(9, 0),
     "send_past_due_reminders": LocalDailyTime(_PAST_DUE_REMINDER_LOCAL_HOUR, 20),
+    # Evening, so a coach's mistaken tap can be undone the same day.
+    "auto_approve_level_ups": LocalDailyTime(18, 30),
+    # After the 18:30 evening level-up sweep, so a level finished today is
+    # celebrated with its certificate in the same e-mail.
+    "send_parent_evening_wins": LocalDailyTime(19, 0),
 }
 
 #: Per-local-day claim budget for the jobs whose body is NOT safe to repeat
@@ -464,6 +478,27 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # (unique source_key, migration 0201), so an extra run creates nothing.
     "create_trial_follow_ups": {
         "schedule": {"type": "crontab", "value": "50 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },  # Tap-to-master: queued level-ups on levels without owner approval land
+    # once a day. Idempotent: an approved recommendation is never pending again.
+    "auto_approve_level_ups": {
+        "schedule": {"type": "crontab", "value": "30 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # The parent "evening win" e-mail: hourly ticks, once per academy-local
+    # day at 19:00; idempotent per family per day (parent_win_sends claim).
+    "send_parent_evening_wins": {
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # The parent monthly report card: hourly ticks, once per academy-local
+    # day at 09:00, sending only on the 1st; idempotent per family per month
+    # (parent_report_card_sends claim).
+    "send_parent_report_cards": {
+        "schedule": {"type": "crontab", "value": "0 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -808,6 +843,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.win_back import compose_win_back
 
     app.state.win_back = compose_win_back(db, settings)
+    from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
+
+    app.state.parent_evening_wins = compose_send_parent_evening_wins(db)
+    from backend.v2.composition.report_cards import compose_send_parent_report_cards
+
+    app.state.parent_report_cards = compose_send_parent_report_cards(db)
     # Roadmap L3c: the trial follow-up job's use case (composition/trial_follow_ups.py).
     from backend.v2.composition.trial_follow_ups import compose_trial_follow_ups
 
@@ -1194,6 +1235,84 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["created"] or totals["failed"]:
             log.info("trial_follow_ups_created", extra=totals)
 
+    async def _auto_approve_level_ups() -> None:
+        await _run_leased_job(
+            "auto_approve_level_ups", timedelta(minutes=5), _auto_approve_level_ups_body
+        )
+
+    async def _auto_approve_level_ups_body() -> None:
+        totals = {"academy_count": 0, "approved": 0, "needs_owner": 0, "skipped": 0, "failed": 0}
+        admin = app.state.admin
+        if admin.student_progress is None:
+            return
+
+        async def _display_for(rec_id: str) -> dict[str, object]:
+            return await resolve_certificate_display(rec_id, admin)
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            run = await admin.student_progress.auto_approve_level_ups.execute(_display_for)
+            totals["academy_count"] += 1
+            totals["approved"] += run.approved
+            totals["needs_owner"] += run.needs_owner
+            totals["skipped"] += run.skipped
+
+        summary = await _run_local_daily("auto_approve_level_ups", _for_academy)
+        totals["failed"] = len(summary.failed)
+        if totals["approved"] or totals["failed"]:
+            log.info("auto_level_ups_approved", extra=totals)
+
+    async def _send_parent_evening_wins() -> None:
+        await _run_leased_job(
+            "send_parent_evening_wins", timedelta(minutes=10), _send_parent_evening_wins_body
+        )
+
+    async def _send_parent_evening_wins_body() -> None:
+        totals = {"academy_count": 0, "families": 0, "sent": 0, "failed": 0}
+
+        async def _for_academy(academy_id: str, local_now: datetime) -> None:
+            run = await app.state.parent_evening_wins.execute(
+                SendParentEveningWinsCommand(academy_id=academy_id, local_now=local_now)
+            )
+            totals["academy_count"] += 1
+            totals["families"] += run.families
+            totals["sent"] += run.sent
+            totals["failed"] += run.failed
+            if run.retryable_failed:
+                # Raising marks the academy's day failed, so a later hourly
+                # tick retries; families already sent keep their claims.
+                raise RuntimeError(
+                    f"{run.retryable_failed} evening win e-mail(s) failed; retrying next tick"
+                )
+
+        await _run_local_daily("send_parent_evening_wins", _for_academy)
+        if totals["families"]:
+            log.info("parent_evening_wins_processed", extra=totals)
+
+    async def _send_parent_report_cards() -> None:
+        await _run_leased_job(
+            "send_parent_report_cards", timedelta(minutes=10), _send_parent_report_cards_body
+        )
+
+    async def _send_parent_report_cards_body() -> None:
+        totals = {"academy_count": 0, "families": 0, "sent": 0, "failed": 0}
+
+        async def _for_academy(academy_id: str, local_now: datetime) -> None:
+            run = await app.state.parent_report_cards.execute(
+                SendParentReportCardsCommand(academy_id=academy_id, local_now=local_now)
+            )
+            totals["academy_count"] += 1
+            totals["families"] += run.families
+            totals["sent"] += run.sent
+            totals["failed"] += run.failed
+            if run.retryable_failed:
+                # Fail the local run so a later tick today re-claims the
+                # retryable sends; a suppression stays done.
+                raise RuntimeError(f"{run.retryable_failed} retryable send failures")
+
+        await _run_local_daily("send_parent_report_cards", _for_academy)
+        if totals["families"]:
+            log.info("parent_report_cards_processed", extra=totals)
+
     async def _process_stripe_webhook_events() -> None:
         # 60s interval: keep TTL just under the interval so a clean run's early
         # release lets the next tick reclaim, and a crash frees the lease fast.
@@ -1457,7 +1576,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # is meaningful too — otherwise a month-long email outage would be
         # invisible in the digest on all 29 days that did not generate.
         if not (
-            totals["academy_count"] or totals["invoices_emailed"] or totals["invoice_emails_failed"]
+            totals["academy_count"]
+            or totals["invoices_emailed"]
+            or totals["invoice_autopay_notices_sent"]
+            or totals["invoice_emails_failed"]
         ):
             return
         counts = {key: value for key, value in totals.items() if key != "created"}
@@ -1823,6 +1945,33 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        _auto_approve_level_ups,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["auto_approve_level_ups"].minute,
+        timezone=UTC,
+        id="auto_approve_level_ups",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_parent_evening_wins,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_parent_evening_wins"].minute,
+        timezone=UTC,
+        id="send_parent_evening_wins",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_parent_report_cards,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_parent_report_cards"].minute,
+        timezone=UTC,
+        id="send_parent_report_cards",
+        replace_existing=True,
+        max_instances=1,
+    )
     # Issue #774: hourly tick; each academy's sweep runs once per local day
     # from 09:20 local (LOCAL_DAILY_JOBS), so one cron serves every timezone.
     scheduler.add_job(
@@ -2185,6 +2334,7 @@ async def _run_monthly_invoice_generation(
         "invoices_emailed": 0,
         "invoice_emails_failed": 0,
         "invoice_emails_skipped_autopay": 0,
+        "invoice_autopay_notices_sent": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -2335,6 +2485,9 @@ async def _email_generated_invoices(
         ("invoices_emailed", "emailed"),
         ("invoice_emails_failed", "email_failed"),
         ("invoice_emails_skipped_autopay", "skipped_autopay"),
+        # Autopay parents get a pre-charge notice, not an invoice email; without
+        # this the digest showed "0 emailed" for a fully notified run.
+        ("invoice_autopay_notices_sent", "autopay_notified"),
     ):
         totals[total_key] += int(_outcome_count(outcome, outcome_key))
 

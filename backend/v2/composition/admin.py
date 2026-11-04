@@ -87,6 +87,7 @@ from backend.v2.composition.scheduled_cancellations import (
 )
 from backend.v2.composition.session_announcements import compose_announcements
 from backend.v2.composition.student_autopay import compose_get_admin_student
+from backend.v2.composition.waiver_receipt_email import compose_waiver_receipt_notifier
 from backend.v2.contexts.billing.application.admin_money import (
     coerce_report_datetime,
     invoice_outstanding_cents,
@@ -1837,7 +1838,7 @@ def compose_admin(
 
     send_campaign = compose_send_campaign(db, _email_sender, settings)
     waivers_repo = MongoAdminWaiverRepository(db)
-    list_admin_waivers = ListAdminWaivers(waivers_repo)
+    list_admin_waivers = ListAdminWaivers(waivers_repo, copies=MongoParentWaiverRepository(db))
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
     manage_admin_waiver_templates = ManageAdminWaiverTemplates(
         waiver_templates_repo, programs=MongoWaiverProgramLookup(db)
@@ -1850,6 +1851,7 @@ def compose_admin(
         waitlist=waitlist,
         waiver_templates=waiver_templates_repo,
         waiver_signatures=MongoParentWaiverRepository(db),
+        waiver_receipt_notifier=compose_waiver_receipt_notifier(db, settings),
         enrollment_events=enrollment_events,
         trial_conversion=link_trial_conversion,
         student_registrations=students_r,

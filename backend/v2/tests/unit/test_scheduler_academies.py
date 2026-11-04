@@ -118,7 +118,7 @@ def test_scheduler_job_tables_cover_every_registered_job() -> None:
     source = inspect.getsource(_lifespan)
     registered = set(re.findall(r'id="(\w+)"', source))
 
-    assert len(registered) == 18  # +create_trial_follow_ups (L3c)
+    assert len(registered) == 21  # +level-ups, +evening wins, +report cards
     assert registered == set(JOB_STALE_AFTER)
     assert registered == set(SCHEDULED_JOB_MONITORS)
     # Every leased wrapper names a registered job, so a typo cannot leave a
@@ -661,7 +661,7 @@ async def test_generated_invoices_are_emailed_per_academy_and_period() -> None:
 
     async def _send(period: str) -> dict[str, int]:
         sent.append(period)
-        return {"emailed": 2, "email_failed": 0, "skipped_autopay": 1}
+        return {"emailed": 2, "email_failed": 0, "skipped_autopay": 1, "autopay_notified": 3}
 
     totals = await _run_monthly_invoice_generation(
         db=db,
@@ -678,6 +678,7 @@ async def test_generated_invoices_are_emailed_per_academy_and_period() -> None:
     assert totals["invoices_emailed"] == 4
     assert totals["invoice_emails_skipped_autopay"] == 2
     assert totals["invoice_emails_failed"] == 0
+    assert totals["invoice_autopay_notices_sent"] == 6
 
 
 @pytest.mark.asyncio

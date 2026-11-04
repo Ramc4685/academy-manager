@@ -35,6 +35,7 @@ from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
     compose_list_parent_waitlist,
 )
+from backend.v2.composition.waiver_receipt_email import compose_waiver_receipt_notifier
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
 )
@@ -271,6 +272,7 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
 )
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     AcceptParentWaiver,
+    GetParentSignedWaiver,
     GetParentWaiverRequirement,
 )
 from backend.v2.contexts.onboarding.domain.errors import (
@@ -399,6 +401,7 @@ class ParentComposition:
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
     accept_parent_waiver: AcceptParentWaiver
+    get_parent_signed_waiver: GetParentSignedWaiver
     get_academy_info: object  # callable accepting academy_id
     get_registration_waiver: object  # callable -> Waiver | None
     student_progress: StudentProgressComposition
@@ -1126,7 +1129,12 @@ def compose_parent(
     waivers_repo = MongoRegistrationWaiverRepository(db)
     parent_waivers_repo = MongoParentWaiverRepository(db)
     get_waiver_req = GetParentWaiverRequirement(waivers=parent_waivers_repo)
-    accept_waiver = AcceptParentWaiver(waivers=parent_waivers_repo, academy_id=request_academy_id)
+    accept_waiver = AcceptParentWaiver(
+        waivers=parent_waivers_repo,
+        academy_id=request_academy_id,
+        notifier=compose_waiver_receipt_notifier(db, settings),
+    )
+    get_signed_waiver = GetParentSignedWaiver(waivers=parent_waivers_repo)
 
     async def _checkout_stripe_account() -> str | None:
         route = await resolve_charge_route(
@@ -3032,6 +3040,7 @@ def compose_parent(
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,
         accept_parent_waiver=accept_waiver,
+        get_parent_signed_waiver=get_signed_waiver,
         get_academy_info=get_academy_info,
         get_registration_waiver=get_registration_waiver,
         get_registration_waivers=get_registration_waivers,

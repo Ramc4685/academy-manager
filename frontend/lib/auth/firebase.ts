@@ -17,6 +17,7 @@ import {
   getRedirectResult,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  signInWithCredential,
   signInWithCustomToken,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -27,6 +28,11 @@ import {
 } from "firebase/auth";
 import { resolveAuthDomain } from "@/lib/auth/auth-domain";
 import { shouldUseRedirectForGoogleSignIn } from "@/lib/auth/google-sign-in-mode";
+import {
+  canUseNativeSignIn,
+  nativeCredential,
+  type NativeProvider,
+} from "@/lib/auth/native-sign-in";
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
@@ -193,7 +199,18 @@ function consumeGoogleRedirectPending(): boolean {
   }
 }
 
+async function signInNatively(provider: NativeProvider): Promise<User> {
+  const { user } = await signInWithCredential(auth(), await nativeCredential(provider));
+  return user;
+}
+
+/** iOS app only; see shouldOfferAppleSignIn. */
+export async function signInWithApple(): Promise<User> {
+  return signInNatively("apple");
+}
+
 export async function signInWithGoogle(): Promise<User | null> {
+  if (canUseNativeSignIn()) return signInNatively("google");
   const provider = googleProvider();
   if (shouldUseGoogleRedirect()) {
     markGoogleRedirectPending();

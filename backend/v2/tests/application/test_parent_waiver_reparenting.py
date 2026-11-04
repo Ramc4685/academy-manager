@@ -126,6 +126,7 @@ async def test_accepting_re_signs_a_child_whose_signature_belongs_to_the_old_par
     ).execute(
         parent_id="parent-new",
         signer_name="Parent New",
+        consent=True,
         signer_email="new@example.com",
         ip_address=None,
         user_agent=None,

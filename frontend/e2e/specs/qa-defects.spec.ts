@@ -163,8 +163,17 @@ test.describe("QA defect regressions", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
         configured: true,
+        consent_text: "I agree to sign electronically.",
         version: "1.0",
         body: "BLNO Liability Waiver\nParent agrees to academy safety rules.",
+        waivers: [
+          {
+            waiver_template_id: "wt-qa",
+            title: "BLNO Liability Waiver",
+            version: "1.0",
+            body: "BLNO Liability Waiver\nParent agrees to academy safety rules.",
+          },
+        ],
       });
     });
     await page.route("**/api/v2/parent/onboarding/app-qa-1", async (route) => {
@@ -227,7 +236,9 @@ test.describe("QA defect regressions", () => {
 
     await expect(page.getByText("BLNO Liability Waiver")).toBeVisible();
     await expect(page.getByText("Parent agrees to academy safety rules.")).toBeVisible();
-    await page.getByRole("button", { name: "I Accept" }).click();
+    await page.getByLabel("Full legal name").fill("Priya Rao");
+    await page.getByLabel("I agree to sign electronically.").check();
+    await page.getByRole("button", { name: "Sign and continue" }).click();
 
     await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Thursday Beginner/ })).toBeVisible();

@@ -1340,6 +1340,8 @@ def test_record_invoice_manual_payment_route(admin_client):
         "payment_id": "manual-1",
         "invoice_status": "partially_paid",
         "balance_due_cents": 4_500,
+        "previous_balance_applied_cents": 0,
+        "overpayment_credit_cents": 0,
     }
 
 

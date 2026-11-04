@@ -8,7 +8,9 @@
  *
  * `/admin/messages?dm=<parent_id>` opens the DM composer for that parent
  * (the Payments buckets "Message" action, spec §4), even when no thread with
- * them exists yet.
+ * them exists yet. An optional `&draft=<text>` prefills that composer (the
+ * pathway dashboard's "Message parent" / "Offer a 1-on-1"); nothing is sent
+ * until the admin presses Send.
  */
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -54,7 +56,9 @@ export default function AdminMessagesPage() {
 
 function AdminMessagesContent() {
   const queryClient = useQueryClient();
-  const dmParam = useSearchParams().get("dm");
+  const searchParams = useSearchParams();
+  const dmParam = searchParams.get("dm");
+  const draftParam = searchParams.get("draft");
   const [dmRecipientId, setDmRecipientId] = useState<string | null>(dmParam);
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -262,6 +266,7 @@ function AdminMessagesContent() {
                   </ul>
                   <DmComposer
                     recipientId={dmRecipientId}
+                    initialBody={dmRecipientId === dmParam ? (draftParam ?? "") : ""}
                     onSent={invalidate}
                     key={dmRecipientId}
                   />
@@ -551,12 +556,14 @@ function BroadcastComposer({ onSent }: { onSent: () => void }) {
 
 function DmComposer({
   recipientId,
+  initialBody,
   onSent,
 }: {
   recipientId: string;
+  initialBody: string;
   onSent: () => void;
 }) {
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialBody);
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
@@ -575,7 +582,7 @@ function DmComposer({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (!body.trim()) return;
+        if (!body.trim() || mutation.isPending) return;
         mutation.mutate();
       }}
       className="flex flex-wrap gap-2"
@@ -587,10 +594,18 @@ function DmComposer({
       )}
       {/* #893 `min-w-0`: an input's default `min-width: auto` is wider than a
           narrow thread column, which is what pushed Send out of its card. */}
-      <input
-        type="text"
+      {/* A textarea so a prefilled draft can be read whole before sending;
+          Enter still sends, as it did when this was a one-line input. */}
+      <textarea
+        rows={initialBody ? 4 : 1}
         value={body}
         onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            e.currentTarget.form?.requestSubmit();
+          }
+        }}
         placeholder="Type a message..."
         className="min-w-0 flex-1 rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
         aria-label="DM message body"

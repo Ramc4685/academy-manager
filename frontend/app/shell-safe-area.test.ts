@@ -78,3 +78,31 @@ describe("top-anchored overlays pad for the iOS status bar", () => {
     expect(source(rel)).toContain(OVERLAY_SAFE_TOP);
   });
 });
+
+/**
+ * Public screens sit under the iOS status bar too (the tenant page header held
+ * its only visible login link under the battery icon). Each one adds the inset
+ * to its own top padding.
+ */
+describe("public screens pad for the iOS status bar", () => {
+  const SAFE_TOP = "env(safe-area-inset-top, 0px)";
+  const TW_SAFE_TOP = "pt-[calc(1.5rem+env(safe-area-inset-top,0px))]";
+
+  it.each([
+    "../components/public-page/public-page.module.css",
+    "landing.module.css",
+    "(marketing)/legal.module.css",
+  ])("%s pads its top edge", (rel) => {
+    expect(source(rel)).toContain(SAFE_TOP);
+  });
+
+  it.each([
+    "(marketing)/login/login-client.tsx",
+    "(marketing)/register/register-client.tsx",
+    "(marketing)/auth/action/page.tsx",
+    "(marketing)/auth/magic/page.tsx",
+    "(marketing)/unsubscribe/page.tsx",
+  ])("%s pads its top edge", (rel) => {
+    expect(source(rel)).toContain(TW_SAFE_TOP);
+  });
+});

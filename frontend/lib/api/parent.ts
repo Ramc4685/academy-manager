@@ -201,23 +201,54 @@ export interface ParentProgressNote {
   created_at: string;
 }
 
-export interface ParentSkillUpdate {
-  skill_id: string;
-  skill_name: string;
-  status: SkillStatus;
-  updated_at: string;
-}
-
-export interface ParentPracticeResourceLink {
-  kind: "YOUTUBE";
-  title: string;
-  url: string;
-}
-
-export interface ParentPracticeResource {
-  skill_id: string;
-  skill_name: string;
-  resource_links: ParentPracticeResourceLink[];
+/** GET /parent/students/{id}/progress-journey — the "how far along" view. */
+export interface ParentProgressJourney {
+  student_id: string;
+  program_id: string;
+  levels: {
+    level_id: string;
+    name: string;
+    number: number;
+    state: "done" | "current" | "upcoming";
+    color?: string | null;
+  }[];
+  current_level: {
+    level_id: string;
+    name: string;
+    number: number;
+    skills_done: number;
+    skills_total: number;
+    skills_remaining: number;
+    has_next_level: boolean;
+    /** Omitted (null) when recent passes are too few to estimate honestly. */
+    pace_weeks: number | null;
+    color?: string | null;
+  } | null;
+  skills: {
+    skill_id: string;
+    name: string;
+    state: "got_it" | "working_on_it" | "coming_up";
+  }[];
+  recent_wins: {
+    kind: "skill" | "certificate";
+    at: string;
+    title: string;
+    cert_id: string | null;
+    cert_number: string | null;
+    /** The coach's optional one-line note to the parent on this win. */
+    coach_note?: string | null;
+  }[];
+  focus_skill_id: string | null;
+  focus_skill_name: string | null;
+  /** Finished the last level: every level is done and current_level is null. */
+  pathway_complete: boolean;
+  practice_drill: {
+    skill_id: string;
+    skill_name: string | null;
+    kind: "YOUTUBE";
+    title: string;
+    url: string;
+  } | null;
 }
 
 export interface ParentScheduleEntry {
@@ -289,6 +320,8 @@ export interface RegistrationWaiver {
   body: string | null;
   /** Every waiver to sign for the chosen class; the flat fields above are the first. */
   waivers?: RegistrationWaiverItem[];
+  /** The statement beside the consent checkbox; stored with the acceptance. */
+  consent_text?: string;
   /** True when a waiver is assigned to a program: ask for the class first. */
   class_first?: boolean;
 }
@@ -309,6 +342,11 @@ export function patchOnboarding(
     child_profile?: Partial<ChildProfile>;
     selected_session_id?: string;
     accept_waiver?: boolean;
+    /** Required with accept_waiver: the typed full legal name and consent box. */
+    signer_name?: string;
+    consent?: boolean;
+    /** waiver_template_id -> {section key: initials} for sections marked [initials]. */
+    initials?: Record<string, Record<string, string>>;
   },
 ): Promise<OnboardingApplication> {
   return apiFetch(`/parent/onboarding/${application_id}`, {
@@ -458,20 +496,13 @@ export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch("/parent/progress", { method: "GET" });
 }
 
-export function listSkillUpdates(studentId: string): Promise<ParentSkillUpdate[]> {
-  return apiFetch<{ updates: ParentSkillUpdate[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/skill-updates`,
-    { method: "GET" },
-  ).then((d) => d.updates);
-}
-
-export function listPracticeResources(
+export function getParentProgressJourney(
   studentId: string,
-): Promise<ParentPracticeResource[]> {
-  return apiFetch<{ resources: ParentPracticeResource[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/practice-resources`,
+): Promise<ParentProgressJourney> {
+  return apiFetch<ParentProgressJourney>(
+    `/parent/students/${encodeURIComponent(studentId)}/progress-journey`,
     { method: "GET" },
-  ).then((d) => d.resources);
+  );
 }
 
 export function listParentPauseRequests(): Promise<{
@@ -555,6 +586,12 @@ export interface ParentWaiverStudentView {
   status: ParentWaiverStatus;
   signed_at: string | null;
   waiver_version: string | null;
+  /** The signature behind a signed status; opens the signed copy. */
+  waiver_signature_id?: string | null;
+  /** Adult or parent/guardian release, from the child's date of birth. */
+  signing_path?: "adult" | "minor" | null;
+  /** The waiver has age sections and this child has no date of birth yet. */
+  date_of_birth_missing?: boolean;
 }
 
 export interface ParentWaiverItemView {
@@ -574,6 +611,8 @@ export interface ParentWaiverCurrentView {
   students: ParentWaiverStudentView[];
   /** Every waiver this parent's children must sign; the flat fields above are the first. */
   waivers?: ParentWaiverItemView[];
+  /** The statement beside the consent checkbox; stored on every signature. */
+  consent_text: string;
 }
 
 export function getParentCurrentWaiver(): Promise<ParentWaiverCurrentView> {
@@ -581,11 +620,40 @@ export function getParentCurrentWaiver(): Promise<ParentWaiverCurrentView> {
 }
 
 export function acceptParentWaiver(payload: {
-  signer_name: string | null;
+  signer_name: string;
+  consent: boolean;
+  /** Sign for these children only; omit to sign for every child who needs it. */
+  student_ids?: string[];
+  /** waiver_template_id -> {section key: initials} for sections marked [initials]. */
+  initials?: Record<string, Record<string, string>>;
 }): Promise<ParentWaiverCurrentView> {
   return apiFetch("/parent/waivers/accept", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+/** A signed waiver as a document: the exact text plus its audit trail. */
+export interface SignedWaiverCopy {
+  waiver_signature_id: string;
+  student_name: string;
+  title: string | null;
+  version: string | null;
+  body: string;
+  content_hash: string | null;
+  signed_at: string | null;
+  signer_name: string;
+  signer_email: string | null;
+  consent_text: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  initials?: Record<string, string>;
+  signing_path?: "adult" | "minor" | null;
+}
+
+export function getParentSignedWaiver(waiverSignatureId: string): Promise<SignedWaiverCopy> {
+  return apiFetch(`/parent/waivers/signatures/${encodeURIComponent(waiverSignatureId)}`, {
+    method: "GET",
   });
 }
 

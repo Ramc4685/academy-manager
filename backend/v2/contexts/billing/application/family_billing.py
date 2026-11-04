@@ -135,6 +135,28 @@ class CreditFacts:
 
 
 @dataclass(frozen=True)
+class ManualPaymentFacts:
+    """A live, non-Stripe ledger payment that settled one of this family's invoices.
+
+    Listed so an owner can void one recorded by mistake. ``credit_*`` are the
+    OVERPAYMENT credits its allocations minted; once any of that credit has
+    been spent the void is refused (the reversal cannot take it back).
+    """
+
+    payment_id: str
+    method: str | None
+    amount_cents: int
+    paid_at: datetime | None
+    #: (invoice_id, cents) per allocation that moved money; the $0
+    #: overpayment row a credit hangs off is left out.
+    allocations: tuple[tuple[str, int], ...]
+    credit_cents: int
+    credit_spent_cents: int
+    #: A pre-0130 allocation with no idempotency key: void refuses those too.
+    has_legacy_allocation: bool = False
+
+
+@dataclass(frozen=True)
 class InvoiceFacts:
     invoice_id: str
     invoice_number: str | None
@@ -257,6 +279,7 @@ class FamilyFacts:
     #: suppression-lookup failure degrades to "no known problem" rather than
     #: taking the whole family page down (the #748 503 pattern).
     email_delivery: EmailDeliveryFacts | None = None
+    manual_payments: tuple[ManualPaymentFacts, ...] = ()
 
 
 # --------------------------------------------------------------------------- helpers
@@ -881,6 +904,28 @@ def _invoice_payload(inv: InvoiceFacts, *, eligibility: Eligibility) -> dict[str
     }
 
 
+def _manual_payment_payload(p: ManualPaymentFacts) -> dict[str, Any]:
+    blocked = (
+        "legacy_allocation"
+        if p.has_legacy_allocation
+        else "credit_spent"
+        if p.credit_spent_cents > 0
+        else None
+    )
+    return {
+        "payment_id": p.payment_id,
+        "method": p.method,
+        "amount_cents": p.amount_cents,
+        "paid_at": _iso(p.paid_at),
+        "allocations": [
+            {"invoice_id": invoice_id, "amount_cents": cents} for invoice_id, cents in p.allocations
+        ],
+        "credit_cents": p.credit_cents,
+        "credit_spent_cents": p.credit_spent_cents,
+        "void_blocked_reason": blocked,
+    }
+
+
 def _last_payment(facts: FamilyFacts) -> dict[str, Any] | None:
     newest: tuple[datetime, str] | None = None
     for inv in facts.invoices:
@@ -1021,6 +1066,7 @@ def build_family_billing_view(
             for s in facts.students
         ],
         "invoices": invoice_rows,
+        "manual_payments": [_manual_payment_payload(p) for p in facts.manual_payments],
         "timeline": build_timeline(facts, zone=zone),
         "actions": family_actions(
             state=state, has_card=facts.customer.has_card, invoices=facts.invoices

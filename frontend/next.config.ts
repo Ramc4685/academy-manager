@@ -15,6 +15,12 @@ const FIREBASE_AUTH_HELPER_ORIGIN = `https://${
   process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "academy-courtmastr"
 }.firebaseapp.com`;
 
+// Firebase Hosting site that serves academy logos while the project is on the
+// Spark plan (no Storage bucket, so the logo upload endpoint answers 503).
+const FIREBASE_HOSTING_ORIGIN = `https://${
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "academy-courtmastr"
+}.web.app`;
+
 const IS_DEV = process.env.NODE_ENV === "development";
 
 // Report-Only rollout first (QW5): watch for violations in staging/prod, then
@@ -39,7 +45,7 @@ const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com${IS_DEV ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://firebasestorage.googleapis.com",
+  `img-src 'self' data: blob: https://firebasestorage.googleapis.com ${FIREBASE_HOSTING_ORIGIN}`,
   "font-src 'self' data:",
   `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com https://cloudflareinsights.com https://*.ingest.us.sentry.io${
     IS_DEV ? " ws: http://localhost:* http://127.0.0.1:*" : ""

@@ -97,3 +97,15 @@ describe("next.config redirects", () => {
     expect(hostRedirects.every((entry) => entry.source === "/:path*")).toBe(true);
   });
 });
+
+describe("next.config CSP img-src", () => {
+  it("allows academy logos from Firebase Storage and the Firebase Hosting site", async () => {
+    const rules = (await config.headers?.()) ?? [];
+    const csp = rules
+      .flatMap((rule) => rule.headers)
+      .find((header) => header.key === "Content-Security-Policy-Report-Only");
+    const imgSrc = csp?.value.split("; ").find((part) => part.startsWith("img-src "));
+    expect(imgSrc).toContain("https://firebasestorage.googleapis.com");
+    expect(imgSrc).toContain("https://academy-courtmastr.web.app");
+  });
+});

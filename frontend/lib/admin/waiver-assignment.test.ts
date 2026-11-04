@@ -67,6 +67,7 @@ const row = (status: AdminStudentWaiverRow["status"], signed_version: string | n
 describe("student waiver rows", () => {
   it("summarises signed, older version and unsigned", () => {
     expect(studentWaiverSummary(row("signed", "2"))).toBe("Signed v2");
+    expect(studentWaiverSummary(row("expired", "2"))).toBe("Signature expired: renewal due");
     expect(studentWaiverSummary(row("older_version", "1"))).toBe("Signed an older version (v1)");
     expect(studentWaiverSummary(row("unsigned", null))).toBe("Not signed");
   });
