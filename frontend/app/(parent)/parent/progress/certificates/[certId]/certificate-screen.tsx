@@ -7,6 +7,7 @@ import {
   type CertificateAcademy,
 } from "@/components/progress/level-certificate";
 import type { CertificateDetail } from "@/lib/api/curriculum";
+import { useIsNativeApp } from "@/lib/use-native-app";
 
 /**
  * Share a short note and this page's link from the phone's share sheet.
@@ -50,6 +51,7 @@ export function CertificateScreen({
   onPrint: () => void;
   onShare: () => void;
 }) {
+  const isNativeApp = useIsNativeApp();
   const cert = detail.certificate;
   const firstName = cert.student_name.split(" ")[0] || cert.student_name;
   const completed = formatCertificateDate(cert.completed_at, academy.timezone);
@@ -95,22 +97,24 @@ export function CertificateScreen({
       <CertificatePreview detail={detail} academy={academy} />
 
       <div className="flex flex-col gap-2.5">
-        <button
-          type="button"
-          onClick={onPrint}
-          className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-rally-volt-400 text-[15px] font-bold text-rally-ink"
-        >
-          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <path
-              d="M5 7V2h8v5M5 13H3V7h12v6h-2M5 11h8v5H5z"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinejoin="round"
-            />
-          </svg>
-          Print or save as PDF
-        </button>
+        {!isNativeApp && (
+          <button
+            type="button"
+            onClick={onPrint}
+            className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-rally-volt-400 text-[15px] font-bold text-rally-ink"
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <path
+                d="M5 7V2h8v5M5 13H3V7h12v6h-2M5 11h8v5H5z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Print or save as PDF
+          </button>
+        )}
         <button
           type="button"
           onClick={onShare}
@@ -129,8 +133,9 @@ export function CertificateScreen({
           Share with family
         </button>
         <p className="text-center text-xs text-rally-muted">
-          Sharing uses your phone&apos;s share sheet. To send the certificate itself, save it as a
-          PDF first. Nothing is posted publicly.
+          Sharing uses your phone&apos;s share sheet.
+          {!isNativeApp && " To send the certificate itself, save it as a PDF first."} Nothing is
+          posted publicly.
         </p>
       </div>
 

@@ -1,6 +1,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const shell = vi.hoisted(() => ({ native: false }));
+vi.mock("@/lib/use-native-app", () => ({ useIsNativeApp: () => shell.native }));
 
 import { formatSignedAt, SignedWaiverDocument } from "./signed-waiver-document";
 
@@ -49,6 +52,20 @@ describe("SignedWaiverDocument", () => {
     expect(html).toContain("Participants under 18");
     expect(html).toContain("Parent or guardian");
     expect(html).not.toContain("<input");
+  });
+
+  it("offers print on the web but not in the app shell, where it goes nowhere", () => {
+    expect(renderToStaticMarkup(createElement(SignedWaiverDocument, { copy }))).toContain(
+      "Print or save as PDF",
+    );
+    shell.native = true;
+    try {
+      expect(renderToStaticMarkup(createElement(SignedWaiverDocument, { copy }))).not.toContain(
+        "Print or save as PDF",
+      );
+    } finally {
+      shell.native = false;
+    }
   });
 
   it("keeps the UTC instant next to the local time", () => {

@@ -114,6 +114,23 @@ def _account_switch_unsets(
 class MongoParentBillingCustomerRepository(TenantScopedRepository):
     collection_name = "parent_billing_customers"
 
+    async def customer_ref(self, *, parent_id: str) -> tuple[str, str | None] | None:
+        """(stripe_customer_id, stripe_account_id) for the parent, or None."""
+        doc = await self._find_one({"parent_id": parent_id})
+        if not doc or not doc.get("stripe_customer_id"):
+            return None
+        return str(doc["stripe_customer_id"]), stored_stripe_account(doc)
+
+    async def clear_saved_payment_methods(self, *, parent_id: str) -> None:
+        """Forget every saved card; the customer id stays for refunds/disputes."""
+        await self._update_one(
+            {"parent_id": parent_id},
+            {
+                "$unset": dict.fromkeys(_PAYMENT_METHOD_FIELDS, ""),
+                "$set": {"updated_at": datetime.now(UTC)},
+            },
+        )
+
     async def get_stripe_customer_id(self, *, parent_id: str) -> str | None:
         doc = await self._find_one({"parent_id": parent_id})
         if not doc:

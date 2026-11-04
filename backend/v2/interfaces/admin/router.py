@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .academy_routes import router as academy_router
+from .account_deletion_routes import router as account_deletion_router
 from .audit_routes import router as audit_router
 from .billing_health_routes import router as billing_health_router
 from .billing_products_routes import router as billing_products_router
@@ -50,6 +51,7 @@ from .waiver_routes import router as waiver_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(audit_router)
+router.include_router(account_deletion_router)
 router.include_router(dashboard_router)
 router.include_router(setup_checklist_router)
 router.include_router(inbox_router)

@@ -68,6 +68,12 @@ class MongoApplicationRepository(TenantScopedRepository):
         doc = await self._find_one({"application_id": application_id})
         return self._to_domain(doc) if doc else None
 
+    async def delete_for_parent(self, *, academy_id: str, parent_user_ids: list[str]) -> None:
+        """Account deletion (M5, D3): an application holds nothing to retain."""
+        await self.collection.delete_many(
+            {"academy_id": academy_id, "parent_user_id": {"$in": parent_user_ids}}
+        )
+
     async def latest_for_parent(self, parent_user_id: str) -> Application | None:
         cursor = self._find_many(
             {"parent_user_id": parent_user_id},

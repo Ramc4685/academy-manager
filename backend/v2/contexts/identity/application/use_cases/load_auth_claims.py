@@ -19,6 +19,7 @@ SaaS contract:
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.identity.application.ports import (
@@ -142,6 +143,7 @@ class LoadAuthClaims:
             membership_id=membership.membership_id,
             roles=membership.roles,
             platform_roles=platform_role_names,
+            signed_in_at=_signed_in_at(token_claims),
         )
 
     async def _record_login(
@@ -174,6 +176,13 @@ class LoadAuthClaims:
             )
         except Exception:  # pragma: no cover - defensive
             logger.warning("login audit failed for user %s", user.user_id, exc_info=True)
+
+
+def _signed_in_at(token_claims: dict[str, Any]) -> datetime | None:
+    auth_time = token_claims.get("auth_time")
+    if isinstance(auth_time, bool) or not isinstance(auth_time, (int, float)):
+        return None
+    return datetime.fromtimestamp(auth_time, UTC)
 
 
 def _sign_in_provider(token_claims: dict[str, Any]) -> str | None:

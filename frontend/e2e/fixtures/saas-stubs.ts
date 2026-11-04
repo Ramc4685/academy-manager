@@ -225,4 +225,10 @@ export async function stubAcademy(page: Page, academyId: string): Promise<void> 
       address: null,
     });
   });
+  // The admin Families pages read pending account deletions (mobile D4).
+  // Unstubbed the call 502s and trips clean-console specs.
+  await page.route("**/api/v2/admin/account-deletions", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { deletions: [] });
+  });
 }

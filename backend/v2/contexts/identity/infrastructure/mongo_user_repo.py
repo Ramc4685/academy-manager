@@ -25,6 +25,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.errors import (
+    AccountDeletionPending,
     CannotRemoveLastOwner,
     CannotRemoveLastRole,
     CoachHasFutureSessions,
@@ -44,6 +45,7 @@ from backend.v2.contexts.identity.domain.identity_aliases import (
     parent_alias_set,
 )
 from backend.v2.contexts.identity.domain.models import (
+    SUSPENDED_MEMBERSHIP_STATUSES,
     GlobalUserStatus,
     Role,
     User,
@@ -51,6 +53,9 @@ from backend.v2.contexts.identity.domain.models import (
 )
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
+    MongoAccountDeletionStore,
 )
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
@@ -94,12 +99,7 @@ COACHING_ROLES: frozenset[str] = frozenset({"coach", "assistant_coach"})
 #: identity may not depend on the enrollment context (import-linter contract).
 _LIVE_ENROLLMENT_STATUSES: frozenset[str] = frozenset({"active", "paused", "held"})
 
-#: `academy_memberships.status` spellings that mean the membership grants
-#: nothing. Anything else (including a legacy row with no status at all) is
-#: treated as live, so a shared Firebase account is never disabled on a guess.
-_SUSPENDED_MEMBERSHIP_STATUSES: frozenset[str] = frozenset(
-    {"suspended", "revoked", "removed", "disabled", "inactive"}
-)
+_SUSPENDED_MEMBERSHIP_STATUSES = SUSPENDED_MEMBERSHIP_STATUSES
 
 
 def _global_status_from_doc(doc: dict[str, object], *, is_active: bool) -> GlobalUserStatus:
@@ -542,6 +542,10 @@ class MongoUserRepository:
             if existing is not None
             else parent_id
         )
+        # The membership upsert below sets status 'active'.
+        await self._assert_no_pending_deletion(
+            (uid, *(self._membership_aliases(existing) if existing is not None else ()))
+        )
 
         try:
             firebase_uid, _firebase_created = await get_firebase_admin_adapter().ensure_user(
@@ -707,6 +711,8 @@ class MongoUserRepository:
         )
         if existing is not None:
             await self._require_member_of_academy(existing, academy_id=academy_id)
+            # The membership upsert below sets status 'active'.
+            await self._assert_no_pending_deletion(self._membership_aliases(existing))
         uid = (
             str(existing.get("firebase_uid") or existing.get("auth_uid") or existing.get("user_id"))
             if existing is not None
@@ -1050,6 +1056,8 @@ class MongoUserRepository:
             # role removal — it suspends the membership and the Firebase
             # account — so it has to clear at least the same bar.
             await self._assert_offboardable(before, academy_id=academy_id)
+        if status_change == "active":
+            await self._assert_no_pending_deletion(self._membership_aliases(before))
         changed = [
             key
             for key, value in set_doc.items()
@@ -1446,6 +1454,20 @@ class MongoUserRepository:
                 after=doc,
             )
         return self._to_admin_summary(doc) if doc else None
+
+    async def _assert_no_pending_deletion(self, aliases: Sequence[str]) -> None:
+        """Refuse any academy write that would make this person's membership live.
+
+        A self-service deletion covers every academy; only platform support may
+        undo it. Callers check before any write so nothing changes.
+        """
+        if aliases and await MongoAccountDeletionStore(self._db).pending_request_exists(
+            list(aliases)
+        ):
+            raise AccountDeletionPending(
+                "this person asked to delete their account; only CourtMastr "
+                "support can restore it, after confirming with them"
+            )
 
     def _membership_aliases(self, doc: dict[str, Any]) -> tuple[str, ...]:
         """The alias set `LoadAuthClaims` resolves this account's membership with.

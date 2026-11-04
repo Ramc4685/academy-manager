@@ -25,6 +25,7 @@ import {
   sendDuesReminders,
 } from "@/lib/api/admin";
 import { formatCents, formatDateOnly } from "@/lib/money";
+import { useIsNativeApp } from "@/lib/use-native-app";
 import { NO_DATA_TEXT, finiteText, isSettled, statText } from "@/lib/ui/load-state";
 import { invoiceStatusChip } from "@/lib/billing-status";
 import {
@@ -130,6 +131,7 @@ export default function AdminMonthClosePage() {
     },
   });
 
+  const isNativeApp = useIsNativeApp();
   const quickbooksMutation = useMutation({
     mutationFn: () => exportAdminReportCsv("quickbooks", period),
     onSuccess: (csv) => downloadCsv(`quickbooks-${period}`, csv),
@@ -236,22 +238,26 @@ export default function AdminMonthClosePage() {
                 className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm text-rally-ink shadow-sm focus:border-rally-cobalt-600 focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/15 dark:bg-neutral-950"
               />
             </label>
-            <Button
-              variant="secondary"
-              onClick={() => quickbooksMutation.mutate()}
-              disabled={quickbooksMutation.isPending}
-              data-testid="export-quickbooks"
-            >
-              {quickbooksMutation.isPending ? "Exporting..." : "QuickBooks journal"}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => depositSlipMutation.mutate()}
-              disabled={depositSlipMutation.isPending}
-              data-testid="export-deposit-slip"
-            >
-              {depositSlipMutation.isPending ? "Exporting..." : "Deposit slip"}
-            </Button>
+            {!isNativeApp && (
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => quickbooksMutation.mutate()}
+                  disabled={quickbooksMutation.isPending}
+                  data-testid="export-quickbooks"
+                >
+                  {quickbooksMutation.isPending ? "Exporting..." : "QuickBooks journal"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => depositSlipMutation.mutate()}
+                  disabled={depositSlipMutation.isPending}
+                  data-testid="export-deposit-slip"
+                >
+                  {depositSlipMutation.isPending ? "Exporting..." : "Deposit slip"}
+                </Button>
+              </>
+            )}
           </div>
         </div>
 

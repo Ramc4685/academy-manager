@@ -3512,6 +3512,35 @@
       ]
     },
     {
+      "route": "/account-deletion",
+      "role": "public",
+      "source": "frontend/app/(marketing)/account-deletion/page.tsx",
+      "workflows": [
+        "Read account deletion instructions"
+      ],
+      "controls": {
+        "buttons": [
+          "Auth navigation"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "default",
+        "mobile"
+      ],
+      "risk_edges": [
+        "Broken support contact",
+        "Broken navigation"
+      ],
+      "acceptance": [
+        "Page renders readable account deletion instructions",
+        "Workflow evidence: \"Read account deletion instructions\" completes for the public route /account-deletion with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Broken support contact\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/security",
       "role": "public",
       "source": "frontend/app/(marketing)/security/page.tsx",

@@ -310,6 +310,39 @@ class MongoStudentRepository(TenantScopedRepository):
             students.append(self._to_domain(doc))
         return students
 
+    async def anonymise(self, student_id: str, *, now: datetime) -> None:
+        """Strip a child's personal details after the parent's account deletion.
+
+        The row stays (as "Student 4F2A") so attendance, progress and payroll
+        history keep resolving; nothing that identifies the child survives.
+        """
+        await self._update_one(
+            {"student_id": student_id},
+            {
+                "$set": {
+                    "full_name": f"Student {student_id[-4:].upper()}",
+                    "anonymised_at": now,
+                    "updated_at": now,
+                },
+                "$unset": dict.fromkeys(
+                    (
+                        "first_name",
+                        "last_name",
+                        "date_of_birth",
+                        "dob",  # legacy spelling from import_blno / seed_local
+                        "medical_notes",
+                        "emergency_contact_name",
+                        "emergency_contact_phone",
+                        "notes",
+                        "previous_experience",
+                        "t_shirt_size",
+                        "photo_url",
+                    ),
+                    "",
+                ),
+            },
+        )
+
     async def get_parent_user_doc(self, parent_id: str) -> dict[str, Any] | None:
         # Raw parent ``users`` doc (tenant-scoped), used by the parent daily
         # digest for portal-status + display-name. Lives in infrastructure so the

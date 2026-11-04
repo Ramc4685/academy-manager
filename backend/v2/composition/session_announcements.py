@@ -38,9 +38,13 @@ from typing import Any, Literal, Protocol
 
 from backend.v2.composition.digests import _build_email_sender
 from backend.v2.composition.email_adapters import _BRAND_HEADING, _branded_shell
+from backend.v2.composition.push import compose_send_push_to_user
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     EmailSendPort,
+)
+from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
+    SendPushToUser,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SessionAudience
@@ -154,6 +158,7 @@ class SessionAnnouncementService:
         users: UserLookup,
         audiences: AudienceResolver,
         sender: EmailSendPort,
+        push: SendPushToUser | None = None,
     ) -> None:
         self._comms = comms
         self._sessions = sessions
@@ -161,6 +166,7 @@ class SessionAnnouncementService:
         self._users = users
         self._audiences = audiences
         self._sender = sender
+        self._push = push
 
     async def list_for_session(self, session_id: str) -> list[Message]:
         session = await self._sessions.get(session_id)
@@ -277,12 +283,27 @@ class SessionAnnouncementService:
                 sent += 1
             else:
                 failed += 1
+            if self._push is not None:
+                # Mobile M3: the phone nudge follows the email; it never raises.
+                await self._push.execute(
+                    academy_id=current_academy_id(),
+                    user_id=recipient.user_id,
+                    title=session.title or academy_name,
+                    body=_push_preview(message.body),
+                    data={"url": "/parent/messages"},
+                )
         return AnnouncementPostResult(
             message=message,
             email_status="sent",
             sent_count=sent,
             failed_count=failed,
         )
+
+
+def _push_preview(body: str, limit: int = 140) -> str:
+    """One line of the announcement for the lock screen."""
+    text = " ".join(body.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def compose_announcements(
@@ -306,4 +327,5 @@ def compose_announcements(
         users=users,
         audiences=MongoAudienceResolver(db=db),
         sender=_build_email_sender(settings, db),
+        push=compose_send_push_to_user(db, settings),
     )

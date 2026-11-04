@@ -127,6 +127,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     # Issue #828: hourly waitlist-offer sweep. Three missed ticks is a real
     # stall, and a stalled sweep means held seats nobody can claim.
     "sweep_expired_waitlist_offers": timedelta(hours=3),
+    # Mobile M5 (D3): hourly account-deletion executor.
+    "execute_account_deletions": timedelta(hours=3),
     "send_ops_digest": timedelta(hours=26),
     # Issue #697: daily hold sweeps (departures design contract §3.9/§4.3),
     # hourly ticks since Settings Phase 4.

@@ -12,8 +12,8 @@ export const brand = {
   productDescriptor: "Academy operations platform",
   copyrightYears: copyrightYears(),
   legalOwner: "Marvy Labs",
-  supportEmail: "support@marvylabs.com",
-  securityEmail: "security@marvylabs.com",
+  supportEmail: "support@marvy-labs.com",
+  securityEmail: "security@marvy-labs.com",
   publicSiteUrl: "https://academy.courtmastr.com",
   statusUrl: "https://api.academy.courtmastr.com/api/v2/healthz",
   legalLinks: {
