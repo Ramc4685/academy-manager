@@ -102,12 +102,20 @@ class UnsubscribeLinkBuilder:
     secret: str | None = None
 
     def build(
-        self, *, academy_id: str, user_id: str, academy_slug: str | None = None
+        self,
+        *,
+        academy_id: str,
+        user_id: str,
+        academy_slug: str | None = None,
+        path: str = "/unsubscribe",
     ) -> str | None:
+        """``path`` is the page the token lands on: the frontend preferences
+        page by default, or the backend-rendered prospect page
+        (``/api/v2/unsubscribe/prospect``) for a ``crm_contact:`` recipient."""
         base = academy_frontend_url(frontend_url=self.frontend_url, academy_slug=academy_slug)
         if not base:
             return None
         token = mint_unsubscribe_token(academy_id=academy_id, user_id=user_id, secret=self.secret)
         if token is None:
             return None
-        return f"{base.rstrip('/')}/unsubscribe?t={quote(token, safe='')}"
+        return f"{base.rstrip('/')}{path}?t={quote(token, safe='')}"

@@ -109,6 +109,8 @@ TENANT_OWNED_COLLECTIONS = {
     "family_details",
     # Invoice email copies to opted-in family contacts (migration 0197, L1b2)
     "invoice_contact_email_sends",
+    # Prospect email opt-outs keyed by address (migration 0215, inquiry ack)
+    "email_prospect_opt_outs",
     # CSV family and student import batches (migration 0199, roadmap L8a)
     "import_batches",
     # Uploaded academy media audit rows (logo upload, Settings overhaul P4)

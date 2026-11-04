@@ -17,13 +17,26 @@ here:
 ``transactional`` is not a field these routes accept. A request that sends one
 is rejected rather than ignored, so nobody can believe they switched off their
 invoices.
+
+``/unsubscribe/prospect`` is the lead-facing variant for a ``crm_contact:``
+recipient (a website inquiry, never a user): a backend-rendered page, because
+prospects have no portal and no frontend route exists for them. Same token
+scheme, same tenant binding, same opaque failure; GET only renders the form,
+POST records the opt-out by address (``composition/prospect_email.py``).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+import html
+from urllib.parse import quote
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.v2.contexts.communications.application.prospect_recipient import (
+    prospect_contact_id,
+)
 from backend.v2.contexts.communications.application.use_cases.resolve_unsubscribe_token import (
     ResolveUnsubscribeToken,
     UnsubscribeTokenInvalid,
@@ -135,4 +148,82 @@ async def confirm_unsubscribe(
         campaigns_opted_out=saved.campaigns_opted_out,
         digests_opted_out=saved.digests_opted_out,
         notifications_opted_out=saved.notifications_opted_out,
+    )
+
+
+# --- prospect (lead) unsubscribe: backend-rendered ---------------------------
+
+_PAGE_STYLE = (
+    "font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:480px;"
+    "margin:48px auto;padding:0 20px;color:#0f172a;line-height:1.5;"
+)
+_BUTTON_STYLE = (
+    "background:#1d4ed8;color:#fff;border:0;border-radius:6px;padding:10px 18px;"
+    "font-size:15px;cursor:pointer;"
+)
+
+
+def _page(status: int, title: str, body_html: str) -> HTMLResponse:
+    content = (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="robots" content="noindex">'
+        f"<title>{html.escape(title)}</title></head>"
+        f'<body style="{_PAGE_STYLE}"><h1 style="font-size:22px;">{html.escape(title)}</h1>'
+        f"{body_html}</body></html>"
+    )
+    return HTMLResponse(content, status_code=status, headers={"Cache-Control": "no-store"})
+
+
+def _invalid_page() -> HTMLResponse:
+    # A fresh response per request: middleware stamps headers on the instance.
+    return _page(
+        401, "This link is not valid", "<p>Ask the academy to stop emailing you instead.</p>"
+    )
+
+
+def _prospect_target(request: Request, token: str) -> tuple[str, str] | None:
+    """``(academy_id, recipient_id)`` for a prospect token, else ``None``."""
+    try:
+        academy_id, user_id = _resolve(request, token)
+    except HTTPException:
+        return None
+    if prospect_contact_id(user_id) is None:
+        return None
+    return academy_id, user_id
+
+
+_TOKEN_QUERY = Query(alias="t", min_length=1, max_length=1024)
+
+
+@router.get("/prospect", response_class=HTMLResponse, include_in_schema=False)
+async def prospect_unsubscribe_page(request: Request, token: str = _TOKEN_QUERY) -> HTMLResponse:
+    """The emailed link lands here. Renders the form; mutates nothing."""
+    if _prospect_target(request, token) is None:
+        return _invalid_page()
+    return _page(
+        200,
+        "Stop emails about your inquiry?",
+        "<p>You asked this academy about a class. Confirm below and it will not "
+        "email you about that inquiry again.</p>"
+        f'<form method="post" action="?t={html.escape(quote(token, safe=""), quote=True)}">'
+        f'<button type="submit" style="{_BUTTON_STYLE}">Stop these emails</button></form>',
+    )
+
+
+@router.post("/prospect", response_class=HTMLResponse, include_in_schema=False)
+async def prospect_unsubscribe_confirm(request: Request, token: str = _TOKEN_QUERY) -> HTMLResponse:
+    target = _prospect_target(request, token)
+    if target is None:
+        return _invalid_page()
+    academy_id, recipient_id = target
+    done = await request.app.state.unsubscribe_prospect.execute(
+        academy_id=academy_id, recipient_id=recipient_id
+    )
+    if not done:
+        return _invalid_page()
+    return _page(
+        200,
+        "Done",
+        "<p>This academy will not email you about your inquiry again.</p>",
     )
