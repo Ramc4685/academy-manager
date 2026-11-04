@@ -14,6 +14,7 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 import { PlatformFallbackCard } from "@/components/admin/settings/platform-fallback-card";
+import { PlanCard } from "@/components/admin/settings/plan-card";
 import { EmailSendingCard } from "@/components/admin/settings/email-sending-card";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 
@@ -144,6 +145,7 @@ export function GatewayPanel() {
 
       <EmailSendingCard />
       <PlatformFallbackCard />
+      <PlanCard />
       <ConfirmActionDialog
         open={confirmDisconnect}
         onOpenChange={setConfirmDisconnect}
