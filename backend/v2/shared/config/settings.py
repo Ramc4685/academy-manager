@@ -187,6 +187,14 @@ class Settings(BaseSettings):
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
     )
+    ai_enabled: bool = Field(
+        default=False,
+        description=(
+            "When True and anthropic_api_key is set, composition.ai wires the real "
+            "Anthropic LlmPort. Otherwise the disabled port raises AiDisabled."
+        ),
+    )
+    anthropic_api_key: str | None = Field(default=None)
     ops_alert_email: str | None = Field(
         default=None,
         description=(
