@@ -17,7 +17,7 @@ Self-service account deletions are now carried out 14 days after the request (sl
 - If another guardian on the family still has an active account in that academy, the children and family records are kept, and an ops alert asks an admin to re-home the family. The classes are still dropped, because billing belonged to the deleted parent.
 - A failure on one account is recorded on its request (`last_error`, `attempts`) and retried after a back-off of 1 hour, doubling up to a day, so a stuck account never blocks the queue. Every step is safe to repeat, and other accounts carry on.
 - The request row drops its email once the job completes.
-- An academy that re-enables the account during the 14-day window cancels the deletion: the scheduled request is removed, and the job checks each request again just before erasing it.
+- An academy that re-enables the account during the 14-day window takes only its own records out of the deletion; the person's request still erases every other academy's records and the shared login, and is removed only once every academy has restored it. The job re-reads each request just before erasing it.
 
 ## Deploy notes
 No migration and no new secrets. The job runs on deploy, and in production it uses the live Stripe key to detach cards. To get a Sentry Crons check-in, add `execute_account_deletions` to `SENTRY_CRON_JOBS` (each monitor counts against the plan). Without it, the ops digest still flags the job as stale after 3 hours.

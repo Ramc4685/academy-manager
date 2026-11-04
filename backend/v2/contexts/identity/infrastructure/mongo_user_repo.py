@@ -52,6 +52,9 @@ from backend.v2.contexts.identity.domain.models import (
 from backend.v2.contexts.identity.infrastructure.firebase_admin_adapter import (
     get_firebase_admin_adapter,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
+    MongoAccountDeletionStore,
+)
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 
@@ -1326,16 +1329,15 @@ class MongoUserRepository:
                 },
             )
             if not disabled:
-                # Restoring during the 14-day grace window cancels a pending
-                # self-service deletion (the promise on /account-deletion).
-                # Deleted, not flagged: user_id is unique, so a leftover row
-                # would block a later request.
-                cancelled = await self._db["account_deletion_requests"].delete_many(
-                    {"status": "scheduled", "aliases": {"$in": aliases}}
+                # Restoring during the 14-day grace window takes THIS academy out
+                # of a pending self-service deletion (the promise on
+                # /account-deletion); other academies' share stays scheduled.
+                released = await MongoAccountDeletionStore(self._db).release_academy(
+                    aliases=aliases, academy_id=academy_id
                 )
-                if cancelled.deleted_count:
+                if released:
                     _log.info(
-                        "identity.account_deletion_cancelled_by_restore",
+                        "identity.account_deletion_released_by_restore",
                         extra={"academy_id": academy_id, "aliases": aliases},
                     )
         auth_uid = self._firebase_uid(doc)

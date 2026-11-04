@@ -6,6 +6,7 @@ array match on ``roles``, and alias-wide membership removal.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -145,3 +146,59 @@ async def test_upcoming_coaching_counts_future_live_occurrences_in_that_academy(
     store = MongoAccountDeletionStore(real_db)
     assert await store.upcoming_coaching_count(academy_id="acad-a", aliases=("u1",)) == 1
     assert await store.upcoming_coaching_count(academy_id="acad-c", aliases=("u1",)) == 0
+
+
+async def test_release_academy_takes_out_only_that_academys_share(real_db) -> None:
+    store = MongoAccountDeletionStore(real_db)
+    await store.create_request(
+        replace(_request("r1", ("u1", "fb-1")), academy_ids=("acad-a", "acad-b"))
+    )
+
+    # An academy the request never named changes nothing.
+    assert not await store.release_academy(aliases=["fb-1"], academy_id="acad-c")
+    assert await store.release_academy(aliases=["fb-1"], academy_id="acad-b")
+    request = await store.scheduled_request("r1")
+    assert request is not None
+    assert request.academy_ids == ("acad-a",)
+    assert request.restored_academy_ids == ("acad-b",)
+
+    # A repeat restore in B is a no-op; A's share stays scheduled.
+    assert not await store.release_academy(aliases=["u1"], academy_id="acad-b")
+    assert (await store.scheduled_request("r1")) is not None
+
+    # Once the last academy restores, nothing is left to erase and the row goes,
+    # so a later request by the same person is not blocked by the unique user_id.
+    assert await store.release_academy(aliases=["u1"], academy_id="acad-a")
+    assert await real_db["account_deletion_requests"].count_documents({}) == 0
+
+
+async def test_anonymise_identity_keeps_a_restoring_academys_users_doc(real_db) -> None:
+    await real_db["users"].insert_many(
+        [
+            {
+                "user_id": "u1",
+                "firebase_uid": "fb-1",
+                "academy_id": "acad-a",
+                "display_name": "Pat",
+            },
+            # The same person's doc in academy B, keyed by the Firebase uid.
+            {
+                "user_id": "fb-1",
+                "academy_id": "acad-b",
+                "display_name": "Pat",
+            },
+        ]
+    )
+    request = replace(
+        _request("r1", ("u1", "fb-1")),
+        academy_ids=("acad-a",),
+        restored_academy_ids=("acad-b",),
+    )
+
+    await MongoAccountDeletionStore(real_db).anonymise_identity(request, now=T0)
+
+    names = {
+        d["academy_id"]: d["display_name"]
+        async for d in real_db["users"].find({}, {"academy_id": 1, "display_name": 1})
+    }
+    assert names == {"acad-a": "Deleted user", "acad-b": "Pat"}

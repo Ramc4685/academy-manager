@@ -51,3 +51,6 @@ class AccountDeletionRequest:
     requested_at: datetime
     execute_after: datetime
     status: AccountDeletionStatus = "scheduled"
+    # Academies whose admin restored the account in the grace window: their
+    # share is out of ``academy_ids`` and their tenant records are kept.
+    restored_academy_ids: tuple[str, ...] = ()

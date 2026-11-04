@@ -23,6 +23,7 @@ pytestmark = pytest.mark.asyncio
 
 NOW = datetime(2026, 11, 20, 12, tzinfo=UTC)
 A = "acad-a"
+B = "acad-b"
 
 
 class RecordingStopAll:
@@ -229,3 +230,43 @@ async def test_back_off_is_capped_at_a_day_however_many_attempts(real_db: Any) -
     row = await real_db["account_deletion_requests"].find_one({"request_id": "r1"})
     assert row["attempts"] == 501
     assert row["execute_after"].replace(tzinfo=UTC) == NOW + timedelta(days=1)
+
+
+async def test_an_academy_that_restored_the_account_keeps_its_records(real_db: Any) -> None:
+    from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
+        MongoAccountDeletionStore,
+    )
+
+    await _seed(real_db)
+    await real_db["account_deletion_requests"].update_one(
+        {"request_id": "r1"}, {"$set": {"academy_ids": [A, B]}}
+    )
+    await real_db["users"].update_one({"user_id": "u1"}, {"$set": {"academy_id": A}})
+    await real_db["users"].insert_one({"user_id": "fb1", "academy_id": B, "display_name": "Pat B"})
+    await real_db["students"].insert_one(
+        {"academy_id": B, "student_id": "stu-b", "parent_id": "u1", "full_name": "Kid B"}
+    )
+    await real_db["family_notes"].insert_one({"academy_id": B, "parent_id": "u1", "body": "b"})
+    # Academy B's admin re-enabled the account during the grace window.
+    await MongoAccountDeletionStore(real_db).release_academy(aliases=["u1"], academy_id=B)
+    job, stop_all, _stripe, firebase = _job(real_db)
+
+    assert (await job.execute(now=NOW)).completed == 1
+
+    # A's share went as the person asked.
+    assert stop_all.students == ["stu-abcd"]
+    assert (await real_db["students"].find_one({"student_id": "stu-abcd"}))["full_name"] == (
+        "Student ABCD"
+    )
+    assert (await real_db["users"].find_one({"user_id": "u1"}))["display_name"] == "Deleted user"
+    assert await real_db["family_notes"].count_documents({"academy_id": A}) == 0
+    # B's records stay.
+    assert (await real_db["students"].find_one({"student_id": "stu-b"}))["full_name"] == "Kid B"
+    assert await real_db["family_notes"].count_documents({"academy_id": B}) == 1
+    assert (await real_db["users"].find_one({"user_id": "fb1"}))["display_name"] == "Pat B"
+    # The shared login is the person's, not B's: it is still deleted.
+    assert firebase.deleted == ["fb1"]
+    completed = await real_db["audit_logs"].distinct(
+        "academy_id", {"action": "user.deletion_completed"}
+    )
+    assert completed == [A]

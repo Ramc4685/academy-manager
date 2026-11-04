@@ -54,6 +54,7 @@ def _to_request(doc: dict[str, Any]) -> AccountDeletionRequest:
         requested_at=_aware(doc["requested_at"]),
         execute_after=_aware(doc["execute_after"]),
         status=doc.get("status", "scheduled"),
+        restored_academy_ids=tuple(doc.get("restored_academy_ids") or ()),
     )
 
 
@@ -217,7 +218,8 @@ class MongoAccountDeletionStore:
         if request.email:
             who += [{"email": request.email}, {"normalized_email": request.email.strip().lower()}]
         await self._db["users"].update_many(
-            {"$or": who},
+            # A restoring academy keeps its own users doc; the rest are erased.
+            {"$or": who, "academy_id": {"$nin": list(request.restored_academy_ids)}},
             {
                 "$set": {
                     "display_name": DELETED_NAME,
@@ -265,11 +267,32 @@ class MongoAccountDeletionStore:
                 upsert=True,
             )
 
-    async def is_scheduled(self, request_id: str) -> bool:
-        # An academy restore deletes the row, so a missing row means cancelled.
-        return (
-            await self._requests.find_one({"request_id": request_id, "status": "scheduled"})
-        ) is not None
+    async def scheduled_request(self, request_id: str) -> AccountDeletionRequest | None:
+        doc = await self._requests.find_one({"request_id": request_id, "status": "scheduled"})
+        return _to_request(doc) if doc else None
+
+    async def release_academy(self, *, aliases: list[str], academy_id: str) -> bool:
+        """An admin of ``academy_id`` restored the account in the grace window.
+
+        Only that academy's share leaves the erasure: the person's request stays
+        in force for every other academy, and for the shared login. Returns
+        whether a scheduled request named this academy.
+        """
+        match: dict[str, Any] = {"status": "scheduled", "aliases": {"$in": aliases}}
+        released = await self._requests.update_many(
+            {**match, "academy_ids": academy_id},
+            {
+                "$pull": {"academy_ids": academy_id},
+                "$addToSet": {"restored_academy_ids": academy_id},
+            },
+        )
+        if released.modified_count:
+            # Every academy restored: nothing is left to erase. Deleted, not
+            # flagged: user_id is unique, so a leftover row would block a later request.
+            await self._requests.delete_many(
+                {**match, "academy_ids": {"$size": 0}, "restored_academy_ids": academy_id}
+            )
+        return bool(released.modified_count)
 
     async def mark_completed(self, request_id: str, *, now: datetime) -> None:
         # The address was kept only so the person could be reached during the
