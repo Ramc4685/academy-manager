@@ -66,7 +66,7 @@ async def list_account_deletions(
                 user_id=r.user_id,
                 aliases=list(r.aliases),
                 display_name=r.display_name,
-                status=r.status,  # type: ignore[arg-type]
+                status=r.status,
                 requested_at=r.requested_at,
                 execute_after=r.execute_after,
                 completed_at=r.completed_at,
