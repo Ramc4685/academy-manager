@@ -1,0 +1,12 @@
+# gitleaks defaults plus a Google API key rule that also matches keys followed by `:`, `&`, `,` or `)`
+# (URLs and logs). The built-in gcp-api-key rule needs a quote, space, `;` or line end after the key,
+# so it missed the key in .playwright-cli logs that GitHub secret scanning caught (alert #1).
+[extend]
+useDefault = true
+
+[[rules]]
+id = "gcp-api-key-any-boundary"
+description = "Google API key followed by any non-key character"
+regex = '''AIza[\w-]{35}(?:[^\w-]|$)'''
+entropy = 3.5
+keywords = ["aiza"]

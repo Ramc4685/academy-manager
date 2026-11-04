@@ -1,0 +1,18 @@
+# Pre-commit checks on staged files only. Enable once per clone: `lefthook install`
+# (needs `brew install lefthook gitleaks`). The pre-push hook from scripts/dev/install-hooks.sh is separate.
+pre-commit:
+  parallel: true
+  commands:
+    gitleaks:
+      run: gitleaks git --staged --redact --no-banner
+    ruff:
+      root: backend/
+      glob: "*.py"
+      # Same ruff as CI (backend/requirements-dev.txt); uvx so worktrees without backend/.venv work too.
+      run: uvx ruff@0.16.5 check --fix --force-exclude {staged_files} && uvx ruff@0.16.5 format --force-exclude {staged_files}
+      stage_fixed: true
+    eslint:
+      root: frontend/
+      glob: "*.{ts,tsx}"
+      run: pnpm exec eslint --fix --no-warn-ignored {staged_files}
+      stage_fixed: true
