@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from mongomock_motor import AsyncMongoMockClient
+from pydantic import SecretStr
 
 from backend.v2.composition.ai import AcademyAiCapLookup, compose_ai
 from backend.v2.contexts.ai.application.use_cases.record_ai_call import (
@@ -24,7 +25,7 @@ from backend.v2.contexts.ai.infrastructure.anthropic_llm_port import (
     cost_cents,
 )
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
-from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.shared.tenancy import TenantContextUnset, tenant_scope
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 RESULT = LlmResult(text="hi", input_tokens=10, output_tokens=5, cost_cents=1, model=DEFAULT_MODEL)
@@ -49,7 +50,9 @@ async def test_disabled_port_raises() -> None:
 def test_compose_ai_wires_the_real_port_only_when_enabled_with_a_key(
     enabled: bool, key: str | None, expected: type
 ) -> None:
-    settings = SimpleNamespace(ai_enabled=enabled, anthropic_api_key=key)
+    settings = SimpleNamespace(
+        ai_enabled=enabled, anthropic_api_key=SecretStr(key) if key else None
+    )
     db = AsyncMongoMockClient()["test_db"]
     assert type(compose_ai(db, settings=settings).llm) is expected
 
@@ -60,10 +63,15 @@ def test_prompt_registry_has_the_unused_placeholder() -> None:
 
 def test_cost_rounds_up_to_a_whole_cent() -> None:
     assert cost_cents(DEFAULT_MODEL, 0, 0) == 0
-    # 1 input token at $3/MTok is a fraction of a cent: still 1 cent.
+    # 1 input token at $2/MTok is a fraction of a cent: still 1 cent.
     assert cost_cents(DEFAULT_MODEL, 1, 0) == 1
-    # 1M in + 1M out = $3 + $15.
-    assert cost_cents(DEFAULT_MODEL, 1_000_000, 1_000_000) == 1800
+    # 1M in + 1M out = $2 + $10.
+    assert cost_cents(DEFAULT_MODEL, 1_000_000, 1_000_000) == 1200
+
+
+def test_anthropic_port_refuses_a_model_without_a_price_row() -> None:
+    with pytest.raises(ValueError):
+        AnthropicLlmPort(api_key="sk-ant-test", model="claude-unpriced")
 
 
 async def test_anthropic_port_sends_messages_request_and_parses_usage() -> None:
@@ -178,3 +186,8 @@ async def test_academy_cap_lookup_reads_ai_monthly_call_cap(
 ) -> None:
     with tenant_scope("acad-ai"):
         assert await AcademyAiCapLookup(FakeAcademies(doc)).monthly_cap() == expected
+
+
+async def test_academy_cap_lookup_needs_a_tenant_scope() -> None:
+    with pytest.raises(TenantContextUnset):
+        await AcademyAiCapLookup(FakeAcademies({"ai": {"monthly_call_cap": 7}})).monthly_cap()

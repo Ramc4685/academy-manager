@@ -23,7 +23,7 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 
 #: List price in cents per million tokens, by model. Rounded up to a whole
 #: cent per call so the audit never under-counts against the cap.
-PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {DEFAULT_MODEL: (300, 1500)}
+PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {DEFAULT_MODEL: (200, 1000)}
 
 
 def cost_cents(model: str, input_tokens: int, output_tokens: int) -> int:
@@ -40,6 +40,8 @@ class AnthropicLlmPort:
         model: str = DEFAULT_MODEL,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        if model not in PRICE_CENTS_PER_MTOK:
+            raise ValueError(f"no price row for model {model!r}; add it to PRICE_CENTS_PER_MTOK")
         self._api_key = api_key
         self._model = model
         self._transport = transport

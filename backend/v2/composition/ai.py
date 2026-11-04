@@ -55,7 +55,7 @@ class AiComposition:
 def compose_ai(db: Any, settings: Any) -> AiComposition:
     llm: LlmPort
     if settings.ai_enabled and settings.anthropic_api_key:
-        llm = AnthropicLlmPort(api_key=settings.anthropic_api_key)
+        llm = AnthropicLlmPort(api_key=settings.anthropic_api_key.get_secret_value())
     else:
         llm = DisabledLlmPort()
     return AiComposition(

@@ -6,10 +6,14 @@ from datetime import UTC, datetime
 
 import pytest
 
+from backend.v2.composition.ai import AcademyAiCapLookup
 from backend.v2.contexts.ai.application.use_cases.record_ai_call import RecordAiCall
 from backend.v2.contexts.ai.domain.errors import AiMonthlyCapReached
 from backend.v2.contexts.ai.domain.models import DEFAULT_MODEL, AiCallRecord, LlmResult
 from backend.v2.contexts.ai.infrastructure.mongo_ai_call_repo import MongoAiCallRepository
+from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
+    MongoAcademyRepository,
+)
 from backend.v2.shared.tenancy import tenant_scope
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -86,3 +90,23 @@ async def test_monthly_cap_counts_only_this_month(real_db) -> None:
             feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
         )
         assert record.created_at == NOW
+
+
+@pytest.mark.asyncio
+async def test_cap_is_read_from_the_academy_document(real_db) -> None:
+    await real_db["academies"].insert_one(
+        {"academy_id": "acad-ai-doc", "display_name": "AI", "ai": {"monthly_call_cap": 1}}
+    )
+    use_case = RecordAiCall(
+        calls=MongoAiCallRepository(real_db),
+        cap_source=AcademyAiCapLookup(MongoAcademyRepository(real_db)),
+        clock=lambda: NOW,
+    )
+    with tenant_scope("acad-ai-doc"):
+        await use_case.execute(
+            feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
+        )
+        with pytest.raises(AiMonthlyCapReached):
+            await use_case.execute(
+                feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
+            )

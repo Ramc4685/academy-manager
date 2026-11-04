@@ -38,7 +38,9 @@ class RecordAiCall:
         used = await self._calls.count_since(month_start)
         cap = await self._cap_source.monthly_cap()
         # shortcut: the cap is checked when the call is recorded, after the
-        # tokens were spent; split out a pre-call check when the first
+        # tokens were spent, and count-then-insert is not atomic (concurrent
+        # calls at cap-1 can each pass); upgrade to a pre-call reserve on a
+        # per-month counter document ($inc with a $lt filter) when the first
         # feature must refuse before calling the model.
         if used + 1 > cap:
             raise AiMonthlyCapReached(

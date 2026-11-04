@@ -10,7 +10,7 @@ import os
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -194,7 +194,7 @@ class Settings(BaseSettings):
             "Anthropic LlmPort. Otherwise the disabled port raises AiDisabled."
         ),
     )
-    anthropic_api_key: str | None = Field(default=None)
+    anthropic_api_key: SecretStr | None = Field(default=None)
     ops_alert_email: str | None = Field(
         default=None,
         description=(
