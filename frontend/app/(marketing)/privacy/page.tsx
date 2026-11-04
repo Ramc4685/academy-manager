@@ -98,7 +98,7 @@ export default function PrivacyPage() {
               <li>Google Firebase: sign-in and push notifications.</li>
               <li>Stripe: card and bank payments.</li>
               <li>Resend: email delivery.</li>
-              <li>Sentry: crash and error reports.</li>
+              <li>Sentry: crash reports and diagnostics.</li>
               <li>Fly.io and Cloudflare: hosting.</li>
               <li>MongoDB Atlas: database.</li>
             </ul>
