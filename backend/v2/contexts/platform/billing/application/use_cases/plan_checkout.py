@@ -167,12 +167,19 @@ class StartGrowthCheckout:
                 "The Growth plan is not available for self-serve checkout yet."
             )
         existing = await self._subscriptions.get_for_academy(command.academy_id)
-        if (
-            existing is not None
-            and existing.plan_id == growth.plan_id
-            and existing.billing_status in ENTITLED_BILLING_STATUSES
-        ):
-            raise AlreadyOnGrowth("This academy is already on the Growth plan.")
+        if existing is not None and existing.plan_id == growth.plan_id:
+            if existing.billing_status in ENTITLED_BILLING_STATUSES:
+                raise AlreadyOnGrowth("This academy is already on the Growth plan.")
+            # A second Checkout would open a second Stripe subscription on the
+            # same customer; the dunning one must be settled or cancelled first.
+            if existing.stripe_subscription_id and existing.billing_status in (
+                "past_due",
+                "unpaid",
+            ):
+                raise AlreadyOnGrowth(
+                    "This academy's Growth subscription has an unpaid invoice; "
+                    "settle or cancel it before starting a new checkout."
+                )
 
         now = self._clock()
         customer_id = existing.stripe_customer_id if existing else None
@@ -275,12 +282,28 @@ class SyncTenantSubscriptionFromStripe:
             status = _STRIPE_STATUS.get(str(obj.get("status") or ""), "incomplete")
             if event_type == "customer.subscription.deleted":
                 status = "cancelled"
+            if (
+                existing is not None
+                and existing.stripe_subscription_id
+                and existing.stripe_subscription_id != _text(obj.get("id"))
+                and existing.billing_status in ENTITLED_BILLING_STATUSES
+                and status not in ENTITLED_BILLING_STATUSES
+            ):
+                # A late event for an older subscription (cancelled, then
+                # re-subscribed) must not take the live one off entitlement.
+                log.warning(
+                    "platform_plan_sync_stale_subscription academy=%s event_sub=%s current=%s",
+                    academy_id,
+                    obj.get("id"),
+                    existing.stripe_subscription_id,
+                )
+                return
             cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
             updates.update(
                 stripe_subscription_id=_text(obj.get("id")),
                 billing_status=status,
-                current_period_start=_stamp(obj.get("current_period_start")),
-                current_period_end=_stamp(obj.get("current_period_end")),
+                current_period_start=_period(obj, "current_period_start"),
+                current_period_end=_period(obj, "current_period_end"),
                 cancel_at_period_end=cancel_at_period_end,
                 cancellation_status=(
                     "cancelled"
@@ -349,6 +372,15 @@ def _text(value: Any) -> str | None:
     if isinstance(value, dict):
         value = value.get("id")
     return str(value) if value else None
+
+
+def _period(obj: dict[str, Any], key: str) -> datetime | None:
+    # API versions from basil on carry the period on the subscription items.
+    value = obj.get(key)
+    if value is None:
+        items = (obj.get("items") or {}).get("data") or []
+        value = items[0].get(key) if items else None
+    return _stamp(value)
 
 
 def _stamp(value: Any) -> datetime | None:

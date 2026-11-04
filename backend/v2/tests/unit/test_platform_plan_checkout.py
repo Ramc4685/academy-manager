@@ -170,6 +170,24 @@ async def test_checkout_refuses_when_already_on_growth() -> None:
 
 
 @pytest.mark.asyncio
+async def test_checkout_refuses_while_the_growth_subscription_is_past_due() -> None:
+    plans, subs, stripe = FakePlans(_plan("growth")), FakeSubscriptions(), FakeStripe()
+    subs.rows[ACADEMY] = TenantSubscription(
+        subscription_id="platform_sub_1",
+        academy_id=ACADEMY,
+        plan_id="plan_growth",
+        billing_status="past_due",
+        stripe_customer_id="cus_1",
+        stripe_subscription_id="sub_growth_1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    with pytest.raises(AlreadyOnGrowth):
+        await _checkout(plans, subs, stripe, _Audit()).execute(_command())
+    assert stripe.checkouts == []
+
+
+@pytest.mark.asyncio
 async def test_checkout_creates_the_customer_once_and_audits_the_volume() -> None:
     plans, subs, stripe, audit = (
         FakePlans(_plan("growth")),
@@ -357,6 +375,60 @@ async def test_sync_maps_cancel_at_period_end_and_deleted() -> None:
     assert row.cancellation_status == "cancelled"
     assert row.cancelled_at == datetime.fromtimestamp(1796385600, tz=UTC)
     assert await has_ai.execute(ACADEMY, "ai") is False
+
+
+@pytest.mark.asyncio
+async def test_sync_reads_the_period_from_the_items_on_dahlia_subscriptions() -> None:
+    plans, subs = FakePlans(_plan("growth")), FakeSubscriptions()
+    event = _sub_event("customer.subscription.updated", "active", cancel_at_period_end=True)
+    obj = event["data"]["object"]
+    del obj["current_period_start"], obj["current_period_end"]
+    obj["items"] = {
+        "object": "list",
+        "data": [
+            {
+                "id": "si_1",
+                "current_period_start": 1793793600,
+                "current_period_end": 1796385600,
+            }
+        ],
+    }
+    await _sync(plans, subs).execute("customer.subscription.updated", event)
+    row = subs.rows[ACADEMY]
+    assert row.current_period_start == datetime.fromtimestamp(1793793600, tz=UTC)
+    assert row.current_period_end == datetime.fromtimestamp(1796385600, tz=UTC)
+    after_period = datetime.fromtimestamp(1796385600, tz=UTC) + timedelta(seconds=1)
+    has_ai = HasFeature(plans=plans, subscriptions=subs, clock=lambda: after_period)
+    assert await has_ai.execute(ACADEMY, "ai") is False
+
+
+@pytest.mark.asyncio
+async def test_sync_ignores_a_late_cancel_for_an_older_subscription() -> None:
+    plans, subs = FakePlans(_plan("growth")), FakeSubscriptions()
+    sync = _sync(plans, subs)
+    has_ai = HasFeature(plans=plans, subscriptions=subs, clock=lambda: NOW)
+    await sync.execute(
+        "customer.subscription.created", _sub_event("customer.subscription.created", "active")
+    )
+    # Re-subscribed: the new subscription goes active first...
+    new_sub = _sub_event("customer.subscription.created", "active", id="sub_growth_2")
+    await sync.execute("customer.subscription.created", new_sub)
+    assert subs.rows[ACADEMY].stripe_subscription_id == "sub_growth_2"
+    # ...then the old subscription's delete arrives late.
+    await sync.execute(
+        "customer.subscription.deleted",
+        _sub_event("customer.subscription.deleted", "canceled", canceled_at=1796385600),
+    )
+    row = subs.rows[ACADEMY]
+    assert row.stripe_subscription_id == "sub_growth_2"
+    assert row.billing_status == "active"
+    assert await has_ai.execute(ACADEMY, "ai") is True
+    # A delete for the current subscription still lands.
+    await sync.execute(
+        "customer.subscription.deleted",
+        _sub_event("customer.subscription.deleted", "canceled", id="sub_growth_2"),
+    )
+    assert subs.rows[ACADEMY].billing_status == "cancelled"
 
 
 @pytest.mark.asyncio
