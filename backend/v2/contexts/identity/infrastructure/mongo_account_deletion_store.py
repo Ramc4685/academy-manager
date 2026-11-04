@@ -265,6 +265,12 @@ class MongoAccountDeletionStore:
                 upsert=True,
             )
 
+    async def is_scheduled(self, request_id: str) -> bool:
+        # An academy restore deletes the row, so a missing row means cancelled.
+        return (
+            await self._requests.find_one({"request_id": request_id, "status": "scheduled"})
+        ) is not None
+
     async def mark_completed(self, request_id: str, *, now: datetime) -> None:
         # The address was kept only so the person could be reached during the
         # grace window; the ids stay so admins can trace what was erased.

@@ -32,12 +32,16 @@ class Store:
         self.requests = list(requests)
         self.calls: list[str] = []
         self.failures: list[tuple[str, str]] = []
+        self.cancelled: set[str] = set()
 
     async def due_requests(self, *, now, limit):
         return list(self.requests)
 
     async def anonymise_identity(self, request, *, now):
         self.calls.append(f"identity:{request.request_id}")
+
+    async def is_scheduled(self, request_id):
+        return request_id not in self.cancelled
 
     async def mark_completed(self, request_id, *, now):
         self.calls.append(f"completed:{request_id}")
@@ -99,3 +103,17 @@ async def test_a_failing_account_is_recorded_and_does_not_stop_the_others() -> N
     # r1 never reached identity, Firebase or completion: the next tick retries it.
     assert [c for c in store.calls if c.endswith("r1") or c.endswith("fb1")] == ["family:r1"]
     assert "completed:r2" in store.calls
+
+
+@pytest.mark.asyncio
+async def test_skips_a_request_restored_after_the_batch_was_read() -> None:
+    store = Store(_request(1), _request(2))
+    store.cancelled.add(_request(1).request_id)
+    job = ExecuteAccountDeletions(
+        store=store, steps=[Step("family", store.calls)], firebase=Firebase(store.calls)
+    )
+
+    result = await job.execute(now=NOW)
+
+    assert result.completed == 1
+    assert not any(_request(1).request_id in c for c in store.calls)

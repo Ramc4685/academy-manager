@@ -1366,3 +1366,45 @@ async def test_admin_detail_carries_the_membership_roles(db) -> None:
     assert detail is not None
     assert "owner" not in detail.roles
     assert detail.membership_roles == ("parent", "owner")
+
+
+@pytest.mark.asyncio
+async def test_restoring_an_account_cancels_its_scheduled_deletion(db, monkeypatch) -> None:
+    """/account-deletion promises the academy can restore an account during the
+    14-day grace window; the executor must then have nothing left to erase."""
+    from backend.v2.contexts.identity.application.use_cases.admin_directory import (
+        UpdateAdminUserCommand,
+    )
+
+    class _Firebase:
+        async def set_user_disabled(self, uid: str, disabled: bool) -> None:
+            return None
+
+    monkeypatch.setattr(user_repo_module, "get_firebase_admin_adapter", lambda: _Firebase())
+    await _seed_editable_parent(db)
+    await db["users"].update_one({"user_id": "roster-parent-9"}, {"$set": {"status": "disabled"}})
+    await db["academy_memberships"].update_one(
+        {"user_id": "fb-uid-9"}, {"$set": {"status": "removed"}}
+    )
+    await db["account_deletion_requests"].insert_many(
+        [
+            {
+                "request_id": "r-9",
+                "status": "scheduled",
+                "aliases": ["roster-parent-9", "fb-uid-9"],
+            },
+            {"request_id": "r-other", "status": "scheduled", "aliases": ["someone-else"]},
+        ]
+    )
+    repo = MongoUserRepository(db, default_academy_id="academy-b")
+
+    await repo.update_admin_user(
+        "roster-parent-9",
+        UpdateAdminUserCommand(status="active", actor_id="admin-1", reason="changed their mind"),
+        academy_id="academy-b",
+    )
+
+    remaining = await db["account_deletion_requests"].distinct("request_id")
+    assert remaining == ["r-other"]
+    membership = await db["academy_memberships"].find_one({"user_id": "fb-uid-9"})
+    assert membership["status"] == "active"

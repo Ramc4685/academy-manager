@@ -75,6 +75,7 @@ async def _seed(db: Any, *, guardian_active: bool = False) -> None:
                 "parent_id": "u1",
                 "full_name": "Kid One",
                 "date_of_birth": "2015-04-01",
+                "dob": "2015-04-01",
                 "medical_notes": "asthma",
             },
             {"academy_id": A, "student_id": "stu-other", "parent_id": "u9", "full_name": "Other"},
@@ -143,7 +144,7 @@ async def test_erases_the_account_and_keeps_what_the_academy_must_keep(real_db: 
     assert "p@example.com" not in str(user)
     kid = await real_db["students"].find_one({"student_id": "stu-abcd"})
     assert kid["full_name"] == "Student ABCD"
-    assert "date_of_birth" not in kid and "medical_notes" not in kid
+    assert "date_of_birth" not in kid and "dob" not in kid and "medical_notes" not in kid
     other = await real_db["students"].find_one({"student_id": "stu-other"})
     assert other["full_name"] == "Other"
     for name in ("family_contacts", "family_notes", "crm_contacts", "email_preferences"):

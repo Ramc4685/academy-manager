@@ -186,6 +186,24 @@ async def test_a_repeat_request_returns_the_one_on_file(db: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_retry_after_a_crash_finishes_the_lockout(db: Any) -> None:
+    # The first attempt wrote the request row, then died before removing memberships.
+    with TestClient(_app(db)) as client:
+        client.post(URL, json=CONFIRM)
+    await db["academy_memberships"].update_many(
+        {"user_id": {"$in": ["u-parent", "fb-1"]}}, {"$set": {"status": "active"}}
+    )
+    firebase = FakeFirebase()
+    with TestClient(_app(db, firebase=firebase)) as client:
+        assert client.post(URL, json=CONFIRM).status_code == 200
+
+    statuses = await _membership_statuses(db)
+    assert statuses[("acad-a", "u-parent")] == "removed"
+    assert statuses[("acad-b", "fb-1")] == "removed"
+    assert firebase.disabled == ["fb-1"]
+
+
+@pytest.mark.asyncio
 async def test_firebase_outage_still_locks_the_account(db: Any) -> None:
     with TestClient(_app(db, firebase=FakeFirebase(fail=True))) as client:
         assert client.post(URL, json=CONFIRM).status_code == 200

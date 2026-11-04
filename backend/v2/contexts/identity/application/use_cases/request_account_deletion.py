@@ -88,6 +88,11 @@ class RequestAccountDeletion:
         account = await self.store.load_account(user_id=cmd.user_id, email=cmd.email)
         existing = await self.store.find_request(account.aliases)
         if existing is not None:
+            if existing.status == "scheduled":
+                # A retry after a crash between insert and lockout must finish the
+                # lockout; both steps are idempotent.
+                await self.store.remove_memberships(aliases=account.aliases, now=now)
+                await self._disable_firebase(existing.auth_uid)
             return existing
 
         live = [m for m in account.memberships if m.status != "removed"]

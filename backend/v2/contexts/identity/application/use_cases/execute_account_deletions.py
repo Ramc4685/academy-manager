@@ -38,6 +38,10 @@ class DueDeletionStore(Protocol):
         self, request: AccountDeletionRequest, *, now: datetime
     ) -> None: ...
 
+    async def is_scheduled(self, request_id: str) -> bool:
+        """False once an academy restored the account (the request row is gone)."""
+        ...
+
     async def mark_completed(self, request_id: str, *, now: datetime) -> None: ...
 
     async def record_failure(
@@ -77,6 +81,9 @@ class ExecuteAccountDeletions:
         for request in await self._store.due_requests(now=now, limit=limit):
             step = "start"
             try:
+                # Re-check per request: a restore may land after the batch was read.
+                if not await self._store.is_scheduled(request.request_id):
+                    continue
                 for erasure in self._steps:
                     step = erasure.name
                     await erasure.erase(request, now=now)

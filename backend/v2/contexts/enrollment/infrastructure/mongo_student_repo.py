@@ -329,6 +329,7 @@ class MongoStudentRepository(TenantScopedRepository):
                         "first_name",
                         "last_name",
                         "date_of_birth",
+                        "dob",  # legacy spelling from import_blno / seed_local
                         "medical_notes",
                         "emergency_contact_name",
                         "emergency_contact_phone",

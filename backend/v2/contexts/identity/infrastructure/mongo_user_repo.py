@@ -1325,6 +1325,19 @@ class MongoUserRepository:
                     }
                 },
             )
+            if not disabled:
+                # Restoring during the 14-day grace window cancels a pending
+                # self-service deletion (the promise on /account-deletion).
+                # Deleted, not flagged: user_id is unique, so a leftover row
+                # would block a later request.
+                cancelled = await self._db["account_deletion_requests"].delete_many(
+                    {"status": "scheduled", "aliases": {"$in": aliases}}
+                )
+                if cancelled.deleted_count:
+                    _log.info(
+                        "identity.account_deletion_cancelled_by_restore",
+                        extra={"academy_id": academy_id, "aliases": aliases},
+                    )
         auth_uid = self._firebase_uid(doc)
         if not auth_uid:
             return
