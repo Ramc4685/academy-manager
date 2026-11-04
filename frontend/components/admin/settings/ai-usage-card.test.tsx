@@ -6,16 +6,19 @@ vi.mock("@/lib/api/admin", () => ({ getAdminAiUsage: vi.fn() }));
 
 import type { AiUsage } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { OwnerProvider } from "@/components/admin/owner-context";
 
 import { AiUsageCard } from "./ai-usage-card";
 
-function html(usage: AiUsage) {
+function html(usage: AiUsage, isOwner = true) {
   const client = new QueryClient();
   client.setQueryData(queryKeys.admin.aiUsage(), usage);
   return renderToStaticMarkup(
-    <QueryClientProvider client={client}>
-      <AiUsageCard />
-    </QueryClientProvider>,
+    <OwnerProvider isOwner={isOwner}>
+      <QueryClientProvider client={client}>
+        <AiUsageCard />
+      </QueryClientProvider>
+    </OwnerProvider>,
   );
 }
 
@@ -31,6 +34,12 @@ describe("AiUsageCard (Phase 2 slice A3)", () => {
     expect(out).toContain("You have used 20 of 20 AI drafts this month");
     expect(out).toContain("Upgrade to Growth for unlimited drafts");
     expect(out).toContain('href="/admin/settings?panel=billing-rules"');
+  });
+
+  it("tells a non-owner admin to ask the owner instead of linking the owner-only panel", () => {
+    const out = html({ used: 20, cap: 20, tier: "free", upgrade_suggested: true, month: "2026-11" }, false);
+    expect(out).toContain("Ask the academy owner to upgrade");
+    expect(out).not.toContain("panel=billing-rules");
   });
 
   it("labels Growth and never prompts", () => {

@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getAdminAiUsage, type AiUsage } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 
@@ -14,6 +15,8 @@ import { Overline } from "@/components/ds/typography";
  * never a hard stop; Growth shows the abuse ceiling.
  */
 export function AiUsageMeter({ usage }: { usage: AiUsage }) {
+  // Billing rules is an owner-only panel; a non-owner would land on OwnerOnlyPanel.
+  const isOwner = useIsOwner();
   return (
     <>
       <p className="mt-3 text-sm text-rally-ink" data-testid="ai-usage-line">
@@ -22,9 +25,13 @@ export function AiUsageMeter({ usage }: { usage: AiUsage }) {
       </p>
       {usage.upgrade_suggested && (
         <p className="mt-2 text-sm text-rally-subtle" data-testid="ai-usage-upgrade">
-          <Link href="/admin/settings?panel=billing-rules" className="font-medium text-rally-cobalt underline">
-            Upgrade to Growth for unlimited drafts
-          </Link>
+          {isOwner ? (
+            <Link href="/admin/settings?panel=billing-rules" className="font-medium text-rally-cobalt underline">
+              Upgrade to Growth for unlimited drafts
+            </Link>
+          ) : (
+            "Ask the academy owner to upgrade to Growth for unlimited drafts."
+          )}
         </p>
       )}
     </>
