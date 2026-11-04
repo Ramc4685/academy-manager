@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 500">
+  <rect width="1024" height="500" fill="#0a0f1c"/>
+  <g transform="translate(232 250) scale(1.25) translate(-120 -128)"><path d="M190 66H102A38 38 0 0 0 64 104V152A38 38 0 0 0 102 190H190" fill="none" stroke="#facc15" stroke-width="28"/><path d="M110 156V102L140 134L170 102V156" fill="none" stroke="#f8fafc" stroke-width="14"/></g>
+  <text x="420" y="240" font-family="Outfit, Manrope, Helvetica Neue, Arial, sans-serif" font-weight="700" font-size="56" letter-spacing="-1.2" fill="#f8fafc">CourtMastr Academy</text>
+  <text x="422" y="300" font-family="Manrope, Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="30" fill="#cbd5e1">Your academy, on one court.</text>
+</svg>

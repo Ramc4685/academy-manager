@@ -129,6 +129,9 @@ TENANT_OWNED_COLLECTIONS = {
     # Scheduled plan price changes (migration 0212, Settings overhaul PR 26);
     # read by every charge path with an explicit academy_id filter.
     "plan_price_changes",
+    # FCM device tokens (migration 0215, mobile M2). Token is unique across
+    # academies; register re-stamps academy_id from the request scope.
+    "push_devices",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
@@ -146,6 +149,9 @@ GLOBAL_COLLECTIONS = {
     # Host -> academy mapping, resolved globally by hostname during request
     # tenant resolution (see shared/tenancy/resolver.py).
     "academy_domains",
+    # Self-service account deletion requests (migration 0216, mobile M5): one
+    # Firebase account spans academies, so its deletion request does too.
+    "account_deletion_requests",
 }
 
 assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (

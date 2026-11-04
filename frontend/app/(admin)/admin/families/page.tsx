@@ -43,6 +43,7 @@ import {
   type FamilyScope,
 } from "@/lib/api/admin-families";
 import { effectiveMoneyView, familyMoneyDisplay, serverMoneyView } from "@/lib/family-money-view";
+import { AccountDeletionsCard } from "@/components/admin/account-deletions";
 import { FamilyMoneyCell } from "@/components/admin/family-money";
 import { ViewingAsToggle, useViewingAs } from "@/components/admin/viewing-as";
 import { queryKeys } from "@/lib/query/keys";
@@ -301,6 +302,8 @@ function FamiliesView() {
       <BulkInviteNotInvited onInvited={refreshAll} />
 
       <FamilyImportPanel onImported={refreshAll} />
+
+      <AccountDeletionsCard />
 
       <Card p={0}>
         <ListToolbar>

@@ -17,6 +17,7 @@ import { Card, Chip, Skeleton } from "@/components/ds";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { fetchAdminFamilyBilling, fetchFamilyRecord } from "@/lib/api/admin-families";
 import { effectiveMoneyView, familyMoneyDisplay, serverMoneyView } from "@/lib/family-money-view";
+import { AccountDeletionBanner } from "@/components/admin/account-deletions";
 import { FamilyOwesFlag } from "@/components/admin/family-money";
 import { ViewingAsToggle, useViewingAs } from "@/components/admin/viewing-as";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
@@ -132,6 +133,7 @@ export default function FamilyRecordPage() {
             <FamilyOwesFlag display={familyMoneyDisplay(family, moneyView)} />
           )}
         </div>
+        <AccountDeletionBanner familyIds={[parentId, canonicalId]} />
         <ViewingAsToggle />
       </div>
 

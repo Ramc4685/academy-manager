@@ -52,6 +52,32 @@ Rows 10 and 11 are deliberate retentions, not gaps: `SoftDeletePolicy` preserves
 financial history, and `RetentionPolicy` sets the windows (audit and financial records 2555
 days; tenant data 30 days after deletion; export artifacts 7 days).
 
+## Self-service account deletion (mobile M5)
+
+A person deleting their own account (`POST /api/v2/me/account-deletion`, then the hourly
+`execute_account_deletions` job 14 days later) runs a narrower cascade over the same rows,
+for that person's family only. Built in `composition/account_deletion.py`, one step per
+context. Owner decisions: children anonymised, Stripe customer kept with cards detached,
+messages kept as "Deleted user", invoice and audit snapshots kept under retention.
+
+| # | Self-service status |
+|---|---|
+| 1 | Kept (counts feed payroll) |
+| 2 | Nothing to do: `absence_notices` stores no free-text reason |
+| 3 | Not handled: open makeup requests are left in place |
+| 4 | DONE: every live enrollment dropped (outcome `adjustment`, no money moves) |
+| 5, 6 | Kept against the anonymised student ("Student 4F2A") |
+| 7 | Kept, not yet restricted to the owner role |
+| 8 | DONE for messages (`author_display_name` = "Deleted user", delivery email removed); WhatsApp group membership not handled |
+| 9 | DONE: email preferences deleted; digests stop because the membership is removed |
+| 10, 11 | Retained as designed |
+
+Also erased: the `users` rows (name, email, phone), family contacts, notes, follow-ups,
+contact log, details, the CRM lead, onboarding applications, sign-in helpers, saved cards,
+and the Firebase account (last). When another guardian on the family still has an active
+account in that academy, the children and family records are kept and an ops alert asks an
+admin to re-home the family.
+
 ## Rules for whoever builds the executor
 
 - Approval, not the request, is the trigger. A `pending_review` row must never mutate

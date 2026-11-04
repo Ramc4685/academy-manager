@@ -67,6 +67,19 @@
   }
 }
 
+/*
+ * iOS zooms into any focused field under 16px and keeps the zoom after
+ * navigation. Unlayered on purpose so it beats `text-sm` (Tailwind utilities
+ * live in a layer); touch screens only, desktop keeps the compact sizes.
+ */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* Parent portal animations */
 @keyframes fade-in-up {
   from { opacity: 0; transform: translateY(12px); }

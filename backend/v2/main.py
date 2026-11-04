@@ -65,6 +65,7 @@ from backend.v2.composition.prospect_email import compose_unsubscribe_prospect
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
+from backend.v2.composition.push import _build_push_sender
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
@@ -102,6 +103,9 @@ from backend.v2.contexts.communications.application.ports import ResolvedRecipie
 from backend.v2.contexts.communications.application.use_cases.get_email_preferences import (
     GetEmailPreferences,
 )
+from backend.v2.contexts.communications.application.use_cases.register_push_device import (
+    RegisterPushDevice,
+)
 from backend.v2.contexts.communications.application.use_cases.resolve_unsubscribe_token import (
     ResolveUnsubscribeToken,
 )
@@ -117,17 +121,36 @@ from backend.v2.contexts.communications.application.use_cases.send_parent_evenin
 from backend.v2.contexts.communications.application.use_cases.send_parent_report_cards import (
     SendParentReportCardsCommand,
 )
+from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
+    SendPushToUser,
+)
 from backend.v2.contexts.communications.application.use_cases.set_email_preferences import (
     SetEmailPreferences,
 )
+from backend.v2.contexts.communications.application.use_cases.unregister_push_device import (
+    ForgetPushDevices,
+    UnregisterPushDevice,
+)
 from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
     MongoEmailPreferenceRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo import (
+    MongoPushDeviceRepository,
+)
+from backend.v2.contexts.communications.infrastructure.mongo_push_token_audit import (
+    MongoPushTokenAudit,
 )
 from backend.v2.contexts.identity.application.list_my_memberships_use_case import (
     ListMyMembershipsUseCase,
 )
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
+)
+from backend.v2.contexts.identity.application.use_cases.cancel_account_deletion import (
+    CancelAccountDeletion,
+)
+from backend.v2.contexts.identity.application.use_cases.list_account_deletions import (
+    ListAccountDeletions,
 )
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
@@ -137,6 +160,9 @@ from backend.v2.contexts.identity.application.use_cases.magic_link import (
 )
 from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
     RegisterPublicParent,
+)
+from backend.v2.contexts.identity.application.use_cases.request_account_deletion import (
+    RequestAccountDeletion,
 )
 from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
     SendRegistrationVerificationEmail,
@@ -158,6 +184,9 @@ from backend.v2.contexts.identity.infrastructure.firebase_token_verifier import 
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
+    MongoAccountDeletionStore,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
@@ -389,6 +418,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # frees are already on the waitlist when this one runs.
     "sweep_expired_waitlist_offers": {
         "schedule": {"type": "crontab", "value": "35 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # Mobile M5 (D3): erases self-service deleted accounts once their 14-day
+    # grace window ends. Hourly; a failed account is retried on the next tick.
+    "execute_account_deletions": {
+        "schedule": {"type": "crontab", "value": "50 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -684,6 +720,28 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _email_preference_repo = MongoEmailPreferenceRepository(db)
     app.state.get_email_preferences = GetEmailPreferences(preferences=_email_preference_repo)
     app.state.set_email_preferences = SetEmailPreferences(preferences=_email_preference_repo)
+    # Push device tokens (mobile M2): POST/DELETE /api/v2/me/devices.
+    _push_device_repo = MongoPushDeviceRepository(db)
+    app.state.register_push_device = RegisterPushDevice(
+        devices=_push_device_repo, audit=MongoPushTokenAudit(db)
+    )
+    app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
+    app.state.forget_push_devices = ForgetPushDevices(devices=_push_device_repo)
+    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
+    app.state.request_account_deletion = RequestAccountDeletion(
+        store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
+    )
+    # D4: GET /api/v2/admin/account-deletions.
+    app.state.list_account_deletions = ListAccountDeletions(store=MongoAccountDeletionStore(db))
+    # Support-only restore: POST /api/v2/platform/account-deletions/{id}/cancel.
+    app.state.cancel_account_deletion = CancelAccountDeletion(
+        store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
+    )
+    # Push sending (mobile M3). Stub unless PUSH_DELIVERY_ENABLED. The parent
+    # notifiers build their own via composition.push.compose_send_push_to_user.
+    app.state.send_push_to_user = SendPushToUser(
+        devices=_push_device_repo, sender=_build_push_sender(settings)
+    )
     # Fail closed: with no secret configured nothing was ever signed, the
     # footer rendered a portal pointer instead of a link, and the unsubscribe
     # endpoints 404. There is deliberately no fallback onto another secret.
@@ -909,6 +967,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
+    from backend.v2.composition.account_deletion import compose_execute_account_deletions
+
+    app.state.execute_account_deletions = compose_execute_account_deletions(
+        db, stop_all_classes=_departures.stop_all_classes, stripe=stripe_gw
+    )
     # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back
     # (and re-offer it); a bare status write leaked the seat. Same promote
     # instance as the admin route and the sweep, so the SeatBroker applies.
@@ -1067,6 +1130,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 totals[key] += result[key]
         if totals["expired"]:
             log.info("waitlist_offers_swept", extra=totals)
+
+    async def _execute_account_deletions() -> None:
+        await _run_leased_job(
+            "execute_account_deletions",
+            timedelta(minutes=20),
+            _execute_account_deletions_body,
+        )
+
+    async def _execute_account_deletions_body() -> None:
+        # Global, not per academy: one deletion spans every academy the
+        # person belonged to, and each step opens its own tenant scope.
+        result = await app.state.execute_account_deletions.execute()
+        if result.completed or result.failed:
+            log.info(
+                "account_deletions_executed",
+                extra={"completed": result.completed, "failed": result.failed},
+            )
 
     async def _process_scheduled_cancellations() -> None:
         await _run_leased_job(
@@ -1885,6 +1965,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "cron",
         minute=35,
         id="sweep_expired_waitlist_offers",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _execute_account_deletions,
+        "cron",
+        minute=50,
+        id="execute_account_deletions",
         replace_existing=True,
         max_instances=1,
     )
