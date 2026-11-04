@@ -115,6 +115,7 @@ class MongoTenantLifecycleRepository:
             platform_agreement_version=doc.get("platform_agreement_version"),
             platform_agreement_accepted_at=doc.get("platform_agreement_accepted_at"),
             platform_agreement_accepted_by=doc.get("platform_agreement_accepted_by"),
+            referral_code=doc.get("referral_code"),
         )
 
     @staticmethod

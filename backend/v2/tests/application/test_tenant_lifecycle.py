@@ -372,3 +372,19 @@ async def test_create_tenant_assigns_an_invoice_prefix_from_the_slug() -> None:
     tenant = await service.create_tenant(_create_command())
 
     assert assigner.calls == [(tenant.academy_id, "north-shore")]
+
+
+@pytest.mark.asyncio
+async def test_get_tenant_derives_referral_code_from_slug_once_and_keeps_it() -> None:
+    repo = FakeTenantRepository()
+    service = _service(repo)
+    created = await service.create_tenant(_create_command())
+    assert created.referral_code is None
+
+    first = await service.get_tenant(created.academy_id)
+    assert first.referral_code == "north-shore"
+    assert repo.tenants[created.academy_id].referral_code == "north-shore"
+
+    # A code already on the record is kept, even when the slug has since moved.
+    repo.tenants[created.academy_id] = first.model_copy(update={"slug": "renamed"})
+    assert (await service.get_tenant(created.academy_id)).referral_code == "north-shore"

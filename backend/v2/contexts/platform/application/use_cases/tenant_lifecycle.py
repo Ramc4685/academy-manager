@@ -204,6 +204,12 @@ class TenantLifecycleService:
         tenant = await self._tenants.get_by_id(academy_id)
         if tenant is None:
             raise TenantNotFound(f"tenant not found: {academy_id}")
+        if tenant.referral_code is None:
+            # Generated once, on first read, so tenants created before the
+            # field existed get one without a migration.
+            tenant = await self._tenants.save(
+                tenant.model_copy(update={"referral_code": tenant.slug})
+            )
         return tenant
 
     async def list_tenants(self) -> list[Tenant]:
