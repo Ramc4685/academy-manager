@@ -39,6 +39,7 @@ import { Overline } from "@/components/ds/typography";
 import { Th } from "@/components/ds/dialog-chrome";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { useIsNativeApp } from "@/lib/use-native-app";
 
 interface ChosenFile {
   name: string;
@@ -53,6 +54,7 @@ const STATUS_CLASS: Record<ImportRow["status"], string> = {
 
 export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
   const [open, setOpen] = useState(false);
+  const isNativeApp = useIsNativeApp();
   const [file, setFile] = useState<ChosenFile | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [batch, setBatch] = useState<ImportBatch | null>(null);
@@ -251,16 +253,18 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
               onChange={(event) => void onChoose(event)}
               className="max-w-full text-sm text-rally-base file:mr-3 file:rounded-md file:border file:border-rally-line file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium"
             />
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              data-testid="admin-families-import-template"
-              icon={<Download className="size-4" aria-hidden="true" />}
-              onClick={downloadTemplate}
-            >
-              Download template
-            </Button>
+            {!isNativeApp && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                data-testid="admin-families-import-template"
+                icon={<Download className="size-4" aria-hidden="true" />}
+                onClick={downloadTemplate}
+              >
+                Download template
+              </Button>
+            )}
           </div>
 
           {fileError ? (
