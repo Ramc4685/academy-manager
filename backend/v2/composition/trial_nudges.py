@@ -294,7 +294,7 @@ class TrialNudgeEmailAdapter:
         return "failed"
 
     async def _resolve_parent(self, parent_id: str) -> ResolvedRecipient | None:
-        resolved = await self._audiences.resolve_selected_audience(
+        resolved: list[ResolvedRecipient] = await self._audiences.resolve_selected_audience(
             SelectedRecipientsAudience(user_ids=(parent_id,))
         )
         if resolved:
