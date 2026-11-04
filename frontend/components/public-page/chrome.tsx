@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
+import { brand as platformBrand } from "@/lib/brand";
 import { monogram, safeHexColor, safeHttpsUrl } from "@/lib/public-page/format";
 import type { PrimaryAction } from "@/lib/public-page/page-model";
 import type { PageTheme } from "@/lib/public-page/theme";
@@ -156,7 +157,7 @@ export function SiteFooter({
         </ul>
         <p className={styles.credit} data-testid="courtmastr-credit">
           <CourtMastrMark />
-          Bookings and payments by CourtMastr
+          <a href={platformBrand.publicSiteUrl}>Bookings and payments by CourtMastr</a>
         </p>
       </div>
     </footer>

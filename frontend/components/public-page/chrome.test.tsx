@@ -9,6 +9,9 @@ describe("SiteFooter legal links (Settings overhaul Phase 4 PR 13)", () => {
     expect(html).toContain('href="/terms"');
     expect(html).toContain('href="/privacy"');
     expect(html).not.toContain("Refund policy");
+    expect(html).toContain(
+      '<a href="https://academy.courtmastr.com">Bookings and payments by CourtMastr</a>',
+    );
   });
 
   it("shows the academy's terms and refund links when set", () => {
