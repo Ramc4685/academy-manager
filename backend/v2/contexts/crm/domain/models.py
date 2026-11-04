@@ -131,24 +131,6 @@ def normalize_email(value: str | None) -> str | None:
     return text.lower() if text else None
 
 
-_GMAIL_DOMAINS: frozenset[str] = frozenset({"gmail.com", "googlemail.com"})
-
-
-def canonical_mailbox(value: str | None) -> str | None:
-    """The inbox an address delivers to, for per-inbox send caps only (never
-    stored on a contact or shown): lower-cased, any ``+tag`` dropped on every
-    domain, and for Gmail the dots dropped and googlemail.com read as gmail.com,
-    so ``J.amie+x@GoogleMail.com`` and ``jamie@gmail.com`` are one inbox."""
-    email = normalize_email(value)
-    if not email or "@" not in email:
-        return email
-    local, _, domain = email.rpartition("@")
-    local = local.split("+", 1)[0]
-    if domain in _GMAIL_DOMAINS:
-        local, domain = local.replace(".", ""), "gmail.com"
-    return f"{local}@{domain}"
-
-
 def normalize_phone_digits(value: str | None) -> str | None:
     """Digits only (spec §3.2 phone search matches on digits); blank becomes None."""
     if value is None:
