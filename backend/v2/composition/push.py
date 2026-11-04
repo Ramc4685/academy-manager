@@ -9,7 +9,13 @@ from __future__ import annotations
 from typing import Any
 
 from backend.v2.contexts.communications.application.ports import PushSendPort
+from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
+    SendPushToUser,
+)
 from backend.v2.contexts.communications.infrastructure.fcm_push_send_port import FcmPushSendPort
+from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo import (
+    MongoPushDeviceRepository,
+)
 from backend.v2.contexts.communications.infrastructure.stub_push_send_port import (
     StubPushSendPort,
 )
@@ -20,3 +26,11 @@ def _build_push_sender(settings: Any) -> PushSendPort:
     if getattr(settings, "push_delivery_enabled", False):
         return FcmPushSendPort(app_provider=firebase_app)
     return StubPushSendPort()
+
+
+def compose_send_push_to_user(db: Any, settings: Any) -> SendPushToUser:
+    """The push the parent notifiers send after their email (class cancelled,
+    waitlist offer, urgent announcement, dues reminders)."""
+    return SendPushToUser(
+        devices=MongoPushDeviceRepository(db), sender=_build_push_sender(settings)
+    )
