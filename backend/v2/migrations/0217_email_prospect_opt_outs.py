@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0215_email_prospect_opt_outs"
+version = "0217_email_prospect_opt_outs"
 
 
 async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]

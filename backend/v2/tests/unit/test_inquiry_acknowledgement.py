@@ -60,8 +60,8 @@ DOC = {
     "brand_color": "#0f766e",
 }
 _M0192 = importlib.import_module("backend.v2.migrations.0192_crm_contacts")
-_M0215 = importlib.import_module("backend.v2.migrations.0215_email_prospect_opt_outs")
-_M0217 = importlib.import_module("backend.v2.migrations.0217_crm_inquiry_ack_throttle")
+_M0217 = importlib.import_module("backend.v2.migrations.0217_email_prospect_opt_outs")
+_M0218 = importlib.import_module("backend.v2.migrations.0218_crm_inquiry_ack_throttle")
 
 
 def _contact(**overrides: Any) -> CrmContact:
@@ -111,8 +111,8 @@ def db() -> Any:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["inquiry-ack"]
     asyncio.run(_M0192.up(db))
-    asyncio.run(_M0215.up(db))
     asyncio.run(_M0217.up(db))
+    asyncio.run(_M0218.up(db))
     return db
 
 
@@ -409,3 +409,16 @@ def test_repeat_or_honeypot_sends_nothing_to_the_family(db: Any) -> None:
     )
     asyncio.run(adapter.notify(academy_id=ACADEMY, contact=None, created=False, class_title=None))
     assert stub.sent == []
+
+
+def test_a_repeat_inbox_claim_loses_even_before_the_unique_index_exists() -> None:
+    # Prod applies migrations by hand; the cap must not fail open until 0218 runs.
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    repo = MongoInquiryAckThrottleRepository(mongomock_motor.AsyncMongoMockClient()["no-index"])
+    at = datetime(2026, 11, 4, 15, tzinfo=UTC)
+
+    async def claims() -> list[bool]:
+        with tenant_scope(ACADEMY):
+            return [await repo.try_claim("parent@gmail.com", at=at) for _ in range(2)]
+
+    assert asyncio.run(claims()) == [True, False]

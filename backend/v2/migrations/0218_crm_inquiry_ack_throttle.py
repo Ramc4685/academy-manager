@@ -22,7 +22,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-version = "0217_crm_inquiry_ack_throttle"
+version = "0218_crm_inquiry_ack_throttle"
 
 TTL_SECONDS = 7 * 24 * 60 * 60
 

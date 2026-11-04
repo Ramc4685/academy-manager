@@ -35,7 +35,7 @@ GATE_UNAVAILABLE = "unsubscribe_check_unavailable"
 
 
 class MongoProspectOptOutRepository(TenantScopedRepository):
-    """``email_prospect_opt_outs``, unique on ``(academy_id, email)`` (migration 0215)."""
+    """``email_prospect_opt_outs``, unique on ``(academy_id, email)`` (migration 0217)."""
 
     collection_name = "email_prospect_opt_outs"
 
