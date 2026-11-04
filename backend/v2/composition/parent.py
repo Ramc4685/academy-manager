@@ -26,6 +26,7 @@ from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
 )
+from backend.v2.composition.platform_plan_checkout import compose_platform_plan_sync
 from backend.v2.composition.registration_decision_email import (
     compose_registration_decision_notifier,
 )
@@ -693,6 +694,7 @@ def compose_parent_webhook_handler(
             directory=MongoConnectedAccountDirectory(db),
         ),
         payment_disputes=MongoPaymentDisputeRepository(db),
+        platform_plan_sync=compose_platform_plan_sync(db).execute,
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -861,6 +863,7 @@ def compose_parent(
             directory=MongoConnectedAccountDirectory(db),
         ),
         payment_disputes=MongoPaymentDisputeRepository(db),
+        platform_plan_sync=compose_platform_plan_sync(db).execute,
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
