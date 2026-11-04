@@ -1,6 +1,6 @@
 # ai-foundation
 
-PR: #PRNUM
+PR: #1124
 
 ## What changed
 AI plumbing with no feature behind it yet: a model port gated by `V2_AI_ENABLED` + `V2_ANTHROPIC_API_KEY` (off by default, so nothing calls a model), an `ai_calls` audit collection with a per-academy monthly cap, prompt versions in code, and `has_feature(academy, "ai")` read from `PlatformPlan.features` via the academy's platform subscription. The dead `openai` pin is removed.
