@@ -314,7 +314,7 @@ export function TapSkillsWorkspace({
                 {has && noteOpen(cell) && (
                   <MasteryNote
                     studentName={student.student_name}
-                    criteria={skill.criteria}
+                    criteria={skill.criteria ?? []}
                     note={note}
                     editing={editing}
                     draft={draft}

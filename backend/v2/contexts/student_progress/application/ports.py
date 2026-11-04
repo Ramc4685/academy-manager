@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -150,7 +151,7 @@ class SkillLookup(Protocol):
 class CriterionLookup(Protocol):
     """Cross-context port: a skill's observable criteria, from the curriculum context."""
 
-    async def list_for_skill(self, skill_id: str) -> list[object]: ...
+    async def list_for_skill(self, skill_id: str) -> Sequence[object]: ...
 
 
 class EnrollmentStatusLookup(Protocol):

@@ -724,8 +724,9 @@ export interface SkillBoardSkill {
   name: string;
   sequence: number;
   is_required: boolean;
-  /** Observable criterion descriptions, in display order: the coach's quick-tags. */
-  criteria: string[];
+  /** Observable criterion descriptions, in display order: the coach's quick-tags.
+   *  Absent on boards cached before the field shipped (persisted for 24h). */
+  criteria?: string[];
 }
 
 export interface SkillBoardStudentRow {
