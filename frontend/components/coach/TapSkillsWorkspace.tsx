@@ -13,7 +13,7 @@ import {
   type SkillBoardCell,
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
-import { NOTE_MAX, pickedCriteria, toggleCriterion } from "@/lib/coach/mastery-note";
+import { NOTE_MAX, criterionFits, pickedCriteria, toggleCriterion } from "@/lib/coach/mastery-note";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
@@ -411,8 +411,9 @@ export function MasteryNote({
                   key={criterion}
                   type="button"
                   aria-pressed={on}
+                  disabled={!criterionFits(draft, criteria, criterion)}
                   onClick={() => onDraft(toggleCriterion(draft, criteria, criterion))}
-                  className={`min-h-touch rounded-full border-2 px-3 text-left text-sm font-semibold ${
+                  className={`min-h-touch rounded-full border-2 px-3 text-left text-sm font-semibold disabled:opacity-40 ${
                     on
                       ? "border-rally-cobalt bg-rally-cobalt text-white"
                       : "border-rally-line bg-white text-rally-ink"

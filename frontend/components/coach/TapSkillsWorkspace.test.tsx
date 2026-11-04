@@ -173,6 +173,11 @@ describe("MasteryNote criterion quick-tags", () => {
     expect(out).toContain('value="Nailed it today: elbow in front of body."');
   });
 
+  it("disables a chip that no longer fits the note", () => {
+    const out = editor("", ["x".repeat(140)]);
+    expect(out).toMatch(/aria-pressed="false" disabled=""/);
+  });
+
   it("shows no chip row for a skill without criteria", () => {
     expect(editor("", [])).not.toContain("Tap what");
   });

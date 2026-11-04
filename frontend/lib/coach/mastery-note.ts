@@ -41,9 +41,37 @@ export function composeMasteryNote(picked: string[]): string {
   return kept.length ? sentence(kept) : "";
 }
 
-/** The criteria the draft already says: the chips' pressed state. */
+/** Where `needle` appears in `text` as whole words, as [start, end) spans. */
+function spans(text: string, needle: string): [number, number][] {
+  const out: [number, number][] = [];
+  if (!needle) return out;
+  for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) {
+    const end = i + needle.length;
+    if (!/\w/.test(text[i - 1] ?? "") && !/\w/.test(text[end] ?? "")) out.push([i, end]);
+  }
+  return out;
+}
+
+/**
+ * The criteria the draft already says: the chips' pressed state. Whole words,
+ * any case; a cue only found inside a longer criterion's cue ("elbow in front"
+ * within "elbow in front of body") does not count.
+ */
 export function pickedCriteria(draft: string, criteria: string[]): string[] {
-  return criteria.filter((c) => cue(c) !== "" && draft.includes(cue(c)));
+  const text = draft.toLowerCase();
+  const found = criteria.map((c) => spans(text, cue(c).toLowerCase()));
+  const inLonger = (i: number, [s, e]: [number, number]) =>
+    found.some((other, j) => j !== i && other.some(([os, oe]) => os <= s && e <= oe && oe - os > e - s));
+  return criteria.filter((_, i) => found[i].some((span) => !inLonger(i, span)));
+}
+
+/** Whether tapping this chip still fits the note under NOTE_MAX (a pressed chip can always come off). */
+export function criterionFits(draft: string, criteria: string[], criterion: string): boolean {
+  const picked = new Set(pickedCriteria(draft, criteria));
+  if (picked.has(criterion)) return true;
+  picked.add(criterion);
+  const cues = criteria.filter((c) => picked.has(c)).map(cue).filter(Boolean);
+  return cues.length > 0 && sentence(cues).length <= NOTE_MAX;
 }
 
 /** Tap a chip: add or remove it, and rewrite the draft as the templated sentence. */
