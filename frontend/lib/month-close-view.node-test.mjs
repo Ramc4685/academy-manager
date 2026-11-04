@@ -8,6 +8,7 @@ import {
   monthCloseVerdict,
   normalizeMonthClose,
   oddRows,
+  platformFeeDisclosure,
   warningLine,
 } from "./month-close-view.ts";
 
@@ -360,4 +361,26 @@ test("a garbage payload normalizes to zeros instead of throwing", () => {
   assert.deepEqual(empty.odd, []);
   assert.equal(monthCloseTiles(empty)[0].value, "0");
   assert.equal(autopayRunBox(empty).state, "none");
+});
+
+test("the processing-fee line shows only a computed, non-zero rate", () => {
+  assert.equal(platformFeeDisclosure(view()), null);
+  assert.deepEqual(
+    platformFeeDisclosure(
+      view({ money: { collected_cents: 400000, platform_fee_bps: 100, platform_fee_cents: 3999 } }),
+    ),
+    { cents: 3999, rate: "1.00%" },
+  );
+  assert.equal(
+    platformFeeDisclosure(view({ money: { platform_fee_bps: 0, platform_fee_cents: 0 } })),
+    null,
+  );
+  assert.equal(
+    platformFeeDisclosure(view({ money: { platform_fee_bps: 100, platform_fee_cents: null } })),
+    null,
+  );
+  assert.match(
+    warningLine(view({ warnings: ["platform_fee_unavailable"] })),
+    /processing fee rate could not be read/,
+  );
 });

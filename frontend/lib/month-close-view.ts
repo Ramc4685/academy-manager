@@ -43,6 +43,7 @@ const WARNING_LABELS: Record<string, string> = {
   dunning_unavailable: "the autopay retry ladder could not be read",
   discounts_unavailable: "the tuition discount summary could not be read",
   card_state_unavailable: "cards on file could not be read, so the autopay-without-a-card check was skipped",
+  platform_fee_unavailable: "the CourtMastr processing fee rate could not be read",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -100,6 +101,12 @@ export function normalizeMonthClose(data: unknown, period = ""): AdminMonthClose
       collected_cents: numberOr(money.collected_cents, 0),
       outstanding_cents: numberOr(money.outstanding_cents, 0),
       collection_rate: typeof rate === "number" && Number.isFinite(rate) ? rate : null,
+      stripe_collected_cents: numberOr(money.stripe_collected_cents, 0),
+      // Null, never 0: a fee we did not compute is not shown (Phase 2 A1).
+      platform_fee_bps:
+        typeof money.platform_fee_bps === "number" ? money.platform_fee_bps : null,
+      platform_fee_cents:
+        typeof money.platform_fee_cents === "number" ? money.platform_fee_cents : null,
     },
     autopay_run: {
       charge_on: typeof run.charge_on === "string" ? run.charge_on : null,
@@ -370,6 +377,24 @@ export function monthCloseVerdict(view: AdminMonthCloseView): MonthCloseVerdict 
   }
 
   return { ok: issueCount === 0, issueCount, issues };
+}
+
+export interface MonthClosePlatformFee {
+  /** The estimated fee taken; the page formats it. */
+  cents: number;
+  /** "1.00%" */
+  rate: string;
+}
+
+/**
+ * The processing-fee disclosure (Phase 2 A1), or null when there is nothing
+ * to disclose: the rate is 0 (no markup on this academy) or it could not be
+ * read (a number we did not compute is never shown; `warnings` says why).
+ */
+export function platformFeeDisclosure(view: AdminMonthCloseView): MonthClosePlatformFee | null {
+  const { platform_fee_bps: bps, platform_fee_cents: cents } = view.money;
+  if (bps == null || cents == null || bps <= 0) return null;
+  return { cents, rate: `${(bps / 100).toFixed(2)}%` };
 }
 
 /** One muted line naming every source that could not be read, or null. */

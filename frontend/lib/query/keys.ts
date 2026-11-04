@@ -146,6 +146,7 @@ export const queryKeys = {
     gateway: () => ["admin", "academy", "gateway"] as const,
     paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
+    platformFee: () => ["admin", "billing", "platform-fee"] as const,
     // sessionTypes() is the invalidation prefix; sessionTypesList() is the
     // per-view cache key, since the archived and active lists differ.
     sessionTypes: () => ["admin", "session-types"] as const,
