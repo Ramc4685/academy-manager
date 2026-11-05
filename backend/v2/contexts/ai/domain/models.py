@@ -34,3 +34,6 @@ class AiCallRecord(BaseModel):
     cost_cents: int = Field(ge=0)
     approver: str | None = None
     created_at: datetime
+    #: The row's id once written; the repository stamps it so an approval can
+    #: set ``approver`` later. ``None`` before ``record``.
+    call_id: str | None = None

@@ -46,6 +46,9 @@ class ChildWins:
     progress_url: str
     level_ups: tuple[LevelUp, ...] = ()
     skill_wins: tuple[SkillWins, ...] = ()
+    #: A coach-approved AI paragraph (B4). Non-empty replaces the templated
+    #: skill sentences; the coach quotes and the button stay.
+    narrative: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,8 +113,13 @@ def _child_block(child: ChildWins, accent: str) -> str:
             f"{esc(up.program_name)} is done, and the certificate is ready.</p>"
         )
         parts.extend(_quote(note) for note in up.coach_notes)
+    if child.narrative and child.skill_wins:
+        parts.append(f'<p style="margin:0 0 12px;">{esc(child.narrative)}</p>')
     for wins in child.skill_wins:
-        parts.append(f'<p style="margin:0 0 12px;">{esc(_skill_line(child.first_name, wins))}</p>')
+        if not child.narrative:
+            parts.append(
+                f'<p style="margin:0 0 12px;">{esc(_skill_line(child.first_name, wins))}</p>'
+            )
         parts.extend(_quote(note) for note in wins.coach_notes)
     label = "See the certificate" if child.level_ups else f"See {child.first_name}'s progress"
     url = (child.level_ups[-1].certificate_url if child.level_ups else "") or child.progress_url
