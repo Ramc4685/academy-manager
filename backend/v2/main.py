@@ -1051,6 +1051,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_month_close = compose_admin_month_close(db)
     # Automated late fees, driven from the dunning tick below (#552).
     app.state.apply_late_fees = compose_apply_late_fees(db)
+    # B3: AI-drafted reply on the pipeline card, and its human-approved send.
+    from backend.v2.composition.ai_pipeline import compose_ai_pipeline
+
+    app.state.ai_pipeline = compose_ai_pipeline(db, settings, ai=app.state.ai)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.
