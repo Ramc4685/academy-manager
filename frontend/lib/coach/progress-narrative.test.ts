@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { AI_STATUS_KEY, masteredOn, narrativeErrorCopy } from "./progress-narrative";
+import type { CoachNarrative } from "@/lib/api/coach";
+
+import { AI_STATUS_KEY, masteredOn, narrativeErrorCopy, narrativePanel } from "./progress-narrative";
 
 const today = new Date(2026, 10, 4, 15, 30); // local
 const key = "2026-11-04";
@@ -40,4 +42,33 @@ describe("narrativeErrorCopy", () => {
 
 it("queries B1's status under the shared admin key", () => {
   expect(AI_STATUS_KEY).toEqual(["admin", "ai", "status"]);
+});
+
+describe("narrativePanel", () => {
+  const row = (status: CoachNarrative["status"], text = "Aarav flew."): CoachNarrative => ({
+    narrative_id: `n-${status}`,
+    student_id: "s1",
+    for_date: "2026-11-04",
+    kind: "evening_wins",
+    text,
+    status,
+    approver: null,
+  });
+
+  it("waits for the read, then offers Draft when the day has no row", () => {
+    expect(narrativePanel(null, undefined)).toEqual({ panel: "loading", row: null });
+    expect(narrativePanel(null, null)).toEqual({ panel: "draft", row: null });
+  });
+
+  it("shows a persisted draft for review after a refresh, and decided rows by status", () => {
+    expect(narrativePanel(null, row("pending_review")).panel).toBe("review");
+    expect(narrativePanel(null, row("approved")).panel).toBe("approved");
+    expect(narrativePanel(null, row("rejected")).panel).toBe("rejected");
+  });
+
+  it("prefers the row from this session's draft or decision over the loaded one", () => {
+    const fresh = row("pending_review", "Drafted again.");
+    expect(narrativePanel(fresh, row("rejected"))).toEqual({ panel: "review", row: fresh });
+    expect(narrativePanel(row("approved"), undefined).panel).toBe("approved");
+  });
 });

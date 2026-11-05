@@ -1,20 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   decideCoachNarrative,
   draftCoachNarrative,
+  getCoachStudentNarrative,
   type CoachNarrative,
 } from "@/lib/api/coach";
-import { narrativeErrorCopy } from "@/lib/coach/progress-narrative";
+import { narrativeErrorCopy, narrativePanel } from "@/lib/coach/progress-narrative";
 import { queryKeys } from "@/lib/query/keys";
 
 /**
  * "Draft tonight's note": one model-drafted paragraph for the parents, shown
  * in a textarea the coach edits, then approves or rejects. Nothing reaches a
  * parent until Approve; the evening email falls back to its templated line.
+ * The day's row is loaded on mount, so a pending draft survives a refresh.
  */
 export function ProgressNarrativeNote({
   studentId,
@@ -26,61 +28,81 @@ export function ProgressNarrativeNote({
   date: string;
 }) {
   const queryClient = useQueryClient();
-  const [row, setRow] = useState<CoachNarrative | null>(null);
-  const [text, setText] = useState("");
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: queryKeys.coach.pendingNarratives(date) });
+  const [local, setLocal] = useState<CoachNarrative | null>(null);
+  // The coach's edits; null means "show the row's text".
+  const [edited, setEdited] = useState<string | null>(null);
+  const loaded = useQuery({
+    queryKey: queryKeys.coach.studentNarrative(studentId, date),
+    queryFn: () => getCoachStudentNarrative(studentId, date),
+    retry: false,
+  });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.coach.pendingNarratives(date) });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.coach.studentNarrative(studentId, date),
+    });
+  };
 
   const draft = useMutation({
     mutationFn: () => draftCoachNarrative(studentId, date),
     onSuccess: (result) => {
-      setRow(result);
-      setText(result.text);
-      void invalidate();
+      setLocal(result);
+      setEdited(null);
+      invalidate();
     },
   });
+  const { panel, row } = narrativePanel(local, loaded.isError ? null : loaded.data);
+  const text = edited ?? row?.text ?? "";
   const decide = useMutation({
     mutationFn: (status: "approved" | "rejected") =>
       decideCoachNarrative(row!.narrative_id, status === "approved" ? { status, text } : { status }),
     onSuccess: (result) => {
-      setRow(result);
-      void invalidate();
+      setLocal(result);
+      invalidate();
     },
   });
 
   const error = draft.error ?? decide.error;
   const inputId = `narrative-${studentId}`;
+  const draftButton = (label: string) => (
+    <button
+      type="button"
+      disabled={draft.isPending}
+      onClick={() => draft.mutate()}
+      className="min-h-touch text-sm font-bold text-rally-cobalt-700 disabled:opacity-50"
+    >
+      {draft.isPending ? "Drafting…" : label}
+    </button>
+  );
+  const errorLine = error && (
+    <p role="alert" className="text-sm text-red-700">
+      {narrativeErrorCopy(error)}
+    </p>
+  );
 
-  if (row?.status === "approved") {
+  if (panel === "loading") return null;
+  if (panel === "approved" || panel === "rejected") {
     return (
-      <p className="mt-1.5 px-1 text-xs font-semibold text-status-green-800">
-        Note approved for tonight&apos;s email.
-      </p>
-    );
-  }
-  if (row?.status === "rejected") {
-    return (
-      <p className="mt-1.5 px-1 text-xs text-status-slate-600">
-        Note rejected; tonight&apos;s email uses the standard line.
-      </p>
-    );
-  }
-  if (!row) {
-    return (
-      <div className="mt-1.5 px-1">
-        <button
-          type="button"
-          disabled={draft.isPending}
-          onClick={() => draft.mutate()}
-          className="min-h-touch text-sm font-bold text-rally-cobalt-700 disabled:opacity-50"
-        >
-          {draft.isPending ? "Drafting…" : `Draft tonight's note for ${studentName}`}
-        </button>
-        {error && (
-          <p role="alert" className="text-sm text-red-700">
-            {narrativeErrorCopy(error)}
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 px-1">
+        {panel === "approved" ? (
+          <p className="text-xs font-semibold text-status-green-800">
+            Note approved for tonight&apos;s email.
+          </p>
+        ) : (
+          <p className="text-xs text-status-slate-600">
+            Note rejected; tonight&apos;s email uses the standard line.
           </p>
         )}
+        {draftButton("Draft again")}
+        {errorLine}
+      </div>
+    );
+  }
+  if (panel === "draft") {
+    return (
+      <div className="mt-1.5 px-1">
+        {draftButton(`Draft tonight's note for ${studentName}`)}
+        {errorLine}
       </div>
     );
   }
@@ -94,7 +116,7 @@ export function ProgressNarrativeNote({
         value={text}
         maxLength={500}
         rows={4}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setEdited(e.target.value)}
         className="w-full rounded-md border-2 border-rally-line px-3 py-2 text-sm"
       />
       <div className="flex justify-end gap-1.5">
@@ -115,11 +137,7 @@ export function ProgressNarrativeNote({
           Approve
         </button>
       </div>
-      {error && (
-        <p role="alert" className="text-sm text-red-700">
-          {narrativeErrorCopy(error)}
-        </p>
-      )}
+      {errorLine}
     </div>
   );
 }

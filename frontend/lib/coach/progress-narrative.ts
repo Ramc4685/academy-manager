@@ -6,6 +6,7 @@
  */
 
 import type { ApiError } from "@/lib/api/client";
+import type { CoachNarrative } from "@/lib/api/coach";
 import type { SkillBoardCell } from "@/lib/api/curriculum";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 
@@ -40,4 +41,21 @@ const ERROR_COPY: Record<number, string> = {
 export function narrativeErrorCopy(error: unknown): string {
   const status = (error as Partial<ApiError> | null)?.status;
   return (status !== undefined && ERROR_COPY[status]) || "Couldn't draft the note. Try again.";
+}
+
+export type NarrativePanel = "loading" | "draft" | "review" | "approved" | "rejected";
+
+/**
+ * Which panel the note shows. A row the coach just drafted or decided wins
+ * over the one loaded on mount (the query catches up after invalidation);
+ * `undefined` loaded means the read has not answered yet.
+ */
+export function narrativePanel(
+  local: CoachNarrative | null,
+  loaded: CoachNarrative | null | undefined,
+): { panel: NarrativePanel; row: CoachNarrative | null } {
+  const row = local ?? loaded ?? null;
+  if (row === null) return { panel: loaded === undefined ? "loading" : "draft", row };
+  if (row.status === "pending_review") return { panel: "review", row };
+  return { panel: row.status, row };
 }

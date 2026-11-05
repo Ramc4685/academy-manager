@@ -6,7 +6,7 @@
  * we hand-declare them.
  */
 
-import { apiFetch } from "./client";
+import { apiFetch, type ApiError } from "./client";
 import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
@@ -765,6 +765,22 @@ export function draftCoachNarrative(studentId: string, date?: string): Promise<C
     `/coach/students/${encodeURIComponent(studentId)}/narrative-draft`,
     { method: "POST", body: JSON.stringify(date ? { date } : {}) },
   );
+}
+
+/** The day's note for one student, whatever its status; null when none was drafted. */
+export async function getCoachStudentNarrative(
+  studentId: string,
+  date: string,
+): Promise<CoachNarrative | null> {
+  try {
+    return await apiFetch<CoachNarrative>(
+      `/coach/students/${encodeURIComponent(studentId)}/narrative?date=${encodeURIComponent(date)}`,
+      { method: "GET" },
+    );
+  } catch (error) {
+    if ((error as Partial<ApiError>).status === 404) return null;
+    throw error;
+  }
 }
 
 export function decideCoachNarrative(
