@@ -230,13 +230,21 @@ def check_narrative(narrative: Narrative, inp: MonthCloseNarratorInput) -> None:
     not in the input or any href outside the input's items and ``FIXED_HREFS``."""
     allowed = allowed_numbers(inp)
     labels = sorted(
-        {label for check in inp.odd for label in (check.label, *(i.label for i in check.items))},
+        {
+            label
+            for check in inp.odd
+            for label in (check.label, *(i.label for i in check.items))
+            if len(label.strip()) >= 3 and re.search(r"[A-Za-z]", label)
+        },
         key=len,
         reverse=True,
     )
     texts = [narrative.summary, *(fix.text for fix in narrative.fix_first)]
     for label in labels:
-        texts = [text.replace(label, " ") for text in texts]
+        # Whole-token only, so "Park 2" masks that phrase but not a "2" glued
+        # to other digits; the placeholder carries no digits.
+        pattern = re.compile(rf"(?<![\w$.,]){re.escape(label)}(?![\w.,])")
+        texts = [pattern.sub(" LABEL ", text) for text in texts]
     for token in (m.group(0) for text in texts for m in _NUMBER.finditer(text)):
         if token.lstrip("$").replace(",", "") not in allowed:
             raise AiProviderError(f"{_UNREADABLE}: number {token!r} is not in the month-close view")

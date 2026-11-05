@@ -182,6 +182,15 @@ def test_digits_from_a_label_do_not_authorise_other_numbers() -> None:
     check_narrative(_narrative("Park 77 is overdue.", []), inp)
     with pytest.raises(AiProviderError):
         check_narrative(_narrative("77 families are overdue.", []), inp)
+    # The label is masked as a whole token only: digits glued to it stay checked.
+    with pytest.raises(AiProviderError):
+        check_narrative(_narrative("Park 771 is overdue.", []), inp)
+    # A digits-only or tiny label never masks anything.
+    body["odd"][0]["items"][0]["label"] = "77"
+    with pytest.raises(AiProviderError):
+        check_narrative(
+            _narrative("77 families are overdue.", []), reduce_month_close_payload(body)
+        )
 
 
 def test_a_number_in_a_fix_first_text_is_checked_too() -> None:
