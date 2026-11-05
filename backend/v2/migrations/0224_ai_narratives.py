@@ -3,7 +3,9 @@
 ``(academy_id, student_id, for_date, kind)`` unique: one draft per child per
 day per message kind, so a second "Draft tonight's note" replaces the first.
 ``(academy_id, status)`` serves the coach's pending list. New, empty
-collection; idempotent (``create_index`` with the same spec is a no-op).
+collection. Also ``ai_calls (academy_id, call_id)`` so approving a narrative
+stamps its call without scanning the month. Idempotent (``create_index`` with
+the same spec is a no-op).
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ INDEXES: list[tuple[str, str, list[tuple[str, int]], dict[str, Any]]] = [
         {"unique": True},
     ),
     ("ai_narratives", "ai_narratives_academy_status", [("academy_id", 1), ("status", 1)], {}),
+    ("ai_calls", "ai_calls_academy_call_id", [("academy_id", 1), ("call_id", 1)], {}),
 ]
 
 

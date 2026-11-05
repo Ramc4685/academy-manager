@@ -6,6 +6,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.ai.domain.narrative import AiNarrative
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -27,11 +29,13 @@ class MongoAiNarrativeRepository(TenantScopedRepository):
     async def upsert_draft(self, row: AiNarrative) -> AiNarrative:
         """A fresh draft replaces whatever row holds the key: the coach asked
         again, so the day's note starts over from the new text."""
-        doc = await self._find_one_and_update(
-            {"student_id": row.student_id, "for_date": row.for_date, "kind": row.kind},
-            {"$set": row.model_dump(mode="python")},
-            upsert=True,
-        )
+        key = {"student_id": row.student_id, "for_date": row.for_date, "kind": row.kind}
+        update = {"$set": row.model_dump(mode="python")}
+        try:
+            doc = await self._find_one_and_update(key, update, upsert=True)
+        except DuplicateKeyError:
+            # Two drafts raced on the unique key; the loser now matches the row.
+            doc = await self._find_one_and_update(key, update, upsert=True)
         return self._to_domain(doc or row.model_dump(mode="python"))
 
     async def get(self, narrative_id: str) -> AiNarrative | None:

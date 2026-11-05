@@ -507,6 +507,8 @@ async def test_migration_0224_builds_the_indexes_and_rerun_is_a_no_op():
     assert unique["key"] == [("academy_id", 1), ("student_id", 1), ("for_date", 1), ("kind", 1)]
     assert unique["unique"] is True
     assert info["ai_narratives_academy_status"]["key"] == [("academy_id", 1), ("status", 1)]
+    calls = await db["ai_calls"].index_information()
+    assert calls["ai_calls_academy_call_id"]["key"] == [("academy_id", 1), ("call_id", 1)]
     for _collection, _name, keys, _options in _M0224.INDEXES:
         assert keys[0] == ("academy_id", 1)
 

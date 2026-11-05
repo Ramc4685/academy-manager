@@ -14,6 +14,7 @@ from backend.v2.contexts.ai.infrastructure.mongo_ai_narrative_repo import (
     MongoAiNarrativeRepository,
 )
 from backend.v2.shared.tenancy import tenant_scope
+from pymongo.errors import DuplicateKeyError
 
 NOW = datetime(2026, 11, 4, 18, 0, tzinfo=UTC)
 
@@ -155,3 +156,22 @@ async def test_ai_calls_record_returns_the_id_and_set_approver_is_tenant_scoped(
         assert await MongoAiCallRepository(db).set_approver(call_id, "coach-1") is True
     doc = await db["ai_calls"].find_one({"call_id": call_id})
     assert doc is not None and (doc["approver"], doc["academy_id"]) == ("coach-1", "acad-a")
+
+
+async def test_upsert_draft_retries_once_when_a_racing_draft_wins_the_unique_key() -> None:
+    db = _db()
+    with tenant_scope("acad-a"):
+        repo = MongoAiNarrativeRepository(db)
+        real = repo._find_one_and_update
+        attempts: list[int] = []
+
+        async def racing(*args: Any, **kwargs: Any) -> Any:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise DuplicateKeyError("E11000 duplicate key")
+            return await real(*args, **kwargs)
+
+        repo._find_one_and_update = racing  # type: ignore[method-assign]
+        row = await repo.upsert_draft(_row("n1"))
+    assert (row.narrative_id, len(attempts)) == ("n1", 2)
+    assert await db["ai_narratives"].count_documents({}) == 1
