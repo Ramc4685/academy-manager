@@ -1,0 +1,12 @@
+# parent-progress-narrative
+
+PR: #TBD
+
+## What changed
+Coaches can ask for an AI-drafted paragraph for tonight's parent "evening wins" email: in the tap-skills workspace, a "Draft tonight's note" button appears under each student who mastered a skill today, the draft opens in an editable box, and the coach approves or rejects it; the Today page shows how many notes wait for approval. An approved paragraph replaces the templated "X mastered Y today" sentence in that evening's email (the coach's quoted notes and the progress button stay); a pending or rejected draft changes nothing, so the email never waits. The model only sees the child's first name, the level and program names, today's skills with their criteria and the coach's quick-tag words, and the passed/total counts; every call is written to `ai_calls`, and the coach's approval becomes that row's `approver`. The monthly report card is unchanged (its body is tiles and a focus line, not a sentence to swap).
+
+## Deploy notes
+Migration `0224_ai_narratives` adds the unique `(academy_id, student_id, for_date, kind)` and `(academy_id, status)` indexes on the new, empty `ai_narratives` collection; it runs through the normal migration path. No new env vars. The feature stays dark until `V2_AI_ENABLED` and `V2_ANTHROPIC_API_KEY` are set and the academy's platform plan has the `ai` feature (Growth); without them the button is hidden (the status read fails or says disabled) and the route answers 503 `Ai.Disabled` / 403 `Ai.NotEntitled`. Coach review is on by default; to let drafts go straight to the email for one academy, set `ai.coach_review_narratives: false` on its `academies` document by hand (no UI in this slice). The button reads B1's `GET /api/v2/admin/ai/status`, which the admin persona serves; a plain coach account gets 404 there and so does not see the button until a coach-side status read exists.
+
+## Risk / rollback
+If wrong, a parent could receive an odd paragraph, but only one a coach approved (or one the owner chose to skip review for). The strict parse refuses answers with numbers other than the given counts or with skills the input did not name, and refuses before anything is stored. Rolling back the PR restores the templated sentence; `ai_narratives` rows and migration 0224 are harmless left in place, and `ai_calls` rows keep their audit value.

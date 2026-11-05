@@ -4352,3 +4352,8 @@ export function updateAdminClassPublicFields(
     { method: "PATCH", body: JSON.stringify(payload) }
   );
 }
+
+/** B1: whether the model port is on for this deployment; `enabled` is all the UI reads. */
+export function getAdminAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
+}

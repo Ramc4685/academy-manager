@@ -56,3 +56,23 @@ it is set by hand until a Growth-tier screen exists.
 Whether an academy may use AI at all is `has_feature(academy_id, "ai")` in
 `contexts/platform/billing` (see that context's README). This context does
 not read plans.
+
+## Parent progress narrative (B4, paid)
+
+Feature key `progress_narrative`, prompt `progress-narrative-v1`, `max_tokens`
+400. A coach taps "Draft tonight's note" on a student who mastered a skill
+today (`POST /api/v2/coach/students/{id}/narrative-draft`). The use case
+`DraftProgressNarrative` runs entitlement (`AiNotEntitled`, 403) -> monthly cap
+(429) -> `llm.complete` -> `record_ai_call.execute` -> strict parse (502). The
+model sees exactly `ProgressNarrativeInput`: the child's first name, level and
+program names, today's skills with their observable criteria and the coach's
+quick-tag words, and the passed/total counts. No surname, family, attendance
+or other children. The draft is stored in `ai_narratives` (tenant-scoped, one
+row per `(student_id, for_date, kind)`, migration 0224) as `pending_review`.
+The coach edits and approves or rejects it (`PUT
+/api/v2/coach/narratives/{id}/decision`); approving sets `approver` to the
+coach's user id on both the narrative and its `ai_calls` row (`call_id`). The
+evening wins email uses an approved paragraph in place of its templated skill
+sentence and ignores pending or rejected rows, so it never waits on review.
+`ai.coach_review_narratives: false` on the academy document stores drafts
+approved with approver `coach_review_off` (no UI yet).

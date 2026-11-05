@@ -14,6 +14,7 @@ export const queryKeys = {
     todayPlan: (date: string) => ["coach", "today-plan", date] as const,
     skillBoard: (sessionId: string, programId?: string) =>
       ["coach", "skill-board", sessionId, programId ?? "default"] as const,
+    pendingNarratives: (date: string) => ["coach", "narratives", "pending", date] as const,
     schedule: () => ["coach", "schedule"] as const,
     profile: () => ["coach", "profile"] as const,
     academy: () => ["coach", "academy"] as const,

@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
-import { getCoachToday, type CoachSession } from "@/lib/api/coach";
+import { getAdminAiStatus } from "@/lib/api/admin";
+import { getCoachToday, listCoachPendingNarratives, type CoachSession } from "@/lib/api/coach";
+import { AI_STATUS_KEY } from "@/lib/coach/progress-narrative";
 import {
   coachSessionHref,
   isCancelled,
@@ -59,6 +61,20 @@ export default function CoachTodayPage() {
   // badge in the list below, and repeating them here would be noise.
   const recentUnmarked: CoachSession[] = recentUnmarkedSessions(lookbackSessions);
 
+  // B4: AI notes waiting for this coach's approval before tonight's email.
+  const aiStatus = useQuery({
+    queryKey: AI_STATUS_KEY,
+    queryFn: getAdminAiStatus,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  const pendingNotes = useQuery({
+    queryKey: queryKeys.coach.pendingNarratives(date),
+    queryFn: () => listCoachPendingNarratives(date),
+    enabled: aiStatus.data?.enabled === true,
+  });
+  const pendingCount = pendingNotes.data?.narratives.length ?? 0;
+
   useMemo(() => reportVitals("coach.today"), []);
 
   return (
@@ -87,6 +103,16 @@ export default function CoachTodayPage() {
           <DatePicker date={date} onChange={setDate} />
         </div>
       </header>
+
+      {pendingCount > 0 && (
+        <p
+          data-testid="pending-notes"
+          className="mb-4 rounded-lg bg-rally-volt-400 p-3 text-sm font-semibold text-rally-ink"
+        >
+          {pendingCount} AI {pendingCount === 1 ? "note waits" : "notes wait"} for your approval
+          before tonight&apos;s email. Open the class to review.
+        </p>
+      )}
 
       {isLoading && <SessionSkeleton />}
 
