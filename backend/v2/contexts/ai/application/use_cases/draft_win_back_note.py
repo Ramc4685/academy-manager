@@ -135,7 +135,7 @@ class PersonaliseWinBackParagraph:
         draft = await self._draft.execute(
             WinBackNoteInput(
                 child_first_name=child_first_name,
-                milestone_days=milestone_days,  # type: ignore[arg-type]
+                milestone_days=milestone_days,
                 level_name=level_name,
                 recent_wins=wins[:3],
                 academy_name=academy_name,
