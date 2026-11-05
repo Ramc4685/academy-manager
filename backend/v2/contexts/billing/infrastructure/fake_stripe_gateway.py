@@ -43,6 +43,8 @@ class FakeStripeGateway(StripeGateway):
         self.checkouts: list[dict[str, Any]] = []
         self.subscription_checkouts: list[dict[str, Any]] = []
         self.autopay_setup_checkouts: list[dict[str, Any]] = []
+        self.platform_customers: list[dict[str, Any]] = []
+        self.platform_plan_checkouts: list[dict[str, Any]] = []
         self.portal_sessions: list[dict[str, Any]] = []
         self.refunds: list[dict[str, Any]] = []
         # Every refund create call, including idempotent replays Stripe answers
@@ -200,6 +202,43 @@ class FakeStripeGateway(StripeGateway):
             }
         )
         return checkout_id, f"https://fake.stripe.com/c/{checkout_id}", stripe_subscription_id
+
+    async def create_platform_customer(
+        self,
+        *,
+        name: str,
+        email: str | None,
+        metadata: dict[str, str],
+    ) -> str:
+        customer_id = f"cus_platform_test_{new_ulid()}"
+        self.register_object(customer_id)
+        self.platform_customers.append(
+            {"customer_id": customer_id, "name": name, "email": email, "metadata": metadata}
+        )
+        return customer_id
+
+    async def create_platform_plan_checkout_session(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        checkout_id = f"cs_plan_test_{new_ulid()}"
+        self.register_object(checkout_id)
+        self.platform_plan_checkouts.append(
+            {
+                "checkout_id": checkout_id,
+                "customer_id": customer_id,
+                "price_id": price_id,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "metadata": metadata,
+            }
+        )
+        return checkout_id, f"https://checkout.stripe.test/{checkout_id}"
 
     async def create_autopay_setup_checkout_session(
         self,

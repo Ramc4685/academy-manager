@@ -20,6 +20,7 @@ import {
   type SkillScoringType,
 } from "@/lib/api/curriculum";
 import { LevelColorPicker } from "@/components/admin/curriculum/level-color-picker";
+import { SkillLadderDraftCard } from "@/components/admin/curriculum/skill-ladder-draft-card";
 import { levelSwatch } from "@/lib/level-color";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
@@ -101,6 +102,11 @@ export function ProgramEditor({
       </div>
 
       <LessonCardsPanel programId={programId} />
+
+      <SkillLadderDraftCard
+        programId={programId}
+        lastLevelSequence={Math.max(0, ...data.levels.map((l) => l.level.sequence))}
+      />
 
       {showAddLevel && (
         <Card p={20}>

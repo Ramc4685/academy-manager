@@ -113,6 +113,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # tier as Reports and Payouts (spec 2026-09-07 §2). Admins who could
         # open Billing Health before this change now get a 404.
         ("GET", f"{_ADMIN}/billing/connect-readiness"),
+        # plan_routes.py — what the academy pays CourtMastr (Phase 2 A2).
+        ("GET", f"{_ADMIN}/billing/plan"),
+        ("POST", f"{_ADMIN}/billing/plan/checkout"),
         ("GET", f"{_ADMIN}/billing/webhooks"),
         ("POST", f"{_ADMIN}/billing/webhook-events/{{event_id}}/replay"),
         ("GET", f"{_ADMIN}/billing/reconciliation-runs"),

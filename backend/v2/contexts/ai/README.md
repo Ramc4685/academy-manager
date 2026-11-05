@@ -51,6 +51,29 @@ since the first of the current UTC month and raises `AiMonthlyCapReached`
 when one more would exceed the cap. There is no write path for the cap yet;
 it is set by hand until a Growth-tier screen exists.
 
+## Features
+
+### `skill_ladder` (B1, prompt `skill-ladder-v1`)
+
+`application/use_cases/draft_skill_ladder.py::DraftSkillLadder`, wired by
+`composition/ai_curriculum.py` at `app.state.ai_curriculum`, behind
+`POST /admin/curriculum/programs/{program_id}/ladder-draft`
+(`interfaces/admin/ai_curriculum_routes.py`, admin persona). The model sees
+exactly `SkillLadderInput`: `sport` (from the program, through
+`ProgramSportLookup` in composition because this context never imports
+curriculum), `age_band`, `level_count` and the owner's `notes`, serialised as
+one JSON object; no student, family or enrollment data. The use case calls
+`RecordAiCall.assert_under_cap()` before spending tokens, records the row
+before parsing, and reads the answer strictly (`parse_skill_ladder`: optional
+```` ```json ```` fence, pydantic shape, exactly `level_count` levels numbered
+1..n, 2-6 skills each, 1-5 criteria each, scoring type from the curriculum
+literal), so a bad answer is 502 `Ai.ProviderError` and nothing half-saved.
+The human approves in the program editor's draft card
+(`frontend/components/admin/curriculum/skill-ladder-draft-card.tsx`): the
+draft is editable local state until "Save to program" walks it through the
+existing create level / skill / criterion routes. `GET /admin/ai/status`
+(`{enabled}`) hides the card while the disabled port is wired.
+
 ## Entitlement
 
 Whether an academy may use AI at all is `has_feature(academy_id, "ai")` in
