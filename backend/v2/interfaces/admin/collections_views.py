@@ -59,7 +59,7 @@ class AdminCollectionsInvoice(_View):
     total_cents: int
     balance_due_cents: int
     due_date: str
-    delivery_status: str | None = None
+    delivery_status: str  # always set: the read model falls back to "not_sent"
 
 
 class AdminCollectionsAutopay(_View):

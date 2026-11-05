@@ -1517,15 +1517,8 @@
             "type": "integer"
           },
           "delivery_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Delivery Status"
+            "title": "Delivery Status",
+            "type": "string"
           },
           "due_date": {
             "title": "Due Date",
@@ -1565,7 +1558,8 @@
           "status",
           "total_cents",
           "balance_due_cents",
-          "due_date"
+          "due_date",
+          "delivery_status"
         ],
         "title": "AdminCollectionsInvoice",
         "type": "object"

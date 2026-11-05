@@ -7817,7 +7817,7 @@ export interface components {
             /** Balance Due Cents */
             balance_due_cents: number;
             /** Delivery Status */
-            delivery_status?: string | null;
+            delivery_status: string;
             /** Due Date */
             due_date: string;
             /** Invoice Id */

@@ -56,8 +56,7 @@ type Fits<Server, Client> = [Server] extends [never]
     : false;
 type Expect<T extends true> = T;
 
-// One alias per endpoint: a single tuple of all of them hits TypeScript's
-// instantiation limits and can report a false failure.
+// One alias per endpoint, so a failure names the endpoint that drifted.
 
 // Parent money screens
 export type ParentPaymentsFit = Expect<
