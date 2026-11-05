@@ -410,6 +410,20 @@ async def test_any_ai_error_falls_back_to_the_template_and_still_sends(
     assert "Maya" not in caplog.text and "Shuttle Starter" not in caplog.text
 
 
+async def test_wrong_schema_answer_never_reaches_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    marker = "MARKER-maya-forehand-serve"
+    llm = FakeLlm(json.dumps({"note": marker, "level": "Shuttle Starter"}))
+    adapter, sender = _adapter(_personaliser(enabled=True, llm=llm, calls=FakeCalls()))
+    with caplog.at_level(logging.WARNING, logger="backend.v2.composition.win_back"):
+        await _send(adapter)
+    assert _paragraphs(sender.calls[0]["body"])[1] == TEMPLATE_SECOND
+    [record] = [r for r in caplog.records if r.getMessage() == "win_back_ai_paragraph_failed"]
+    assert record.exc_info is None
+    assert record.error_type == "AiProviderError"  # type: ignore[attr-defined]
+    assert record.error_code == "Ai.ProviderError"  # type: ignore[attr-defined]
+    assert marker not in caplog.text and "Shuttle Starter" not in caplog.text
+
+
 async def test_cap_reached_also_falls_back(caplog: pytest.LogCaptureFixture) -> None:
     llm = FakeLlm(json.dumps({"paragraph": GOOD_PARAGRAPH}))
     adapter, sender = _adapter(_personaliser(enabled=True, llm=llm, calls=FakeCalls(used=2)))

@@ -134,13 +134,18 @@ class WinBackNotificationAdapter:
                     child_first_name=student_name.split()[0] if student_name.split() else "",
                     milestone_days=milestone_days,
                 )
-            except Exception:
+            except Exception as exc:
                 # Disabled, not entitled, cap, provider or validation: the
-                # template still goes out. No prompt text in the log.
+                # template still goes out. No traceback or message: a chained
+                # pydantic error would carry the model's output into the log.
                 logger.warning(
                     "win_back_ai_paragraph_failed",
-                    extra={"student_id": student_id, "milestone_days": milestone_days},
-                    exc_info=True,
+                    extra={
+                        "student_id": student_id,
+                        "milestone_days": milestone_days,
+                        "error_type": type(exc).__name__,
+                        "error_code": getattr(exc, "code", None),
+                    },
                 )
             else:
                 if drafted:
