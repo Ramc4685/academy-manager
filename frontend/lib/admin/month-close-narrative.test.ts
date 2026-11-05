@@ -4,6 +4,7 @@ import {
   NARRATIVE_FOOTNOTE,
   fixFirstLinks,
   narrativeErrorCopy,
+  narrativeForPeriod,
 } from "@/lib/admin/month-close-narrative";
 
 describe("month-close narrator card (B5)", () => {
@@ -42,6 +43,13 @@ describe("month-close narrator card (B5)", () => {
       ["Review dues", "/admin/dues"],
     ]);
     expect(new Set(links.map((l) => l.key)).size).toBe(3);
+  });
+
+  it("shows a narrative only for the month it was written for", () => {
+    const result = { period: "2026-10", narrative: { summary: "October" } };
+    expect(narrativeForPeriod(result, "2026-10")).toEqual({ summary: "October" });
+    expect(narrativeForPeriod(result, "2026-11")).toBeNull();
+    expect(narrativeForPeriod(undefined, "2026-11")).toBeNull();
   });
 
   it("says the summary never calculates money", () => {

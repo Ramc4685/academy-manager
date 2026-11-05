@@ -41,3 +41,14 @@ export function fixFirstLinks(narrative: Pick<AdminMonthCloseNarrative, "fix_fir
     .slice(0, 3)
     .map((fix, index) => ({ key: `${index}:${fix.href}`, text: fix.text.trim(), href: fix.href }));
 }
+
+/**
+ * The narrative to show for the selected month: the result only when it was
+ * written for that period, otherwise nothing (the button offers the new month).
+ */
+export function narrativeForPeriod<T>(
+  result: { period: string; narrative: T } | undefined,
+  period: string,
+): T | null {
+  return result && result.period === period ? result.narrative : null;
+}

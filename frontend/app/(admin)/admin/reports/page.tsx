@@ -30,6 +30,7 @@ import {
   NARRATIVE_FOOTNOTE,
   fixFirstLinks,
   narrativeErrorCopy,
+  narrativeForPeriod,
 } from "@/lib/admin/month-close-narrative";
 import { formatCents, formatDateOnly } from "@/lib/money";
 import { useIsNativeApp } from "@/lib/use-native-app";
@@ -109,8 +110,10 @@ export default function AdminMonthClosePage() {
   });
   const aiEnabled = aiStatusQuery.data?.enabled === true;
   const narrativeMutation = useMutation({
-    mutationFn: () => postAdminMonthCloseNarrative(period),
+    // Carry the requested period so a result never renders under another month's heading.
+    mutationFn: async () => ({ period, narrative: await postAdminMonthCloseNarrative(period) }),
   });
+  const narrative = narrativeForPeriod(narrativeMutation.data, period);
 
   const revenueQuery = useQuery({
     queryKey: ["admin", "revenue"],
@@ -378,12 +381,12 @@ export default function AdminMonthClosePage() {
               {narrativeErrorCopy(narrativeMutation.error)}
             </p>
           ) : null}
-          {narrativeMutation.data ? (
+          {narrative ? (
             <div className="mt-3 space-y-3" data-testid="month-close-narrative-result">
-              <p className="text-sm text-rally-ink">{narrativeMutation.data.summary}</p>
-              {fixFirstLinks(narrativeMutation.data).length > 0 ? (
+              <p className="text-sm text-rally-ink">{narrative.summary}</p>
+              {fixFirstLinks(narrative).length > 0 ? (
                 <ol className="list-decimal space-y-1 pl-5 text-sm">
-                  {fixFirstLinks(narrativeMutation.data).map((fix) => (
+                  {fixFirstLinks(narrative).map((fix) => (
                     <li key={fix.key}>
                       <Link
                         href={fix.href as Route}
