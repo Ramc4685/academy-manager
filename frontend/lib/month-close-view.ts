@@ -107,6 +107,7 @@ export function normalizeMonthClose(data: unknown, period = ""): AdminMonthClose
         typeof money.platform_fee_bps === "number" ? money.platform_fee_bps : null,
       platform_fee_cents:
         typeof money.platform_fee_cents === "number" ? money.platform_fee_cents : null,
+      platform_fee_estimated: money.platform_fee_estimated === true,
     },
     autopay_run: {
       charge_on: typeof run.charge_on === "string" ? run.charge_on : null,
@@ -380,21 +381,28 @@ export function monthCloseVerdict(view: AdminMonthCloseView): MonthCloseVerdict 
 }
 
 export interface MonthClosePlatformFee {
-  /** The estimated fee taken; the page formats it. */
+  /** The fee taken; the page formats it. */
   cents: number;
-  /** "1.00%" */
-  rate: string;
+  /** The parenthetical after the amount: how the number was arrived at. */
+  detail: string;
 }
 
 /**
  * The processing-fee disclosure (Phase 2 A1), or null when there is nothing
- * to disclose: the rate is 0 (no markup on this academy) or it could not be
+ * to disclose: no fee was taken and the rate is 0, or the rate could not be
  * read (a number we did not compute is never shown; `warnings` says why).
+ * Fees recorded on the month's payments still show once the rate is set to
+ * 0; "estimated" appears only when the backend estimated part of the amount.
  */
 export function platformFeeDisclosure(view: AdminMonthCloseView): MonthClosePlatformFee | null {
-  const { platform_fee_bps: bps, platform_fee_cents: cents } = view.money;
-  if (bps == null || cents == null || bps <= 0) return null;
-  return { cents, rate: `${(bps / 100).toFixed(2)}%` };
+  const { platform_fee_bps: bps, platform_fee_cents: cents, platform_fee_estimated } = view.money;
+  if (bps == null || cents == null || (bps <= 0 && cents <= 0)) return null;
+  if (bps <= 0) return { cents, detail: "recorded on this month's payments" };
+  const rate = `${(bps / 100).toFixed(2)}%`;
+  return {
+    cents,
+    detail: `${rate} of Stripe-collected payments${platform_fee_estimated ? ", estimated" : ""}`,
+  };
 }
 
 /** One muted line naming every source that could not be read, or null. */

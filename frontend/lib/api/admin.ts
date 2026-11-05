@@ -3796,6 +3796,8 @@ export interface AdminMonthCloseView {
      */
     platform_fee_bps: number | null;
     platform_fee_cents: number | null;
+    /** True when rows without a recorded fee were estimated from the current rate. */
+    platform_fee_estimated: boolean;
   };
   autopay_run: {
     charge_on: string | null;

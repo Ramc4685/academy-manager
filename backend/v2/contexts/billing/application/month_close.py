@@ -304,6 +304,9 @@ def build_money_section(
             if platform_fee_bps is not None
             else None
         ),
+        # True when part of the amount came from the current rate rather than
+        # a recorded fee; the page says "estimated" only then.
+        "platform_fee_estimated": platform_fee_bps is not None and stripe_unrecorded_cents > 0,
     }
 
 

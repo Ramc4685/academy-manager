@@ -166,9 +166,22 @@ def test_platform_fee_is_the_rate_on_stripe_collected_money_only_or_null() -> No
     assert section["stripe_collected_cents"] == 4_001
     assert section["platform_fee_bps"] == 100
     assert section["platform_fee_cents"] == 40  # 1% of $40.01, floored
+    assert section["platform_fee_estimated"] is True
 
     unread = build_money_section([], collected_cents=10_000, stripe_collected_cents=4_001)
     assert unread["platform_fee_bps"] is None and unread["platform_fee_cents"] is None
+    assert unread["platform_fee_estimated"] is False
+
+    # Every row carries a recorded fee: the total is exact, even at a 0 bps rate.
+    recorded = build_money_section(
+        [],
+        collected_cents=10_000,
+        stripe_collected_cents=9_001,
+        platform_fee_bps=0,
+        platform_fee_recorded_cents=74,
+    )
+    assert recorded["platform_fee_cents"] == 74
+    assert recorded["platform_fee_estimated"] is False
 
     # Fees the webhook recorded are summed as stored; only the rows with no
     # record are estimated from the current rate.
@@ -181,6 +194,7 @@ def test_platform_fee_is_the_rate_on_stripe_collected_money_only_or_null() -> No
         stripe_unrecorded_cents=4_001,
     )
     assert mixed["platform_fee_cents"] == 37 + 40
+    assert mixed["platform_fee_estimated"] is True
 
 
 def test_collection_rate_is_capped_at_one() -> None:
@@ -530,6 +544,7 @@ def test_an_empty_period_is_zeros_a_null_rate_and_four_zero_checks() -> None:
         "stripe_collected_cents": 0,
         "platform_fee_bps": None,
         "platform_fee_cents": None,
+        "platform_fee_estimated": False,
     }
     assert view["invoices"]["generated"] == 0
     assert [row["count"] for row in view["odd"]] == [0, 0, 0, 0]

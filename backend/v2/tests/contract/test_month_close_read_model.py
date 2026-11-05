@@ -341,6 +341,7 @@ async def test_the_platform_fee_is_the_rate_on_the_stripe_share_only(db: Any, ac
     assert view.money.stripe_collected_cents == 50_001
     assert view.money.platform_fee_bps == 100
     assert view.money.platform_fee_cents == 74 + 400  # recorded + 1% of $400.01, floored
+    assert view.money.platform_fee_estimated is True
     assert view.warnings == []
 
     # The house academy charges on the platform account: no application fee.
@@ -350,6 +351,7 @@ async def test_the_platform_fee_is_the_rate_on_the_stripe_share_only(db: Any, ac
     # A fee the webhook recorded is still reported as stored; only the estimate drops to 0.
     house = AdminMonthCloseView.model_validate(await reader(db).build(PERIOD))
     assert (house.money.platform_fee_bps, house.money.platform_fee_cents) == (0, 74)
+    assert house.money.platform_fee_estimated is True  # pay-card still carries no record
 
 
 class _BrokenSettings:

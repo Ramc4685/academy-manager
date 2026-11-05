@@ -53,6 +53,8 @@ class AdminMonthCloseMoney(_View):
     stripe_collected_cents: int = 0
     platform_fee_bps: int | None = None
     platform_fee_cents: int | None = None
+    # True when rows without a recorded fee were estimated from the current rate.
+    platform_fee_estimated: bool = False
 
 
 class AdminMonthCloseTally(_View):

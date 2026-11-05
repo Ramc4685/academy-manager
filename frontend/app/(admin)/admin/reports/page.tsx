@@ -340,8 +340,8 @@ export default function AdminMonthClosePage() {
         {tileGrid(headlineTiles, "month-close-tiles")}
         {platformFee && closeSettled ? (
           <p className="text-[12px] text-rally-muted" data-testid="month-close-platform-fee">
-            CourtMastr processing fee taken: {formatMoney(platformFee.cents)} ({platformFee.rate} of
-            Stripe-collected payments, estimated). Parents are not charged a per-order fee.
+            CourtMastr processing fee taken: {formatMoney(platformFee.cents)} ({platformFee.detail}).
+            Parents are not charged a per-order fee.
           </p>
         ) : null}
 
