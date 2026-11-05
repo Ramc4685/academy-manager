@@ -115,16 +115,30 @@ def mask_cell(value: str) -> str:
     return "".join(out)
 
 
+#: An email, a phone, or an ISO date (its year is a 4-digit run) in a header cell.
+_DATA_LIKE = re.compile(r"@|\d{4}")
+
+
 def _header_labels(headers: tuple[str, ...]) -> tuple[str, ...]:
-    """Masked mode: a header that looks like data (an email means the file has
-    no header row, so every column is relabeled; otherwise 4+ digits or over 40
-    characters) becomes its column label instead of leaking a cell."""
-    if any("@" in h for h in headers):
+    """Masked mode: any header that looks like data means the file has no header
+    row, so EVERY column is relabeled "(column N)" (the other cells of that row
+    are names). Otherwise only an over-long header is relabeled."""
+    if any(_DATA_LIKE.search(h) for h in headers):
         return tuple(f"(column {i + 1})" for i in range(len(headers)))
-    return tuple(
-        f"(column {i + 1})" if sum(c.isdigit() for c in h) >= 4 or len(h) > 40 else h
-        for i, h in enumerate(headers)
-    )
+    return tuple(f"(column {i + 1})" if len(h) > 40 else h for i, h in enumerate(headers))
+
+
+def _reject_duplicate_headers(headers: tuple[str, ...]) -> None:
+    """Two columns with the same name (case and spaces aside) would collide in
+    the mapping, so the file is refused before any model call, in both modes."""
+    seen: set[str] = set()
+    for h in headers:
+        key = "".join(h.lower().split())
+        if key in seen:
+            raise AiImportSampleRejected(
+                f"The file has two columns named {h}; rename one and try again.", header=h
+            )
+        seen.add(key)
 
 
 def read_sample(csv_text: str, *, share_values: bool) -> ImportSample:
@@ -144,6 +158,7 @@ def read_sample(csv_text: str, *, share_values: bool) -> ImportSample:
             (cell.strip() or f"(column {i + 1})")[:MAX_HEADER_LENGTH]
             for i, cell in enumerate(header_cells)
         )
+        _reject_duplicate_headers(headers)
         rows: list[tuple[str, ...]] = []
         count = 0
         for cells in reader:

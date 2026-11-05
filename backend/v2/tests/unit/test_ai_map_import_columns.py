@@ -115,13 +115,45 @@ def test_read_sample_relabels_a_header_row_that_is_really_data() -> None:
     sample = read_sample(HEADERLESS_CSV, share_values=False)
     assert sample.headers == tuple(f"(column {i})" for i in range(1, 6))
     assert sample.file_headers[0] == "Jane Doe"
-    # Without an email, only the data-like headers are relabeled.
-    sample = read_sample(
-        "Guardian,3095550123,Long header " + "x" * 40 + "\na,b,c\n", share_values=False
-    )
-    assert sample.headers == ("Guardian", "(column 2)", "(column 3)")
+    # A phone or a date in any header cell also means a headerless file.
+    for row in ("Guardian,3095550123,Child", "Guardian,Child,2015-03-04"):
+        assert read_sample(row + "\na,b,c\n", share_values=False).headers == (
+            "(column 1)",
+            "(column 2)",
+            "(column 3)",
+        )
+    # Label-like headers stay; only an over-long one relabels itself.
+    sample = read_sample("Guardian,Long header " + "x" * 40 + "\na,b\n", share_values=False)
+    assert sample.headers == ("Guardian", "(column 2)")
     # Sharing on sends headers as written.
     assert read_sample(HEADERLESS_CSV, share_values=True).headers[0] == "Jane Doe"
+
+
+@pytest.mark.parametrize("share_values", [False, True])
+def test_duplicate_headers_are_refused_before_any_model_call(share_values: bool) -> None:
+    with pytest.raises(AiImportSampleRejected, match="two columns named Parent Name"):
+        read_sample("parent name,Parent Name\na,b\n", share_values=share_values)
+
+
+async def test_phone_only_headerless_row_leaks_nothing() -> None:
+    # No email anywhere: the phone alone must mark the row as data.
+    csv_text = "Jane Doe,3095550123,Sam Doe,2015-03-04\nAnn Roe,3095550199,Kit Roe,2016-07-08\n"
+    answer = _answer(
+        mappings=[
+            {"target": "parent_name", "source_headers": ["(column 1)"], "confidence": "low"},
+            {"target": "student_name", "source_headers": ["(column 3)"], "confidence": "low"},
+        ],
+        unmapped_headers=["(column 2)", "(column 4)"],
+    )
+    llm = FakeLlm(answer)
+    use_case, _ = _use_case(llm)
+    result = await use_case.execute(csv_text=csv_text, approver="u")
+    user = llm.calls[0]["user"]
+    for secret in ("Jane", "Doe", "Sam", "3095550123", "2015-03-04"):
+        assert secret not in user
+    assert json.loads(user)["headers"] == [f"(column {i})" for i in range(1, 5)]
+    assert result.draft.mappings[0].source_headers == ["Jane Doe"]
+    assert result.draft.unmapped_headers == ["3095550123", "2015-03-04"]
 
 
 async def test_headerless_file_leaks_nothing_and_answers_in_file_headers() -> None:

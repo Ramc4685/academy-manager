@@ -158,6 +158,12 @@ def test_oversized_body_is_refused_before_parsing(client: TestClient) -> None:
     assert client.post(MAP, json={"csv": CSV, "academy_id": "acad-b"}).status_code == 422
 
 
+def test_duplicate_headers_are_a_422(client: TestClient) -> None:
+    response = client.post(MAP, json={"csv": "Name,name\nJane,Sam\n"})
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "Ai.ImportSampleRejected"
+
+
 def test_disabled_port_is_a_503_with_the_ai_disabled_code(caller: Caller) -> None:
     app = FastAPI()
     register_exception_handlers(app)
