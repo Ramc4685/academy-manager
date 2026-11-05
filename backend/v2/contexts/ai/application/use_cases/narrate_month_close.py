@@ -199,9 +199,13 @@ def allowed_numbers(inp: MonthCloseNarratorInput) -> frozenset[str]:
 
     A cents value is allowed as cents, as whole dollars, and as dollars with
     two decimals; counts as given; the rate as given and as a whole percent;
-    the period's year and month digits.
+    the period's year and month digits; and every digit run inside the odd
+    check and item labels the model was given (invoice numbers, "Park 2").
     """
     allowed: set[str] = set()
+    for check in inp.odd:
+        for label in (check.label, *(item.label for item in check.items)):
+            allowed.update(re.findall(r"\d+", label))
     for value in (inp.money.billed_cents, inp.money.collected_cents, inp.money.outstanding_cents):
         allowed.update({str(value), str(value // 100), f"{value // 100}.{value % 100:02d}"})
     rate = inp.money.collection_rate

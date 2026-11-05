@@ -165,10 +165,19 @@ def test_a_number_not_in_the_input_is_a_provider_error(summary: str) -> None:
         check_narrative(_narrative(summary), reduce_month_close_payload(payload()))
 
 
+def test_digits_quoted_from_an_item_label_pass() -> None:
+    body = payload()
+    body["odd"][0]["items"][0]["label"] = "INV-2026-0042"
+    check_narrative(
+        _narrative("Fine.", [{"text": "Resend INV-2026-0042", "href": "/admin/payments"}]),
+        reduce_month_close_payload(body),
+    )
+
+
 def test_a_number_in_a_fix_first_text_is_checked_too() -> None:
     with pytest.raises(AiProviderError):
         check_narrative(
-            _narrative("Fine.", [{"text": "Chase 3 failed cards", "href": "/admin/payments"}]),
+            _narrative("Fine.", [{"text": "Chase 6 failed cards", "href": "/admin/payments"}]),
             reduce_month_close_payload(payload()),
         )
 

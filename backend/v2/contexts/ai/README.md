@@ -14,7 +14,7 @@ or child data goes to any model.** This README is the contract; the tests in
 | `domain/prompts.py` | `PROMPTS`: feature -> `PromptVersion(version, system_text)`; one unused placeholder |
 | `domain/errors.py` | `AiDisabled` (503), `AiMonthlyCapReached` (429), `AiProviderError` (502) |
 | `application/ports.py` | `LlmPort`, `AiCallRepository`, `MonthlyCapSource` |
-| `application/use_cases/record_ai_call.py` | `RecordAiCall`: counts this UTC month's rows, refuses past the cap, writes one row |
+| `application/use_cases/record_ai_call.py` | `RecordAiCall`: `assert_under_cap()` refuses before the call; `execute()` always writes one row |
 | `infrastructure/anthropic_llm_port.py` | the one `LlmPort` adapter: Anthropic Messages API over plain `httpx`, no SDK |
 | `infrastructure/disabled_llm_port.py` | wired whenever AI is off; every call raises `AiDisabled` |
 | `infrastructure/mongo_ai_call_repo.py` | `MongoAiCallRepository(TenantScopedRepository)`, collection `ai_calls` |
@@ -46,9 +46,11 @@ Collection `ai_calls`, one document per model call.
 
 `ai.monthly_call_cap` on the academy document (`academies`), read by
 `composition/ai.py::AcademyAiCapLookup`; absent or invalid means
-`DEFAULT_MONTHLY_CALL_CAP` (200). `RecordAiCall` counts the academy's rows
-since the first of the current UTC month and raises `AiMonthlyCapReached`
-when one more would exceed the cap. There is no write path for the cap yet;
+`DEFAULT_MONTHLY_CALL_CAP` (200). `RecordAiCall.assert_under_cap()` counts the
+academy's rows since the first of the current UTC month and raises
+`AiMonthlyCapReached` when one more would exceed the cap; every feature calls it
+before `llm.complete`. `execute()` only writes the audit row, even past the cap,
+so a spent call is always counted. There is no write path for the cap yet;
 it is set by hand until a Growth-tier screen exists.
 
 ## Entitlement
