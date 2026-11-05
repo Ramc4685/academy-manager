@@ -6,6 +6,7 @@ vi.mock("@/lib/api/coach", () => ({
   markCoachSkillMastered: vi.fn(),
   unmarkCoachSkillMastered: vi.fn(),
   setCoachMasteryNote: vi.fn(),
+  getCoachAiStatus: vi.fn(),
 }));
 vi.mock("@/lib/api/curriculum", () => ({ getCoachSessionSkillBoard: vi.fn() }));
 

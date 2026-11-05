@@ -4011,6 +4011,21 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
   });
 }
 
+/** AI usage meter (plan 2026-11-04 Phase 2, slice A3): this month's drafts against the plan's cap. */
+export interface AiUsage {
+  used: number;
+  cap: number;
+  tier: "free" | "growth";
+  /** Free tier at or past its cap: a soft prompt to upgrade, never a hard stop. */
+  upgrade_suggested: boolean;
+  /** YYYY-MM, UTC. */
+  month: string;
+}
+
+export function getAdminAiUsage(): Promise<AiUsage> {
+  return apiFetch<AiUsage>("/admin/ai/usage", { method: "GET" });
+}
+
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
 }
@@ -4409,7 +4424,38 @@ export function updateAdminClassPublicFields(
   );
 }
 
+/** B6: the owner's standing approval of AI-personalised win-back wording (owner-only, 404 otherwise). */
+export function getAdminAiWinBackPersonalised(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/win-back-personalised", { method: "GET" });
+}
+
+export function updateAdminAiWinBackPersonalised(enabled: boolean): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/win-back-personalised", {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 /** B1: whether AI drafting is on for this academy (V2_AI_ENABLED + key). */
 export function fetchAdminAiStatus(): Promise<{ enabled: boolean }> {
   return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
+}
+
+/**
+ * `POST /admin/reports/month-close/narrative?period=YYYY-MM` (B5, owner-only, paid).
+ * Mirrors `MonthCloseNarrative` in
+ * `backend/v2/contexts/ai/application/use_cases/narrate_month_close.py`.
+ */
+export interface AdminMonthCloseNarrative {
+  summary: string;
+  fix_first: { text: string; href: string }[];
+  prompt_version: string;
+  generated_at: string;
+}
+
+export function postAdminMonthCloseNarrative(period: string): Promise<AdminMonthCloseNarrative> {
+  return apiFetch<AdminMonthCloseNarrative>(
+    `/admin/reports/month-close/narrative?period=${encodeURIComponent(period)}`,
+    { method: "POST" },
+  );
 }

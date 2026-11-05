@@ -6,7 +6,8 @@
  * we hand-declare them.
  */
 
-import { apiFetch } from "./client";
+import { apiFetch, type ApiError } from "./client";
+import type { TechniqueObservationDraft } from "@/lib/coach/technique-observation";
 import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
@@ -743,4 +744,75 @@ export interface CoachAcademy {
 
 export function getCoachAcademy(): Promise<CoachAcademy> {
   return apiFetch<CoachAcademy>("/coach/academy", { method: "GET" });
+}
+
+/** B6: whether a model is wired for this deployment, readable by a coach-only user. Only `enabled` is read. */
+export function getCoachAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/coach/ai/status", { method: "GET" });
+}
+
+/** B6: text-only technique observation -> a draft the coach saves as a skill note. Stores nothing. */
+export function draftTechniqueObservation(
+  studentId: string,
+  observation: string,
+): Promise<TechniqueObservationDraft> {
+  return apiFetch<TechniqueObservationDraft>(
+    `/coach/students/${encodeURIComponent(studentId)}/technique-observation-draft`,
+    { method: "POST", body: JSON.stringify({ observation }) },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AI progress narrative (AI Phase 2, B4): draft, review, pending list.
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface CoachNarrative {
+  narrative_id: string;
+  student_id: string;
+  for_date: string;
+  kind: "evening_wins" | "report_card";
+  text: string;
+  status: "pending_review" | "approved" | "rejected";
+  approver: string | null;
+}
+
+/** Drafts tonight's note from the student's wins that day; pending until a coach approves. */
+export function draftCoachNarrative(studentId: string, date?: string): Promise<CoachNarrative> {
+  return apiFetch<CoachNarrative>(
+    `/coach/students/${encodeURIComponent(studentId)}/narrative-draft`,
+    { method: "POST", body: JSON.stringify(date ? { date } : {}) },
+  );
+}
+
+/** The day's note for one student, whatever its status; null when none was drafted. */
+export async function getCoachStudentNarrative(
+  studentId: string,
+  date: string,
+): Promise<CoachNarrative | null> {
+  try {
+    return await apiFetch<CoachNarrative>(
+      `/coach/students/${encodeURIComponent(studentId)}/narrative?date=${encodeURIComponent(date)}`,
+      { method: "GET" },
+    );
+  } catch (error) {
+    if ((error as Partial<ApiError>).status === 404) return null;
+    throw error;
+  }
+}
+
+export function decideCoachNarrative(
+  narrativeId: string,
+  body: { status: "approved" | "rejected"; text?: string },
+): Promise<CoachNarrative> {
+  return apiFetch<CoachNarrative>(
+    `/coach/narratives/${encodeURIComponent(narrativeId)}/decision`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export function listCoachPendingNarratives(date?: string): Promise<{ narratives: CoachNarrative[] }> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : "";
+  return apiFetch<{ narratives: CoachNarrative[] }>(`/coach/narratives/pending${q}`, {
+    method: "GET",
+  });
 }

@@ -6,6 +6,7 @@
  * missing route by design — surface it as "unavailable", not "forbidden".
  */
 
+import type { AiUsage } from "./admin";
 import { apiFetch, apiFetchBlob } from "./client";
 
 export type TenantStatus = "provisioning" | "active" | "suspended" | "cancelled";
@@ -243,6 +244,13 @@ export function setPlatformBillingIdentity(
     `/platform/academies/${encodeURIComponent(academyId)}/billing-identity`,
     { method: "PUT", body: JSON.stringify(payload) },
   );
+}
+
+/** The same AI usage meter the academy admin sees, for one academy (slice A3). */
+export function getPlatformAiUsage(academyId: string): Promise<AiUsage> {
+  return apiFetch<AiUsage>(`/platform/academies/${encodeURIComponent(academyId)}/ai-usage`, {
+    method: "GET",
+  });
 }
 
 /** Tenant data export (roadmap L9d): a zip of every tenant-scoped collection. */

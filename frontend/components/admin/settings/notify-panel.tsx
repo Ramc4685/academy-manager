@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  getAdminAiWinBackPersonalised,
   getAdminNotifications,
   getCoachDigestLog,
   listAdminUsers,
   sendCoachDigestTest,
+  updateAdminAiWinBackPersonalised,
   updateAdminNotifications,
   type AdminNotificationsView,
   type CoachDigestLogEntryView,
@@ -104,6 +106,7 @@ export function NotifyPanel() {
               setForm((prev) => ({ ...prev, win_back_enabled: checked }))
             }
           />
+          <AiWinBackToggle />
           <Toggle
             label="Trial nudges"
             helper="Trial reminder the day before, a follow-up after a missed trial, and a reminder to finish an abandoned registration."
@@ -202,6 +205,32 @@ export function NotifyPanel() {
         <CoachDigestTools />
       </Card>
     </section>
+  );
+}
+
+const AI_WIN_BACK_KEY = ["admin", "ai", "win-back-personalised"] as const;
+
+/** B6: the owner's standing approval. Owner-only route, so an admin (404) sees nothing. Saves on tap. */
+function AiWinBackToggle() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: AI_WIN_BACK_KEY,
+    queryFn: getAdminAiWinBackPersonalised,
+    retry: false,
+  });
+  const mutation = useMutation({
+    mutationFn: (enabled: boolean) => updateAdminAiWinBackPersonalised(enabled),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: AI_WIN_BACK_KEY }),
+  });
+  if (!query.data) return null;
+  return (
+    <Toggle
+      label="Personalise win-back emails with AI (uses the child's level and recent wins; you approve this wording in advance by turning it on)"
+      helper={mutation.isError ? "Couldn't save that. Try again." : undefined}
+      testId="notify-ai-win-back-personalised"
+      checked={query.data.enabled}
+      onChange={(checked) => mutation.mutate(checked)}
+    />
   );
 }
 

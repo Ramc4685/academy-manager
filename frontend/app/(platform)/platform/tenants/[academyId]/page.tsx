@@ -32,6 +32,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { TenantStatusChip } from "../status-chip";
 
 import { AgreementCard } from "./agreement-card";
+import { AiUsageCard } from "./ai-usage-card";
 import { DataOffboardingCard } from "./data-offboarding-card";
 import { ApplicationFeeCard } from "./application-fee-card";
 import { BillingIdentityCard } from "./billing-identity-card";
@@ -185,6 +186,8 @@ export default function PlatformTenantDetailPage() {
           <ApplicationFeeCard academyId={academyId} canEdit={auth.isAdmin} />
 
           <BillingIdentityCard academyId={academyId} canEdit={auth.isAdmin} />
+
+          <AiUsageCard academyId={academyId} canEdit={auth.isAdmin} />
 
           {auth.isAdmin && <DataOffboardingCard tenant={tenant} />}
 
