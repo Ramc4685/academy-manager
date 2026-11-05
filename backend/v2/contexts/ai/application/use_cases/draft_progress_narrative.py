@@ -66,8 +66,11 @@ def parse_narrative(raw: str, data: ProgressNarrativeInput) -> NarrativeDraft:
     except (ValueError, ValidationError) as exc:
         raise AiProviderError("the model's answer could not be read") from exc
     text = " ".join(draft.text.split())
-    allowed_numbers = {str(data.passed_in_level), str(data.total_in_level)}
     skill_names = {s.skill_name for s in data.skills_mastered_today}
+    # The two counts, plus any number that is part of a given name ("Level 2").
+    allowed_numbers = {str(data.passed_in_level), str(data.total_in_level)} | set(
+        re.findall(r"\d+", " ".join([data.level_name, data.program_name, *skill_names]))
+    )
     if (
         len(text.split()) > MAX_WORDS
         or any(n not in allowed_numbers for n in re.findall(r"\d+", text))

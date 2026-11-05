@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from backend.v2.contexts.ai.domain.narrative import AiNarrative
@@ -15,7 +15,14 @@ class MongoAiNarrativeRepository(TenantScopedRepository):
 
     @staticmethod
     def _to_domain(doc: dict[str, Any]) -> AiNarrative:
-        return AiNarrative.model_validate({k: v for k, v in doc.items() if k != "_id"})
+        # Mongo returns naive UTC datetimes; the domain row is tz-aware.
+        return AiNarrative.model_validate(
+            {
+                k: v.replace(tzinfo=UTC) if isinstance(v, datetime) and v.tzinfo is None else v
+                for k, v in doc.items()
+                if k != "_id"
+            }
+        )
 
     async def upsert_draft(self, row: AiNarrative) -> AiNarrative:
         """A fresh draft replaces whatever row holds the key: the coach asked
