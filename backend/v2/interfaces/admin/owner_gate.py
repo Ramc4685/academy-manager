@@ -188,6 +188,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # departures_routes.py — the leaving report is a financial report,
         # same tier as every other route under /reports/* (issue #698).
         ("GET", f"{_ADMIN}/reports/leaving"),
+        # ai_reports_routes.py — B5 month-close narrator (paid AI, owner-only
+        # like the month-close view it summarises).
+        ("POST", f"{_ADMIN}/reports/month-close/narrative"),
     }
 )
 

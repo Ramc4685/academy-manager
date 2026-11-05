@@ -56,3 +56,29 @@ it is set by hand until a Growth-tier screen exists.
 Whether an academy may use AI at all is `has_feature(academy_id, "ai")` in
 `contexts/platform/billing` (see that context's README). This context does
 not read plans.
+
+## B5: month-close narrator (paid, owner-only)
+
+Feature key `month_close_narrator`, prompt `month-close-narrator-v1`, use case
+`application/use_cases/narrate_month_close.py`, route
+`POST /api/v2/admin/reports/month-close/narrative?period=YYYY-MM`
+(`interfaces/admin/ai_reports_routes.py`, wired in `composition/ai_reports.py`
+at `app.state.ai_reports`). Order: `AiEntitlement.has_ai()` (403
+`Ai.NotEntitled`) -> `RecordAiCall.assert_under_cap()` (429) -> `complete`
+-> `RecordAiCall.execute` -> parse -> number and link check (502).
+
+What the model sees: `reduce_month_close_payload` over the owner's existing
+month-close view and nothing else: period, timezone, the money section's cents
+and rate, invoice counts, autopay run counts and state, the four odd checks
+with at most five `{label, href}` items each, and the warning codes. No ids,
+void reasons, discounts, dates, emails or phones.
+
+Never computes money: every number token in the answer must be a cents value
+from the input (as cents or dollars), a count or rate as given, or the
+period's digits; every `fix_first` href must be an odd item's href or one of
+`/admin/payments`, `/admin/dues`, `/admin/families`, `/admin/billing-health`,
+`/admin/reports`. Anything else is a 502 after the call is recorded.
+
+Where the human is: the owner clicks "Explain this month" on the Reports page
+and reads the result there; the owner is the `approver` on the `ai_calls` row.
+Nothing is stored and nothing reaches a parent.

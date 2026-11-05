@@ -1051,6 +1051,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_month_close = compose_admin_month_close(db)
     # Automated late fees, driven from the dunning tick below (#552).
     app.state.apply_late_fees = compose_apply_late_fees(db)
+    # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
+    from backend.v2.composition.ai_reports import compose_ai_reports
+
+    app.state.ai_reports = compose_ai_reports(app.state.ai, app.state.admin_month_close)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.
