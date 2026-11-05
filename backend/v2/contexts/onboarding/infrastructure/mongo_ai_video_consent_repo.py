@@ -50,8 +50,8 @@ class MongoAiVideoConsentRepository(TenantScopedRepository):
 
     async def children_of(self, parent_id: str) -> list[AiVideoConsentChild]:
         # Same ownership read as the parent waiver page (parent_id or
-        # parent_user_id), without its live-enrollment filter: a parent can
-        # still see and revoke consent for a child between classes.
+        # parent_user_id), without its live-enrollment or active-status filter: a parent can
+        # still see and revoke consent for a child between classes or after they leave.
         academy_id = current_academy_id()
         seen: dict[str, AiVideoConsentChild] = {}
         for field in ("parent_id", "parent_user_id"):
@@ -59,7 +59,6 @@ class MongoAiVideoConsentRepository(TenantScopedRepository):
                 {
                     "academy_id": academy_id,
                     "is_deleted": {"$ne": True},
-                    "status": "active",
                     field: parent_id,
                 },
                 sort=[("full_name", 1)],

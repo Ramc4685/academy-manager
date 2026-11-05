@@ -134,6 +134,15 @@ async def test_revoke_turns_the_gate_off_and_is_recorded() -> None:
     assert await _gate(db, REVIEWED)("acad-a", "s-asha") is True
 
 
+async def test_parent_can_revoke_after_the_child_leaves() -> None:
+    db = await _db()
+    await _grant(db)
+    await db["students"].update_one({"student_id": "s-asha"}, {"$set": {"status": "inactive"}})
+    with tenant_scope("acad-a"):
+        await _parent(db, REVIEWED).revoke(parent_id="p-rao", student_id="s-asha")
+    assert await _gate(db, REVIEWED)("acad-a", "s-asha") is False
+
+
 async def test_revoke_without_a_consent_is_a_no_op() -> None:
     db = await _db()
     with tenant_scope("acad-a"):
