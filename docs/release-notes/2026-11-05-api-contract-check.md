@@ -1,6 +1,6 @@
 # api-contract-check
 
-PR: #TBD
+PR: #1144
 
 ## What changed
 The frontend and backend API shapes are now checked against each other in CI. The backend's OpenAPI description is committed as `frontend/lib/api/openapi.snapshot.json`, with frontend types generated from it. A backend structural test fails when the live API differs from the snapshot, and the existing frontend drift step now fails instead of silently skipping. A new compile-time contract pins 18 billing endpoints the parent and admin money screens read, so a renamed or retyped field fails typecheck instead of breaking a page. The collections view now declares a paused family's `enrollment_id` and `student_name` as always present, which they already were.
