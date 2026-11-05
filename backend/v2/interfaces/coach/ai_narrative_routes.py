@@ -13,7 +13,9 @@
   coach supervisor sees the academy's.
 
 Same guard as the skill routes: the student must be on a session the coach is
-assigned to, else 404. ``AiDisabled`` (503), ``AiNotEntitled`` (403),
+assigned to, else 404. An assistant-only coach gets 403 on drafting and on
+approving, the same rule that stops assistants sharing notes with parents
+(a draft is approved on the spot when coach review is off). ``AiDisabled`` (503), ``AiNotEntitled`` (403),
 ``AiMonthlyCapReached`` (429) and ``AiProviderError`` (502) pass through.
 """
 
@@ -30,7 +32,7 @@ from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.skill_routes import _require_assigned_to_student
 from backend.v2.interfaces.coach.today_routes import _resolve_date
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
+from backend.v2.shared.http import is_assistant_only, is_coach_supervisor, require_coach_surface
 
 router = APIRouter(tags=["coach-ai-narratives"])
 
@@ -68,6 +70,13 @@ async def _academy_day(
     return start, start + timedelta(days=1)
 
 
+def _forbid_assistant(claims: AuthClaims) -> None:
+    if is_assistant_only(claims):
+        raise HTTPException(
+            status_code=403, detail="assistant coaches cannot share notes with parents"
+        )
+
+
 def _dump(row: Any) -> dict[str, object]:
     return row.model_dump(mode="json")  # type: ignore[no-any-return]
 
@@ -80,6 +89,7 @@ async def draft_student_narrative(
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
     narratives: object = Depends(_get_narratives),
 ) -> dict[str, object]:
+    _forbid_assistant(claims)
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     on = await _resolve_date(body.date, academy_id=claims.academy_id, use_cases=use_cases)
     start, end = await _academy_day(use_cases, claims.academy_id, on)
@@ -118,6 +128,8 @@ async def decide_narrative(
     if row is None:
         raise HTTPException(status_code=404, detail="narrative not found")
     await _require_assigned_to_student(use_cases, claims.user_id, row.student_id)
+    if body.status == "approved":
+        _forbid_assistant(claims)
     decided = await review.decide(
         narrative_id, status=body.status, text=body.text, approver=claims.user_id
     )

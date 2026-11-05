@@ -172,6 +172,16 @@ def test_review_off_returns_an_approved_row_the_coach_never_sees_as_pending() ->
     assert calls.approvers == [(calls.recorded[0].call_id, "coach_review_off")]
 
 
+def test_an_assistant_only_coach_cannot_draft_or_approve_for_parents() -> None:
+    composition, _, _ = _narratives(llm=FakeLlm())
+    row = _client(_claims(COACH, "coach"), composition).post(DRAFT, json={}).json()
+    assistant = _client(_claims(COACH, "assistant_coach"), composition)
+    assert assistant.post(DRAFT, json={}).status_code == 403
+    decision = f"/api/v2/coach/narratives/{row['narrative_id']}/decision"
+    assert assistant.put(decision, json={"status": "approved"}).status_code == 403
+    assert assistant.put(decision, json={"status": "rejected"}).status_code == 200
+
+
 def test_another_coach_s_pending_rows_are_not_listed_but_a_supervisor_sees_all() -> None:
     composition, _, _ = _narratives(llm=FakeLlm())
     _client(_claims(COACH, "coach"), composition).post(DRAFT, json={"date": "2026-11-04"})

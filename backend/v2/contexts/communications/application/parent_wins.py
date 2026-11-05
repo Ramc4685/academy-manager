@@ -113,10 +113,13 @@ def _child_block(child: ChildWins, accent: str) -> str:
             f"{esc(up.program_name)} is done, and the certificate is ready.</p>"
         )
         parts.extend(_quote(note) for note in up.coach_notes)
-    if child.narrative and child.skill_wins:
+    # The narrative is drafted from one level; with wins in two levels the
+    # templated lines are the only ones that cover every skill.
+    narrated = bool(child.narrative) and len(child.skill_wins) == 1
+    if narrated:
         parts.append(f'<p style="margin:0 0 12px;">{esc(child.narrative)}</p>')
     for wins in child.skill_wins:
-        if not child.narrative:
+        if not narrated:
             parts.append(
                 f'<p style="margin:0 0 12px;">{esc(_skill_line(child.first_name, wins))}</p>'
             )

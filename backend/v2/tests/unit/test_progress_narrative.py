@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -566,6 +567,23 @@ def test_render_uses_an_approved_narrative_instead_of_the_templated_sentence():
 def test_render_without_a_narrative_keeps_the_templated_sentence():
     _, body = render_parent_wins(_family(""))
     assert "Aarav mastered Forecourt movement today. That&#x27;s 3 of 6 skills in Level 2" in body
+
+
+def test_render_keeps_every_level_s_templated_lines_when_wins_span_two_levels():
+    family = _family("Aarav moved so well today, 3 of 6 done.")
+    child = family.children[0]
+    other = SkillWins(
+        level_name="Level 3",
+        skill_names=("Smash",),
+        passed_in_level=1,
+        total_in_level=5,
+        coach_notes=(),
+    )
+    two = replace(family, children=(replace(child, skill_wins=(*child.skill_wins, other)),))
+    _, body = render_parent_wins(two)
+    assert "Aarav moved so well today" not in body
+    assert "Aarav mastered Forecourt movement today." in body
+    assert "Aarav mastered Smash today." in body
 
 
 # --- the fingerprint: an approved paragraph only while the wins still match ----
