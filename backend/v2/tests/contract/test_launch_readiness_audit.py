@@ -4,6 +4,7 @@ import importlib
 from datetime import UTC, datetime
 
 import pytest
+from pymongo.errors import CollectionInvalid
 
 identity_membership_indexes = importlib.import_module(
     "backend.v2.migrations.0080_identity_membership_indexes"
@@ -65,6 +66,7 @@ async def test_launch_readiness_audit_fails_missing_ledger_copy_and_indexes(db) 
 async def test_launch_readiness_audit_passes_required_storage_and_reports_membership_review(
     db,
 ) -> None:
+    await _install_validators(db)
     await identity_membership_indexes.up(db)
     await _create_launch_specific_indexes(db)
     now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
@@ -76,6 +78,7 @@ async def test_launch_readiness_audit_passes_required_storage_and_reports_member
             "amount_cents": 5_000,
             "unapplied_amount_cents": 5_000,
             "ledger_idempotency_key": "payment:ledger",
+            "currency": "usd",
             "status": "succeeded",
             "created_at": now,
             "updated_at": now,
@@ -151,6 +154,7 @@ async def test_launch_readiness_audit_fails_until_legacy_payments_are_archived(d
 
 @pytest.mark.asyncio
 async def test_launch_readiness_audit_passes_after_legacy_payment_archive(db) -> None:
+    await _install_validators(db)
     await identity_membership_indexes.up(db)
     await _create_launch_specific_indexes(db)
     await db["invoices"].insert_one(
@@ -158,6 +162,13 @@ async def test_launch_readiness_audit_passes_after_legacy_payment_archive(db) ->
             "academy_id": "acad_blno_badminton",
             "invoice_id": "inv-from-legacy-pay-1",
             "backfill_payment_id": "legacy-pay-1",
+            "parent_id": "parent-1",
+            "status": "open",
+            "total_cents": 5_000,
+            "balance_due_cents": 5_000,
+            "currency": "usd",
+            "created_at": datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
+            "updated_at": datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
         }
     )
     await db["legacy_payments_archive"].insert_one(
@@ -522,6 +533,21 @@ async def test_outbox_health_audit_fails_unrecovered_work(db) -> None:
     assert result["stale_locks"] == 1
     assert result["retries_due"] == 1
     assert result["pending_due"] == 1
+
+
+async def _install_validators(db) -> None:
+    """Create every audited collection with its validator, as the migrations do.
+
+    Real Mongo enforces and reports them; mongomock reports the check as
+    unsupported, so this is a no-op there.
+    """
+    for name, validator in launch_readiness_audit.VALIDATORS.items():
+        try:
+            await db.create_collection(name, validator=validator)
+        except (NotImplementedError, TypeError):
+            return
+        except CollectionInvalid:
+            await db.command({"collMod": name, "validator": validator})
 
 
 async def _create_launch_specific_indexes(db) -> None:
