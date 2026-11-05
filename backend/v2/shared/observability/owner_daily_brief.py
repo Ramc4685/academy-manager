@@ -63,6 +63,20 @@ OPEN_INVOICE_STATUSES: tuple[str, ...] = ("open", "partially_paid")
 #: import ``contexts/``), pinned by ``test_trial_passed_prefix_matches_the_domain``.
 TRIAL_PASSED_SOURCE_PREFIX = "trial_passed:"
 
+#: ``payment_attempts`` statuses that mean a charge was tried and did not take
+#: money (``billing/application/family_billing.FAILURE_ATTEMPT_STATUSES``;
+#: duplicated, ``shared/`` may not import ``contexts/``), pinned by
+#: ``test_failed_attempt_statuses_match_billing``. A declined autopay lands
+#: here, not on the legacy ``payments`` collection.
+FAILED_ATTEMPT_STATUSES: tuple[str, ...] = (
+    "failed",
+    "declined",
+    "requires_action",
+    "error",
+    "canceled",
+    "cancelled",
+)
+
 #: The "three things today" lines, in the order they are rendered.
 THREE_THINGS_LABELS: tuple[str, str, str] = (
     "Failed cards",
@@ -157,13 +171,14 @@ class OwnerDailyBrief:
         reporting but must never be what makes the subject line say the owner
         has work waiting, or the flag stops meaning anything.
         """
-        trial_passed, at_risk = self.three_things[1], self.three_things[2]
+        failed_cards, trial_passed, at_risk = self.three_things
         return bool(
             self.approvals_waiting
             or self.payments_failed
             or self.waivers_missing
             or self.emails_undeliverable
             or self.departures
+            or failed_cards.count
             or trial_passed.count
             or at_risk.count
         )
@@ -325,13 +340,22 @@ def _named(
 async def _failed_cards(
     db: AsyncIOMotorDatabase[Any], academy_id: str, since: datetime, facts: FamilyFacts | None
 ) -> dict[str, Any]:
-    """Same rows as ``payments_failed``, with who they belong to."""
+    """Charge attempts in the window that did not take money, with who they belong to.
+
+    Same source and filters as the family-money read model's "last failure":
+    autopay declines are recorded on ``payment_attempts``, so the legacy
+    ``payments`` counter (``payments_failed``) misses them.
+    """
     refs: list[str] = []
-    async for doc in db["payments"].find(
-        {"academy_id": academy_id, "status": "failed", "updated_at": {"$gte": since}},
-        {"parent_id": 1, "parent_user_id": 1},
+    async for doc in db["payment_attempts"].find(
+        {
+            "academy_id": academy_id,
+            "status": {"$in": list(FAILED_ATTEMPT_STATUSES)},
+            "created_at": {"$gte": since},
+        },
+        {"parent_id": 1},
     ):
-        refs.append(str(doc.get("parent_id") or doc.get("parent_user_id") or ""))
+        refs.append(str(doc.get("parent_id") or ""))
     row = _named([r for r in refs if r], facts, count=len(refs), label=THREE_THINGS_LABELS[0])
     return {"failed_cards": row}
 

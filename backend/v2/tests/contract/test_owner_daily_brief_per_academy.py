@@ -94,6 +94,18 @@ async def _seed_signals(db: Any, academy_id: str, n: int) -> None:
                 "updated_at": RECENT,
             }
         )
+        await db["payment_attempts"].insert_one(
+            {
+                "academy_id": academy_id,
+                "attempt_id": f"{academy_id}-attempt-{i}",
+                "invoice_id": f"{academy_id}-inv-{i}",
+                "parent_id": f"{academy_id}-parent-{i}",
+                "status": "failed",
+                "amount_cents": 1000,
+                "currency": "usd",
+                "created_at": RECENT,
+            }
+        )
         await db["invoices"].insert_one(
             {
                 "academy_id": academy_id,

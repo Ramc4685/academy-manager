@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.billing.application.family_billing import FAILURE_ATTEMPT_STATUSES
 from backend.v2.contexts.crm.domain.family_notes import TRIAL_PASSED_SOURCE_PREFIX as DOMAIN_PREFIX
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEventType
 from backend.v2.shared.observability.owner_daily_brief import (
     DEPARTURE_EVENT_TYPES,
+    FAILED_ATTEMPT_STATUSES,
     THREE_THINGS_LABELS,
     TRIAL_PASSED_SOURCE_PREFIX,
     BriefFamily,
@@ -168,6 +170,16 @@ def _db(**overrides: _FakeCollection) -> Any:
                 {"academy_id": o, "status": "failed", "updated_at": RECENT, "parent_id": "p-9"},
             ]
         ),
+        # Where a declined autopay actually lands (ChargeInvoiceViaAutopay ->
+        # record_payment_attempt); the "Failed cards" line reads this.
+        "payment_attempts": _FakeCollection(
+            [
+                {"academy_id": a, "status": "failed", "created_at": RECENT, "parent_id": "fb-1"},
+                {"academy_id": a, "status": "failed", "created_at": OLD, "parent_id": "p-2"},
+                {"academy_id": a, "status": "succeeded", "created_at": RECENT, "parent_id": "p-2"},
+                {"academy_id": o, "status": "failed", "created_at": RECENT, "parent_id": "p-9"},
+            ]
+        ),
         "family_follow_ups": _FakeCollection(
             [
                 {
@@ -294,6 +306,7 @@ async def test_a_quiet_day_does_not_claim_action_is_needed() -> None:
         enrollment_events=_FakeCollection([], aggregate_rows=[]),
         onboarding_applications=_FakeCollection([]),
         payments=_FakeCollection([]),
+        payment_attempts=_FakeCollection([]),
         students=_FakeCollection([]),
         waiver_acceptances=_FakeCollection([]),
         email_suppressions=_FakeCollection([]),
@@ -315,6 +328,7 @@ async def test_new_enrollments_alone_never_flip_the_subject_line() -> None:
         enrollment_events=_FakeCollection([], aggregate_rows=[]),
         onboarding_applications=_FakeCollection([]),
         payments=_FakeCollection([]),
+        payment_attempts=_FakeCollection([]),
         students=_FakeCollection([]),
         waiver_acceptances=_FakeCollection([]),
         email_suppressions=_FakeCollection([]),
@@ -341,6 +355,43 @@ def test_departure_events_match_the_domain() -> None:
 def test_trial_passed_prefix_matches_the_domain() -> None:
     """``shared/`` may not import crm, so the prefix is duplicated."""
     assert TRIAL_PASSED_SOURCE_PREFIX == DOMAIN_PREFIX
+
+
+def test_failed_attempt_statuses_match_billing() -> None:
+    """``shared/`` may not import billing, so the failure statuses are duplicated."""
+    assert set(FAILED_ATTEMPT_STATUSES) == set(FAILURE_ATTEMPT_STATUSES)
+
+
+@pytest.mark.asyncio
+async def test_failed_cards_read_payment_attempts_not_legacy_payments() -> None:
+    """A declined autopay is a ``payment_attempts`` row, never a ``payments`` one."""
+    db = _db(
+        payments=_FakeCollection([]),
+        payment_attempts=_FakeCollection(
+            [
+                {
+                    "academy_id": ACADEMY,
+                    "status": "failed",
+                    "created_at": RECENT,
+                    "parent_id": "p-1",
+                },
+                {"academy_id": ACADEMY, "status": "failed", "created_at": OLD, "parent_id": "p-2"},
+                {
+                    "academy_id": ACADEMY,
+                    "status": "succeeded",
+                    "created_at": RECENT,
+                    "parent_id": "p-2",
+                },
+                {"academy_id": OTHER, "status": "failed", "created_at": RECENT, "parent_id": "p-9"},
+            ]
+        ),
+    )
+    brief = await collect_owner_daily_brief(db, academy_id=ACADEMY, family_facts=_facts, now=NOW)
+
+    failed = brief.three_things[0]
+    assert (failed.count, [f.name for f in failed.families]) == (1, ["Testparent One"])
+    assert brief.payments_failed == 0  # the legacy counter still reads ``payments``
+    assert brief.has_attention_items  # a failed card alone flips the subject line
 
 
 @pytest.mark.asyncio
@@ -374,7 +425,11 @@ async def test_three_things_render_first_in_order_with_links() -> None:
 
 @pytest.mark.asyncio
 async def test_three_things_say_none_when_zero() -> None:
-    quiet = _db(payments=_FakeCollection([]), family_follow_ups=_FakeCollection([]))
+    quiet = _db(
+        payments=_FakeCollection([]),
+        payment_attempts=_FakeCollection([]),
+        family_follow_ups=_FakeCollection([]),
+    )
     brief = await collect_owner_daily_brief(
         quiet, academy_id=ACADEMY, family_facts=_quiet_facts, now=NOW
     )
@@ -390,6 +445,7 @@ async def test_trial_passed_and_at_risk_alone_flip_the_subject_line() -> None:
         enrollment_events=_FakeCollection([], aggregate_rows=[]),
         onboarding_applications=_FakeCollection([]),
         payments=_FakeCollection([]),
+        payment_attempts=_FakeCollection([]),
         students=_FakeCollection([]),
         waiver_acceptances=_FakeCollection([]),
         email_suppressions=_FakeCollection([]),
