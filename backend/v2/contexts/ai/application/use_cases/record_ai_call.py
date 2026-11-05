@@ -25,6 +25,23 @@ class RecordAiCall:
         self._cap_source = cap_source
         self._clock = clock or (lambda: datetime.now(UTC))
 
+    async def assert_under_cap(self) -> None:
+        """Refuse before any tokens are spent when this month is at the cap.
+        Features call it first, then ``execute`` after the model answers."""
+        await self._check_cap(self._clock())
+
+    async def _check_cap(self, now: datetime) -> None:
+        month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+        used = await self._calls.count_since(month_start)
+        cap = await self._cap_source.monthly_cap()
+        # shortcut: count-then-insert is not atomic (concurrent calls at cap-1
+        # can each pass); upgrade to a reserve on a per-month counter document
+        # ($inc with a $lt filter) when the overshoot starts to matter.
+        if used + 1 > cap:
+            raise AiMonthlyCapReached(
+                f"monthly AI call cap reached ({used} of {cap})", used=used, cap=cap
+            )
+
     async def execute(
         self,
         *,
@@ -34,18 +51,7 @@ class RecordAiCall:
         approver: str | None,
     ) -> AiCallRecord:
         now = self._clock()
-        month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
-        used = await self._calls.count_since(month_start)
-        cap = await self._cap_source.monthly_cap()
-        # shortcut: the cap is checked when the call is recorded, after the
-        # tokens were spent, and count-then-insert is not atomic (concurrent
-        # calls at cap-1 can each pass); upgrade to a pre-call reserve on a
-        # per-month counter document ($inc with a $lt filter) when the first
-        # feature must refuse before calling the model.
-        if used + 1 > cap:
-            raise AiMonthlyCapReached(
-                f"monthly AI call cap reached ({used} of {cap})", used=used, cap=cap
-            )
+        await self._check_cap(now)
         record = AiCallRecord(
             feature=feature,
             prompt_version=prompt_version,
