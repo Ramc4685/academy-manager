@@ -1051,6 +1051,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_month_close = compose_admin_month_close(db)
     # Automated late fees, driven from the dunning tick below (#552).
     app.state.apply_late_fees = compose_apply_late_fees(db)
+    # Phase 2 B6 (paid AI): the owner's standing approval for AI win-back
+    # wording, hung on the win-back notifier, and the coach's technique draft.
+    from backend.v2.composition.ai_technique import compose_ai_technique
+    from backend.v2.composition.ai_win_back import compose_ai_win_back
+
+    app.state.ai_win_back = compose_ai_win_back(db, app.state.ai, app.state.win_back)
+    app.state.ai_technique = compose_ai_technique(db, app.state.ai)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.

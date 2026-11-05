@@ -21,7 +21,7 @@ import html
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
@@ -66,6 +66,15 @@ def _para(text: str) -> str:
     return f"<p style='margin:0 0 12px'>{text}</p>"
 
 
+class WinBackPersonaliser(Protocol):
+    """B6: the AI-drafted second paragraph, or ``None`` when the owner has not
+    turned the standing approval on. Any error means the template is used."""
+
+    async def paragraph(
+        self, *, student_id: str, child_first_name: str, milestone_days: int
+    ) -> str | None: ...
+
+
 class WinBackNotificationAdapter:
     """Resolves the parent's email and sends the win-back copy through the
     already-gated ``EmailSendPort`` (suppression + preference gates apply
@@ -79,11 +88,15 @@ class WinBackNotificationAdapter:
         students: Any,
         sender: EmailSendPort,
         academies: Any | None = None,
+        personaliser: WinBackPersonaliser | None = None,
     ) -> None:
         self._academies = academies
         self._audiences = audiences
         self._students = students
         self._sender = sender
+        #: Attached after construction by ``compose_ai_win_back`` (the AI
+        #: composition is built later in main.py than this adapter).
+        self.personaliser = personaliser
 
     async def win_back(
         self,
@@ -109,13 +122,32 @@ class WinBackNotificationAdapter:
         safe_name = html.escape(student_name)
 
         subject = f"We miss having {safe_name} in class"
+        second = "We would love to have them back whenever you're ready to re-enroll."
+        if self.personaliser is not None:
+            try:
+                drafted = await self.personaliser.paragraph(
+                    student_id=student_id,
+                    child_first_name=student_name.split()[0] if student_name.split() else "",
+                    milestone_days=milestone_days,
+                )
+            except Exception:
+                # Disabled, not entitled, cap, provider or validation: the
+                # template still goes out. No prompt text in the log.
+                logger.warning(
+                    "win_back_ai_paragraph_failed",
+                    extra={"student_id": student_id, "milestone_days": milestone_days},
+                    exc_info=True,
+                )
+            else:
+                if drafted:
+                    second = html.escape(drafted)
         body = "".join(
             [
                 _para(
                     f"It's been {milestone_days} days since <strong>{safe_name}</strong> "
                     "left the academy."
                 ),
-                _para("We would love to have them back whenever you're ready to re-enroll."),
+                _para(second),
                 _para("If this no longer applies, you can safely ignore this message."),
             ]
         )
@@ -169,6 +201,7 @@ class AcademyWinBackSwitch:
 @dataclass
 class WinBackComposition:
     send_win_back_notices: SendWinBackNotices
+    notifier: WinBackNotificationAdapter
 
 
 def compose_win_back(db: Any, settings: Any) -> WinBackComposition:
@@ -210,4 +243,4 @@ def compose_win_back(db: Any, settings: Any) -> WinBackComposition:
         notifier=notifier,
         switch=AcademyWinBackSwitch(academies),
     )
-    return WinBackComposition(send_win_back_notices=use_case)
+    return WinBackComposition(send_win_back_notices=use_case, notifier=notifier)

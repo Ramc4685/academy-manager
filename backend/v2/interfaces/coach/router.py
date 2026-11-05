@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .academy_routes import router as academy_router
+from .ai_technique_routes import router as ai_technique_router
 from .announcement_routes import router as announcement_router
 from .attendance_routes import router as attendance_router
 from .dashboard_routes import router as dashboard_router
@@ -40,3 +41,4 @@ router.include_router(skill_router)
 router.include_router(messages_router)
 router.include_router(announcement_router)
 router.include_router(trial_outcome_router)
+router.include_router(ai_technique_router)

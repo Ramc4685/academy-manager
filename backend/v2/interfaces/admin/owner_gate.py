@@ -188,6 +188,10 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # departures_routes.py — the leaving report is a financial report,
         # same tier as every other route under /reports/* (issue #698).
         ("GET", f"{_ADMIN}/reports/leaving"),
+        # ai_win_back_routes.py — the owner's standing approval of AI win-back
+        # wording (B6). Read and write both owner-only.
+        ("GET", f"{_ADMIN}/ai/win-back-personalised"),
+        ("PUT", f"{_ADMIN}/ai/win-back-personalised"),
     }
 )
 
