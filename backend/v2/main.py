@@ -939,7 +939,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ai_calls cap. Plumbing only; no feature reads it yet.
     from backend.v2.composition.ai import compose_ai
 
-    app.state.ai = compose_ai(db, settings)
+    app.state.ai = compose_ai(db, settings, has_feature=app.state.platform_billing.has_feature)
     # Phase 2 slice B2: the roster-import copilot over app.state.ai.
     from backend.v2.composition.ai_import import compose_ai_import
 
@@ -1071,6 +1071,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_platform_fee = compose_admin_platform_fee(db)
     # Automated late fees, driven from the dunning tick below (#552).
     app.state.apply_late_fees = compose_apply_late_fees(db)
+    # B3: AI-drafted reply on the pipeline card, and its human-approved send.
+    from backend.v2.composition.ai_pipeline import compose_ai_pipeline
+
+    app.state.ai_pipeline = compose_ai_pipeline(db, settings, ai=app.state.ai)
 
     # Owner (franchise) BFF wiring — UIM11. Left unset when the flag is off so
     # the routes 404 even if something mounts them.

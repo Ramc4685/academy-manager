@@ -10,7 +10,7 @@ from typing import get_args
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 
-from backend.v2.composition.ai import AiComposition
+from backend.v2.composition.ai import AiComposition, PlatformAiEntitlement
 from backend.v2.composition.ai_curriculum import (
     CurriculumProgramSportLookup,
     compose_ai_curriculum,
@@ -212,6 +212,16 @@ async def test_sport_lookup_is_tenant_scoped() -> None:
 def test_compose_reports_enabled_only_off_the_disabled_port() -> None:
     db = AsyncMongoMockClient()["test_db"]
     record = RecordAiCall(calls=FakeCalls(), cap_source=FakeCap())
-    off = compose_ai_curriculum(db, AiComposition(llm=DisabledLlmPort(), record_ai_call=record))
-    on = compose_ai_curriculum(db, AiComposition(llm=FakeLlm("{}"), record_ai_call=record))
+    off = compose_ai_curriculum(
+        db,
+        AiComposition(
+            llm=DisabledLlmPort(), record_ai_call=record, entitlement=PlatformAiEntitlement(None)
+        ),
+    )
+    on = compose_ai_curriculum(
+        db,
+        AiComposition(
+            llm=FakeLlm("{}"), record_ai_call=record, entitlement=PlatformAiEntitlement(None)
+        ),
+    )
     assert (off.enabled, on.enabled) == (False, True)

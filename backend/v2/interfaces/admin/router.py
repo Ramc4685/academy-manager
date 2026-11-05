@@ -8,6 +8,7 @@ from .academy_routes import router as academy_router
 from .account_deletion_routes import router as account_deletion_router
 from .ai_curriculum_routes import router as ai_curriculum_router
 from .ai_import_routes import router as ai_import_router
+from .ai_pipeline_routes import router as ai_pipeline_router
 from .audit_routes import router as audit_router
 from .billing_health_routes import router as billing_health_router
 from .billing_products_routes import router as billing_products_router
@@ -101,4 +102,5 @@ router.include_router(pipeline_router)
 router.include_router(departure_policy_router)
 router.include_router(hold_router)
 router.include_router(departures_router)
+router.include_router(ai_pipeline_router)
 router.include_router(ai_curriculum_router)

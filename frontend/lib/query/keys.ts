@@ -77,6 +77,8 @@ export const queryKeys = {
     // People CRM Pipeline board (L3b). Under `families()` so a families-wide
     // invalidation refreshes it too.
     pipelineBoard: () => ["admin", "families", "pipeline"] as const,
+    // AI status (B1): hides the paid AI buttons while AI is off.
+    aiStatus: () => ["admin", "ai", "status"] as const,
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
     familyRecord: (familyId: string) =>
@@ -139,7 +141,6 @@ export const queryKeys = {
     billingRules: () => ["admin", "billing", "rules"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     // Shared with slice B1's AI status card: both read the same key.
-    aiStatus: () => ["admin", "ai", "status"] as const,
     aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,
     publicPage: () => ["admin", "academy", "public-page"] as const,
     programs: () => ["admin", "programs"] as const,

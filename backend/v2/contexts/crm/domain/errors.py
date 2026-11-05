@@ -164,3 +164,18 @@ class ImportUnavailable(DomainError):
 
     code = "Crm.ImportUnavailable"
     status_code = 503
+
+
+class PipelineReplyNotSendable(DomainError):
+    """The lead cannot be emailed: no address on the contact, or the address
+    opted out or is suppressed (``details.reason``)."""
+
+    code = "Crm.PipelineReplyNotSendable"
+    status_code = 409
+
+
+class PipelineReplySendFailed(DomainError):
+    """The provider refused or could not be reached; nothing was logged."""
+
+    code = "Crm.PipelineReplySendFailed"
+    status_code = 502
