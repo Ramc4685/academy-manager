@@ -1,6 +1,6 @@
 # real-backend-journey-e2e
 
-PR: #0000
+PR: #1145
 
 ## What changed
 Test-only. A new Playwright spec, `frontend/e2e/specs/real-backend-journeys.spec.ts`, runs six journeys against the real Next.js frontend, the real FastAPI backend and real MongoDB (Firebase Auth emulator), with nothing faked by `page.route`. The journeys are:
