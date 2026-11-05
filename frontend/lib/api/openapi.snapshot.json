@@ -19219,6 +19219,125 @@
         "title": "InvoiceAttemptsResponse",
         "type": "object"
       },
+      "InvoiceAuditEntryView": {
+        "description": "Mirror of the billing domain's BillingAuditEntry (interfaces may not import domain).",
+        "properties": {
+          "academy_id": {
+            "title": "Academy Id",
+            "type": "string"
+          },
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "audit_id": {
+            "title": "Audit Id",
+            "type": "string"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "invoice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "audit_id",
+          "academy_id",
+          "action",
+          "actor_id",
+          "at"
+        ],
+        "title": "InvoiceAuditEntryView",
+        "type": "object"
+      },
+      "InvoiceAuditResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/InvoiceAuditEntryView"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "InvoiceAuditResponse",
+        "type": "object"
+      },
       "InvoiceCreditUsageDto": {
         "properties": {
           "amount_cents": {
@@ -19727,6 +19846,34 @@
           "payment_id"
         ],
         "title": "IssueRefundRequest",
+        "type": "object"
+      },
+      "IssueRefundResult": {
+        "properties": {
+          "payment_id": {
+            "title": "Payment Id",
+            "type": "string"
+          },
+          "refunded_cents": {
+            "title": "Refunded Cents",
+            "type": "integer"
+          },
+          "stripe_refund_id": {
+            "title": "Stripe Refund Id",
+            "type": "string"
+          },
+          "total_refunded_cents": {
+            "title": "Total Refunded Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "payment_id",
+          "stripe_refund_id",
+          "refunded_cents",
+          "total_refunded_cents"
+        ],
+        "title": "IssueRefundResult",
         "type": "object"
       },
       "LadderDraftBody": {
@@ -35096,15 +35243,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "items": {
-                      "additionalProperties": true,
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "title": "Response List Invoice Audit Api V2 Admin Billing Invoices  Invoice Id  Audit Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvoiceAuditResponse"
                 }
               }
             },
@@ -40378,9 +40517,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Refund Api V2 Admin Payments Refund Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IssueRefundResult"
                 }
               }
             },

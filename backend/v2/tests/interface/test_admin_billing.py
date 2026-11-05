@@ -1407,16 +1407,33 @@ def test_refund_invoice_route_uses_invoice_native_use_case(admin_client):
 def test_list_invoice_audit_route_returns_entries(admin_client):
     async def list_billing_audit(**kwargs):
         assert kwargs["invoice_id"] == "inv-1"
-        return [{"audit_id": "baud-1", "action": "refund_issued", "actor_id": "admin-1"}]
+        # Shape of a real BillingAuditEntry.model_dump(): every field present.
+        return [
+            {
+                "audit_id": "baud-1",
+                "academy_id": "acad-1",
+                "action": "refund_issued",
+                "actor_id": "admin-1",
+                "at": datetime(2026, 11, 5, 12, 0, tzinfo=UTC),
+                "invoice_id": "inv-1",
+                "payment_id": None,
+                "parent_id": None,
+                "reason": None,
+                "before": None,
+                "after": {"refunded_cents": 3_000},
+            }
+        ]
 
     admin_client.use_cases.list_billing_audit = list_billing_audit
 
     response = admin_client.get("/api/v2/admin/billing/invoices/inv-1/audit")
 
     assert response.status_code == 200, response.text
-    assert response.json() == {
-        "entries": [{"audit_id": "baud-1", "action": "refund_issued", "actor_id": "admin-1"}]
-    }
+    (entry,) = response.json()["entries"]
+    assert entry["audit_id"] == "baud-1"
+    assert entry["action"] == "refund_issued"
+    assert entry["at"] == "2026-11-05T12:00:00Z"
+    assert entry["after"] == {"refunded_cents": 3_000}
 
 
 def test_list_invoice_audit_missing_invoice_returns_404(admin_client):

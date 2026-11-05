@@ -37,14 +37,18 @@ fail() { echo -e "${RED}✗${RESET} $*"; }
 info() { echo -e "${YELLOW}▸${RESET} $*"; }
 header() { echo -e "\n${BOLD}$*${RESET}"; }
 
+# Per-run output file: concurrent gates in other worktrees must not overwrite it.
+CHECK_OUT="$(mktemp -t pre-push-out)"
+trap 'rm -f "$CHECK_OUT"' EXIT
+
 # Fail-fast: stop at the first failing check instead of running everything.
 run_check() {
   local label="$1"; shift
-  if "$@" > /tmp/pre-push-out 2>&1; then
+  if "$@" > "$CHECK_OUT" 2>&1; then
     pass "$label"
   else
     fail "$label"
-    cat /tmp/pre-push-out
+    cat "$CHECK_OUT"
     echo ""
     echo -e "${RED}${BOLD}Check failed — fix before pushing.${RESET}"
     exit 1
