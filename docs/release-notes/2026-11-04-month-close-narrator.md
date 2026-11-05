@@ -1,6 +1,6 @@
 # month-close-narrator
 
-PR: #TBD
+PR: #1139
 
 ## What changed
 Owners on a plan with the `ai` feature get an "Explain this month" button on the Reports page's month-close view. It asks the model for a short summary of the month and up to three "fix first" links, built only from the numbers already on the page; every number and link in the answer is checked against the month-close view before it is shown.
