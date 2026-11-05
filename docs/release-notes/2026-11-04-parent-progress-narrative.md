@@ -1,6 +1,6 @@
 # parent-progress-narrative
 
-PR: #TBD
+PR: #1138
 
 ## What changed
 Coaches can ask for an AI-drafted paragraph for tonight's parent "evening wins" email: in the tap-skills workspace, a "Draft tonight's note" button appears under each student who mastered a skill today, the draft opens in an editable box, and the coach approves or rejects it; the Today page shows how many notes wait for approval. An approved paragraph replaces the templated "X mastered Y today" sentence in that evening's email (the coach's quoted notes and the progress button stay); a pending or rejected draft changes nothing, so the email never waits. The model only sees the child's first name, the level and program names, today's skills with their criteria and the coach's quick-tag words, and the passed/total counts; every call is written to `ai_calls`, and the coach's approval becomes that row's `approver`. The monthly report card is unchanged (its body is tiles and a focus line, not a sentence to swap).
