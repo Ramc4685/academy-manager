@@ -426,7 +426,9 @@ export function draftSkillLadder(
 ): Promise<SkillLadderDraft> {
   return apiFetch<SkillLadderDraft>(
     `${CURRICULUM_PROGRAMS_PATH}/${encodeURIComponent(programId)}/ladder-draft`,
-    { method: "POST", body: JSON.stringify(body) },
+    // The backend lets the model run up to 60 s; the default 20 s abort would
+    // drop the draft client-side while the server still spends tokens.
+    { method: "POST", body: JSON.stringify(body), timeoutMs: 75_000 },
   );
 }
 
