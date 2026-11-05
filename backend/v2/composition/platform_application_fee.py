@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    AssignDefaultApplicationFee,
     GetApplicationFee,
     SetApplicationFee,
 )
@@ -49,4 +50,15 @@ def compose_platform_application_fee(db: Any) -> PlatformApplicationFee:
             audit=MongoBillingAuditLogRepository(db),
             academy_exists=academy_exists,
         ),
+    )
+
+
+def compose_default_application_fee_assigner(db: Any) -> AssignDefaultApplicationFee:
+    """For ``TenantLifecycleService.create_tenant``: new academies start on the
+    default markup. No existence probe: the tenant row was just written."""
+    return AssignDefaultApplicationFee(
+        set_fee=SetApplicationFee(
+            settings=MongoBillingSettingsRepository(db),
+            audit=MongoBillingAuditLogRepository(db),
+        )
     )

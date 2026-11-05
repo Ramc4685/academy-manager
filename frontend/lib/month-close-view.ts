@@ -43,6 +43,7 @@ const WARNING_LABELS: Record<string, string> = {
   dunning_unavailable: "the autopay retry ladder could not be read",
   discounts_unavailable: "the tuition discount summary could not be read",
   card_state_unavailable: "cards on file could not be read, so the autopay-without-a-card check was skipped",
+  platform_fee_unavailable: "the CourtMastr processing fee rate could not be read",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -100,6 +101,13 @@ export function normalizeMonthClose(data: unknown, period = ""): AdminMonthClose
       collected_cents: numberOr(money.collected_cents, 0),
       outstanding_cents: numberOr(money.outstanding_cents, 0),
       collection_rate: typeof rate === "number" && Number.isFinite(rate) ? rate : null,
+      stripe_collected_cents: numberOr(money.stripe_collected_cents, 0),
+      // Null, never 0: a fee we did not compute is not shown (Phase 2 A1).
+      platform_fee_bps:
+        typeof money.platform_fee_bps === "number" ? money.platform_fee_bps : null,
+      platform_fee_cents:
+        typeof money.platform_fee_cents === "number" ? money.platform_fee_cents : null,
+      platform_fee_estimated: money.platform_fee_estimated === true,
     },
     autopay_run: {
       charge_on: typeof run.charge_on === "string" ? run.charge_on : null,
@@ -370,6 +378,31 @@ export function monthCloseVerdict(view: AdminMonthCloseView): MonthCloseVerdict 
   }
 
   return { ok: issueCount === 0, issueCount, issues };
+}
+
+export interface MonthClosePlatformFee {
+  /** The fee taken; the page formats it. */
+  cents: number;
+  /** The parenthetical after the amount: how the number was arrived at. */
+  detail: string;
+}
+
+/**
+ * The processing-fee disclosure (Phase 2 A1), or null when there is nothing
+ * to disclose: no fee was taken and the rate is 0, or the rate could not be
+ * read (a number we did not compute is never shown; `warnings` says why).
+ * Fees recorded on the month's payments still show once the rate is set to
+ * 0; "estimated" appears only when the backend estimated part of the amount.
+ */
+export function platformFeeDisclosure(view: AdminMonthCloseView): MonthClosePlatformFee | null {
+  const { platform_fee_bps: bps, platform_fee_cents: cents, platform_fee_estimated } = view.money;
+  if (bps == null || cents == null || (bps <= 0 && cents <= 0)) return null;
+  if (bps <= 0) return { cents, detail: "recorded on this month's payments" };
+  const rate = `${(bps / 100).toFixed(2)}%`;
+  return {
+    cents,
+    detail: `${rate} of Stripe-collected payments${platform_fee_estimated ? ", estimated" : ""}`,
+  };
 }
 
 /** One muted line naming every source that could not be read, or null. */

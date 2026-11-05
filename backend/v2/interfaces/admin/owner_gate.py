@@ -113,6 +113,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # tier as Reports and Payouts (spec 2026-09-07 §2). Admins who could
         # open Billing Health before this change now get a 404.
         ("GET", f"{_ADMIN}/billing/connect-readiness"),
+        # plan_routes.py — what the academy pays CourtMastr (Phase 2 A2).
+        ("GET", f"{_ADMIN}/billing/plan"),
+        ("POST", f"{_ADMIN}/billing/plan/checkout"),
         ("GET", f"{_ADMIN}/billing/webhooks"),
         ("POST", f"{_ADMIN}/billing/webhook-events/{{event_id}}/replay"),
         ("GET", f"{_ADMIN}/billing/reconciliation-runs"),
@@ -192,6 +195,10 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # wording (B6). Read and write both owner-only.
         ("GET", f"{_ADMIN}/ai/win-back-personalised"),
         ("PUT", f"{_ADMIN}/ai/win-back-personalised"),
+        # ai_import_routes.py (Phase 2 slice B2): whether the roster-import
+        # copilot may see real spreadsheet values is the owner's call.
+        ("GET", f"{_ADMIN}/ai/import-sharing"),
+        ("PUT", f"{_ADMIN}/ai/import-sharing"),
     }
 )
 

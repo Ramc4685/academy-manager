@@ -163,6 +163,48 @@ describe("apiFetch Sentry capture (#707)", () => {
   });
 });
 
+describe("apiFetch timeout", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((_: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          const abort = new Error("aborted");
+          abort.name = "AbortError";
+          reject(abort);
+        });
+      }),
+    ));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("aborts after 20 s by default", async () => {
+    const pending = apiFetch("/coach/today");
+    const settled = vi.fn();
+    void pending.catch(settled);
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("honours a per-request timeoutMs", async () => {
+    const pending = apiFetch("/admin/curriculum/programs/p1/ladder-draft", {
+      method: "POST",
+      timeoutMs: 75_000,
+    });
+    const settled = vi.fn();
+    void pending.catch(settled);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(55_000);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
 describe("apiFetch FormData bodies", () => {
   it("leaves Content-Type to the browser so the multipart boundary is set", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(200, { logo_url: "https://x" }));

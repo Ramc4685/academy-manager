@@ -8,6 +8,7 @@ import {
   monthCloseVerdict,
   normalizeMonthClose,
   oddRows,
+  platformFeeDisclosure,
   warningLine,
 } from "./month-close-view.ts";
 
@@ -360,4 +361,41 @@ test("a garbage payload normalizes to zeros instead of throwing", () => {
   assert.deepEqual(empty.odd, []);
   assert.equal(monthCloseTiles(empty)[0].value, "0");
   assert.equal(autopayRunBox(empty).state, "none");
+});
+
+test("the processing-fee line shows a computed rate or a recorded fee, never a guess", () => {
+  assert.equal(platformFeeDisclosure(view()), null);
+  assert.deepEqual(
+    platformFeeDisclosure(
+      view({ money: { collected_cents: 400000, platform_fee_bps: 100, platform_fee_cents: 3999 } }),
+    ),
+    { cents: 3999, detail: "1.00% of Stripe-collected payments" },
+  );
+  // "estimated" only when the backend says part of the amount was.
+  assert.deepEqual(
+    platformFeeDisclosure(
+      view({
+        money: { platform_fee_bps: 100, platform_fee_cents: 3999, platform_fee_estimated: true },
+      }),
+    ),
+    { cents: 3999, detail: "1.00% of Stripe-collected payments, estimated" },
+  );
+  assert.equal(
+    platformFeeDisclosure(view({ money: { platform_fee_bps: 0, platform_fee_cents: 0 } })),
+    null,
+  );
+  // A historical statement keeps its recorded fees after the rate drops to 0,
+  // worded from the amount rather than the current rate.
+  assert.deepEqual(
+    platformFeeDisclosure(view({ money: { platform_fee_bps: 0, platform_fee_cents: 74 } })),
+    { cents: 74, detail: "recorded on this month's payments" },
+  );
+  assert.equal(
+    platformFeeDisclosure(view({ money: { platform_fee_bps: 100, platform_fee_cents: null } })),
+    null,
+  );
+  assert.match(
+    warningLine(view({ warnings: ["platform_fee_unavailable"] })),
+    /processing fee rate could not be read/,
+  );
 });

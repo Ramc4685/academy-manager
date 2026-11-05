@@ -16,6 +16,7 @@ import {
   type CoachDigestTestSendResponse,
   type UpdateAdminNotificationsRequest,
 } from "@/lib/api/admin";
+import { getImportSharing, setImportSharing } from "@/lib/api/admin-ai-import";
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -200,6 +201,7 @@ export function NotifyPanel() {
           )}
         </div>
 
+        <AiImportSharingToggle />
         <CoachDigestTools />
       </Card>
     </section>
@@ -229,6 +231,41 @@ function AiWinBackToggle() {
       checked={query.data.enabled}
       onChange={(checked) => mutation.mutate(checked)}
     />
+  );
+}
+
+/**
+ * Phase 2 slice B2, owner-only (`ai.share_import_values`). The GET 404s for a
+ * plain admin, so the control renders for owners only; saved on change.
+ */
+function AiImportSharingToggle() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: queryKeys.admin.aiImportSharing(),
+    queryFn: getImportSharing,
+    retry: false,
+  });
+  const mutation = useMutation({
+    mutationFn: (value: boolean) => setImportSharing(value),
+    onSuccess: (view) => queryClient.setQueryData(queryKeys.admin.aiImportSharing(), view),
+  });
+  if (!query.data) return null;
+  return (
+    <div className="mt-8 border-t border-rally-line pt-6" data-testid="admin-settings-ai-import-sharing">
+      <Overline>AI import helper</Overline>
+      <div className="mt-4">
+        <Toggle
+          label="Let the AI import helper see real spreadsheet values (names, emails, phones)."
+          helper="Off: it sees only the column headers and masked samples."
+          testId="ai-import-share-values"
+          checked={query.data.share_values}
+          onChange={(checked) => mutation.mutate(checked)}
+        />
+        {mutation.isError && (
+          <p className="mt-2 text-sm font-medium text-red-700">{mutation.error.message}</p>
+        )}
+      </div>
+    </div>
   );
 }
 

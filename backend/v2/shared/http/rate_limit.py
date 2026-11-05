@@ -55,6 +55,7 @@ _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
     # a few files a minute.
     ("POST", "/api/v2/admin/imports/families/preview"): (10, 60),
     ("POST", "/api/v2/admin/imports/families/commit"): (10, 60),
+    ("POST", "/api/v2/admin/imports/families/map-columns"): (10, 60),
 }
 
 # Second, per-HOST ceiling for anonymous writes that land on one academy

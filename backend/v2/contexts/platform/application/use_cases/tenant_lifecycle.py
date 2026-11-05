@@ -108,6 +108,15 @@ class InvoicePrefixAssigner(Protocol):
     async def execute(self, *, academy_id: str, slug: str) -> str: ...
 
 
+class DefaultApplicationFeeAssigner(Protocol):
+    """Starts a new academy on the default processing markup (billing owns
+    the rate and the audit). Wired in composition to billing's
+    ``AssignDefaultApplicationFee``.
+    """
+
+    async def execute(self, *, academy_id: str, actor_id: str) -> int: ...
+
+
 class TenantLifecycleService:
     """Application service for platform tenant lifecycle operations."""
 
@@ -119,9 +128,11 @@ class TenantLifecycleService:
         clock: Callable[[], datetime] | None = None,
         audit_recorder: AuditRecorder | None = None,
         invoice_prefix_assigner: InvoicePrefixAssigner | None = None,
+        default_application_fee_assigner: DefaultApplicationFeeAssigner | None = None,
     ) -> None:
         self._tenants = tenants
         self._invoice_prefix_assigner = invoice_prefix_assigner
+        self._default_application_fee_assigner = default_application_fee_assigner
         self._id_factory = id_factory or (lambda prefix: f"{prefix}{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
         self._audit_recorder = audit_recorder
@@ -189,6 +200,10 @@ class TenantLifecycleService:
         if self._invoice_prefix_assigner is not None:
             await self._invoice_prefix_assigner.execute(
                 academy_id=created.academy_id, slug=created.slug
+            )
+        if self._default_application_fee_assigner is not None:
+            await self._default_application_fee_assigner.execute(
+                academy_id=created.academy_id, actor_id=command.actor_user_id
             )
         await self._emit_audit(
             actor_user_id=command.actor_user_id,

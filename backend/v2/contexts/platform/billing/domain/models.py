@@ -66,11 +66,23 @@ class TenantSubscription(BaseModel):
     cancellation_status: CancellationStatus = "none"
     stripe_customer_id: str | None = None
     stripe_subscription_id: str | None = None
+    # Stripe's ``created`` on that subscription: lets the webhook sync accept a
+    # newer subscription after this one was cancelled and ignore older ones.
+    stripe_subscription_created_at: datetime | None = None
     current_period_start: datetime | None = None
     current_period_end: datetime | None = None
     trial_started_at: datetime | None = None
     trial_ends_at: datetime | None = None
     cancel_at_period_end: bool = False
     cancelled_at: datetime | None = None
+    # The open Stripe Billing Checkout from ``StartGrowthCheckout``: a second
+    # request continues it instead of opening another payable session, and
+    # the token (also in the session's and subscription's Stripe metadata)
+    # lets the webhook sync accept the subscription it produced as the
+    # successor of a live one (an upgrade). All cleared once that lands.
+    pending_checkout_token: str | None = None
+    pending_checkout_session_id: str | None = None
+    pending_checkout_url: str | None = None
+    pending_checkout_created_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

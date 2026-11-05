@@ -43,6 +43,9 @@ FamilyStageName = Literal[
 ]
 
 
+AtRiskReason = Literal["attendance", "payment"]
+
+
 class _View(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -92,6 +95,12 @@ class AdminFamilyIndexRow(_View):
     owes_money: bool | None = None
     #: True when the search matched the parent (name, email, phone).
     matched_parent: bool = False
+    #: Rules only (AI strategy Phase 2, A4): ``attendance`` when a child's
+    #: lifecycle is at_risk, ``payment`` when the money block carries a
+    #: failed card or an overdue invoice. ``payment`` is withheld from callers
+    #: who may not see money, like ``owes_money``.
+    at_risk: bool = False
+    at_risk_reasons: list[AtRiskReason] = Field(default_factory=list)
 
 
 class AdminFamilyIndexPage(_View):
@@ -192,9 +201,24 @@ def _owes(money: FamilyMoney | None, view: MoneyView) -> bool | None:
     return money.balance_cents > 0
 
 
+def at_risk_reasons(record: FamilyRecord, *, view: MoneyView) -> list[AtRiskReason]:
+    reasons: list[AtRiskReason] = []
+    if any(child.lifecycle == "at_risk" for child in record.children):
+        reasons.append("attendance")
+    money = record.money
+    if (
+        view != "none"
+        and money is not None
+        and (money.last_failed_payment_at is not None or money.overdue_invoice_count > 0)
+    ):
+        reasons.append("payment")
+    return reasons
+
+
 def _row(row: FamilyIndexRow, *, view: MoneyView) -> AdminFamilyIndexRow:
     record = row.record
     matched = frozenset(row.hit.matched_student_ids) if row.hit else frozenset()
+    reasons = at_risk_reasons(record, view=view)
     return AdminFamilyIndexRow(
         family_id=record.family_id,
         parent_name=record.parent_name,
@@ -208,6 +232,8 @@ def _row(row: FamilyIndexRow, *, view: MoneyView) -> AdminFamilyIndexRow:
         money=_money(record.money, view == "amounts"),
         owes_money=_owes(record.money, view),
         matched_parent=bool(row.hit and row.hit.matched_parent),
+        at_risk=bool(reasons),
+        at_risk_reasons=reasons,
     )
 
 
