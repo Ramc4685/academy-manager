@@ -21,4 +21,4 @@ class MongoAiCallRepository(TenantScopedRepository):
         """The human who approved the output, set after the fact (B4: the
         coach's approval of a narrative). False when no such row in scope."""
         result = await self._update_one({"call_id": call_id}, {"$set": {"approver": approver}})
-        return result.matched_count == 1
+        return bool(result.matched_count == 1)
