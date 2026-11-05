@@ -10,6 +10,7 @@ vi.mock("next/link", () => ({
 vi.mock("@/lib/api/admin", () => ({
   assignAdminWaiverTemplate: vi.fn(),
   createAdminWaiverTemplate: vi.fn(),
+  listAdminAiVideoConsents: vi.fn(),
   listAdminWaivers: vi.fn(),
   listAdminWaiverTemplates: vi.fn(),
   publishAdminWaiverTemplate: vi.fn(),

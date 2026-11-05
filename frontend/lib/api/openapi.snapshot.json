@@ -794,6 +794,22 @@
         "title": "AdminAcademyView",
         "type": "object"
       },
+      "AdminAiVideoConsentList": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/AiVideoConsentRow"
+            },
+            "title": "Children",
+            "type": "array"
+          }
+        },
+        "required": [
+          "children"
+        ],
+        "title": "AdminAiVideoConsentList",
+        "type": "object"
+      },
       "AdminAttentionItemView": {
         "properties": {
           "attention_id": {
@@ -9857,6 +9873,81 @@
           "month"
         ],
         "title": "AiUsageView",
+        "type": "object"
+      },
+      "AiVideoConsentRow": {
+        "description": "One child's consent status, as the parent and the admin see it.",
+        "properties": {
+          "accepted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "accepted_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted By"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "status": {
+            "enum": [
+              "granted",
+              "revoked",
+              "none"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "text_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Version"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "status"
+        ],
+        "title": "AiVideoConsentRow",
         "type": "object"
       },
       "AiWinBackPersonalisedRequest": {
@@ -21954,6 +22045,58 @@
           "display_name"
         ],
         "title": "ParentAcademyView",
+        "type": "object"
+      },
+      "ParentAiVideoConsentGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "title": "Consent",
+            "type": "boolean"
+          },
+          "text_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Text Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text_version",
+          "consent"
+        ],
+        "title": "ParentAiVideoConsentGrantRequest",
+        "type": "object"
+      },
+      "ParentAiVideoConsentView": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/AiVideoConsentRow"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "placeholder": {
+            "title": "Placeholder",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "text_version": {
+            "title": "Text Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text_version",
+          "text",
+          "placeholder",
+          "children"
+        ],
+        "title": "ParentAiVideoConsentView",
         "type": "object"
       },
       "ParentAttendanceRecordView": {
@@ -46770,6 +46913,28 @@
         ]
       }
     },
+    "/api/v2/admin/waivers/ai-video-consents": {
+      "get": {
+        "description": "Read-only per-child AI/video consent status (Phase 3 E1).",
+        "operationId": "list_admin_ai_video_consents_api_v2_admin_waivers_ai_video_consents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAiVideoConsentList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Admin Ai Video Consents",
+        "tags": [
+          "admin-waivers"
+        ]
+      }
+    },
     "/api/v2/admin/waivers/signatures/{signature_id}": {
       "get": {
         "operationId": "get_signed_waiver_detail_api_v2_admin_waivers_signatures__signature_id__get",
@@ -51939,6 +52104,121 @@
           }
         },
         "summary": "Accept Parent Waiver",
+        "tags": [
+          "parent.waivers"
+        ]
+      }
+    },
+    "/api/v2/parent/waivers/ai-video-consent": {
+      "get": {
+        "operationId": "parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAiVideoConsentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Parent Ai Video Consent",
+        "tags": [
+          "parent.waivers"
+        ]
+      }
+    },
+    "/api/v2/parent/waivers/ai-video-consent/{student_id}/grant": {
+      "post": {
+        "operationId": "grant_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__grant_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentAiVideoConsentGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAiVideoConsentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Grant Parent Ai Video Consent",
+        "tags": [
+          "parent.waivers"
+        ]
+      }
+    },
+    "/api/v2/parent/waivers/ai-video-consent/{student_id}/revoke": {
+      "post": {
+        "operationId": "revoke_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAiVideoConsentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Parent Ai Video Consent",
         "tags": [
           "parent.waivers"
         ]

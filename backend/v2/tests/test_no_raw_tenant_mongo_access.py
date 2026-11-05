@@ -50,6 +50,7 @@ TENANT_OWNED_COLLECTIONS = {
     "academy_feature_flags",
     "ai_calls",
     "ai_narratives",
+    "ai_video_consents",
     "academy_roles",
     "academy_settings",
     "announcements",

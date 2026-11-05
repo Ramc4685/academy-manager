@@ -82,3 +82,17 @@ class WaiverStudentNotFound(DomainError):
 
     code = "Onboarding.WaiverStudentNotFound"
     status_code = 404
+
+
+class AiVideoConsentIncomplete(DomainError):
+    """The parent did not tick the AI/video consent box."""
+
+    code = "Onboarding.AiVideoConsentIncomplete"
+    status_code = 422
+
+
+class AiVideoConsentTextChanged(DomainError):
+    """The parent agreed to a text version that is no longer the current one."""
+
+    code = "Onboarding.AiVideoConsentTextChanged"
+    status_code = 409

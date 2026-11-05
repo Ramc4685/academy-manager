@@ -26,6 +26,7 @@ from backend.v2.composition.admin_session_staff import (
     compose_assistant_eligibility_check,
     compose_set_session_assistants,
 )
+from backend.v2.composition.ai_video_consent import compose_admin_ai_video_consents
 from backend.v2.composition.attendance_corrections import compose_attendance_corrections
 from backend.v2.composition.autopay_comms import (
     autopay_active_enrollment_ids,
@@ -4310,6 +4311,7 @@ def compose_admin(
         list_admin_waivers=list_admin_waivers,
         admin_registration_review=admin_registration_review,
         manage_admin_waiver_templates=manage_admin_waiver_templates,
+        list_ai_video_consents=compose_admin_ai_video_consents(db),
         get_academy_use_case=get_academy_use_case,
         update_academy_use_case=update_academy_use_case,
         get_academy_fees_use_case=get_academy_fees_use_case,
