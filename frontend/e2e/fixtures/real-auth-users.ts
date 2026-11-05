@@ -20,4 +20,12 @@ export const REAL_AUTH_USERS = {
       process.env.SEED_PARENT_PASSWORD ??
       "CHANGE_ME",
   },
+  // Seeded coach for the real-backend journey spec (synthetic seed address).
+  coach: {
+    email: process.env.LOCAL_AUTH_COACH_EMAIL ?? "gowtham@blno.academy",
+    password:
+      process.env.LOCAL_AUTH_COACH_PASSWORD ??
+      process.env.SEED_COACH_PASSWORD ??
+      "CHANGE_ME",
+  },
 } as const;
