@@ -26,17 +26,18 @@ class RecordAiCall:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def assert_under_cap(self) -> None:
-        """Refuse before any tokens are spent when this month is at the cap.
-        Features call it first, then ``execute`` after the model answers."""
-        await self._check_cap(self._clock())
+        """Refuse before any tokens are spent when the month is already at the cap.
 
-    async def _check_cap(self, now: datetime) -> None:
+        Features call this first, then the model, then ``execute``. Only this
+        check refuses: once the model has answered the tokens are spent, so
+        ``execute`` always writes the audit row, even one past the cap."""
+        now = self._clock()
         month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
         used = await self._calls.count_since(month_start)
         cap = await self._cap_source.monthly_cap()
         # shortcut: count-then-insert is not atomic (concurrent calls at cap-1
         # can each pass); upgrade to a reserve on a per-month counter document
-        # ($inc with a $lt filter) when the overshoot starts to matter.
+        # ($inc with a $lt filter) when a paid feature needs a hard ceiling.
         if used + 1 > cap:
             raise AiMonthlyCapReached(
                 f"monthly AI call cap reached ({used} of {cap})", used=used, cap=cap
@@ -50,8 +51,6 @@ class RecordAiCall:
         result: LlmResult,
         approver: str | None,
     ) -> AiCallRecord:
-        now = self._clock()
-        await self._check_cap(now)
         record = AiCallRecord(
             feature=feature,
             prompt_version=prompt_version,
@@ -60,7 +59,7 @@ class RecordAiCall:
             output_tokens=result.output_tokens,
             cost_cents=result.cost_cents,
             approver=approver,
-            created_at=now,
+            created_at=self._clock(),
         )
         await self._calls.record(record)
         return record
