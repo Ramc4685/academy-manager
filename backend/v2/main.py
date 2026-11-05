@@ -944,6 +944,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.trial_nudges import compose_trial_nudges
 
     app.state.trial_nudges = compose_trial_nudges(db, settings)
+    # AI strategy Phase 2 B1: skill-ladder drafting over app.state.ai.
+    from backend.v2.composition.ai_curriculum import compose_ai_curriculum
+
+    app.state.ai_curriculum = compose_ai_curriculum(db, app.state.ai)
     # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
     # which cannot see `_holds.hold_notifier` (built here, after
     # compose_admin runs) and is at its own wiring line-budget cap. Attach
