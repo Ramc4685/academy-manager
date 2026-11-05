@@ -30,7 +30,7 @@ MAX_INQUIRY_CHARS = 2000
 MAX_CLASS_LINES = 6
 
 _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
-_URL = re.compile(r"https?://\S+")
+_URL = re.compile(r"(?:https?://|www\.|mailto:)\S+")
 
 
 class InquiryNotFound(DomainError):
@@ -112,8 +112,9 @@ def parse_reply_draft(text: str, *, allowed_url: str | None) -> ReplyDraft:
         draft = ReplyDraft.model_validate(json.loads(raw))
     except (ValueError, ValidationError) as exc:
         raise AiProviderError("the model's answer could not be read") from exc
+    allowed = (allowed_url or "").rstrip("/")
     for url in _URL.findall(draft.body):
-        if allowed_url is None or url.rstrip(".,;)") != allowed_url:
+        if not allowed or url.rstrip(".,;)").rstrip("/") != allowed:
             raise AiProviderError("the model's answer could not be read", reason="invented_link")
     return draft
 

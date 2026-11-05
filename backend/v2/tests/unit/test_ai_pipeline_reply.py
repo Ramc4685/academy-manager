@@ -210,6 +210,25 @@ def test_parse_strips_a_json_fence_and_allows_only_the_public_url() -> None:
         parse_reply_draft(GOOD, allowed_url=None)
 
 
+def _body(text: str) -> str:
+    return json.dumps({"subject": "ok", "body": text, "key_points": []})
+
+
+@pytest.mark.parametrize(
+    "text", ["Visit www.evil.example today.", "Write to mailto:coach@evil.example please."]
+)
+def test_parse_rejects_bare_domain_and_mailto_links(text: str) -> None:
+    with pytest.raises(AiProviderError):
+        parse_reply_draft(_body(text), allowed_url=CONTEXT.public_page_url)
+
+
+def test_parse_accepts_the_public_url_with_or_without_a_trailing_slash() -> None:
+    url = CONTEXT.public_page_url
+    assert url is not None
+    parse_reply_draft(_body(f"See {url}/."), allowed_url=url)
+    parse_reply_draft(_body(f"See {url}."), allowed_url=url + "/")
+
+
 # --- prompt content ---------------------------------------------------------------
 
 _M0192 = importlib.import_module("backend.v2.migrations.0192_crm_contacts")
