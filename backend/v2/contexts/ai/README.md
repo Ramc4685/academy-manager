@@ -56,3 +56,21 @@ it is set by hand until a Growth-tier screen exists.
 Whether an academy may use AI at all is `has_feature(academy_id, "ai")` in
 `contexts/platform/billing` (see that context's README). This context does
 not read plans.
+
+## Feature: pipeline reply draft (B3, paid)
+
+Feature key `pipeline_reply`, prompt `pipeline-reply-v1`,
+`application/use_cases/draft_pipeline_reply.py`, wired in
+`composition/ai_pipeline.py` behind `POST /admin/pipeline/cards/{id}/reply-draft`.
+Order: `has_feature(academy, "ai")` (403 `Ai.NotEntitled`), `assert_under_cap`
+(429), the model, `record_ai_call` with the staff member as `approver`, then a
+strict parse (502). The model sees exactly `PipelineReplyInput`: academy name,
+staff first name, the lead's own message (labelled untrusted, at most 2000
+characters), the child's age as stored, the requested class title, up to six
+public class lines (name, schedule, price only when the public page shows
+prices), the trials-open line and the public page URL. Never the parent's
+name, email, phone, notes or another family (`tests/unit/test_ai_pipeline_reply.py`).
+The human approval is `POST /admin/pipeline/cards/{id}/reply`
+(`crm/application/use_cases/send_pipeline_reply.py`): the edited text goes to
+the lead through the prospect send path and is logged on the family contact
+log; the draft itself is written nowhere.
