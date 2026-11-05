@@ -23,11 +23,6 @@ def _utc(value: datetime | None) -> datetime | None:
     return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
 
 
-def _db(name: str):
-    mongomock_motor = pytest.importorskip("mongomock_motor")
-    return mongomock_motor.AsyncMongoMockClient()[name]
-
-
 async def _seed(db, status: str = "active") -> None:
     await db["enrollments"].insert_one(
         {
@@ -51,8 +46,7 @@ async def _mark_pending(writer: MongoEnrollmentWriter):
 
 
 @pytest.mark.asyncio
-async def test_pending_cancellation_keeps_status_active_and_is_visible_to_reads() -> None:
-    db = _db("pending-cancel-visible")
+async def test_pending_cancellation_keeps_status_active_and_is_visible_to_reads(db) -> None:
     await _seed(db)
     writer = MongoEnrollmentWriter(db)
     with tenant_scope("acad-1"):
@@ -70,8 +64,7 @@ async def test_pending_cancellation_keeps_status_active_and_is_visible_to_reads(
 
 
 @pytest.mark.asyncio
-async def test_second_pending_request_loses_the_cas() -> None:
-    db = _db("pending-cancel-twice")
+async def test_second_pending_request_loses_the_cas(db) -> None:
     await _seed(db)
     writer = MongoEnrollmentWriter(db)
     with tenant_scope("acad-1"):
@@ -80,16 +73,14 @@ async def test_second_pending_request_loses_the_cas() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_request_refused_for_non_active_row() -> None:
-    db = _db("pending-cancel-paused")
+async def test_pending_request_refused_for_non_active_row(db) -> None:
     await _seed(db, status="paused")
     with tenant_scope("acad-1"):
         assert await _mark_pending(MongoEnrollmentWriter(db)) is None
 
 
 @pytest.mark.asyncio
-async def test_complete_pending_cancellation_flips_and_returns_pre_image() -> None:
-    db = _db("pending-cancel-complete")
+async def test_complete_pending_cancellation_flips_and_returns_pre_image(db) -> None:
     await _seed(db)
     writer = MongoEnrollmentWriter(db)
     with tenant_scope("acad-1"):
@@ -111,8 +102,7 @@ async def test_complete_pending_cancellation_flips_and_returns_pre_image() -> No
 
 
 @pytest.mark.asyncio
-async def test_complete_pending_cancellation_stands_down_when_admin_ended_it_first() -> None:
-    db = _db("pending-cancel-admin-first")
+async def test_complete_pending_cancellation_stands_down_when_admin_ended_it_first(db) -> None:
     await _seed(db)
     writer = MongoEnrollmentWriter(db)
     with tenant_scope("acad-1"):
@@ -128,11 +118,10 @@ async def test_complete_pending_cancellation_stands_down_when_admin_ended_it_fir
 
 
 @pytest.mark.asyncio
-async def test_terminal_status_write_clears_the_pending_cancellation_marker() -> None:
+async def test_terminal_status_write_clears_the_pending_cancellation_marker(db) -> None:
     """#675 follow-up: an admin who cancels outright on the 20th must not leave
     "Ends Sep 30" on the roster next to a CANCELLED chip — the chip renders on
     the presence of the marker, independent of status."""
-    db = _db("pending-cancel-admin-cancel")
     writer = MongoEnrollmentWriter(db)
 
     with tenant_scope("acad-1"):
@@ -146,8 +135,7 @@ async def test_terminal_status_write_clears_the_pending_cancellation_marker() ->
 
 
 @pytest.mark.asyncio
-async def test_withdraw_status_write_clears_the_pending_cancellation_marker() -> None:
-    db = _db("pending-cancel-admin-withdraw")
+async def test_withdraw_status_write_clears_the_pending_cancellation_marker(db) -> None:
     writer = MongoEnrollmentWriter(db)
 
     with tenant_scope("acad-1"):
@@ -161,11 +149,10 @@ async def test_withdraw_status_write_clears_the_pending_cancellation_marker() ->
 
 
 @pytest.mark.asyncio
-async def test_hold_keeps_the_pending_cancellation_marker() -> None:
+async def test_hold_keeps_the_pending_cancellation_marker(db) -> None:
     """A hold is not an ending either — same as pause above, except a hold
     keeps the seat (``mark_held_if_active`` never touches ``reserved_seats``,
     unlike pause)."""
-    db = _db("pending-cancel-admin-hold")
     writer = MongoEnrollmentWriter(db)
 
     with tenant_scope("acad-1"):
@@ -186,14 +173,13 @@ async def test_hold_keeps_the_pending_cancellation_marker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_complete_pending_cancellation_succeeds_for_a_held_row() -> None:
+async def test_complete_pending_cancellation_succeeds_for_a_held_row(db) -> None:
     """The core regression this guards: a parent self-cancels at end of
     period, then an admin holds the child before month end. The CAS must
     still recognize the row as "not yet ended" — before this fix the filter
     only allowed active/paused, so this returned ``None`` and the month-end
     job logged the dishonest reason ``enrollment_already_ended:held`` (the
     enrollment was never ended) and retired the scheduled action for good."""
-    db = _db("pending-cancel-complete-held")
     await _seed(db)
     writer = MongoEnrollmentWriter(db)
     with tenant_scope("acad-1"):
@@ -219,10 +205,9 @@ async def test_complete_pending_cancellation_succeeds_for_a_held_row() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pause_keeps_the_pending_cancellation_marker() -> None:
+async def test_pause_keeps_the_pending_cancellation_marker(db) -> None:
     """A pause is not an ending: the scheduled cancel still has to fire at
     month end, and ``complete_pending_cancellation`` accepts a paused row."""
-    db = _db("pending-cancel-admin-pause")
     writer = MongoEnrollmentWriter(db)
 
     with tenant_scope("acad-1"):

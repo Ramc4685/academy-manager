@@ -12,10 +12,8 @@ ACADEMY = "acad-468"
 
 
 @pytest.fixture
-def mongo_db():
-    mongomock_motor = pytest.importorskip("mongomock_motor")
-    client = mongomock_motor.AsyncMongoMockClient()
-    return client["test_db"]
+def mongo_db(db):
+    return db
 
 
 async def _record(recorder: MongoLoginAuditRecorder, *, dedupe_key: str) -> None:

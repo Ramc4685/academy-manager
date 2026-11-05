@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 
-import mongomock_motor
 import pytest
 
 from backend.scripts.index_drift_audit import (
@@ -113,8 +112,7 @@ async def test_an_unexpected_plain_index_is_listed_but_never_fails(expected) -> 
     assert report.unexpected_plain == ["enrollments.stripe_subscription_id_1"]
 
 
-async def test_dump_skips_the_id_index_and_keeps_the_partial_filter() -> None:
-    db = mongomock_motor.AsyncMongoMockClient()["dump"]
+async def test_dump_skips_the_id_index_and_keeps_the_partial_filter(db) -> None:  # type: ignore[no-untyped-def]
     await db.things.create_index(
         [("academy_id", 1), ("code", 1)],
         unique=True,

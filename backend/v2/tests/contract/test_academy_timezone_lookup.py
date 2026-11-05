@@ -13,12 +13,6 @@ import pytest
 from backend.v2.shared.time import academy_timezone_lookup
 
 
-@pytest.fixture
-def db():
-    mongomock_motor = pytest.importorskip("mongomock_motor")
-    return mongomock_motor.AsyncMongoMockClient()["test_db"]
-
-
 @pytest.mark.asyncio
 async def test_returns_the_stored_timezone(db) -> None:
     await db["academies"].insert_one(
