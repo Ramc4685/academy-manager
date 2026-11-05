@@ -34,7 +34,11 @@ from backend.v2.contexts.crm.application.use_cases.send_pipeline_reply import (
     SendPipelineReply,
     contact_log_parent_id,
 )
-from backend.v2.contexts.crm.domain.errors import ContactNotFound, PipelineReplyNotSendable
+from backend.v2.contexts.crm.domain.errors import (
+    ContactNotFound,
+    PipelineReplyNotSendable,
+    PipelineReplySendFailed,
+)
 from backend.v2.contexts.crm.domain.models import ContactConsent, CrmContact
 from backend.v2.contexts.crm.infrastructure.mongo_crm_contact_repo import (
     MongoCrmContactRepository,
@@ -91,10 +95,15 @@ def db() -> Any:
     return db
 
 
-def _use_case(db: Any) -> tuple[SendPipelineReply, StubEmailSendPort]:
+class _BrokenOptOuts:
+    async def is_opted_out(self, email: str) -> bool:
+        raise RuntimeError("store down")
+
+
+def _use_case(db: Any, opt_outs: Any = None) -> tuple[SendPipelineReply, StubEmailSendPort]:
     stub = StubEmailSendPort()
     sender = GatedEmailSendPort(
-        inner=stub, prospects=ProspectOptOutGate(MongoProspectOptOutRepository(db))
+        inner=stub, prospects=ProspectOptOutGate(opt_outs or MongoProspectOptOutRepository(db))
     )
     contacts = MongoCrmContactRepository(db)
     use_case = SendPipelineReply(
@@ -157,6 +166,18 @@ async def test_suppressed_lead_is_refused_and_nothing_is_sent(db: Any) -> None:
             academy_id=ACADEMY, contact_id="contact-1", subject="s", body="b", actor=STAFF
         )
     assert exc.value.details["reason"] == "suppressed"
+    assert stub.sent == []
+    assert await db["family_contact_log"].count_documents({}) == 0
+
+
+async def test_opt_out_store_outage_is_a_retryable_failure_not_an_opt_out(db: Any) -> None:
+    await _file(db, _contact())
+    use_case, stub = _use_case(db, opt_outs=_BrokenOptOuts())
+    with tenant_scope(ACADEMY), pytest.raises(PipelineReplySendFailed) as exc:
+        await use_case.execute(
+            academy_id=ACADEMY, contact_id="contact-1", subject="s", body="b", actor=STAFF
+        )
+    assert exc.value.details["reason"] == "unsubscribe_check_unavailable"
     assert stub.sent == []
     assert await db["family_contact_log"].count_documents({}) == 0
 

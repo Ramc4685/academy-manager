@@ -20,7 +20,7 @@ Wiring plus the small adapters that span contexts, attached at
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from backend.v2.composition.ai import AiComposition
@@ -38,6 +38,9 @@ from backend.v2.contexts.communications.application.prospect_recipient import (
     prospect_contact_id,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
+from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_repo import (
+    GATE_UNAVAILABLE,
+)
 from backend.v2.contexts.crm.application.family_messages import LogFamilyContact
 from backend.v2.contexts.crm.application.ports import FamilyDirectory, FamilyRef
 from backend.v2.contexts.crm.application.use_cases.send_pipeline_reply import SendPipelineReply
@@ -179,7 +182,7 @@ class ProspectReplyEmailer:
             for part in body.split("\n\n")
             if part.strip()
         )
-        return await self._prospects.send(
+        outcome = await self._prospects.send(
             contact=contact,
             academy_doc=doc,
             subject=subject,
@@ -187,6 +190,10 @@ class ProspectReplyEmailer:
             # A staff answer to the lead's own request, under the form's tick.
             category=EmailCategory.TRANSACTIONAL,
         )
+        # The opt-out store being down is a retryable failure, not an opt-out.
+        if outcome.suppressed and outcome.failed_reason == GATE_UNAVAILABLE:
+            return replace(outcome, suppressed=False)
+        return outcome
 
 
 @dataclass(frozen=True)
