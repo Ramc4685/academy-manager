@@ -1,6 +1,6 @@
 # skill-ladder-generator
 
-PR: #TBD
+PR: #1135
 
 ## What changed
 The program editor (Settings -> Curriculum) gets a "Draft a skill ladder with AI" card when the academy has AI switched on: the owner gives an age band, a level count and optional notes, the model drafts levels, skills and observable criteria for the program's sport, and the owner edits the rows before choosing "Save to program", which writes them through the existing level, skill and criterion routes. New admin routes `GET /admin/ai/status` and `POST /admin/curriculum/programs/{program_id}/ladder-draft`; the draft touches no student, family or enrollment data and every model call lands in `ai_calls` under feature `skill_ladder`, prompt `skill-ladder-v1`, refused up front once the academy's monthly cap is reached.
