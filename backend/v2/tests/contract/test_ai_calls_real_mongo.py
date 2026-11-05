@@ -80,12 +80,11 @@ async def test_monthly_cap_counts_only_this_month(real_db) -> None:
             feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
         )
         with pytest.raises(AiMonthlyCapReached):
-            await use_case.execute(
-                feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
-            )
+            await use_case.assert_under_cap()
         assert await repo.count_since(MONTH_START) == 2
     # Another academy's month is untouched by the cap hit.
     with tenant_scope("acad-ai-other"):
+        await use_case.assert_under_cap()
         record = await use_case.execute(
             feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
         )
@@ -103,10 +102,9 @@ async def test_cap_is_read_from_the_academy_document(real_db) -> None:
         clock=lambda: NOW,
     )
     with tenant_scope("acad-ai-doc"):
+        await use_case.assert_under_cap()
         await use_case.execute(
             feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
         )
         with pytest.raises(AiMonthlyCapReached):
-            await use_case.execute(
-                feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
-            )
+            await use_case.assert_under_cap()

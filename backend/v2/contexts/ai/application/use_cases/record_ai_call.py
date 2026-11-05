@@ -28,11 +28,10 @@ class RecordAiCall:
     async def assert_under_cap(self) -> None:
         """Refuse before any tokens are spent when the month is already at the cap.
 
-        Features call this first, then the model, then ``execute``, which
-        checks again when it records the row."""
-        await self._check_cap(self._clock())
-
-    async def _check_cap(self, now: datetime) -> None:
+        Features call this first, then the model, then ``execute``. Only this
+        check refuses: once the model has answered the tokens are spent, so
+        ``execute`` always writes the audit row, even one past the cap."""
+        now = self._clock()
         month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
         used = await self._calls.count_since(month_start)
         cap = await self._cap_source.monthly_cap()
@@ -52,8 +51,6 @@ class RecordAiCall:
         result: LlmResult,
         approver: str | None,
     ) -> AiCallRecord:
-        now = self._clock()
-        await self._check_cap(now)
         record = AiCallRecord(
             feature=feature,
             prompt_version=prompt_version,
@@ -62,7 +59,7 @@ class RecordAiCall:
             output_tokens=result.output_tokens,
             cost_cents=result.cost_cents,
             approver=approver,
-            created_at=now,
+            created_at=self._clock(),
         )
         await self._calls.record(record)
         return record
