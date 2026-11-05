@@ -10,6 +10,7 @@ from .ai_curriculum_routes import router as ai_curriculum_router
 from .ai_import_routes import router as ai_import_router
 from .ai_pipeline_routes import router as ai_pipeline_router
 from .ai_reports_routes import router as ai_reports_router
+from .ai_usage_routes import router as ai_usage_router
 from .ai_win_back_routes import router as ai_win_back_router
 from .audit_routes import router as audit_router
 from .billing_health_routes import router as billing_health_router
@@ -92,6 +93,7 @@ router.include_router(payroll_router)
 router.include_router(coach_pay_rate_router)
 router.include_router(comms_router)
 router.include_router(academy_router)
+router.include_router(ai_usage_router)
 router.include_router(ai_import_router)
 router.include_router(waiver_router)
 router.include_router(pathway_router)

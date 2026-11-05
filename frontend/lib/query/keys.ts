@@ -152,6 +152,7 @@ export const queryKeys = {
     programsWithArchived: () => ["admin", "programs", "with-archived"] as const,
     classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    aiUsage: () => ["admin", "ai", "usage"] as const,
     plan: () => ["admin", "billing", "plan"] as const,
     paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
@@ -242,6 +243,8 @@ export const queryKeys = {
       ["platform", "tenant", academyId, "application-fee"] as const,
     tenantBillingIdentity: (academyId: string) =>
       ["platform", "tenant", academyId, "billing-identity"] as const,
+    tenantAiUsage: (academyId: string) =>
+      ["platform", "tenant", academyId, "ai-usage"] as const,
   },
   student: {
     all: ["student"] as const,

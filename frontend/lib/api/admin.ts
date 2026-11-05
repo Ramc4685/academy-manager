@@ -4011,6 +4011,21 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
   });
 }
 
+/** AI usage meter (plan 2026-11-04 Phase 2, slice A3): this month's drafts against the plan's cap. */
+export interface AiUsage {
+  used: number;
+  cap: number;
+  tier: "free" | "growth";
+  /** Free tier at or past its cap: a soft prompt to upgrade, never a hard stop. */
+  upgrade_suggested: boolean;
+  /** YYYY-MM, UTC. */
+  month: string;
+}
+
+export function getAdminAiUsage(): Promise<AiUsage> {
+  return apiFetch<AiUsage>("/admin/ai/usage", { method: "GET" });
+}
+
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
 }

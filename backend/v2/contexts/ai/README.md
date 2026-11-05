@@ -200,3 +200,19 @@ period's digits; every `fix_first` href must be an odd item's href or one of
 Where the human is: the owner clicks "Explain this month" on the Reports page
 and reads the result there; the owner is the `approver` on the `ai_calls` row.
 Nothing is stored and nothing reaches a parent.
+
+## Usage meter
+
+Phase 2 slice A3. `application/use_cases/get_ai_usage.py::GetAiUsage`
+reports `used` (this UTC month's `ai_calls` rows for the academy in scope),
+`tier` (`growth` when the plan has the `ai` feature, else `free`), `cap`
+(`FREE_TIER_MONTHLY_DRAFTS` = 20 on free, the academy's `monthly_call_cap`
+on Growth) and `upgrade_suggested` (free tier at or past its cap). The free
+cap is a soft prompt only (owner decision 4): `RecordAiCall` and its hard
+ceiling are unchanged. The entitlement comes through the `EntitlementSource`
+port, implemented in `composition/ai_usage.py::ScopedHasFeature` over the
+platform billing `HasFeature` use case, so this context still does not import
+`platform`. Routes: `GET /api/v2/admin/ai/usage` (admin persona) and
+`GET /api/v2/platform/academies/{academy_id}/ai-usage` (platform admin,
+enters `tenant_scope`, 404 for an unknown academy); wired at
+`app.state.ai_usage`.
