@@ -26,3 +26,10 @@ class AiProviderError(DomainError):
 
     code = "Ai.ProviderError"
     status_code = 502
+
+
+class AiNotEntitled(DomainError):
+    """The academy's platform plan does not include the ``ai`` feature."""
+
+    code = "Ai.NotEntitled"
+    status_code = 403
