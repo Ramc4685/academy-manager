@@ -1,6 +1,6 @@
 # roster-import-copilot
 
-PR: #TBD
+PR: #1136
 
 ## What changed
 On the Families page, a CSV whose header is not the five import columns can now be mapped with an AI helper: "Map columns with AI" asks the model for a column mapping, the admin edits it in a table, "Use this mapping" rewrites the file in the browser and runs the existing check and import steps, so the dry run and the import button remain the approval gate. By default the model sees only the column headers and five sample rows masked to their shape (letters become a, digits become 9); an owner can let it see real values with a new switch under Settings > Notifications, "AI import helper". Every request is recorded in `ai_calls` and refused once the academy's monthly cap is reached.
