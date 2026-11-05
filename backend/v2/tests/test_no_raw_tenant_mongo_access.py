@@ -48,6 +48,7 @@ V2_ROOT = Path(__file__).resolve().parents[1]
 TENANT_OWNED_COLLECTIONS = {
     "account_credit_ledger",
     "academy_feature_flags",
+    "ai_call_counters",
     "ai_calls",
     "ai_narratives",
     "academy_roles",

@@ -49,6 +49,7 @@ from backend.v2.contexts.communications.application.parent_wins import (
     render_parent_wins,
 )
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 NOW = datetime(2026, 11, 4, 18, 0, tzinfo=UTC)
 START = datetime(2026, 11, 4, 0, 0, tzinfo=UTC)
@@ -128,7 +129,12 @@ class FakeEntitlement:
 def _drafter(llm: Any, calls: FakeCalls, *, entitled: bool = True) -> DraftProgressNarrative:
     return DraftProgressNarrative(
         llm=llm,
-        record_ai_call=RecordAiCall(calls=calls, cap_source=FakeCap(), clock=lambda: NOW),
+        record_ai_call=RecordAiCall(
+            calls=calls,
+            counters=counters_at(calls.used, NOW),
+            cap_source=FakeCap(),
+            clock=lambda: NOW,
+        ),
         entitlement=FakeEntitlement(entitled),
     )
 

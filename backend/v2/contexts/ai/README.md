@@ -12,12 +12,13 @@ or child data goes to any model.** This README is the contract; the tests in
 |---|---|
 | `domain/models.py` | `DEFAULT_MODEL` (`claude-sonnet-5-5`, a constant, not a setting), `LlmResult`, `AiCallRecord` |
 | `domain/prompts.py` | `PROMPTS`: feature -> `PromptVersion(version, system_text)`; one unused placeholder |
-| `domain/errors.py` | `AiDisabled` (503), `AiMonthlyCapReached` (429), `AiProviderError` (502) |
-| `application/ports.py` | `LlmPort`, `AiCallRepository`, `MonthlyCapSource` |
-| `application/use_cases/record_ai_call.py` | `RecordAiCall`: `assert_under_cap()` refuses before the call; `execute()` always writes one row |
+| `domain/errors.py` | `AiDisabled` (503), `AiMonthlyCapReached` (429), `AiDailyCapReached` (429), `AiProviderError` (502) |
+| `application/ports.py` | `LlmPort`, `AiCallRepository`, `AiCallCounterRepository`, `MonthlyCapSource`, `DailyCapSource` |
+| `application/use_cases/record_ai_call.py` | `RecordAiCall`: `async with reserve(feature)` holds a cap slot around the model call; `execute()` always writes one row |
 | `infrastructure/anthropic_llm_port.py` | the one `LlmPort` adapter: Anthropic Messages API over plain `httpx`, no SDK |
 | `infrastructure/disabled_llm_port.py` | wired whenever AI is off; every call raises `AiDisabled` |
 | `infrastructure/mongo_ai_call_repo.py` | `MongoAiCallRepository(TenantScopedRepository)`, collection `ai_calls` |
+| `infrastructure/mongo_ai_call_counter_repo.py` | `MongoAiCallCounterRepository`, collection `ai_call_counters` (migration 0226, unique `(academy_id, key)`) |
 | `backend/v2/migrations/0220_ai_calls.py` | `(academy_id, created_at)` and `(academy_id, feature, created_at)` indexes |
 | `backend/v2/composition/ai.py` | `compose_ai(db, settings)`: the gate and the cap lookup; attached at `app.state.ai` |
 
@@ -46,12 +47,29 @@ Collection `ai_calls`, one document per model call.
 
 `ai.monthly_call_cap` on the academy document (`academies`), read by
 `composition/ai.py::AcademyAiCapLookup`; absent or invalid means
-`DEFAULT_MONTHLY_CALL_CAP` (200). `RecordAiCall.assert_under_cap()` counts the
-academy's rows since the first of the current UTC month and raises
-`AiMonthlyCapReached` when one more would exceed the cap; every feature calls it
-before `llm.complete`. `execute()` only writes the audit row, even past the cap,
-so a spent call is always counted. There is no write path for the cap yet;
-it is set by hand until a Growth-tier screen exists.
+`DEFAULT_MONTHLY_CALL_CAP` (200). It is a hard ceiling (Phase 3 slice D1):
+every feature wraps its model call in `async with RecordAiCall.reserve(FEATURE):`,
+which takes one slot on the academy's `month:YYYY-MM` counter in
+`ai_call_counters` with one atomic `find_one_and_update` (`$inc` filtered on
+`count < cap`, upsert for the month's first call). At the cap the filter misses,
+the upsert collides with the unique `(academy_id, key)` index and the call is
+refused with `AiMonthlyCapReached`; the same duplicate-key error on a
+concurrent first-of-the-month upsert is retried once without upsert. So
+concurrent calls at the cap minus one let exactly one through
+(`tests/contract/test_ai_calls_real_mongo.py`). Any error raised inside the
+block (the provider failing, or the prep before it) releases the slot, so a
+failed model call does not burn one; `execute()` runs after the block and
+only writes the audit row, even past the cap, so a spent call is always
+counted. A new UTC month is a new counter at zero; counters are not seeded
+from `ai_calls`.
+
+`ai.daily_call_cap.<feature>` (for example `{"ask": 50}`) adds a per-feature
+ceiling on a `day:YYYY-MM-DD:<feature>` counter, reserved after the month slot
+the same way and refused with `AiDailyCapReached` (429, same error shape),
+which gives the month slot back. Absent or invalid means no daily ceiling.
+There is no write path for either cap yet; they are set by hand until a
+Growth-tier screen exists. The usage meter below still counts `ai_calls`
+rows, not the counters.
 
 ## Features
 
@@ -65,7 +83,7 @@ exactly `SkillLadderInput`: `sport` (from the program, through
 `ProgramSportLookup` in composition because this context never imports
 curriculum), `age_band`, `level_count` and the owner's `notes`, serialised as
 one JSON object; no student, family or enrollment data. The use case calls
-`RecordAiCall.assert_under_cap()` before spending tokens, records the row
+`RecordAiCall.reserve()` before spending tokens, records the row
 before parsing, and reads the answer strictly (`parse_skill_ladder`: optional
 ```` ```json ```` fence, pydantic shape, exactly `level_count` levels numbered
 1..n, 2-6 skills each, 1-5 criteria each, scoring type from the curriculum
@@ -105,7 +123,7 @@ header names. Two columns with the same name (case and spaces aside) are refused
 with a 422 before any model call, in both modes; the error names the column
 positions, never the header text, since in a headerless file that is a name. The use case
 refuses before spending tokens when the month is at the cap
-(`RecordAiCall.assert_under_cap`), records the call before parsing the answer,
+(`RecordAiCall.reserve`), records the call before parsing the answer,
 and turns an answer that is not the exact JSON shape, repeats a target, lacks
 `parent_name` or `student_name`, or names a header not in the file into
 `AiProviderError` (502). It reads and writes nothing but the `ai_calls` row.
@@ -120,7 +138,7 @@ the only write path for families and students.
 Feature key `pipeline_reply`, prompt `pipeline-reply-v1`,
 `application/use_cases/draft_pipeline_reply.py`, wired in
 `composition/ai_pipeline.py` behind `POST /admin/pipeline/cards/{id}/reply-draft`.
-Order: `has_feature(academy, "ai")` (403 `Ai.NotEntitled`), `assert_under_cap`
+Order: `has_feature(academy, "ai")` (403 `Ai.NotEntitled`), `reserve`
 (429), the model, `record_ai_call` with the staff member as `approver`, then a
 strict parse (502). The model sees exactly `PipelineReplyInput`: academy name,
 staff first name, the lead's own message (labelled untrusted, at most 2000
@@ -136,7 +154,7 @@ log; the draft itself is written nowhere.
 ### Win-back wording and text-only technique observations (B6, paid)
 
 Two features behind `AiEntitlement.has_ai()` (`has_feature(academy, "ai")`),
-each in order: entitlement (403 `Ai.NotEntitled`) -> `assert_under_cap` (429)
+each in order: entitlement (403 `Ai.NotEntitled`) -> `reserve` (429)
 -> `complete` -> `record_ai_call.execute` -> strict JSON parse (502 on failure).
 
 | | `win_back_note` | `technique_observation` |
@@ -182,7 +200,7 @@ Feature key `month_close_narrator`, prompt `month-close-narrator-v1`, use case
 `POST /api/v2/admin/reports/month-close/narrative?period=YYYY-MM`
 (`interfaces/admin/ai_reports_routes.py`, wired in `composition/ai_reports.py`
 at `app.state.ai_reports`). Order: `AiEntitlement.has_ai()` (403
-`Ai.NotEntitled`) -> `RecordAiCall.assert_under_cap()` (429) -> `complete`
+`Ai.NotEntitled`) -> `RecordAiCall.reserve()` (429) -> `complete`
 -> `RecordAiCall.execute` -> parse -> number and link check (502).
 
 What the model sees: `reduce_month_close_payload` over the owner's existing

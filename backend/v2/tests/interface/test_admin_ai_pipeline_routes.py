@@ -33,6 +33,7 @@ from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.context import _current as _tenant
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 A = "acad-a"
 B = "acad-b"
@@ -177,6 +178,7 @@ def world() -> SimpleNamespace:
         contacts=contacts,
         llm=Llm(),
         calls=Calls(),
+        counters=counters_at(),
         entitlement=Entitlement(),
         emailer=Emailer(),
         logs=Logs(),
@@ -187,7 +189,9 @@ def _services(world: SimpleNamespace, llm: Any) -> SimpleNamespace:
     return SimpleNamespace(
         draft_reply=DraftPipelineReply(
             llm=llm,
-            record_ai_call=RecordAiCall(calls=world.calls, cap_source=Cap(), clock=lambda: NOW),
+            record_ai_call=RecordAiCall(
+                calls=world.calls, counters=world.counters, cap_source=Cap(), clock=lambda: NOW
+            ),
             entitlement=world.entitlement,
             inquiries=Inquiries(world.contacts),
             context=Context(),
@@ -246,7 +250,7 @@ def test_not_entitled_is_403_and_cap_is_429(client: TestClient, world: SimpleNam
     assert response.json()["error"]["code"] == "Ai.NotEntitled"
 
     world.entitlement.entitled = True
-    world.calls.used = 2
+    world.counters.counts["month:2026-11"] = 2
     response = client.post(DRAFT)
     assert response.status_code == 429
     assert response.json()["error"]["code"] == "Ai.MonthlyCapReached"

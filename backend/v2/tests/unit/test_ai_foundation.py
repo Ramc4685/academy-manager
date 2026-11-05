@@ -1,8 +1,9 @@
 """AI foundation plumbing (plan 2026-11-04 Phase 1): the gate, the adapter
-request shape and cost, and the monthly cap arithmetic."""
+request shape and cost, and the hard cap reservation (Phase 3 D1)."""
 
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -17,7 +18,12 @@ from backend.v2.contexts.ai.application.use_cases.record_ai_call import (
     DEFAULT_MONTHLY_CALL_CAP,
     RecordAiCall,
 )
-from backend.v2.contexts.ai.domain.errors import AiDisabled, AiMonthlyCapReached, AiProviderError
+from backend.v2.contexts.ai.domain.errors import (
+    AiDailyCapReached,
+    AiDisabled,
+    AiMonthlyCapReached,
+    AiProviderError,
+)
 from backend.v2.contexts.ai.domain.models import DEFAULT_MODEL, AiCallRecord, LlmResult
 from backend.v2.contexts.ai.domain.prompts import PROMPTS
 from backend.v2.contexts.ai.infrastructure.anthropic_llm_port import (
@@ -26,6 +32,7 @@ from backend.v2.contexts.ai.infrastructure.anthropic_llm_port import (
 )
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
 from backend.v2.shared.tenancy import TenantContextUnset, tenant_scope
+from backend.v2.tests.fixtures.ai_counters import InMemoryAiCallCounters
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 RESULT = LlmResult(text="hi", input_tokens=10, output_tokens=5, cost_cents=1, model=DEFAULT_MODEL)
@@ -120,30 +127,44 @@ async def test_anthropic_port_raises_provider_error_on_4xx() -> None:
 
 
 class FakeCalls:
-    def __init__(self, used: int) -> None:
-        self.used = used
+    def __init__(self) -> None:
         self.recorded: list[AiCallRecord] = []
 
     async def count_since(self, since: datetime) -> int:
-        assert since == datetime(2026, 11, 1, tzinfo=UTC)
-        return self.used
+        return len(self.recorded)
 
     async def record(self, call: AiCallRecord) -> None:
         self.recorded.append(call)
 
 
 class FakeCap:
-    def __init__(self, cap: int) -> None:
+    def __init__(self, cap: int, daily: dict[str, int] | None = None) -> None:
         self.cap = cap
+        self.daily = daily or {}
 
     async def monthly_cap(self) -> int:
         return self.cap
 
+    async def daily_cap(self, feature: str) -> int | None:
+        return self.daily.get(feature)
 
-async def test_record_ai_call_writes_under_the_cap() -> None:
-    calls = FakeCalls(used=1)
-    use_case = RecordAiCall(calls=calls, cap_source=FakeCap(2), clock=lambda: NOW)
 
+def _record_ai_call(
+    cap: FakeCap, counters: InMemoryAiCallCounters | None = None, now: datetime = NOW
+) -> tuple[RecordAiCall, InMemoryAiCallCounters, FakeCalls]:
+    counters = counters if counters is not None else InMemoryAiCallCounters()
+    calls = FakeCalls()
+    use_case = RecordAiCall(
+        calls=calls, counters=counters, cap_source=cap, daily_caps=cap, clock=lambda: now
+    )
+    return use_case, counters, calls
+
+
+async def test_record_ai_call_writes_the_audit_row() -> None:
+    use_case, _, calls = _record_ai_call(FakeCap(2))
+
+    async with use_case.reserve("placeholder"):
+        pass
     record = await use_case.execute(
         feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver="u1"
     )
@@ -152,20 +173,98 @@ async def test_record_ai_call_writes_under_the_cap() -> None:
     assert record.model == DEFAULT_MODEL and record.approver == "u1" and record.created_at == NOW
 
 
-async def test_assert_under_cap_refuses_at_the_cap_before_any_call() -> None:
-    calls = FakeCalls(used=2)
-    use_case = RecordAiCall(calls=calls, cap_source=FakeCap(2), clock=lambda: NOW)
+async def test_reservation_at_the_cap_is_refused_before_any_call() -> None:
+    use_case, counters, calls = _record_ai_call(FakeCap(2))
+    for _ in range(2):
+        async with use_case.reserve("placeholder"):
+            pass
 
     with pytest.raises(AiMonthlyCapReached):
-        await use_case.assert_under_cap()
+        async with use_case.reserve("placeholder"):
+            pytest.fail("the block must not run at the cap")
+    assert counters.counts == {"month:2026-11": 2}
     assert calls.recorded == []
+
+
+async def test_a_zero_cap_refuses_the_first_call() -> None:
+    use_case, counters, _ = _record_ai_call(FakeCap(0))
+    with pytest.raises(AiMonthlyCapReached):
+        async with use_case.reserve("placeholder"):
+            pass
+    assert counters.counts == {}
+
+
+async def test_a_provider_error_releases_the_slot() -> None:
+    use_case, counters, _ = _record_ai_call(FakeCap(1, daily={"placeholder": 1}))
+
+    with pytest.raises(AiProviderError):
+        async with use_case.reserve("placeholder"):
+            raise AiProviderError("boom")
+    assert counters.counts == {"month:2026-11": 0, "day:2026-11-04:placeholder": 0}
+
+    # The freed slot is usable: one call goes through, the next is refused.
+    async with use_case.reserve("placeholder"):
+        pass
+    with pytest.raises(AiMonthlyCapReached):
+        async with use_case.reserve("placeholder"):
+            pass
+
+
+async def test_month_rollover_starts_a_new_counter() -> None:
+    counters = InMemoryAiCallCounters()
+    october, _, _ = _record_ai_call(
+        FakeCap(1), counters, now=datetime(2026, 10, 31, 23, 59, tzinfo=UTC)
+    )
+    november, _, _ = _record_ai_call(FakeCap(1), counters, now=NOW)
+
+    async with october.reserve("placeholder"):
+        pass
+    with pytest.raises(AiMonthlyCapReached):
+        async with october.reserve("placeholder"):
+            pass
+    async with november.reserve("placeholder"):
+        pass
+    assert counters.counts == {"month:2026-10": 1, "month:2026-11": 1}
+
+
+async def test_daily_ceiling_applies_per_feature() -> None:
+    use_case, counters, _ = _record_ai_call(FakeCap(10, daily={"ask": 1}))
+
+    async with use_case.reserve("ask"):
+        pass
+    with pytest.raises(AiDailyCapReached):
+        async with use_case.reserve("ask"):
+            pass
+    # Another feature has no daily ceiling and still has month left.
+    for _ in range(3):
+        async with use_case.reserve("skill_ladder"):
+            pass
+    # The refused daily call gave its month slot back: 1 ask + 3 ladder.
+    assert counters.counts == {"month:2026-11": 4, "day:2026-11-04:ask": 1}
+
+    # The next UTC day the feature's ceiling starts over.
+    tomorrow, _, _ = _record_ai_call(
+        FakeCap(10, daily={"ask": 1}), counters, now=datetime(2026, 11, 5, 0, 1, tzinfo=UTC)
+    )
+    async with tomorrow.reserve("ask"):
+        pass
+
+
+async def test_no_daily_cap_source_means_no_daily_ceiling() -> None:
+    counters = InMemoryAiCallCounters()
+    use_case = RecordAiCall(
+        calls=FakeCalls(), counters=counters, cap_source=FakeCap(5), clock=lambda: NOW
+    )
+    for _ in range(5):
+        async with use_case.reserve("ask"):
+            pass
+    assert counters.counts == {"month:2026-11": 5}
 
 
 async def test_execute_always_records_a_spent_call_even_past_the_cap() -> None:
     # The tokens are already spent when execute runs: refusing here would
-    # drop the audit row, so only assert_under_cap refuses.
-    calls = FakeCalls(used=2)
-    use_case = RecordAiCall(calls=calls, cap_source=FakeCap(2), clock=lambda: NOW)
+    # drop the audit row, so only reserve refuses.
+    use_case, _, calls = _record_ai_call(FakeCap(0))
 
     record = await use_case.execute(
         feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
@@ -201,3 +300,37 @@ async def test_academy_cap_lookup_reads_ai_monthly_call_cap(
 async def test_academy_cap_lookup_needs_a_tenant_scope() -> None:
     with pytest.raises(TenantContextUnset):
         await AcademyAiCapLookup(FakeAcademies({"ai": {"monthly_call_cap": 7}})).monthly_cap()
+
+
+@pytest.mark.parametrize(
+    ("doc", "expected"),
+    [
+        (None, None),
+        ({"ai": {}}, None),
+        ({"ai": {"daily_call_cap": {"skill_ladder": 3}}}, None),
+        ({"ai": {"daily_call_cap": {"ask": 50}}}, 50),
+        ({"ai": {"daily_call_cap": {"ask": 0}}}, 0),
+        ({"ai": {"daily_call_cap": {"ask": "many"}}}, None),
+        ({"ai": {"daily_call_cap": {"ask": True}}}, None),
+        ({"ai": {"daily_call_cap": 50}}, None),
+    ],
+)
+async def test_academy_cap_lookup_reads_ai_daily_call_cap_per_feature(
+    doc: dict | None, expected: int | None
+) -> None:
+    with tenant_scope("acad-ai"):
+        assert await AcademyAiCapLookup(FakeAcademies(doc)).daily_cap("ask") == expected
+
+
+_M0226 = importlib.import_module("backend.v2.migrations.0226_ai_call_counters")
+
+
+async def test_migration_0226_builds_the_unique_counter_index_and_rerun_is_a_no_op() -> None:
+    assert _M0226.version == "0226_ai_call_counters"
+    db = AsyncMongoMockClient()["m0226"]
+    await _M0226.up(db)
+    await _M0226.up(db)
+    info = await db["ai_call_counters"].index_information()
+    index = info["ai_call_counters_academy_key_unique"]
+    assert index["key"] == [("academy_id", 1), ("key", 1)]
+    assert index["unique"] is True

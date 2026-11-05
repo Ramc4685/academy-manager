@@ -164,26 +164,26 @@ class DraftPipelineReply:
             raise InquiryNotFound("contact not found", contact_id=contact_id)
         if not await self._entitlement.has_ai():
             raise AiNotEntitled("AI replies are part of the Growth plan")
-        await self._record.assert_under_cap()
-        context = await self._context.reply_context()
-        message = (facts.inquiry_message or "")[:MAX_INQUIRY_CHARS] or None
-        payload = PipelineReplyInput(
-            academy_name=context.academy_name,
-            staff_first_name=await self._staff.first_name(staff_user_id) or "the team",
-            inquiry_message=message,
-            child_ages=list(facts.child_ages),
-            interest=facts.interest,
-            class_context=list(context.class_context[:MAX_CLASS_LINES]),
-            trial_offer=context.trial_offer,
-            public_page_url=context.public_page_url,
-        )
-        prompt = PROMPTS[FEATURE]
-        result = await self._llm.complete(
-            prompt_version=prompt.version,
-            system=prompt.system_text,
-            user=json.dumps(payload.model_dump(mode="json"), ensure_ascii=False),
-            max_tokens=MAX_TOKENS,
-        )
+        async with self._record.reserve(FEATURE):
+            context = await self._context.reply_context()
+            message = (facts.inquiry_message or "")[:MAX_INQUIRY_CHARS] or None
+            payload = PipelineReplyInput(
+                academy_name=context.academy_name,
+                staff_first_name=await self._staff.first_name(staff_user_id) or "the team",
+                inquiry_message=message,
+                child_ages=list(facts.child_ages),
+                interest=facts.interest,
+                class_context=list(context.class_context[:MAX_CLASS_LINES]),
+                trial_offer=context.trial_offer,
+                public_page_url=context.public_page_url,
+            )
+            prompt = PROMPTS[FEATURE]
+            result = await self._llm.complete(
+                prompt_version=prompt.version,
+                system=prompt.system_text,
+                user=json.dumps(payload.model_dump(mode="json"), ensure_ascii=False),
+                max_tokens=MAX_TOKENS,
+            )
         # The tokens are spent whatever the answer looks like: record first.
         await self._record.execute(
             feature=FEATURE,
