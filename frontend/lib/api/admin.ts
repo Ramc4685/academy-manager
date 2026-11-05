@@ -4352,3 +4352,27 @@ export function updateAdminClassPublicFields(
     { method: "PATCH", body: JSON.stringify(payload) }
   );
 }
+
+/** `GET /admin/ai/status` (B1): whether this academy may call the model. Read `enabled` only. */
+export function getAdminAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
+}
+
+/**
+ * `POST /admin/reports/month-close/narrative?period=YYYY-MM` (B5, owner-only, paid).
+ * Mirrors `MonthCloseNarrative` in
+ * `backend/v2/contexts/ai/application/use_cases/narrate_month_close.py`.
+ */
+export interface AdminMonthCloseNarrative {
+  summary: string;
+  fix_first: { text: string; href: string }[];
+  prompt_version: string;
+  generated_at: string;
+}
+
+export function postAdminMonthCloseNarrative(period: string): Promise<AdminMonthCloseNarrative> {
+  return apiFetch<AdminMonthCloseNarrative>(
+    `/admin/reports/month-close/narrative?period=${encodeURIComponent(period)}`,
+    { method: "POST" },
+  );
+}
