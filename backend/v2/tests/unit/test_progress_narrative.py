@@ -14,6 +14,7 @@ import pytest
 
 from backend.v2.composition.ai import PlatformAiEntitlement
 from backend.v2.composition.ai_narratives import AcademyCoachReviewSwitch, _StudentNarrativeFacts
+from backend.v2.composition.evening_wins import _ParentWinsProvider
 from backend.v2.contexts.ai.application.use_cases.draft_progress_narrative import (
     DraftProgressNarrative,
     ProgressNarrativeInput,
@@ -32,7 +33,12 @@ from backend.v2.contexts.ai.domain.errors import (
     AiProviderError,
 )
 from backend.v2.contexts.ai.domain.models import DEFAULT_MODEL, AiCallRecord, LlmResult
-from backend.v2.contexts.ai.domain.narrative import COACH_REVIEW_OFF, AiNarrative, NoWinsToday
+from backend.v2.contexts.ai.domain.narrative import (
+    COACH_REVIEW_OFF,
+    AiNarrative,
+    NoWinsToday,
+    source_fingerprint,
+)
 from backend.v2.contexts.ai.domain.prompts import PROMPTS
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
 from backend.v2.contexts.communications.application.parent_wins import (
@@ -335,6 +341,16 @@ class FakeNarratives:
     async def get(self, narrative_id: str) -> AiNarrative | None:
         return self.rows.get(narrative_id)
 
+    async def get_for(self, student_id: str, for_date: str, kind: str) -> AiNarrative | None:
+        return next(
+            (
+                r
+                for r in self.rows.values()
+                if (r.student_id, r.for_date, r.kind) == (student_id, for_date, kind)
+            ),
+            None,
+        )
+
     async def list_pending(self, for_date: str, created_by: str | None) -> list[AiNarrative]:
         return [
             r
@@ -550,3 +566,89 @@ def test_render_uses_an_approved_narrative_instead_of_the_templated_sentence():
 def test_render_without_a_narrative_keeps_the_templated_sentence():
     _, body = render_parent_wins(_family(""))
     assert "Aarav mastered Forecourt movement today. That&#x27;s 3 of 6 skills in Level 2" in body
+
+
+# --- the fingerprint: an approved paragraph only while the wins still match ----
+
+
+def test_fingerprint_is_order_free_and_moves_with_the_wins():
+    skills = [("Serve", None), ("Forecourt movement", "Split step.")]
+    same = source_fingerprint(reversed(skills), 3, 6)
+    assert source_fingerprint(skills, 3, 6) == same
+    assert source_fingerprint([("Serve", "")], 3, 6) == source_fingerprint([("Serve", None)], 3, 6)
+    assert source_fingerprint(skills[1:], 2, 6) != same
+    assert source_fingerprint(skills, 3, 7) != same
+
+
+async def test_draft_stores_the_fingerprint_of_the_facts_it_was_built_from():
+    use_case, _, _ = _student_drafter(review=True)
+    row = await _draft(use_case)
+    assert row.source_fingerprint == source_fingerprint(
+        [("Forecourt movement", "Nailed it today: split step before moving.")], 3, 6
+    )
+
+
+class _ApprovedNarratives:
+    def __init__(self, row: AiNarrative) -> None:
+        self.row = row
+
+    async def approved_for(self, student_ids, for_date, kind):
+        return {self.row.student_id: self.row}
+
+
+class _Empty:
+    async def list_issued_between(self, start, end):
+        return []
+
+    async def find_by_id(self, key):
+        return {}
+
+
+def _provider(today: list[Any], narrative: AiNarrative) -> _ParentWinsProvider:
+    skills = {
+        f"L2-{i}": SimpleNamespace(skill_id=f"L2-{i}", name=n, is_required=True)
+        for i, n in enumerate(["Grip", "Ready stance", "Forecourt movement", "Serve"], 1)
+    }
+    student = SimpleNamespace(student_id="s-aarav", full_name="Aarav Raj", parent_id="p1")
+
+    class _Students:
+        async def by_ids(self, ids):
+            return [student]
+
+    return _ParentWinsProvider(
+        skill_progress=_FakeProgress(today=today, done=[_row("L2-1"), *today]),
+        certificates=_Empty(),
+        students=_Students(),
+        skills=_One(**skills),
+        levels=_One(L2=SimpleNamespace(name="Level 2")),
+        academies=_Empty(),
+        narratives=_ApprovedNarratives(narrative),
+    )
+
+
+async def test_evening_wins_use_the_approved_paragraph_only_while_its_wins_still_stand():
+    today = [_row("L2-3", note="Split step."), _row("L2-4")]
+    approved = AiNarrative(
+        narrative_id="n1",
+        student_id="s-aarav",
+        for_date="2026-11-04",
+        kind="evening_wins",
+        text="Aarav flew across the court today.",
+        status="approved",
+        approver="coach-1",
+        prompt_version="progress-narrative-v1",
+        created_by="coach-1",
+        created_at=NOW,
+        source_fingerprint=source_fingerprint(
+            [("Forecourt movement", "Split step."), ("Serve", None)], 3, 4
+        ),
+    )
+    with tenant_scope("acad-a"):
+        [family] = await _provider(today, approved).families_with_wins(START, END)
+        assert family.children[0].narrative == "Aarav flew across the court today."
+        # The coach undid the Serve tap after approving: the paragraph is stale.
+        [family] = await _provider(today[:1], approved).families_with_wins(START, END)
+    child = family.children[0]
+    assert child.narrative == ""
+    assert child.skill_wins[0].skill_names == ("Forecourt movement",)
+    assert "mastered Forecourt movement today" in render_parent_wins(family)[1]

@@ -146,6 +146,24 @@ def test_coach_drafts_then_approves_with_edits_and_both_rows_carry_the_coach() -
     assert again.status_code == 409
 
 
+def test_the_day_s_row_is_readable_by_student_so_a_refresh_keeps_the_draft() -> None:
+    composition, _, _ = _narratives(llm=FakeLlm())
+    client = _client(_claims(COACH, "coach"), composition)
+    url = f"/api/v2/coach/students/{STUDENT}/narrative?date=2026-11-04"
+    assert client.get(url).status_code == 404
+    drafted = client.post(DRAFT, json={"date": "2026-11-04"}).json()
+    assert client.get(url).json() == drafted
+    assert client.get(url.replace("2026-11-04", "2026-11-03")).status_code == 404
+    client.put(
+        f"/api/v2/coach/narratives/{drafted['narrative_id']}/decision", json={"status": "rejected"}
+    )
+    assert client.get(url).json()["status"] == "rejected"
+    # Other personas and a coach off the student's sessions (another academy's
+    # coach included) get 404, never the row.
+    for claims in (_claims(PARENT, "parent"), _claims(OTHER_COACH, "coach")):
+        assert _client(claims, composition).get(url).status_code == 404
+
+
 def test_review_off_returns_an_approved_row_the_coach_never_sees_as_pending() -> None:
     composition, calls, _ = _narratives(llm=FakeLlm(), review=False)
     client = _client(_claims(COACH, "coach"), composition)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Literal
 
@@ -38,6 +41,22 @@ class AiNarrative(BaseModel):
     created_by: str
     created_at: datetime
     decided_at: datetime | None = None
+    #: ``source_fingerprint`` of the wins the draft was built from; the evening
+    #: email recomputes it and skips the paragraph when the wins changed.
+    source_fingerprint: str | None = None
+
+
+def source_fingerprint(
+    skills: Iterable[tuple[str, str | None]], passed_in_level: int, total_in_level: int
+) -> str:
+    """sha256 over the sorted (skill name, coach words) pairs and the level's
+    passed/total counts. An undone tap or an edited note changes it."""
+    payload = [
+        sorted((name, words or "") for name, words in skills),
+        passed_in_level,
+        total_in_level,
+    ]
+    return hashlib.sha256(json.dumps(payload).encode()).hexdigest()
 
 
 class NoWinsToday(DomainError):

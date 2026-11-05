@@ -107,7 +107,23 @@ async def test_decide_only_moves_a_pending_row_and_keeps_the_text_unless_edited(
         )
 
 
-async def test_approved_text_for_returns_only_approved_rows_of_the_day_and_kind() -> None:
+async def test_get_for_finds_the_day_s_row_by_student_inside_the_tenant_only() -> None:
+    db = _db()
+    with tenant_scope("acad-a"):
+        repo = MongoAiNarrativeRepository(db)
+        row = await repo.upsert_draft(_row("n1", source_fingerprint="abc"))
+        assert await repo.get_for("s-aarav", "2026-11-04", "evening_wins") == row
+        assert row.source_fingerprint == "abc"
+        assert await repo.get_for("s-aarav", "2026-11-03", "evening_wins") is None
+        assert await repo.get_for("s-aarav", "2026-11-04", "report_card") is None
+    with tenant_scope("acad-b"):
+        assert (
+            await MongoAiNarrativeRepository(db).get_for("s-aarav", "2026-11-04", "evening_wins")
+            is None
+        )
+
+
+async def test_approved_for_returns_only_approved_rows_of_the_day_and_kind() -> None:
     db = _db()
     with tenant_scope("acad-a"):
         repo = MongoAiNarrativeRepository(db)
@@ -122,15 +138,12 @@ async def test_approved_text_for_returns_only_approved_rows_of_the_day_and_kind(
             )
         )
         ids = ["s-pending", "s-rejected", "s-approved", "s-none"]
-        assert await repo.approved_text_for(ids, "2026-11-04", "evening_wins") == {
-            "s-approved": "Approved."
-        }
-        assert await repo.approved_text_for(ids, "2026-11-04", "report_card") == {}
+        approved = await repo.approved_for(ids, "2026-11-04", "evening_wins")
+        assert {k: v.text for k, v in approved.items()} == {"s-approved": "Approved."}
+        assert await repo.approved_for(ids, "2026-11-04", "report_card") == {}
     with tenant_scope("acad-b"):
         assert (
-            await MongoAiNarrativeRepository(db).approved_text_for(
-                ids, "2026-11-04", "evening_wins"
-            )
+            await MongoAiNarrativeRepository(db).approved_for(ids, "2026-11-04", "evening_wins")
             == {}
         )
 

@@ -42,6 +42,10 @@ class MongoAiNarrativeRepository(TenantScopedRepository):
         doc = await self._find_one({"narrative_id": narrative_id})
         return self._to_domain(doc) if doc else None
 
+    async def get_for(self, student_id: str, for_date: str, kind: str) -> AiNarrative | None:
+        doc = await self._find_one({"student_id": student_id, "for_date": for_date, "kind": kind})
+        return self._to_domain(doc) if doc else None
+
     async def list_pending(self, for_date: str, created_by: str | None) -> list[AiNarrative]:
         filter_: dict[str, Any] = {"status": "pending_review", "for_date": for_date}
         if created_by is not None:
@@ -66,11 +70,11 @@ class MongoAiNarrativeRepository(TenantScopedRepository):
         )
         return self._to_domain(doc) if doc else None
 
-    async def approved_text_for(
+    async def approved_for(
         self, student_ids: list[str], for_date: str, kind: str
-    ) -> dict[str, str]:
-        """Approved paragraphs by student for the evening wins render; pending
-        and rejected rows are simply absent, so the email never waits."""
+    ) -> dict[str, AiNarrative]:
+        """Approved rows by student for the evening wins render; pending and
+        rejected rows are simply absent, so the email never waits."""
         cursor = self._find_many(
             {
                 "student_id": {"$in": student_ids},
@@ -79,4 +83,4 @@ class MongoAiNarrativeRepository(TenantScopedRepository):
                 "status": "approved",
             }
         )
-        return {str(doc["student_id"]): str(doc["text"]) async for doc in cursor}
+        return {str(doc["student_id"]): self._to_domain(doc) async for doc in cursor}

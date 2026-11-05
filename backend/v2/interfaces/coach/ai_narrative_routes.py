@@ -4,6 +4,9 @@
   from the student's wins that day and stores it ``pending_review`` (or
   ``approved`` when the academy turned coach review off). Replaces the day's
   earlier draft. Nothing reaches a parent until a coach approves.
+* ``GET /coach/students/{student_id}/narrative?date=``: the day's row for one
+  student, whatever its status, so a draft survives a page refresh; 404 when
+  none.
 * ``PUT /coach/narratives/{narrative_id}/decision`` ``{status, text?}``:
   approve (with the coach's edits) or reject.
 * ``GET /coach/narratives/pending?date=``: the coach's own pending drafts; a
@@ -83,6 +86,22 @@ async def draft_student_narrative(
     row = await narratives.draft_for_student.execute(  # type: ignore[attr-defined]
         student_id=student_id, for_date=on, start=start, end=end, coach_id=claims.user_id
     )
+    return _dump(row)
+
+
+@router.get("/students/{student_id}/narrative")
+async def get_student_narrative(
+    student_id: str,
+    on_date: str | None = Query(None, alias="date"),
+    claims: AuthClaims = Depends(require_coach_surface()),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+    narratives: object = Depends(_get_narratives),
+) -> dict[str, object]:
+    await _require_assigned_to_student(use_cases, claims.user_id, student_id)
+    on = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
+    row = await narratives.review.for_student(student_id, on)  # type: ignore[attr-defined]
+    if row is None:
+        raise HTTPException(status_code=404, detail="narrative not found")
     return _dump(row)
 
 

@@ -16,7 +16,12 @@ from backend.v2.contexts.ai.application.use_cases.draft_progress_narrative impor
     DraftProgressNarrative,
     ProgressNarrativeInput,
 )
-from backend.v2.contexts.ai.domain.narrative import COACH_REVIEW_OFF, AiNarrative, NoWinsToday
+from backend.v2.contexts.ai.domain.narrative import (
+    COACH_REVIEW_OFF,
+    AiNarrative,
+    NoWinsToday,
+    source_fingerprint,
+)
 from backend.v2.shared.ids import new_ulid
 
 
@@ -38,6 +43,7 @@ class CoachReviewSwitch(Protocol):
 class AiNarrativeRepository(Protocol):
     async def upsert_draft(self, row: AiNarrative) -> AiNarrative: ...
     async def get(self, narrative_id: str) -> AiNarrative | None: ...
+    async def get_for(self, student_id: str, for_date: str, kind: str) -> AiNarrative | None: ...
     async def list_pending(self, for_date: str, created_by: str | None) -> list[AiNarrative]: ...
     async def decide(
         self,
@@ -93,6 +99,11 @@ class DraftStudentNarrative:
                 created_by=coach_id,
                 created_at=now,
                 decided_at=None if review else now,
+                source_fingerprint=source_fingerprint(
+                    ((s.skill_name, s.coach_words) for s in facts.skills_mastered_today),
+                    facts.passed_in_level,
+                    facts.total_in_level,
+                ),
             )
         )
 
@@ -111,6 +122,10 @@ class ReviewNarratives:
 
     async def get(self, narrative_id: str) -> AiNarrative | None:
         return await self._narratives.get(narrative_id)
+
+    async def for_student(self, student_id: str, for_date: date) -> AiNarrative | None:
+        """The day's note for one student, whatever its status."""
+        return await self._narratives.get_for(student_id, for_date.isoformat(), "evening_wins")
 
     async def pending(self, for_date: date, created_by: str | None) -> list[AiNarrative]:
         return await self._narratives.list_pending(for_date.isoformat(), created_by)

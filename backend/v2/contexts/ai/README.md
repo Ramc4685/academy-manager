@@ -73,6 +73,11 @@ The coach edits and approves or rejects it (`PUT
 /api/v2/coach/narratives/{id}/decision`); approving sets `approver` to the
 coach's user id on both the narrative and its `ai_calls` row (`call_id`). The
 evening wins email uses an approved paragraph in place of its templated skill
-sentence and ignores pending or rejected rows, so it never waits on review.
+sentence and ignores pending or rejected rows, so it never waits on review. The
+row carries a `source_fingerprint` (sha256 of the sorted skill name/coach words
+pairs and the passed/total counts); the email recomputes it from that night's
+wins and falls back to the templated sentence when they no longer match. `GET
+/api/v2/coach/students/{id}/narrative?date=` returns the day's row (404 when
+none) so the workspace restores a draft after a refresh.
 `ai.coach_review_narratives: false` on the academy document stores drafts
 approved with approver `coach_review_off` (no UI yet).
