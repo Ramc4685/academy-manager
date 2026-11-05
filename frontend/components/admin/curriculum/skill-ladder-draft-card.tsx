@@ -33,10 +33,10 @@ const INPUT = "rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:bo
  */
 export function SkillLadderDraftCard({
   programId,
-  existingLevelCount,
+  lastLevelSequence,
 }: {
   programId: string;
-  existingLevelCount: number;
+  lastLevelSequence: number;
 }) {
   const queryClient = useQueryClient();
   const status = useQuery({ queryKey: queryKeys.admin.aiStatus(), queryFn: getAiStatus });
@@ -54,13 +54,16 @@ export function SkillLadderDraftCard({
 
   const save = useMutation({
     mutationFn: () =>
-      saveLadderDraft(programId, levels ?? [], existingLevelCount, {
-        createLevel,
-        createSkill,
-        addCriterion,
-      }),
-    onSuccess: () => {
-      setLevels(null);
+      saveLadderDraft(
+        programId,
+        levels ?? [],
+        lastLevelSequence,
+        { createLevel, createSkill, addCriterion },
+        // Drop each level once it lands, so Save after a failure resumes at the one that failed.
+        () => setLevels((prev) => prev?.slice(1) ?? null),
+      ),
+    onSuccess: () => setLevels(null),
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "pathway", programId] });
     },
   });
@@ -144,7 +147,8 @@ export function SkillLadderDraftCard({
             ))}
             {save.isError && (
               <p role="alert" className="text-xs text-red-600">
-                Saving stopped part way; the levels already saved are in the program below.
+                Saving stopped part way; the levels already saved are in the program below. Save
+                again continues with the ones still listed here.
               </p>
             )}
             <div className="flex items-center justify-end gap-2">

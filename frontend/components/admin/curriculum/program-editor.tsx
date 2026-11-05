@@ -103,7 +103,10 @@ export function ProgramEditor({
 
       <LessonCardsPanel programId={programId} />
 
-      <SkillLadderDraftCard programId={programId} existingLevelCount={data.levels.length} />
+      <SkillLadderDraftCard
+        programId={programId}
+        lastLevelSequence={Math.max(0, ...data.levels.map((l) => l.level.sequence))}
+      />
 
       {showAddLevel && (
         <Card p={20}>

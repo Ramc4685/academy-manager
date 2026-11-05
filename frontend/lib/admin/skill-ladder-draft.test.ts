@@ -112,12 +112,41 @@ describe("saveLadderDraft", () => {
 
   it("stops at the first failure so nothing after it is half-saved", async () => {
     const api = fakeApi();
+    const onLevelSaved = vi.fn();
     api.createSkill.mockRejectedValueOnce(new Error("boom"));
 
-    await expect(saveLadderDraft("prog-1", levels, 0, api)).rejects.toThrow("boom");
+    await expect(saveLadderDraft("prog-1", levels, 0, api, onLevelSaved)).rejects.toThrow("boom");
 
     expect(api.createLevel).toHaveBeenCalledTimes(1);
     expect(api.addCriterion).not.toHaveBeenCalled();
+    expect(onLevelSaved).not.toHaveBeenCalled();
+  });
+
+  it("reports each saved level so a retry resumes at the failed one with a fresh sequence", async () => {
+    const api = fakeApi();
+    const onLevelSaved = vi.fn();
+    // Level 1 lands; level 2 fails on its skill.
+    api.createSkill.mockResolvedValueOnce({ skill_id: "sk-1" });
+    api.createSkill.mockResolvedValueOnce({ skill_id: "sk-2" });
+    api.createSkill.mockRejectedValueOnce(new Error("boom"));
+
+    await expect(saveLadderDraft("prog-1", levels, 0, api, onLevelSaved)).rejects.toThrow("boom");
+    expect(onLevelSaved.mock.calls).toEqual([[0]]);
+
+    // The card drops the saved level and the editor now reports sequence 1 as the last one;
+    // the retry re-posts only level 2 and does not collide with level 1.
+    const retry = fakeApi();
+    await saveLadderDraft("prog-1", levels.slice(1), 1, retry);
+    expect(retry.createLevel.mock.calls).toEqual([
+      ["prog-1", { name: "Improver", description: "", sequence: 2 }],
+    ]);
+  });
+
+  it("places new levels after the highest existing sequence, not the level count", async () => {
+    // Program has levels 1 and 3 (2 was deleted): the editor passes max = 3.
+    const api = fakeApi();
+    await saveLadderDraft("prog-1", levels.slice(0, 1), 3, api);
+    expect(api.createLevel.mock.calls[0][1].sequence).toBe(4);
   });
 });
 

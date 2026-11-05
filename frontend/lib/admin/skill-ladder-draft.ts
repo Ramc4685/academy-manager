@@ -30,18 +30,24 @@ export interface LadderSaveApi {
   ) => Promise<Pick<SkillCriterion, "criterion_id">>;
 }
 
-/** Levels go after the program's existing ones; skills and criteria keep draft order. */
+/**
+ * Levels go after the program's last existing sequence (not its count, which
+ * collides when a level was deleted); skills and criteria keep draft order.
+ * `onLevelSaved` fires once per fully saved level so the caller can drop it
+ * from the draft and a retry after a failure resumes at the level that failed.
+ */
 export async function saveLadderDraft(
   programId: string,
   levels: DraftLevel[],
-  existingLevelCount: number,
+  lastLevelSequence: number,
   api: LadderSaveApi,
+  onLevelSaved?: (index: number) => void,
 ): Promise<void> {
   for (const [li, level] of levels.entries()) {
     const saved = await api.createLevel(programId, {
       name: level.name.trim(),
       description: level.description.trim(),
-      sequence: existingLevelCount + li + 1,
+      sequence: lastLevelSequence + li + 1,
     });
     for (const [si, skill] of level.skills.entries()) {
       const savedSkill = await api.createSkill(saved.level_id, {
@@ -61,6 +67,7 @@ export async function saveLadderDraft(
         });
       }
     }
+    onLevelSaved?.(li);
   }
 }
 
