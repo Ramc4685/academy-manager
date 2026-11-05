@@ -502,7 +502,14 @@ class FakeBillingLedger:
     ) -> LedgerPayment:
         existing_id = self.payment_keys.get(idempotency_key)
         if existing_id is not None:
-            return self.payments[existing_id]
+            existing = self.payments[existing_id]
+            # Mirrors the Mongo repo: a replay fills a missing fee once, never overwrites.
+            if existing.application_fee_cents is None and payment.application_fee_cents is not None:
+                existing = existing.model_copy(
+                    update={"application_fee_cents": payment.application_fee_cents}
+                )
+                self.payments[existing_id] = existing
+            return existing
         self.payments[payment.payment_id] = payment
         self.payment_keys[idempotency_key] = payment.payment_id
         return payment
@@ -1451,6 +1458,64 @@ async def test_payment_intent_succeeded_marks_payment_succeeded() -> None:
     assert res["processed"] is True
     assert repo.by_id["pay-1"].status == "succeeded"
     assert [e.name for e in outbox.events] == ["Billing.PaymentSucceeded"]
+
+
+@pytest.mark.asyncio
+async def test_autopay_webhook_fills_the_fee_on_a_row_the_sync_charge_wrote_without_it() -> None:
+    """Phase 2 A1: ChargeInvoiceViaAutopay records ``autopay-pi:{pi}`` first;
+    the webhook's replay of that key fills a missing fee once and never
+    overwrites a recorded one."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice())
+    uc = _build(repo, dedup=FakeDedup(), billing_ledger=ledger)
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    for pi_id, fee in (("pi_blank", None), ("pi_recorded", 50)):
+        ledger.payments[f"ledger-pay-autopay:{pi_id}"] = LedgerPayment(
+            payment_id=f"ledger-pay-autopay:{pi_id}",
+            academy_id="acad",
+            parent_id="parent-from-invoice",
+            amount_cents=10000,
+            unapplied_amount_cents=10000,
+            currency="usd",
+            status="succeeded",
+            payment_method="stripe_autopay",
+            stripe_payment_intent_id=pi_id,
+            application_fee_cents=fee,
+            paid_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        ledger.payment_keys[f"autopay-pi:{pi_id}"] = f"ledger-pay-autopay:{pi_id}"
+
+    async def replay(event_id: str, pi_id: str) -> None:
+        body = json.dumps(
+            {
+                "id": event_id,
+                "type": "payment_intent.succeeded",
+                "data": {
+                    "object": {
+                        "id": pi_id,
+                        "amount": 10000,
+                        "currency": "usd",
+                        "application_fee_amount": 100,
+                        "metadata": {
+                            "academy_id": "acad",
+                            "invoice_id": "inv-autopay",
+                            "source": "autopay",
+                        },
+                    }
+                },
+            }
+        ).encode()
+        await uc.accept(body, "test_signature")
+        assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+
+    await replay("evt_fill_1", "pi_blank")
+    assert ledger.payments["ledger-pay-autopay:pi_blank"].application_fee_cents == 100
+    await replay("evt_fill_2", "pi_blank")
+    assert ledger.payments["ledger-pay-autopay:pi_blank"].application_fee_cents == 100
+    await replay("evt_keep", "pi_recorded")
+    assert ledger.payments["ledger-pay-autopay:pi_recorded"].application_fee_cents == 50
 
 
 @pytest.mark.asyncio

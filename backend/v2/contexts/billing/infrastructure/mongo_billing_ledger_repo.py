@@ -353,6 +353,25 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             {"academy_id": academy_id, "ledger_idempotency_key": idempotency_key}
         )
         if existing is not None:
+            if (
+                existing.get("application_fee_cents") is None
+                and payment.application_fee_cents is not None
+            ):
+                # A replay that knows the fee (the webhook, after a sync
+                # producer wrote the row without it) fills the blank once; a
+                # recorded fee is never overwritten.
+                existing = (
+                    await self.ledger_payments.find_one_and_update(
+                        {
+                            "academy_id": academy_id,
+                            "ledger_idempotency_key": idempotency_key,
+                            "application_fee_cents": None,
+                        },
+                        {"$set": {"application_fee_cents": payment.application_fee_cents}},
+                        return_document=ReturnDocument.AFTER,
+                    )
+                    or existing
+                )
             return self._payment_from_doc(existing)
 
         doc = _mongo_doc(payment)
