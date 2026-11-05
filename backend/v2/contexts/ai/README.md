@@ -147,3 +147,28 @@ each in order: entitlement (403 `Ai.NotEntitled`) -> `assert_under_cap` (429)
 | Composition | `composition/ai_win_back.py`, hung on `WinBackNotificationAdapter.personaliser`; any AI error logs a WARNING and the templated paragraph goes out. The model is called before the sender's suppression and preference gates, so a suppressed parent still costs one cap slot | `composition/ai_technique.py` at `app.state.ai_technique`; `GET /coach/ai/status` -> `{enabled}` (a model is wired) is what the coach shell gates the draft box on, since a coach-only user cannot read the admin status route |
 
 Text only: no audio, video or file upload anywhere in this slice (BIPA).
+
+### Parent progress narrative (B4, paid, prompt `progress-narrative-v1`)
+
+Feature key `progress_narrative`, prompt `progress-narrative-v1`, `max_tokens`
+400. A coach taps "Draft tonight's note" on a student who mastered a skill
+today (`POST /api/v2/coach/students/{id}/narrative-draft`). The use case
+`DraftProgressNarrative` runs entitlement (`AiNotEntitled`, 403) -> monthly cap
+(429) -> `llm.complete` -> `record_ai_call.execute` -> strict parse (502). The
+model sees exactly `ProgressNarrativeInput`: the child's first name, level and
+program names, today's skills with their observable criteria and the coach's
+quick-tag words, and the passed/total counts. No surname, family, attendance
+or other children. The draft is stored in `ai_narratives` (tenant-scoped, one
+row per `(student_id, for_date, kind)`, migration 0224) as `pending_review`.
+The coach edits and approves or rejects it (`PUT
+/api/v2/coach/narratives/{id}/decision`); approving sets `approver` to the
+coach's user id on both the narrative and its `ai_calls` row (`call_id`). The
+evening wins email uses an approved paragraph in place of its templated skill
+sentence and ignores pending or rejected rows, so it never waits on review. The
+row carries a `source_fingerprint` (sha256 of the sorted skill name/coach words
+pairs and the passed/total counts); the email recomputes it from that night's
+wins and falls back to the templated sentence when they no longer match. `GET
+/api/v2/coach/students/{id}/narrative?date=` returns the day's row (404 when
+none) so the workspace restores a draft after a refresh.
+`ai.coach_review_narratives: false` on the academy document stores drafts
+approved with approver `coach_review_off` (no UI yet).

@@ -118,6 +118,7 @@ def _ids(academy: str) -> dict[str, str]:
         "rec_id": f"{academy}-levelup-rec-1",
         "cert_id": f"{academy}-cert-1",
         "note_id": f"{academy}-note-1",
+        "narrative_id": f"{academy}-narrative-1",
         "follow_up_id": f"{academy}-follow-up-1",
         # Seeded as an approved trial request with an assigned date (L3a:
         # POST /admin/self-service/trials/{request_id}/outcome and
@@ -165,6 +166,7 @@ UNSEEDED_PARAMS = frozenset(
         "level_id",
         "rec_id",
         "note_id",
+        "narrative_id",
         "follow_up_id",
         "request_id",
         "event_id",

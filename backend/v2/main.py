@@ -1087,6 +1087,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the routes 404 even if something mounts them.
     if settings.enable_owner_role:
         app.state.owner = compose_owner(db)
+    # AI Phase 2 B4: the coach-reviewed parent progress narrative.
+    from backend.v2.composition.ai_narratives import compose_ai_narratives
+
+    app.state.ai_narratives = compose_ai_narratives(db, app.state.ai)
 
     scheduler: AsyncIOScheduler | None = None
 

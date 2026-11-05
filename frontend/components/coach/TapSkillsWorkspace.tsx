@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  getCoachAiStatus,
   markCoachSkillMastered,
   setCoachMasteryNote,
   unmarkCoachSkillMastered,
@@ -14,9 +15,11 @@ import {
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
 import { NOTE_MAX, criterionFits, pickedCriteria, toggleCriterion } from "@/lib/coach/mastery-note";
+import { AI_STATUS_KEY, masteredOn } from "@/lib/coach/progress-narrative";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
+import { ProgressNarrativeNote } from "@/components/coach/ProgressNarrativeNote";
 
 // Matches the backend's MASTERY_NOTE_WINDOW: notes go on the day's wins.
 const NOTE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -80,6 +83,14 @@ export function TapSkillsWorkspace({
     queryKey: boardKey,
     queryFn: () => getCoachSessionSkillBoard(sessionId, requestedProgramId),
   });
+  // B4: the AI note button shows only when the deployment says AI is on.
+  const aiStatus = useQuery({
+    queryKey: AI_STATUS_KEY,
+    queryFn: getCoachAiStatus,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  const aiEnabled = aiStatus.data?.enabled === true;
   const [picked, setPicked] = useState<Selection | null>(null);
   const [notice, setNotice] = useState<LevelUpNotice | null>(null);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
@@ -337,6 +348,13 @@ export function TapSkillsWorkspace({
                         note: null,
                       })
                     }
+                  />
+                )}
+                {aiEnabled && masteredOn(student.statuses, date) && (
+                  <ProgressNarrativeNote
+                    studentId={student.student_id}
+                    studentName={student.student_name}
+                    date={date}
                   />
                 )}
               </li>
