@@ -1,6 +1,6 @@
 # api-contract-followups
 
-PR: #1148
+PR: #1149
 
 ## What changed
 Two more admin money endpoints now declare their response shape, so the frontend contract check covers them. `POST /admin/payments/refund` returns the refund result type the use case already produced, and `GET /admin/billing/invoices/{id}/audit` returns typed audit entries. The audit view copies the billing domain's audit entry, because the API layer may not import the domain directly. A structural test fails if the two drift apart. Both endpoints are added to `frontend/lib/api/billing-contract.ts`. The responses on the wire are unchanged.
