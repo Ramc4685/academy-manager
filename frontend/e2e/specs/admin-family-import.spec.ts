@@ -92,6 +92,8 @@ async function setup(page: Page) {
     fulfillJson(route, { counts: {}, total: 0 }),
   );
   await page.route("**/api/v2/admin/sessions*", (route) => fulfillJson(route, { sessions: [] }));
+  // The import panel asks whether AI is on (B1's route); off keeps the AI button hidden.
+  await page.route("**/api/v2/admin/ai/status", (route) => fulfillJson(route, { enabled: false }));
   await stubEmptyBillingSetup(page);
   const lists: Request[] = [];
   await stubFamilyIndex(page, { families: [], onList: (req) => lists.push(req) });

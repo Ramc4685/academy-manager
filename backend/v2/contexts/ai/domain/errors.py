@@ -33,3 +33,11 @@ class AiAcademyNotFound(DomainError):
 
     code = "Ai.AcademyNotFound"
     status_code = 404
+
+
+class AiImportSampleRejected(DomainError):
+    """The spreadsheet handed to the roster-import copilot is over the import's
+    own size or row cap, or is not readable as CSV."""
+
+    code = "Ai.ImportSampleRejected"
+    status_code = 422

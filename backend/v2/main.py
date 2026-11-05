@@ -939,6 +939,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.ai_usage import compose_ai_usage
 
     app.state.ai_usage = compose_ai_usage(db, app.state.platform_billing.has_feature)
+    # Phase 2 slice B2: the roster-import copilot over app.state.ai.
+    from backend.v2.composition.ai_import import compose_ai_import
+
+    app.state.ai_import = compose_ai_import(db, app.state.ai)
     from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
 
     app.state.parent_evening_wins = compose_send_parent_evening_wins(db)

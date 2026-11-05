@@ -29,3 +29,11 @@ class EntitlementSource(Protocol):
     """Whether the academy in scope holds a plan feature (``"ai"``)."""
 
     async def has_feature(self, feature: str) -> bool: ...
+
+
+class ImportValueSharing(Protocol):
+    """Whether the academy in scope lets the roster-import copilot see real
+    spreadsheet values (``ai.share_import_values``); False means headers and
+    masked samples only."""
+
+    async def share_values(self) -> bool: ...

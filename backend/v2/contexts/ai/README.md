@@ -80,6 +80,39 @@ Whether an academy may use AI at all is `has_feature(academy_id, "ai")` in
 `contexts/platform/billing` (see that context's README). This context does
 not read plans.
 
+### Roster-import copilot (Phase 2 slice B2)
+
+Feature key `roster_import_map`, prompt `roster-import-map-v1`
+(`domain/prompts.py`), use case `application/use_cases/map_import_columns.py`,
+route `POST /admin/imports/families/map-columns` (`interfaces/admin/ai_import_routes.py`,
+admin persona, same body and size guard as the import preview), wired by
+`composition/ai_import.py` at `app.state.ai_import`.
+
+The model proposes ONLY the column mapping from a spreadsheet's headers to the
+five import columns. It sees the header row, at most five data rows and the
+five target columns with their rules, built from an explicit sample dataclass
+and never from a request dict or a stored document. By default every sample
+cell is masked to its shape (letters `a`/`A`, digits `9`, cut to 24 characters);
+real sample cells go only when the academy's `ai.share_import_values` is true,
+set by the owner through `PUT /admin/ai/import-sharing` (Settings >
+Notifications, "AI import helper"). Headers go as written unless, in masked mode,
+one looks like data (an "@", a run of 4+ digits or an ISO date in any header means
+the file has no header row, so every column is relabeled "(column N)"; a header
+over 40 characters relabels itself); the answer is translated back to the file's
+header names. Two columns with the same name (case and spaces aside) are refused
+with a 422 before any model call, in both modes; the error names the column
+positions, never the header text, since in a headerless file that is a name. The use case
+refuses before spending tokens when the month is at the cap
+(`RecordAiCall.assert_under_cap`), records the call before parsing the answer,
+and turns an answer that is not the exact JSON shape, repeats a target, lacks
+`parent_name` or `student_name`, or names a header not in the file into
+`AiProviderError` (502). It reads and writes nothing but the `ai_calls` row.
+
+The human approves in the browser: `FamilyImportPanel` shows the draft as an
+editable table, `applyColumnMapping` rewrites the CSV client side, and the
+rewritten text goes through the existing import preview and commit, which stay
+the only write path for families and students.
+
 ## Usage meter
 
 Phase 2 slice A3. `application/use_cases/get_ai_usage.py::GetAiUsage`
