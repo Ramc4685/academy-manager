@@ -215,7 +215,14 @@ def _body(text: str) -> str:
 
 
 @pytest.mark.parametrize(
-    "text", ["Visit www.evil.example today.", "Write to mailto:coach@evil.example please."]
+    "text",
+    [
+        "Visit www.evil.example today.",
+        "Write to mailto:coach@evil.example please.",
+        "See HTTPS://EVIL.EXAMPLE/offer for details.",
+        "Book at evil.example/book now.",
+        "Our friends at other-academy.com can help.",
+    ],
 )
 def test_parse_rejects_bare_domain_and_mailto_links(text: str) -> None:
     with pytest.raises(AiProviderError):

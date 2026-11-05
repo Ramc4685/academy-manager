@@ -30,7 +30,11 @@ MAX_INQUIRY_CHARS = 2000
 MAX_CLASS_LINES = 6
 
 _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
-_URL = re.compile(r"(?:https?://|www\.|mailto:)\S+")
+#: Any link-looking token, case-insensitive: a scheme, www., mailto:, or a
+#: bare domain (two or more letters after a dot, so "e.g." does not match).
+_URL = re.compile(
+    r"(?i)(?:[a-z][a-z0-9+.-]*:)?//\S+|www\.\S+|mailto:\S+|\b[\w-]+(?:\.[a-z]{2,})+(?:/\S*)?"
+)
 
 
 class InquiryNotFound(DomainError):
@@ -112,9 +116,11 @@ def parse_reply_draft(text: str, *, allowed_url: str | None) -> ReplyDraft:
         draft = ReplyDraft.model_validate(json.loads(raw))
     except (ValueError, ValidationError) as exc:
         raise AiProviderError("the model's answer could not be read") from exc
-    allowed = (allowed_url or "").rstrip("/")
+    allowed = (allowed_url or "").rstrip("/").lower()
     for url in _URL.findall(draft.body):
-        if not allowed or url.rstrip(".,;)").rstrip("/") != allowed:
+        found = url.rstrip(".,;)").rstrip("/").lower()
+        # The public page URL may be quoted whole or as its bare host/path.
+        if not allowed or found not in allowed:
             raise AiProviderError("the model's answer could not be read", reason="invented_link")
     return draft
 
