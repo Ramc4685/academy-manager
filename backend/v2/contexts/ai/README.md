@@ -79,7 +79,8 @@ one looks like data (an "@", a run of 4+ digits or an ISO date in any header mea
 the file has no header row, so every column is relabeled "(column N)"; a header
 over 40 characters relabels itself); the answer is translated back to the file's
 header names. Two columns with the same name (case and spaces aside) are refused
-with a 422 before any model call, in both modes. The use case
+with a 422 before any model call, in both modes; the error names the column
+positions, never the header text, since in a headerless file that is a name. The use case
 refuses before spending tokens when the month is at the cap
 (`RecordAiCall.assert_under_cap`), records the call before parsing the answer,
 and turns an answer that is not the exact JSON shape, repeats a target, lacks

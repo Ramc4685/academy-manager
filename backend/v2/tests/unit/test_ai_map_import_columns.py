@@ -116,7 +116,11 @@ def test_read_sample_relabels_a_header_row_that_is_really_data() -> None:
     assert sample.headers == tuple(f"(column {i})" for i in range(1, 6))
     assert sample.file_headers[0] == "Jane Doe"
     # A phone or a date in any header cell also means a headerless file.
-    for row in ("Guardian,3095550123,Child", "Guardian,Child,2015-03-04"):
+    for row in (
+        "Guardian,3095550123,Child",
+        "Guardian,(309) 555-0123,Child",
+        "Guardian,Child,2015-03-04",
+    ):
         assert read_sample(row + "\na,b,c\n", share_values=False).headers == (
             "(column 1)",
             "(column 2)",
@@ -131,8 +135,11 @@ def test_read_sample_relabels_a_header_row_that_is_really_data() -> None:
 
 @pytest.mark.parametrize("share_values", [False, True])
 def test_duplicate_headers_are_refused_before_any_model_call(share_values: bool) -> None:
-    with pytest.raises(AiImportSampleRejected, match="two columns named Parent Name"):
-        read_sample("parent name,Parent Name\na,b\n", share_values=share_values)
+    with pytest.raises(AiImportSampleRejected, match="Columns 1 and 3 have the same name") as info:
+        read_sample("parent name,Child,Parent Name\na,b,c\n", share_values=share_values)
+    # By position only: in a headerless file the header text is a person's name.
+    assert "Parent Name" not in str(info.value)
+    assert info.value.details == {"columns": [1, 3]}
 
 
 async def test_phone_only_headerless_row_leaks_nothing() -> None:

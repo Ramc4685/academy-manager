@@ -115,30 +115,36 @@ def mask_cell(value: str) -> str:
     return "".join(out)
 
 
-#: An email, a phone, or an ISO date (its year is a 4-digit run) in a header cell.
-_DATA_LIKE = re.compile(r"@|\d{4}")
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _looks_like_data(header: str) -> bool:
+    """An email, a phone in any punctuation (4+ digits in total), or an ISO date."""
+    return "@" in header or sum(c.isdigit() for c in header) >= 4 or bool(_ISO_DATE.search(header))
 
 
 def _header_labels(headers: tuple[str, ...]) -> tuple[str, ...]:
     """Masked mode: any header that looks like data means the file has no header
     row, so EVERY column is relabeled "(column N)" (the other cells of that row
     are names). Otherwise only an over-long header is relabeled."""
-    if any(_DATA_LIKE.search(h) for h in headers):
+    if any(_looks_like_data(h) for h in headers):
         return tuple(f"(column {i + 1})" for i in range(len(headers)))
     return tuple(f"(column {i + 1})" if len(h) > 40 else h for i, h in enumerate(headers))
 
 
 def _reject_duplicate_headers(headers: tuple[str, ...]) -> None:
     """Two columns with the same name (case and spaces aside) would collide in
-    the mapping, so the file is refused before any model call, in both modes."""
-    seen: set[str] = set()
-    for h in headers:
+    the mapping, so the file is refused before any model call, in both modes.
+    Reported by position: in a headerless file the text is a person's name."""
+    seen: dict[str, int] = {}
+    for i, h in enumerate(headers, start=1):
         key = "".join(h.lower().split())
         if key in seen:
             raise AiImportSampleRejected(
-                f"The file has two columns named {h}; rename one and try again.", header=h
+                f"Columns {seen[key]} and {i} have the same name; rename one and try again.",
+                columns=[seen[key], i],
             )
-        seen.add(key)
+        seen[key] = i
 
 
 def read_sample(csv_text: str, *, share_values: bool) -> ImportSample:
