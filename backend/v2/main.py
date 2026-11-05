@@ -29,6 +29,7 @@ from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.admin_platform_fee import compose_admin_platform_fee
 from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.composition.billing_rules import compose_admin_billing_rules
 from backend.v2.composition.coach import compose_coach
@@ -59,6 +60,9 @@ from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
 from backend.v2.composition.payment_methods import compose_admin_payment_methods
+from backend.v2.composition.platform_application_fee import (
+    compose_default_application_fee_assigner,
+)
 from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.composition.pricing import compose_admin_pricing
 from backend.v2.composition.prospect_email import compose_unsubscribe_prospect
@@ -835,6 +839,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         tenants=MongoTenantLifecycleRepository(db),
         audit_recorder=_record_lifecycle_audit,
         invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
+        default_application_fee_assigner=compose_default_application_fee_assigner(db),
     )
     app.state.platform_billing = build_platform_billing_use_cases(db)
 
@@ -1066,6 +1071,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
     app.state.admin_month_close = compose_admin_month_close(db)
+    # Academy admin's read-only view of the processing markup (Phase 2 A1).
+    app.state.admin_platform_fee = compose_admin_platform_fee(db)
     # Automated late fees, driven from the dunning tick below (#552).
     app.state.apply_late_fees = compose_apply_late_fees(db)
 
@@ -1863,10 +1870,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             summary = await send_owner_daily_briefs(
                 db,
                 sender=app.state.ops_digest_sender,
+                family_index=app.state.admin_family_index.index,
                 academy_ids=[academy_id],
                 house_academy_id=settings.house_academy_id or runtime_academy_id,
                 override_email=settings.owner_brief_email or settings.ops_alert_email,
                 now=local_now,
+                frontend_url=settings.frontend_url,
             )
             for key in totals:
                 totals[key] += int(getattr(summary, key, 0) or 0)

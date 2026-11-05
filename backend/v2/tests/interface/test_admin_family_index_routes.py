@@ -22,6 +22,7 @@ from backend.v2.contexts.crm.application.family_index import (
 )
 from backend.v2.interfaces.admin import family_index_routes
 from backend.v2.interfaces.admin.family_index_routes import get_admin_family_index
+from backend.v2.interfaces.admin.family_index_views import at_risk_reasons
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
@@ -158,6 +159,8 @@ def test_list_shape_and_tenant(admin: TestClient, services: FakeServices) -> Non
         },
         "owes_money": True,
         "matched_parent": False,
+        "at_risk": True,
+        "at_risk_reasons": ["payment"],
     }
     assert body["money_view"] == "amounts"
     assert body["families"][1]["money"] is None
@@ -289,3 +292,57 @@ def test_family_record_by_alias_is_the_canonical_family(admin: TestClient) -> No
 
 def test_family_record_alias_of_another_academy_is_404(admin: TestClient) -> None:
     assert admin.get("/api/v2/admin/families/fb-foreign/record").status_code == 404
+
+
+def _record(*, lifecycle: str, money: FamilyMoney | None) -> FamilyRecord:
+    return FamilyRecord(
+        family_id="u-risk",
+        parent_name="Testparent Risk",
+        email=None,
+        phone=None,
+        has_account=True,
+        children=(FamilyChild(student_id="s-r", name="Kiddo Risk", lifecycle=lifecycle),),
+        stage=lifecycle,
+        card_on_file=True,
+        registration="registered",
+        money=money,
+    )
+
+
+def _money(*, overdue: int = 0, failed_at: datetime | None = None) -> FamilyMoney:
+    return FamilyMoney(
+        balance_cents=0,
+        open_invoice_count=1,
+        overdue_invoice_count=overdue,
+        overdue_cents=0,
+        oldest_overdue_due_on=None,
+        last_failed_payment_at=failed_at,
+    )
+
+
+def test_at_risk_reasons_from_attendance_and_payment_signals() -> None:
+    quiet = _record(lifecycle="active", money=_money())
+    assert at_risk_reasons(quiet, view="amounts") == []
+
+    attendance = _record(lifecycle="at_risk", money=_money())
+    assert at_risk_reasons(attendance, view="amounts") == ["attendance"]
+    # Attendance is not money: front desk sees it too.
+    assert at_risk_reasons(attendance, view="none") == ["attendance"]
+
+    failed_card = _record(lifecycle="active", money=_money(failed_at=NOW))
+    assert at_risk_reasons(failed_card, view="amounts") == ["payment"]
+    overdue = _record(lifecycle="active", money=_money(overdue=1))
+    assert at_risk_reasons(overdue, view="flag") == ["payment"]
+    # Money hidden from this caller: the payment reason is withheld, like owes_money.
+    assert at_risk_reasons(overdue, view="none") == []
+    # Money unreadable: unknown, never a reason.
+    assert at_risk_reasons(_record(lifecycle="active", money=None), view="amounts") == []
+
+    both = _record(lifecycle="at_risk", money=_money(overdue=2, failed_at=NOW))
+    assert at_risk_reasons(both, view="amounts") == ["attendance", "payment"]
+
+
+def test_record_view_carries_the_at_risk_flag(admin: TestClient) -> None:
+    body = admin.get("/api/v2/admin/families/u-alpha/record").json()
+    assert body["family"]["at_risk"] is True
+    assert body["family"]["at_risk_reasons"] == ["payment"]

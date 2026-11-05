@@ -352,7 +352,17 @@ export interface FamilyIndexRow {
    */
   owes_money?: boolean | null;
   matched_parent: boolean;
+  /**
+   * Rules only (AI strategy Phase 2, A4): `attendance` when a child's
+   * lifecycle is at_risk, `payment` when the money block carries a failed
+   * card or an overdue invoice (withheld when money is hidden). Computed by
+   * the server; optional because responses before A4 omit it.
+   */
+  at_risk?: boolean;
+  at_risk_reasons?: AtRiskReason[];
 }
+
+export type AtRiskReason = "attendance" | "payment";
 
 /**
  * How the server let this caller see family money (L2b, #553): `amounts`

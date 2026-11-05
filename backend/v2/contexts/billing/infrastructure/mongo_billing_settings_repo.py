@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pymongo.errors import DuplicateKeyError
 
-from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.billing_settings import (
+    ApplicationFeeAgreementAcceptance,
+    BillingSettings,
+)
 from backend.v2.contexts.billing.domain.errors import InvoicePrefixTaken
 from backend.v2.contexts.billing.infrastructure.house_academy import platform_charges_allowed
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
@@ -15,6 +20,9 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 #: "BLNO" used to spread (roadmap X32).
 _PLATFORM_ONLY_FIELDS = {
     "application_fee_bps",
+    "application_fee_agreement_version",
+    "application_fee_accepted_at",
+    "application_fee_accepted_by",
     "invoice_number_prefix",
     # The ceiling on the ACH discount a tenant may set (Settings overhaul
     # Phase 4 PR 13). A tenant write must never persist or raise it.
@@ -68,19 +76,26 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
             upsert=True,
         )
 
-    async def set_application_fee_bps(self, fee_bps: int) -> None:
+    async def set_application_fee_bps(
+        self, fee_bps: int, *, agreement: ApplicationFeeAgreementAcceptance | None = None
+    ) -> None:
         """Platform-admin write of this academy's application fee (roadmap L9b).
 
-        Touches ONLY ``application_fee_bps``; creates the settings document
-        (every other field at its default) when the academy has none yet.
+        Touches ONLY ``application_fee_bps`` and, when an acceptance is given,
+        the three ``application_fee_*`` agreement fields; creates the settings
+        document (every other field at its default) when the academy has none
+        yet. Without an acceptance the previously recorded one is kept.
         """
         # Validate through the model so the bounds live in one place.
         BillingSettings(academy_id=current_academy_id(), application_fee_bps=fee_bps)
-        await self._update_one(
-            {},
-            {"$set": {"application_fee_bps": int(fee_bps)}},
-            upsert=True,
-        )
+        payload: dict[str, Any] = {"application_fee_bps": int(fee_bps)}
+        if agreement is not None:
+            payload.update(
+                application_fee_agreement_version=agreement.version,
+                application_fee_accepted_at=agreement.accepted_at,
+                application_fee_accepted_by=agreement.accepted_by,
+            )
+        await self._update_one({}, {"$set": payload}, upsert=True)
 
     async def set_invoice_number_prefix(self, prefix: str) -> None:
         """Platform write of this academy's invoice prefix (Settings overhaul P1 PR 2).
