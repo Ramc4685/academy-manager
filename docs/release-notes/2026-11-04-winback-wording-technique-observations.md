@@ -1,6 +1,6 @@
 # winback-wording-technique-observations
 
-PR: #TBD
+PR: #1140
 
 ## What changed
 Two paid AI features for academies whose plan includes "ai". Win-back emails (30/60/90 days after a child leaves) can get an AI-written second paragraph that uses the child's first name, current level and up to three recent passed skills; the owner turns this on with a new Settings -> Notifications checkbox, "Personalise win-back emails with AI". Coaches get a "Draft from what I saw" box in the skill-notes panel: they type what they observed (text only, no audio or video), the model maps it to one criterion of the child's current level and suggests a parent-friendly sentence, and the coach edits and saves it as an ordinary skill note. The box shows for any coach-surface user, including coach-only accounts, via a new coach-persona status read (`GET /api/v2/coach/ai/status`).
