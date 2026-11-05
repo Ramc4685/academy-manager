@@ -44,6 +44,7 @@ from backend.v2.contexts.ai.domain.errors import (
 from backend.v2.contexts.ai.domain.models import DEFAULT_MODEL, AiCallRecord, LlmResult
 from backend.v2.contexts.ai.domain.prompts import PROMPTS
 from backend.v2.contexts.communications.application.ports import ResolvedRecipient, SendOutcome
+from backend.v2.contexts.identity.domain.errors import AcademyNotFound
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
@@ -200,6 +201,10 @@ async def test_win_back_success_records_the_call_with_the_owner_as_approver() ->
         json.dumps(
             {"paragraph": "Maya left 30 days ago; classes cost 45 dollars."}
         ),  # stray digits
+        json.dumps({"paragraph": "Maya, see https://example.test for the schedule."}),
+        json.dumps({"paragraph": "Maya, visit www.example.test to re-enroll."}),
+        json.dumps({"paragraph": "Maya, write to coach@example.test any time."}),
+        json.dumps({"paragraph": "Maya, visit example.com to re-enroll."}),  # bare domain
     ],
 )
 async def test_win_back_malformed_answer_is_502_after_recording(answer: str) -> None:
@@ -445,6 +450,22 @@ async def test_setting_reads_and_writes_only_the_scoped_academy_document() -> No
     with tenant_scope("acad-a"):
         await setting.set(enabled=False, user_id="someone-else")
         assert await setting.get() == (False, None)
+    with tenant_scope("acad-missing"), pytest.raises(AcademyNotFound) as exc:
+        await setting.set(enabled=True, user_id=OWNER)
+    assert exc.value.status_code == 404
+    assert await db["academies"].count_documents({}) == 2
+
+
+def test_technique_composition_reports_whether_a_model_is_wired() -> None:
+    from backend.v2.composition.ai import compose_ai
+    from backend.v2.composition.ai_technique import compose_ai_technique
+
+    db = AsyncMongoMockClient()["test_db"]
+    off = SimpleNamespace(ai_enabled=False, anthropic_api_key=None)
+    assert compose_ai_technique(db, compose_ai(db, off)).enabled is False
+    key = SimpleNamespace(get_secret_value=lambda: "sk-test")
+    on = SimpleNamespace(ai_enabled=True, anthropic_api_key=key)
+    assert compose_ai_technique(db, compose_ai(db, on)).enabled is True
 
 
 async def test_win_back_facts_use_the_active_level_and_three_passed_skills() -> None:

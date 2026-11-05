@@ -20,6 +20,7 @@ from backend.v2.contexts.ai.application.use_cases.draft_win_back_note import (
 )
 from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
+from backend.v2.contexts.identity.domain.errors import AcademyNotFound
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
@@ -51,13 +52,16 @@ class AcademyAiWinBackSetting:
         return True, str(by) if by else None
 
     async def set(self, *, enabled: bool, user_id: str) -> bool:
-        await self._academies.update_by_id(
-            current_academy_id(),
+        academy_id = current_academy_id()
+        updated = await self._academies.update_by_id(
+            academy_id,
             {
                 "ai.win_back_personalised": enabled,
                 "ai.win_back_personalised_by": user_id if enabled else None,
             },
         )
+        if updated is None:
+            raise AcademyNotFound(f"no academy document for {academy_id}")
         return enabled
 
 

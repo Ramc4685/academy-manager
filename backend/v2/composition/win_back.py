@@ -123,6 +123,10 @@ class WinBackNotificationAdapter:
 
         subject = f"We miss having {safe_name} in class"
         second = "We would love to have them back whenever you're ready to re-enroll."
+        # shortcut: the model is called before ``sender.send`` applies suppression
+        # and preference gates, so a suppressed parent still costs one cap slot;
+        # move the gates ahead of this call if win-back volume ever crowds out
+        # coach drafts.
         if self.personaliser is not None:
             try:
                 drafted = await self.personaliser.paragraph(

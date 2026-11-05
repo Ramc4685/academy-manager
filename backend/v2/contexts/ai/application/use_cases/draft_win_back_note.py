@@ -22,6 +22,9 @@ from backend.v2.contexts.ai.domain.prompts import PROMPTS
 
 FEATURE = "win_back_note"
 MAX_TOKENS = 400
+# Mail clients auto-link these even after html.escape, and the paragraph goes
+# out under the standing approval with no per-message review.
+_LINK_LIKE = re.compile(r"://|www\.|@|\.[a-z]{2,}", re.IGNORECASE)
 
 
 class WinBackRecentWin(BaseModel):
@@ -74,7 +77,12 @@ class DraftWinBackNote:
         draft = parse_json_answer(result.text, WinBackNoteDraft)
         words = draft.paragraph.split()
         digits_ok = all(d == str(data.milestone_days) for d in re.findall(r"\d+", draft.paragraph))
-        if len(words) > 80 or data.child_first_name not in draft.paragraph or not digits_ok:
+        if (
+            len(words) > 80
+            or data.child_first_name not in draft.paragraph
+            or not digits_ok
+            or _LINK_LIKE.search(draft.paragraph)
+        ):
             raise AiProviderError(UNREADABLE)
         return draft
 
