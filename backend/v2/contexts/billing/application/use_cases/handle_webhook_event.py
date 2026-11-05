@@ -168,6 +168,12 @@ QUARANTINE_UNATTRIBUTED = "unattributed_no_tenant_marker"
 # disagreeing means something is wrong, so neither is trusted to project.
 QUARANTINE_ACCOUNT_METADATA_CONFLICT = "connect_account_metadata_conflict"
 
+# ``quarantine_reason`` for a ``metadata.source == "platform_plan"`` event that
+# carries a top-level ``account``. Platform-plan objects live on the platform
+# account only, so a Connect event tagged as one is metadata someone wrote on
+# a connected account: it is neither synced nor processed as tuition.
+QUARANTINE_PLATFORM_PLAN_ON_CONNECT_ACCOUNT = "platform_plan_on_connect_account"
+
 
 class AccountAcademyResolver(Protocol):
     """Resolves a Stripe Connect account id to its owning academy id.
@@ -316,7 +322,9 @@ class HandleWebhookEvent:
         log.warning(
             "stripe_webhook_event_unattributed"
             if reason_code == QUARANTINE_UNATTRIBUTED
-            else "stripe_webhook_event_account_metadata_conflict",
+            else "stripe_webhook_event_account_metadata_conflict"
+            if reason_code == QUARANTINE_ACCOUNT_METADATA_CONFLICT
+            else "stripe_webhook_event_platform_plan_on_connect_account",
             extra={
                 "event_id": event_id,
                 "event_type": event_type,
@@ -387,8 +395,16 @@ class HandleWebhookEvent:
         Raises only ``WebhookAccountLookupUnavailable`` past signature
         verification, and only when the owner lookup errors.
         """
-        metadata_academy = self._event_metadata(event).get("academy_id")
+        metadata = self._event_metadata(event)
+        metadata_academy = metadata.get("academy_id")
         account_id = str(event.get("account") or "")
+        if account_id and metadata.get("source") == "platform_plan":
+            return (
+                self._academy_id,
+                f"metadata.source=platform_plan on connected account {account_id}; "
+                "platform-plan events come from the platform account only",
+                QUARANTINE_PLATFORM_PLAN_ON_CONNECT_ACCOUNT,
+            )
         if account_id:
             owner: str | None = None
             if self._connected_accounts is not None:
@@ -776,6 +792,12 @@ class HandleWebhookEvent:
             event_type in PLATFORM_PLAN_EVENT_TYPES
             and self._event_metadata(event).get("source") == "platform_plan"
         ):
+            if event.get("account"):
+                # Ingest already quarantines this; a drain racing that mark
+                # must not sync it either.
+                raise _QuarantineStripeEvent(
+                    f"platform_plan event on connected account {event['account']}"
+                )
             if self._platform_plan_sync is None:
                 log.warning("platform_plan event ignored: no sync wired type=%s", event_type)
                 return

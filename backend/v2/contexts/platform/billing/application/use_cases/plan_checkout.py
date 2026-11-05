@@ -262,45 +262,74 @@ class SyncTenantSubscriptionFromStripe:
         obj = event.get("data", {}).get("object", {})
         metadata = obj.get("metadata") or {}
         academy_id = str(metadata.get("academy_id") or "")
-        plan_id = str(metadata.get("plan_id") or "")
-        if not academy_id or not plan_id or event_type not in PLATFORM_PLAN_EVENT_TYPES:
+        if not academy_id or event_type not in PLATFORM_PLAN_EVENT_TYPES:
             log.warning("platform_plan_sync_ignored type=%s obj=%s", event_type, obj.get("id"))
             return
         now = self._clock()
         existing = await self._subscriptions.get_for_academy(academy_id)
+        customer_id = _text(obj.get("customer"))
+        if existing and existing.stripe_customer_id and customer_id != existing.stripe_customer_id:
+            log.warning(
+                "platform_plan_sync_customer_mismatch academy=%s event_customer=%s current=%s",
+                academy_id,
+                customer_id,
+                existing.stripe_customer_id,
+            )
+            return
+        is_checkout = event_type == "checkout.session.completed"
+        event_sub_id = _text(obj.get("subscription") if is_checkout else obj.get("id"))
+        if (
+            existing is not None
+            and existing.stripe_subscription_id
+            and existing.stripe_subscription_id != event_sub_id
+            and not _supersedes(existing, _stamp(obj.get("created")))
+        ):
+            # Another subscription than the one on file: only a newer one after
+            # the stored one was cancelled (re-subscribe) may replace it.
+            log.warning(
+                "platform_plan_sync_stale_subscription academy=%s event_sub=%s current=%s",
+                academy_id,
+                event_sub_id,
+                existing.stripe_subscription_id,
+            )
+            return
         updates: dict[str, Any] = {
-            "plan_id": plan_id,
-            "stripe_customer_id": _text(obj.get("customer"))
+            "stripe_customer_id": customer_id
             or (existing.stripe_customer_id if existing else None),
             "updated_at": now,
         }
-        if event_type == "checkout.session.completed":
-            # The subscription event carries the status and period; the
-            # session only tells us which Stripe subscription this now is.
-            updates["stripe_subscription_id"] = _text(obj.get("subscription"))
+        if is_checkout:
+            # The session only tells us which customer and Stripe subscription
+            # this now is; plan and entitlement come from the subscription event.
+            # The row itself is written by StartGrowthCheckout before Checkout.
+            if existing is None or not (
+                obj.get("payment_status") == "paid" or obj.get("status") == "complete"
+            ):
+                log.warning("platform_plan_sync_checkout_ignored session=%s", obj.get("id"))
+                return
+            updates["stripe_subscription_id"] = event_sub_id
         else:
+            price_id = _price_id(obj)
+            plan = next(
+                (p for p in await self._plans.list() if price_id and p.stripe_price_id == price_id),
+                None,
+            )
+            if plan is None:
+                log.warning(
+                    "platform_plan_sync_unknown_price academy=%s sub=%s price=%s",
+                    academy_id,
+                    event_sub_id,
+                    price_id,
+                )
+                return
             status = _STRIPE_STATUS.get(str(obj.get("status") or ""), "incomplete")
             if event_type == "customer.subscription.deleted":
                 status = "cancelled"
-            if (
-                existing is not None
-                and existing.stripe_subscription_id
-                and existing.stripe_subscription_id != _text(obj.get("id"))
-                and existing.billing_status in ENTITLED_BILLING_STATUSES
-                and status not in ENTITLED_BILLING_STATUSES
-            ):
-                # A late event for an older subscription (cancelled, then
-                # re-subscribed) must not take the live one off entitlement.
-                log.warning(
-                    "platform_plan_sync_stale_subscription academy=%s event_sub=%s current=%s",
-                    academy_id,
-                    obj.get("id"),
-                    existing.stripe_subscription_id,
-                )
-                return
             cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
             updates.update(
-                stripe_subscription_id=_text(obj.get("id")),
+                plan_id=plan.plan_id,
+                stripe_subscription_id=event_sub_id,
+                stripe_subscription_created_at=_stamp(obj.get("created")),
                 billing_status=status,
                 current_period_start=_period(obj, "current_period_start"),
                 current_period_end=_period(obj, "current_period_end"),
@@ -336,6 +365,7 @@ class SyncTenantSubscriptionFromStripe:
         )
         if not became_active:
             return
+        plan_id = subscription.plan_id
         plan = await self._plans.get(plan_id)
         from_plan = (
             await self._plans.get(existing.plan_id)
@@ -372,6 +402,20 @@ def _text(value: Any) -> str | None:
     if isinstance(value, dict):
         value = value.get("id")
     return str(value) if value else None
+
+
+def _price_id(obj: dict[str, Any]) -> str | None:
+    items = (obj.get("items") or {}).get("data") or []
+    return _text(items[0].get("price")) if items else None
+
+
+def _supersedes(existing: TenantSubscription, event_created: datetime | None) -> bool:
+    """A different subscription may replace the stored one only once that one
+    is cancelled and the event's object is newer than it."""
+    if existing.billing_status != "cancelled" or event_created is None:
+        return False
+    stored = existing.stripe_subscription_created_at
+    return stored is None or event_created > stored
 
 
 def _period(obj: dict[str, Any], key: str) -> datetime | None:

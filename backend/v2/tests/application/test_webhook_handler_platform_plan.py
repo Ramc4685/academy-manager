@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.handle_webhook_event import (
+    QUARANTINE_PLATFORM_PLAN_ON_CONNECT_ACCOUNT,
     HandleWebhookEvent,
 )
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
@@ -21,10 +22,12 @@ from backend.v2.tests.application.test_webhook_handler import (
 )
 
 
-def _build(repo: FakePaymentRepo, subs: FakeSubscriptionRepo, sync: Any) -> HandleWebhookEvent:
+def _build(
+    repo: FakePaymentRepo, subs: FakeSubscriptionRepo, sync: Any, dedup: FakeDedup | None = None
+) -> HandleWebhookEvent:
     return HandleWebhookEvent(
         stripe=FakeStripeGateway(),
-        dedup=FakeDedup(),
+        dedup=dedup or FakeDedup(),
         payments=repo,
         subscriptions=subs,
         outbox=FakeOutbox(),
@@ -41,9 +44,9 @@ class _Sync:
         self.calls.append((event_type, event["data"]["object"]["id"]))
 
 
-def _event(event_type: str, obj: dict[str, Any]) -> bytes:
+def _event(event_type: str, obj: dict[str, Any], **top: Any) -> bytes:
     return json.dumps(
-        {"id": f"evt_{obj['id']}", "type": event_type, "data": {"object": obj}}
+        {"id": f"evt_{obj['id']}", "type": event_type, "data": {"object": obj}, **top}
     ).encode()
 
 
@@ -97,3 +100,26 @@ async def test_platform_plan_event_without_a_sync_is_dropped_not_misrouted() -> 
         "test_signature",
     )
     assert subs.by_stripe_sub == {}
+
+
+@pytest.mark.asyncio
+async def test_platform_plan_event_on_a_connected_account_is_quarantined_not_synced() -> None:
+    """Metadata is text anyone on a connected account can write; platform-plan
+    objects live on the platform account only (no top-level ``account``)."""
+    repo, subs, sync, dedup = FakePaymentRepo(), FakeSubscriptionRepo(), _Sync(), FakeDedup()
+    uc = _build(repo, subs, sync, dedup)
+    body = _event(
+        "customer.subscription.updated",
+        {"id": "sub_plan_1", "status": "active", "metadata": _PLAN_METADATA},
+        account="acct_connected",
+    )
+    res = await uc.accept(body, "test_signature")
+    assert res["status"] == "quarantined"
+    row = dedup.events["evt_sub_plan_1"]
+    assert row["status"] == "quarantined"
+    assert row["quarantine_reason"] == QUARANTINE_PLATFORM_PLAN_ON_CONNECT_ACCOUNT
+    # The direct path (a drain racing the mark) refuses it too.
+    res = await _build(repo, subs, sync).execute(body, "test_signature")
+    assert res["status"] == "quarantined"
+    assert sync.calls == []
+    assert subs.by_stripe_sub == {} and repo.by_id == {}

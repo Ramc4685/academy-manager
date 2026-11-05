@@ -72,6 +72,7 @@ def _subscription_from_doc(doc: dict[str, Any]) -> TenantSubscription:
         "trial_started_at",
         "trial_ends_at",
         "cancelled_at",
+        "stripe_subscription_created_at",
         "created_at",
         "updated_at",
     ):

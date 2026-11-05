@@ -262,6 +262,11 @@ def _sub_event(event_type: str, status: str, **extra: Any) -> dict[str, Any]:
                 "object": "subscription",
                 "customer": "cus_1",
                 "status": status,
+                "created": 1793793600,
+                "items": {
+                    "object": "list",
+                    "data": [{"id": "si_1", "price": {"id": "price_growth"}}],
+                },
                 "current_period_start": 1793793600,
                 "current_period_end": 1796385600,
                 "cancel_at_period_end": False,
@@ -274,6 +279,42 @@ def _sub_event(event_type: str, status: str, **extra: Any) -> dict[str, Any]:
             }
         },
     }
+
+
+def _checkout_event(**extra: Any) -> dict[str, Any]:
+    return {
+        "id": "evt_cs",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_1",
+                "created": 1793793600,
+                "customer": "cus_1",
+                "subscription": "sub_growth_1",
+                "payment_status": "paid",
+                "status": "complete",
+                "metadata": {
+                    "source": "platform_plan",
+                    "academy_id": ACADEMY,
+                    "plan_id": "plan_growth",
+                },
+                **extra,
+            }
+        },
+    }
+
+
+def _seed_incomplete(subs: FakeSubscriptions, *, plan_id: str = "plan_growth") -> None:
+    # What StartGrowthCheckout writes before sending the owner to Stripe.
+    subs.rows[ACADEMY] = TenantSubscription(
+        subscription_id="platform_sub_seed",
+        academy_id=ACADEMY,
+        plan_id=plan_id,
+        billing_status="incomplete",
+        stripe_customer_id="cus_1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
 
 
 def _sync(plans: FakePlans, subs: FakeSubscriptions, audit: _Audit | None = None):
@@ -291,25 +332,10 @@ async def test_sync_creates_activates_and_unlocks_ai() -> None:
     plans, subs, audit = FakePlans(_plan("growth")), FakeSubscriptions(), _Audit()
     sync = _sync(plans, subs, audit)
     has_ai = HasFeature(plans=plans, subscriptions=subs, clock=lambda: NOW)
+    _seed_incomplete(subs)
     assert await has_ai.execute(ACADEMY, "ai") is False
 
-    session = {
-        "id": "evt_cs",
-        "type": "checkout.session.completed",
-        "data": {
-            "object": {
-                "id": "cs_1",
-                "customer": "cus_1",
-                "subscription": "sub_growth_1",
-                "metadata": {
-                    "source": "platform_plan",
-                    "academy_id": ACADEMY,
-                    "plan_id": "plan_growth",
-                },
-            }
-        },
-    }
-    await sync.execute("checkout.session.completed", session)
+    await sync.execute("checkout.session.completed", _checkout_event())
     row = subs.rows[ACADEMY]
     assert row.billing_status == "incomplete"
     assert row.stripe_subscription_id == "sub_growth_1"
@@ -388,6 +414,7 @@ async def test_sync_reads_the_period_from_the_items_on_dahlia_subscriptions() ->
         "data": [
             {
                 "id": "si_1",
+                "price": {"id": "price_growth"},
                 "current_period_start": 1793793600,
                 "current_period_end": 1796385600,
             }
@@ -403,32 +430,101 @@ async def test_sync_reads_the_period_from_the_items_on_dahlia_subscriptions() ->
 
 
 @pytest.mark.asyncio
-async def test_sync_ignores_a_late_cancel_for_an_older_subscription() -> None:
+async def test_sync_ignores_another_subscription_until_the_stored_one_is_cancelled() -> None:
     plans, subs = FakePlans(_plan("growth")), FakeSubscriptions()
     sync = _sync(plans, subs)
-    has_ai = HasFeature(plans=plans, subscriptions=subs, clock=lambda: NOW)
     await sync.execute(
         "customer.subscription.created", _sub_event("customer.subscription.created", "active")
     )
-    # Re-subscribed: the new subscription goes active first...
-    new_sub = _sub_event("customer.subscription.created", "active", id="sub_growth_2")
-    await sync.execute("customer.subscription.created", new_sub)
-    assert subs.rows[ACADEMY].stripe_subscription_id == "sub_growth_2"
-    # ...then the old subscription's delete arrives late.
+    # A second, even newer and active, subscription does not displace the live one...
+    newer = _sub_event(
+        "customer.subscription.created", "active", id="sub_growth_2", created=1793800000
+    )
+    await sync.execute("customer.subscription.created", newer)
+    assert subs.rows[ACADEMY].stripe_subscription_id == "sub_growth_1"
+    # ...nor does an older one's late delete touch it.
+    await sync.execute(
+        "customer.subscription.deleted",
+        _sub_event(
+            "customer.subscription.deleted", "canceled", id="sub_growth_0", created=1793700000
+        ),
+    )
+    assert subs.rows[ACADEMY].billing_status == "active"
+    # The current subscription's delete lands.
     await sync.execute(
         "customer.subscription.deleted",
         _sub_event("customer.subscription.deleted", "canceled", canceled_at=1796385600),
     )
+    assert subs.rows[ACADEMY].billing_status == "cancelled"
+    # Now cancelled: an OLDER subscription's event is still ignored...
+    await sync.execute(
+        "customer.subscription.updated",
+        _sub_event(
+            "customer.subscription.updated", "active", id="sub_growth_0", created=1793700000
+        ),
+    )
+    assert subs.rows[ACADEMY].stripe_subscription_id == "sub_growth_1"
+    # ...but the newer re-subscribe replaces it.
+    await sync.execute("customer.subscription.created", newer)
     row = subs.rows[ACADEMY]
     assert row.stripe_subscription_id == "sub_growth_2"
     assert row.billing_status == "active"
-    assert await has_ai.execute(ACADEMY, "ai") is True
-    # A delete for the current subscription still lands.
-    await sync.execute(
-        "customer.subscription.deleted",
-        _sub_event("customer.subscription.deleted", "canceled", id="sub_growth_2"),
+    assert row.stripe_subscription_created_at == datetime.fromtimestamp(1793800000, tz=UTC)
+
+
+@pytest.mark.asyncio
+async def test_sync_resolves_the_plan_from_the_price_not_the_metadata() -> None:
+    plans = FakePlans(_plan("growth"), _plan("flat", price="price_flat", features=()))
+    subs = FakeSubscriptions()
+    event = _sub_event("customer.subscription.created", "active")
+    event["data"]["object"]["items"]["data"][0]["price"] = {"id": "price_flat"}
+    await _sync(plans, subs).execute("customer.subscription.created", event)
+    assert subs.rows[ACADEMY].plan_id == "plan_flat"  # metadata says plan_growth
+
+
+@pytest.mark.asyncio
+async def test_sync_ignores_an_unknown_price() -> None:
+    plans, subs = FakePlans(_plan("growth")), FakeSubscriptions()
+    for price in ({"id": "price_other"}, None):
+        event = _sub_event("customer.subscription.created", "active")
+        event["data"]["object"]["items"]["data"][0]["price"] = price
+        await _sync(plans, subs).execute("customer.subscription.created", event)
+    assert subs.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_sync_ignores_events_for_another_customer() -> None:
+    plans, subs = FakePlans(_plan("growth")), FakeSubscriptions()
+    _seed_incomplete(subs)
+    await _sync(plans, subs).execute(
+        "customer.subscription.created",
+        _sub_event("customer.subscription.created", "active", customer="cus_other"),
     )
-    assert subs.rows[ACADEMY].billing_status == "cancelled"
+    assert subs.rows[ACADEMY].billing_status == "incomplete"
+    await _sync(plans, subs).execute(
+        "checkout.session.completed", _checkout_event(customer="cus_other")
+    )
+    assert subs.rows[ACADEMY].stripe_subscription_id is None
+
+
+@pytest.mark.asyncio
+async def test_sync_checkout_records_ids_only_and_only_when_paid() -> None:
+    plans = FakePlans(_plan("growth"), _plan("flat", price=None, features=()))
+    subs = FakeSubscriptions()
+    sync = _sync(plans, subs)
+    # No row yet (nothing started the checkout): nothing to attach the ids to.
+    await sync.execute("checkout.session.completed", _checkout_event())
+    assert subs.rows == {}
+    _seed_incomplete(subs, plan_id="plan_flat")
+    await sync.execute(
+        "checkout.session.completed", _checkout_event(payment_status="unpaid", status="open")
+    )
+    assert subs.rows[ACADEMY].stripe_subscription_id is None
+    # Paid: ids recorded, but plan and status come only from the subscription event.
+    await sync.execute("checkout.session.completed", _checkout_event(status="open"))
+    row = subs.rows[ACADEMY]
+    assert row.stripe_subscription_id == "sub_growth_1"
+    assert row.plan_id == "plan_flat" and row.billing_status == "incomplete"
 
 
 @pytest.mark.asyncio

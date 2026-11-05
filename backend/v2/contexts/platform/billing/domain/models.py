@@ -66,6 +66,9 @@ class TenantSubscription(BaseModel):
     cancellation_status: CancellationStatus = "none"
     stripe_customer_id: str | None = None
     stripe_subscription_id: str | None = None
+    # Stripe's ``created`` on that subscription: lets the webhook sync accept a
+    # newer subscription after this one was cancelled and ignore older ones.
+    stripe_subscription_created_at: datetime | None = None
     current_period_start: datetime | None = None
     current_period_end: datetime | None = None
     trial_started_at: datetime | None = None
