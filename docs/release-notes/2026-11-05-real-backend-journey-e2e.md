@@ -14,7 +14,7 @@ Test-only. A new Playwright spec, `frontend/e2e/specs/real-backend-journeys.spec
 Each test creates its own class and uses its own seeded family, so the tests stay independent. Seeding goes through the same `/api/v2` admin routes the UI calls. The payment is the admin's "record payment" route, because CI has no Stripe test keys. The spec is listed in `playwright.ci-real-auth.config.ts` next to the sign-in smoke spec.
 
 ## Deploy notes
-No app code changed, and there is nothing to deploy. The `Frontend E2E Real Auth` CI job gets a second step that runs the new spec on the stack the smoke step already started. It adds well under a minute. The step is blocking: the owner agreed to make it required after it passed in CI twice in a row, so a failing journey fails the job and CI Gate. A cross-academy admin check is not included: the local stack runs with `V2_SAAS_MODE` off, so every request resolves to BLno. That check needs a SaaS-mode stack.
+No app code changed, and there is nothing to deploy. The `Frontend E2E Real Auth` CI job gets a second step that runs the new spec on the stack the smoke step already started. It adds well under a minute. That step is `continue-on-error`, so it reports failures but does not fail CI Gate until the owner agrees to make it required. A cross-academy admin check is not included: the local stack runs with `V2_SAAS_MODE` off, so every request resolves to BLno. That check needs a SaaS-mode stack.
 
 ## Risk / rollback
-The only risk is a flaky journey blocking unrelated PRs. To unblock quickly, add `continue-on-error: true` back to the journeys step; to roll back fully, revert the PR.
+The only risk is a noisy non-blocking CI step. Roll back by reverting the PR.
