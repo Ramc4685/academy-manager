@@ -4352,3 +4352,20 @@ export function updateAdminClassPublicFields(
     { method: "PATCH", body: JSON.stringify(payload) }
   );
 }
+
+/** B1: whether a model is wired for this deployment. Only `enabled` is read. */
+export function getAdminAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
+}
+
+/** B6: the owner's standing approval of AI-personalised win-back wording (owner-only, 404 otherwise). */
+export function getAdminAiWinBackPersonalised(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/win-back-personalised", { method: "GET" });
+}
+
+export function updateAdminAiWinBackPersonalised(enabled: boolean): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/win-back-personalised", {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+}

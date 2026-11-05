@@ -3,14 +3,21 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { getAdminAiStatus } from "@/lib/api/admin";
 import {
   createSkillNote,
+  draftTechniqueObservation,
   listSkillNotes,
   setSkillNoteVisibility,
   type NoteVisibility,
   type SkillNote,
 } from "@/lib/api/coach";
 import type { ApiError } from "@/lib/api/client";
+import {
+  OBSERVATION_MAX,
+  noteFromDraft,
+  techniqueDraftErrorMessage,
+} from "@/lib/coach/technique-observation";
 import { queryKeys } from "@/lib/query/keys";
 import { Modal } from "@/components/ds/modal";
 import { canChangeNoteVisibility, useCoachSurface } from "./coach-surface-context";
@@ -41,6 +48,11 @@ export function SkillNotesPanel({
 }) {
   const [body, setBody] = useState("");
   const [share, setShare] = useState(false);
+  // B6: the draft may pick a different skill of the same level; the note is
+  // then saved under that skill, and the hint names it until the coach saves.
+  const [observation, setObservation] = useState("");
+  const [draftSkillId, setDraftSkillId] = useState<string | null>(null);
+  const [aiHint, setAiHint] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const notesKey = queryKeys.coach.skillNotes(studentId, skillId);
   // Assistant coaches write notes but never share them (the BFF 403s a
@@ -57,14 +69,35 @@ export function SkillNotesPanel({
   const addNoteMutation = useMutation({
     mutationFn: () =>
       createSkillNote(studentId, {
-        skill_id: skillId,
+        skill_id: draftSkillId ?? skillId,
         body: body.trim(),
         visibility: !assistant && share ? "shared" : "private",
       }),
     onSuccess: () => {
       setBody("");
       setShare(false);
+      setDraftSkillId(null);
+      setAiHint(null);
       void queryClient.invalidateQueries({ queryKey: notesKey });
+    },
+  });
+
+  // Hidden unless a model is wired (B1's status route); a failed request hides it too.
+  const aiStatus = useQuery({
+    queryKey: ["admin", "ai", "status"],
+    queryFn: getAdminAiStatus,
+    enabled: open,
+    retry: false,
+  });
+  const aiEnabled = aiStatus.data?.enabled === true;
+  const draftMutation = useMutation({
+    mutationFn: () => draftTechniqueObservation(studentId, observation.trim()),
+    onSuccess: (draft) => {
+      const note = noteFromDraft(draft);
+      setBody(note.body.slice(0, BODY_MAX_LENGTH));
+      setDraftSkillId(note.skillId);
+      setAiHint(note.hint);
+      setObservation("");
     },
   });
 
@@ -158,6 +191,41 @@ export function SkillNotesPanel({
 
         {!unavailable && (
           <div className="space-y-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+            {aiEnabled && (
+              <div className="space-y-1" data-testid="technique-observation-draft">
+                <textarea
+                  value={observation}
+                  onChange={(e) => setObservation(e.target.value.slice(0, OBSERVATION_MAX))}
+                  placeholder="What did you see? e.g. kept the thumb flat on every forehand"
+                  rows={2}
+                  maxLength={OBSERVATION_MAX}
+                  className="w-full rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800"
+                />
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-neutral-400">
+                    {observation.length}/{OBSERVATION_MAX}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!observation.trim() || draftMutation.isPending}
+                    onClick={() => draftMutation.mutate()}
+                    className="min-h-touch rounded-lg border border-neutral-300 px-3 text-xs font-medium text-neutral-700 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300"
+                  >
+                    {draftMutation.isPending ? "Drafting..." : "Draft from what I saw"}
+                  </button>
+                </div>
+                {draftMutation.isError && (
+                  <p className="text-xs text-red-600" data-testid="technique-observation-error">
+                    {techniqueDraftErrorMessage((draftMutation.error as ApiError).status)}
+                  </p>
+                )}
+              </div>
+            )}
+            {aiHint && (
+              <p className="text-xs text-neutral-500" data-testid="technique-observation-hint">
+                {aiHint}
+              </p>
+            )}
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value.slice(0, BODY_MAX_LENGTH))}

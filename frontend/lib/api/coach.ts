@@ -7,6 +7,7 @@
  */
 
 import { apiFetch } from "./client";
+import type { TechniqueObservationDraft } from "@/lib/coach/technique-observation";
 import {
   coachDayHubPath,
   coachSessionBulkSkillStatusPath,
@@ -743,4 +744,15 @@ export interface CoachAcademy {
 
 export function getCoachAcademy(): Promise<CoachAcademy> {
   return apiFetch<CoachAcademy>("/coach/academy", { method: "GET" });
+}
+
+/** B6: text-only technique observation -> a draft the coach saves as a skill note. Stores nothing. */
+export function draftTechniqueObservation(
+  studentId: string,
+  observation: string,
+): Promise<TechniqueObservationDraft> {
+  return apiFetch<TechniqueObservationDraft>(
+    `/coach/students/${encodeURIComponent(studentId)}/technique-observation-draft`,
+    { method: "POST", body: JSON.stringify({ observation }) },
+  );
 }
