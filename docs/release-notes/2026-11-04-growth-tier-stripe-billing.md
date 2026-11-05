@@ -1,6 +1,6 @@
 # growth-tier-stripe-billing
 
-PR: #TBD
+PR: #1134
 
 ## What changed
 Academy owners now see a "Your CourtMastr plan" card on Settings > Integrations: the current plan (or free core operations) and the Growth offer ($99 a month, 0 bps processing markup, AI features) with an "Upgrade to Growth" button that opens Stripe Billing Checkout on the platform account. The Stripe webhook keeps the academy's platform subscription current (status, period, cancel at period end), which is what `has_feature(academy, "ai")` reads, and the upgrade is instrumented with two platform audit events (`tenant.plan_upgrade_started` with the academy's 90-day Stripe volume, `tenant.plan_activated`).
