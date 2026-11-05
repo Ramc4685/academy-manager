@@ -85,7 +85,7 @@ pnpm dev          # next dev (Turbopack) on :3001
 pnpm build        # production build
 pnpm typecheck    # tsc --noEmit
 pnpm lint
-pnpm generate:api # generate lib/api/generated/v2.d.ts from a running local v2 OpenAPI
+pnpm generate:api # regenerate lib/api/generated/v2.d.ts from the committed openapi.snapshot.json
 pnpm size         # size-limit check
 pnpm lhci         # Lighthouse CI run
 ```

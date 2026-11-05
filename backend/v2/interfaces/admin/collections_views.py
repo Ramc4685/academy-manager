@@ -84,8 +84,9 @@ class AdminCollectionsPause(_View):
     # Beyond spec §3: the Resume row action posts to
     # ``/admin/enrollments/{enrollment_id}/resume`` and the row names the
     # paused student, so the classifier's extra pause facts are kept.
-    enrollment_id: str | None = None
-    student_name: str | None = None
+    # Always set: _pause_payload copies them from PauseFacts, where both are required.
+    enrollment_id: str
+    student_name: str
 
 
 class AdminCollectionsPaid(_View):

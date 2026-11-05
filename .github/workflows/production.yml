@@ -309,6 +309,16 @@ jobs:
         # See the backend audit step: registry outage -> warning, findings -> fail.
         run: bash "$GITHUB_WORKSPACE/scripts/ci/dependency_audit.sh" pnpm audit --audit-level=high
 
+      - name: OpenAPI drift check
+        # The backend structural test keeps the snapshot equal to the live API;
+        # this keeps the committed types equal to the snapshot.
+        run: |
+          pnpm exec openapi-typescript lib/api/openapi.snapshot.json -o /tmp/generated-v2.d.ts
+          diff -q lib/api/generated/v2.d.ts /tmp/generated-v2.d.ts || {
+            echo "::error::lib/api/generated/v2.d.ts is out of date. Run 'pnpm generate:api' and commit the result."
+            exit 1
+          }
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -342,17 +352,6 @@ jobs:
       - name: Worker runtime smoke
         run: bash "$GITHUB_WORKSPACE/scripts/smoke/worker_runtime_smoke.sh"
 
-      - name: OpenAPI drift check
-        run: |
-          if [ -f lib/api/openapi.snapshot.json ]; then
-            npx openapi-typescript lib/api/openapi.snapshot.json -o /tmp/generated-v2.d.ts
-            diff -q lib/api/generated/v2.d.ts /tmp/generated-v2.d.ts || {
-              echo "::error::lib/api/generated/v2.d.ts is out of date. Run 'pnpm generate:api' against the committed openapi.snapshot.json."
-              exit 1
-            }
-          else
-            echo "No openapi.snapshot.json yet. Skipping drift check."
-          fi
 
   frontend-e2e-chromium:
     name: Frontend E2E Chromium (${{ matrix.shard }}/2)
