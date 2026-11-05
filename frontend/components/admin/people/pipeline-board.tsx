@@ -29,17 +29,21 @@ import {
   PIPELINE_COLUMNS,
   PIPELINE_COLUMN_LABELS,
   SOURCE_LABELS,
+  draftPipelineReply,
   fetchPipelineBoard,
   focusAfterLeaving,
   groupByColumn,
   isPipelineColumn,
   movePipelineCard,
   quickAddLead,
+  sendPipelineReply,
   type PipelineCard,
   type PipelineColumn,
   type QuickAddSource,
 } from "@/lib/api/admin-crm-pipeline";
+import { fetchAdminAiStatus } from "@/lib/api/admin";
 import type { ApiError } from "@/lib/api/client";
+import { draftToForm, replyErrorMessage, type ReplyForm } from "@/lib/admin/pipeline-reply-draft";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { Button } from "@/components/ds/button";
@@ -66,6 +70,8 @@ const WARNING_COPY: Record<string, string> = {
 
 const INPUT =
   "h-10 w-full rounded-md border border-neutral-200 bg-white px-2 font-body text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15";
+const TEXTAREA =
+  "min-h-40 w-full rounded-md border border-neutral-200 bg-white p-2 font-body text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15";
 
 function headingId(column: PipelineColumn): string {
   return `pipeline-column-${column}`;
@@ -90,6 +96,14 @@ export function PipelineBoard({ initialStage }: { initialStage?: string | null }
     retry: false,
   });
   const groups = useMemo(() => groupByColumn(boardQuery.data?.cards ?? []), [boardQuery.data]);
+  // B3: the paid "Draft reply" button shows only when AI is on; a failed
+  // status read means off.
+  const aiStatus = useQuery({
+    queryKey: queryKeys.admin.aiStatus(),
+    queryFn: fetchAdminAiStatus,
+    retry: false,
+  });
+  const aiEnabled = aiStatus.data?.enabled === true;
 
   // Focus lands once the refreshed board has rendered (WCAG 2.4.3).
   useEffect(() => {
@@ -199,7 +213,12 @@ export function PipelineBoard({ initialStage }: { initialStage?: string | null }
                   <ul className="flex flex-col gap-2">
                     {groups[column].map((card) => (
                       <li key={card.card_id}>
-                        <PipelineCardView card={card} onMoved={onMoved} onRefresh={refresh} />
+                        <PipelineCardView
+                          card={card}
+                          aiEnabled={aiEnabled}
+                          onMoved={onMoved}
+                          onRefresh={refresh}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -215,16 +234,23 @@ export function PipelineBoard({ initialStage }: { initialStage?: string | null }
 
 function PipelineCardView({
   card,
+  aiEnabled,
   onMoved,
   onRefresh,
 }: {
   card: PipelineCard;
+  aiEnabled: boolean;
   onMoved: (card: PipelineCard, to: PipelineColumn) => void;
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [replyOpen, setReplyOpen] = useState(false);
   const panelId = useId();
+  const replyPanelId = useId();
   const triggerId = `${cardDomId(card.card_id)}-move`;
+  const replyTriggerId = `${cardDomId(card.card_id)}-reply`;
+  const canReply =
+    aiEnabled && card.kind === "contact" && !!card.contact_id && card.has_email && card.has_message;
   const childLine = [card.child, card.child_age ? `age ${card.child_age}` : null]
     .filter(Boolean)
     .join(", ");
@@ -302,7 +328,156 @@ function PipelineCardView({
           )}
         </div>
       )}
+      {canReply && (
+        <div className="mt-2">
+          <Button
+            id={replyTriggerId}
+            size="sm"
+            variant="secondary"
+            aria-expanded={replyOpen}
+            aria-controls={replyPanelId}
+            data-testid={`admin-pipeline-draft-reply-${card.card_id}`}
+            onClick={() => setReplyOpen((value) => !value)}
+          >
+            Draft reply
+          </Button>
+          {replyOpen && (
+            <ReplyPanel
+              id={replyPanelId}
+              contactId={card.contact_id as string}
+              onClose={() => {
+                setReplyOpen(false);
+                window.setTimeout(() => document.getElementById(replyTriggerId)?.focus(), 0);
+              }}
+            />
+          )}
+        </div>
+      )}
     </article>
+  );
+}
+
+/** B3: the AI draft, editable, sent only on the explicit "Send reply". */
+function ReplyPanel({
+  id,
+  contactId,
+  onClose,
+}: {
+  id: string;
+  contactId: string;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [form, setForm] = useState<ReplyForm | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const subjectId = useId();
+  const bodyId = useId();
+
+  const draft = useMutation({
+    mutationFn: () => draftPipelineReply(contactId),
+    onSuccess: (result) => {
+      setError(null);
+      setForm(draftToForm(result));
+    },
+    onError: (err: ApiError) => setError(replyErrorMessage(err, "draft")),
+  });
+  const send = useMutation({
+    mutationFn: (values: ReplyForm) =>
+      sendPipelineReply(contactId, { subject: values.subject, body: values.body }),
+    onSuccess: () => {
+      toast({ kind: "success", title: "Reply sent and logged" });
+      onClose();
+    },
+    onError: (err: ApiError) => setError(replyErrorMessage(err, "send")),
+  });
+
+  const { mutate: requestDraft } = draft;
+  useEffect(() => {
+    requestDraft();
+  }, [requestDraft]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (form && form.subject.trim() && form.body.trim()) send.mutate(form);
+  };
+
+  return (
+    <form
+      id={id}
+      onSubmit={submit}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+      className="mt-2 flex flex-col gap-2 rounded-md border border-rally-line bg-rally-paper p-2"
+      data-testid={`admin-pipeline-reply-panel-${contactId}`}
+    >
+      {draft.isPending && (
+        <p role="status" className="text-xs text-rally-muted">
+          Drafting a reply…
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-xs font-medium text-status-red-800">
+          {error}
+        </p>
+      )}
+      {form && (
+        <>
+          <FormField label="Subject" htmlFor={subjectId} required>
+            <input
+              id={subjectId}
+              className={INPUT}
+              value={form.subject}
+              maxLength={200}
+              onChange={(e) => setForm({ ...form, subject: e.target.value })}
+            />
+          </FormField>
+          <FormField label="Reply" htmlFor={bodyId} required>
+            <textarea
+              id={bodyId}
+              className={TEXTAREA}
+              value={form.body}
+              maxLength={1500}
+              onChange={(e) => setForm({ ...form, body: e.target.value })}
+            />
+          </FormField>
+          {form.keyPoints.length > 0 && (
+            <ul className="list-disc pl-4 text-xs text-rally-muted" aria-label="Draft based on">
+              {form.keyPoints.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-rally-subtle">
+            Read it over before sending; the email goes to the lead with the academy&apos;s
+            unsubscribe footer and is logged.
+          </p>
+        </>
+      )}
+      <div className="flex gap-2">
+        {form && (
+          <Button
+            type="submit"
+            size="sm"
+            disabled={send.isPending || !form.subject.trim() || !form.body.trim()}
+            data-testid={`admin-pipeline-send-reply-${contactId}`}
+          >
+            {send.isPending ? "Sending…" : "Send reply"}
+          </Button>
+        )}
+        {!form && !draft.isPending && (
+          <Button type="button" size="sm" variant="secondary" onClick={() => draft.mutate()}>
+            Try again
+          </Button>
+        )}
+        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
 
