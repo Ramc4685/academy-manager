@@ -52,6 +52,11 @@ pytest v2/tests
 - Run backend tests after API, auth, database, billing, or scheduler changes.
 - Run browser checks for UI changes.
 - Run smoke tests after deployment or CORS/auth changes.
+- After any API request or response change, refresh the contract: run
+  `UPDATE_OPENAPI_SNAPSHOT=1 pytest backend/v2/tests/structural/test_openapi_snapshot.py`,
+  then `pnpm generate:api` in `frontend/`, commit both files, and fix any
+  `frontend/lib/api/billing-contract.ts` type errors. Those errors mean a screen
+  reads a field the backend no longer sends in that shape.
 - State skipped checks and why they were skipped.
 
 ---

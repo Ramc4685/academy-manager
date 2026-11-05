@@ -13,7 +13,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test:unit": "vitest run",
     "test:node": "node --no-warnings --test \"lib/**/*.node-test.mjs\"",
-    "generate:api": "openapi-typescript http://localhost:8001/openapi.json -o lib/api/generated/v2.d.ts",
+    "generate:api": "openapi-typescript lib/api/openapi.snapshot.json -o lib/api/generated/v2.d.ts",
     "size": "size-limit",
     "lhci": "lhci autorun",
     "e2e": "playwright test",
