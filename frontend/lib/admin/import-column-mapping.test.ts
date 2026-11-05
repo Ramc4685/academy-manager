@@ -8,6 +8,7 @@ import {
   choicesFromDraft,
   mappingFromChoices,
   parseCsv,
+  readHeaders,
 } from "./import-column-mapping";
 
 describe("parseCsv", () => {
@@ -31,6 +32,17 @@ describe("checkImportHeader", () => {
       expect(check.unknown).toEqual(["guardian", "child"]);
       expect(check.missing).toEqual(["parent_name", "student_name"]);
     }
+  });
+});
+
+describe("readHeaders", () => {
+  it("cuts a header to the backend's 80 characters so the draft can name it", () => {
+    const long = "H".repeat(90);
+    expect(readHeaders(`${long},B\n1,2\n`)).toEqual(["H".repeat(80), "B"]);
+    const out = applyColumnMapping(`${long},B\n1,2\n`, [
+      { target: "parent_name", source_headers: ["H".repeat(80)] },
+    ]);
+    expect(out).toBe("parent_name\r\n1\r\n");
   });
 });
 

@@ -86,11 +86,13 @@ class ColumnMappingDraft(BaseModel):
 
 @dataclass(frozen=True)
 class ImportSample:
-    """Exactly what the model is allowed to see."""
+    """Exactly what the model is allowed to see, plus ``file_headers`` (never
+    sent) to translate the answer back when a header was relabeled."""
 
     headers: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
     masked: bool
+    file_headers: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -113,9 +115,22 @@ def mask_cell(value: str) -> str:
     return "".join(out)
 
 
+def _header_labels(headers: tuple[str, ...]) -> tuple[str, ...]:
+    """Masked mode: a header that looks like data (an email means the file has
+    no header row, so every column is relabeled; otherwise 4+ digits or over 40
+    characters) becomes its column label instead of leaking a cell."""
+    if any("@" in h for h in headers):
+        return tuple(f"(column {i + 1})" for i in range(len(headers)))
+    return tuple(
+        f"(column {i + 1})" if sum(c.isdigit() for c in h) >= 4 or len(h) > 40 else h
+        for i, h in enumerate(headers)
+    )
+
+
 def read_sample(csv_text: str, *, share_values: bool) -> ImportSample:
     """The header row and the first :data:`SAMPLE_ROWS` non-blank data rows,
-    masked unless ``share_values``. The header row is never masked."""
+    masked unless ``share_values``. Header names go as written unless they look
+    like data (see :func:`_header_labels`)."""
     if len(csv_text.encode("utf-8", errors="surrogatepass")) > MAX_IMPORT_BYTES:
         raise AiImportSampleRejected("The file is too large.", max_bytes=MAX_IMPORT_BYTES)
     if "\x00" in csv_text:
@@ -148,7 +163,12 @@ def read_sample(csv_text: str, *, share_values: bool) -> ImportSample:
         raise AiImportSampleRejected("The file could not be read as CSV.", reason=str(exc)) from exc
     if not rows:
         raise AiImportSampleRejected("The file has a header but no rows.")
-    return ImportSample(headers=headers, rows=tuple(rows), masked=not share_values)
+    return ImportSample(
+        headers=headers if share_values else _header_labels(headers),
+        rows=tuple(rows),
+        masked=not share_values,
+        file_headers=headers,
+    )
 
 
 def user_message(sample: ImportSample) -> str:
@@ -168,15 +188,17 @@ def user_message(sample: ImportSample) -> str:
 def parse_draft(text: str, *, headers: tuple[str, ...]) -> ColumnMappingDraft:
     """Strict: a fenced or bare JSON object in the exact shape, every target at
     most once, both required targets present, every source header from the
-    file. Anything else is a provider error (502)."""
+    file and used once. Anything else is a provider error (502)."""
     try:
         draft = ColumnMappingDraft.model_validate(json.loads(_FENCE.sub("", text)))
     except (ValueError, ValidationError) as exc:
         raise AiProviderError("the model's answer could not be read") from exc
     targets = [m.target for m in draft.mappings]
+    used = [h for m in draft.mappings for h in m.source_headers] + draft.unmapped_headers
     known = set(headers)
     if (
         len(set(targets)) != len(targets)
+        or len(set(used)) != len(used)
         or any(required not in targets for required in REQUIRED_COLUMNS)
         or any(h not in known for m in draft.mappings for h in m.source_headers)
         or any(h not in known for h in draft.unmapped_headers)
@@ -208,8 +230,14 @@ class MapImportColumns:
         await self._record.execute(
             feature=FEATURE, prompt_version=prompt.version, result=result, approver=approver
         )
+        draft = parse_draft(result.text, headers=sample.headers)
+        # Relabeled headers back to the file's names so the frontend can match them.
+        back = dict(zip(sample.headers, sample.file_headers, strict=True))
+        for m in draft.mappings:
+            m.source_headers = [back[h] for h in m.source_headers]
+        draft.unmapped_headers = [back[h] for h in draft.unmapped_headers]
         return MapImportColumnsResult(
-            draft=parse_draft(result.text, headers=sample.headers),
+            draft=draft,
             sample_mode="masked" if sample.masked else "values",
             prompt_version=prompt.version,
         )

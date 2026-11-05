@@ -74,7 +74,10 @@ and never from a request dict or a stored document. By default every sample
 cell is masked to its shape (letters `a`/`A`, digits `9`, cut to 24 characters);
 real sample cells go only when the academy's `ai.share_import_values` is true,
 set by the owner through `PUT /admin/ai/import-sharing` (Settings >
-Notifications, "AI import helper"). Headers are never masked. The use case
+Notifications, "AI import helper"). Headers go as written unless, in masked mode,
+one looks like data (an email relabels every column as "(column N)", a header with
+4+ digits or over 40 characters relabels itself); the answer is translated back to
+the file's header names. The use case
 refuses before spending tokens when the month is at the cap
 (`RecordAiCall.assert_under_cap`), records the call before parsing the answer,
 and turns an answer that is not the exact JSON shape, repeats a target, lacks

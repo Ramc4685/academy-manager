@@ -98,13 +98,48 @@ def test_mask_cell_keeps_only_the_shape(raw: str, masked: str) -> None:
     assert mask_cell(raw) == masked
 
 
-def test_read_sample_never_masks_the_header_and_caps_rows() -> None:
+def test_read_sample_keeps_label_like_headers_and_caps_rows() -> None:
     many = "A,B\n" + "".join(f"Row {i},{i}\n" for i in range(8))
     sample = read_sample(many, share_values=False)
-    assert sample.headers == ("A", "B")
+    assert sample.headers == ("A", "B") == sample.file_headers
     assert len(sample.rows) == mic.SAMPLE_ROWS
     assert sample.rows[0] == ("Aaa 9", "9")
     assert sample.masked is True
+
+
+HEADERLESS_CSV = CSV.split("\n", 1)[1]
+
+
+def test_read_sample_relabels_a_header_row_that_is_really_data() -> None:
+    # No header row: the email relabels every column, so the names go too.
+    sample = read_sample(HEADERLESS_CSV, share_values=False)
+    assert sample.headers == tuple(f"(column {i})" for i in range(1, 6))
+    assert sample.file_headers[0] == "Jane Doe"
+    # Without an email, only the data-like headers are relabeled.
+    sample = read_sample(
+        "Guardian,3095550123,Long header " + "x" * 40 + "\na,b,c\n", share_values=False
+    )
+    assert sample.headers == ("Guardian", "(column 2)", "(column 3)")
+    # Sharing on sends headers as written.
+    assert read_sample(HEADERLESS_CSV, share_values=True).headers[0] == "Jane Doe"
+
+
+async def test_headerless_file_leaks_nothing_and_answers_in_file_headers() -> None:
+    answer = _answer(
+        mappings=[
+            {"target": "parent_name", "source_headers": ["(column 1)"], "confidence": "low"},
+            {"target": "student_name", "source_headers": ["(column 4)"], "confidence": "low"},
+        ],
+        unmapped_headers=["(column 2)", "(column 3)", "(column 5)"],
+    )
+    llm = FakeLlm(answer)
+    use_case, _ = _use_case(llm)
+    result = await use_case.execute(csv_text=HEADERLESS_CSV, approver="u")
+    user = llm.calls[0]["user"]
+    for secret in ("Jane", "Doe", "jane.doe@gmail.com", "3095550123", "2015-03-04"):
+        assert secret not in user
+    assert result.draft.mappings[0].source_headers == ["Jane Doe"]
+    assert result.draft.unmapped_headers == ["jane.doe@gmail.com", "3095550123", "2015-03-04"]
 
 
 def test_read_sample_refuses_what_the_import_refuses() -> None:
@@ -238,6 +273,7 @@ def _answer(**changes) -> str:
             mappings=[{"target": "parent_name", "source_headers": ["Nope"], "confidence": "high"}]
         ),
         _answer(mappings=json.loads(GOOD_ANSWER)["mappings"][1:]),  # parent_name missing
+        _answer(unmapped_headers=["Guardian"]),  # a header both mapped and unmapped
         _answer(extra="field"),
     ],
 )

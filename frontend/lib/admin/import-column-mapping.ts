@@ -63,10 +63,14 @@ function quoteCell(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
-/** The file's header names (trimmed; a blank header becomes "(column N)"). */
+/** One header as the backend names it: trimmed, blank -> "(column N)", cut to 80 characters. */
+function headerName(raw: string, i: number): string {
+  return (raw.trim() || `(column ${i + 1})`).slice(0, 80);
+}
+
+/** The file's header names, normalized like the backend's so the draft's headers match. */
 export function readHeaders(csvText: string): string[] {
-  const first = parseCsv(csvText)[0] ?? [];
-  return first.map((h, i) => h.trim() || `(column ${i + 1})`);
+  return (parseCsv(csvText)[0] ?? []).map(headerName);
 }
 
 export type HeaderCheck =
@@ -93,7 +97,7 @@ export function checkImportHeader(csvText: string): HeaderCheck {
  */
 export function applyColumnMapping(csvText: string, mapping: ColumnMapping[]): string {
   const rows = parseCsv(csvText);
-  const headers = (rows[0] ?? []).map((h, i) => h.trim() || `(column ${i + 1})`);
+  const headers = (rows[0] ?? []).map(headerName);
   const index = new Map(headers.map((h, i) => [h, i] as const));
   const byTarget = new Map(mapping.map((m) => [m.target, m.source_headers] as const));
   const targets = IMPORT_COLUMNS.filter((c) => byTarget.has(c));
