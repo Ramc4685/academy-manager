@@ -148,8 +148,8 @@ async def test_ai_calls_record_returns_the_id_and_set_approver_is_tenant_scoped(
         created_at=NOW,
     )
     with tenant_scope("acad-a"):
-        call_id = await MongoAiCallRepository(db).record(record)
-    assert call_id
+        await MongoAiCallRepository(db).record(record)
+    call_id = record.call_id
     with tenant_scope("acad-b"):
         assert await MongoAiCallRepository(db).set_approver(call_id, "intruder") is False
     with tenant_scope("acad-a"):

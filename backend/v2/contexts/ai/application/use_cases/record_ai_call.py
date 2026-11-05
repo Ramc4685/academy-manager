@@ -61,5 +61,5 @@ class RecordAiCall:
             approver=approver,
             created_at=self._clock(),
         )
-        call_id = await self._calls.record(record)
-        return record.model_copy(update={"call_id": call_id}) if call_id else record
+        await self._calls.record(record)
+        return record

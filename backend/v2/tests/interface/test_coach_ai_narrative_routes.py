@@ -135,7 +135,7 @@ def test_coach_drafts_then_approves_with_edits_and_both_rows_carry_the_coach() -
         COACH,
         "Aarav moved so well today.",
     )
-    assert calls.approvers == [("call-1", COACH)]
+    assert calls.approvers == [(calls.recorded[0].call_id, COACH)]
     assert client.get("/api/v2/coach/narratives/pending?date=2026-11-04").json() == {
         "narratives": []
     }
@@ -151,7 +151,7 @@ def test_review_off_returns_an_approved_row_the_coach_never_sees_as_pending() ->
     client = _client(_claims(COACH, "coach"), composition)
     row = client.post(DRAFT, json={}).json()
     assert (row["status"], row["approver"]) == ("approved", "coach_review_off")
-    assert calls.approvers == [("call-1", "coach_review_off")]
+    assert calls.approvers == [(calls.recorded[0].call_id, "coach_review_off")]
 
 
 def test_another_coach_s_pending_rows_are_not_listed_but_a_supervisor_sees_all() -> None:

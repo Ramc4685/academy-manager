@@ -97,9 +97,8 @@ class FakeCalls:
     async def count_since(self, since: datetime) -> int:
         return self.used
 
-    async def record(self, call: AiCallRecord) -> str:
+    async def record(self, call: AiCallRecord) -> None:
         self.recorded.append(call)
-        return f"call-{len(self.recorded)}"
 
     async def set_approver(self, call_id: str, approver: str) -> bool:
         self.approvers.append((call_id, approver))
@@ -181,7 +180,7 @@ async def test_happy_path_sends_exactly_the_input_and_records_before_returning()
     assert json.loads(sent["user"]) == INPUT.model_dump()
     assert draft.text.startswith("Aarav mastered Forecourt movement")
     assert [c.feature for c in calls.recorded] == ["progress_narrative"]
-    assert call.approver is None and call.call_id == "call-1"
+    assert call.approver is None and call.call_id == calls.recorded[0].call_id
 
 
 async def test_a_malformed_answer_is_still_recorded_then_502():
@@ -403,7 +402,7 @@ async def test_review_on_stores_pending_with_no_approver():
     assert (row.for_date, row.kind, row.call_id, row.created_by) == (
         "2026-11-04",
         "evening_wins",
-        "call-1",
+        calls.recorded[0].call_id,
         "coach-1",
     )
     assert calls.approvers == [] and list(repo.rows.values()) == [row]
@@ -413,7 +412,8 @@ async def test_review_off_stores_approved_and_stamps_coach_review_off_on_both_ro
     use_case, calls, _repo = _student_drafter(review=False)
     row = await _draft(use_case)
     assert (row.status, row.approver, row.decided_at) == ("approved", COACH_REVIEW_OFF, NOW)
-    assert calls.approvers == [("call-1", COACH_REVIEW_OFF)]
+    assert calls.approvers == [(row.call_id, COACH_REVIEW_OFF)]
+    assert row.call_id == calls.recorded[0].call_id
 
 
 async def test_no_wins_that_day_is_409_without_a_model_call():
@@ -449,7 +449,7 @@ async def test_approving_with_edits_stamps_the_coach_on_the_row_and_the_ai_call(
         "Aarav moved so well today.",
         NOW,
     )
-    assert calls.approvers == [("call-1", "coach-1")]
+    assert calls.approvers == [(row.call_id, "coach-1")]
     assert await review.pending(date(2026, 11, 4), "coach-1") == []
     # Already decided: nothing to decide again.
     assert await review.decide(row.narrative_id, status="rejected", text=None, approver="x") is None

@@ -77,7 +77,7 @@ class DraftStudentNarrative:
         draft, call = await self._drafter.execute(facts)
         review = await self._review.coach_review_required()
         now = self._clock()
-        if not review and call.call_id:
+        if not review:
             await self._calls.set_approver(call.call_id, COACH_REVIEW_OFF)
         return await self._narratives.upsert_draft(
             AiNarrative(
