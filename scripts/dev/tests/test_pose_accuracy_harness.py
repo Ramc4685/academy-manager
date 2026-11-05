@@ -52,6 +52,17 @@ class FaceDropTests(unittest.TestCase):
         self.assertTrue(all(lm is None for lm in dropped[:11]))
         self.assertEqual(dropped[11:], [(lm.x, lm.y, lm.z, lm.visibility) for lm in raw[11:]])
 
+    def test_non_square_frame_is_scaled_to_pixels_before_angles(self) -> None:
+        # A true 90 degree knee in a 1920x1080 clip, given in normalised coords.
+        px = {h.R_HIP: (760, 340), h.R_KNEE: (960, 540), h.R_ANKLE: (1160, 340)}
+        raw = [SimpleNamespace(x=0.5, y=0.5, z=0.0, visibility=0.9) for _ in range(33)]
+        for j, (x, y) in px.items():
+            raw[j] = SimpleNamespace(x=x / 1920, y=y / 1080, z=0.0, visibility=0.9)
+        frame = h.drop_face(raw, width=1920, height=1080)
+        self.assertAlmostEqual(h.frame_angle(frame, KNEE, 0.5), 90.0, places=6)
+        skewed = h.drop_face(raw)
+        self.assertNotAlmostEqual(h.frame_angle(skewed, KNEE, 0.5), 90.0, places=1)
+
     def test_no_criterion_uses_a_face_landmark(self) -> None:
         for spec in h.CRITERIA.values():
             self.assertFalse(set(spec["joints"]) & set(h.FACE_LANDMARKS))
@@ -158,3 +169,22 @@ class PrivacyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LungeDepthTests(unittest.TestCase):
+    def test_back_leg_is_read_at_the_deepest_front_knee_frame(self) -> None:
+        back = h.CRITERIA["lunge_back_leg"]["joints"]
+
+        def frame(front_deg: float, back_deg: float) -> list:
+            f = skeleton(front_deg, KNEE)
+            b = skeleton(back_deg, back)
+            for j in back:
+                f[j] = b[j]
+            return f
+
+        # Standing (front 175, back 180) around a lunge (front 95, back 100):
+        # a whole-clip max would report the standing 180.
+        frames = [frame(175, 180), frame(95, 100), frame(175, 180)]
+        self.assertAlmostEqual(h.measure_clip(frames, "lunge_back_leg").value, 100.0)
+        extended = [frame(175, 180), frame(95, 170), frame(175, 180)]
+        self.assertAlmostEqual(h.measure_clip(extended, "lunge_back_leg").value, 170.0)

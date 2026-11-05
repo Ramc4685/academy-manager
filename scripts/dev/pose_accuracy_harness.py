@@ -63,7 +63,9 @@ L_ANKLE, R_ANKLE = 27, 28
 # add a per-clip handedness column when a left-handed child is in the set.
 CRITERIA: dict[str, dict[str, object]] = {
     # key: (a, vertex, c) angle at the vertex in degrees, a per-clip reducer,
-    # and what the coach is judging.
+    # and what the coach is judging. "at_lunge_depth" reads the angle on the
+    # frame where the front knee is most bent, so standing frames before or
+    # after the lunge do not stand in for it.
     "grip_wrist_cock": {
         "joints": (R_ELBOW, R_WRIST, R_INDEX),
         "reduce": "median",
@@ -81,8 +83,8 @@ CRITERIA: dict[str, dict[str, object]] = {
     },
     "lunge_back_leg": {
         "joints": (L_HIP, L_KNEE, L_ANKLE),
-        "reduce": "max",
-        "meaning": "Lunge: back leg extended (hip-knee-ankle of the back leg).",
+        "reduce": "at_lunge_depth",
+        "meaning": "Lunge: back leg extended at the deepest lunge frame (back hip-knee-ankle).",
     },
     "lunge_trunk_upright": {
         "joints": (R_SHOULDER, R_HIP, R_KNEE),
@@ -102,14 +104,17 @@ Frame = list[Landmark | None]
 # ---------------------------------------------------------------- pure functions
 
 
-def drop_face(landmarks: Iterable[object]) -> Frame:
+def drop_face(landmarks: Iterable[object], width: float = 1.0, height: float = 1.0) -> Frame:
     """Convert MediaPipe landmarks (objects with x, y, z, visibility) to a frame.
 
-    Face landmarks become None without their coordinates ever being read, so no
-    face point is copied out of the MediaPipe result.
+    MediaPipe normalises x by image width and y by image height, so a
+    non-square clip would skew every angle; pass the frame size to get pixel
+    coordinates (z is on the x scale). Face landmarks become None without
+    their coordinates ever being read, so no face point is copied out of the
+    MediaPipe result.
     """
     return [
-        None if i in FACE_LANDMARKS else (lm.x, lm.y, lm.z, lm.visibility)  # type: ignore[attr-defined]
+        None if i in FACE_LANDMARKS else (lm.x * width, lm.y * height, lm.z * width, lm.visibility)  # type: ignore[attr-defined]
         for i, lm in enumerate(landmarks)
     ]
 
@@ -157,6 +162,17 @@ def measure_clip(
     unusable = len(angles) - len(valid)
     if not valid or len(valid) < min_valid_fraction * len(angles):
         return ClipMeasure(None, len(angles), unusable)
+    if spec["reduce"] == "at_lunge_depth":
+        front_joints = CRITERIA["lunge_front_knee"]["joints"]
+        paired = [
+            (front, angle)
+            for f, angle in zip(frames, angles, strict=True)
+            if angle is not None
+            and (front := frame_angle(f, front_joints, min_visibility)) is not None  # type: ignore[arg-type]
+        ]
+        if not paired:
+            return ClipMeasure(None, len(angles), unusable)
+        return ClipMeasure(min(paired)[1], len(angles), unusable)
     reducer = {"median": statistics.median, "min": min, "max": max}[spec["reduce"]]  # type: ignore[index]
     return ClipMeasure(reducer(valid), len(angles), unusable)
 
@@ -311,12 +327,13 @@ def read_clip_frames(path: Path) -> Iterator[Frame]:
                 ok, image = capture.read()
                 if not ok:
                     break
+                height, width = image.shape[:2]
                 result = pose.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
                 del image
                 if result.pose_landmarks is None:
                     yield [None] * NUM_LANDMARKS
                     continue
-                yield drop_face(result.pose_landmarks.landmark)
+                yield drop_face(result.pose_landmarks.landmark, width=width, height=height)
                 del result
     finally:
         capture.release()
