@@ -347,10 +347,14 @@ export function TrialRequestForm({
             name="message"
             maxLength={TRIAL_LIMITS.message}
             aria-invalid={errors.message ? true : undefined}
-            aria-describedby={describedBy("message")}
+            aria-describedby={describedBy("message", true)}
             value={values.message}
             onChange={(e) => set("message", e.target.value)}
           />
+          <p className={styles.fieldHint} id={id("message-hint")}>
+            Please leave out medical or other sensitive details. We may use AI tools to help us
+            read and answer messages faster; a person reviews every reply before it is sent.
+          </p>
           {errorText("message")}
         </div>
 

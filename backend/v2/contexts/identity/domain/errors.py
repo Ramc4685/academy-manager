@@ -10,6 +10,11 @@ class UserNotFound(DomainError):
     status_code = 404
 
 
+class AcademyNotFound(DomainError):
+    code = "Identity.AcademyNotFound"
+    status_code = 404
+
+
 class UserEmailAlreadyExists(DomainError):
     code = "Identity.UserEmailAlreadyExists"
     status_code = 409

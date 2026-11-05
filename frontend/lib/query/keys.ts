@@ -8,12 +8,16 @@
 export const queryKeys = {
   coach: {
     all: ["coach"] as const,
+    aiStatus: () => ["coach", "ai", "status"] as const,
     dashboard: () => ["coach", "dashboard"] as const,
     dayHub: (date: string) => ["coach", "day-hub", date] as const,
     today: (date: string) => ["coach", "today", date] as const,
     todayPlan: (date: string) => ["coach", "today-plan", date] as const,
     skillBoard: (sessionId: string, programId?: string) =>
       ["coach", "skill-board", sessionId, programId ?? "default"] as const,
+    pendingNarratives: (date: string) => ["coach", "narratives", "pending", date] as const,
+    studentNarrative: (studentId: string, date: string) =>
+      ["coach", "narratives", "student", studentId, date] as const,
     schedule: () => ["coach", "schedule"] as const,
     profile: () => ["coach", "profile"] as const,
     academy: () => ["coach", "academy"] as const,
@@ -77,6 +81,7 @@ export const queryKeys = {
     // People CRM Pipeline board (L3b). Under `families()` so a families-wide
     // invalidation refreshes it too.
     pipelineBoard: () => ["admin", "families", "pipeline"] as const,
+    // AI status (B1): hides the paid AI buttons while AI is off.
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
     familyRecord: (familyId: string) =>
@@ -138,14 +143,20 @@ export const queryKeys = {
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
+    // Shared with slice B1's AI status card: both read the same key.
+    aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,
+    aiStatus: () => ["admin", "ai", "status"] as const,
     publicPage: () => ["admin", "academy", "public-page"] as const,
     programs: () => ["admin", "programs"] as const,
     // Under the programs() prefix so a program change refetches it too.
     programsWithArchived: () => ["admin", "programs", "with-archived"] as const,
     classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    aiUsage: () => ["admin", "ai", "usage"] as const,
+    plan: () => ["admin", "billing", "plan"] as const,
     paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
+    platformFee: () => ["admin", "billing", "platform-fee"] as const,
     // sessionTypes() is the invalidation prefix; sessionTypesList() is the
     // per-view cache key, since the archived and active lists differ.
     sessionTypes: () => ["admin", "session-types"] as const,
@@ -232,6 +243,8 @@ export const queryKeys = {
       ["platform", "tenant", academyId, "application-fee"] as const,
     tenantBillingIdentity: (academyId: string) =>
       ["platform", "tenant", academyId, "billing-identity"] as const,
+    tenantAiUsage: (academyId: string) =>
+      ["platform", "tenant", academyId, "ai-usage"] as const,
   },
   student: {
     all: ["student"] as const,

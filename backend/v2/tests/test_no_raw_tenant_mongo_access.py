@@ -49,6 +49,7 @@ TENANT_OWNED_COLLECTIONS = {
     "account_credit_ledger",
     "academy_feature_flags",
     "ai_calls",
+    "ai_narratives",
     "academy_roles",
     "academy_settings",
     "announcements",

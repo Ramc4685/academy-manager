@@ -26,3 +26,25 @@ class AiProviderError(DomainError):
 
     code = "Ai.ProviderError"
     status_code = 502
+
+
+class AiAcademyNotFound(DomainError):
+    """Platform admin asked for the AI usage of an unknown academy."""
+
+    code = "Ai.AcademyNotFound"
+    status_code = 404
+
+
+class AiNotEntitled(DomainError):
+    """The academy's platform plan does not include the ``ai`` feature."""
+
+    code = "Ai.NotEntitled"
+    status_code = 403
+
+
+class AiImportSampleRejected(DomainError):
+    """The spreadsheet handed to the roster-import copilot is over the import's
+    own size or row cap, or is not readable as CSV."""
+
+    code = "Ai.ImportSampleRejected"
+    status_code = 422

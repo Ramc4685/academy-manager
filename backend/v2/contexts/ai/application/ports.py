@@ -17,9 +17,30 @@ class LlmPort(Protocol):
 class AiCallRepository(Protocol):
     async def record(self, call: AiCallRecord) -> None: ...
     async def count_since(self, since: datetime) -> int: ...
+    async def set_approver(self, call_id: str, approver: str) -> bool: ...
 
 
 class MonthlyCapSource(Protocol):
     """The academy in scope's monthly AI call cap."""
 
     async def monthly_cap(self) -> int: ...
+
+
+class EntitlementSource(Protocol):
+    """Whether the academy in scope holds a plan feature (``"ai"``)."""
+
+    async def has_feature(self, feature: str) -> bool: ...
+
+
+class AiEntitlement(Protocol):
+    """Whether the academy in scope may use paid AI features."""
+
+    async def has_ai(self) -> bool: ...
+
+
+class ImportValueSharing(Protocol):
+    """Whether the academy in scope lets the roster-import copilot see real
+    spreadsheet values (``ai.share_import_values``); False means headers and
+    masked samples only."""
+
+    async def share_values(self) -> bool: ...

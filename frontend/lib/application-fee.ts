@@ -28,3 +28,8 @@ export function percentInputToBps(value: string, maxBps: number): number | null 
   if (!Number.isFinite(bps) || bps < 0 || bps > maxBps) return null;
   return bps;
 }
+
+/** "1.00%" style rate for the processing-fee disclosure lines (Phase 2 A1). */
+export function formatProcessingRate(bps: number): string {
+  return `${(bps / 100).toFixed(2)}%`;
+}

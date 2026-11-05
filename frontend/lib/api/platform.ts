@@ -6,6 +6,7 @@
  * missing route by design — surface it as "unavailable", not "forbidden".
  */
 
+import type { AiUsage } from "./admin";
 import { apiFetch, apiFetchBlob } from "./client";
 
 export type TenantStatus = "provisioning" | "active" | "suspended" | "cancelled";
@@ -177,11 +178,21 @@ export function bootstrapPlatformAcademy(
   });
 }
 
-/** Per-academy platform application fee (roadmap L9b), in basis points. */
+/**
+ * Per-academy platform application fee (roadmap L9b), in basis points, plus
+ * the processing-fee agreement recorded with it (AI strategy Phase 2 A1):
+ * the version the academy accepted (null until recorded), the current text
+ * and version from code, and who accepted it when.
+ */
 export interface ApplicationFee {
   academy_id: string;
   application_fee_bps: number;
   max_application_fee_bps: number;
+  agreement_version: string | null;
+  agreement_text: string;
+  current_agreement_version: string;
+  accepted_at: string | null;
+  accepted_by: string | null;
 }
 
 export function getPlatformApplicationFee(academyId: string): Promise<ApplicationFee> {
@@ -193,7 +204,12 @@ export function getPlatformApplicationFee(academyId: string): Promise<Applicatio
 
 export function setPlatformApplicationFee(
   academyId: string,
-  payload: { application_fee_bps: number; reason?: string },
+  payload: {
+    application_fee_bps: number;
+    reason?: string;
+    /** Record the academy's acceptance of the current agreement with the fee. */
+    agreement?: { version: string; accepted_by: string };
+  },
 ): Promise<ApplicationFee> {
   return apiFetch<ApplicationFee>(
     `/platform/academies/${encodeURIComponent(academyId)}/application-fee`,
@@ -228,6 +244,13 @@ export function setPlatformBillingIdentity(
     `/platform/academies/${encodeURIComponent(academyId)}/billing-identity`,
     { method: "PUT", body: JSON.stringify(payload) },
   );
+}
+
+/** The same AI usage meter the academy admin sees, for one academy (slice A3). */
+export function getPlatformAiUsage(academyId: string): Promise<AiUsage> {
+  return apiFetch<AiUsage>(`/platform/academies/${encodeURIComponent(academyId)}/ai-usage`, {
+    method: "GET",
+  });
 }
 
 /** Tenant data export (roadmap L9d): a zip of every tenant-scoped collection. */

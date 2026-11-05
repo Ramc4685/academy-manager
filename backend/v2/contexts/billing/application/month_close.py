@@ -30,6 +30,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     autopay_eligibility,
     invoice_is_chargeable,
 )
+from backend.v2.contexts.billing.domain.fees import application_fee_cents
 
 #: Odd-list checks are capped so one bad month cannot return thousands of rows.
 #: The count beside the list is always the true count (spec §4.3).
@@ -140,6 +141,18 @@ class MonthCloseFacts:
     invoices: tuple[InvoiceFacts, ...] = ()
     #: ``cash_received_in_period(...).net_cents`` — the one "collected" (§3.2).
     collected_cents: int = 0
+    #: The Stripe-paid share of ``collected_cents``: what the processing
+    #: markup applies to.
+    stripe_collected_cents: int = 0
+    #: Sum of the per-charge fees the webhook recorded (``application_fee_cents``
+    #: on the payment row), and the Stripe net of the rows that carry none.
+    platform_fee_recorded_cents: int = 0
+    stripe_unrecorded_cents: int = 0
+    #: The academy's current ``application_fee_bps`` on a connected route, 0
+    #: on the house academy (platform charges carry no fee), ``None`` when
+    #: the setting could not be read (which also raises
+    #: ``platform_fee_unavailable``).
+    platform_fee_bps: int | None = None
     #: ``GET /admin/finance/tuition-discounts`` verbatim, or ``None`` when the
     #: use case was unavailable (which also raises ``discounts_unavailable``).
     tuition_discounts: dict[str, Any] | None = None
@@ -253,11 +266,27 @@ def build_invoices_section(invoices: Iterable[InvoiceFacts]) -> dict[str, Any]:
 
 
 def build_money_section(
-    invoices: Iterable[InvoiceFacts], *, collected_cents: int
+    invoices: Iterable[InvoiceFacts],
+    *,
+    collected_cents: int,
+    stripe_collected_cents: int = 0,
+    platform_fee_bps: int | None = None,
+    platform_fee_recorded_cents: int = 0,
+    stripe_unrecorded_cents: int = 0,
 ) -> dict[str, Any]:
     """``billed`` and ``outstanding`` keep the dashboard's definitions; the
     collection rate is ``None`` — rendered "—" — on an empty month, so a month
-    with nothing billed never reads as a total collection failure."""
+    with nothing billed never reads as a total collection failure.
+
+    ``platform_fee_cents`` is the CourtMastr processing markup disclosed on
+    the statement (Phase 2 A1): the fees the webhook recorded per charge,
+    plus the current bps applied to the Stripe net of the rows that carry no
+    record (written before the field existed). That remainder is an
+    ESTIMATE, labelled so by the page: the rate may have changed mid-month
+    and a refund does not return the recorded fee. ``None`` (never 0) when
+    the rate could not be read, so the page shows nothing rather than a
+    wrong number.
+    """
     live = _live(invoices)
     billed_cents = sum(inv.paid_cents + inv.outstanding_cents for inv in live)
     return {
@@ -267,6 +296,17 @@ def build_money_section(
         "collection_rate": (
             round(min(collected_cents / billed_cents, 1.0), 4) if billed_cents > 0 else None
         ),
+        "stripe_collected_cents": stripe_collected_cents,
+        "platform_fee_bps": platform_fee_bps,
+        "platform_fee_cents": (
+            platform_fee_recorded_cents
+            + application_fee_cents(stripe_unrecorded_cents, platform_fee_bps)
+            if platform_fee_bps is not None
+            else None
+        ),
+        # True when part of the amount came from the current rate rather than
+        # a recorded fee; the page says "estimated" only then.
+        "platform_fee_estimated": platform_fee_bps is not None and stripe_unrecorded_cents > 0,
     }
 
 
@@ -395,7 +435,14 @@ def build_month_close_view(facts: MonthCloseFacts) -> dict[str, Any]:
         "timezone": facts.timezone,
         "period": facts.period,
         "invoices": build_invoices_section(facts.invoices),
-        "money": build_money_section(facts.invoices, collected_cents=facts.collected_cents),
+        "money": build_money_section(
+            facts.invoices,
+            collected_cents=facts.collected_cents,
+            stripe_collected_cents=facts.stripe_collected_cents,
+            platform_fee_bps=facts.platform_fee_bps,
+            platform_fee_recorded_cents=facts.platform_fee_recorded_cents,
+            stripe_unrecorded_cents=facts.stripe_unrecorded_cents,
+        ),
         "autopay_run": build_autopay_run_section(facts.invoices, today=facts.today),
         "odd": build_odd_section(facts.invoices, card_state_known=facts.card_state_known),
         "tuition_discounts": facts.tuition_discounts,

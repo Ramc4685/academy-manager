@@ -93,6 +93,7 @@ _PAYMENT_MONEY_PROJECTION: dict[str, int] = {
     "amount_received": 1,
     "refunded_cents": 1,
     "payment_method": 1,
+    "application_fee_cents": 1,
     "paid_at": 1,
     "created_at": 1,
 }
@@ -126,6 +127,9 @@ class CashReceivedRow:
     gross_cents: int
     refunded_cents: int
     source: Literal["ledger", "legacy"]
+    #: The platform fee Stripe took, when the webhook recorded it (Phase 2 A1);
+    #: None on legacy rows and on ledger rows written before the field existed.
+    application_fee_cents: int | None = None
 
     @property
     def net_cents(self) -> int:
@@ -140,6 +144,10 @@ class CashReceived:
     #: over-refunded row cannot eat another row's revenue.
     net_cents: int
     rows: tuple[CashReceivedRow, ...]
+
+
+def _opt_int(value: Any) -> int | None:
+    return int(value) if isinstance(value, int | float) else None
 
 
 def _opt_str(value: Any) -> str | None:
@@ -268,6 +276,7 @@ async def _ledger_rows(
                 gross_cents=gross,
                 refunded_cents=refunded,
                 source="ledger",
+                application_fee_cents=_opt_int(payment.get("application_fee_cents")),
             )
         )
     return rows, keys

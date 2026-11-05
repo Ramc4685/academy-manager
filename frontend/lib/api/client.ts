@@ -124,7 +124,7 @@ function isTransportFailure(error: unknown): error is Error {
   if (typeof error !== "object" || error === null) return false;
   const name = (error as { name?: unknown }).name;
   // `fetch` rejects with a TypeError when the network/CORS layer fails; our
-  // 20 s `AbortController` rejects with an AbortError.
+  // `AbortController` timeout rejects with an AbortError.
   return error instanceof TypeError || name === "AbortError";
 }
 
@@ -165,11 +165,11 @@ function makeError(
 
 export async function apiFetch<T>(
   path: string,
-  init: RequestInit & { dedup?: boolean; authToken?: string | null } = {}
+  init: RequestInit & { dedup?: boolean; authToken?: string | null; timeoutMs?: number } = {}
 ): Promise<T> {
   const usesSameOriginBff = !path.startsWith("http");
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
-  const { authToken, dedup, ...requestInit } = init;
+  const { authToken, dedup, timeoutMs = 20_000, ...requestInit } = init;
   const token = await resolveApiAuthToken(authToken, getIdToken);
   const headers = new Headers(init.headers);
   if (token) {
@@ -200,10 +200,11 @@ export async function apiFetch<T>(
     return parseResponse<T>(r.clone(), ref);
   }
 
-  // Abort hung requests after 20 s so loading states surface as errors
-  // instead of spinning forever when the backend is slow to respond.
+  // Abort hung requests (20 s unless the caller knows better) so loading
+  // states surface as errors instead of spinning forever when the backend is
+  // slow to respond.
   const controller = new AbortController();
-  const abortTimer = setTimeout(() => controller.abort(), 20_000);
+  const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
   const promise = fetch(url, { ...requestInit, headers, signal: controller.signal });
   if (dedupKey) inflight.set(dedupKey, promise);
   try {

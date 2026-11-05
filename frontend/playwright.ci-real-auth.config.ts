@@ -17,12 +17,13 @@ function assertLocalAuthBaseURL(rawBaseURL: string): string {
   return rawBaseURL;
 }
 
-// Dedicated config for the CI real-auth job: matches only the minimal smoke
-// spec, keeping the heavier manual QA sweeps (local-auth-qa / local-auth-inventory,
-// see playwright.local-auth.config.ts) out of the CI gate.
+// Dedicated config for the CI real-auth job: the sign-in smoke spec plus the
+// real-backend money/attendance journeys, keeping the heavier manual QA sweeps
+// (local-auth-qa / local-auth-inventory, see playwright.local-auth.config.ts)
+// out of the CI gate.
 export default defineConfig({
   testDir: "./e2e/specs",
-  testMatch: ["real-auth-smoke.spec.ts"],
+  testMatch: ["real-auth-smoke.spec.ts", "real-backend-journeys.spec.ts"],
   outputDir: `${evidenceDir}/playwright-artifacts`,
   // Frontend runs via `pnpm dev` (see scripts/local_test_stack.sh) — first
   // hits of /login, /post-login and a persona home each trigger a fresh

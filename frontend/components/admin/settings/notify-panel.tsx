@@ -4,16 +4,19 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  getAdminAiWinBackPersonalised,
   getAdminNotifications,
   getCoachDigestLog,
   listAdminUsers,
   sendCoachDigestTest,
+  updateAdminAiWinBackPersonalised,
   updateAdminNotifications,
   type AdminNotificationsView,
   type CoachDigestLogEntryView,
   type CoachDigestTestSendResponse,
   type UpdateAdminNotificationsRequest,
 } from "@/lib/api/admin";
+import { getImportSharing, setImportSharing } from "@/lib/api/admin-ai-import";
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -103,6 +106,7 @@ export function NotifyPanel() {
               setForm((prev) => ({ ...prev, win_back_enabled: checked }))
             }
           />
+          <AiWinBackToggle />
           <Toggle
             label="Trial nudges"
             helper="Trial reminder the day before, a follow-up after a missed trial, and a reminder to finish an abandoned registration."
@@ -197,9 +201,71 @@ export function NotifyPanel() {
           )}
         </div>
 
+        <AiImportSharingToggle />
         <CoachDigestTools />
       </Card>
     </section>
+  );
+}
+
+const AI_WIN_BACK_KEY = ["admin", "ai", "win-back-personalised"] as const;
+
+/** B6: the owner's standing approval. Owner-only route, so an admin (404) sees nothing. Saves on tap. */
+function AiWinBackToggle() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: AI_WIN_BACK_KEY,
+    queryFn: getAdminAiWinBackPersonalised,
+    retry: false,
+  });
+  const mutation = useMutation({
+    mutationFn: (enabled: boolean) => updateAdminAiWinBackPersonalised(enabled),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: AI_WIN_BACK_KEY }),
+  });
+  if (!query.data) return null;
+  return (
+    <Toggle
+      label="Personalise win-back emails with AI (uses the child's level and recent wins; you approve this wording in advance by turning it on)"
+      helper={mutation.isError ? "Couldn't save that. Try again." : undefined}
+      testId="notify-ai-win-back-personalised"
+      checked={query.data.enabled}
+      onChange={(checked) => mutation.mutate(checked)}
+    />
+  );
+}
+
+/**
+ * Phase 2 slice B2, owner-only (`ai.share_import_values`). The GET 404s for a
+ * plain admin, so the control renders for owners only; saved on change.
+ */
+function AiImportSharingToggle() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: queryKeys.admin.aiImportSharing(),
+    queryFn: getImportSharing,
+    retry: false,
+  });
+  const mutation = useMutation({
+    mutationFn: (value: boolean) => setImportSharing(value),
+    onSuccess: (view) => queryClient.setQueryData(queryKeys.admin.aiImportSharing(), view),
+  });
+  if (!query.data) return null;
+  return (
+    <div className="mt-8 border-t border-rally-line pt-6" data-testid="admin-settings-ai-import-sharing">
+      <Overline>AI import helper</Overline>
+      <div className="mt-4">
+        <Toggle
+          label="Let the AI import helper see real spreadsheet values (names, emails, phones)."
+          helper="Off: it sees only the column headers and masked samples."
+          testId="ai-import-share-values"
+          checked={query.data.share_values}
+          onChange={(checked) => mutation.mutate(checked)}
+        />
+        {mutation.isError && (
+          <p className="mt-2 text-sm font-medium text-red-700">{mutation.error.message}</p>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -2344,6 +2344,23 @@ export function updateBillingRules(
   });
 }
 
+/**
+ * The CourtMastr processing markup this academy pays on Stripe-collected
+ * payments, with the agreement text and its acceptance (Phase 2 A1).
+ * Read-only: only a platform admin can change it.
+ */
+export interface AdminPlatformFeeView {
+  application_fee_bps: number;
+  agreement_version: string | null;
+  agreement_text: string;
+  accepted_at: string | null;
+  accepted_by: string | null;
+}
+
+export function getAdminPlatformFee(): Promise<AdminPlatformFeeView> {
+  return apiFetch<AdminPlatformFeeView>("/admin/billing/platform-fee", { method: "GET" });
+}
+
 export function getPlatformChargeFallback(): Promise<PlatformChargeFallbackView> {
   return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
     method: "GET",
@@ -3770,6 +3787,17 @@ export interface AdminMonthCloseView {
     outstanding_cents: number;
     /** Null, never 0, when nothing was billed — the page renders "—". */
     collection_rate: number | null;
+    /** The Stripe-paid share of `collected_cents` (Phase 2 A1). */
+    stripe_collected_cents: number;
+    /**
+     * The CourtMastr processing markup: current bps and the ESTIMATED fee on
+     * the Stripe share. Both null, never 0, when the rate could not be read
+     * (`platform_fee_unavailable` in `warnings`).
+     */
+    platform_fee_bps: number | null;
+    platform_fee_cents: number | null;
+    /** True when rows without a recorded fee were estimated from the current rate. */
+    platform_fee_estimated: boolean;
   };
   autopay_run: {
     charge_on: string | null;
@@ -3983,6 +4011,21 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
   });
 }
 
+/** AI usage meter (plan 2026-11-04 Phase 2, slice A3): this month's drafts against the plan's cap. */
+export interface AiUsage {
+  used: number;
+  cap: number;
+  tier: "free" | "growth";
+  /** Free tier at or past its cap: a soft prompt to upgrade, never a hard stop. */
+  upgrade_suggested: boolean;
+  /** YYYY-MM, UTC. */
+  month: string;
+}
+
+export function getAdminAiUsage(): Promise<AiUsage> {
+  return apiFetch<AiUsage>("/admin/ai/usage", { method: "GET" });
+}
+
 export function getAdminGateway(): Promise<AdminGatewayView> {
   return apiFetch<AdminGatewayView>("/admin/academy/gateway", { method: "GET" });
 }
@@ -4020,6 +4063,34 @@ export function startStripeConnect(): Promise<AdminGatewayConnectLinkView> {
 
 export function disconnectStripe(): Promise<void> {
   return apiFetch<void>("/admin/academy/gateway/stripe/connect", { method: "DELETE" });
+}
+
+export interface AdminPlanSummary {
+  code: string;
+  display_name: string;
+  monthly_price_cents: number;
+  features: string[];
+}
+
+/** What the academy pays CourtMastr (owner only). `plan` null = free core operations. */
+export interface AdminPlanOverview {
+  plan: AdminPlanSummary | null;
+  subscription: {
+    billing_status: string;
+    cancel_at_period_end: boolean;
+    current_period_end: string | null;
+  } | null;
+  growth: AdminPlanSummary | null;
+  checkout_available: boolean;
+}
+
+export function getAdminPlan(): Promise<AdminPlanOverview> {
+  return apiFetch<AdminPlanOverview>("/admin/billing/plan", { method: "GET" });
+}
+
+/** Owner only. Stripe Billing Checkout for the Growth plan; redirect to `url`. */
+export function startGrowthCheckout(): Promise<{ url: string }> {
+  return apiFetch<{ url: string }>("/admin/billing/plan/checkout", { method: "POST" });
 }
 
 export interface CreateAdminUserRequest {
@@ -4350,5 +4421,41 @@ export function updateAdminClassPublicFields(
   return apiFetch<AdminClassPublicProfileView>(
     `/admin/sessions/${encodeURIComponent(sessionId)}/public-fields`,
     { method: "PATCH", body: JSON.stringify(payload) }
+  );
+}
+
+/** B6: the owner's standing approval of AI-personalised win-back wording (owner-only, 404 otherwise). */
+export function getAdminAiWinBackPersonalised(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/win-back-personalised", { method: "GET" });
+}
+
+export function updateAdminAiWinBackPersonalised(enabled: boolean): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/win-back-personalised", {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+/** B1: whether AI drafting is on for this academy (V2_AI_ENABLED + key). */
+export function fetchAdminAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
+}
+
+/**
+ * `POST /admin/reports/month-close/narrative?period=YYYY-MM` (B5, owner-only, paid).
+ * Mirrors `MonthCloseNarrative` in
+ * `backend/v2/contexts/ai/application/use_cases/narrate_month_close.py`.
+ */
+export interface AdminMonthCloseNarrative {
+  summary: string;
+  fix_first: { text: string; href: string }[];
+  prompt_version: string;
+  generated_at: string;
+}
+
+export function postAdminMonthCloseNarrative(period: string): Promise<AdminMonthCloseNarrative> {
+  return apiFetch<AdminMonthCloseNarrative>(
+    `/admin/reports/month-close/narrative?period=${encodeURIComponent(period)}`,
+    { method: "POST" },
   );
 }

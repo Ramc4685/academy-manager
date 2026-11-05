@@ -61,6 +61,7 @@ def _make_payment_with_metadata(payment_id: str, academy_id: str, now: datetime)
         update={
             "stripe_payment_intent_id": "pi_metadata_1",
             "metadata": {"disclosure_version": "cash-discount-v1"},
+            "application_fee_cents": 100,
         }
     )
 
@@ -111,6 +112,44 @@ async def test_record_payment_idempotency_via_ledger_payments(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_record_payment_replay_fills_a_missing_fee_once_and_never_overwrites(
+    db, acad
+) -> None:
+    """Phase 2 A1: a sync autopay success writes the row first; the webhook's
+    replay of the same key may carry the fee. It fills a blank once; a
+    recorded fee (including 0) is never changed."""
+    repo = MongoBillingLedgerRepository(db)
+    now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
+    blank = _make_payment("pay-fee-1", acad, now)
+    with_fee = blank.model_copy(update={"application_fee_cents": 100})
+
+    first = await repo.record_payment(blank, idempotency_key="pay:fee:1")
+    assert first.application_fee_cents is None
+
+    filled = await repo.record_payment(with_fee, idempotency_key="pay:fee:1")
+    assert filled.application_fee_cents == 100
+    raw = await db["ledger_payments"].find_one({"payment_id": "pay-fee-1"})
+    assert raw is not None and raw["application_fee_cents"] == 100
+
+    again = await repo.record_payment(
+        blank.model_copy(update={"application_fee_cents": 999}), idempotency_key="pay:fee:1"
+    )
+    assert again.application_fee_cents == 100
+    assert await db["ledger_payments"].count_documents({"payment_id": "pay-fee-1"}) == 1
+
+    zero = await repo.record_payment(
+        _make_payment("pay-fee-0", acad, now).model_copy(update={"application_fee_cents": 0}),
+        idempotency_key="pay:fee:0",
+    )
+    assert zero.application_fee_cents == 0
+    replayed = await repo.record_payment(
+        _make_payment("pay-fee-0", acad, now).model_copy(update={"application_fee_cents": 250}),
+        idempotency_key="pay:fee:0",
+    )
+    assert replayed.application_fee_cents == 0
+
+
+@pytest.mark.asyncio
 async def test_record_payment_round_trips_metadata(db, acad) -> None:
     repo = MongoBillingLedgerRepository(db)
     now = datetime(2026, 6, 14, 12, 0, tzinfo=UTC)
@@ -128,6 +167,7 @@ async def test_record_payment_round_trips_metadata(db, acad) -> None:
     assert raw["metadata"] == {"disclosure_version": "cash-discount-v1"}
     assert fetched is not None
     assert fetched.metadata == {"disclosure_version": "cash-discount-v1"}
+    assert fetched.application_fee_cents == 100
 
 
 @pytest.mark.asyncio

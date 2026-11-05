@@ -144,6 +144,11 @@ class LedgerPayment(BaseModel):
     #: academy, and every legacy destination charge. Refunds go to this account.
     stripe_account_id: str | None = None
     stripe_invoice_id: str | None = None
+    #: The CourtMastr processing fee Stripe took on this charge
+    #: (``application_fee_amount``), recorded by the webhook. None = unknown:
+    #: a row written before Phase 2 A1, or a path that does not report it;
+    #: month close estimates those from the current rate.
+    application_fee_cents: int | None = None
     paid_at: datetime | None = None
     recorded_by: str | None = None
     notes: str | None = None
