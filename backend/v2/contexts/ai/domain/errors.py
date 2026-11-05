@@ -26,3 +26,11 @@ class AiProviderError(DomainError):
 
     code = "Ai.ProviderError"
     status_code = 502
+
+
+class AiImportSampleRejected(DomainError):
+    """The spreadsheet handed to the roster-import copilot is over the import's
+    own size or row cap, or is not readable as CSV."""
+
+    code = "Ai.ImportSampleRejected"
+    status_code = 422

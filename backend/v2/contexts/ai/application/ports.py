@@ -23,3 +23,11 @@ class MonthlyCapSource(Protocol):
     """The academy in scope's monthly AI call cap."""
 
     async def monthly_cap(self) -> int: ...
+
+
+class ImportValueSharing(Protocol):
+    """Whether the academy in scope lets the roster-import copilot see real
+    spreadsheet values (``ai.share_import_values``); False means headers and
+    masked samples only."""
+
+    async def share_values(self) -> bool: ...
