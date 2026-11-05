@@ -159,6 +159,7 @@ export const queryKeys = {
     pathwayDashboard: () => ["admin", "pathway", "dashboard"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
+    aiStatus: () => ["admin", "ai", "status"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
     reconciliationRuns: () =>
       ["admin", "billing", "reconciliation-runs"] as const,

@@ -336,6 +336,22 @@ export function createSkill(
   );
 }
 
+// Mirrors POST /admin/curriculum/skills/{skill_id}/criteria (AddCriterionBody).
+export function addCriterion(
+  skillId: string,
+  body: {
+    level_id: string;
+    program_id: string;
+    description: string;
+    display_order: number;
+  },
+): Promise<SkillCriterion> {
+  return apiFetch<SkillCriterion>(
+    `/admin/skills/${encodeURIComponent(skillId)}/criteria`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
 export function addExternalRef(
   skillId: string,
   body: {
@@ -365,6 +381,46 @@ export function seedBadmintonPathway(): Promise<{
   return apiFetch<{ program_id: string; name: string }>(
     `/admin/programs/_/seed-badminton`,
     { method: "POST" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin — AI drafting (AI strategy Phase 2 B1)
+// ---------------------------------------------------------------------------
+
+export interface DraftSkill {
+  name: string;
+  description: string;
+  scoring_type: SkillScoringType;
+  is_required: boolean;
+  criteria: string[];
+}
+
+export interface DraftLevel {
+  sequence: number;
+  name: string;
+  description: string;
+  skills: DraftSkill[];
+}
+
+export interface SkillLadderDraft {
+  prompt_version: string;
+  levels: DraftLevel[];
+}
+
+/** False while the academy has no model port; AI buttons stay hidden. */
+export function getAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
+}
+
+/** Drafts only: nothing is saved until the owner saves the edited draft. */
+export function draftSkillLadder(
+  programId: string,
+  body: { age_band: string; level_count: number; notes: string },
+): Promise<SkillLadderDraft> {
+  return apiFetch<SkillLadderDraft>(
+    `${CURRICULUM_PROGRAMS_PATH}/${encodeURIComponent(programId)}/ladder-draft`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 }
 
