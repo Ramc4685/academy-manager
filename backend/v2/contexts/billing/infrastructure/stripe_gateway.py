@@ -225,6 +225,42 @@ class RealStripeGateway(StripeGateway):
         stripe_subscription_id = str(getattr(result, "subscription", "") or "")
         return str(result.id), str(result.url), stripe_subscription_id
 
+    async def create_platform_customer(
+        self,
+        *,
+        name: str,
+        email: str | None,
+        metadata: dict[str, str],
+    ) -> str:
+        def _create() -> Any:
+            return self._stripe.Customer.create(name=name, email=email, metadata=metadata)
+
+        result = await asyncio.to_thread(_create)
+        return str(result.id)
+
+    async def create_platform_plan_checkout_session(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        def _create() -> Any:
+            return self._stripe.checkout.Session.create(
+                mode="subscription",
+                customer=customer_id,
+                line_items=[{"price": price_id, "quantity": 1}],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                metadata=metadata,
+                subscription_data={"metadata": metadata},
+            )
+
+        result = await asyncio.to_thread(_create)
+        return str(result.id), str(result.url)
+
     async def create_autopay_setup_checkout_session(
         self,
         *,

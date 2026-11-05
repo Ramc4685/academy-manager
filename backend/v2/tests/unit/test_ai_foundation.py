@@ -152,15 +152,25 @@ async def test_record_ai_call_writes_under_the_cap() -> None:
     assert record.model == DEFAULT_MODEL and record.approver == "u1" and record.created_at == NOW
 
 
-async def test_record_ai_call_refuses_at_the_cap() -> None:
+async def test_assert_under_cap_refuses_at_the_cap_before_any_call() -> None:
     calls = FakeCalls(used=2)
     use_case = RecordAiCall(calls=calls, cap_source=FakeCap(2), clock=lambda: NOW)
 
     with pytest.raises(AiMonthlyCapReached):
-        await use_case.execute(
-            feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
-        )
+        await use_case.assert_under_cap()
     assert calls.recorded == []
+
+
+async def test_execute_always_records_a_spent_call_even_past_the_cap() -> None:
+    # The tokens are already spent when execute runs: refusing here would
+    # drop the audit row, so only assert_under_cap refuses.
+    calls = FakeCalls(used=2)
+    use_case = RecordAiCall(calls=calls, cap_source=FakeCap(2), clock=lambda: NOW)
+
+    record = await use_case.execute(
+        feature="placeholder", prompt_version="placeholder-v0", result=RESULT, approver=None
+    )
+    assert calls.recorded == [record]
 
 
 class FakeAcademies:

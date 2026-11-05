@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from .academy_routes import router as academy_router
 from .account_deletion_routes import router as account_deletion_router
+from .ai_curriculum_routes import router as ai_curriculum_router
 from .audit_routes import router as audit_router
 from .billing_health_routes import router as billing_health_router
 from .billing_products_routes import router as billing_products_router
@@ -34,6 +35,7 @@ from .payout_period_routes import router as payout_period_router
 from .payroll_routes import router as payroll_router
 from .people_reports_routes import router as people_reports_router
 from .pipeline_routes import router as pipeline_router
+from .plan_routes import router as plan_router
 from .pricing_routes import router as pricing_router
 from .progress_routes import router as progress_router
 from .public_page_routes import router as public_page_router
@@ -86,6 +88,7 @@ router.include_router(comms_router)
 router.include_router(academy_router)
 router.include_router(waiver_router)
 router.include_router(pathway_router)
+router.include_router(plan_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
 router.include_router(self_service_request_router)
@@ -94,3 +97,4 @@ router.include_router(pipeline_router)
 router.include_router(departure_policy_router)
 router.include_router(hold_router)
 router.include_router(departures_router)
+router.include_router(ai_curriculum_router)

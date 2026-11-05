@@ -39,7 +39,9 @@ CANCELLED_DAY = datetime(2026, 9, 10, 23, 0, tzinfo=UTC)  # 18:00 America/Chicag
 
 
 async def _seed(db, *, invoiced: bool, price_field: str = "amount_cents") -> None:
-    await db["academies"].insert_one({"academy_id": ACADEMY, "timezone": TZ})
+    await db["academies"].insert_one(
+        {"academy_id": ACADEMY, "display_name": "Test Academy", "timezone": TZ}
+    )
     await db["sessions"].insert_one(
         {
             "academy_id": ACADEMY,
@@ -83,7 +85,7 @@ async def _seed(db, *, invoiced: bool, price_field: str = "amount_cents") -> Non
                 "total_cents": 12000,
                 "balance_due_cents": 12000,
                 "currency": "usd",
-                "due_date": "2026-09-08",
+                "due_date": datetime(2026, 9, 8, tzinfo=UTC),
                 "created_at": datetime(2026, 8, 28, tzinfo=UTC),
                 "updated_at": datetime(2026, 8, 28, tzinfo=UTC),
             }
