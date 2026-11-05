@@ -67,18 +67,25 @@ export function SkillNotesPanel({
   });
 
   const addNoteMutation = useMutation({
-    mutationFn: () =>
-      createSkillNote(studentId, {
-        skill_id: draftSkillId ?? skillId,
+    mutationFn: () => {
+      const savedSkillId = draftSkillId ?? skillId;
+      return createSkillNote(studentId, {
+        skill_id: savedSkillId,
         body: body.trim(),
         visibility: !assistant && share ? "shared" : "private",
-      }),
-    onSuccess: () => {
+      }).then((note) => ({ note, savedSkillId }));
+    },
+    onSuccess: ({ savedSkillId }) => {
       setBody("");
       setShare(false);
       setDraftSkillId(null);
       setAiHint(null);
       void queryClient.invalidateQueries({ queryKey: notesKey });
+      if (savedSkillId !== skillId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.coach.skillNotes(studentId, savedSkillId),
+        });
+      }
     },
   });
 
