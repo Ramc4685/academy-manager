@@ -394,6 +394,10 @@ export interface DraftSkill {
   scoring_type: SkillScoringType;
   is_required: boolean;
   criteria: string[];
+  /** Set once saved, so a retried save skips the create (see saveLadderDraft). */
+  skillId?: string;
+  /** How many leading criteria are already saved; they are posted in order. */
+  criteriaSaved?: number;
 }
 
 export interface DraftLevel {
@@ -401,6 +405,8 @@ export interface DraftLevel {
   name: string;
   description: string;
   skills: DraftSkill[];
+  /** Set once saved, so a retried save skips the create (see saveLadderDraft). */
+  levelId?: string;
 }
 
 export interface SkillLadderDraft {

@@ -142,6 +142,62 @@ describe("saveLadderDraft", () => {
     ]);
   });
 
+  it("resumes after a skill failure without re-creating the level", async () => {
+    const api = fakeApi();
+    const onLevelSaved = vi.fn();
+    let latest: DraftLevel | undefined;
+    api.createSkill.mockResolvedValueOnce({ skill_id: "sk-1" });
+    api.createSkill.mockRejectedValueOnce(new Error("boom"));
+
+    await expect(
+      saveLadderDraft("prog-1", levels.slice(0, 1), 0, api, onLevelSaved, (_, level) => {
+        latest = level;
+      }),
+    ).rejects.toThrow("boom");
+
+    expect(onLevelSaved).not.toHaveBeenCalled();
+    expect(latest?.levelId).toBe("lvl-1");
+    expect(latest?.skills[0]).toMatchObject({ skillId: "sk-1", criteriaSaved: 2 });
+    expect(latest?.skills[1].skillId).toBeUndefined();
+
+    // Save again: no second level, no repeat of the saved skill or its criteria.
+    const retry = fakeApi();
+    const onRetrySaved = vi.fn();
+    await saveLadderDraft("prog-1", [latest!], 1, retry, onRetrySaved);
+    expect(retry.createLevel).not.toHaveBeenCalled();
+    expect(retry.createSkill.mock.calls).toEqual([
+      ["lvl-1", expect.objectContaining({ name: "Serve", sequence: 2 })],
+    ]);
+    expect(retry.addCriterion.mock.calls).toEqual([
+      ["sk-1", { level_id: "lvl-1", program_id: "prog-1", description: "Shuttle lands in the front box", display_order: 0 }],
+    ]);
+    expect(onRetrySaved.mock.calls).toEqual([[0]]);
+  });
+
+  it("retries only the criteria that were not saved", async () => {
+    const api = fakeApi();
+    let latest: DraftLevel | undefined;
+    // Grip's first criterion lands, its second fails.
+    api.addCriterion.mockResolvedValueOnce({ criterion_id: "cr" });
+    api.addCriterion.mockRejectedValueOnce(new Error("boom"));
+
+    await expect(
+      saveLadderDraft("prog-1", levels.slice(0, 1), 0, api, undefined, (_, level) => {
+        latest = level;
+      }),
+    ).rejects.toThrow("boom");
+    expect(latest?.skills[0]).toMatchObject({ skillId: "sk-1", criteriaSaved: 1 });
+
+    const retry = fakeApi();
+    await saveLadderDraft("prog-1", [latest!], 0, retry);
+    expect(retry.createLevel).not.toHaveBeenCalled();
+    expect(retry.createSkill).toHaveBeenCalledTimes(1); // Serve only
+    expect(retry.addCriterion.mock.calls.map(([skillId, body]) => [skillId, body.description, body.display_order])).toEqual([
+      ["sk-1", "Thumb on the flat side", 1],
+      ["sk-1", "Shuttle lands in the front box", 0],
+    ]);
+  });
+
   it("places new levels after the highest existing sequence, not the level count", async () => {
     // Program has levels 1 and 3 (2 was deleted): the editor passes max = 3.
     const api = fakeApi();

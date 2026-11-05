@@ -59,8 +59,10 @@ export function SkillLadderDraftCard({
         levels ?? [],
         lastLevelSequence,
         { createLevel, createSkill, addCriterion },
-        // Drop each level once it lands, so Save after a failure resumes at the one that failed.
+        // Drop each level once it lands; the one being saved is always first.
         () => setLevels((prev) => prev?.slice(1) ?? null),
+        // Record each created id on it, so Save after a failure skips what already landed.
+        (_, level) => setLevels((prev) => (prev ? patchLevel(prev, 0, () => level) : prev)),
       ),
     onSuccess: () => setLevels(null),
     onSettled: () => {
@@ -147,8 +149,8 @@ export function SkillLadderDraftCard({
             ))}
             {save.isError && (
               <p role="alert" className="text-xs text-red-600">
-                Saving stopped part way; the levels already saved are in the program below. Save
-                again continues with the ones still listed here.
+                Saving stopped part way; what already landed is in the program below. Save again
+                continues from the row that failed.
               </p>
             )}
             <div className="flex items-center justify-end gap-2">
