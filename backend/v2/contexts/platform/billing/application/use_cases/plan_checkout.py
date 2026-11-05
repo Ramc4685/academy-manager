@@ -25,6 +25,7 @@ from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_
     ENTITLED_BILLING_STATUSES,
     AuditRecorder,
     _emit_audit,
+    _lapsed,
 )
 from backend.v2.contexts.platform.billing.domain.models import (
     BillingStatus,
@@ -49,6 +50,12 @@ PLATFORM_PLAN_EVENT_TYPES = frozenset(
 #: The webhook has no signed-in user; the audit row still needs an actor.
 WEBHOOK_ACTOR = "stripe_webhook"
 STRIPE_VOLUME_WINDOW = timedelta(days=90)
+#: Stripe expires a Checkout Session 24h after creation.
+PENDING_CHECKOUT_TTL = timedelta(hours=24)
+#: A claim whose Stripe call never finished (process died) is abandoned after this.
+PENDING_CLAIM_GRACE = timedelta(minutes=10)
+#: Metadata key carrying ``TenantSubscription.pending_checkout_token``.
+CHECKOUT_TOKEN_METADATA_KEY = "checkout_token"
 
 #: Stripe subscription status -> ``TenantSubscription.billing_status``.
 _STRIPE_STATUS: dict[str, BillingStatus] = {
@@ -81,6 +88,16 @@ class PlanCheckoutGateway(Protocol):
         metadata: dict[str, str],
     ) -> tuple[str, str]: ...
 
+    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]: ...
+
+    async def expire_checkout_session(self, checkout_session_id: str) -> None: ...
+
+
+class PlanSyncGateway(Protocol):
+    async def cancel_subscription(
+        self, stripe_subscription_id: str, *, at_period_end: bool
+    ) -> None: ...
+
 
 class GrowthPlanUnavailable(DomainError):
     code = "PlatformBilling.GrowthPlanUnavailable"
@@ -89,6 +106,11 @@ class GrowthPlanUnavailable(DomainError):
 
 class AlreadyOnGrowth(DomainError):
     code = "PlatformBilling.AlreadyOnGrowth"
+    status_code = 409
+
+
+class CheckoutInProgress(DomainError):
+    code = "PlatformBilling.CheckoutInProgress"
     status_code = 409
 
 
@@ -167,8 +189,14 @@ class StartGrowthCheckout:
                 "The Growth plan is not available for self-serve checkout yet."
             )
         existing = await self._subscriptions.get_for_academy(command.academy_id)
+        now = self._clock()
         if existing is not None and existing.plan_id == growth.plan_id:
-            if existing.billing_status in ENTITLED_BILLING_STATUSES:
+            # A local trial (no Stripe subscription) or a lapsed one may buy.
+            if (
+                existing.billing_status in ENTITLED_BILLING_STATUSES
+                and existing.stripe_subscription_id
+                and not _lapsed(existing, now)
+            ):
                 raise AlreadyOnGrowth("This academy is already on the Growth plan.")
             # A second Checkout would open a second Stripe subscription on the
             # same customer; the dunning one must be settled or cancelled first.
@@ -181,41 +209,79 @@ class StartGrowthCheckout:
                     "settle or cancel it before starting a new checkout."
                 )
 
-        now = self._clock()
-        customer_id = existing.stripe_customer_id if existing else None
-        if not customer_id:
-            customer_id = await self._stripe.create_platform_customer(
-                name=command.academy_name,
-                email=command.actor_email,
-                metadata={"academy_id": command.academy_id},
-            )
+        if existing is not None:
+            open_url = await self._continue_pending_checkout(existing, now)
+            if open_url:
+                return open_url
+
+        # Claim before any Stripe call: the loser of a concurrent pair creates
+        # nothing (one payable session per academy, repo billing rule).
+        token = f"pco_{new_ulid()}"
+        claim = {
+            "pending_checkout_token": token,
+            "pending_checkout_session_id": None,
+            "pending_checkout_url": None,
+            "pending_checkout_created_at": now,
+            "updated_at": now,
+        }
         subscription = (
-            existing.model_copy(update={"stripe_customer_id": customer_id, "updated_at": now})
+            existing.model_copy(update=claim)
             if existing
             else TenantSubscription(
                 subscription_id=f"platform_sub_{new_ulid()}",
                 academy_id=command.academy_id,
                 plan_id=growth.plan_id,
                 billing_status="incomplete",
-                stripe_customer_id=customer_id,
                 created_at=now,
-                updated_at=now,
+                **claim,
             )
         )
-        await self._subscriptions.save(subscription)
+        if not await self._subscriptions.claim_pending_checkout(
+            subscription,
+            expected_token=existing.pending_checkout_token if existing else None,
+            now=now,
+        ):
+            raise CheckoutInProgress(
+                "A Growth checkout is already being opened for this academy; try again in a moment."
+            )
 
-        metadata = {
-            "source": PLATFORM_PLAN_METADATA_SOURCE,
-            "academy_id": command.academy_id,
-            "plan_id": growth.plan_id,
-        }
-        _, url = await self._stripe.create_platform_plan_checkout_session(
-            customer_id=customer_id,
-            price_id=growth.stripe_price_id,
-            success_url=command.success_url,
-            cancel_url=command.cancel_url,
-            metadata=metadata,
+        try:
+            customer_id = existing.stripe_customer_id if existing else None
+            if not customer_id:
+                customer_id = await self._stripe.create_platform_customer(
+                    name=command.academy_name,
+                    email=command.actor_email,
+                    metadata={"academy_id": command.academy_id},
+                )
+            metadata = {
+                "source": PLATFORM_PLAN_METADATA_SOURCE,
+                "academy_id": command.academy_id,
+                "plan_id": growth.plan_id,
+                CHECKOUT_TOKEN_METADATA_KEY: token,
+            }
+            session_id, url = await self._stripe.create_platform_plan_checkout_session(
+                customer_id=customer_id,
+                price_id=growth.stripe_price_id,
+                success_url=command.success_url,
+                cancel_url=command.cancel_url,
+                metadata=metadata,
+            )
+        except Exception:
+            # Release the claim so the next request is not held for the grace window.
+            await self._subscriptions.save(
+                subscription.model_copy(
+                    update={"pending_checkout_token": None, "pending_checkout_created_at": None}
+                )
+            )
+            raise
+        subscription = subscription.model_copy(
+            update={
+                "stripe_customer_id": customer_id,
+                "pending_checkout_session_id": session_id,
+                "pending_checkout_url": url,
+            }
         )
+        await self._subscriptions.save(subscription)
         from_plan = await self._plans.get(existing.plan_id) if existing else None
         await _emit_audit(
             audit_recorder=self._audit_recorder,
@@ -237,6 +303,43 @@ class StartGrowthCheckout:
         )
         return url
 
+    async def _continue_pending_checkout(
+        self, existing: TenantSubscription, now: datetime
+    ) -> str | None:
+        """The url of the Checkout an earlier request opened while Stripe still
+        has it open; ``None`` once it is gone (expired or never finished), so the
+        caller opens a new one. A completed one whose webhook has not landed
+        yet must not be followed by a second subscription: that raises."""
+        session_id = existing.pending_checkout_session_id
+        started = existing.pending_checkout_created_at
+        if existing.pending_checkout_token is None or started is None:
+            return None
+        age = now - started
+        if session_id is None:
+            if age < PENDING_CLAIM_GRACE:
+                raise CheckoutInProgress(
+                    "A Growth checkout is already being opened for this academy; "
+                    "try again in a moment."
+                )
+            return None
+        if age < PENDING_CHECKOUT_TTL:
+            session = await self._stripe.retrieve_checkout_session(session_id)
+            status = session.get("status")
+            if status == "open" and existing.pending_checkout_url:
+                return existing.pending_checkout_url
+            if status == "complete":
+                raise CheckoutInProgress(
+                    "This academy's Growth checkout was completed and is being confirmed; "
+                    "refresh in a moment."
+                )
+        try:
+            await self._stripe.expire_checkout_session(session_id)
+        except Exception as exc:
+            # Already complete or expired on Stripe, or unreachable: it cannot
+            # be paid twice either way once the new session replaces it here.
+            log.info("platform_plan_checkout_expire_skipped session=%s err=%s", session_id, exc)
+        return None
+
 
 class SyncTenantSubscriptionFromStripe:
     """Project a ``source == "platform_plan"`` Stripe event onto the academy's
@@ -248,12 +351,14 @@ class SyncTenantSubscriptionFromStripe:
         *,
         plans: PlatformPlanRepository,
         subscriptions: TenantSubscriptionRepository,
+        stripe: PlanSyncGateway | None = None,
         stripe_volume: StripeVolumeReader | None = None,
         audit_recorder: AuditRecorder | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._plans = plans
         self._subscriptions = subscriptions
+        self._stripe = stripe
         self._stripe_volume = stripe_volume
         self._audit_recorder = audit_recorder
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -278,10 +383,19 @@ class SyncTenantSubscriptionFromStripe:
             return
         is_checkout = event_type == "checkout.session.completed"
         event_sub_id = _text(obj.get("subscription") if is_checkout else obj.get("id"))
-        if (
-            existing is not None
+        from_pending = existing is not None and _from_pending_checkout(existing, obj, is_checkout)
+        # Another subscription than the one on file.
+        superseded_id = (
+            existing.stripe_subscription_id
+            if existing is not None
             and existing.stripe_subscription_id
             and existing.stripe_subscription_id != event_sub_id
+            else None
+        )
+        if (
+            existing is not None
+            and superseded_id
+            and not from_pending
             and not _supersedes(existing, _stamp(obj.get("created")))
         ):
             # Another subscription than the one on file: only a newer one after
@@ -298,6 +412,13 @@ class SyncTenantSubscriptionFromStripe:
             or (existing.stripe_customer_id if existing else None),
             "updated_at": now,
         }
+        if from_pending:
+            updates.update(
+                pending_checkout_token=None,
+                pending_checkout_session_id=None,
+                pending_checkout_url=None,
+                pending_checkout_created_at=None,
+            )
         if is_checkout:
             # The session only tells us which customer and Stripe subscription
             # this now is; plan and entitlement come from the subscription event.
@@ -325,6 +446,15 @@ class SyncTenantSubscriptionFromStripe:
             status = _STRIPE_STATUS.get(str(obj.get("status") or ""), "incomplete")
             if event_type == "customer.subscription.deleted":
                 status = "cancelled"
+            if superseded_id and from_pending and status not in ENTITLED_BILLING_STATUSES:
+                # An upgrade that did not go through keeps the live subscription.
+                log.warning(
+                    "platform_plan_sync_successor_not_entitled academy=%s sub=%s status=%s",
+                    academy_id,
+                    event_sub_id,
+                    status,
+                )
+                return
             cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
             updates.update(
                 plan_id=plan.plan_id,
@@ -346,6 +476,10 @@ class SyncTenantSubscriptionFromStripe:
                 if existing and existing.trial_status == "active" and status == "active"
                 else (existing.trial_status if existing else "none"),
             )
+        if superseded_id and from_pending:
+            # The checkout the academy opened produced this subscription: it
+            # succeeds the live one, which Stripe must stop billing (upgrade).
+            await self._cancel_superseded(superseded_id, academy_id)
         subscription = (
             existing.model_copy(update=updates)
             if existing
@@ -361,7 +495,9 @@ class SyncTenantSubscriptionFromStripe:
         )
         await self._subscriptions.save(subscription)
         became_active = subscription.billing_status == "active" and (
-            existing is None or existing.billing_status != "active"
+            existing is None
+            or existing.billing_status != "active"
+            or existing.plan_id != subscription.plan_id
         )
         if not became_active:
             return
@@ -396,6 +532,26 @@ class SyncTenantSubscriptionFromStripe:
             ip_address=None,
         )
 
+    async def _cancel_superseded(self, stripe_subscription_id: str, academy_id: str) -> None:
+        if self._stripe is None:
+            log.warning(
+                "platform_plan_sync_superseded_not_cancelled academy=%s sub=%s (no gateway)",
+                academy_id,
+                stripe_subscription_id,
+            )
+            return
+        try:
+            await self._stripe.cancel_subscription(stripe_subscription_id, at_period_end=False)
+        except Exception as exc:
+            # Best effort: the row already moved on; the old subscription's own
+            # events are ignored as stale, so this only needs a follow-up in Stripe.
+            log.warning(
+                "platform_plan_sync_superseded_cancel_failed academy=%s sub=%s err=%s",
+                academy_id,
+                stripe_subscription_id,
+                exc,
+            )
+
 
 def _text(value: Any) -> str | None:
     # Stripe expands some ids to objects; both shapes carry the id.
@@ -407,6 +563,21 @@ def _text(value: Any) -> str | None:
 def _price_id(obj: dict[str, Any]) -> str | None:
     items = (obj.get("items") or {}).get("data") or []
     return _text(items[0].get("price")) if items else None
+
+
+def _from_pending_checkout(
+    existing: TenantSubscription, obj: dict[str, Any], is_checkout: bool
+) -> bool:
+    """The event belongs to the Checkout the academy opened through
+    ``StartGrowthCheckout``: the session id on a checkout event, the token the
+    session put on the subscription's metadata otherwise. Either order of
+    arrival works."""
+    if is_checkout:
+        return bool(existing.pending_checkout_session_id) and (
+            obj.get("id") == existing.pending_checkout_session_id
+        )
+    token = (obj.get("metadata") or {}).get(CHECKOUT_TOKEN_METADATA_KEY)
+    return bool(existing.pending_checkout_token) and token == existing.pending_checkout_token
 
 
 def _supersedes(existing: TenantSubscription, event_created: datetime | None) -> bool:

@@ -694,7 +694,7 @@ def compose_parent_webhook_handler(
             directory=MongoConnectedAccountDirectory(db),
         ),
         payment_disputes=MongoPaymentDisputeRepository(db),
-        platform_plan_sync=compose_platform_plan_sync(db).execute,
+        platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -863,7 +863,7 @@ def compose_parent(
             directory=MongoConnectedAccountDirectory(db),
         ),
         payment_disputes=MongoPaymentDisputeRepository(db),
-        platform_plan_sync=compose_platform_plan_sync(db).execute,
+        platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True

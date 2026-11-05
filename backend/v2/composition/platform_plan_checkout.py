@@ -85,10 +85,13 @@ def compose_admin_plan(db: Any, stripe: StripeGateway, settings: Any) -> AdminPl
     )
 
 
-def compose_platform_plan_sync(db: Any) -> SyncTenantSubscriptionFromStripe:
+def compose_platform_plan_sync(
+    db: Any, *, stripe: StripeGateway
+) -> SyncTenantSubscriptionFromStripe:
     return SyncTenantSubscriptionFromStripe(
         plans=MongoPlatformPlanRepository(db),
         subscriptions=MongoTenantSubscriptionRepository(db),
+        stripe=stripe,
         stripe_volume=_stripe_volume(db),
         audit_recorder=PlatformAuditService(
             audit_events=MongoPlatformAuditRepository(db)

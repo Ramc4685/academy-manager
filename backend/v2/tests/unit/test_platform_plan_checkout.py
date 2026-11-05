@@ -3,6 +3,7 @@ projection onto ``TenantSubscription``."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -16,6 +17,7 @@ from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_
 )
 from backend.v2.contexts.platform.billing.application.use_cases.plan_checkout import (
     AlreadyOnGrowth,
+    CheckoutInProgress,
     GetPlanOverview,
     GrowthPlanUnavailable,
     StartGrowthCheckout,
@@ -47,22 +49,45 @@ class FakePlans:
 
 
 class FakeSubscriptions:
-    def __init__(self) -> None:
+    def __init__(self, *, yield_on_read: bool = False) -> None:
         self.rows: dict[str, TenantSubscription] = {}
         self.saves = 0
+        self.yield_on_read = yield_on_read
 
     async def get_for_academy(self, academy_id: str) -> TenantSubscription | None:
-        return self.rows.get(academy_id)
+        row = self.rows.get(academy_id)
+        if self.yield_on_read:
+            await asyncio.sleep(0)  # a concurrent request reads the same snapshot
+        return row
 
     async def save(self, subscription: TenantSubscription) -> None:
         self.saves += 1
         self.rows[subscription.academy_id] = subscription
+
+    async def claim_pending_checkout(
+        self, subscription: TenantSubscription, *, expected_token: str | None, now: datetime
+    ) -> bool:
+        # Mirrors the Mongo CAS: only the pending fields are written on an
+        # existing row, the whole row is inserted when there is none.
+        current = self.rows.get(subscription.academy_id)
+        if (current.pending_checkout_token if current else None) != expected_token:
+            return False
+        pending = {
+            k: v for k, v in subscription.model_dump().items() if k.startswith("pending_checkout_")
+        }
+        self.rows[subscription.academy_id] = (
+            current.model_copy(update={**pending, "updated_at": now}) if current else subscription
+        )
+        return True
 
 
 class FakeStripe:
     def __init__(self) -> None:
         self.customers: list[dict[str, Any]] = []
         self.checkouts: list[dict[str, Any]] = []
+        self.session_status: dict[str, str] = {}  # default "open"
+        self.expired: list[str] = []
+        self.cancelled: list[tuple[str, bool]] = []
 
     async def create_platform_customer(self, **kwargs: Any) -> str:
         self.customers.append(kwargs)
@@ -70,7 +95,24 @@ class FakeStripe:
 
     async def create_platform_plan_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
         self.checkouts.append(kwargs)
-        return "cs_1", "https://checkout.stripe.test/cs_1"
+        session_id = f"cs_{len(self.checkouts)}"
+        return session_id, f"https://checkout.stripe.test/{session_id}"
+
+    async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]:
+        return {
+            "id": checkout_session_id,
+            "status": self.session_status.get(checkout_session_id, "open"),
+        }
+
+    async def expire_checkout_session(self, checkout_session_id: str) -> None:
+        if self.session_status.get(checkout_session_id) in ("complete", "expired"):
+            raise ValueError("not expirable")
+        self.expired.append(checkout_session_id)
+
+    async def cancel_subscription(
+        self, stripe_subscription_id: str, *, at_period_end: bool
+    ) -> None:
+        self.cancelled.append((stripe_subscription_id, at_period_end))
 
 
 def _plan(code: str, *, price: str | None = "price_growth", features=("ai",)) -> PlatformPlan:
@@ -160,6 +202,7 @@ async def test_checkout_refuses_when_already_on_growth() -> None:
         academy_id=ACADEMY,
         plan_id="plan_growth",
         billing_status="active",
+        stripe_subscription_id="sub_growth_1",
         created_at=NOW,
         updated_at=NOW,
     )
@@ -212,7 +255,11 @@ async def test_checkout_creates_the_customer_once_and_audits_the_volume() -> Non
         "source": "platform_plan",
         "academy_id": ACADEMY,
         "plan_id": "plan_growth",
+        "checkout_token": row.pending_checkout_token,
     }
+    assert row.pending_checkout_session_id == "cs_1"
+    assert row.pending_checkout_url == url
+    assert row.pending_checkout_created_at == NOW
     assert checkout["success_url"].endswith("plan=upgraded")
     event = audit.events[0]
     assert event.action == "tenant.plan_upgrade_started"
@@ -223,10 +270,148 @@ async def test_checkout_creates_the_customer_once_and_audits_the_volume() -> Non
         "stripe_volume_90d_cents": 123_456,
     }
 
-    # A second attempt (abandoned checkout) reuses the customer.
-    await uc.execute(_command())
+    # A second attempt continues the open session: no second payable one.
+    assert await uc.execute(_command()) == url
     assert len(stripe.customers) == 1
-    assert stripe.checkouts[1]["customer_id"] == "cus_1"
+    assert len(stripe.checkouts) == 1
+    assert len(audit.events) == 1
+
+
+def _seed_pending(
+    subs: FakeSubscriptions,
+    *,
+    plan_id: str = "plan_growth",
+    billing_status: str = "incomplete",
+    stripe_subscription_id: str | None = None,
+    created_at: datetime = NOW,
+    session_id: str | None = "cs_old",
+) -> TenantSubscription:
+    row = TenantSubscription(
+        subscription_id="platform_sub_seed",
+        academy_id=ACADEMY,
+        plan_id=plan_id,
+        billing_status=billing_status,  # type: ignore[arg-type]
+        stripe_customer_id="cus_1",
+        stripe_subscription_id=stripe_subscription_id,
+        pending_checkout_token="pco_old",
+        pending_checkout_session_id=session_id,
+        pending_checkout_url=f"https://checkout.stripe.test/{session_id}" if session_id else None,
+        pending_checkout_created_at=created_at,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    subs.rows[ACADEMY] = row
+    return row
+
+
+@pytest.mark.asyncio
+async def test_checkout_replaces_a_pending_session_older_than_stripe_keeps_it() -> None:
+    plans, subs, stripe = FakePlans(_plan("growth")), FakeSubscriptions(), FakeStripe()
+    _seed_pending(subs, created_at=NOW - timedelta(hours=24))
+    url = await _checkout(plans, subs, stripe, _Audit()).execute(_command())
+    assert url == "https://checkout.stripe.test/cs_1"
+    assert stripe.expired == ["cs_old"]  # best effort; Stripe already did
+    row = subs.rows[ACADEMY]
+    assert row.pending_checkout_session_id == "cs_1"
+    assert row.pending_checkout_token != "pco_old"
+
+
+@pytest.mark.asyncio
+async def test_checkout_replaces_a_pending_session_stripe_reports_expired() -> None:
+    plans, subs, stripe = FakePlans(_plan("growth")), FakeSubscriptions(), FakeStripe()
+    _seed_pending(subs)
+    stripe.session_status["cs_old"] = "expired"
+    url = await _checkout(plans, subs, stripe, _Audit()).execute(_command())
+    assert url == "https://checkout.stripe.test/cs_1"
+    assert stripe.expired == []  # refused by Stripe, swallowed
+    assert subs.rows[ACADEMY].pending_checkout_session_id == "cs_1"
+
+
+@pytest.mark.asyncio
+async def test_checkout_waits_for_the_webhook_after_a_completed_session() -> None:
+    # Paid on Stripe, not yet synced: a new session would open a second subscription.
+    plans, subs, stripe = FakePlans(_plan("growth")), FakeSubscriptions(), FakeStripe()
+    _seed_pending(subs)
+    stripe.session_status["cs_old"] = "complete"
+    with pytest.raises(CheckoutInProgress):
+        await _checkout(plans, subs, stripe, _Audit()).execute(_command())
+    assert stripe.checkouts == []
+
+
+@pytest.mark.asyncio
+async def test_checkout_claim_in_flight_blocks_then_lapses() -> None:
+    plans, subs, stripe = FakePlans(_plan("growth")), FakeSubscriptions(), FakeStripe()
+    _seed_pending(subs, session_id=None, created_at=NOW - timedelta(minutes=9))
+    with pytest.raises(CheckoutInProgress):
+        await _checkout(plans, subs, stripe, _Audit()).execute(_command())
+    assert stripe.checkouts == []
+    _seed_pending(subs, session_id=None, created_at=NOW - timedelta(minutes=10))
+    url = await _checkout(plans, subs, stripe, _Audit()).execute(_command())
+    assert url.endswith("cs_1")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_checkouts_open_one_session() -> None:
+    plans, stripe = FakePlans(_plan("growth")), FakeStripe()
+    subs = FakeSubscriptions(yield_on_read=True)  # both read "no row" first
+    uc = _checkout(plans, subs, stripe, _Audit())
+    results = await asyncio.gather(
+        uc.execute(_command()), uc.execute(_command()), return_exceptions=True
+    )
+    urls = [r for r in results if isinstance(r, str)]
+    errors = [r for r in results if isinstance(r, CheckoutInProgress)]
+    assert len(urls) == 1 and len(errors) == 1, results
+    assert len(stripe.checkouts) == 1
+    assert len(stripe.customers) == 1
+    assert subs.rows[ACADEMY].pending_checkout_session_id == "cs_1"
+
+
+@pytest.mark.asyncio
+async def test_checkout_releases_the_claim_when_stripe_fails() -> None:
+    plans, subs = FakePlans(_plan("growth")), FakeSubscriptions()
+
+    class Boom(FakeStripe):
+        async def create_platform_plan_checkout_session(self, **kwargs: Any) -> tuple[str, str]:
+            raise RuntimeError("stripe down")
+
+    with pytest.raises(RuntimeError):
+        await _checkout(plans, subs, Boom(), _Audit()).execute(_command())
+    assert subs.rows[ACADEMY].pending_checkout_token is None
+    # The next request is not held for the claim grace window.
+    stripe = FakeStripe()
+    assert (await _checkout(plans, subs, stripe, _Audit()).execute(_command())).endswith("cs_1")
+
+
+@pytest.mark.asyncio
+async def test_checkout_allowed_on_a_lapsed_or_local_growth_trial() -> None:
+    plans, stripe = FakePlans(_plan("growth")), FakeStripe()
+    for trial_ends_at in (NOW - timedelta(days=1), NOW + timedelta(days=7)):
+        subs = FakeSubscriptions()
+        subs.rows[ACADEMY] = TenantSubscription(
+            subscription_id="s1",
+            academy_id=ACADEMY,
+            plan_id="plan_growth",
+            billing_status="trialing",
+            trial_status="active",
+            trial_ends_at=trial_ends_at,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        await _checkout(plans, subs, stripe, _Audit()).execute(_command())
+        assert subs.rows[ACADEMY].pending_checkout_session_id
+    # A Stripe-run trial is a live Growth subscription.
+    subs = FakeSubscriptions()
+    subs.rows[ACADEMY] = TenantSubscription(
+        subscription_id="s1",
+        academy_id=ACADEMY,
+        plan_id="plan_growth",
+        billing_status="trialing",
+        stripe_subscription_id="sub_growth_1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    with pytest.raises(AlreadyOnGrowth):
+        await _checkout(plans, subs, stripe, _Audit()).execute(_command())
 
 
 @pytest.mark.asyncio
@@ -317,10 +502,16 @@ def _seed_incomplete(subs: FakeSubscriptions, *, plan_id: str = "plan_growth") -
     )
 
 
-def _sync(plans: FakePlans, subs: FakeSubscriptions, audit: _Audit | None = None):
+def _sync(
+    plans: FakePlans,
+    subs: FakeSubscriptions,
+    audit: _Audit | None = None,
+    stripe: FakeStripe | None = None,
+):
     return SyncTenantSubscriptionFromStripe(
         plans=plans,
         subscriptions=subs,
+        stripe=stripe,
         stripe_volume=_volume,
         audit_recorder=audit,
         clock=lambda: NOW,
@@ -470,6 +661,91 @@ async def test_sync_ignores_another_subscription_until_the_stored_one_is_cancell
     assert row.stripe_subscription_id == "sub_growth_2"
     assert row.billing_status == "active"
     assert row.stripe_subscription_created_at == datetime.fromtimestamp(1793800000, tz=UTC)
+
+
+def _seed_flat_upgrading(subs: FakeSubscriptions) -> None:
+    # Active Flat through ActivateTenantSubscription, then StartGrowthCheckout.
+    _seed_pending(
+        subs, plan_id="plan_flat", billing_status="active", stripe_subscription_id="sub_flat_1"
+    )
+
+
+def _flat_plans() -> FakePlans:
+    return FakePlans(_plan("growth"), _plan("flat", price="price_flat", features=()))
+
+
+@pytest.mark.asyncio
+async def test_sync_flat_to_growth_cancels_the_old_subscription_checkout_first() -> None:
+    plans, subs, audit, stripe = _flat_plans(), FakeSubscriptions(), _Audit(), FakeStripe()
+    _seed_flat_upgrading(subs)
+    sync = _sync(plans, subs, audit, stripe)
+    await sync.execute("checkout.session.completed", _checkout_event(id="cs_old"))
+    row = subs.rows[ACADEMY]
+    assert row.stripe_subscription_id == "sub_growth_1"
+    assert row.plan_id == "plan_flat" and row.billing_status == "active"
+    assert row.pending_checkout_token is None and row.pending_checkout_session_id is None
+    assert stripe.cancelled == [("sub_flat_1", False)]
+
+    await sync.execute(
+        "customer.subscription.created", _sub_event("customer.subscription.created", "active")
+    )
+    row = subs.rows[ACADEMY]
+    assert row.plan_id == "plan_growth" and row.billing_status == "active"
+    assert stripe.cancelled == [("sub_flat_1", False)]  # once
+    assert [e.action for e in audit.events] == ["tenant.plan_activated"]
+    assert audit.events[0].after_snapshot["from_plan_code"] == "flat"
+    # The old subscription's own delete is stale now.
+    await sync.execute(
+        "customer.subscription.deleted",
+        _sub_event("customer.subscription.deleted", "canceled", id="sub_flat_1"),
+    )
+    assert subs.rows[ACADEMY].billing_status == "active"
+
+
+@pytest.mark.asyncio
+async def test_sync_flat_to_growth_accepts_the_subscription_event_first_by_token() -> None:
+    plans, subs, stripe = _flat_plans(), FakeSubscriptions(), FakeStripe()
+    _seed_flat_upgrading(subs)
+    sync = _sync(plans, subs, stripe=stripe)
+    event = _sub_event("customer.subscription.created", "active")
+    event["data"]["object"]["metadata"]["checkout_token"] = "pco_old"
+    await sync.execute("customer.subscription.created", event)
+    row = subs.rows[ACADEMY]
+    assert row.stripe_subscription_id == "sub_growth_1" and row.plan_id == "plan_growth"
+    assert row.pending_checkout_token is None
+    assert stripe.cancelled == [("sub_flat_1", False)]
+    # The late checkout event finds the ids already on file.
+    await sync.execute("checkout.session.completed", _checkout_event(id="cs_old"))
+    assert subs.rows[ACADEMY].stripe_subscription_id == "sub_growth_1"
+    assert stripe.cancelled == [("sub_flat_1", False)]
+
+
+@pytest.mark.asyncio
+async def test_sync_keeps_flat_when_the_successor_is_not_entitled_or_unrelated() -> None:
+    plans, subs, stripe = _flat_plans(), FakeSubscriptions(), FakeStripe()
+    _seed_flat_upgrading(subs)
+    sync = _sync(plans, subs, stripe=stripe)
+    event = _sub_event("customer.subscription.created", "incomplete")
+    event["data"]["object"]["metadata"]["checkout_token"] = "pco_old"
+    await sync.execute("customer.subscription.created", event)
+    # No token: the stale guard still holds for any other subscription.
+    await sync.execute(
+        "customer.subscription.created", _sub_event("customer.subscription.created", "active")
+    )
+    row = subs.rows[ACADEMY]
+    assert row.stripe_subscription_id == "sub_flat_1" and row.plan_id == "plan_flat"
+    assert row.pending_checkout_token == "pco_old"
+    assert stripe.cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_sync_clears_the_pending_checkout_on_a_fresh_academy() -> None:
+    plans, subs = FakePlans(_plan("growth")), FakeSubscriptions()
+    _seed_pending(subs)
+    await _sync(plans, subs).execute("checkout.session.completed", _checkout_event(id="cs_old"))
+    row = subs.rows[ACADEMY]
+    assert row.stripe_subscription_id == "sub_growth_1"
+    assert row.pending_checkout_session_id is None and row.pending_checkout_token is None
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.platform.billing.domain.models import (
     PlatformPlan,
     TenantSubscription,
@@ -53,6 +55,24 @@ class MongoTenantSubscriptionRepository:
             upsert=True,
         )
 
+    async def claim_pending_checkout(
+        self, subscription: TenantSubscription, *, expected_token: str | None, now: datetime
+    ) -> bool:
+        doc = subscription.model_dump(mode="python")
+        pending = {k: v for k, v in doc.items() if k.startswith("pending_checkout_")}
+        rest = {k: v for k, v in doc.items() if k not in pending and k != "updated_at"}
+        try:
+            result = await self._collection.update_one(
+                {"academy_id": subscription.academy_id, "pending_checkout_token": expected_token},
+                {"$set": {**pending, "updated_at": now}, "$setOnInsert": rest},
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            # The row exists with another token (platform_tenant_subscriptions
+            # _academy_unique): a concurrent request claimed it first.
+            return False
+        return result.matched_count == 1 or result.upserted_id is not None
+
 
 def _plan_from_doc(doc: dict[str, Any]) -> PlatformPlan:
     return PlatformPlan(
@@ -73,6 +93,7 @@ def _subscription_from_doc(doc: dict[str, Any]) -> TenantSubscription:
         "trial_ends_at",
         "cancelled_at",
         "stripe_subscription_created_at",
+        "pending_checkout_created_at",
         "created_at",
         "updated_at",
     ):
