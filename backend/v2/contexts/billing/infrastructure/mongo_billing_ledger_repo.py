@@ -331,6 +331,25 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return self._payment_from_doc(doc) if doc else None
 
+    async def sum_stripe_settled_cents(self, *, since: datetime) -> int:
+        """Succeeded Stripe payments (card or ACH) settled since ``since``, in
+        cents, for the academy in scope. The upgrade instrumentation's
+        "Stripe volume" number (AI strategy Phase 2, A2)."""
+        pipeline = [
+            {
+                "$match": {
+                    "academy_id": current_academy_id(),
+                    "status": "succeeded",
+                    "stripe_payment_intent_id": {"$type": "string"},
+                    "paid_at": {"$gte": since},
+                }
+            },
+            {"$group": {"_id": None, "total": {"$sum": "$amount_cents"}}},
+        ]
+        async for row in self.ledger_payments.aggregate(pipeline):
+            return int(row.get("total") or 0)
+        return 0
+
     async def get_payment_allocation_by_idempotency_key(
         self, idempotency_key: str
     ) -> PaymentAllocation | None:

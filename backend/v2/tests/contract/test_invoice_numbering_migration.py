@@ -8,9 +8,27 @@ double-mint, plus does not corrupt existing invoice documents.
 from __future__ import annotations
 
 import importlib
+from datetime import UTC, datetime
 
 import pytest
 from pymongo.errors import DuplicateKeyError
+
+
+def _invoice(academy_id: str, invoice_id: str) -> dict[str, object]:
+    """Every field the 0138 invoices validator requires (real Mongo enforces it)."""
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    return {
+        "academy_id": academy_id,
+        "invoice_id": invoice_id,
+        "invoice_number": "BLNO-202606-001",
+        "parent_id": "par-1",
+        "status": "open",
+        "total_cents": 100,
+        "balance_due_cents": 100,
+        "currency": "usd",
+        "created_at": now,
+        "updated_at": now,
+    }
 
 
 @pytest.fixture
@@ -47,23 +65,9 @@ async def test_migration_rejects_duplicate_invoice_number_within_academy(
 ) -> None:
     await migration.up(db)
 
-    await db["invoices"].insert_one(
-        {
-            "academy_id": acad,
-            "invoice_id": "inv-1",
-            "invoice_number": "BLNO-202606-001",
-            "status": "open",
-        }
-    )
+    await db["invoices"].insert_one(_invoice(acad, "inv-1"))
     with pytest.raises(DuplicateKeyError):
-        await db["invoices"].insert_one(
-            {
-                "academy_id": acad,
-                "invoice_id": "inv-2",
-                "invoice_number": "BLNO-202606-001",
-                "status": "open",
-            }
-        )
+        await db["invoices"].insert_one(_invoice(acad, "inv-2"))
 
 
 async def test_migration_allows_same_invoice_number_across_different_academies(
@@ -71,21 +75,7 @@ async def test_migration_allows_same_invoice_number_across_different_academies(
 ) -> None:
     await migration.up(db)
 
-    await db["invoices"].insert_one(
-        {
-            "academy_id": acad,
-            "invoice_id": "inv-1",
-            "invoice_number": "BLNO-202606-001",
-            "status": "open",
-        }
-    )
+    await db["invoices"].insert_one(_invoice(acad, "inv-1"))
     # Same invoice_number, different academy — must not collide.
-    await db["invoices"].insert_one(
-        {
-            "academy_id": other_acad,
-            "invoice_id": "inv-2",
-            "invoice_number": "BLNO-202606-001",
-            "status": "open",
-        }
-    )
+    await db["invoices"].insert_one(_invoice(other_acad, "inv-2"))
     assert await db["invoices"].count_documents({}) == 2

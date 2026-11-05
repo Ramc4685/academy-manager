@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from datetime import UTC, date, datetime
 
 import pytest
@@ -982,6 +983,10 @@ async def test_generate_monthly_concurrent_runs_converge_to_one_invoice_and_line
         unique=True,
         name="uniq_monthly_invoice_key",
     )
+    # The loser of the key claim recovers the orphan while the winner is still
+    # writing; only production's unique invoice/line indexes (0091) make the
+    # two writes converge. Real Mongo interleaves the runs; mongomock does not.
+    await importlib.import_module("backend.v2.migrations.0091_billing_ledger_indexes").up(db)
     ledger_repo = MongoBillingLedgerRepository(db)
     repo = MongoPaymentRepository(
         db,

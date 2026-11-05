@@ -144,6 +144,7 @@ export const queryKeys = {
     programsWithArchived: () => ["admin", "programs", "with-archived"] as const,
     classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    plan: () => ["admin", "billing", "plan"] as const,
     paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
     platformFee: () => ["admin", "billing", "platform-fee"] as const,
@@ -160,6 +161,7 @@ export const queryKeys = {
     pathwayDashboard: () => ["admin", "pathway", "dashboard"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
+    aiStatus: () => ["admin", "ai", "status"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
     reconciliationRuns: () =>
       ["admin", "billing", "reconciliation-runs"] as const,

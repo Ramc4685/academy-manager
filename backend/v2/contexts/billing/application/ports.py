@@ -505,6 +505,29 @@ class StripeGateway(Protocol):
     ) -> tuple[str, str, str]:
         """Returns (checkout_session_id, redirect_url, stripe_subscription_id)."""
 
+    async def create_platform_customer(
+        self,
+        *,
+        name: str,
+        email: str | None,
+        metadata: dict[str, str],
+    ) -> str:
+        """Create a Customer on the PLATFORM account (an academy paying
+        CourtMastr for a plan, never a parent). Returns the customer id."""
+
+    async def create_platform_plan_checkout_session(
+        self,
+        *,
+        customer_id: str,
+        price_id: str,
+        success_url: str,
+        cancel_url: str,
+        metadata: dict[str, str],
+    ) -> tuple[str, str]:
+        """Subscription-mode Checkout for a ``PlatformPlan`` price on the
+        PLATFORM account. ``metadata`` goes on the session and the
+        subscription. Returns (checkout_session_id, redirect_url)."""
+
     async def create_autopay_setup_checkout_session(
         self,
         *,

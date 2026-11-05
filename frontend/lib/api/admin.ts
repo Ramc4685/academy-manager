@@ -4050,6 +4050,34 @@ export function disconnectStripe(): Promise<void> {
   return apiFetch<void>("/admin/academy/gateway/stripe/connect", { method: "DELETE" });
 }
 
+export interface AdminPlanSummary {
+  code: string;
+  display_name: string;
+  monthly_price_cents: number;
+  features: string[];
+}
+
+/** What the academy pays CourtMastr (owner only). `plan` null = free core operations. */
+export interface AdminPlanOverview {
+  plan: AdminPlanSummary | null;
+  subscription: {
+    billing_status: string;
+    cancel_at_period_end: boolean;
+    current_period_end: string | null;
+  } | null;
+  growth: AdminPlanSummary | null;
+  checkout_available: boolean;
+}
+
+export function getAdminPlan(): Promise<AdminPlanOverview> {
+  return apiFetch<AdminPlanOverview>("/admin/billing/plan", { method: "GET" });
+}
+
+/** Owner only. Stripe Billing Checkout for the Growth plan; redirect to `url`. */
+export function startGrowthCheckout(): Promise<{ url: string }> {
+  return apiFetch<{ url: string }>("/admin/billing/plan/checkout", { method: "POST" });
+}
+
 export interface CreateAdminUserRequest {
   role: AdminUserRole;
   display_name: string;
