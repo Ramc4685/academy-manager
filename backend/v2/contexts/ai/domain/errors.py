@@ -28,6 +28,13 @@ class AiProviderError(DomainError):
     status_code = 502
 
 
+class AiAcademyNotFound(DomainError):
+    """Platform admin asked for the AI usage of an unknown academy."""
+
+    code = "Ai.AcademyNotFound"
+    status_code = 404
+
+
 class AiNotEntitled(DomainError):
     """The academy's platform plan does not include the ``ai`` feature."""
 

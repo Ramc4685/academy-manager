@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from backend.v2.shared.ids import new_ulid
+
 #: The one model every feature uses until a per-feature choice is needed.
 DEFAULT_MODEL = "claude-sonnet-5-5"
 
@@ -34,3 +36,5 @@ class AiCallRecord(BaseModel):
     cost_cents: int = Field(ge=0)
     approver: str | None = None
     created_at: datetime
+    #: Minted at construction so a later approval can set ``approver`` on the row.
+    call_id: str = Field(default_factory=new_ulid)

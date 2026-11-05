@@ -940,6 +940,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.ai import compose_ai
 
     app.state.ai = compose_ai(db, settings, has_feature=app.state.platform_billing.has_feature)
+    # Phase 2 slice A3: the usage meter over ai_calls and the plan's cap.
+    from backend.v2.composition.ai_usage import compose_ai_usage
+
+    app.state.ai_usage = compose_ai_usage(db, app.state.platform_billing.has_feature)
     # Phase 2 slice B2: the roster-import copilot over app.state.ai.
     from backend.v2.composition.ai_import import compose_ai_import
 
@@ -1071,6 +1075,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_platform_fee = compose_admin_platform_fee(db)
     # Automated late fees, driven from the dunning tick below (#552).
     app.state.apply_late_fees = compose_apply_late_fees(db)
+    # Phase 2 B6 (paid AI): the owner's standing approval for AI win-back
+    # wording, hung on the win-back notifier, and the coach's technique draft.
+    from backend.v2.composition.ai_technique import compose_ai_technique
+    from backend.v2.composition.ai_win_back import compose_ai_win_back
+
+    app.state.ai_win_back = compose_ai_win_back(db, app.state.ai, app.state.win_back)
+    app.state.ai_technique = compose_ai_technique(db, app.state.ai)
+    # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
+    from backend.v2.composition.ai_reports import compose_ai_reports
+
+    app.state.ai_reports = compose_ai_reports(app.state.ai, app.state.admin_month_close)
     # B3: AI-drafted reply on the pipeline card, and its human-approved send.
     from backend.v2.composition.ai_pipeline import compose_ai_pipeline
 
@@ -1080,6 +1095,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the routes 404 even if something mounts them.
     if settings.enable_owner_role:
         app.state.owner = compose_owner(db)
+    # AI Phase 2 B4: the coach-reviewed parent progress narrative.
+    from backend.v2.composition.ai_narratives import compose_ai_narratives
+
+    app.state.ai_narratives = compose_ai_narratives(db, app.state.ai)
 
     scheduler: AsyncIOScheduler | None = None
 

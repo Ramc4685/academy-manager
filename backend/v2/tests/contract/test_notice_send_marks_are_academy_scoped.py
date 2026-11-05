@@ -8,7 +8,6 @@ copies of the digest-send repo and updated by a bare ``send_id`` too.
 from __future__ import annotations
 
 import pytest
-from mongomock_motor import AsyncMongoMockClient
 
 from backend.v2.composition.absence_notifications import MongoAbsenceNoticeSendRepository
 from backend.v2.composition.hold_notice_send_repo import MongoHoldNoticeSendRepository
@@ -36,8 +35,7 @@ async def _claim(repo_cls, repo):  # type: ignore[no-untyped-def]
     "repo_cls",
     [MongoHoldNoticeSendRepository, MongoAbsenceNoticeSendRepository, MongoWinBackSendRepository],
 )
-async def test_mark_from_another_academy_leaves_the_row_untouched(repo_cls, mark: str) -> None:  # type: ignore[no-untyped-def]
-    db = AsyncMongoMockClient()["notice_test"]
+async def test_mark_from_another_academy_leaves_the_row_untouched(repo_cls, mark: str, db) -> None:  # type: ignore[no-untyped-def]
     coll = db[repo_cls.collection_name]
 
     with tenant_scope(ACADEMY_ID):

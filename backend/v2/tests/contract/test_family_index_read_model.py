@@ -571,13 +571,13 @@ async def _seed_many(db: Any, acad: str, n: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_count_is_fixed_however_many_families(acad) -> None:
+async def test_query_count_is_fixed_however_many_families(db, acad) -> None:
     """No N+1: 3 families and 30 families cost the same number of reads."""
-    import mongomock_motor
-
     counts = []
     for n in (3, 30):
-        raw = mongomock_motor.AsyncMongoMockClient()[f"n{n}"]
+        for name in await db.list_collection_names():
+            await db[name].delete_many({})
+        raw = db
         await _seed_many(raw, acad, n)
         counting = CountingDb(raw)
         index = await _index_model(counting).build(acad)

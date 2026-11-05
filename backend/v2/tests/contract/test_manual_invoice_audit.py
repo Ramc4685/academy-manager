@@ -28,16 +28,14 @@ class _FakeOutbox:
 
 
 @pytest.fixture
-def admin_db(monkeypatch):
-    mongomock_motor = pytest.importorskip("mongomock_motor")
+def admin_db(monkeypatch, db):
     monkeypatch.delenv("V2_PRIMARY_ACADEMY_ID", raising=False)
     monkeypatch.delenv("PRIMARY_ACADEMY_ID", raising=False)
     monkeypatch.setenv("V2_DEFAULT_ACADEMY_ID", ACAD)
     monkeypatch.setenv("DEFAULT_ACADEMY_ID", ACAD)
     get_settings.cache_clear()
     try:
-        client = mongomock_motor.AsyncMongoMockClient()
-        yield client["test_db"]
+        yield db
     finally:
         get_settings.cache_clear()
 

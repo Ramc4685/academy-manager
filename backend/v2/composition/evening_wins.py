@@ -10,10 +10,12 @@ the communications use case stays context-free (ADR-0005).
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
+from backend.v2.contexts.ai.domain.narrative import source_fingerprint
 from backend.v2.contexts.communications.application.parent_wins import (
     ChildWins,
     FamilyWins,
@@ -27,6 +29,8 @@ from backend.v2.shared.config import get_settings
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
+logger = logging.getLogger(__name__)
+
 
 class _ParentWinsProvider:
     def __init__(
@@ -38,6 +42,7 @@ class _ParentWinsProvider:
         skills: Any,
         levels: Any,
         academies: Any,
+        narratives: Any | None = None,
     ) -> None:
         self._progress = skill_progress
         self._certs = certificates
@@ -45,6 +50,7 @@ class _ParentWinsProvider:
         self._skills = skills
         self._levels = levels
         self._academies = academies
+        self._narratives = narratives
 
     async def families_with_wins(self, start: datetime, end: datetime) -> list[FamilyWins]:
         passed = await self._progress.list_passed_between(start, end)
@@ -87,10 +93,20 @@ class _ParentWinsProvider:
         skills_by_level: dict[str, dict[str, Any]] = {}
         level_names: dict[str, str] = {}
         families: dict[str, list[ChildWins]] = defaultdict(list)
+        # B4: coach-approved AI paragraphs; pending or rejected rows are absent.
+        narratives: dict[str, Any] = (
+            await self._narratives.approved_for(
+                sorted(students), start.date().isoformat(), "evening_wins"
+            )
+            if self._narratives is not None
+            else {}
+        )
         for student_id, student in students.items():
             if not student.parent_id:
                 continue
             skill_wins: list[SkillWins] = []
+            # What the draft was built from (first level, like _StudentNarrativeFacts).
+            fingerprint: str | None = None
             for level_id, skill_ids in open_levels[student_id].items():
                 if level_id not in skills_by_level:
                     skills_by_level[level_id] = {
@@ -118,6 +134,16 @@ class _ParentWinsProvider:
                         ),
                     )
                 )
+                if fingerprint is None:
+                    fingerprint = source_fingerprint(
+                        (
+                            (skills[sid].name, notes.get((student_id, sid)))
+                            for sid in sorted(skill_ids)
+                            if sid in skills
+                        ),
+                        skill_wins[-1].passed_in_level,
+                        skill_wins[-1].total_in_level,
+                    )
             ups = tuple(
                 LevelUp(
                     level_name=up.level_name,
@@ -129,12 +155,22 @@ class _ParentWinsProvider:
             )
             if not ups and not skill_wins:
                 continue
+            narrative = narratives.get(student_id)
+            if narrative and skill_wins and narrative.source_fingerprint != fingerprint:
+                # An undone tap or edited note since approval: the templated line is right.
+                logger.info(
+                    "evening_wins.narrative_stale student_id=%s narrative_id=%s",
+                    student_id,
+                    narrative.narrative_id,
+                )
+                narrative = None
             families[student.parent_id].append(
                 ChildWins(
                     first_name=(student.full_name.split() or ["Your child"])[0],
                     progress_url=f"{frontend}/parent/progress?child={student_id}",
                     level_ups=ups,
                     skill_wins=tuple(skill_wins),
+                    narrative=narrative.text if narrative is not None else "",
                 )
             )
         return [
@@ -149,6 +185,9 @@ def compose_send_parent_evening_wins(db: Any) -> SendParentEveningWins:
         _AcademySlugLookup,
         _build_email_sender,
         compose_unsubscribe_link_builder,
+    )
+    from backend.v2.contexts.ai.infrastructure.mongo_ai_narrative_repo import (
+        MongoAiNarrativeRepository,
     )
     from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
         MongoAudienceResolver,
@@ -188,6 +227,7 @@ def compose_send_parent_evening_wins(db: Any) -> SendParentEveningWins:
             skills=MongoSkillRepository(db),
             levels=MongoLevelRepository(db),
             academies=academies,
+            narratives=MongoAiNarrativeRepository(db),
         ),
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(academies),
