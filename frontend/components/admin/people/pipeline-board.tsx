@@ -392,7 +392,11 @@ function ReplyPanel({
   });
 
   const { mutate: requestDraft } = draft;
+  // One paid draft per open, even under StrictMode's double mount.
+  const drafted = useRef(false);
   useEffect(() => {
+    if (drafted.current) return;
+    drafted.current = true;
     requestDraft();
   }, [requestDraft]);
 
