@@ -18,12 +18,20 @@ import Link from "next/link";
 
 import {
   exportAdminReportCsv,
+  fetchAdminAiStatus,
   getAdminMonthClose,
   getAdminProjectedIncome,
   getAdminReportsDashboard,
   getRevenue,
+  postAdminMonthCloseNarrative,
   sendDuesReminders,
 } from "@/lib/api/admin";
+import {
+  NARRATIVE_FOOTNOTE,
+  fixFirstLinks,
+  narrativeErrorCopy,
+  narrativeForPeriod,
+} from "@/lib/admin/month-close-narrative";
 import { formatCents, formatDateOnly } from "@/lib/money";
 import { useIsNativeApp } from "@/lib/use-native-app";
 import { NO_DATA_TEXT, finiteText, isSettled, statText } from "@/lib/ui/load-state";
@@ -95,6 +103,18 @@ export default function AdminMonthClosePage() {
     queryKey: ["admin", "reports", "month-close", period],
     queryFn: () => getAdminMonthClose(period),
   });
+  // B5: the "Explain this month" button shows only when AI is on for this academy.
+  const aiStatusQuery = useQuery({
+    queryKey: ["admin", "ai", "status"],
+    queryFn: fetchAdminAiStatus,
+    retry: false,
+  });
+  const aiEnabled = aiStatusQuery.data?.enabled === true;
+  const narrativeMutation = useMutation({
+    // Carry the requested period so a result never renders under another month's heading.
+    mutationFn: async () => ({ period, narrative: await postAdminMonthCloseNarrative(period) }),
+  });
+  const narrative = narrativeForPeriod(narrativeMutation.data, period);
 
   const revenueQuery = useQuery({
     queryKey: ["admin", "revenue"],
@@ -334,6 +354,54 @@ export default function AdminMonthClosePage() {
                 ? "The four checks came back clean, every invoice went out, and no autopay charge failed."
                 : "Anything odd, below, links to each row."}
             </p>
+          ) : null}
+        </Card>
+
+        {/* B5: written by the model from the view above, checked against it. */}
+        <Card p={20} data-testid="month-close-narrative">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <Overline>What happened this month</Overline>
+              <p className="mt-1 text-sm text-rally-subtle">
+                A short summary of {formatMonth(period)} and what to fix first.
+              </p>
+            </div>
+            {aiEnabled ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => narrativeMutation.mutate()}
+                disabled={narrativeMutation.isPending || !closeSettled}
+                data-testid="month-close-narrative-explain"
+              >
+                {narrativeMutation.isPending ? "Writing…" : "Explain this month"}
+              </Button>
+            ) : null}
+          </div>
+          {narrativeMutation.isError ? (
+            <p className="mt-3 text-sm text-rally-subtle" data-testid="month-close-narrative-error">
+              {narrativeErrorCopy(narrativeMutation.error)}
+            </p>
+          ) : null}
+          {narrative ? (
+            <div className="mt-3 space-y-3" data-testid="month-close-narrative-result">
+              <p className="text-sm text-rally-ink">{narrative.summary}</p>
+              {fixFirstLinks(narrative).length > 0 ? (
+                <ol className="list-decimal space-y-1 pl-5 text-sm">
+                  {fixFirstLinks(narrative).map((fix) => (
+                    <li key={fix.key}>
+                      <Link
+                        href={fix.href as Route}
+                        className="font-medium text-rally-cobalt-600 hover:underline"
+                      >
+                        {fix.text}
+                      </Link>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              <p className="text-[12px] text-rally-muted">{NARRATIVE_FOOTNOTE}</p>
+            </div>
           ) : null}
         </Card>
 

@@ -14,7 +14,7 @@ or child data goes to any model.** This README is the contract; the tests in
 | `domain/prompts.py` | `PROMPTS`: feature -> `PromptVersion(version, system_text)`; one unused placeholder |
 | `domain/errors.py` | `AiDisabled` (503), `AiMonthlyCapReached` (429), `AiProviderError` (502) |
 | `application/ports.py` | `LlmPort`, `AiCallRepository`, `MonthlyCapSource` |
-| `application/use_cases/record_ai_call.py` | `RecordAiCall`: counts this UTC month's rows, refuses past the cap, writes one row |
+| `application/use_cases/record_ai_call.py` | `RecordAiCall`: `assert_under_cap()` refuses before the call; `execute()` always writes one row |
 | `infrastructure/anthropic_llm_port.py` | the one `LlmPort` adapter: Anthropic Messages API over plain `httpx`, no SDK |
 | `infrastructure/disabled_llm_port.py` | wired whenever AI is off; every call raises `AiDisabled` |
 | `infrastructure/mongo_ai_call_repo.py` | `MongoAiCallRepository(TenantScopedRepository)`, collection `ai_calls` |
@@ -46,9 +46,11 @@ Collection `ai_calls`, one document per model call.
 
 `ai.monthly_call_cap` on the academy document (`academies`), read by
 `composition/ai.py::AcademyAiCapLookup`; absent or invalid means
-`DEFAULT_MONTHLY_CALL_CAP` (200). `RecordAiCall` counts the academy's rows
-since the first of the current UTC month and raises `AiMonthlyCapReached`
-when one more would exceed the cap. There is no write path for the cap yet;
+`DEFAULT_MONTHLY_CALL_CAP` (200). `RecordAiCall.assert_under_cap()` counts the
+academy's rows since the first of the current UTC month and raises
+`AiMonthlyCapReached` when one more would exceed the cap; every feature calls it
+before `llm.complete`. `execute()` only writes the audit row, even past the cap,
+so a spent call is always counted. There is no write path for the cap yet;
 it is set by hand until a Growth-tier screen exists.
 
 ## Features
@@ -172,3 +174,29 @@ wins and falls back to the templated sentence when they no longer match. `GET
 none) so the workspace restores a draft after a refresh.
 `ai.coach_review_narratives: false` on the academy document stores drafts
 approved with approver `coach_review_off` (no UI yet).
+
+### Month-close narrator (B5, paid, owner-only, prompt `month-close-narrator-v1`)
+
+Feature key `month_close_narrator`, prompt `month-close-narrator-v1`, use case
+`application/use_cases/narrate_month_close.py`, route
+`POST /api/v2/admin/reports/month-close/narrative?period=YYYY-MM`
+(`interfaces/admin/ai_reports_routes.py`, wired in `composition/ai_reports.py`
+at `app.state.ai_reports`). Order: `AiEntitlement.has_ai()` (403
+`Ai.NotEntitled`) -> `RecordAiCall.assert_under_cap()` (429) -> `complete`
+-> `RecordAiCall.execute` -> parse -> number and link check (502).
+
+What the model sees: `reduce_month_close_payload` over the owner's existing
+month-close view and nothing else: period, timezone, the money section's cents
+and rate, invoice counts, autopay run counts and state, the four odd checks
+with at most five `{label, href}` items each, and the warning codes. No ids,
+void reasons, discounts, dates, emails or phones.
+
+Never computes money: every number token in the answer must be a cents value
+from the input (as cents or dollars), a count or rate as given, or the
+period's digits; every `fix_first` href must be an odd item's href or one of
+`/admin/payments`, `/admin/dues`, `/admin/families`, `/admin/billing-health`,
+`/admin/reports`. Anything else is a 502 after the call is recorded.
+
+Where the human is: the owner clicks "Explain this month" on the Reports page
+and reads the result there; the owner is the `approver` on the `ai_calls` row.
+Nothing is stored and nothing reaches a parent.

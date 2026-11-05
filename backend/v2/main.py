@@ -1078,6 +1078,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.ai_win_back = compose_ai_win_back(db, app.state.ai, app.state.win_back)
     app.state.ai_technique = compose_ai_technique(db, app.state.ai)
+    # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
+    from backend.v2.composition.ai_reports import compose_ai_reports
+
+    app.state.ai_reports = compose_ai_reports(app.state.ai, app.state.admin_month_close)
     # B3: AI-drafted reply on the pipeline card, and its human-approved send.
     from backend.v2.composition.ai_pipeline import compose_ai_pipeline
 
