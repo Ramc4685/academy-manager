@@ -24,7 +24,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
-from backend.v2.interfaces.coach.skill_routes import _parse_date, _require_assigned_to_student
+from backend.v2.interfaces.coach.skill_routes import _require_assigned_to_student
+from backend.v2.interfaces.coach.today_routes import _resolve_date
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
 
@@ -77,7 +78,7 @@ async def draft_student_narrative(
     narratives: object = Depends(_get_narratives),
 ) -> dict[str, object]:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
-    on = _parse_date(body.date)
+    on = await _resolve_date(body.date, academy_id=claims.academy_id, use_cases=use_cases)
     start, end = await _academy_day(use_cases, claims.academy_id, on)
     row = await narratives.draft_for_student.execute(  # type: ignore[attr-defined]
         student_id=student_id, for_date=on, start=start, end=end, coach_id=claims.user_id
@@ -110,9 +111,11 @@ async def decide_narrative(
 async def list_pending_narratives(
     on_date: str | None = Query(None, alias="date"),
     claims: AuthClaims = Depends(require_coach_surface()),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
     narratives: object = Depends(_get_narratives),
 ) -> dict[str, object]:
+    on = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     rows = await narratives.review.pending(  # type: ignore[attr-defined]
-        _parse_date(on_date), None if is_coach_supervisor(claims) else claims.user_id
+        on, None if is_coach_supervisor(claims) else claims.user_id
     )
     return {"narratives": [_dump(r) for r in rows]}

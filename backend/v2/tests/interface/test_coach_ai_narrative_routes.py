@@ -224,3 +224,21 @@ def test_unconfigured_state_is_503_and_unknown_body_keys_are_422() -> None:
     composition, _, _ = _narratives(llm=FakeLlm())
     client = _client(_claims(COACH, "coach"), composition)
     assert client.post(DRAFT, json={"student_name": "x"}).status_code == 422
+
+
+def test_omitted_date_is_the_academy_s_day_not_utc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """02:00 UTC on the 5th is still the evening of the 4th in Chicago, so a
+    no-date draft and the pending list both land on 2026-11-04."""
+    from backend.v2.interfaces.coach import today_routes
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return datetime(2026, 11, 5, 2, 0, tzinfo=UTC).astimezone(tz)
+
+    monkeypatch.setattr(today_routes, "datetime", _Clock)
+    composition, _, _ = _narratives(llm=FakeLlm())
+    client = _client(_claims(COACH, "coach"), composition)
+    assert client.post(DRAFT, json={}).json()["for_date"] == "2026-11-04"
+    pending = client.get("/api/v2/coach/narratives/pending").json()["narratives"]
+    assert [r["for_date"] for r in pending] == ["2026-11-04"]
