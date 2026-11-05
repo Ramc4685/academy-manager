@@ -18,11 +18,18 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.v2.contexts.billing.application.ports import BillingSettingsRepository
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
-from backend.v2.contexts.billing.domain.billing_settings import MAX_APPLICATION_FEE_BPS
+from backend.v2.contexts.billing.domain.billing_settings import (
+    APPLICATION_FEE_AGREEMENT_TEXT,
+    APPLICATION_FEE_AGREEMENT_VERSION,
+    MAX_APPLICATION_FEE_BPS,
+    NEW_ACADEMY_APPLICATION_FEE_BPS,
+    ApplicationFeeAgreementAcceptance,
+    BillingSettings,
+)
 from backend.v2.contexts.billing.domain.errors import ApplicationFeeAcademyNotFound
 from backend.v2.contexts.billing.domain.fees import application_fee_cents
 from backend.v2.shared.ids import new_ulid
@@ -31,9 +38,15 @@ from backend.v2.shared.tenancy import tenant_scope
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "APPLICATION_FEE_AGREEMENT_TEXT",
+    "APPLICATION_FEE_AGREEMENT_VERSION",
     "MAX_APPLICATION_FEE_BPS",
+    "NEW_ACADEMY_APPLICATION_FEE_BPS",
+    "AgreementAcceptance",
     "ApplicationFeeResult",
+    "AssignDefaultApplicationFee",
     "GetApplicationFee",
+    "ReadAcademyApplicationFee",
     "SetApplicationFee",
     "SetApplicationFeeCommand",
     "application_fee_kwargs",
@@ -108,6 +121,52 @@ class ApplicationFeeResult(BaseModel):
     academy_id: str
     application_fee_bps: int
     max_application_fee_bps: int = MAX_APPLICATION_FEE_BPS
+    # The processing-fee agreement: the current text and version (from code)
+    # and the acceptance recorded with the fee, if any.
+    agreement_version: str | None = None
+    agreement_text: str = APPLICATION_FEE_AGREEMENT_TEXT
+    current_agreement_version: str = APPLICATION_FEE_AGREEMENT_VERSION
+    accepted_at: datetime | None = None
+    accepted_by: str | None = None
+
+
+def _result(academy_id: str, settings: BillingSettings) -> ApplicationFeeResult:
+    return ApplicationFeeResult(
+        academy_id=academy_id,
+        application_fee_bps=settings.application_fee_bps,
+        agreement_version=settings.application_fee_agreement_version,
+        accepted_at=settings.application_fee_accepted_at,
+        accepted_by=settings.application_fee_accepted_by,
+    )
+
+
+def _agreement_fields(settings: BillingSettings) -> dict[str, Any]:
+    return {
+        "application_fee_bps": settings.application_fee_bps,
+        "application_fee_agreement_version": settings.application_fee_agreement_version,
+        "application_fee_accepted_at": settings.application_fee_accepted_at,
+        "application_fee_accepted_by": settings.application_fee_accepted_by,
+    }
+
+
+class AgreementAcceptance(BaseModel):
+    """The academy signatory, as typed by the platform admin, accepting the
+    agreement version the admin was shown. Only the current version can be
+    recorded, so the stored version always names a text that exists."""
+
+    model_config = {"frozen": True}
+
+    version: str = Field(min_length=1)
+    accepted_by: str = Field(min_length=1)
+
+    @field_validator("version")
+    @classmethod
+    def _current_version_only(cls, value: str) -> str:
+        if value != APPLICATION_FEE_AGREEMENT_VERSION:
+            raise ValueError(
+                f"unknown agreement version; current is {APPLICATION_FEE_AGREEMENT_VERSION}"
+            )
+        return value
 
 
 class SetApplicationFeeCommand(BaseModel):
@@ -117,6 +176,7 @@ class SetApplicationFeeCommand(BaseModel):
     application_fee_bps: int = Field(ge=0, le=MAX_APPLICATION_FEE_BPS)
     actor_id: str = Field(min_length=1)
     reason: str | None = None
+    agreement: AgreementAcceptance | None = None
 
 
 class GetApplicationFee:
@@ -134,9 +194,19 @@ class GetApplicationFee:
             raise ApplicationFeeAcademyNotFound("academy not found", academy_id=academy_id)
         with tenant_scope(academy_id):
             current = await self._settings.get()
-        return ApplicationFeeResult(
-            academy_id=academy_id, application_fee_bps=current.application_fee_bps
-        )
+        return _result(academy_id, current)
+
+
+class ReadAcademyApplicationFee:
+    """The CURRENT academy's fee and agreement, for the academy admin's
+    read-only view (``GET /admin/billing/platform-fee``). Tenant from scope."""
+
+    def __init__(self, *, settings: BillingSettingsRepository) -> None:
+        self._settings = settings
+
+    async def execute(self) -> ApplicationFeeResult:
+        current = await self._settings.get()
+        return _result(current.academy_id, current)
 
 
 class SetApplicationFee:
@@ -163,12 +233,38 @@ class SetApplicationFee:
     async def execute(self, cmd: SetApplicationFeeCommand) -> ApplicationFeeResult:
         if self._academy_exists is not None and not await self._academy_exists(cmd.academy_id):
             raise ApplicationFeeAcademyNotFound("academy not found", academy_id=cmd.academy_id)
+        now = self._now()
+        acceptance = (
+            ApplicationFeeAgreementAcceptance(
+                version=cmd.agreement.version,
+                accepted_by=cmd.agreement.accepted_by,
+                accepted_at=now,
+            )
+            if cmd.agreement is not None
+            else None
+        )
         with tenant_scope(cmd.academy_id):
             current = await self._settings.get()
-            if current.application_fee_bps == cmd.application_fee_bps:
-                return ApplicationFeeResult(
-                    academy_id=cmd.academy_id, application_fee_bps=cmd.application_fee_bps
-                )
+            same_acceptance = acceptance is None or (
+                acceptance.version == current.application_fee_agreement_version
+                and acceptance.accepted_by == current.application_fee_accepted_by
+            )
+            if current.application_fee_bps == cmd.application_fee_bps and same_acceptance:
+                return _result(cmd.academy_id, current)
+            after = current.model_copy(
+                update={
+                    "application_fee_bps": cmd.application_fee_bps,
+                    **(
+                        {
+                            "application_fee_agreement_version": acceptance.version,
+                            "application_fee_accepted_at": acceptance.accepted_at,
+                            "application_fee_accepted_by": acceptance.accepted_by,
+                        }
+                        if acceptance is not None
+                        else {}
+                    ),
+                }
+            )
             if self._audit is not None:
                 await self._audit.append(
                     BillingAuditEntry(
@@ -176,13 +272,15 @@ class SetApplicationFee:
                         academy_id=cmd.academy_id,
                         action="application_fee_changed",
                         actor_id=cmd.actor_id,
-                        at=self._now(),
+                        at=now,
                         reason=cmd.reason,
-                        before={"application_fee_bps": current.application_fee_bps},
-                        after={"application_fee_bps": cmd.application_fee_bps},
+                        before=_agreement_fields(current),
+                        after=_agreement_fields(after),
                     )
                 )
-            await self._settings.set_application_fee_bps(cmd.application_fee_bps)
+            await self._settings.set_application_fee_bps(
+                cmd.application_fee_bps, agreement=acceptance
+            )
         log.info(
             "application_fee: academy=%s fee_bps %s -> %s by actor=%s",
             cmd.academy_id,
@@ -190,6 +288,35 @@ class SetApplicationFee:
             cmd.application_fee_bps,
             cmd.actor_id,
         )
-        return ApplicationFeeResult(
-            academy_id=cmd.academy_id, application_fee_bps=cmd.application_fee_bps
+        return _result(cmd.academy_id, after)
+
+
+class AssignDefaultApplicationFee:
+    """Start a NEWLY CREATED academy on the default processing markup
+    (``NEW_ACADEMY_APPLICATION_FEE_BPS``), with no agreement acceptance yet.
+
+    Platform's ``TenantLifecycleService.create_tenant`` calls this through its
+    ``DefaultApplicationFeeAssigner`` port, exactly like the invoice prefix.
+    Audited as an ordinary fee change by the creating platform admin.
+    Idempotent through ``SetApplicationFee``: re-running on an academy already
+    at the default writes nothing.
+    """
+
+    def __init__(self, *, set_fee: SetApplicationFee) -> None:
+        self._set_fee = set_fee
+
+    async def execute(self, *, academy_id: str, actor_id: str) -> int:
+        await self._set_fee.execute(
+            SetApplicationFeeCommand(
+                academy_id=academy_id,
+                application_fee_bps=NEW_ACADEMY_APPLICATION_FEE_BPS,
+                actor_id=actor_id,
+                reason="default for new academies",
+            )
         )
+        log.info(
+            "application_fee_default_assigned academy=%s fee_bps=%s",
+            academy_id,
+            NEW_ACADEMY_APPLICATION_FEE_BPS,
+        )
+        return NEW_ACADEMY_APPLICATION_FEE_BPS

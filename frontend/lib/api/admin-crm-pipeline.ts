@@ -55,6 +55,26 @@ export interface PipelineCard {
   override_set_at: string | null;
   /** Columns a staff move may take this card to now; empty = read-only. */
   move_targets: PipelineColumn[];
+  /** Contact cards: a reply can be drafted and emailed (B3). */
+  has_email: boolean;
+  has_message: boolean;
+}
+
+export interface ReplyDraft {
+  subject: string;
+  body: string;
+  key_points: string[];
+  prompt_version: string;
+}
+
+export interface ReplySent {
+  log_id: string;
+  parent_id: string;
+  channel: string;
+  status: string;
+  note: string | null;
+  author_user_id: string;
+  created_at: string;
 }
 
 export interface PipelineBoardResponse {
@@ -118,4 +138,23 @@ export function focusAfterLeaving(columnCards: PipelineCard[], cardId: string): 
   if (index < 0) return null;
   const next = columnCards[index + 1] ?? columnCards[index - 1];
   return next ? next.card_id : null;
+}
+
+/** B3: an AI draft for the staff member to edit; writes only the ai_calls row. */
+export function draftPipelineReply(contactId: string): Promise<ReplyDraft> {
+  return apiFetch<ReplyDraft>(
+    `/admin/pipeline/cards/${encodeURIComponent(contactId)}/reply-draft`,
+    { method: "POST" },
+  );
+}
+
+/** B3: the human approval; emails the lead and logs it on the contact log. */
+export function sendPipelineReply(
+  contactId: string,
+  body: { subject: string; body: string },
+): Promise<ReplySent> {
+  return apiFetch<ReplySent>(`/admin/pipeline/cards/${encodeURIComponent(contactId)}/reply`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }

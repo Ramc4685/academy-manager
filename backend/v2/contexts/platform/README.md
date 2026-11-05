@@ -29,3 +29,17 @@ to its `PlatformPlan` (status `active`) and answers whether `feature` is in
 `PUT /api/v2/platform/billing/plans/{plan_id}`). No subscription, a
 cancelled or unpaid one, or an archived plan all answer `False`. The first
 feature name is `"ai"`.
+
+## Processing markup: `application_fee_bps` and its agreement
+
+The platform's only per-payment revenue is the processing markup,
+`billing_settings.application_fee_bps` (billing context, platform-only field,
+Stripe `application_fee_amount` on Connect destination charges; see
+`billing/application/use_cases/application_fee.py`). New academies start at
+`NEW_ACADEMY_APPLICATION_FEE_BPS` (100) through
+`TenantLifecycleService.create_tenant`'s `DefaultApplicationFeeAssigner` port;
+existing academies keep what is stored (0 when nothing is) until a platform
+admin sets theirs. The agreement text and version live in code
+(`APPLICATION_FEE_AGREEMENT_*`, never "forever"); acceptance is recorded with
+the fee (`application_fee_agreement_version/accepted_at/accepted_by`) and is
+separate from the tenant-level platform agreement on `Tenant`.

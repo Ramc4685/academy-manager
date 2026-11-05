@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
@@ -167,6 +168,12 @@ QUARANTINE_UNATTRIBUTED = "unattributed_no_tenant_marker"
 # disagreeing means something is wrong, so neither is trusted to project.
 QUARANTINE_ACCOUNT_METADATA_CONFLICT = "connect_account_metadata_conflict"
 
+# ``quarantine_reason`` for a ``metadata.source == "platform_plan"`` event that
+# carries a top-level ``account``. Platform-plan objects live on the platform
+# account only, so a Connect event tagged as one is metadata someone wrote on
+# a connected account: it is neither synced nor processed as tuition.
+QUARANTINE_PLATFORM_PLAN_ON_CONNECT_ACCOUNT = "platform_plan_on_connect_account"
+
 
 class AccountAcademyResolver(Protocol):
     """Resolves a Stripe Connect account id to its owning academy id.
@@ -201,6 +208,21 @@ class AccountAcademyResolver(Protocol):
     ) -> bool: ...
 
 
+#: ``async (event_type, event) -> None``: the platform billing context's
+#: ``SyncTenantSubscriptionFromStripe``. An academy paying CourtMastr for a
+#: plan (``metadata.source == "platform_plan"``) is not parent tuition, so
+#: those events never reach the tuition handlers.
+PlatformPlanSync = Callable[[str, dict[str, Any]], Awaitable[None]]
+PLATFORM_PLAN_EVENT_TYPES = frozenset(
+    {
+        "checkout.session.completed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    }
+)
+
+
 class HandleWebhookEvent:
     def __init__(
         self,
@@ -223,6 +245,7 @@ class HandleWebhookEvent:
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
         payment_disputes: PaymentDisputeRepository | None = None,
+        platform_plan_sync: PlatformPlanSync | None = None,
         expected_livemode: bool | None = None,
         tenancy_mode: str = "single_academy",
         clock=lambda: datetime.now(UTC),
@@ -242,6 +265,7 @@ class HandleWebhookEvent:
         self._enrollment_identity = enrollment_identity
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
+        self._platform_plan_sync = platform_plan_sync
         self._expected_livemode = expected_livemode
         self._tenancy_mode = tenancy_mode
         self._outbox = outbox
@@ -298,7 +322,9 @@ class HandleWebhookEvent:
         log.warning(
             "stripe_webhook_event_unattributed"
             if reason_code == QUARANTINE_UNATTRIBUTED
-            else "stripe_webhook_event_account_metadata_conflict",
+            else "stripe_webhook_event_account_metadata_conflict"
+            if reason_code == QUARANTINE_ACCOUNT_METADATA_CONFLICT
+            else "stripe_webhook_event_platform_plan_on_connect_account",
             extra={
                 "event_id": event_id,
                 "event_type": event_type,
@@ -369,8 +395,16 @@ class HandleWebhookEvent:
         Raises only ``WebhookAccountLookupUnavailable`` past signature
         verification, and only when the owner lookup errors.
         """
-        metadata_academy = self._event_metadata(event).get("academy_id")
+        metadata = self._event_metadata(event)
+        metadata_academy = metadata.get("academy_id")
         account_id = str(event.get("account") or "")
+        if account_id and metadata.get("source") == "platform_plan":
+            return (
+                self._academy_id,
+                f"metadata.source=platform_plan on connected account {account_id}; "
+                "platform-plan events come from the platform account only",
+                QUARANTINE_PLATFORM_PLAN_ON_CONNECT_ACCOUNT,
+            )
         if account_id:
             owner: str | None = None
             if self._connected_accounts is not None:
@@ -754,6 +788,21 @@ class HandleWebhookEvent:
                 )
 
     async def _dispatch_event(self, event_type: str, event: dict[str, Any]) -> None:
+        if (
+            event_type in PLATFORM_PLAN_EVENT_TYPES
+            and self._event_metadata(event).get("source") == "platform_plan"
+        ):
+            if event.get("account"):
+                # Ingest already quarantines this; a drain racing that mark
+                # must not sync it either.
+                raise _QuarantineStripeEvent(
+                    f"platform_plan event on connected account {event['account']}"
+                )
+            if self._platform_plan_sync is None:
+                log.warning("platform_plan event ignored: no sync wired type=%s", event_type)
+                return
+            await self._platform_plan_sync(event_type, event)
+            return
         if event_type == "checkout.session.completed":
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay_setup":
@@ -1013,6 +1062,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
                 stripe_account_id=_event_account(event),
+                application_fee_cents=_application_fee_cents(obj),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -1147,6 +1197,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_checkout",
                 stripe_payment_intent_id=payment_intent_id,
                 stripe_account_id=_event_account(event),
+                application_fee_cents=_application_fee_cents(obj),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -1602,6 +1653,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_autopay",
                 stripe_payment_intent_id=pi_id,
                 stripe_account_id=_event_account(event),
+                application_fee_cents=_application_fee_cents(pi),
                 paid_at=now,
                 metadata=payment_metadata or None,
                 created_at=now,
@@ -2551,6 +2603,7 @@ class HandleWebhookEvent:
                     status="succeeded",
                     payment_method="stripe",
                     stripe_payment_intent_id=stripe_pi,
+                    application_fee_cents=_application_fee_cents(invoice),
                     paid_at=now,
                     created_at=now,
                     updated_at=now,
@@ -2775,6 +2828,7 @@ class HandleWebhookEvent:
                 payment_method="stripe_subscription",
                 stripe_payment_intent_id=stripe_payment_id,
                 stripe_invoice_id=stripe_invoice_id,
+                application_fee_cents=_application_fee_cents(invoice),
                 paid_at=now,
                 created_at=now,
                 updated_at=now,
@@ -3058,6 +3112,19 @@ def _identity_value(
     else:
         value = getattr(identity, key)
     return str(value) if value else None
+
+
+def _application_fee_cents(obj: dict[str, Any]) -> int | None:
+    """The platform fee Stripe reports on a PaymentIntent, Invoice or (as a
+    string we stamped ourselves) checkout-session metadata; None when absent,
+    never 0, so month close knows to estimate rather than trust a blank."""
+    raw = obj.get("application_fee_amount")
+    if raw is None:
+        raw = (obj.get("metadata") or {}).get("application_fee_cents")
+    try:
+        return int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _event_account(event: dict[str, Any]) -> str | None:

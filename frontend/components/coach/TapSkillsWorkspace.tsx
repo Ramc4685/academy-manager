@@ -13,7 +13,7 @@ import {
   type SkillBoardCell,
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
-import { getAdminAiStatus } from "@/lib/api/admin";
+import { fetchAdminAiStatus } from "@/lib/api/admin";
 import { NOTE_MAX, criterionFits, pickedCriteria, toggleCriterion } from "@/lib/coach/mastery-note";
 import { AI_STATUS_KEY, masteredOn } from "@/lib/coach/progress-narrative";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
@@ -86,7 +86,7 @@ export function TapSkillsWorkspace({
   // B4: the AI note button shows only when the deployment says AI is on.
   const aiStatus = useQuery({
     queryKey: AI_STATUS_KEY,
-    queryFn: getAdminAiStatus,
+    queryFn: fetchAdminAiStatus,
     retry: false,
     staleTime: 5 * 60 * 1000,
   });

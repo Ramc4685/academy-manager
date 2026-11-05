@@ -8,7 +8,10 @@ import pytest
 from pydantic import ValidationError
 
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    AgreementAcceptance,
+    AssignDefaultApplicationFee,
     GetApplicationFee,
+    ReadAcademyApplicationFee,
     SetApplicationFee,
     SetApplicationFeeCommand,
     application_fee_kwargs,
@@ -17,7 +20,11 @@ from backend.v2.contexts.billing.application.use_cases.application_fee import (
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.billing_settings import (
+    APPLICATION_FEE_AGREEMENT_TEXT,
+    APPLICATION_FEE_AGREEMENT_VERSION,
     MAX_APPLICATION_FEE_BPS,
+    NEW_ACADEMY_APPLICATION_FEE_BPS,
+    ApplicationFeeAgreementAcceptance,
     BillingSettings,
 )
 from backend.v2.contexts.billing.domain.errors import ApplicationFeeAcademyNotFound
@@ -25,7 +32,7 @@ from backend.v2.contexts.billing.domain.fees import (
     application_fee_cents,
     check_application_fee_cents,
 )
-from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.tenancy import current_academy_id, tenant_scope
 
 # ---------------------------------------------------------------------------
 # Domain: fee math and validation
@@ -112,6 +119,7 @@ class _Settings:
 
     def __init__(self, fees: dict[str, int] | None = None, *, fail: bool = False) -> None:
         self.fees = dict(fees or {})
+        self.agreements: dict[str, ApplicationFeeAgreementAcceptance] = {}
         self.fail = fail
         self.fee_writes: list[tuple[str, int]] = []
 
@@ -119,16 +127,25 @@ class _Settings:
         if self.fail:
             raise RuntimeError("settings store down")
         academy_id = current_academy_id()
+        agreement = self.agreements.get(academy_id)
         return BillingSettings(
-            academy_id=academy_id, application_fee_bps=self.fees.get(academy_id, 0)
+            academy_id=academy_id,
+            application_fee_bps=self.fees.get(academy_id, 0),
+            application_fee_agreement_version=agreement.version if agreement else None,
+            application_fee_accepted_at=agreement.accepted_at if agreement else None,
+            application_fee_accepted_by=agreement.accepted_by if agreement else None,
         )
 
     async def upsert(self, settings: BillingSettings) -> None:  # pragma: no cover - unused
         return None
 
-    async def set_application_fee_bps(self, fee_bps: int) -> None:
+    async def set_application_fee_bps(
+        self, fee_bps: int, *, agreement: ApplicationFeeAgreementAcceptance | None = None
+    ) -> None:
         academy_id = current_academy_id()
         self.fees[academy_id] = fee_bps
+        if agreement is not None:
+            self.agreements[academy_id] = agreement
         self.fee_writes.append((academy_id, fee_bps))
 
 
@@ -222,8 +239,109 @@ async def test_set_application_fee_writes_only_the_named_academy_and_audits() ->
     assert entry.academy_id == "acad-1"
     assert entry.action == "application_fee_changed"
     assert entry.actor_id == "platform-admin"
-    assert entry.before == {"application_fee_bps": 0}
-    assert entry.after == {"application_fee_bps": 250}
+    assert entry.before == {
+        "application_fee_bps": 0,
+        "application_fee_agreement_version": None,
+        "application_fee_accepted_at": None,
+        "application_fee_accepted_by": None,
+    }
+    assert entry.after == {**entry.before, "application_fee_bps": 250}
+    assert result.agreement_version is None and result.accepted_by is None
+    assert result.agreement_text == APPLICATION_FEE_AGREEMENT_TEXT
+    assert "forever" not in APPLICATION_FEE_AGREEMENT_TEXT
+
+
+async def test_set_application_fee_records_the_agreement_acceptance_with_the_fee() -> None:
+    settings = _Settings()
+    audit = _Audit()
+    at = datetime(2026, 11, 4, 15, 0, tzinfo=UTC)
+    use_case = SetApplicationFee(
+        settings=settings, audit=audit, academy_exists=_exists, clock=lambda: at
+    )
+
+    result = await use_case.execute(
+        SetApplicationFeeCommand(
+            academy_id="acad-1",
+            application_fee_bps=100,
+            actor_id="platform-admin",
+            agreement=AgreementAcceptance(
+                version=APPLICATION_FEE_AGREEMENT_VERSION, accepted_by="Jane Owner"
+            ),
+        )
+    )
+
+    assert (result.application_fee_bps, result.agreement_version, result.accepted_by) == (
+        100,
+        APPLICATION_FEE_AGREEMENT_VERSION,
+        "Jane Owner",
+    )
+    assert result.accepted_at == at
+    stored = settings.agreements["acad-1"]
+    assert (stored.version, stored.accepted_by, stored.accepted_at) == (
+        APPLICATION_FEE_AGREEMENT_VERSION,
+        "Jane Owner",
+        at,
+    )
+    assert audit.entries[0].after == {
+        "application_fee_bps": 100,
+        "application_fee_agreement_version": APPLICATION_FEE_AGREEMENT_VERSION,
+        "application_fee_accepted_at": at,
+        "application_fee_accepted_by": "Jane Owner",
+    }
+
+    # Same fee, same acceptance: nothing written, nothing audited.
+    await use_case.execute(
+        SetApplicationFeeCommand(
+            academy_id="acad-1",
+            application_fee_bps=100,
+            actor_id="platform-admin",
+            agreement=AgreementAcceptance(
+                version=APPLICATION_FEE_AGREEMENT_VERSION, accepted_by="Jane Owner"
+            ),
+        )
+    )
+    assert len(settings.fee_writes) == 1 and len(audit.entries) == 1
+
+    # A rate change without a new acceptance keeps the recorded acceptance.
+    await use_case.execute(
+        SetApplicationFeeCommand(academy_id="acad-1", application_fee_bps=150, actor_id="p")
+    )
+    assert settings.agreements["acad-1"].accepted_by == "Jane Owner"
+    assert audit.entries[1].after["application_fee_accepted_by"] == "Jane Owner"
+
+
+def test_only_the_current_agreement_version_can_be_accepted() -> None:
+    with pytest.raises(ValidationError):
+        AgreementAcceptance(version="2025-01-01", accepted_by="x")
+    with pytest.raises(ValidationError):
+        AgreementAcceptance(version=APPLICATION_FEE_AGREEMENT_VERSION, accepted_by="")
+
+
+async def test_read_academy_application_fee_reads_the_current_tenant() -> None:
+    settings = _Settings({"acad-1": 100, "acad-2": 150})
+    with tenant_scope("acad-2"):
+        result = await ReadAcademyApplicationFee(settings=settings).execute()
+    assert (result.academy_id, result.application_fee_bps) == ("acad-2", 150)
+    assert result.agreement_text == APPLICATION_FEE_AGREEMENT_TEXT
+    assert result.accepted_at is None
+
+
+async def test_assign_default_application_fee_starts_a_new_academy_at_100_bps() -> None:
+    settings = _Settings()
+    audit = _Audit()
+    assigner = AssignDefaultApplicationFee(
+        set_fee=SetApplicationFee(settings=settings, audit=audit, academy_exists=_exists)
+    )
+
+    assert await assigner.execute(academy_id="acad-1", actor_id="platform-admin") == 100
+
+    assert settings.fee_writes == [("acad-1", NEW_ACADEMY_APPLICATION_FEE_BPS)]
+    assert "acad-1" not in settings.agreements  # no acceptance yet
+    assert audit.entries[0].actor_id == "platform-admin"
+    assert audit.entries[0].reason == "default for new academies"
+    # Re-running (a retried create) writes nothing more.
+    await assigner.execute(academy_id="acad-1", actor_id="platform-admin")
+    assert len(settings.fee_writes) == 1
 
 
 async def test_set_application_fee_same_value_is_a_no_op() -> None:

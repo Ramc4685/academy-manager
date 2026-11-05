@@ -177,11 +177,21 @@ export function bootstrapPlatformAcademy(
   });
 }
 
-/** Per-academy platform application fee (roadmap L9b), in basis points. */
+/**
+ * Per-academy platform application fee (roadmap L9b), in basis points, plus
+ * the processing-fee agreement recorded with it (AI strategy Phase 2 A1):
+ * the version the academy accepted (null until recorded), the current text
+ * and version from code, and who accepted it when.
+ */
 export interface ApplicationFee {
   academy_id: string;
   application_fee_bps: number;
   max_application_fee_bps: number;
+  agreement_version: string | null;
+  agreement_text: string;
+  current_agreement_version: string;
+  accepted_at: string | null;
+  accepted_by: string | null;
 }
 
 export function getPlatformApplicationFee(academyId: string): Promise<ApplicationFee> {
@@ -193,7 +203,12 @@ export function getPlatformApplicationFee(academyId: string): Promise<Applicatio
 
 export function setPlatformApplicationFee(
   academyId: string,
-  payload: { application_fee_bps: number; reason?: string },
+  payload: {
+    application_fee_bps: number;
+    reason?: string;
+    /** Record the academy's acceptance of the current agreement with the fee. */
+    agreement?: { version: string; accepted_by: string };
+  },
 ): Promise<ApplicationFee> {
   return apiFetch<ApplicationFee>(
     `/platform/academies/${encodeURIComponent(academyId)}/application-fee`,

@@ -6,6 +6,7 @@ import {
   EMPTY_FAMILY_INDEX_STATE,
   FALLBACK_PRESETS,
   ariaSort,
+  atRiskTitle,
   classOptions,
   clearFilterChips,
   familyDisplayName,
@@ -269,5 +270,19 @@ describe("results heading copy", () => {
     expect(familiesCountLabel(1, true)).toBe("1 family matches this search");
     expect(familiesCountLabel(0, true)).toBe("0 families match this search");
     expect(familiesCountLabel(2, true)).toBe("2 families match this search");
+  });
+});
+
+describe("atRiskTitle", () => {
+  it("is null unless the server flagged the family", () => {
+    expect(atRiskTitle(family())).toBeNull();
+    expect(atRiskTitle(family({ at_risk: false, at_risk_reasons: ["attendance"] }))).toBeNull();
+  });
+
+  it("spells out every reason the server gave", () => {
+    expect(atRiskTitle(family({ at_risk: true, at_risk_reasons: ["attendance", "payment"] }))).toBe(
+      "At risk: a child has stopped attending; a card failed or an invoice is overdue",
+    );
+    expect(atRiskTitle(family({ at_risk: true, at_risk_reasons: [] }))).toBe("At risk");
   });
 });

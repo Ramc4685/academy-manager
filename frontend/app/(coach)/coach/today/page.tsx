@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
-import { getAdminAiStatus } from "@/lib/api/admin";
+import { fetchAdminAiStatus } from "@/lib/api/admin";
 import { getCoachToday, listCoachPendingNarratives, type CoachSession } from "@/lib/api/coach";
 import { AI_STATUS_KEY } from "@/lib/coach/progress-narrative";
 import {
@@ -64,7 +64,7 @@ export default function CoachTodayPage() {
   // B4: AI notes waiting for this coach's approval before tonight's email.
   const aiStatus = useQuery({
     queryKey: AI_STATUS_KEY,
-    queryFn: getAdminAiStatus,
+    queryFn: fetchAdminAiStatus,
     retry: false,
     staleTime: 5 * 60 * 1000,
   });

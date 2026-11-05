@@ -27,6 +27,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.academy_links import academy_frontend_base_url_lookup
 from backend.v2.contexts.communications.application.ports import (
     EmailSendPort,
     ResolvedRecipient,
@@ -35,8 +36,14 @@ from backend.v2.contexts.communications.domain.models import AcademyAudience
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
 )
+from backend.v2.contexts.crm.infrastructure.family_index_read_model import (
+    MongoFamilyIndexReadModel,
+)
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.observability.owner_daily_brief import (
+    BriefFamily,
+    FamilyFacts,
+    FamilyFactsSource,
     collect_owner_daily_brief,
     render_owner_daily_brief,
 )
@@ -87,14 +94,35 @@ async def resolve_owner_brief_recipients(
     return recipients
 
 
+def family_facts_source(index: MongoFamilyIndexReadModel) -> FamilyFactsSource:
+    """The brief's "three things" read the People CRM family index: the same
+    per-child lifecycle the Families page shows and the same family names."""
+
+    async def facts(academy_id: str) -> FamilyFacts:
+        built = await index.build(academy_id)
+        names = {f.family_id: f.parent_name or f.email or f.family_id for f in built.families}
+        at_risk = tuple(
+            BriefFamily(family_id=f.family_id, name=names[f.family_id])
+            for f in built.families
+            if any(child.lifecycle == "at_risk" for child in f.children)
+        )
+        return FamilyFacts(
+            family_by_alias=built.family_by_alias, name_by_family=names, at_risk=at_risk
+        )
+
+    return facts
+
+
 async def send_owner_daily_briefs(
     db: AsyncIOMotorDatabase[Any],
     *,
     sender: EmailSendPort,
+    family_index: MongoFamilyIndexReadModel,
     academy_ids: Iterable[str],
     house_academy_id: str | None,
     override_email: str | None,
     now: datetime,
+    frontend_url: str | None = None,
 ) -> OwnerBriefRunSummary:
     """Collect, address and send one brief per academy.
 
@@ -102,6 +130,8 @@ async def send_owner_daily_briefs(
     academy's local now, Settings Phase 4): the subject's date label is taken
     from it verbatim.
     """
+    family_facts = family_facts_source(family_index)
+    base_url_for = academy_frontend_base_url_lookup(db, frontend_url=frontend_url)
     academies = sent = send_failed = skipped = failed = 0
     for academy_id in academy_ids:
         academies += 1
@@ -117,7 +147,13 @@ async def send_owner_daily_briefs(
                     skipped += 1
                     log.info("owner_brief_skipped_no_recipient academy_id=%s", academy_id)
                     continue
-                brief = await collect_owner_daily_brief(db, academy_id=academy_id, now=now)
+                brief = await collect_owner_daily_brief(
+                    db,
+                    academy_id=academy_id,
+                    family_facts=family_facts,
+                    now=now,
+                    base_url=await base_url_for(academy_id),
+                )
                 subject, body = render_owner_daily_brief(brief)
                 for recipient in recipients:
                     outcome = await sender.send(recipient=recipient, subject=subject, body=body)

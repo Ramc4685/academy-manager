@@ -20,6 +20,7 @@ import { effectiveMoneyView, familyMoneyDisplay, serverMoneyView } from "@/lib/f
 import { AccountDeletionBanner } from "@/components/admin/account-deletions";
 import { FamilyOwesFlag } from "@/components/admin/family-money";
 import { ViewingAsToggle, useViewingAs } from "@/components/admin/viewing-as";
+import { atRiskTitle } from "@/lib/admin/family-index-view";
 import { lifecycleLabel, lifecycleVariant } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -127,6 +128,11 @@ export default function FamilyRecordPage() {
           {family && (
             <span data-testid="family-record-stage">
               <Chip variant={lifecycleVariant(family.stage)} label={lifecycleLabel(family.stage)} />
+            </span>
+          )}
+          {family && atRiskTitle(family) && (
+            <span title={atRiskTitle(family) ?? undefined} data-testid="family-record-at-risk">
+              <Chip variant="approval" label="AT RISK" />
             </span>
           )}
           {family && moneyView === "flag" && (
