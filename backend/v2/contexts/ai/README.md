@@ -56,3 +56,20 @@ it is set by hand until a Growth-tier screen exists.
 Whether an academy may use AI at all is `has_feature(academy_id, "ai")` in
 `contexts/platform/billing` (see that context's README). This context does
 not read plans.
+
+## B6: win-back wording and text-only technique observations (paid)
+
+Two features behind `AiEntitlement.has_ai()` (`has_feature(academy, "ai")`),
+each in order: entitlement (403 `Ai.NotEntitled`) -> `assert_under_cap` (429)
+-> `complete` -> `record_ai_call.execute` -> strict JSON parse (502 on failure).
+
+| | `win_back_note` | `technique_observation` |
+|---|---|---|
+| Prompt version | `win-back-note-v1` | `technique-observation-v1` |
+| Use case | `draft_win_back_note.py` (`DraftWinBackNote`, `PersonaliseWinBackParagraph`) | `draft_technique_observation.py` (`DraftTechniqueObservation`, `DraftTechniqueObservationForStudent`) |
+| The model sees | child first name, milestone days (30/60/90), level name, up to 3 `{skill_name, when: YYYY-MM}` wins, academy name | child first name, the coach's typed observation (<= 500 chars, quoted as untrusted), the current level's criteria `{criterion_id, skill_id, skill_name, description}` (<= 40) |
+| Output | `{paragraph}` <= 80 words, names the child, no digits but the milestone | `{criterion_id, skill_id, parent_sentence, coach_summary}`; the criterion must be a candidate, the sentence has no digits |
+| Human approval | the owner's standing approval: `ai.win_back_personalised` on the academy document (owner-only `GET/PUT /admin/ai/win-back-personalised`, Settings -> Notifications), `ai.win_back_personalised_by` is the `approver` | the coach saving the prefilled note through the existing `POST /coach/students/{id}/skill-notes`; the draft route (`POST .../technique-observation-draft`) stores only the `ai_calls` row |
+| Composition | `composition/ai_win_back.py`, hung on `WinBackNotificationAdapter.personaliser`; any AI error logs a WARNING and the templated paragraph goes out | `composition/ai_technique.py` at `app.state.ai_technique` |
+
+Text only: no audio, video or file upload anywhere in this slice (BIPA).
