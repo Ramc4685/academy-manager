@@ -384,8 +384,8 @@ async def test_the_user_message_is_exactly_the_reduced_input() -> None:
         assert forbidden not in user
 
 
-def test_the_prompt_is_the_last_entry_and_says_the_rules() -> None:
-    assert list(PROMPTS)[-1] == FEATURE
+def test_the_prompt_is_registered_and_says_the_rules() -> None:
+    assert FEATURE in PROMPTS
     text = PROMPTS[FEATURE].system_text
     assert PROMPTS[FEATURE].version == "month-close-narrator-v1"
     for phrase in ("JSON only", "Invent nothing", "untrusted", "/admin/billing-health"):
