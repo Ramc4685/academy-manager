@@ -379,6 +379,30 @@ async def test_create_tenant_assigns_an_invoice_prefix_from_the_slug() -> None:
     assert assigner.calls == [(tenant.academy_id, "north-shore")]
 
 
+class _FeeAssigner:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def execute(self, *, academy_id: str, actor_id: str) -> int:
+        self.calls.append((academy_id, actor_id))
+        return 100
+
+
+@pytest.mark.asyncio
+async def test_create_tenant_starts_the_academy_on_the_default_processing_markup() -> None:
+    assigner = _FeeAssigner()
+    service = TenantLifecycleService(
+        tenants=FakeTenantRepository(),
+        id_factory=lambda prefix: f"{prefix}001",
+        clock=_clock,
+        default_application_fee_assigner=assigner,
+    )
+
+    tenant = await service.create_tenant(_create_command())
+
+    assert assigner.calls == [(tenant.academy_id, "platform-admin")]
+
+
 @pytest.mark.asyncio
 async def test_get_tenant_derives_referral_code_from_slug_once_and_keeps_it() -> None:
     repo = FakeTenantRepository()

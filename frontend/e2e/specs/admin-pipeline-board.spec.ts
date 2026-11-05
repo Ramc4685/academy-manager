@@ -85,6 +85,8 @@ async function setup(page: Page) {
     { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "owner" },
   ]);
   await stubAcademy(page, ACADEMY_A);
+  // The card asks whether AI is on (B1's route); off keeps the Draft reply button hidden.
+  await page.route("**/api/v2/admin/ai/status", (route) => fulfillJson(route, { enabled: false }));
   await page.route("**/api/v2/admin/messages/**", (route) => fulfillJson(route, { messages: [] }));
   await page.route("**/api/v2/admin/inbox/counts", (route) =>
     fulfillJson(route, { counts: {}, total: 0 }),

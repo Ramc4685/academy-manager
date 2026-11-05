@@ -9,15 +9,40 @@
  * what a row becomes: it shows the backend's plan and sends the batch id back.
  * A commit the backend refuses because the data changed is re-checked with
  * the same file, never retried blind.
+ *
+ * Phase 2 slice B2: a file whose header is not the five import columns can
+ * be mapped with the AI copilot (`lib/api/admin-ai-import.ts`). The model only
+ * proposes the mapping; the admin edits it, the CSV is rewritten here in the
+ * browser (`lib/admin/import-column-mapping.ts`) and then goes through the
+ * same check and import steps as any other file.
  */
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useMutation } from "@tanstack/react-query";
-import { Download, Upload } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Download, Sparkles, Upload } from "lucide-react";
 
 import {
+  getAiStatus,
+  mapColumnsErrorMessage,
+  mapImportColumns,
+  type ColumnMappingDraftRow,
+  type MapColumnsResponse,
+} from "@/lib/api/admin-ai-import";
+import {
+  applyColumnMapping,
+  checkImportHeader,
+  choicesFromDraft,
+  mappingFromChoices,
+  readHeaders,
+  sourceOrder,
+  swapSources,
+  type HeaderCheck,
+  type TargetChoice,
+} from "@/lib/admin/import-column-mapping";
+import {
+  IMPORT_COLUMNS,
   checkImportFile,
   commitFamilyImport,
   commitResultLine,
@@ -32,6 +57,7 @@ import {
   type ImportCommitResult,
   type ImportRow,
 } from "@/lib/api/admin-family-import";
+import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -57,6 +83,11 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
   const isNativeApp = useIsNativeApp();
   const [file, setFile] = useState<ChosenFile | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [headerIssue, setHeaderIssue] = useState<Exclude<HeaderCheck, { ok: true }> | null>(null);
+  const [draft, setDraft] = useState<MapColumnsResponse | null>(null);
+  const [choices, setChoices] = useState<Record<string, TargetChoice>>({});
+  // Headers in the order two sources join; the draft's order, not the file's.
+  const [order, setOrder] = useState<string[]>([]);
   const [batch, setBatch] = useState<ImportBatch | null>(null);
   const [result, setResult] = useState<ImportCommitResult | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -89,6 +120,27 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
     },
   });
 
+  // Slice B1's endpoint. Not there yet, or AI off: the button stays hidden.
+  const aiStatus = useQuery({
+    queryKey: queryKeys.admin.aiStatus(),
+    queryFn: getAiStatus,
+    retry: false,
+    staleTime: 5 * 60_000,
+    enabled: open,
+  });
+  const aiAvailable = aiStatus.data?.enabled === true;
+
+  const mapColumns = useMutation({
+    mutationFn: (chosen: ChosenFile) =>
+      mapImportColumns({ csv: chosen.text, filename: chosen.name }),
+    onSuccess: (next, chosen) => {
+      const fileHeaders = readHeaders(chosen.text);
+      setDraft(next);
+      setChoices(choicesFromDraft(fileHeaders, next));
+      setOrder(sourceOrder(fileHeaders, next));
+    },
+  });
+
   const commit = useMutation({
     mutationFn: (importBatchId: string) => commitFamilyImport(importBatchId),
     onSuccess: (done) => {
@@ -108,6 +160,10 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
   const reset = () => {
     setFile(null);
     setFileError(null);
+    setHeaderIssue(null);
+    setDraft(null);
+    setChoices({});
+    mapColumns.reset();
     setBatch(null);
     setResult(null);
     setCommitError(null);
@@ -128,6 +184,9 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
     setBatch(null);
     setResult(null);
     setCommitError(null);
+    setHeaderIssue(null);
+    setDraft(null);
+    mapColumns.reset();
     preview.reset();
     if (!chosen) {
       setFile(null);
@@ -142,7 +201,10 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
     }
     setFileError(null);
     try {
-      setFile({ name: chosen.name, text: await chosen.text() });
+      const text = await chosen.text();
+      setFile({ name: chosen.name, text });
+      const header = checkImportHeader(text);
+      setHeaderIssue(header.ok ? null : header);
     } catch {
       setFile(null);
       setFileError("This file could not be read. Save it again as a CSV and retry.");
@@ -165,6 +227,19 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
     () => (batch ? (onlyProblems ? batch.rows.filter((r) => r.status === "error") : batch.rows) : []),
     [batch, onlyProblems],
   );
+
+  const headers = useMemo(() => (file ? readHeaders(file.text) : []), [file]);
+
+  /** Rewrite the CSV in the browser and run the existing check on the result. */
+  const useMapping = () => {
+    if (!file) return;
+    const rewritten = { name: file.name, text: applyColumnMapping(file.text, mappingFromChoices(order, choices)) };
+    setFile(rewritten);
+    setHeaderIssue(null);
+    setDraft(null);
+    mapColumns.reset();
+    preview.mutate(rewritten);
+  };
 
   if (!open) {
     return (
@@ -273,7 +348,53 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
             </p>
           ) : null}
 
-          {file && !batch ? (
+          {file && headerIssue && !batch ? (
+            <div className="flex flex-col gap-3" data-testid="admin-families-import-header-issue">
+              <p role="alert" className="text-sm text-status-red-800">
+                {headerIssue.message}
+                {headerIssue.duplicate
+                  ? ""
+                  : ` Rename the columns in your spreadsheet${aiAvailable ? ", or let the AI helper propose a mapping" : ""}.`}
+              </p>
+              {aiAvailable && !draft && !headerIssue.duplicate ? (
+                <div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    data-testid="admin-families-import-map-ai"
+                    icon={<Sparkles className="size-4" aria-hidden="true" />}
+                    disabled={mapColumns.isPending}
+                    onClick={() => mapColumns.mutate(file)}
+                  >
+                    {mapColumns.isPending ? "Mapping…" : "Map columns with AI"}
+                  </Button>
+                </div>
+              ) : null}
+              {mapColumns.isError ? (
+                <ErrorNotice
+                  testId="admin-families-import-map-ai-error"
+                  message={mapColumnsErrorMessage(mapColumns.error)}
+                  onRetry={() => mapColumns.mutate(file)}
+                  retrying={mapColumns.isPending}
+                />
+              ) : null}
+              {draft ? (
+                <MappingTable
+                  headers={headers}
+                  draft={draft}
+                  choices={choices}
+                  order={order}
+                  onChoose={(header, target) => setChoices((prev) => ({ ...prev, [header]: target }))}
+                  onSwap={(a, b) => setOrder((prev) => swapSources(prev, a, b))}
+                  onUse={useMapping}
+                  pending={preview.isPending}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {file && !headerIssue && !batch ? (
             <div>
               <Button
                 type="button"
@@ -373,6 +494,123 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
         />
       ) : null}
     </Card>
+  );
+}
+
+const TARGET_LABEL: Record<TargetChoice, string> = {
+  ignore: "Ignore",
+  parent_name: "parent_name",
+  parent_email: "parent_email",
+  parent_phone: "parent_phone",
+  student_name: "student_name",
+  student_date_of_birth: "student_date_of_birth",
+};
+
+function MappingTable({
+  headers,
+  draft,
+  choices,
+  order,
+  onChoose,
+  onSwap,
+  onUse,
+  pending,
+}: {
+  headers: string[];
+  draft: MapColumnsResponse;
+  choices: Record<string, TargetChoice>;
+  order: string[];
+  onChoose: (header: string, target: TargetChoice) => void;
+  onSwap: (a: string, b: string) => void;
+  onUse: () => void;
+  pending: boolean;
+}) {
+  const chosen = new Set(Object.values(choices));
+  const ready = chosen.has("parent_name") && chosen.has("student_name");
+  const mapping = mappingFromChoices(order, choices);
+  /** The two sources joining into this header's target, when it is the first of them. */
+  const pairLedBy = (header: string): [string, string] | null => {
+    const hit = mapping.find((m) => m.target === choices[header]);
+    return hit && hit.source_headers.length === 2 && hit.source_headers[0] === header
+      ? [hit.source_headers[0], hit.source_headers[1]]
+      : null;
+  };
+  const byHeader = (header: string): ColumnMappingDraftRow | undefined =>
+    draft.mappings.find((m) => m.source_headers.includes(header));
+  return (
+    <div className="flex flex-col gap-3" data-testid="admin-families-import-mapping">
+      <p className="text-sm text-rally-muted" data-testid="admin-families-import-mapping-mode">
+        {draft.sample_mode === "masked"
+          ? "Only the column headers and masked samples were sent to the model (letters became a, digits became 9)."
+          : "Real values from the first 5 rows were sent to the model, as this academy's settings allow."}
+        {draft.notes ? ` ${draft.notes}` : ""}
+      </p>
+      <div className="overflow-auto rounded-md border border-rally-line">
+        <table className="w-full text-left text-sm">
+          <caption className="sr-only">One row per column in the file</caption>
+          <thead className="bg-white">
+            <tr className="border-b border-neutral-200">
+              <Th>Column in file</Th>
+              <Th>Import as</Th>
+              <Th>Confidence</Th>
+              <Th>Note</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {headers.map((header) => {
+              const hit = byHeader(header);
+              const pair = pairLedBy(header);
+              return (
+                <tr key={header} className="border-b border-neutral-100 align-top last:border-0">
+                  <td className="px-3 py-2 text-rally-base">{header}</td>
+                  <td className="px-3 py-2">
+                    <select
+                      aria-label={`Import ${header} as`}
+                      value={choices[header] ?? "ignore"}
+                      onChange={(event) => onChoose(header, event.target.value as TargetChoice)}
+                      className="rounded-md border border-rally-line bg-white px-2 py-1 text-sm"
+                    >
+                      {(["ignore", ...IMPORT_COLUMNS] as TargetChoice[]).map((t) => (
+                        <option key={t} value={t}>
+                          {TARGET_LABEL[t]}
+                        </option>
+                      ))}
+                    </select>
+                    {pair ? (
+                      <button
+                        type="button"
+                        data-testid="admin-families-import-swap-order"
+                        aria-label={`Swap order: ${pair[0]} then ${pair[1]}`}
+                        onClick={() => onSwap(pair[0], pair[1])}
+                        className="ml-2 text-xs text-rally-muted underline"
+                      >
+                        Joined as {pair[0]} {pair[1]} — swap order
+                      </button>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-rally-muted">{hit?.confidence ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs text-rally-muted">{hit?.note || "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          size="sm"
+          data-testid="admin-families-import-use-mapping"
+          disabled={!ready || pending}
+          onClick={onUse}
+        >
+          {pending ? "Checking…" : "Use this mapping"}
+        </Button>
+        {!ready ? (
+          <p className="text-sm text-rally-muted">Choose a column for parent_name and student_name.</p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

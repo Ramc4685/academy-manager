@@ -2344,6 +2344,23 @@ export function updateBillingRules(
   });
 }
 
+/**
+ * The CourtMastr processing markup this academy pays on Stripe-collected
+ * payments, with the agreement text and its acceptance (Phase 2 A1).
+ * Read-only: only a platform admin can change it.
+ */
+export interface AdminPlatformFeeView {
+  application_fee_bps: number;
+  agreement_version: string | null;
+  agreement_text: string;
+  accepted_at: string | null;
+  accepted_by: string | null;
+}
+
+export function getAdminPlatformFee(): Promise<AdminPlatformFeeView> {
+  return apiFetch<AdminPlatformFeeView>("/admin/billing/platform-fee", { method: "GET" });
+}
+
 export function getPlatformChargeFallback(): Promise<PlatformChargeFallbackView> {
   return apiFetch<PlatformChargeFallbackView>("/admin/billing/settings/platform-fallback", {
     method: "GET",
@@ -3770,6 +3787,17 @@ export interface AdminMonthCloseView {
     outstanding_cents: number;
     /** Null, never 0, when nothing was billed — the page renders "—". */
     collection_rate: number | null;
+    /** The Stripe-paid share of `collected_cents` (Phase 2 A1). */
+    stripe_collected_cents: number;
+    /**
+     * The CourtMastr processing markup: current bps and the ESTIMATED fee on
+     * the Stripe share. Both null, never 0, when the rate could not be read
+     * (`platform_fee_unavailable` in `warnings`).
+     */
+    platform_fee_bps: number | null;
+    platform_fee_cents: number | null;
+    /** True when rows without a recorded fee were estimated from the current rate. */
+    platform_fee_estimated: boolean;
   };
   autopay_run: {
     charge_on: string | null;
@@ -4020,6 +4048,34 @@ export function startStripeConnect(): Promise<AdminGatewayConnectLinkView> {
 
 export function disconnectStripe(): Promise<void> {
   return apiFetch<void>("/admin/academy/gateway/stripe/connect", { method: "DELETE" });
+}
+
+export interface AdminPlanSummary {
+  code: string;
+  display_name: string;
+  monthly_price_cents: number;
+  features: string[];
+}
+
+/** What the academy pays CourtMastr (owner only). `plan` null = free core operations. */
+export interface AdminPlanOverview {
+  plan: AdminPlanSummary | null;
+  subscription: {
+    billing_status: string;
+    cancel_at_period_end: boolean;
+    current_period_end: string | null;
+  } | null;
+  growth: AdminPlanSummary | null;
+  checkout_available: boolean;
+}
+
+export function getAdminPlan(): Promise<AdminPlanOverview> {
+  return apiFetch<AdminPlanOverview>("/admin/billing/plan", { method: "GET" });
+}
+
+/** Owner only. Stripe Billing Checkout for the Growth plan; redirect to `url`. */
+export function startGrowthCheckout(): Promise<{ url: string }> {
+  return apiFetch<{ url: string }>("/admin/billing/plan/checkout", { method: "POST" });
 }
 
 export interface CreateAdminUserRequest {
@@ -4353,8 +4409,8 @@ export function updateAdminClassPublicFields(
   );
 }
 
-/** `GET /admin/ai/status` (B1): whether this academy may call the model. Read `enabled` only. */
-export function getAdminAiStatus(): Promise<{ enabled: boolean }> {
+/** B1: whether AI drafting is on for this academy (V2_AI_ENABLED + key). */
+export function fetchAdminAiStatus(): Promise<{ enabled: boolean }> {
   return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
 }
 

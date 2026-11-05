@@ -15,6 +15,7 @@ import type { Route } from "next";
 import type {
   FamilyIndexChild,
   FamilyIndexParams,
+  AtRiskReason,
   FamilyIndexRow,
   FamilyIndexSort,
   FamilyScope,
@@ -311,6 +312,18 @@ export function studentHref(studentId: string): Route {
 
 export function familyDisplayName(family: FamilyIndexRow): string {
   return family.parent_name?.trim() || family.email?.trim() || "Unnamed family";
+}
+
+const AT_RISK_REASON_COPY: Record<AtRiskReason, string> = {
+  attendance: "a child has stopped attending",
+  payment: "a card failed or an invoice is overdue",
+};
+
+/** The "At risk" chip's tooltip, or null when the server set no flag. */
+export function atRiskTitle(family: Pick<FamilyIndexRow, "at_risk" | "at_risk_reasons">): string | null {
+  if (!family.at_risk) return null;
+  const reasons = (family.at_risk_reasons ?? []).map((r) => AT_RISK_REASON_COPY[r] ?? r);
+  return reasons.length ? `At risk: ${reasons.join("; ")}` : "At risk";
 }
 
 /** Distinct classes across a family's children, in first-seen order. */

@@ -77,6 +77,8 @@ export const queryKeys = {
     // People CRM Pipeline board (L3b). Under `families()` so a families-wide
     // invalidation refreshes it too.
     pipelineBoard: () => ["admin", "families", "pipeline"] as const,
+    // AI status (B1): hides the paid AI buttons while AI is off.
+    aiStatus: () => ["admin", "ai", "status"] as const,
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
     familyRecord: (familyId: string) =>
@@ -138,14 +140,18 @@ export const queryKeys = {
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
+    // Shared with slice B1's AI status card: both read the same key.
+    aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,
     publicPage: () => ["admin", "academy", "public-page"] as const,
     programs: () => ["admin", "programs"] as const,
     // Under the programs() prefix so a program change refetches it too.
     programsWithArchived: () => ["admin", "programs", "with-archived"] as const,
     classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
+    plan: () => ["admin", "billing", "plan"] as const,
     paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
+    platformFee: () => ["admin", "billing", "platform-fee"] as const,
     // sessionTypes() is the invalidation prefix; sessionTypesList() is the
     // per-view cache key, since the archived and active lists differ.
     sessionTypes: () => ["admin", "session-types"] as const,

@@ -90,6 +90,9 @@ class PipelineCard:
     override_set_at: datetime | None = None
     #: Columns a staff move may take this card to now (empty = read-only).
     move_targets: tuple[PipelineColumn, ...] = ()
+    #: Contact cards: a reply can be drafted and emailed (B3).
+    has_email: bool = False
+    has_message: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,8 @@ def contact_card(contact: CrmContact, *, now: datetime) -> PipelineCard:
         override_set_by=override.set_by if override and not enrolled else None,
         override_set_at=_aware(override.set_at) if override and not enrolled else None,
         move_targets=move_targets(column, enrolled=enrolled),
+        has_email=bool(contact.email),
+        has_message=bool(contact.message),
     )
 
 
