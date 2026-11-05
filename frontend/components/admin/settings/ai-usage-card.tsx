@@ -15,7 +15,7 @@ import { Overline } from "@/components/ds/typography";
  * never a hard stop; Growth shows the abuse ceiling.
  */
 export function AiUsageMeter({ usage }: { usage: AiUsage }) {
-  // Billing rules is an owner-only panel; a non-owner would land on OwnerOnlyPanel.
+  // Integrations (where the Plan card lives) is an owner-only panel; a non-owner would land on OwnerOnlyPanel.
   const isOwner = useIsOwner();
   return (
     <>
@@ -26,7 +26,7 @@ export function AiUsageMeter({ usage }: { usage: AiUsage }) {
       {usage.upgrade_suggested && (
         <p className="mt-2 text-sm text-rally-subtle" data-testid="ai-usage-upgrade">
           {isOwner ? (
-            <Link href="/admin/settings?panel=billing-rules" className="font-medium text-rally-cobalt underline">
+            <Link href="/admin/settings?panel=integrations" className="font-medium text-rally-cobalt underline">
               Upgrade to Growth for unlimited drafts
             </Link>
           ) : (

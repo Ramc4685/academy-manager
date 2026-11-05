@@ -33,13 +33,13 @@ describe("AiUsageCard (Phase 2 slice A3)", () => {
     const out = html({ used: 20, cap: 20, tier: "free", upgrade_suggested: true, month: "2026-11" });
     expect(out).toContain("You have used 20 of 20 AI drafts this month");
     expect(out).toContain("Upgrade to Growth for unlimited drafts");
-    expect(out).toContain('href="/admin/settings?panel=billing-rules"');
+    expect(out).toContain('href="/admin/settings?panel=integrations"');
   });
 
   it("tells a non-owner admin to ask the owner instead of linking the owner-only panel", () => {
     const out = html({ used: 20, cap: 20, tier: "free", upgrade_suggested: true, month: "2026-11" }, false);
     expect(out).toContain("Ask the academy owner to upgrade");
-    expect(out).not.toContain("panel=billing-rules");
+    expect(out).not.toContain("panel=integrations");
   });
 
   it("labels Growth and never prompts", () => {
