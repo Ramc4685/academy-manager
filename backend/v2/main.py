@@ -895,6 +895,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.platform_billing_identity = compose_platform_billing_identity(db)
 
+    # Growth tier self-serve checkout (AI strategy Phase 2, A2) — admin BFF.
+    from backend.v2.composition.platform_plan_checkout import compose_admin_plan
+
+    app.state.admin_plan = compose_admin_plan(db, stripe_gw, settings)
+
     # Tenant data export + purge dry-run (roadmap L9d) — platform BFF only.
     from backend.v2.composition.tenant_data_offboarding import (
         compose_tenant_data_offboarding,

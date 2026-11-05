@@ -512,6 +512,53 @@ async def test_mongo_repositories_persist_platform_plans_and_tenant_subscription
 
 
 @pytest.mark.asyncio
+async def test_mongo_claim_pending_checkout_is_compare_and_set() -> None:
+    client = AsyncMongoMockClient()
+    db = client["academy_manager_test"]
+    await db["platform_tenant_subscriptions"].create_index("academy_id", unique=True)
+    subscriptions = MongoTenantSubscriptionRepository(db)
+    now = _clock()
+
+    def row(token: str) -> TenantSubscription:
+        return TenantSubscription(
+            subscription_id="platform-sub-1",
+            academy_id="academy-1",
+            plan_id="plan_growth",
+            billing_status="incomplete",
+            pending_checkout_token=token,
+            pending_checkout_created_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+
+    # No row yet: the claim inserts it.
+    assert await subscriptions.claim_pending_checkout(row("pco_a"), expected_token=None, now=now)
+    stored = await subscriptions.get_for_academy("academy-1")
+    assert stored is not None and stored.pending_checkout_token == "pco_a"
+    assert stored.billing_status == "incomplete"
+    # A concurrent request that also read "no row" loses on the unique index.
+    assert not await subscriptions.claim_pending_checkout(
+        row("pco_b"), expected_token=None, now=now
+    )
+    # A stale token loses; the current one wins and only the pending fields move.
+    assert not await subscriptions.claim_pending_checkout(
+        row("pco_c"), expected_token="pco_stale", now=now
+    )
+    later = now + timedelta(minutes=1)
+    assert await subscriptions.claim_pending_checkout(
+        row("pco_c").model_copy(update={"billing_status": "active"}),
+        expected_token="pco_a",
+        now=later,
+    )
+    stored = await subscriptions.get_for_academy("academy-1")
+    assert stored is not None
+    assert stored.pending_checkout_token == "pco_c"
+    assert stored.billing_status == "incomplete"
+    assert stored.updated_at == later
+    assert await db["platform_tenant_subscriptions"].count_documents({}) == 1
+
+
+@pytest.mark.asyncio
 async def test_composed_start_trial_writes_platform_audit_events_collection() -> None:
     client = AsyncMongoMockClient()
     db = client["academy_manager_test"]
