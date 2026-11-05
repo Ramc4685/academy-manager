@@ -75,11 +75,28 @@ export function readHeaders(csvText: string): string[] {
 
 export type HeaderCheck =
   | { ok: true }
-  | { ok: false; unknown: string[]; missing: string[]; message: string };
+  | { ok: false; unknown: string[]; missing: string[]; duplicate?: string; message: string };
+
+/** The first header that repeats an earlier one, case and spaces aside; mirrors the backend. */
+export function duplicateHeader(headers: string[]): string | undefined {
+  const seen = new Set<string>();
+  for (const h of headers) {
+    const key = h.toLowerCase().replace(/\s+/g, "");
+    if (seen.has(key)) return h;
+    seen.add(key);
+  }
+  return undefined;
+}
 
 /** What the backend's strict header check would say, before uploading. */
 export function checkImportHeader(csvText: string): HeaderCheck {
-  const names = readHeaders(csvText).map((h) => h.toLowerCase());
+  const headers = readHeaders(csvText);
+  const duplicate = duplicateHeader(headers);
+  if (duplicate !== undefined) {
+    const message = `The file has two columns named ${duplicate}; rename one and try again.`;
+    return { ok: false, unknown: [], missing: [], duplicate, message };
+  }
+  const names = headers.map((h) => h.toLowerCase());
   const known = new Set<string>(IMPORT_COLUMNS);
   const unknown = names.filter((n) => !known.has(n));
   const missing = ["parent_name", "student_name"].filter((n) => !names.includes(n));
@@ -133,13 +150,28 @@ export function choicesFromDraft(
   return choices;
 }
 
-/** Back to a mapping: each target's sources in file order (two join with a space). */
+/**
+ * The headers in the order sources join: the draft's own order first (so
+ * ["First","Last"] stays "Jane Doe" whatever the file order), then the rest in
+ * file order. Pass this, not the file headers, to `mappingFromChoices`.
+ */
+export function sourceOrder(headers: string[], draft: Pick<MapColumnsResponse, "mappings">): string[] {
+  const first = draft.mappings.flatMap((m) => m.source_headers).filter((h) => headers.includes(h));
+  return [...new Set([...first, ...headers])];
+}
+
+/** The order with two headers' positions exchanged. */
+export function swapSources(order: string[], a: string, b: string): string[] {
+  return order.map((h) => (h === a ? b : h === b ? a : h));
+}
+
+/** Back to a mapping: each target's sources in `order` (two join with a space). */
 export function mappingFromChoices(
-  headers: string[],
+  order: string[],
   choices: Record<string, TargetChoice>
 ): ColumnMapping[] {
   return IMPORT_COLUMNS.flatMap((target) => {
-    const sources = headers.filter((h) => choices[h] === target);
+    const sources = order.filter((h) => choices[h] === target);
     return sources.length > 0 ? [{ target, source_headers: sources }] : [];
   });
 }

@@ -9,6 +9,8 @@ import {
   mappingFromChoices,
   parseCsv,
   readHeaders,
+  sourceOrder,
+  swapSources,
 } from "./import-column-mapping";
 
 describe("parseCsv", () => {
@@ -23,6 +25,15 @@ describe("parseCsv", () => {
 describe("checkImportHeader", () => {
   it("accepts the five import columns in any case and order", () => {
     expect(checkImportHeader("Student_Name,parent_name,parent_email\n")).toEqual({ ok: true });
+  });
+
+  it("refuses two columns with the same name, case and spaces aside", () => {
+    const check = checkImportHeader("parent name,Parent Name,student_name\n");
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.duplicate).toBe("Parent Name");
+      expect(check.message).toBe("The file has two columns named Parent Name; rename one and try again.");
+    }
   });
 
   it("names unknown and missing columns", () => {
@@ -103,5 +114,24 @@ describe("choices round trip", () => {
       { target: "parent_phone", source_headers: ["Notes"] },
       { target: "student_name", source_headers: ["Kid"] },
     ]);
+  });
+
+  it("keeps the draft's source order through the choices and swaps it on request", () => {
+    const csv = "Last,First,Kid\r\nDoe,Jane,Sam\r\n";
+    const headers = readHeaders(csv);
+    const draft = {
+      mappings: [
+        { target: "parent_name" as const, source_headers: ["First", "Last"], confidence: "high" as const, note: "" },
+        { target: "student_name" as const, source_headers: ["Kid"], confidence: "high" as const, note: "" },
+      ],
+    };
+    const choices = choicesFromDraft(headers, draft);
+    const order = sourceOrder(headers, draft);
+    expect(order).toEqual(["First", "Last", "Kid"]);
+    const mapping = mappingFromChoices(order, choices);
+    expect(mapping[0]).toEqual({ target: "parent_name", source_headers: ["First", "Last"] });
+    expect(applyColumnMapping(csv, mapping)).toBe("parent_name,student_name\r\nJane Doe,Sam\r\n");
+    const swapped = mappingFromChoices(swapSources(order, "First", "Last"), choices);
+    expect(applyColumnMapping(csv, swapped)).toBe("parent_name,student_name\r\nDoe Jane,Sam\r\n");
   });
 });

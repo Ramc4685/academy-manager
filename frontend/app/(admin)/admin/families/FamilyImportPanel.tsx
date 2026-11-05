@@ -36,6 +36,9 @@ import {
   choicesFromDraft,
   mappingFromChoices,
   readHeaders,
+  sourceOrder,
+  swapSources,
+  type HeaderCheck,
   type TargetChoice,
 } from "@/lib/admin/import-column-mapping";
 import {
@@ -80,9 +83,11 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
   const isNativeApp = useIsNativeApp();
   const [file, setFile] = useState<ChosenFile | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
-  const [headerIssue, setHeaderIssue] = useState<string | null>(null);
+  const [headerIssue, setHeaderIssue] = useState<Exclude<HeaderCheck, { ok: true }> | null>(null);
   const [draft, setDraft] = useState<MapColumnsResponse | null>(null);
   const [choices, setChoices] = useState<Record<string, TargetChoice>>({});
+  // Headers in the order two sources join; the draft's order, not the file's.
+  const [order, setOrder] = useState<string[]>([]);
   const [batch, setBatch] = useState<ImportBatch | null>(null);
   const [result, setResult] = useState<ImportCommitResult | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -129,8 +134,10 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
     mutationFn: (chosen: ChosenFile) =>
       mapImportColumns({ csv: chosen.text, filename: chosen.name }),
     onSuccess: (next, chosen) => {
+      const fileHeaders = readHeaders(chosen.text);
       setDraft(next);
-      setChoices(choicesFromDraft(readHeaders(chosen.text), next));
+      setChoices(choicesFromDraft(fileHeaders, next));
+      setOrder(sourceOrder(fileHeaders, next));
     },
   });
 
@@ -197,7 +204,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
       const text = await chosen.text();
       setFile({ name: chosen.name, text });
       const header = checkImportHeader(text);
-      setHeaderIssue(header.ok ? null : header.message);
+      setHeaderIssue(header.ok ? null : header);
     } catch {
       setFile(null);
       setFileError("This file could not be read. Save it again as a CSV and retry.");
@@ -226,7 +233,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
   /** Rewrite the CSV in the browser and run the existing check on the result. */
   const useMapping = () => {
     if (!file) return;
-    const rewritten = { name: file.name, text: applyColumnMapping(file.text, mappingFromChoices(headers, choices)) };
+    const rewritten = { name: file.name, text: applyColumnMapping(file.text, mappingFromChoices(order, choices)) };
     setFile(rewritten);
     setHeaderIssue(null);
     setDraft(null);
@@ -344,10 +351,12 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
           {file && headerIssue && !batch ? (
             <div className="flex flex-col gap-3" data-testid="admin-families-import-header-issue">
               <p role="alert" className="text-sm text-status-red-800">
-                {headerIssue} Rename the columns in your spreadsheet
-                {aiAvailable ? ", or let the AI helper propose a mapping" : ""}.
+                {headerIssue.message}
+                {headerIssue.duplicate
+                  ? ""
+                  : ` Rename the columns in your spreadsheet${aiAvailable ? ", or let the AI helper propose a mapping" : ""}.`}
               </p>
-              {aiAvailable && !draft ? (
+              {aiAvailable && !draft && !headerIssue.duplicate ? (
                 <div>
                   <Button
                     type="button"
@@ -375,7 +384,9 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
                   headers={headers}
                   draft={draft}
                   choices={choices}
+                  order={order}
                   onChoose={(header, target) => setChoices((prev) => ({ ...prev, [header]: target }))}
+                  onSwap={(a, b) => setOrder((prev) => swapSources(prev, a, b))}
                   onUse={useMapping}
                   pending={preview.isPending}
                 />
@@ -499,19 +510,31 @@ function MappingTable({
   headers,
   draft,
   choices,
+  order,
   onChoose,
+  onSwap,
   onUse,
   pending,
 }: {
   headers: string[];
   draft: MapColumnsResponse;
   choices: Record<string, TargetChoice>;
+  order: string[];
   onChoose: (header: string, target: TargetChoice) => void;
+  onSwap: (a: string, b: string) => void;
   onUse: () => void;
   pending: boolean;
 }) {
   const chosen = new Set(Object.values(choices));
   const ready = chosen.has("parent_name") && chosen.has("student_name");
+  const mapping = mappingFromChoices(order, choices);
+  /** The two sources joining into this header's target, when it is the first of them. */
+  const pairLedBy = (header: string): [string, string] | null => {
+    const hit = mapping.find((m) => m.target === choices[header]);
+    return hit && hit.source_headers.length === 2 && hit.source_headers[0] === header
+      ? [hit.source_headers[0], hit.source_headers[1]]
+      : null;
+  };
   const byHeader = (header: string): ColumnMappingDraftRow | undefined =>
     draft.mappings.find((m) => m.source_headers.includes(header));
   return (
@@ -536,6 +559,7 @@ function MappingTable({
           <tbody>
             {headers.map((header) => {
               const hit = byHeader(header);
+              const pair = pairLedBy(header);
               return (
                 <tr key={header} className="border-b border-neutral-100 align-top last:border-0">
                   <td className="px-3 py-2 text-rally-base">{header}</td>
@@ -552,6 +576,17 @@ function MappingTable({
                         </option>
                       ))}
                     </select>
+                    {pair ? (
+                      <button
+                        type="button"
+                        data-testid="admin-families-import-swap-order"
+                        aria-label={`Swap order: ${pair[0]} then ${pair[1]}`}
+                        onClick={() => onSwap(pair[0], pair[1])}
+                        className="ml-2 text-xs text-rally-muted underline"
+                      >
+                        Joined as {pair[0]} {pair[1]} — swap order
+                      </button>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2 text-xs text-rally-muted">{hit?.confidence ?? "—"}</td>
                   <td className="px-3 py-2 text-xs text-rally-muted">{hit?.note || "—"}</td>
