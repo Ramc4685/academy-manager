@@ -17,6 +17,7 @@ from backend.v2.shared.http import register_exception_handlers
 
 STUDENT, OTHER_STUDENT, SESSION, COACH = "stu-1", "stu-2", "sess-1", "coach-1"
 ROUTE = f"/api/v2/coach/students/{STUDENT}/technique-observation-draft"
+STATUS_ROUTE = "/api/v2/coach/ai/status"
 SUGGESTION = {
     "criterion_id": "c-1",
     "skill_id": "sk-grip",
@@ -43,7 +44,9 @@ class AssignedSessions:
         return coach_id == COACH and session_id == SESSION
 
 
-def _client(roles: tuple[str, ...], draft: SpyDraft, user_id: str = COACH) -> TestClient:
+def _client(
+    roles: tuple[str, ...], draft: SpyDraft, user_id: str = COACH, *, enabled: bool = False
+) -> TestClient:
     async def enrollments(student_id: str) -> list[Any]:
         return [SimpleNamespace(session_id=SESSION)] if student_id == STUDENT else []
 
@@ -53,7 +56,7 @@ def _client(roles: tuple[str, ...], draft: SpyDraft, user_id: str = COACH) -> Te
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(coach_router, prefix="/api/v2")
-    app.state.ai_technique = SimpleNamespace(draft_for_student=draft)
+    app.state.ai_technique = SimpleNamespace(draft_for_student=draft, enabled=enabled)
     app.dependency_overrides[get_coach_use_cases] = lambda: use_cases
     app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
         user_id=user_id,
@@ -114,3 +117,11 @@ def test_ai_errors_pass_through_with_their_codes() -> None:
         ROUTE, json={"observation": "flat thumb"}
     )
     assert gated.status_code == 403 and gated.json()["error"]["code"] == "Ai.NotEntitled"
+
+
+def test_coach_only_persona_reads_the_ai_status() -> None:
+    assert _client(("coach",), SpyDraft(), enabled=True).get(STATUS_ROUTE).json() == {
+        "enabled": True
+    }
+    assert _client(("coach",), SpyDraft()).get(STATUS_ROUTE).json() == {"enabled": False}
+    assert _client(("parent",), SpyDraft(), user_id="u-parent").get(STATUS_ROUTE).status_code == 404

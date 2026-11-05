@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getAdminAiStatus } from "@/lib/api/admin";
 import {
   createSkillNote,
   draftTechniqueObservation,
+  getCoachAiStatus,
   listSkillNotes,
   setSkillNoteVisibility,
   type NoteVisibility,
@@ -82,10 +82,11 @@ export function SkillNotesPanel({
     },
   });
 
-  // Hidden unless a model is wired (B1's status route); a failed request hides it too.
+  // Hidden unless a model is wired; the coach-persona read so a coach-only user
+  // sees the box too. A failed request hides it.
   const aiStatus = useQuery({
-    queryKey: ["admin", "ai", "status"],
-    queryFn: getAdminAiStatus,
+    queryKey: queryKeys.coach.aiStatus(),
+    queryFn: getCoachAiStatus,
     enabled: open,
     retry: false,
   });

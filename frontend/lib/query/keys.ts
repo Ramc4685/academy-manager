@@ -8,6 +8,7 @@
 export const queryKeys = {
   coach: {
     all: ["coach"] as const,
+    aiStatus: () => ["coach", "ai", "status"] as const,
     dashboard: () => ["coach", "dashboard"] as const,
     dayHub: (date: string) => ["coach", "day-hub", date] as const,
     today: (date: string) => ["coach", "today", date] as const,

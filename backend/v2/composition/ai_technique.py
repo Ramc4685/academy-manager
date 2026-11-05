@@ -17,6 +17,7 @@ from backend.v2.contexts.ai.application.use_cases.draft_technique_observation im
     TechniqueCandidate,
     TechniqueFacts,
 )
+from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
 from backend.v2.contexts.curriculum.application.use_cases.manage_program import (
     ResolveDefaultActiveProgram,
 )
@@ -83,6 +84,8 @@ class StudentProgressTechniqueCandidates:
 @dataclass(frozen=True)
 class AiTechniqueComposition:
     draft_for_student: DraftTechniqueObservationForStudent
+    #: A model is wired for this deployment; the coach shell hides the draft box otherwise.
+    enabled: bool
 
 
 def compose_ai_technique(db: Any, ai: AiComposition) -> AiTechniqueComposition:
@@ -101,5 +104,6 @@ def compose_ai_technique(db: Any, ai: AiComposition) -> AiTechniqueComposition:
             draft=DraftTechniqueObservation(
                 llm=ai.llm, record_ai_call=ai.record_ai_call, entitlement=ai.entitlement
             ),
-        )
+        ),
+        enabled=not isinstance(ai.llm, DisabledLlmPort),
     )

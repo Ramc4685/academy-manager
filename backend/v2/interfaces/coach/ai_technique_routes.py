@@ -1,8 +1,10 @@
-"""Coach route for the text-only technique observation draft (B6 part 2).
+"""Coach routes for the text-only technique observation draft (B6 part 2).
 
-Same student-coverage guard as the skill-note routes. The draft is returned,
-never stored: the coach approves it by saving it through the existing
-``POST /students/{student_id}/skill-notes``.
+``GET /ai/status`` tells the coach shell whether a model is wired at all (the
+admin status route is a different persona, so a coach-only user cannot read
+it). The draft route has the same student-coverage guard as the skill-note
+routes; the draft is returned, never stored: the coach approves it by saving
+it through the existing ``POST /students/{student_id}/skill-notes``.
 """
 
 from __future__ import annotations
@@ -30,6 +32,14 @@ class TechniqueObservationBody(BaseModel):
 
 def _draft(request: Request) -> _DraftForStudent:
     return request.app.state.ai_technique.draft_for_student  # type: ignore[no-any-return]
+
+
+@router.get("/ai/status")
+async def ai_status(
+    request: Request,
+    _claims: AuthClaims = Depends(require_coach_surface()),
+) -> dict[str, bool]:
+    return {"enabled": bool(request.app.state.ai_technique.enabled)}
 
 
 @router.post("/students/{student_id}/technique-observation-draft")

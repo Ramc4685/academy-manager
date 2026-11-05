@@ -746,6 +746,11 @@ export function getCoachAcademy(): Promise<CoachAcademy> {
   return apiFetch<CoachAcademy>("/coach/academy", { method: "GET" });
 }
 
+/** B6: whether a model is wired for this deployment, readable by a coach-only user. Only `enabled` is read. */
+export function getCoachAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/coach/ai/status", { method: "GET" });
+}
+
 /** B6: text-only technique observation -> a draft the coach saves as a skill note. Stores nothing. */
 export function draftTechniqueObservation(
   studentId: string,
