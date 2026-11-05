@@ -895,6 +895,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.platform_billing_identity = compose_platform_billing_identity(db)
 
+    # Growth tier self-serve checkout (AI strategy Phase 2, A2) — admin BFF.
+    from backend.v2.composition.platform_plan_checkout import compose_admin_plan
+
+    app.state.admin_plan = compose_admin_plan(db, stripe_gw, settings)
+
     # Tenant data export + purge dry-run (roadmap L9d) — platform BFF only.
     from backend.v2.composition.tenant_data_offboarding import (
         compose_tenant_data_offboarding,
@@ -930,6 +935,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.ai import compose_ai
 
     app.state.ai = compose_ai(db, settings, has_feature=app.state.platform_billing.has_feature)
+    # Phase 2 slice B2: the roster-import copilot over app.state.ai.
+    from backend.v2.composition.ai_import import compose_ai_import
+
+    app.state.ai_import = compose_ai_import(db, app.state.ai)
     from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
 
     app.state.parent_evening_wins = compose_send_parent_evening_wins(db)
@@ -944,6 +953,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.trial_nudges import compose_trial_nudges
 
     app.state.trial_nudges = compose_trial_nudges(db, settings)
+    # AI strategy Phase 2 B1: skill-ladder drafting over app.state.ai.
+    from backend.v2.composition.ai_curriculum import compose_ai_curriculum
+
+    app.state.ai_curriculum = compose_ai_curriculum(db, app.state.ai)
     # Issue #743: WithdrawEnrollment is composed in composition/admin.py,
     # which cannot see `_holds.hold_notifier` (built here, after
     # compose_admin runs) and is at its own wiring line-budget cap. Attach
