@@ -250,16 +250,17 @@ test.describe("real-backend journeys", () => {
     const theirInvoice = await billAndSend(request, adminToken, theirEnrollment, academyMonth(0));
 
     const myToken = await idToken(request, mine.parent);
-    // Direct reads of the other family's records are refused, not filtered to empty.
+    // Direct reads of the other family's records are refused (404, existence
+    // not leaked), not filtered to empty.
     const direct = await apiRaw(request, myToken, "GET", `/parent/invoices/${theirInvoice.invoice_id}`);
-    expect([403, 404]).toContain(direct.status());
+    expect(direct.status()).toBe(404);
     expect(await direct.text()).not.toContain(theirs.studentName);
     expect((await parentInvoices(request, myToken)).map((i) => i.invoice_id)).not.toContain(
       theirInvoice.invoice_id,
     );
-    // An admin-only route is not reachable with a parent token.
+    // Wrong persona gets exactly 404, never 401/403 (docs/security-matrix.md).
     const adminRoute = await apiRaw(request, myToken, "GET", `/admin/families/${theirs.parentId}/billing`);
-    expect([401, 403, 404]).toContain(adminRoute.status());
+    expect(adminRoute.status()).toBe(404);
 
     const parent = await signedInPage(browser, baseURL!, mine.parent, /\/parent/);
     await parent.goto("/parent/children", { waitUntil: "domcontentloaded" });
