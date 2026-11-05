@@ -69,6 +69,7 @@ import {
   writeFamilyIndexState,
   type FamilyIndexState,
   type FamilyResultRow,
+  atRiskTitle,
 } from "@/lib/admin/family-index-view";
 import { useIsPhone } from "@/lib/use-is-phone";
 
@@ -632,6 +633,16 @@ function StageChip({ state, asOf }: { state: string | null | undefined; asOf?: s
   return <Chip variant={lifecycleVariant(state)} label={label} />;
 }
 
+function AtRiskChip({ family }: { family: FamilyIndexRow }) {
+  const title = atRiskTitle(family);
+  if (!title) return null;
+  return (
+    <span title={title} data-testid={`family-at-risk-${family.family_id}`}>
+      <Chip variant="approval" label="AT RISK" />
+    </span>
+  );
+}
+
 function NoAccountChip() {
   return (
     <span
@@ -735,7 +746,10 @@ function FamilyTableRow({
         <ChildrenChips kids={family.children} />
       </td>
       <td className="px-4 py-3">
-        <StageChip state={family.stage} />
+        <div className="flex flex-wrap items-center gap-2">
+          <StageChip state={family.stage} />
+          <AtRiskChip family={family} />
+        </div>
       </td>
       <td className="px-4 py-3">
         <CardLogin family={family} />
@@ -851,6 +865,7 @@ function FamilyPhoneRow({
         <>
           <div className="flex flex-wrap items-center gap-2">
             {moneyView !== "none" ? <StageChip state={family.stage} /> : null}
+            <AtRiskChip family={family} />
             {!family.has_account ? <NoAccountChip /> : null}
             <CardLogin family={family} />
           </div>

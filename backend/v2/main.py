@@ -1859,10 +1859,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             summary = await send_owner_daily_briefs(
                 db,
                 sender=app.state.ops_digest_sender,
+                family_index=app.state.admin_family_index.index,
                 academy_ids=[academy_id],
                 house_academy_id=settings.house_academy_id or runtime_academy_id,
                 override_email=settings.owner_brief_email or settings.ops_alert_email,
                 now=local_now,
+                frontend_url=settings.frontend_url,
             )
             for key in totals:
                 totals[key] += int(getattr(summary, key, 0) or 0)
