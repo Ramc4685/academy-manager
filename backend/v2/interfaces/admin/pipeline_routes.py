@@ -134,6 +134,8 @@ class PipelineBoardCardView(BaseModel):
     override_set_by: str | None = None
     override_set_at: datetime | None = None
     move_targets: list[BoardColumn] = Field(default_factory=list)
+    has_email: bool = False
+    has_message: bool = False
 
 
 class PipelineBoardView(BaseModel):
@@ -170,6 +172,8 @@ def _card_view(card: PipelineCard) -> PipelineBoardCardView:
         override_set_by=card.override_set_by,
         override_set_at=card.override_set_at,
         move_targets=list(card.move_targets),
+        has_email=card.has_email,
+        has_message=card.has_message,
     )
 
 

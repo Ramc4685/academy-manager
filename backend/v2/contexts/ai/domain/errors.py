@@ -35,6 +35,13 @@ class AiAcademyNotFound(DomainError):
     status_code = 404
 
 
+class AiNotEntitled(DomainError):
+    """The academy's platform plan does not include the ``ai`` feature."""
+
+    code = "Ai.NotEntitled"
+    status_code = 403
+
+
 class AiImportSampleRejected(DomainError):
     """The spreadsheet handed to the roster-import copilot is over the import's
     own size or row cap, or is not readable as CSV."""

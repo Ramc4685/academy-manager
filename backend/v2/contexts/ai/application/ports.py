@@ -31,6 +31,12 @@ class EntitlementSource(Protocol):
     async def has_feature(self, feature: str) -> bool: ...
 
 
+class AiEntitlement(Protocol):
+    """Whether the academy in scope may use paid AI features."""
+
+    async def has_ai(self) -> bool: ...
+
+
 class ImportValueSharing(Protocol):
     """Whether the academy in scope lets the roster-import copilot see real
     spreadsheet values (``ai.share_import_values``); False means headers and

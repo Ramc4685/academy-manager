@@ -4423,3 +4423,8 @@ export function updateAdminClassPublicFields(
     { method: "PATCH", body: JSON.stringify(payload) }
   );
 }
+
+/** B1: whether AI drafting is on for this academy (V2_AI_ENABLED + key). */
+export function fetchAdminAiStatus(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
+}
