@@ -16,19 +16,21 @@ class MongoAiCallCounterRepository(TenantScopedRepository):
     async def reserve(self, key: str, cap: int) -> bool:
         """Take one slot if ``count < cap``, atomically. False at the cap.
 
-        The ``$lt`` filter makes the ``$inc`` refuse at the cap; ``upsert``
-        creates the period's first document. At the cap the filter misses an
-        existing document, the upsert tries to insert a second one and the
-        unique ``(academy_id, key)`` index refuses it. That same error is what a
-        concurrent first-of-the-period upsert gets, so retry once without
-        upsert: the document now exists and the ``$lt`` filter decides."""
+        Two steps, so the cap fails closed even without migration 0226's
+        unique index: first create the period's document at zero if it is
+        missing (``$setOnInsert`` adds no capacity to an existing document),
+        then a conditional ``$inc`` that never upserts. A concurrent
+        first-of-the-period insert loses on the unique index; that is fine,
+        the document exists either way."""
         if cap <= 0:
             return False
-        filter_ = {"key": key, "count": {"$lt": cap}}
         try:
-            doc = await self._find_one_and_update(filter_, {"$inc": {"count": 1}}, upsert=True)
+            await self._update_one({"key": key}, {"$setOnInsert": {"count": 0}}, upsert=True)
         except DuplicateKeyError:
-            doc = await self._find_one_and_update(filter_, {"$inc": {"count": 1}})
+            pass
+        doc = await self._find_one_and_update(
+            {"key": key, "count": {"$lt": cap}}, {"$inc": {"count": 1}}
+        )
         return doc is not None
 
     async def release(self, key: str) -> None:

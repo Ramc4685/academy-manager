@@ -50,11 +50,12 @@ Collection `ai_calls`, one document per model call.
 `DEFAULT_MONTHLY_CALL_CAP` (200). It is a hard ceiling (Phase 3 slice D1):
 every feature wraps its model call in `async with RecordAiCall.reserve(FEATURE):`,
 which takes one slot on the academy's `month:YYYY-MM` counter in
-`ai_call_counters` with one atomic `find_one_and_update` (`$inc` filtered on
-`count < cap`, upsert for the month's first call). At the cap the filter misses,
-the upsert collides with the unique `(academy_id, key)` index and the call is
-refused with `AiMonthlyCapReached`; the same duplicate-key error on a
-concurrent first-of-the-month upsert is retried once without upsert. So
+`ai_call_counters` in two steps: a `$setOnInsert` upsert creates the month's
+document at zero if it is missing, then one atomic `find_one_and_update`
+(`$inc` filtered on `count < cap`, never an upsert) takes the slot or misses
+and the call is refused with `AiMonthlyCapReached`. The cap fails closed
+even without the unique `(academy_id, key)` index; the index only keeps a
+racing first-of-the-month insert from creating a second document. So
 concurrent calls at the cap minus one let exactly one through
 (`tests/contract/test_ai_calls_real_mongo.py`). Any error raised inside the
 block (the provider failing, or the prep before it) releases the slot, so a

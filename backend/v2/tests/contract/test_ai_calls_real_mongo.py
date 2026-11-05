@@ -119,13 +119,29 @@ async def test_reserve_at_the_cap_does_not_create_a_duplicate_counter(real_db) -
     counters = MongoAiCallCounterRepository(real_db)
     with tenant_scope("acad-ai-dup"):
         assert await counters.reserve("month:2026-11", 1) is True
-        # At the cap the $lt filter misses and the upsert hits the unique index.
         assert await counters.reserve("month:2026-11", 1) is False
         await counters.release("month:2026-11")
         await counters.release("month:2026-11")  # never below zero
         assert await counters.reserve("month:2026-11", 1) is True
     docs = await real_db["ai_call_counters"].find({"academy_id": "acad-ai-dup"}).to_list(None)
     assert [d["count"] for d in docs] == [1]
+
+
+@pytest.mark.asyncio
+async def test_reserve_fails_closed_without_the_unique_index(real_db) -> None:
+    """A missing migration 0226 index must never add capacity at the cap."""
+
+    class Unindexed(MongoAiCallCounterRepository):
+        collection_name = "ai_call_counters_unindexed"
+
+    counters = Unindexed(real_db)
+    with tenant_scope("acad-ai-noidx"):
+        assert await counters.reserve("month:2026-11", 2) is True
+        assert await counters.reserve("month:2026-11", 2) is True
+        for _ in range(3):
+            assert await counters.reserve("month:2026-11", 2) is False
+    docs = await real_db["ai_call_counters_unindexed"].find({}).to_list(None)
+    assert [d["count"] for d in docs] == [2]
 
 
 @pytest.mark.asyncio
