@@ -228,6 +228,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/ai/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ai Usage */
+        get: operations["get_ai_usage_api_v2_admin_ai_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/ai/win-back-personalised": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Win Back Personalised */
+        get: operations["get_win_back_personalised_api_v2_admin_ai_win_back_personalised_get"];
+        /** Put Win Back Personalised */
+        put: operations["put_win_back_personalised_api_v2_admin_ai_win_back_personalised_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/audit-logs": {
         parameters: {
             query?: never;
@@ -3183,6 +3218,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/reports/month-close/narrative": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Month Close Narrative
+         * @description What happened this month and what to fix first, written by the model
+         *     from the month-close view and checked against it. The owner who asked is
+         *     the approver on the ``ai_calls`` row.
+         */
+        post: operations["month_close_narrative_api_v2_admin_reports_month_close_narrative_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/reports/people/attendance-risk": {
         parameters: {
             query?: never;
@@ -4672,6 +4729,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/coach/ai/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ai Status */
+        get: operations["ai_status_api_v2_coach_ai_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/attendance": {
         parameters: {
             query?: never;
@@ -4751,6 +4825,40 @@ export interface paths {
         put?: never;
         /** Mark Message Read */
         post: operations["mark_message_read_api_v2_coach_messages__message_id__read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/narratives/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Pending Narratives */
+        get: operations["list_pending_narratives_api_v2_coach_narratives_pending_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/narratives/{narrative_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Decide Narrative */
+        put: operations["decide_narrative_api_v2_coach_narratives__narrative_id__decision_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5136,6 +5244,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/coach/students/{student_id}/narrative": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Student Narrative */
+        get: operations["get_student_narrative_api_v2_coach_students__student_id__narrative_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/students/{student_id}/narrative-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Draft Student Narrative */
+        post: operations["draft_student_narrative_api_v2_coach_students__student_id__narrative_draft_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/students/{student_id}/passport": {
         parameters: {
             query?: never;
@@ -5221,6 +5363,23 @@ export interface paths {
         put?: never;
         /** Record Test */
         post: operations["record_test_api_v2_coach_students__student_id__skills__skill_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/students/{student_id}/technique-observation-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Draft Technique Observation */
+        post: operations["draft_technique_observation_api_v2_coach_students__student_id__technique_observation_draft_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5411,6 +5570,23 @@ export interface paths {
         };
         /** My Memberships */
         get: operations["my_memberships_api_v2_me_memberships_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/owner/rollup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Owner Rollup */
+        get: operations["owner_rollup_api_v2_owner_rollup_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6326,6 +6502,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/platform/academies/{academy_id}/ai-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read an academy's AI usage this month */
+        get: operations["get_academy_ai_usage_api_v2_platform_academies__academy_id__ai_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/platform/academies/{academy_id}/application-fee": {
         parameters: {
             query?: never;
@@ -6974,6 +7167,57 @@ export interface paths {
          *     mailer (which was confirmed landing in spam).
          */
         post: operations["send_parent_verification_email_api_v2_register_parent_verification_email_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/student/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get My Profile */
+        get: operations["get_my_profile_api_v2_student_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/student/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get My Progress */
+        get: operations["get_my_progress_api_v2_student_progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/student/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get My Schedule */
+        get: operations["get_my_schedule_api_v2_student_schedule_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -10609,6 +10853,32 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** AiUsageView */
+        AiUsageView: {
+            /** Cap */
+            cap: number;
+            /** Month */
+            month: string;
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "free" | "growth";
+            /** Upgrade Suggested */
+            upgrade_suggested: boolean;
+            /** Used */
+            used: number;
+        };
+        /** AiWinBackPersonalisedRequest */
+        AiWinBackPersonalisedRequest: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /** AiWinBackPersonalisedView */
+        AiWinBackPersonalisedView: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** AlmostThereStudent */
         AlmostThereStudent: {
             /** Level Name */
@@ -13491,6 +13761,13 @@ export interface components {
             /** Student Id */
             student_id: string;
         };
+        /** FixFirst */
+        FixFirst: {
+            /** Href */
+            href: string;
+            /** Text */
+            text: string;
+        };
         /** FollowUpPatch */
         FollowUpPatch: {
             /** Assignee User Id */
@@ -14503,6 +14780,20 @@ export interface components {
             /** Owing Family Count */
             owing_family_count: number;
         };
+        /** MonthCloseNarrative */
+        MonthCloseNarrative: {
+            /** Fix First */
+            fix_first: components["schemas"]["FixFirst"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Summary */
+            summary: string;
+        };
         /** MonthlyGenerationSkippedDetailView */
         MonthlyGenerationSkippedDetailView: {
             /** Billing Period */
@@ -14568,6 +14859,21 @@ export interface components {
             active_academy_id: string;
             /** Memberships */
             memberships: components["schemas"]["MembershipSummaryView"][];
+        };
+        /** NarrativeDecisionBody */
+        NarrativeDecisionBody: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "approved" | "rejected";
+            /** Text */
+            text?: string | null;
+        };
+        /** NarrativeDraftBody */
+        NarrativeDraftBody: {
+            /** Date */
+            date?: string | null;
         };
         /** NewContact */
         NewContact: {
@@ -14697,6 +15003,83 @@ export interface components {
         OverrideStudentPriceRequest: {
             /** Override Price Cents */
             override_price_cents?: number | null;
+        };
+        /** OwnerAcademyRollupRow */
+        OwnerAcademyRollupRow: {
+            /** Academy Id */
+            academy_id: string;
+            /** Academy Name */
+            academy_name?: string | null;
+            /**
+             * Collected Cents
+             * @default 0
+             */
+            collected_cents: number;
+            /**
+             * Outstanding Cents
+             * @default 0
+             */
+            outstanding_cents: number;
+            /**
+             * Outstanding Invoice Count
+             * @default 0
+             */
+            outstanding_invoice_count: number;
+            /**
+             * Revenue By Month
+             * @default {}
+             */
+            revenue_by_month: {
+                [key: string]: number;
+            };
+        };
+        /** OwnerRollup */
+        OwnerRollup: {
+            /**
+             * Academies
+             * @default []
+             */
+            academies: components["schemas"]["OwnerAcademyRollupRow"][];
+            /**
+             * @default {
+             *       "academy_count": 0,
+             *       "collected_cents": 0,
+             *       "outstanding_cents": 0,
+             *       "outstanding_invoice_count": 0,
+             *       "revenue_by_month": {}
+             *     }
+             */
+            totals: components["schemas"]["OwnerRollupTotals"];
+        };
+        /** OwnerRollupTotals */
+        OwnerRollupTotals: {
+            /**
+             * Academy Count
+             * @default 0
+             */
+            academy_count: number;
+            /**
+             * Collected Cents
+             * @default 0
+             */
+            collected_cents: number;
+            /**
+             * Outstanding Cents
+             * @default 0
+             */
+            outstanding_cents: number;
+            /**
+             * Outstanding Invoice Count
+             * @default 0
+             */
+            outstanding_invoice_count: number;
+            /**
+             * Revenue By Month
+             * @default {}
+             */
+            revenue_by_month: {
+                [key: string]: number;
+            };
         };
         /** ParentAcademyView */
         ParentAcademyView: {
@@ -17689,6 +18072,61 @@ export interface components {
              */
             reason: string;
         };
+        /** StudentMeView */
+        StudentMeView: {
+            /** Academy Id */
+            academy_id: string;
+            /** Academy Name */
+            academy_name: string;
+            /** Full Name */
+            full_name: string;
+            /** Level */
+            level?: string | null;
+            /** Student Id */
+            student_id: string;
+        };
+        /** StudentScheduleEntryView */
+        StudentScheduleEntryView: {
+            /** Coach Name */
+            coach_name?: string | null;
+            /**
+             * End At
+             * Format: date-time
+             */
+            end_at: string;
+            /** Location */
+            location?: string | null;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Session Title */
+            session_title: string;
+            /**
+             * Source
+             * @default regular
+             * @enum {string}
+             */
+            source: "regular" | "makeup" | "trial";
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Status */
+            status: string;
+        };
+        /** StudentScheduleResponse */
+        StudentScheduleResponse: {
+            /** Entries */
+            entries: components["schemas"]["StudentScheduleEntryView"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** SubscriptionSummary */
         SubscriptionSummary: {
             /** Billing Status */
@@ -17801,6 +18239,11 @@ export interface components {
             provider: string;
             /** Reason */
             reason: string;
+        };
+        /** TechniqueObservationBody */
+        TechniqueObservationBody: {
+            /** Observation */
+            observation: string;
         };
         /** TenantDataExportRequest */
         TenantDataExportRequest: {
@@ -19240,6 +19683,79 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+        };
+    };
+    get_ai_usage_api_v2_admin_ai_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiUsageView"];
+                };
+            };
+        };
+    };
+    get_win_back_personalised_api_v2_admin_ai_win_back_personalised_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiWinBackPersonalisedView"];
+                };
+            };
+        };
+    };
+    put_win_back_personalised_api_v2_admin_ai_win_back_personalised_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiWinBackPersonalisedRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiWinBackPersonalisedView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -24749,6 +25265,37 @@ export interface operations {
             };
         };
     };
+    month_close_narrative_api_v2_admin_reports_month_close_narrative_post: {
+        parameters: {
+            query: {
+                period: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonthCloseNarrative"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     attendance_risk_api_v2_admin_reports_people_attendance_risk_get: {
         parameters: {
             query?: never;
@@ -27752,6 +28299,28 @@ export interface operations {
             };
         };
     };
+    ai_status_api_v2_coach_ai_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+        };
+    };
     mark_attendance_api_v2_coach_attendance_post: {
         parameters: {
             query?: never;
@@ -27874,6 +28443,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CoachMarkMessageReadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pending_narratives_api_v2_coach_narratives_pending_get: {
+        parameters: {
+            query?: {
+                date?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_narrative_api_v2_coach_narratives__narrative_id__decision_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                narrative_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NarrativeDecisionBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -28777,6 +29416,78 @@ export interface operations {
             };
         };
     };
+    get_student_narrative_api_v2_coach_students__student_id__narrative_get: {
+        parameters: {
+            query?: {
+                date?: string | null;
+            };
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draft_student_narrative_api_v2_coach_students__student_id__narrative_draft_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NarrativeDraftBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_passport_api_v2_coach_students__student_id__passport_get: {
         parameters: {
             query?: {
@@ -28968,6 +29679,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draft_technique_observation_api_v2_coach_students__student_id__technique_observation_draft_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TechniqueObservationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -29274,6 +30020,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MyMembershipsResponse"];
+                };
+            };
+        };
+    };
+    owner_rollup_api_v2_owner_rollup_get: {
+        parameters: {
+            query?: {
+                /** @description Filter to YYYY-MM months */
+                months?: string[] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerRollup"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -30957,6 +31735,37 @@ export interface operations {
             };
         };
     };
+    get_academy_ai_usage_api_v2_platform_academies__academy_id__ai_usage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                academy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiUsageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_application_fee_api_v2_platform_academies__academy_id__application_fee_get: {
         parameters: {
             query?: never;
@@ -32385,6 +33194,91 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_my_profile_api_v2_student_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudentMeView"];
+                };
+            };
+        };
+    };
+    get_my_progress_api_v2_student_progress_get: {
+        parameters: {
+            query?: {
+                program_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_my_schedule_api_v2_student_schedule_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudentScheduleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

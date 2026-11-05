@@ -56,50 +56,74 @@ type Fits<Server, Client> = [Server] extends [never]
     : false;
 type Expect<T extends true> = T;
 
-export type BillingContract = [
-  // Parent money screens
-  Expect<Fits<Res<"/api/v2/parent/payments", "get">, { payments: ParentPayment[] }>>,
-  Expect<Fits<Res<"/api/v2/parent/invoices", "get">, { invoices: ParentInvoice[] }>>,
-  Expect<Fits<Res<"/api/v2/parent/invoices/{invoice_id}", "get">, ParentInvoiceDetail>>,
-  Expect<Fits<Res<"/api/v2/parent/credits", "get">, ParentCreditBalance>>,
-  Expect<
-    Fits<
-      Res<"/api/v2/parent/invoices/{invoice_id}/pay", "post">,
-      { invoice_id: string; redirect_url: string }
-    >
-  >,
-  Expect<Fits<Res<"/api/v2/parent/invoices/pay-balance", "post">, { redirect_url: string }>>,
-  Expect<
-    Fits<Res<"/api/v2/parent/checkout/start", "post">, { payment_id: string; redirect_url: string }>
-  >,
-  // Admin money screens
-  // The backend types status as a plain string; the screen narrows it to known
-  // values and falls back for anything else, so only the other fields are pinned.
-  Expect<
-    Fits<
-      Res<"/api/v2/admin/payments", "get">,
-      Omit<AdminPaymentList, "payments"> & {
-        payments: (Omit<AdminPaymentView, "status"> & { status: string })[];
-      }
-    >
-  >,
-  Expect<Fits<Res<"/api/v2/admin/payments/feed", "get">, AdminPaymentFeedResponse>>,
-  Expect<Fits<Res<"/api/v2/admin/payments/collections", "get">, AdminCollectionsView>>,
-  Expect<Fits<Res<"/api/v2/admin/payments/last-by-family", "get">, AdminFamilyLastPaymentsResponse>>,
-  Expect<Fits<Res<"/api/v2/admin/payments/generate-monthly", "post">, GenerateMonthlyPaymentsResponse>>,
-  Expect<Fits<Res<"/api/v2/admin/billing/settings/invoice-schedule", "get">, InvoiceScheduleView>>,
-  Expect<Fits<Res<"/api/v2/admin/billing/failed-payment-attempts", "get">, FailedPaymentsResponse>>,
-  Expect<
-    Fits<Res<"/api/v2/admin/billing/invoices/{invoice_id}/attempts", "get">, InvoiceAttemptsResponse>
-  >,
-  Expect<
-    Fits<
-      Res<"/api/v2/admin/billing/setup/{parent_id}/autopay/enable", "post">,
-      BillingSetupAutopayEnableResponse
-    >
-  >,
-  Expect<Fits<Res<"/api/v2/admin/families/{parent_id}/billing", "get">, AdminFamilyBillingView>>,
-  Expect<
-    Fits<Res<"/api/v2/admin/families/{parent_id}/autopay/pause", "post">, PauseFamilyAutopayResponse>
-  >,
-];
+// One alias per endpoint: a single tuple of all of them hits TypeScript's
+// instantiation limits and can report a false failure.
+
+// Parent money screens
+export type ParentPaymentsFit = Expect<
+  Fits<Res<"/api/v2/parent/payments", "get">, { payments: ParentPayment[] }>
+>;
+export type ParentInvoicesFit = Expect<
+  Fits<Res<"/api/v2/parent/invoices", "get">, { invoices: ParentInvoice[] }>
+>;
+export type ParentInvoiceDetailFit = Expect<
+  Fits<Res<"/api/v2/parent/invoices/{invoice_id}", "get">, ParentInvoiceDetail>
+>;
+export type ParentCreditsFit = Expect<Fits<Res<"/api/v2/parent/credits", "get">, ParentCreditBalance>>;
+export type ParentPayInvoiceFit = Expect<
+  Fits<
+    Res<"/api/v2/parent/invoices/{invoice_id}/pay", "post">,
+    { invoice_id: string; redirect_url: string }
+  >
+>;
+export type ParentPayBalanceFit = Expect<
+  Fits<Res<"/api/v2/parent/invoices/pay-balance", "post">, { redirect_url: string }>
+>;
+export type ParentCheckoutFit = Expect<
+  Fits<Res<"/api/v2/parent/checkout/start", "post">, { payment_id: string; redirect_url: string }>
+>;
+
+// Admin money screens
+// The backend types status as a plain string; the screen narrows it to known
+// values and falls back for anything else, so only the other fields are pinned.
+export type AdminPaymentsFit = Expect<
+  Fits<
+    Res<"/api/v2/admin/payments", "get">,
+    Omit<AdminPaymentList, "payments"> & {
+      payments: (Omit<AdminPaymentView, "status"> & { status: string })[];
+    }
+  >
+>;
+export type AdminPaymentFeedFit = Expect<
+  Fits<Res<"/api/v2/admin/payments/feed", "get">, AdminPaymentFeedResponse>
+>;
+export type AdminCollectionsFit = Expect<
+  Fits<Res<"/api/v2/admin/payments/collections", "get">, AdminCollectionsView>
+>;
+export type AdminLastPaymentsFit = Expect<
+  Fits<Res<"/api/v2/admin/payments/last-by-family", "get">, AdminFamilyLastPaymentsResponse>
+>;
+export type AdminGenerateMonthlyFit = Expect<
+  Fits<Res<"/api/v2/admin/payments/generate-monthly", "post">, GenerateMonthlyPaymentsResponse>
+>;
+export type AdminInvoiceScheduleFit = Expect<
+  Fits<Res<"/api/v2/admin/billing/settings/invoice-schedule", "get">, InvoiceScheduleView>
+>;
+export type AdminFailedPaymentsFit = Expect<
+  Fits<Res<"/api/v2/admin/billing/failed-payment-attempts", "get">, FailedPaymentsResponse>
+>;
+export type AdminInvoiceAttemptsFit = Expect<
+  Fits<Res<"/api/v2/admin/billing/invoices/{invoice_id}/attempts", "get">, InvoiceAttemptsResponse>
+>;
+export type AdminEnableAutopayFit = Expect<
+  Fits<
+    Res<"/api/v2/admin/billing/setup/{parent_id}/autopay/enable", "post">,
+    BillingSetupAutopayEnableResponse
+  >
+>;
+export type AdminFamilyBillingFit = Expect<
+  Fits<Res<"/api/v2/admin/families/{parent_id}/billing", "get">, AdminFamilyBillingView>
+>;
+export type AdminPauseAutopayFit = Expect<
+  Fits<Res<"/api/v2/admin/families/{parent_id}/autopay/pause", "post">, PauseFamilyAutopayResponse>
+>;

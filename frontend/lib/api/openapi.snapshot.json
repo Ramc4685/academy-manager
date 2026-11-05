@@ -9828,6 +9828,69 @@
         "title": "AgreementAcceptanceRequest",
         "type": "object"
       },
+      "AiUsageView": {
+        "properties": {
+          "cap": {
+            "title": "Cap",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "free",
+              "growth"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "upgrade_suggested": {
+            "title": "Upgrade Suggested",
+            "type": "boolean"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "cap",
+          "tier",
+          "upgrade_suggested",
+          "month"
+        ],
+        "title": "AiUsageView",
+        "type": "object"
+      },
+      "AiWinBackPersonalisedRequest": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AiWinBackPersonalisedRequest",
+        "type": "object"
+      },
+      "AiWinBackPersonalisedView": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AiWinBackPersonalisedView",
+        "type": "object"
+      },
       "AlmostThereStudent": {
         "properties": {
           "level_name": {
@@ -18333,6 +18396,28 @@
         "title": "FeedbackView",
         "type": "object"
       },
+      "FixFirst": {
+        "additionalProperties": false,
+        "properties": {
+          "href": {
+            "minLength": 1,
+            "title": "Href",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "href"
+        ],
+        "title": "FixFirst",
+        "type": "object"
+      },
       "FollowUpPatch": {
         "additionalProperties": false,
         "properties": {
@@ -21089,6 +21174,39 @@
         "title": "MoneyOwedByAgeView",
         "type": "object"
       },
+      "MonthCloseNarrative": {
+        "additionalProperties": false,
+        "properties": {
+          "fix_first": {
+            "items": {
+              "$ref": "#/components/schemas/FixFirst"
+            },
+            "title": "Fix First",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "fix_first",
+          "prompt_version",
+          "generated_at"
+        ],
+        "title": "MonthCloseNarrative",
+        "type": "object"
+      },
       "MonthlyGenerationSkippedDetailView": {
         "properties": {
           "billing_period": {
@@ -21268,6 +21386,55 @@
           "active_academy_id"
         ],
         "title": "MyMembershipsResponse",
+        "type": "object"
+      },
+      "NarrativeDecisionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "NarrativeDecisionBody",
+        "type": "object"
+      },
+      "NarrativeDraftBody": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          }
+        },
+        "title": "NarrativeDraftBody",
         "type": "object"
       },
       "NewContact": {
@@ -21584,6 +21751,111 @@
           }
         },
         "title": "OverrideStudentPriceRequest",
+        "type": "object"
+      },
+      "OwnerAcademyRollupRow": {
+        "properties": {
+          "academy_id": {
+            "title": "Academy Id",
+            "type": "string"
+          },
+          "academy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Academy Name"
+          },
+          "collected_cents": {
+            "default": 0,
+            "title": "Collected Cents",
+            "type": "integer"
+          },
+          "outstanding_cents": {
+            "default": 0,
+            "title": "Outstanding Cents",
+            "type": "integer"
+          },
+          "outstanding_invoice_count": {
+            "default": 0,
+            "title": "Outstanding Invoice Count",
+            "type": "integer"
+          },
+          "revenue_by_month": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Revenue By Month",
+            "type": "object"
+          }
+        },
+        "required": [
+          "academy_id"
+        ],
+        "title": "OwnerAcademyRollupRow",
+        "type": "object"
+      },
+      "OwnerRollup": {
+        "properties": {
+          "academies": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OwnerAcademyRollupRow"
+            },
+            "title": "Academies",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/OwnerRollupTotals",
+            "default": {
+              "academy_count": 0,
+              "collected_cents": 0,
+              "outstanding_cents": 0,
+              "outstanding_invoice_count": 0,
+              "revenue_by_month": {}
+            }
+          }
+        },
+        "title": "OwnerRollup",
+        "type": "object"
+      },
+      "OwnerRollupTotals": {
+        "properties": {
+          "academy_count": {
+            "default": 0,
+            "title": "Academy Count",
+            "type": "integer"
+          },
+          "collected_cents": {
+            "default": 0,
+            "title": "Collected Cents",
+            "type": "integer"
+          },
+          "outstanding_cents": {
+            "default": 0,
+            "title": "Outstanding Cents",
+            "type": "integer"
+          },
+          "outstanding_invoice_count": {
+            "default": 0,
+            "title": "Outstanding Invoice Count",
+            "type": "integer"
+          },
+          "revenue_by_month": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Revenue By Month",
+            "type": "object"
+          }
+        },
+        "title": "OwnerRollupTotals",
         "type": "object"
       },
       "ParentAcademyView": {
@@ -29797,6 +30069,148 @@
         "title": "StudentLoginInviteRequest",
         "type": "object"
       },
+      "StudentMeView": {
+        "properties": {
+          "academy_id": {
+            "title": "Academy Id",
+            "type": "string"
+          },
+          "academy_name": {
+            "title": "Academy Name",
+            "type": "string"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "academy_id",
+          "academy_name"
+        ],
+        "title": "StudentMeView",
+        "type": "object"
+      },
+      "StudentScheduleEntryView": {
+        "properties": {
+          "coach_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Name"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_title": {
+            "title": "Session Title",
+            "type": "string"
+          },
+          "source": {
+            "default": "regular",
+            "enum": [
+              "regular",
+              "makeup",
+              "trial"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "session_title",
+          "start_at",
+          "end_at",
+          "status"
+        ],
+        "title": "StudentScheduleEntryView",
+        "type": "object"
+      },
+      "StudentScheduleResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/StudentScheduleEntryView"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "StudentScheduleResponse",
+        "type": "object"
+      },
       "SubscriptionSummary": {
         "properties": {
           "billing_status": {
@@ -30104,6 +30518,21 @@
           "last_seen_at"
         ],
         "title": "SuppressionView",
+        "type": "object"
+      },
+      "TechniqueObservationBody": {
+        "properties": {
+          "observation": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Observation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observation"
+        ],
+        "title": "TechniqueObservationBody",
         "type": "object"
       },
       "TenantDataExportRequest": {
@@ -34077,6 +34506,87 @@
         "summary": "Ai Status",
         "tags": [
           "admin-ai-curriculum"
+        ]
+      }
+    },
+    "/api/v2/admin/ai/usage": {
+      "get": {
+        "operationId": "get_ai_usage_api_v2_admin_ai_usage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiUsageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ai Usage",
+        "tags": [
+          "admin.ai"
+        ]
+      }
+    },
+    "/api/v2/admin/ai/win-back-personalised": {
+      "get": {
+        "operationId": "get_win_back_personalised_api_v2_admin_ai_win_back_personalised_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiWinBackPersonalisedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Win Back Personalised",
+        "tags": [
+          "admin.ai-win-back"
+        ]
+      },
+      "put": {
+        "operationId": "put_win_back_personalised_api_v2_admin_ai_win_back_personalised_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiWinBackPersonalisedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiWinBackPersonalisedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Win Back Personalised",
+        "tags": [
+          "admin.ai-win-back"
         ]
       }
     },
@@ -42144,6 +42654,50 @@
         ]
       }
     },
+    "/api/v2/admin/reports/month-close/narrative": {
+      "post": {
+        "description": "What happened this month and what to fix first, written by the model\nfrom the month-close view and checked against it. The owner who asked is\nthe approver on the ``ai_calls`` row.",
+        "operationId": "month_close_narrative_api_v2_admin_reports_month_close_narrative_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+              "title": "Period",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonthCloseNarrative"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Month Close Narrative",
+        "tags": [
+          "admin.ai_reports"
+        ]
+      }
+    },
     "/api/v2/admin/reports/people/attendance-risk": {
       "get": {
         "description": "Students who stopped coming (lifecycle at_risk), by class and by coach.",
@@ -46611,6 +47165,31 @@
         ]
       }
     },
+    "/api/v2/coach/ai/status": {
+      "get": {
+        "operationId": "ai_status_api_v2_coach_ai_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Ai Status Api V2 Coach Ai Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ai Status",
+        "tags": [
+          "coach-ai-technique"
+        ]
+      }
+    },
     "/api/v2/coach/attendance": {
       "post": {
         "operationId": "mark_attendance_api_v2_coach_attendance_post",
@@ -46782,6 +47361,111 @@
         "summary": "Mark Message Read",
         "tags": [
           "coach.messages"
+        ]
+      }
+    },
+    "/api/v2/coach/narratives/pending": {
+      "get": {
+        "operationId": "list_pending_narratives_api_v2_coach_narratives_pending_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Pending Narratives Api V2 Coach Narratives Pending Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pending Narratives",
+        "tags": [
+          "coach-ai-narratives"
+        ]
+      }
+    },
+    "/api/v2/coach/narratives/{narrative_id}/decision": {
+      "put": {
+        "operationId": "decide_narrative_api_v2_coach_narratives__narrative_id__decision_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "narrative_id",
+            "required": true,
+            "schema": {
+              "title": "Narrative Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NarrativeDecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Decide Narrative Api V2 Coach Narratives  Narrative Id  Decision Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Narrative",
+        "tags": [
+          "coach-ai-narratives"
         ]
       }
     },
@@ -48210,6 +48894,120 @@
         ]
       }
     },
+    "/api/v2/coach/students/{student_id}/narrative": {
+      "get": {
+        "operationId": "get_student_narrative_api_v2_coach_students__student_id__narrative_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Student Narrative Api V2 Coach Students  Student Id  Narrative Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Student Narrative",
+        "tags": [
+          "coach-ai-narratives"
+        ]
+      }
+    },
+    "/api/v2/coach/students/{student_id}/narrative-draft": {
+      "post": {
+        "operationId": "draft_student_narrative_api_v2_coach_students__student_id__narrative_draft_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NarrativeDraftBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Draft Student Narrative Api V2 Coach Students  Student Id  Narrative Draft Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Draft Student Narrative",
+        "tags": [
+          "coach-ai-narratives"
+        ]
+      }
+    },
     "/api/v2/coach/students/{student_id}/passport": {
       "get": {
         "operationId": "get_passport_api_v2_coach_students__student_id__passport_get",
@@ -48550,6 +49348,58 @@
         "summary": "Record Test",
         "tags": [
           "coach-skills"
+        ]
+      }
+    },
+    "/api/v2/coach/students/{student_id}/technique-observation-draft": {
+      "post": {
+        "operationId": "draft_technique_observation_api_v2_coach_students__student_id__technique_observation_draft_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TechniqueObservationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Draft Technique Observation Api V2 Coach Students  Student Id  Technique Observation Draft Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Draft Technique Observation",
+        "tags": [
+          "coach-ai-technique"
         ]
       }
     },
@@ -48946,6 +49796,60 @@
         "summary": "My Memberships",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/v2/owner/rollup": {
+      "get": {
+        "operationId": "owner_rollup_api_v2_owner_rollup_get",
+        "parameters": [
+          {
+            "description": "Filter to YYYY-MM months",
+            "in": "query",
+            "name": "months",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to YYYY-MM months",
+              "title": "Months"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerRollup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Owner Rollup",
+        "tags": [
+          "owner.rollup"
         ]
       }
     },
@@ -51194,6 +52098,48 @@
         ]
       }
     },
+    "/api/v2/platform/academies/{academy_id}/ai-usage": {
+      "get": {
+        "operationId": "get_academy_ai_usage_api_v2_platform_academies__academy_id__ai_usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "academy_id",
+            "required": true,
+            "schema": {
+              "title": "Academy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiUsageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read an academy's AI usage this month",
+        "tags": [
+          "platform-ai-usage"
+        ]
+      }
+    },
     "/api/v2/platform/academies/{academy_id}/application-fee": {
       "get": {
         "operationId": "get_application_fee_api_v2_platform_academies__academy_id__application_fee_get",
@@ -53175,6 +54121,166 @@
         "summary": "Send Parent Verification Email",
         "tags": [
           "registration"
+        ]
+      }
+    },
+    "/api/v2/student/me": {
+      "get": {
+        "operationId": "get_my_profile_api_v2_student_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentMeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get My Profile",
+        "tags": [
+          "student.me"
+        ]
+      }
+    },
+    "/api/v2/student/progress": {
+      "get": {
+        "operationId": "get_my_progress_api_v2_student_progress_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "program_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Program Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get My Progress Api V2 Student Progress Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get My Progress",
+        "tags": [
+          "student.progress"
+        ]
+      }
+    },
+    "/api/v2/student/schedule": {
+      "get": {
+        "operationId": "get_my_schedule_api_v2_student_schedule_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentScheduleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get My Schedule",
+        "tags": [
+          "student.schedule"
         ]
       }
     },
