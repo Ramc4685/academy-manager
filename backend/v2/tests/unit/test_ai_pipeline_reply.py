@@ -222,6 +222,8 @@ def _body(text: str) -> str:
         "See HTTPS://EVIL.EXAMPLE/offer for details.",
         "Book at evil.example/book now.",
         "Our friends at other-academy.com can help.",
+        "See evil.courtmastr.test for more.",
+        "Try https://academy.courtmastr.test.evil.example/x today.",
     ],
 )
 def test_parse_rejects_bare_domain_and_mailto_links(text: str) -> None:

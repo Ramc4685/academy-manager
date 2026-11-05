@@ -1,6 +1,6 @@
 # pipeline-ai-reply-draft
 
-PR: #TBD
+PR: #1137
 
 ## What changed
 A contact card on the Pipeline board that has an inquiry message and an email now offers "Draft reply" when AI is on for the academy: the model drafts a short reply from the lead's message, the child's age, the class the lead asked about, the classes the public page shows and the trials-open line, and staff edit the subject and body before an explicit "Send reply". The send goes to the lead through the same prospect send path as the inquiry acknowledgement (opt-out gate, bounce suppression, CAN-SPAM footer) and is logged on the family contact log by the staff member; a lead with no email or a suppressed address is refused. The public inquiry form now says under the message box that sensitive details should be left out and that AI tools may help read and answer messages, with a person reviewing every reply.

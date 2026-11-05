@@ -15,6 +15,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -106,6 +107,21 @@ class PipelineReplyDraft:
     prompt_version: str
 
 
+def _allowed_link_forms(allowed_url: str | None) -> frozenset[str]:
+    """The exact spellings of the public page URL a draft may contain: the
+    full URL, without its scheme, the bare host, and host + path. Structural,
+    never a substring match, so "evil.example" cannot ride on a longer URL."""
+    if not allowed_url:
+        return frozenset()
+    parts = urlsplit(allowed_url.strip().lower())
+    host = parts.hostname or ""
+    if not host:
+        return frozenset()
+    path = parts.path.rstrip("/")
+    full = allowed_url.strip().lower().rstrip("/")
+    return frozenset({full, f"{host}{path}", host, f"{parts.scheme}://{host}", f"//{host}{path}"})
+
+
 def parse_reply_draft(text: str, *, allowed_url: str | None) -> ReplyDraft:
     """Strict parse of the model's answer; any failure is a 502."""
     raw = text.strip()
@@ -116,11 +132,10 @@ def parse_reply_draft(text: str, *, allowed_url: str | None) -> ReplyDraft:
         draft = ReplyDraft.model_validate(json.loads(raw))
     except (ValueError, ValidationError) as exc:
         raise AiProviderError("the model's answer could not be read") from exc
-    allowed = (allowed_url or "").rstrip("/").lower()
+    allowed = _allowed_link_forms(allowed_url)
     for url in _URL.findall(draft.body):
         found = url.rstrip(".,;)").rstrip("/").lower()
-        # The public page URL may be quoted whole or as its bare host/path.
-        if not allowed or found not in allowed:
+        if found not in allowed:
             raise AiProviderError("the model's answer could not be read", reason="invented_link")
     return draft
 
