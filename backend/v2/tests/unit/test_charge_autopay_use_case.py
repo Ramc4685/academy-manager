@@ -1496,6 +1496,8 @@ async def test_autopay_default_fee_is_zero_and_request_is_unchanged() -> None:
     call = stripe.create_calls[0]
     assert call["application_fee_cents"] == 0
     assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:acct:acct_ready"
+    # Recorded as 0, not None: month close must not estimate a fee for it.
+    assert repo.recorded_payments[0][0].application_fee_cents == 0
 
 
 async def test_autopay_sends_the_academy_fee_and_scopes_the_idempotency_key() -> None:
@@ -1519,6 +1521,11 @@ async def test_autopay_sends_the_academy_fee_and_scopes_the_idempotency_key() ->
     # A fee change inside Stripe's idempotency window must not replay the old
     # key, and a direct charge's key names the account.
     assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:fee250:acct:acct_ready"
+    # Phase 2 A1: the sync success records the fee itself; the webhook replay
+    # of ``autopay-pi:{pi}`` returns this row unchanged, so it must carry it.
+    payment, key = repo.recorded_payments[0]
+    assert key == f"autopay-pi:{payment.stripe_payment_intent_id}"
+    assert payment.application_fee_cents == 250
 
 
 async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:

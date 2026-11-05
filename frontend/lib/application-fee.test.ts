@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   bpsToPercentInput,
   formatApplicationFee,
+  formatProcessingRate,
   percentInputToBps,
 } from "./application-fee";
 
@@ -32,5 +33,13 @@ describe("application fee percent <-> basis points", () => {
     expect(percentInputToBps("-1", 1000)).toBeNull();
     expect(percentInputToBps("1.234", 1000)).toBeNull();
     expect(percentInputToBps("10.01", 1000)).toBeNull();
+  });
+});
+
+describe("formatProcessingRate", () => {
+  it("always shows two decimals", () => {
+    expect(formatProcessingRate(100)).toBe("1.00%");
+    expect(formatProcessingRate(150)).toBe("1.50%");
+    expect(formatProcessingRate(0)).toBe("0.00%");
   });
 });

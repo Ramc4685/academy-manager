@@ -35,6 +35,7 @@ import {
   monthCloseVerdict,
   normalizeMonthClose,
   oddRows,
+  platformFeeDisclosure,
   warningLine,
 } from "@/lib/month-close-view";
 import type { MonthCloseTile } from "@/lib/month-close-view";
@@ -151,6 +152,7 @@ export default function AdminMonthClosePage() {
   // #862: the page leads with a verdict and the three money figures; the
   // invoice-run counts move into the Invoices group.
   const verdict = monthCloseVerdict(close);
+  const platformFee = platformFeeDisclosure(close);
   const closeSettled = isSettled(monthCloseQuery);
   const headlineTiles = tiles.filter((tile) => tile.cents != null);
   const invoiceTiles = tiles.filter((tile) => tile.cents == null);
@@ -336,6 +338,12 @@ export default function AdminMonthClosePage() {
         </Card>
 
         {tileGrid(headlineTiles, "month-close-tiles")}
+        {platformFee && closeSettled ? (
+          <p className="text-[12px] text-rally-muted" data-testid="month-close-platform-fee">
+            CourtMastr processing fee taken: {formatMoney(platformFee.cents)} ({platformFee.detail}).
+            Parents are not charged a per-order fee.
+          </p>
+        ) : null}
 
         {/*
           * Always visible, never grouped: these four checks are the evidence

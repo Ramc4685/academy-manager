@@ -14,6 +14,7 @@ import {
   setPlatformApplicationFee,
   type ApplicationFee,
 } from "@/lib/api/platform";
+import { formatDateOnly } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
 /**
@@ -64,6 +65,12 @@ export function ApplicationFeeCard({
               Kept by the platform from each online payment routed to this academy&apos;s
               Stripe account. Rounded down to the cent.
             </p>
+            <p className="mt-3 text-sm text-rally-muted">{feeQuery.data.agreement_text}</p>
+            <p className="mt-1 text-sm text-rally-subtle" data-testid="application-fee-agreement">
+              {feeQuery.data.accepted_by && feeQuery.data.accepted_at
+                ? `Agreement ${feeQuery.data.agreement_version ?? ""} accepted by ${feeQuery.data.accepted_by} on ${formatDateOnly(feeQuery.data.accepted_at)}.`
+                : `Agreement ${feeQuery.data.current_agreement_version} not yet accepted.`}
+            </p>
             <div className="mt-4">
               <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
                 Change fee
@@ -90,13 +97,19 @@ function EditApplicationFeeDialog({
   const { toast } = useToast();
   const [percent, setPercent] = useState(bpsToPercentInput(fee.application_fee_bps));
   const [reason, setReason] = useState("");
+  const [recordAcceptance, setRecordAcceptance] = useState(false);
+  const [acceptedBy, setAcceptedBy] = useState(fee.accepted_by ?? "");
   const bps = percentInputToBps(percent, fee.max_application_fee_bps);
+  const acceptanceInvalid = recordAcceptance && acceptedBy.trim() === "";
 
   const mutation = useMutation({
     mutationFn: () =>
       setPlatformApplicationFee(fee.academy_id, {
         application_fee_bps: bps ?? 0,
         reason: reason.trim() || undefined,
+        agreement: recordAcceptance
+          ? { version: fee.current_agreement_version, accepted_by: acceptedBy.trim() }
+          : undefined,
       }),
     onSuccess: (updated) => {
       queryClient.setQueryData(
@@ -124,7 +137,7 @@ function EditApplicationFeeDialog({
           </Button>
           <Button
             size="sm"
-            disabled={bps === null || mutation.isPending}
+            disabled={bps === null || acceptanceInvalid || mutation.isPending}
             onClick={() => mutation.mutate()}
           >
             {mutation.isPending ? "Saving…" : "Save fee"}
@@ -155,6 +168,33 @@ function EditApplicationFeeDialog({
             onChange={(e) => setReason(e.target.value)}
           />
         </FormField>
+        <label className="flex items-start gap-2 text-sm text-rally-ink">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={recordAcceptance}
+            onChange={(e) => setRecordAcceptance(e.target.checked)}
+          />
+          <span>
+            Record the academy&apos;s acceptance of agreement {fee.current_agreement_version}
+            <span className="block text-rally-subtle">{fee.agreement_text}</span>
+          </span>
+        </label>
+        {recordAcceptance && (
+          <FormField
+            label="Accepted by"
+            htmlFor="application-fee-accepted-by"
+            hint="The academy signatory, as they gave it to you"
+            required
+          >
+            <input
+              id="application-fee-accepted-by"
+              className={INPUT_CLASS}
+              value={acceptedBy}
+              onChange={(e) => setAcceptedBy(e.target.value)}
+            />
+          </FormField>
+        )}
       </div>
     </Modal>
   );

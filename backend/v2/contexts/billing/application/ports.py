@@ -9,7 +9,10 @@ from typing import Any, Literal, Protocol, TypeVar
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.domain.autopay_status import AutopayEnrollmentStatus
-from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.billing_settings import (
+    ApplicationFeeAgreementAcceptance,
+    BillingSettings,
+)
 from backend.v2.contexts.billing.domain.connect_region import ConnectAccountRegion
 from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
@@ -918,8 +921,11 @@ class BillingSettingsRepository(Protocol):
         """
         ...
 
-    async def set_application_fee_bps(self, fee_bps: int) -> None:
-        """Platform-admin only: set this academy's application fee (basis points)."""
+    async def set_application_fee_bps(
+        self, fee_bps: int, *, agreement: ApplicationFeeAgreementAcceptance | None = None
+    ) -> None:
+        """Platform-admin only: set this academy's application fee (basis points),
+        recording the processing-fee agreement acceptance when one is given."""
         ...
 
     async def set_invoice_number_prefix(self, prefix: str) -> None:

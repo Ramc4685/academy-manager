@@ -8,6 +8,7 @@ from backend.v2.contexts.billing.application.charge_route import resolve_charge_
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.charge_route import ChargeRoute, decide_charge_route
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+from backend.v2.shared.tenancy import current_academy_id, tenant_scope
 
 
 def _account(*, ready: bool, stripe_account_id: str = "acct_x") -> ConnectedAccount:
@@ -253,3 +254,32 @@ def test_connected_route_fee_math(amount: int, bps: int, fee: int) -> None:
         ChargeRoute.connected("acct_x", application_fee_bps=bps).application_fee_cents(amount)
         == fee
     )
+
+
+class _TenantSettings:
+    """Settings keyed by the CURRENT tenant, like the Mongo repository."""
+
+    def __init__(self, fees: dict[str, int]) -> None:
+        self._fees = fees
+
+    async def get(self) -> BillingSettings:
+        academy_id = current_academy_id()
+        return BillingSettings(academy_id=academy_id, application_fee_bps=self._fees[academy_id])
+
+
+async def test_resolve_charge_route_reads_each_tenants_own_bps_at_call_time() -> None:
+    """Phase 2 A1 regression: two tenants, two rates, one resolver."""
+    settings = _TenantSettings({"acad-a": 100, "acad-b": 150})
+    accounts = _Accounts(_account(ready=True))
+
+    routes = {}
+    for academy_id in ("acad-a", "acad-b"):
+        with tenant_scope(academy_id):
+            routes[academy_id] = await resolve_charge_route(
+                connected_accounts=accounts, settings=settings, context="test"
+            )
+
+    assert routes["acad-a"].application_fee_bps == 100
+    assert routes["acad-b"].application_fee_bps == 150
+    assert routes["acad-a"].application_fee_cents(20_000) == 200
+    assert routes["acad-b"].application_fee_cents(20_000) == 300

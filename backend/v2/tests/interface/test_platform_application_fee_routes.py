@@ -7,6 +7,7 @@ academy admin (or platform support) gets 404, per the security matrix.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI
@@ -15,6 +16,10 @@ from fastapi.testclient import TestClient
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     ApplicationFeeResult,
     SetApplicationFeeCommand,
+)
+from backend.v2.contexts.billing.domain.billing_settings import (
+    APPLICATION_FEE_AGREEMENT_TEXT,
+    APPLICATION_FEE_AGREEMENT_VERSION,
 )
 from backend.v2.contexts.billing.domain.errors import ApplicationFeeAcademyNotFound
 from backend.v2.interfaces.platform.application_fee_routes import router as fee_router
@@ -45,7 +50,11 @@ class _Set:
         self.commands.append(cmd)
         self.fees[cmd.academy_id] = cmd.application_fee_bps
         return ApplicationFeeResult(
-            academy_id=cmd.academy_id, application_fee_bps=cmd.application_fee_bps
+            academy_id=cmd.academy_id,
+            application_fee_bps=cmd.application_fee_bps,
+            agreement_version=cmd.agreement.version if cmd.agreement else None,
+            accepted_at=datetime(2026, 11, 4, tzinfo=UTC) if cmd.agreement else None,
+            accepted_by=cmd.agreement.accepted_by if cmd.agreement else None,
         )
 
 
@@ -119,6 +128,11 @@ def test_platform_admin_reads_default_zero(platform_client: TestClient) -> None:
         "academy_id": "acad-1",
         "application_fee_bps": 0,
         "max_application_fee_bps": 1000,
+        "agreement_version": None,
+        "agreement_text": APPLICATION_FEE_AGREEMENT_TEXT,
+        "current_agreement_version": APPLICATION_FEE_AGREEMENT_VERSION,
+        "accepted_at": None,
+        "accepted_by": None,
     }
 
 
@@ -137,6 +151,45 @@ def test_platform_admin_sets_the_fee_with_actor(
         "agreement",
     )
     assert platform_client.get(URL).json()["application_fee_bps"] == 250
+    assert cmd.agreement is None
+
+
+def test_platform_admin_records_the_agreement_acceptance_with_the_fee(
+    platform_client: TestClient, wiring: _Wiring
+) -> None:
+    response = platform_client.put(
+        URL,
+        json={
+            "application_fee_bps": 100,
+            "agreement": {
+                "version": APPLICATION_FEE_AGREEMENT_VERSION,
+                "accepted_by": "Jane Owner",
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["agreement_version"] == APPLICATION_FEE_AGREEMENT_VERSION
+    assert body["accepted_by"] == "Jane Owner"
+    assert body["accepted_at"] is not None
+    cmd = wiring.set.commands[0]
+    assert cmd.agreement is not None and cmd.agreement.accepted_by == "Jane Owner"
+
+
+def test_an_unknown_agreement_version_is_rejected(
+    platform_client: TestClient, wiring: _Wiring
+) -> None:
+    response = platform_client.put(
+        URL,
+        json={
+            "application_fee_bps": 100,
+            "agreement": {"version": "1999-01-01", "accepted_by": "x"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert wiring.set.commands == []
 
 
 @pytest.mark.parametrize("bps", [-1, 1001, "abc"])

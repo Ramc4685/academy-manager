@@ -514,6 +514,9 @@ class ChargeInvoiceViaAutopay:
                 # A direct charge lives on the academy's connected account;
                 # a refund of it must be issued there. None = platform.
                 stripe_account_id=connected_account_id,
+                # The fee the PaymentIntent was created with; the webhook's
+                # replay of the same idempotency key must not have to fill it.
+                application_fee_cents=fee_cents,
                 paid_at=now,
                 metadata=discount_metadata or None,
                 created_at=now,

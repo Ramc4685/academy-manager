@@ -15,6 +15,37 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: fat-fingered value, not a pricing decision. Raising it is a code change.
 MAX_APPLICATION_FEE_BPS = 1_000
 
+#: The processing markup every NEW academy starts on (AI strategy plan §5,
+#: Phase 2 slice A1): 100 bps = 1% of each Stripe Connect charge. Existing
+#: academies keep whatever is stored (0 when nothing is); the platform admin
+#: sets theirs by hand.
+NEW_ACADEMY_APPLICATION_FEE_BPS = 100
+
+#: The processing-fee agreement an academy accepts, versioned in code so the
+#: accepted version on the settings document always names an exact text.
+#: Never "forever": the offer stays two-way.
+APPLICATION_FEE_AGREEMENT_VERSION = "2026-11-04"
+APPLICATION_FEE_AGREEMENT_TEXT = (
+    "Core operations (rosters, attendance, billing, the parent app, the pipeline board "
+    "and templated messages) are free. CourtMastr takes a processing markup on card and "
+    "ACH payments collected through Stripe Connect. 12 months notice on any pricing "
+    "change, applied to new signups first."
+)
+
+
+class ApplicationFeeAgreementAcceptance(BaseModel):
+    """Who accepted which version of the processing-fee agreement, and when.
+
+    Recorded WITH the fee on the billing settings document (platform-only
+    fields), separate from the tenant-level platform agreement (roadmap L9c).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    version: str = Field(min_length=1)
+    accepted_by: str = Field(min_length=1)
+    accepted_at: datetime
+
 
 class BillingSettings(BaseModel):
     """Academy-scoped billing configuration (cash/ACH discount + invoice numbering)."""
@@ -75,6 +106,12 @@ class BillingSettings(BaseModel):
     # persists this field; only ``set_application_fee_bps`` does, from the
     # platform BFF.
     application_fee_bps: int = Field(default=0, ge=0, le=MAX_APPLICATION_FEE_BPS)
+    # Acceptance of the processing-fee agreement, recorded with the fee by the
+    # platform admin (``set_application_fee_bps``). PLATFORM-ADMIN ONLY, like
+    # the fee itself. All three are None until an acceptance is recorded.
+    application_fee_agreement_version: str | None = None
+    application_fee_accepted_at: datetime | None = None
+    application_fee_accepted_by: str | None = None
 
     @field_validator("reminder_days", mode="before")
     @classmethod
