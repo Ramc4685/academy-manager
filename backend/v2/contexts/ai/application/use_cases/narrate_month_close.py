@@ -199,13 +199,12 @@ def allowed_numbers(inp: MonthCloseNarratorInput) -> frozenset[str]:
 
     A cents value is allowed as cents, as whole dollars, and as dollars with
     two decimals; counts as given; the rate as given and as a whole percent;
-    the period's year and month digits; and every digit run inside the odd
-    check and item labels the model was given (invoice numbers, "Park 2").
+    and the period's year and month digits. Digits inside labels (invoice
+    numbers, family names) are NOT added here: a label may be quoted only
+    verbatim, and :func:`check_narrative` removes verbatim labels before it
+    scans for numbers, so a name's digits never authorise an invented figure.
     """
     allowed: set[str] = set()
-    for check in inp.odd:
-        for label in (check.label, *(item.label for item in check.items)):
-            allowed.update(re.findall(r"\d+", label))
     for value in (inp.money.billed_cents, inp.money.collected_cents, inp.money.outstanding_cents):
         allowed.update({str(value), str(value // 100), f"{value // 100}.{value % 100:02d}"})
     rate = inp.money.collection_rate
@@ -230,7 +229,14 @@ def check_narrative(narrative: Narrative, inp: MonthCloseNarratorInput) -> None:
     """The never-computes-money rule: raise ``AiProviderError`` on any number
     not in the input or any href outside the input's items and ``FIXED_HREFS``."""
     allowed = allowed_numbers(inp)
+    labels = sorted(
+        {label for check in inp.odd for label in (check.label, *(i.label for i in check.items))},
+        key=len,
+        reverse=True,
+    )
     texts = [narrative.summary, *(fix.text for fix in narrative.fix_first)]
+    for label in labels:
+        texts = [text.replace(label, " ") for text in texts]
     for token in (m.group(0) for text in texts for m in _NUMBER.finditer(text)):
         if token.lstrip("$").replace(",", "") not in allowed:
             raise AiProviderError(f"{_UNREADABLE}: number {token!r} is not in the month-close view")

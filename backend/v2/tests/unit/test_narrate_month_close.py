@@ -174,6 +174,16 @@ def test_digits_quoted_from_an_item_label_pass() -> None:
     )
 
 
+def test_digits_from_a_label_do_not_authorise_other_numbers() -> None:
+    # A family label "Park 77" must not let the model invent "77 families".
+    body = payload()
+    body["odd"][0]["items"][0]["label"] = "Park 77"
+    inp = reduce_month_close_payload(body)
+    check_narrative(_narrative("Park 77 is overdue.", []), inp)
+    with pytest.raises(AiProviderError):
+        check_narrative(_narrative("77 families are overdue.", []), inp)
+
+
 def test_a_number_in_a_fix_first_text_is_checked_too() -> None:
     with pytest.raises(AiProviderError):
         check_narrative(
