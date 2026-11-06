@@ -56,4 +56,12 @@ describe("AiVideoConsentBlock", () => {
     expect(html).toMatch(/<button[^>]*>Revoke<\/button>/);
     expect(html).toContain("Revoked");
   });
+
+  it("offers renewal, not Opted in, for a grant to an older text", () => {
+    const html = render({ text_version: "ai_video_consent_v1", placeholder: false });
+    expect(html).not.toContain("Opted in");
+    expect(html).toContain("Text changed");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Accept new text<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Revoke<\/button>/);
+  });
 });

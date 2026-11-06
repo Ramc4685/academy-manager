@@ -92,7 +92,11 @@ export function AiVideoConsentBlock({
       <ul className="mt-3 space-y-2">
         {view.children.map((child) => {
           const busy = busyStudentId === child.student_id;
+          // A grant to an older text authorizes nothing (ConsentAiVideo checks the
+          // version), so it needs renewing against the text shown here.
           const granted = child.status === "granted";
+          const current = granted && child.text_version === view.text_version;
+          const outdated = granted && !current;
           const checkboxId = `ai-video-consent-${child.student_id}`;
           return (
             <li
@@ -100,7 +104,7 @@ export function AiVideoConsentBlock({
               className="flex flex-wrap items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm bg-rally-cobalt-50"
             >
               <span className="font-medium text-rally-ink">{child.student_name}</span>
-              {granted ? (
+              {current ? (
                 <span className="flex items-center gap-2">
                   <Chip variant="approved" label="Opted in" />
                   <Button
@@ -115,6 +119,7 @@ export function AiVideoConsentBlock({
               ) : (
                 <span className="flex items-center gap-2">
                   {child.status === "revoked" && <Chip variant="expired" label="Revoked" />}
+                  {outdated && <Chip variant="pending" label="Text changed" />}
                   <label htmlFor={checkboxId} className="flex items-center gap-1.5 text-rally-ink">
                     <input
                       id={checkboxId}
@@ -135,8 +140,18 @@ export function AiVideoConsentBlock({
                     disabled={busy || !ticked[child.student_id]}
                     onClick={() => onGrant(child.student_id)}
                   >
-                    Opt in
+                    {outdated ? "Accept new text" : "Opt in"}
                   </Button>
+                  {outdated && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={busy}
+                      onClick={() => onRevoke(child.student_id)}
+                    >
+                      Revoke
+                    </Button>
+                  )}
                 </span>
               )}
             </li>
