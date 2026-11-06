@@ -27,7 +27,7 @@ import {
   type ParentEnrollment,
   type ParentScheduleEntry,
 } from "@/lib/api/parent";
-import { formatAcademyDate, formatAcademyTimeRange } from "@/lib/format/academy-time";
+import { formatAcademyDate, formatAcademyDay, formatAcademyTimeRange } from "@/lib/format/academy-time";
 import { nameGradient } from "@/lib/avatar-gradient";
 import {
   cancellationResultTitle,
@@ -405,7 +405,7 @@ function EnrollmentRow({
               <Chip
                 variant="expired"
                 label={departureLabel(enrollment.left_on, (iso) =>
-                  formatAcademyDate(iso, academyTimezone),
+                  formatAcademyDay(iso, academyTimezone),
                 )}
               />
               {departureNote && (

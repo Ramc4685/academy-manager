@@ -124,3 +124,21 @@ export function formatAcademyDate(
   const { timeZone } = resolveAcademyTimeZone(academyTimezone);
   return formatDayDate(instant, timeZone);
 }
+
+/**
+ * Like `formatAcademyDate`, but a value at exactly midnight UTC is read as the
+ * calendar day it was stored for. Admin-picked dates (a withdrawal's effective
+ * date) are saved as `YYYY-MM-DDT00:00:00Z`; shifting that into Chicago shows
+ * the day before. Same rule as the admin past-enrollments table.
+ */
+export function formatAcademyDay(
+  iso: string,
+  academyTimezone: string | null | undefined,
+): string {
+  const instant = parseAcademyInstant(iso);
+  if (Number.isNaN(instant.getTime())) return "";
+  if (instant.getTime() % 86_400_000 === 0) {
+    return formatDayDate(instant, "UTC");
+  }
+  return formatAcademyDate(iso, academyTimezone);
+}
