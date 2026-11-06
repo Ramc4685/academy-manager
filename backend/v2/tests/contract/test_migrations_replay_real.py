@@ -28,7 +28,9 @@ async def _indexes(db) -> dict[str, dict]:
 @pytest.mark.asyncio
 async def test_replay_twice_matches_a_fresh_replay(caplog) -> None:
     caplog.set_level(logging.WARNING)
-    url = os.environ.get("V2_MONGO_URL") or os.environ.get("MONGO_URL") or "mongodb://127.0.0.1:27017"
+    url = (
+        os.environ.get("V2_MONGO_URL") or os.environ.get("MONGO_URL") or "mongodb://127.0.0.1:27017"
+    )
     client: AsyncIOMotorClient = AsyncIOMotorClient(url, serverSelectionTimeoutMS=1500)
     try:
         await client.admin.command("ping")
