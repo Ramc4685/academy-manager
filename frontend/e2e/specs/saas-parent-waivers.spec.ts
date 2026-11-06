@@ -19,12 +19,17 @@ import {
   ACADEMY_A,
   fulfillJson,
   stubAcademy,
+  stubAiVideoConsent,
   stubMe,
   stubMemberships,
   stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
 } from "../fixtures/saas-stubs";
+
+test.beforeEach(async ({ page }) => {
+  await stubAiVideoConsent(page);
+});
 
 test.describe("SaaS v2 — parent registration", () => {
   test("parent onboarding lands cleanly after register hits /register/parent", async ({

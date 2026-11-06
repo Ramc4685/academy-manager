@@ -21,6 +21,14 @@ class AiMonthlyCapReached(DomainError):
     status_code = 429
 
 
+class AiDailyCapReached(DomainError):
+    """This feature already made its daily number of calls for the academy
+    (``ai.daily_call_cap.<feature>`` on the academy document)."""
+
+    code = "Ai.DailyCapReached"
+    status_code = 429
+
+
 class AiProviderError(DomainError):
     """The model provider answered with an error or could not be reached."""
 

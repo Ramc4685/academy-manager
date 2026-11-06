@@ -94,14 +94,14 @@ class DraftProgressNarrative:
     async def execute(self, data: ProgressNarrativeInput) -> tuple[NarrativeDraft, AiCallRecord]:
         if not await self._entitlement.has_ai():
             raise AiNotEntitled("AI notes are part of the Growth plan")
-        await self._record.assert_under_cap()
-        prompt = PROMPTS[FEATURE]
-        result = await self._llm.complete(
-            prompt_version=prompt.version,
-            system=prompt.system_text,
-            user=data.model_dump_json(),
-            max_tokens=MAX_TOKENS,
-        )
+        async with self._record.reserve(FEATURE):
+            prompt = PROMPTS[FEATURE]
+            result = await self._llm.complete(
+                prompt_version=prompt.version,
+                system=prompt.system_text,
+                user=data.model_dump_json(),
+                max_tokens=MAX_TOKENS,
+            )
         call = await self._record.execute(
             feature=FEATURE, prompt_version=prompt.version, result=result, approver=None
         )

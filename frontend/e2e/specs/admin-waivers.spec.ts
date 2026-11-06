@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { stubAiVideoConsent } from "../fixtures/saas-stubs";
+
 const ADMIN_ME = {
   user_id: "user-admin-waivers-e2e",
   email: "admin@example.com",
@@ -35,6 +37,10 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
     body: JSON.stringify(body),
   });
 }
+
+test.beforeEach(async ({ page }) => {
+  await stubAiVideoConsent(page);
+});
 
 async function stubMe(page: Page) {
   await page.route("**/api/v2/me", (route) => {

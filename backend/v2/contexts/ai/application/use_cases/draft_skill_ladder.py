@@ -94,14 +94,14 @@ class DraftSkillLadder:
         self._record = record_ai_call
 
     async def execute(self, inp: SkillLadderInput, *, approver: str) -> SkillLadderDraft:
-        await self._record.assert_under_cap()
-        prompt = PROMPTS[FEATURE]
-        result = await self._llm.complete(
-            prompt_version=prompt.version,
-            system=prompt.system_text,
-            user=json.dumps(inp.model_dump(), sort_keys=True),
-            max_tokens=MAX_TOKENS,
-        )
+        async with self._record.reserve(FEATURE):
+            prompt = PROMPTS[FEATURE]
+            result = await self._llm.complete(
+                prompt_version=prompt.version,
+                system=prompt.system_text,
+                user=json.dumps(inp.model_dump(), sort_keys=True),
+                max_tokens=MAX_TOKENS,
+            )
         # Recorded before parsing so a malformed answer still counts.
         await self._record.execute(
             feature=FEATURE, prompt_version=prompt.version, result=result, approver=approver

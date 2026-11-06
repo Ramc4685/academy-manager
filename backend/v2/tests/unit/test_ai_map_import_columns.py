@@ -29,6 +29,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 CSV = (
@@ -241,7 +242,9 @@ class FakeSharing:
 
 def _use_case(llm: FakeLlm, *, share: bool = False, used: int = 0, cap: int = 200):
     calls = FakeCalls(used)
-    record = RecordAiCall(calls=calls, cap_source=FakeCap(cap), clock=lambda: NOW)
+    record = RecordAiCall(
+        calls=calls, counters=counters_at(used, NOW), cap_source=FakeCap(cap), clock=lambda: NOW
+    )
     return MapImportColumns(llm=llm, record_ai_call=record, sharing=FakeSharing(share)), calls
 
 

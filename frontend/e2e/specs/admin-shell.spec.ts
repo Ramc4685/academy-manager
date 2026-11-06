@@ -10,6 +10,7 @@ import {
 import {
   stubCoachAcademy,
   stubCoachMessages,
+  stubNurtureSequence,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 import { stubFamilyIndex } from "../fixtures/family-index";
@@ -396,6 +397,7 @@ async function stubAdminBff(
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, {});
   });
+  await stubNurtureSequence(page);
   await page.route("**/api/v2/admin/sessions*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { sessions: [] });

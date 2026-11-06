@@ -63,14 +63,14 @@ class DraftWinBackNote:
     async def execute(self, data: WinBackNoteInput, *, approver: str | None) -> WinBackNoteDraft:
         if not await self._entitlement.has_ai():
             raise AiNotEntitled("this academy's plan does not include AI features")
-        await self._record.assert_under_cap()
-        prompt = PROMPTS[FEATURE]
-        result = await self._llm.complete(
-            prompt_version=prompt.version,
-            system=prompt.system_text,
-            user=json.dumps(data.model_dump(), ensure_ascii=False),
-            max_tokens=MAX_TOKENS,
-        )
+        async with self._record.reserve(FEATURE):
+            prompt = PROMPTS[FEATURE]
+            result = await self._llm.complete(
+                prompt_version=prompt.version,
+                system=prompt.system_text,
+                user=json.dumps(data.model_dump(), ensure_ascii=False),
+                max_tokens=MAX_TOKENS,
+            )
         await self._record.execute(
             feature=FEATURE, prompt_version=prompt.version, result=result, approver=approver
         )

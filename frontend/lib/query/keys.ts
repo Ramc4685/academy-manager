@@ -135,6 +135,7 @@ export const queryKeys = {
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,
     studentWaivers: (studentId: string) => ["admin", "waivers", "student", studentId] as const,
+    aiVideoConsents: () => ["admin", "waivers", "ai-video-consents"] as const,
     attention: () => ["admin", "dashboard", "attention"] as const,
     setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,
@@ -153,6 +154,8 @@ export const queryKeys = {
     classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     aiUsage: () => ["admin", "ai", "usage"] as const,
+    // AI strategy Phase 3 C1: the lead nurture sequence editor.
+    nurtureSequence: () => ["admin", "crm", "nurture-sequence"] as const,
     plan: () => ["admin", "billing", "plan"] as const,
     paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,
@@ -231,6 +234,7 @@ export const queryKeys = {
     calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
     emailPreferences: () => ["parent", "email-preferences"] as const,
+    aiVideoConsent: () => ["parent", "waivers", "ai-video-consent"] as const,
   },
   platform: {
     all: ["platform"] as const,

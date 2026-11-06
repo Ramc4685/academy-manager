@@ -201,6 +201,9 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     ListAdminWaivers,
 )
+from backend.v2.contexts.onboarding.application.use_cases.ai_video_consent import (
+    ListAdminAiVideoConsents,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_coach_engagement_stats import (
     GetCoachEngagementStats,
 )
@@ -321,6 +324,8 @@ class AdminUseCases:
     add_session_replacement: object | None = None  # async (...) -> dict | None
     update_session_occurrence_replacement: object | None = None  # async (...) -> dict | None
     manage_admin_waiver_templates: ManageAdminWaiverTemplates | None = None
+    # Per-child AI/video consent, read-only (Phase 3 E1).
+    list_ai_video_consents: ListAdminAiVideoConsents | None = None
     admin_registration_review: AdminRegistrationReview | None = None
     payout_periods: PayoutPeriodRepository | None = None
     list_monthly_payroll: ListMonthlyPayroll | None = None

@@ -237,16 +237,16 @@ class MapImportColumns:
         self._sharing = sharing
 
     async def execute(self, *, csv_text: str, approver: str) -> MapImportColumnsResult:
-        await self._record.assert_under_cap()
-        share = await self._sharing.share_values()
-        sample = read_sample(csv_text, share_values=share)
-        prompt = PROMPTS[FEATURE]
-        result = await self._llm.complete(
-            prompt_version=prompt.version,
-            system=prompt.system_text,
-            user=user_message(sample),
-            max_tokens=MAX_TOKENS,
-        )
+        async with self._record.reserve(FEATURE):
+            share = await self._sharing.share_values()
+            sample = read_sample(csv_text, share_values=share)
+            prompt = PROMPTS[FEATURE]
+            result = await self._llm.complete(
+                prompt_version=prompt.version,
+                system=prompt.system_text,
+                user=user_message(sample),
+                max_tokens=MAX_TOKENS,
+            )
         # Recorded before parsing so a malformed answer is still counted.
         await self._record.execute(
             feature=FEATURE, prompt_version=prompt.version, result=result, approver=approver

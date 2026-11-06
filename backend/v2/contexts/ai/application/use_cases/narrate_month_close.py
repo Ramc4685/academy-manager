@@ -276,15 +276,15 @@ class NarrateMonthClose:
     async def execute(self, *, period: str, approver: str) -> MonthCloseNarrative:
         if not await self._entitlement.has_ai():
             raise AiNotEntitled("AI summaries are part of the Growth plan")
-        await self._record.assert_under_cap()
-        inp = reduce_month_close_payload(await self._source.build(period))
-        prompt = PROMPTS[FEATURE]
-        result = await self._llm.complete(
-            prompt_version=prompt.version,
-            system=prompt.system_text,
-            user=json.dumps(inp.model_dump(), sort_keys=True),
-            max_tokens=MAX_TOKENS,
-        )
+        async with self._record.reserve(FEATURE):
+            inp = reduce_month_close_payload(await self._source.build(period))
+            prompt = PROMPTS[FEATURE]
+            result = await self._llm.complete(
+                prompt_version=prompt.version,
+                system=prompt.system_text,
+                user=json.dumps(inp.model_dump(), sort_keys=True),
+                max_tokens=MAX_TOKENS,
+            )
         # Recorded before parsing: a malformed answer still spent tokens.
         await self._record.execute(
             feature=FEATURE, prompt_version=prompt.version, result=result, approver=approver
