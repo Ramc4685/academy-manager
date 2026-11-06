@@ -135,6 +135,7 @@ export const queryKeys = {
     waivers: () => ["admin", "waivers"] as const,
     waiverTemplates: () => ["admin", "waivers", "templates"] as const,
     studentWaivers: (studentId: string) => ["admin", "waivers", "student", studentId] as const,
+    aiVideoConsents: () => ["admin", "waivers", "ai-video-consents"] as const,
     attention: () => ["admin", "dashboard", "attention"] as const,
     setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,
@@ -231,6 +232,7 @@ export const queryKeys = {
     calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
     emailPreferences: () => ["parent", "email-preferences"] as const,
+    aiVideoConsent: () => ["parent", "waivers", "ai-video-consent"] as const,
   },
   platform: {
     all: ["platform"] as const,

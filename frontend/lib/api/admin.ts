@@ -5,7 +5,7 @@
  * the openapi-typescript generator produces lib/api/generated/v2.d.ts.
  */
 
-import type { SignedWaiverCopy } from "@/lib/api/parent";
+import type { AiVideoConsentRow, SignedWaiverCopy } from "@/lib/api/parent";
 import type {
   BillingRulesView,
   UpdateBillingRulesRequest,
@@ -3274,6 +3274,11 @@ export function sendEmailCampaign(
 
 export function listAdminWaivers(): Promise<AdminWaiverList> {
   return apiFetch<AdminWaiverList>("/admin/waivers", { method: "GET" });
+}
+
+/** Read-only per-child AI/video consent status (Phase 3 E1). */
+export function listAdminAiVideoConsents(): Promise<{ children: AiVideoConsentRow[] }> {
+  return apiFetch("/admin/waivers/ai-video-consents", { method: "GET" });
 }
 
 export function listAdminWaiverTemplates(): Promise<AdminWaiverTemplateManagementList> {

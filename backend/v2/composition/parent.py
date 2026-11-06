@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
+from backend.v2.composition.ai_video_consent import compose_parent_ai_video_consent
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
@@ -422,6 +423,8 @@ class ParentComposition:
     # #1038: approved make-up / trial target ids -> class facts + academy
     # timezone, for the parent Requests screen.
     resolve_assigned_classes: object = None
+    # Per-child AI/video opt-in and revoke (Phase 3 E1).
+    ai_video_consent: object = None
 
 
 class _MongoTransactionRunner:
@@ -3035,6 +3038,7 @@ def compose_parent(
         get_child_schedule=get_child_schedule,
         get_parent_home=get_parent_home,
         resolve_assigned_classes=resolve_assigned_classes,
+        ai_video_consent=compose_parent_ai_video_consent(db),
         # #828: claiming a held seat inside the three-day window.
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),

@@ -4557,6 +4557,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/waivers/ai-video-consents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Admin Ai Video Consents
+         * @description Read-only per-child AI/video consent status (Phase 3 E1).
+         */
+        get: operations["list_admin_ai_video_consents_api_v2_admin_waivers_ai_video_consents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/waivers/signatures/{signature_id}": {
         parameters: {
             query?: never;
@@ -6434,6 +6454,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/waivers/ai-video-consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Parent Ai Video Consent */
+        get: operations["parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/waivers/ai-video-consent/{student_id}/grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Grant Parent Ai Video Consent */
+        post: operations["grant_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__grant_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/waivers/ai-video-consent/{student_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Parent Ai Video Consent */
+        post: operations["revoke_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/waivers/current": {
         parameters: {
             query?: never;
@@ -7567,6 +7638,11 @@ export interface components {
             terms_url?: string | null;
             /** Timezone */
             timezone?: string | null;
+        };
+        /** AdminAiVideoConsentList */
+        AdminAiVideoConsentList: {
+            /** Children */
+            children: components["schemas"]["AiVideoConsentRow"][];
         };
         /** AdminAttentionItemView */
         AdminAttentionItemView: {
@@ -10868,6 +10944,29 @@ export interface components {
             upgrade_suggested: boolean;
             /** Used */
             used: number;
+        };
+        /**
+         * AiVideoConsentRow
+         * @description One child's consent status, as the parent and the admin see it.
+         */
+        AiVideoConsentRow: {
+            /** Accepted At */
+            accepted_at?: string | null;
+            /** Accepted By */
+            accepted_by?: string | null;
+            /** Revoked At */
+            revoked_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "granted" | "revoked" | "none";
+            /** Student Id */
+            student_id: string;
+            /** Student Name */
+            student_name: string;
+            /** Text Version */
+            text_version?: string | null;
         };
         /** AiWinBackPersonalisedRequest */
         AiWinBackPersonalisedRequest: {
@@ -15102,6 +15201,24 @@ export interface components {
             self_service?: components["schemas"]["ParentSelfServiceSwitchesView"];
             /** Timezone */
             timezone?: string | null;
+        };
+        /** ParentAiVideoConsentGrantRequest */
+        ParentAiVideoConsentGrantRequest: {
+            /** Consent */
+            consent: boolean;
+            /** Text Version */
+            text_version: string;
+        };
+        /** ParentAiVideoConsentView */
+        ParentAiVideoConsentView: {
+            /** Children */
+            children: components["schemas"]["AiVideoConsentRow"][];
+            /** Placeholder */
+            placeholder: boolean;
+            /** Text */
+            text: string;
+            /** Text Version */
+            text_version: string;
         };
         /** ParentAttendanceRecordView */
         ParentAttendanceRecordView: {
@@ -28005,6 +28122,26 @@ export interface operations {
             };
         };
     };
+    list_admin_ai_video_consents_api_v2_admin_waivers_ai_video_consents_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAiVideoConsentList"];
+                };
+            };
+        };
+    };
     get_signed_waiver_detail_api_v2_admin_waivers_signatures__signature_id__get: {
         parameters: {
             query?: never;
@@ -31605,6 +31742,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ParentWaiverCurrentView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentAiVideoConsentView"];
+                };
+            };
+        };
+    };
+    grant_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__grant_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParentAiVideoConsentGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentAiVideoConsentView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentAiVideoConsentView"];
                 };
             };
             /** @description Validation Error */

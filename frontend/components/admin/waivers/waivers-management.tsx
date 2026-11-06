@@ -23,6 +23,8 @@ import { queryKeys } from "@/lib/query/keys";
 import { Avatar, BigNum, Card, Chip, LaneHeader, Overline } from "@/components/ds";
 import { archivedProgramLabel, requiredForLabel } from "@/lib/admin/waiver-assignment";
 
+import { AiVideoConsentStatus } from "./ai-video-consent-status";
+
 /**
  * Waiver template list/editor/publish UI (issue #613 area), reused from the
  * standalone `/admin/waivers` page.
@@ -160,6 +162,9 @@ export function WaiversManagement() {
           <WaiversTable waivers={waivers} />
         )}
       </Card>
+
+      <LaneHeader index="04" title="AI video consent" />
+      <AiVideoConsentStatus />
     </section>
   );
 }

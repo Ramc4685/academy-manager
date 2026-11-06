@@ -51,6 +51,7 @@ TENANT_OWNED_COLLECTIONS = {
     "ai_call_counters",
     "ai_calls",
     "ai_narratives",
+    "ai_video_consents",
     "academy_roles",
     "academy_settings",
     "announcements",
