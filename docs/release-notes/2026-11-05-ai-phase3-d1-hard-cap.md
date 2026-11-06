@@ -17,4 +17,4 @@
 
 - If wrong, an academy could be refused AI calls below its cap (a counter that drifts up) or pass it (a counter that drifts down). A slot is released only when the block raises, and never below zero. Rolling back the PR restores the count-then-insert check; the `ai_call_counters` collection and migration 0226 are harmless left in place.
 
-PR: #1150
+PR: #1156

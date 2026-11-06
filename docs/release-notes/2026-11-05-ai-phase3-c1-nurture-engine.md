@@ -18,4 +18,4 @@
 - Emails go only to leads with marketing consent and only after an academy opts in, so the exposure is limited to academies that turn it on. To stop sends without a deploy, switch it off in Settings.
 - Rollback is a revert of this PR. The `nurture_sends` collection, its index and the `crm_nurture` field on academy documents can stay; nothing else reads them.
 
-PR: TBD
+PR: #1156
