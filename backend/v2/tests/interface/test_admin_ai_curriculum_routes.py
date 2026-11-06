@@ -25,6 +25,7 @@ from backend.v2.interfaces.admin.ai_curriculum_routes import get_ai_curriculum
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 STATUS = "/api/v2/admin/ai/status"
 DRAFT = "/api/v2/admin/curriculum/programs/prog-1/ladder-draft"
@@ -183,7 +184,10 @@ def test_disabled_port_is_503_ai_disabled(client: TestClient, services: Any) -> 
     services.draft_skill_ladder = DraftSkillLadder(
         llm=DisabledLlmPort(),
         record_ai_call=RecordAiCall(
-            calls=_NoCalls(), cap_source=_Cap(), clock=lambda: datetime(2026, 11, 4, tzinfo=UTC)
+            calls=_NoCalls(),
+            counters=counters_at(),
+            cap_source=_Cap(),
+            clock=lambda: datetime(2026, 11, 4, tzinfo=UTC),
         ),
     )
     r = client.post(DRAFT, json={"age_band": "8-10"})
