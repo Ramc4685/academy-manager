@@ -13,6 +13,8 @@ The real-backend journeys fixture looked up the seeded coach from `GET /admin/se
 
 The coach-attendance journey opened the coach session page without `?date=`, so the page used the browser's date. On a UTC runner that is already tomorrow during the academy's evening, and the page showed "Session not found". The journey now passes the academy date, the same way the app's own links do.
 
+The SaaS coach-attendance spec now stubs `GET /coach/ai/status`, which #1142 added to coach Today. Unstubbed, the call returned 502 and sometimes reached the console check, so the spec flaked on Chromium and WebKit.
+
 ## Deploy notes
 Nothing to run. The OpenAPI snapshot and generated frontend types are regenerated.
 
