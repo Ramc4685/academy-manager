@@ -63,10 +63,11 @@ def test_prompt_registry_has_the_unused_placeholder() -> None:
 
 def test_cost_rounds_up_to_a_whole_cent() -> None:
     assert cost_cents(DEFAULT_MODEL, 0, 0) == 0
-    # 1 input token at $2/MTok is a fraction of a cent: still 1 cent.
+    # 1 input token at $0.10/MTok is a fraction of a cent: still 1 cent.
     assert cost_cents(DEFAULT_MODEL, 1, 0) == 1
-    # 1M in + 1M out = $2 + $10.
-    assert cost_cents(DEFAULT_MODEL, 1_000_000, 1_000_000) == 1200
+    # 1M in + 1M out = $0.10 + $0.50.
+    assert cost_cents(DEFAULT_MODEL, 1_000_000, 1_000_000) == 60
+    assert cost_cents("claude-sonnet-5-5", 1_000_000, 1_000_000) == 1200
 
 
 def test_anthropic_port_refuses_a_model_without_a_price_row() -> None:

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from backend.v2.shared.ids import new_ulid
 
 #: The one model every feature uses until a per-feature choice is needed.
-DEFAULT_MODEL = "claude-sonnet-5-5"
+DEFAULT_MODEL = "claude-haiku-5-5"
 
 
 class LlmResult(BaseModel):

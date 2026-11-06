@@ -23,7 +23,12 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 
 #: List price in cents per million tokens, by model. Rounded up to a whole
 #: cent per call so the audit never under-counts against the cap.
-PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {DEFAULT_MODEL: (200, 1000)}
+#: shortcut: Haiku 5.5 is the under-100K-token price; every feature prompt is
+#: far below that, add the long-prompt tier if one ever grows past it.
+PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {
+    DEFAULT_MODEL: (10, 50),
+    "claude-sonnet-5-5": (200, 1000),
+}
 
 
 def cost_cents(model: str, input_tokens: int, output_tokens: int) -> int:
