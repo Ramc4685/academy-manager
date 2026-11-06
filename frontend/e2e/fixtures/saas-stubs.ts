@@ -149,6 +149,26 @@ export async function stubParentProfile(
  *
  * Defaults to an empty inbox so the unread badge stays hidden.
  */
+/**
+ * The parent waivers page and the admin waivers page both render an AI video
+ * consent lane; unstubbed, their reads 502 and fail clean-console specs.
+ */
+export async function stubAiVideoConsent(page: Page): Promise<void> {
+  await page.route("**/api/v2/parent/waivers/ai-video-consent", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      text_version: "ai_video_consent_v0_placeholder",
+      text: "Placeholder consent text.",
+      placeholder: true,
+      children: [],
+    });
+  });
+  await page.route("**/api/v2/admin/waivers/ai-video-consents", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { children: [] });
+  });
+}
+
 export async function stubParentMessages(
   page: Page,
   messages: unknown[] = []
