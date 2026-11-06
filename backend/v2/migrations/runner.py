@@ -111,6 +111,12 @@ async def run_all_migrations(db: AsyncIOMotorDatabase[Any]) -> list[str]:
     migrations have already been recorded. Migrations are expected to be
     idempotent; production boot should continue using run_pending_migrations.
     """
+    # Later migrations redefine indexes under names earlier ones created, so
+    # replaying onto a migrated DB conflicts (Mongo codes 85/86). Start from a
+    # fresh index set; documents and validators are untouched.
+    for name in await db.list_collection_names():
+        if not name.startswith("system."):
+            await db[name].drop_indexes()
     replayed: list[str] = []
     for module in _discover_migrations():
         version: str = module.version
