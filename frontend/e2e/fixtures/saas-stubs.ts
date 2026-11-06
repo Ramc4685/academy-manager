@@ -150,6 +150,22 @@ export async function stubParentProfile(
  * Defaults to an empty inbox so the unread badge stays hidden.
  */
 /**
+ * The Settings > Notifications panel renders the lead nurture editor; a
+ * catch-all `{}` for its read crashes the card (no `steps`).
+ */
+export async function stubNurtureSequence(page: Page): Promise<void> {
+  await page.route("**/api/v2/admin/crm/nurture-sequence", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      enabled: false,
+      enabled_at: null,
+      steps: [2, 7, 21].map((day) => ({ day, subject: "", body: "" })),
+      merge_fields: ["academy_name", "class", "seat_band", "booking_link"],
+    });
+  });
+}
+
+/**
  * The parent waivers page and the admin waivers page both render an AI video
  * consent lane; unstubbed, their reads 502 and fail clean-console specs.
  */

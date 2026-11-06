@@ -145,6 +145,9 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
       return fulfillJson(route, { date: "2026-05-22", sessions: [] });
     });
 
+    // Coach Today reads the AI-notes switch; unstubbed it 502s into the console.
+    await page.route("**/api/v2/coach/ai/status", (route) => fulfillJson(route, { enabled: false }));
+
     await page.goto("/coach/today");
     await expect(page.getByTestId("coach-today")).toBeVisible();
     await expect(page.getByText(/Asha/i)).toHaveCount(0);
