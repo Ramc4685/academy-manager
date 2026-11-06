@@ -154,6 +154,8 @@ export const queryKeys = {
     classPublicProfiles: () => ["admin", "class-public-profiles"] as const,
     gateway: () => ["admin", "academy", "gateway"] as const,
     aiUsage: () => ["admin", "ai", "usage"] as const,
+    // AI strategy Phase 3 C1: the lead nurture sequence editor.
+    nurtureSequence: () => ["admin", "crm", "nurture-sequence"] as const,
     plan: () => ["admin", "billing", "plan"] as const,
     paymentMethods: () => ["admin", "academy", "payment-methods"] as const,
     platformFallback: () => ["admin", "billing", "platform-fallback"] as const,

@@ -80,6 +80,8 @@ OLD_CRON_TIMES = {
     "send_trial_no_show_follow_ups": (10, 0),
     "send_checkout_recovery_notices": (10, 10),
     "send_trial_reminders": (16, 0),
+    # Phase 3 C1 (lead nurture), academy-local from the start.
+    "send_nurture_steps": (10, 25),
 }
 
 #: The zone the OLD code used for each academy. Every fixed-hour cron ran in

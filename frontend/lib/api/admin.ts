@@ -15,6 +15,7 @@ import type { PersonLifecycle } from "@/lib/format/lifecycle-copy";
 import type { ManualPaymentMethod } from "@/lib/payment-methods";
 
 import { apiFetch } from "./client";
+import type { components } from "./generated/v2";
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -4463,4 +4464,34 @@ export function postAdminMonthCloseNarrative(period: string): Promise<AdminMonth
     `/admin/reports/month-close/narrative?period=${encodeURIComponent(period)}`,
     { method: "POST" },
   );
+}
+
+/**
+ * Lead nurture sequence (AI strategy Phase 3 C1): day 2, 7 and 21 emails to
+ * consented leads, off by default. Shapes are the backend's
+ * (`interfaces/admin/nurture_routes.py`), taken from the generated contract.
+ */
+export type NurtureSequenceView = components["schemas"]["NurtureSequenceView"];
+export type NurtureStepInput = components["schemas"]["NurtureStepBody"];
+export type NurturePreview = components["schemas"]["NurturePreviewView"];
+
+export function getAdminNurtureSequence(): Promise<NurtureSequenceView> {
+  return apiFetch<NurtureSequenceView>("/admin/crm/nurture-sequence", { method: "GET" });
+}
+
+export function updateAdminNurtureSequence(payload: {
+  enabled: boolean;
+  steps: NurtureStepInput[];
+}): Promise<NurtureSequenceView> {
+  return apiFetch<NurtureSequenceView>("/admin/crm/nurture-sequence", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function previewAdminNurtureStep(step: NurtureStepInput): Promise<NurturePreview> {
+  return apiFetch<NurturePreview>("/admin/crm/nurture-sequence/preview", {
+    method: "POST",
+    body: JSON.stringify(step),
+  });
 }
