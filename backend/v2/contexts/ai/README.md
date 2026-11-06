@@ -10,7 +10,7 @@ or child data goes to any model.** This README is the contract; the tests in
 
 | File | What it is |
 |---|---|
-| `domain/models.py` | `DEFAULT_MODEL` (`claude-sonnet-5-5`, a constant, not a setting), `LlmResult`, `AiCallRecord` |
+| `domain/models.py` | `DEFAULT_MODEL` (`claude-haiku-5-5`, a constant, not a setting), `LlmResult`, `AiCallRecord` |
 | `domain/prompts.py` | `PROMPTS`: feature -> `PromptVersion(version, system_text)`; one unused placeholder |
 | `domain/errors.py` | `AiDisabled` (503), `AiMonthlyCapReached` (429), `AiDailyCapReached` (429), `AiProviderError` (502) |
 | `application/ports.py` | `LlmPort`, `AiCallRepository`, `AiCallCounterRepository`, `MonthlyCapSource`, `DailyCapSource` |
