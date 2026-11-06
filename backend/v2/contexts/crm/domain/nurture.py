@@ -60,7 +60,7 @@ class NurtureStep:
 
     @property
     def key(self) -> str:
-        """The send-claim key: one send per (contact, step)."""
+        """The send-claim key: one send per (inbox, step)."""
         return f"nurture:day_{self.day}"
 
     @property

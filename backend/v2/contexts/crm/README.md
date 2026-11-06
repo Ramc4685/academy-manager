@@ -332,13 +332,17 @@ heartbeat in `ops_job_runs`, stale after 3h). Only the latest due step is a
 candidate, and only up to 3 days after its day: a job that was down sends the
 one step now due, never a backlog, and never day 2 after day 7.
 
-**Idempotency.** One send per (contact, step) through `send_once` over
-`nurture_sends`: `subject_id` = contact id, `digest_date` = `nurture:day_<n>`,
+**Idempotency.** One send per (inbox, step) through `send_once` over
+`nurture_sends`: `subject_id` = `inbox:<hash>` (sha256 of the canonical
+mailbox, never the address), `digest_date` = `nurture:day_<n>`,
 `channel` = `email`, claimed by `claim_digest_send` behind the unique index.
 A rerun, a second machine or a concurrent tick sends nothing; a provider
 failure is retried (bounded), an opt-out or bounce is final. C2 adds an SMS
 step as `channel: "sms"` on the same claim key, so a step still goes once
-per contact whichever channel carries it.
+per inbox whichever channel carries it. The inbox's oldest contact in the
+window decides for it: when that contact has stopped, its remaining steps are
+claimed as skipped, so a newer contact in the same inbox never restarts the
+sequence, even after the oldest ages out of the window.
 
 **Sending.** `ProspectEmailer.send` (README "Emailing a prospect"): the
 `crm_contact:<id>` pseudo recipient, bounce suppression and

@@ -7,7 +7,7 @@ Wires ``SendNurtureSteps`` (the daily ``send_nurture_steps`` job) and
   ``crm_nurture`` (``enabled`` default off, ``enabled_at``, ``steps``), read
   and written for the academy named, never another tenant's document;
 * ``MongoNurtureSendRepository``: ``nurture_sends``, one claim per
-  ``(academy_id, subject_id = contact_id, digest_date = "nurture:day_<n>")``
+  ``(academy_id, subject_id = inbox key, digest_date = "nurture:day_<n>")``
   through ``claim_digest_send``, unique index from migration 0225. Each row
   carries ``channel: "email"`` so C2's SMS steps are a new channel value, not
   a new key;

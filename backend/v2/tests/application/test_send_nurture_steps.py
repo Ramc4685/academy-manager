@@ -30,6 +30,7 @@ from backend.v2.contexts.communications.infrastructure.mongo_prospect_opt_out_re
 from backend.v2.contexts.crm.application.use_cases.nurture_sequence import (
     ManageNurtureSequence,
     SendNurtureSteps,
+    inbox_key,
 )
 from backend.v2.contexts.crm.domain.errors import InvalidNurtureSequence
 from backend.v2.contexts.crm.domain.family_messages import FamilyContactLog
@@ -307,7 +308,15 @@ async def test_a_reply_or_logged_contact_stops_the_sequence(world: World) -> Non
             )
         )
     assert await world.run(on_day(2)) == 0
-    assert await world.claims() == []
+    assert world.notifier.sent == []
+    # The stop spends the inbox's steps, so nothing can restart it later.
+    claims = await world.claims()
+    assert sorted(c["digest_date"] for c in claims) == [
+        "nurture:day_2",
+        "nurture:day_21",
+        "nurture:day_7",
+    ]
+    assert {(c["status"], c["retryable"]) for c in claims} == {("failed", False)}
 
 
 async def test_an_unsubscribe_stops_the_sequence(world: World) -> None:
@@ -346,7 +355,43 @@ async def test_a_suppressed_send_is_final_and_a_failed_one_retries(world: World)
     assert await world.run(on_day(2)) == 1
     assert world.notifier.sent == [("flaky", 2)]
     statuses = {c["subject_id"]: (c["status"], c["retryable"]) for c in await world.claims()}
-    assert statuses == {"bounced": ("failed", False), "flaky": ("sent", True)}
+    assert statuses == {
+        inbox_key("bounced@example.test"): ("failed", False),
+        inbox_key("flaky@example.test"): ("sent", True),
+    }
+
+
+# -- one sequence per inbox, whichever contact is current (Codex review, #1156) --
+
+
+async def test_a_second_contact_in_the_inbox_never_repeats_a_step(world: World) -> None:
+    await world.switch_on()
+    await world.add("first", email="pat@example.test")
+    await world.add("second", email="Pat+kid2@example.test", created_at=ARRIVED + timedelta(days=4))
+    for day in range(0, 30):
+        await world.run(on_day(day))
+    # "first" ages out of the 25-day window before "second" reaches day 21.
+    assert world.notifier.sent == [("first", 2), ("first", 7), ("first", 21)]
+
+
+async def test_a_stopped_oldest_contact_keeps_the_inbox_stopped(world: World) -> None:
+    await world.switch_on()
+    await world.add("first", email="pat@example.test", status="enrolled")
+    await world.add("second", email="pat@example.test", created_at=ARRIVED + timedelta(days=4))
+    for day in range(0, 30):
+        await world.run(on_day(day))
+    assert world.notifier.sent == []
+
+
+async def test_the_whole_audience_is_read_not_the_oldest_500(world: World) -> None:
+    await world.switch_on()
+    for n in range(520):
+        await world.add(f"c{n:03d}")
+    assert await world.run(on_day(2)) == 520
+    # 520 older contacts with nothing due today fill the first 500 rows.
+    await world.add("late", created_at=ARRIVED + timedelta(days=2))
+    assert await world.run(on_day(4)) == 1
+    assert world.notifier.sent[-1] == ("late", 2)
 
 
 # -- the editor ----------------------------------------------------------------

@@ -6,7 +6,7 @@ in ``main.py``) inside the academy's tenant scope. Every send goes through the
 ``NurtureNotifier`` port, which composition implements over the prospect send
 path (``ProspectEmailer``: ``crm_contact:<id>`` recipient, ``ProspectOptOutGate``,
 bounce suppression, unsubscribe footer) with category ``CAMPAIGN``, and every
-send is claimed once per (contact, step) through ``send_once``.
+send is claimed once per (inbox, step) through ``send_once``.
 
 The CRM context imports no other context: the academy settings, the opt-out
 store and the contact log are ports implemented in ``composition/nurture.py``.
@@ -14,7 +14,8 @@ store and the contact log are ports implemented in ``composition/nurture.py``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from functools import partial
 from typing import Protocol
@@ -117,40 +118,69 @@ class SendNurtureSteps:
         since = max(sequence.enabled_at, local_now.astimezone(UTC) - CANDIDATE_LOOKBACK)
         candidates = await self._contacts.list_nurture_candidates(created_since=since)
         results: list[SendResult | None] = []
-        for contact in _one_per_inbox(candidates):
-            if stop_reason(contact) is not None:
+        for inbox, contact in _one_per_inbox(candidates):
+            if await self._stopped(contact):
+                # Stops are permanent: spend the inbox's remaining steps so a
+                # newer contact in the same inbox never restarts the sequence.
+                for spent in steps:
+                    await self._claim(academy_id, inbox, spent, _skip)
                 continue
             step = due_step(
                 steps, created_on=created_on(contact, local_now), today=local_now.date()
             )
-            if step is None or not contact.email:
-                continue
-            if await self._opt_outs.is_opted_out(contact.email):
-                continue
-            if await self._conversations.has_logged_contact(contact_log_parent_id(contact)):
+            if step is None:
                 continue
             results.append(
-                await send_once(
-                    self._send_repo,
-                    academy_id=academy_id,
-                    subject_id=contact.contact_id,
-                    nudge_key=step.key,
-                    send=partial(self._notifier.send_step, contact=contact, step=step),
+                await self._claim(
+                    academy_id,
+                    inbox,
+                    step,
+                    partial(self._notifier.send_step, contact=contact, step=step),
                 )
             )
         return sent_count(results)
 
+    async def _stopped(self, contact: CrmContact) -> bool:
+        if stop_reason(contact) is not None or not contact.email:
+            return True
+        if await self._opt_outs.is_opted_out(contact.email):
+            return True
+        return await self._conversations.has_logged_contact(contact_log_parent_id(contact))
 
-def _one_per_inbox(contacts: list[CrmContact]) -> list[CrmContact]:
-    """The oldest contact per inbox. The public form files a second contact for
-    a second child (or a ``+tag`` spelling of the same address); one inbox gets
-    one sequence, and a stop on that contact stops it for the inbox."""
+    async def _claim(
+        self,
+        academy_id: str,
+        inbox: str,
+        step: NurtureStep,
+        send: Callable[[], Awaitable[SendResult]],
+    ) -> SendResult | None:
+        return await send_once(
+            self._send_repo, academy_id=academy_id, subject_id=inbox, nudge_key=step.key, send=send
+        )
+
+
+async def _skip() -> SendResult:
+    return "skipped"
+
+
+def inbox_key(email: str | None) -> str | None:
+    """The send-claim subject: one sequence per inbox, whichever contact in it
+    is current. A hash, because the canonical mailbox is never stored."""
+    mailbox = canonical_mailbox(email)
+    return f"inbox:{hashlib.sha256(mailbox.encode()).hexdigest()[:32]}" if mailbox else None
+
+
+def _one_per_inbox(contacts: list[CrmContact]) -> list[tuple[str, CrmContact]]:
+    """The oldest contact per inbox, stopped or not. The public form files a
+    second contact for a second child (or a ``+tag`` spelling of the same
+    address); one inbox gets one sequence, and a stop on its oldest contact
+    stops it for the inbox."""
     chosen: dict[str, CrmContact] = {}
     for contact in sorted(contacts, key=lambda c: (c.created_at, c.contact_id)):
-        mailbox = canonical_mailbox(contact.email)
-        if mailbox and mailbox not in chosen:
-            chosen[mailbox] = contact
-    return list(chosen.values())
+        key = inbox_key(contact.email)
+        if key and key not in chosen:
+            chosen[key] = contact
+    return list(chosen.items())
 
 
 class ManageNurtureSequence:

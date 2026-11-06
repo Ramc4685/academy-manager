@@ -2,9 +2,9 @@
 
 The claim collection for the nurture sequence's day 2, 7 and 21 steps: one
 row per ``(academy_id, subject_id, digest_date)``, where ``subject_id`` is the
-``crm_contacts`` id and ``digest_date`` holds the step key
+inbox key (``inbox:<sha256 of the canonical mailbox>``) and ``digest_date`` holds the step key
 (``nurture:day_<n>``). The unique index is what makes a send idempotent per
-(contact, step) across reruns, a second machine and concurrent ticks; rows
+(inbox, step) across reruns, a second machine and concurrent ticks; rows
 also carry ``channel`` (``email`` today, room for C2's SMS). Partial on
 ``{"subject_id": {"$gt": ""}}``, the planner-usable shape (#878).
 """

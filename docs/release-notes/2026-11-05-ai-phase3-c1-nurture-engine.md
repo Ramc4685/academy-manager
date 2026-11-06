@@ -5,7 +5,7 @@
 - Academies can send up to three follow-up emails to new leads, 2, 7 and 21 days after they ask, written by the owner on Settings > Notifications with a preview. No AI is used.
 - Only leads who ticked "news and offers" and are still a lead or trial get them, one sequence per inbox, and only leads who arrive after the switch is turned on.
 - The emails stop when the lead replies (a pipeline reply or any logged contact), staff move the card, the lead unsubscribes, or the family enrolls. The instant acknowledgement is unchanged.
-- Each email goes through the existing lead send path with the unsubscribe footer and opt-out check, at most once per lead per step, from a new daily job `send_nurture_steps` (10:25 academy time).
+- Each email goes through the existing lead send path with the unsubscribe footer and opt-out check, at most once per inbox per step, from a new daily job `send_nurture_steps` (10:25 academy time).
 
 ## Deploy notes
 
