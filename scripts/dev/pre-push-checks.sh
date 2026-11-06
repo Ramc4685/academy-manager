@@ -38,7 +38,7 @@ info() { echo -e "${YELLOW}▸${RESET} $*"; }
 header() { echo -e "\n${BOLD}$*${RESET}"; }
 
 # Per-run output file: concurrent gates in other worktrees must not overwrite it.
-CHECK_OUT="$(mktemp -t pre-push-out)"
+CHECK_OUT="$(mktemp "${TMPDIR:-/tmp}/pre-push-out.XXXXXX")"
 trap 'rm -f "$CHECK_OUT"' EXIT
 
 # Fail-fast: stop at the first failing check instead of running everything.

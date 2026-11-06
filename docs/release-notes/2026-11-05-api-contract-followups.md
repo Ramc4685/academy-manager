@@ -9,6 +9,8 @@ Two more admin money endpoints now declare their response shape, so the frontend
 
 Invoice creation (`POST /admin/students/{id}/invoices` and the bill-period route) is still untyped. Typing it means building a view of the full invoice document, and a wrong field there would turn a successful invoice into a 500.
 
+The real-backend journeys fixture looked up the seeded coach from `GET /admin/sessions` with no date, which lists only today's sessions. The seeded coach teaches only on Thursdays, so the journeys failed every other day, and they now block CI Gate. The fixture asks for the upcoming 30-day window instead.
+
 ## Deploy notes
 Nothing to run. The OpenAPI snapshot and generated frontend types are regenerated.
 

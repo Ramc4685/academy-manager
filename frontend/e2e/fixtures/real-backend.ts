@@ -156,7 +156,9 @@ export async function seededCoachId(
     request,
     adminToken,
     "GET",
-    "/admin/sessions",
+    // Without a window the route lists only today's sessions, and the seeded
+    // coaches teach on fixed weekdays; 30 days always covers each weekday.
+    "/admin/sessions?window=upcoming",
   );
   const match = sessions.find((s) => s.coach_name === coachName);
   expect(match, `seeded class coached by ${coachName}`).toBeTruthy();
