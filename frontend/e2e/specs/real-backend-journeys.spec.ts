@@ -197,8 +197,8 @@ test.describe("real-backend journeys", () => {
     expect(occurrenceId).toContain(academyToday());
 
     const coach = await signedInPage(browser, baseURL!, REAL_AUTH_USERS.coach, /\/coach/);
-    // The app's own links carry ?date=; without it the page uses the browser's
-    // date, which on a UTC runner is tomorrow during the academy's evening.
+    // Pass the academy date like the app's own links do: without it the page
+    // falls back to the browser's UTC date, a day ahead on a Chicago evening.
     await coach.goto(`/coach/sessions/${encodeURIComponent(occurrenceId)}?date=${academyToday()}`, {
       waitUntil: "domcontentloaded",
     });

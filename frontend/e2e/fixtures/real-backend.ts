@@ -146,7 +146,10 @@ export async function createDailyClass(
   return { sessionId: session.session_id, title, coachId };
 }
 
-/** user_id of the seeded coach (by email), read from the admin sessions list. */
+/** user_id of the seeded coach, read from the admin sessions list.
+ *
+ * Without a date the list is today's classes only, and the seeded coach's
+ * classes meet on one weekday, so ask for the 30-day upcoming window. */
 export async function seededCoachId(
   request: APIRequestContext,
   adminToken: string,
@@ -156,8 +159,6 @@ export async function seededCoachId(
     request,
     adminToken,
     "GET",
-    // Without a window the route lists only today's sessions, and the seeded
-    // coaches teach on fixed weekdays; 30 days always covers each weekday.
     "/admin/sessions?window=upcoming",
   );
   const match = sessions.find((s) => s.coach_name === coachName);
