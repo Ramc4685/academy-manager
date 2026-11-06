@@ -1,0 +1,41 @@
+name: Mobile Build Check
+
+# Information only: says whether merged changes need a new TestFlight / Play
+# build. Not a required check and not part of the Production approval path.
+# The apps load the live site, so only native-shell (mobile/) changes need a
+# store build. Baseline: ios-build-<n> / android-build-<n> tags
+# (docs/runbooks/mobile-store-builds.md).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'scripts/ci/*mobile_build_check.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Mobile store build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history plus tags, so the diff can reach the build tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Self-check
+        run: scripts/ci/test_mobile_build_check.sh
+
+      - name: Report
+        run: scripts/ci/mobile_build_check.sh | tee -a "$GITHUB_STEP_SUMMARY"

@@ -3,6 +3,7 @@ import type { ParentEmailPreferences } from "@/lib/parent/notification-preferenc
 
 import { apiFetch } from "./client";
 import type { SkillStatus } from "./curriculum";
+import type { components } from "./generated/v2";
 
 export interface ParentProfile {
   first_name: string;
@@ -630,6 +631,31 @@ export function acceptParentWaiver(payload: {
   return apiFetch("/parent/waivers/accept", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+// --- Per-child AI/video consent (Phase 3 E1): stored, authorizes nothing yet ---
+
+export type AiVideoConsentRow = components["schemas"]["AiVideoConsentRow"];
+export type ParentAiVideoConsentView = components["schemas"]["ParentAiVideoConsentView"];
+
+export function getParentAiVideoConsent(): Promise<ParentAiVideoConsentView> {
+  return apiFetch("/parent/waivers/ai-video-consent", { method: "GET" });
+}
+
+export function grantParentAiVideoConsent(
+  studentId: string,
+  textVersion: string,
+): Promise<ParentAiVideoConsentView> {
+  return apiFetch(`/parent/waivers/ai-video-consent/${encodeURIComponent(studentId)}/grant`, {
+    method: "POST",
+    body: JSON.stringify({ text_version: textVersion, consent: true }),
+  });
+}
+
+export function revokeParentAiVideoConsent(studentId: string): Promise<ParentAiVideoConsentView> {
+  return apiFetch(`/parent/waivers/ai-video-consent/${encodeURIComponent(studentId)}/revoke`, {
+    method: "POST",
   });
 }
 

@@ -28,6 +28,7 @@ from backend.v2.contexts.ai.domain.errors import (
 from backend.v2.contexts.ai.domain.models import AiCallRecord, LlmResult
 from backend.v2.contexts.ai.domain.prompts import PROMPTS
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 PARENT_EMAIL = "dana.whitfield@example.com"
 PARENT_PHONE = "+1 555 010 9988"
@@ -301,7 +302,9 @@ def _use_case(
     uc = NarrateMonthClose(
         llm=llm,
         entitlement=FakeEntitlement(entitled),
-        record_ai_call=RecordAiCall(calls=calls, cap_source=FakeCap()),
+        record_ai_call=RecordAiCall(
+            calls=calls, counters=counters_at(calls.used), cap_source=FakeCap()
+        ),
         source=source,
         clock=lambda: datetime(2026, 9, 30, tzinfo=UTC),
     )

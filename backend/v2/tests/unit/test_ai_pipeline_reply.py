@@ -41,6 +41,7 @@ from backend.v2.contexts.enrollment.application.use_cases.public_catalog import 
     PublicPrice,
 )
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 GOOD = json.dumps(
@@ -133,7 +134,12 @@ def _use_case(
     calls = calls or FakeCalls()
     use_case = DraftPipelineReply(
         llm=llm,
-        record_ai_call=RecordAiCall(calls=calls, cap_source=FakeCap(), clock=lambda: NOW),
+        record_ai_call=RecordAiCall(
+            calls=calls,
+            counters=counters_at(calls.used, NOW),
+            cap_source=FakeCap(),
+            clock=lambda: NOW,
+        ),
         entitlement=FakeEntitlement(entitled),
         inquiries=inquiries or FakeInquiries(FACTS),
         context=FakeContext(),

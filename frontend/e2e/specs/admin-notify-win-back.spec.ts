@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { stubNurtureSequence } from "../fixtures/saas-stubs";
+
 /**
  * Settings → Notify: the per-academy win-back switch (hardcoded-values row
  * 10), against a mocked admin BFF. A never-saved setting reads as on (so an
@@ -34,6 +36,7 @@ async function stub(page: Page): Promise<unknown[]> {
   await page.route("**/api/v2/admin/**", (route) =>
     route.request().method() === "GET" ? fulfillJson(route, {}) : route.fallback(),
   );
+  await stubNurtureSequence(page);
   await page.route("**/api/v2/me", (route) =>
     route.request().method() === "GET" ? fulfillJson(route, ADMIN_ME) : route.fallback(),
   );

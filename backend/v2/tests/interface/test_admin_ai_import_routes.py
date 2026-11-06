@@ -23,6 +23,7 @@ from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.shared.http.rate_limit import _PATH_LIMIT_OVERRIDES
 from backend.v2.shared.tenancy.context import _current as _tenant
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 A = "acad-a"
 MAP = "/api/v2/admin/imports/families/map-columns"
@@ -100,7 +101,10 @@ class Caller:
 def _services(llm) -> AiImportComposition:
     sharing = FakeSharing()
     record = RecordAiCall(
-        calls=FakeCalls(), cap_source=FakeCap(), clock=lambda: datetime(2026, 11, 4, tzinfo=UTC)
+        calls=FakeCalls(),
+        counters=counters_at(),
+        cap_source=FakeCap(),
+        clock=lambda: datetime(2026, 11, 4, tzinfo=UTC),
     )
     return AiImportComposition(
         map_columns=MapImportColumns(llm=llm, record_ai_call=record, sharing=sharing),

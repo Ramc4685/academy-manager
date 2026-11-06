@@ -285,6 +285,93 @@ existing notification switch matches, and none was added. Slice 3 (trial
 nudges) reuses `ProspectEmailer` with its own template and claim.
 
 
+## Lead nurture sequence (AI strategy Phase 3 C1, migration 0225)
+
+One sequence per academy, **off by default**: up to three owner-written emails
+on days 2, 7 and 21 after a lead arrives. Day 0 is the acknowledgement above;
+the sequence never resends or touches it (`acknowledged_at` is not read).
+No model is called.
+
+| File | What it is |
+|---|---|
+| `domain/nurture.py` | step days, validation, merge-field rendering, `stop_reason`, `due_step`, `seat_band_text` |
+| `application/use_cases/nurture_sequence.py` | `SendNurtureSteps` (the job), `ManageNurtureSequence` (editor: get, save, preview); ports for settings, opt-outs, the contact log and the email |
+| `infrastructure/mongo_crm_contact_repo.py` | `list_nurture_candidates(created_since=)` |
+| `backend/v2/composition/nurture.py` | `AcademyNurtureSettings`, `MongoNurtureSendRepository`, `ContactLogConversations`, `NurtureEmailAdapter`, `compose_nurture` |
+| `interfaces/admin/nurture_routes.py` | `GET`/`PUT /admin/crm/nurture-sequence`, `POST /admin/crm/nurture-sequence/preview` (`require_persona("admin")`) |
+| `frontend/components/admin/settings/nurture-sequence-card.tsx` | the editor, on Settings > Notifications |
+
+**Settings.** On the academy document under `crm_nurture`:
+`{enabled, enabled_at, steps: [{day, subject, body}], updated_by, updated_at}`.
+`enabled_at` is stamped when the switch goes on, kept on a re-save, cleared
+when it goes off; switching off and on again restarts it.
+
+**Audience.** `consent.marketing` true, `pipeline_status` `lead` or `trial`,
+created at or after `enabled_at` (so switching it on never mails the existing
+lead list), and one contact per inbox: the oldest contact per
+`canonical_mailbox` gets the sequence and a second child's contact for the
+same inbox gets none. The consent is `consent.marketing` alone. The owner's
+open decision on a separate "nurture" tick on the form would be a one-field
+change: add the field to `ContactConsent` and read it in `stop_reason` and
+`list_nurture_candidates` instead of `marketing`.
+
+**Stops** (checked on every run, each permanent once true):
+
+- `enrolled` (or no longer `lead` / `trial`, or consent withdrawn);
+- a pipeline move: any `pipeline_override` on the row;
+- a reply: the app has no inbound mailbox (replies land in the academy's
+  reply-to inbox), so the signal is any `family_contact_log` row on the lead
+  (`contact_log_parent_id`): a staff reply from the pipeline (B3 logs it), a
+  logged call, WhatsApp or talk;
+- an unsubscribe: `email_prospect_opt_outs` holds the address (checked before
+  the claim; `ProspectOptOutGate` also blocks it at send time).
+
+**When.** Daily job `send_nurture_steps` (10:25 on each academy's clock,
+hourly ticks with a once-per-local-day marker, leased, Sentry cron check-in,
+heartbeat in `ops_job_runs`, stale after 3h). Only the latest due step is a
+candidate, and only up to 3 days after its day: a job that was down sends the
+one step now due, never a backlog, and never day 2 after day 7.
+
+**Idempotency.** One send per (inbox, step) through `send_once` over
+`nurture_sends`: `subject_id` = `inbox:<hash>` (sha256 of the canonical
+mailbox, never the address), `digest_date` = `nurture:day_<n>`,
+`channel` = `email`, claimed by `claim_digest_send` behind the unique index.
+A rerun, a second machine or a concurrent tick sends nothing; a provider
+failure is retried (bounded), an opt-out or bounce is final. C2 adds an SMS
+step as `channel: "sms"` on the same claim key, so a step still goes once
+per inbox whichever channel carries it. The inbox's oldest contact in the
+window decides for it: when that contact has stopped, its remaining steps are
+claimed as skipped, so a newer contact in the same inbox never restarts the
+sequence, even after the oldest ages out of the window.
+
+**Sending.** `ProspectEmailer.send` (README "Emailing a prospect"): the
+`crm_contact:<id>` pseudo recipient, bounce suppression and
+`ProspectOptOutGate`, the unsubscribe footer, `EmailCategory.CAMPAIGN`,
+replies to the academy's reply-to. No unsubscribe link to mint means nothing
+is sent and the claim retries. Like the acknowledgement it does not go
+through the outbox; the claim row is the durable record.
+
+**Merge fields.** `{{academy_name}}`, `{{class}}` (the requested class's title,
+else "our classes"), `{{seat_band}}` (a sentence from the public page's seat
+band for that class, honouring the academy's few-seats threshold and
+"show availability"), `{{booking_link}}` (the academy's public page). Any
+other `{{...}}` is refused on save (`Crm.InvalidNurtureSequence`, 422). Text
+is escaped; nothing the lead typed is merged in.
+
+### Index (migration 0225)
+
+| Collection | Name | Keys | Options |
+|---|---|---|---|
+| `nurture_sends` | `nurture_sends_key_unique` | `academy_id, subject_id, digest_date` | unique, partial `{subject_id: {$gt: ""}}` |
+
+Tests: `tests/application/test_send_nurture_steps.py` (the job and editor on
+the real stores over mongomock: audience, schedule, day 0 untouched, every
+stop, rerun idempotency, retry vs final),
+`tests/unit/test_nurture_email_adapter.py` (send path, footer, escaping, seat
+band), `tests/interface/test_admin_nurture_routes.py` (tenant isolation,
+validation, wrong-persona 404), `tests/unit/test_0225_nurture_sends.py`,
+`tests/contract/test_nurture_sends_real_mongo.py` (real `mongod`).
+
 ## Tests
 
 - `backend/v2/tests/unit/test_crm_create_contact.py`: behaviour, validation,

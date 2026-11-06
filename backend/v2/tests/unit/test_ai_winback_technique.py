@@ -49,6 +49,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 OWNER = "owner-ulid"
@@ -105,7 +106,9 @@ class Entitled:
 
 
 def _record(calls: FakeCalls) -> RecordAiCall:
-    return RecordAiCall(calls=calls, cap_source=FakeCap(), clock=lambda: NOW)
+    return RecordAiCall(
+        calls=calls, counters=counters_at(calls.used, NOW), cap_source=FakeCap(), clock=lambda: NOW
+    )
 
 
 WIN_BACK_INPUT = WinBackNoteInput(

@@ -20,6 +20,9 @@ from backend.v2.contexts.ai.application.use_cases.record_ai_call import (
 )
 from backend.v2.contexts.ai.infrastructure.anthropic_llm_port import AnthropicLlmPort
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
+from backend.v2.contexts.ai.infrastructure.mongo_ai_call_counter_repo import (
+    MongoAiCallCounterRepository,
+)
 from backend.v2.contexts.ai.infrastructure.mongo_ai_call_repo import MongoAiCallRepository
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
@@ -29,21 +32,34 @@ from backend.v2.shared.tenancy import current_academy_id
 logger = logging.getLogger(__name__)
 
 
+def _cap_value(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
 class AcademyAiCapLookup:
-    """``MonthlyCapSource`` over the academy document: ``ai.monthly_call_cap``,
-    read for the academy in scope, the way ``AcademyWinBackSwitch`` reads
+    """``MonthlyCapSource`` and ``DailyCapSource`` over the academy document:
+    ``ai.monthly_call_cap`` and ``ai.daily_call_cap.<feature>``, read for the
+    academy in scope, the way ``AcademyWinBackSwitch`` reads
     ``notifications.win_back_enabled``."""
 
     def __init__(self, academies: Any) -> None:
         self._academies = academies
 
-    async def monthly_cap(self) -> int:
+    async def _ai(self) -> dict[str, Any]:
         doc = await self._academies.find_by_id(current_academy_id())
         ai = (doc or {}).get("ai") if isinstance(doc, dict) else None
-        cap = ai.get("monthly_call_cap") if isinstance(ai, dict) else None
-        if isinstance(cap, int) and not isinstance(cap, bool) and cap >= 0:
-            return cap
-        return DEFAULT_MONTHLY_CALL_CAP
+        return ai if isinstance(ai, dict) else {}
+
+    async def monthly_cap(self) -> int:
+        cap = _cap_value((await self._ai()).get("monthly_call_cap"))
+        return DEFAULT_MONTHLY_CALL_CAP if cap is None else cap
+
+    async def daily_cap(self, feature: str) -> int | None:
+        """None (no daily ceiling) when the setting is absent or invalid."""
+        daily = (await self._ai()).get("daily_call_cap")
+        return _cap_value(daily.get(feature)) if isinstance(daily, dict) else None
 
 
 class PlatformAiEntitlement:
@@ -72,11 +88,14 @@ def compose_ai(db: Any, settings: Any, *, has_feature: Any | None = None) -> AiC
         llm = AnthropicLlmPort(api_key=settings.anthropic_api_key.get_secret_value())
     else:
         llm = DisabledLlmPort()
+    caps = AcademyAiCapLookup(MongoAcademyRepository(db))
     return AiComposition(
         llm=llm,
         record_ai_call=RecordAiCall(
             calls=MongoAiCallRepository(db),
-            cap_source=AcademyAiCapLookup(MongoAcademyRepository(db)),
+            counters=MongoAiCallCounterRepository(db),
+            cap_source=caps,
+            daily_caps=caps,
         ),
         entitlement=PlatformAiEntitlement(has_feature),
     )
