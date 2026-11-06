@@ -616,10 +616,7 @@ jobs:
         run: pnpm exec playwright test --config=playwright.ci-real-auth.config.ts real-auth-smoke.spec.ts
 
       - name: Real-backend journeys (enrollment, invoicing, payment, attendance)
-        id: journeys
-        # Reuses the stack above. Non-blocking until the owner agrees to make it
-        # required: a failure shows on the step but does not fail CI Gate.
-        continue-on-error: true
+        # Reuses the stack above.
         working-directory: frontend
         env:
           CI: "1"
@@ -627,11 +624,11 @@ jobs:
         run: pnpm exec playwright test --config=playwright.ci-real-auth.config.ts real-backend-journeys.spec.ts
 
       - name: Dump stack logs on failure
-        if: failure() || steps.journeys.outcome == 'failure'
+        if: failure()
         run: scripts/local_test_stack.sh logs
 
       - name: Upload Playwright report on failure
-        if: failure() || steps.journeys.outcome == 'failure'
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-real-auth
