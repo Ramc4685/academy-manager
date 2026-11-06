@@ -65,8 +65,10 @@ def test_cost_rounds_up_to_a_whole_cent() -> None:
     assert cost_cents(DEFAULT_MODEL, 0, 0) == 0
     # 1 input token at $0.10/MTok is a fraction of a cent: still 1 cent.
     assert cost_cents(DEFAULT_MODEL, 1, 0) == 1
-    # 1M in + 1M out = $0.10 + $0.50.
-    assert cost_cents(DEFAULT_MODEL, 1_000_000, 1_000_000) == 60
+    # 100K in (still the short tier) + 1M out = $0.01 + $0.50.
+    assert cost_cents(DEFAULT_MODEL, 100_000, 1_000_000) == 51
+    # Past 100K input tokens both rates go 5x: 200K in at $0.50 + 1M out at $2.50.
+    assert cost_cents(DEFAULT_MODEL, 200_000, 1_000_000) == 260
     assert cost_cents("claude-sonnet-5-5", 1_000_000, 1_000_000) == 1200
 
 

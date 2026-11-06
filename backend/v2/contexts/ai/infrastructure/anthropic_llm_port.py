@@ -23,16 +23,21 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 
 #: List price in cents per million tokens, by model. Rounded up to a whole
 #: cent per call so the audit never under-counts against the cap.
-#: shortcut: Haiku 5.5 is the under-100K-token price; every feature prompt is
-#: far below that, add the long-prompt tier if one ever grows past it.
 PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {
     DEFAULT_MODEL: (10, 50),
     "claude-sonnet-5-5": (200, 1000),
 }
 
+#: Haiku 5.5 bills both input and output at 5x once a prompt passes 100K input
+#: tokens; an import sample with value sharing on can get there.
+LONG_PROMPT_INPUT_TOKENS = 100_000
+LONG_PROMPT_PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {DEFAULT_MODEL: (50, 250)}
+
 
 def cost_cents(model: str, input_tokens: int, output_tokens: int) -> int:
     in_price, out_price = PRICE_CENTS_PER_MTOK[model]
+    if input_tokens > LONG_PROMPT_INPUT_TOKENS and model in LONG_PROMPT_PRICE_CENTS_PER_MTOK:
+        in_price, out_price = LONG_PROMPT_PRICE_CENTS_PER_MTOK[model]
     micro = input_tokens * in_price + output_tokens * out_price
     return (micro + 999_999) // 1_000_000
 
