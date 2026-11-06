@@ -216,3 +216,44 @@ platform billing `HasFeature` use case, so this context still does not import
 `GET /api/v2/platform/academies/{academy_id}/ai-usage` (platform admin,
 enters `tenant_scope`, 404 for an unknown academy); wired at
 `app.state.ai_usage`.
+
+## Tools
+
+Phase 3 slice D2. `application/tools.py` is a registry of read-only tools for
+"ask the academy" (D3). Nothing calls it yet and nothing here calls a model.
+
+A tool is a `ToolSpec` (name, one-paragraph description, pydantic argument
+model with `extra="forbid"`, access level) plus a runner. The specs live in
+this context; the runners are built in `composition/ai_tools.py::compose_ai_tools(admin,
+people_reports)` (`app.state.admin` and `app.state.admin_family_index.reports`),
+because the reports belong to billing, enrollment, coaching and crm and this
+context imports none of them. Each runner calls the same use case its report
+route calls and shapes the result with the route's own response model, so a
+tool result is the same JSON as the HTTP response.
+
+`ToolRegistry.call(name, arguments, caller)` validates the arguments (a bad
+one raises pydantic `ValidationError`), refuses a tool the caller may not use
+(`ToolNotAllowed`), runs the use case inside `tenant_scope(caller.academy_id)`
+and returns the response model's JSON cut to `MAX_TOOL_RESULT_CHARS` (12,000)
+with a `[truncated: ...]` marker. A use case not wired in this deployment is
+`ToolUnavailable`; the use case's own errors (for example `InvalidReportRange`)
+propagate. `ToolCaller` comes from `composition/ai_tools.py::tool_caller(academy_id,
+claims)`: `is_owner` is `"owner" in claims.roles`, the same test as
+`require_owner()`, and `can_view_family_money` is crm's #553 check. Access
+mirrors the routes: `owner` for session economics, projected income, refunds,
+revenue by category and deposit slip; `family_money` for money owed by age;
+`admin` for the rest (the D3 route checks the admin persona itself).
+`ToolRegistry.anthropic_tools(caller)` renders the tools that caller may use in
+the Messages API shape: `name`, `description`, `input_schema` from
+`model_json_schema()`.
+
+Registered: all thirteen reports behind `interfaces/admin/reports_routes.py`
+and `people_reports_routes.py`: `reports_dashboard`, `session_economics`,
+`projected_income`, `enrollment_funnel`, `attendance_trends`,
+`coach_utilization`, `refunds_report`, `revenue_by_category`, `deposit_slip`,
+`money_owed_by_age`, `inquiry_conversion`, `attendance_risk`, `families_lost`.
+Left out: none. Every use case takes only its period or date window and reads
+the academy from the tenant scope or an explicit `academy_id`; none needs the
+`Request`, a FastAPI dependency or route-side shaping beyond the response
+model. The CSV export route is not a tool (it returns a file, not data).
+Tests: `backend/v2/tests/unit/test_ai_tools.py`.
