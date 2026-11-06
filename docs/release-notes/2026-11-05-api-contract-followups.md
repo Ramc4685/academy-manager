@@ -11,6 +11,8 @@ Invoice creation (`POST /admin/students/{id}/invoices` and the bill-period route
 
 The real-backend journeys fixture looked up the seeded coach from `GET /admin/sessions` with no date, which lists only today's sessions. The seeded coach teaches only on Thursdays, so the journeys failed every other day, and they now block CI Gate. The fixture asks for the upcoming 30-day window instead.
 
+The coach-attendance journey opened the coach session page without `?date=`, so the page used the browser's date. On a UTC runner that is already tomorrow during the academy's evening, and the page showed "Session not found". The journey now passes the academy date, the same way the app's own links do.
+
 ## Deploy notes
 Nothing to run. The OpenAPI snapshot and generated frontend types are regenerated.
 
