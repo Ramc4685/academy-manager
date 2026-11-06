@@ -26,6 +26,7 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefundCommand,
+    IssueRefundResult,
 )
 from backend.v2.contexts.billing.application.use_cases.send_invoice import (
     EmptyInvoiceNotSendable,
@@ -395,13 +396,13 @@ async def last_payment_by_family(
     return AdminFamilyLastPaymentsResponse(rows=[AdminFamilyLastPaymentRow(**row) for row in rows])
 
 
-@router.post("/payments/refund", summary="Issue a refund")
+@router.post("/payments/refund", summary="Issue a refund", response_model=IssueRefundResult)
 async def refund(
     body: IssueRefundRequest,
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
-) -> dict[str, object]:
+) -> IssueRefundResult:
     """Send an ``Idempotency-Key`` (one per refund attempt, reused on retry) so
     a retry replays while a second real refund is still issued (#930). Without
     it an identical repeat inside the TTL is a 409 to confirm; a key reused for
@@ -414,7 +415,7 @@ async def refund(
             idempotency_key=idempotency_key or None,
         )
     )
-    return result.model_dump()
+    return result
 
 
 @router.post("/payments/generate-monthly", response_model=GenerateMonthlyPaymentsResponse)
@@ -1147,9 +1148,30 @@ async def refund_invoice(
     )
 
 
+class InvoiceAuditEntryView(BaseModel):
+    """Mirror of the billing domain's BillingAuditEntry (interfaces may not import domain)."""
+
+    audit_id: str
+    academy_id: str
+    action: str
+    actor_id: str
+    at: datetime
+    invoice_id: str | None = None
+    payment_id: str | None = None
+    parent_id: str | None = None
+    reason: str | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+
+
+class InvoiceAuditResponse(BaseModel):
+    entries: list[InvoiceAuditEntryView]
+
+
 @router.get(
     "/billing/invoices/{invoice_id}/audit",
     summary="List the append-only billing audit trail for an invoice",
+    response_model=InvoiceAuditResponse,
 )
 async def list_invoice_audit(
     invoice_id: str,

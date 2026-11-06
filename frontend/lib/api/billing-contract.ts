@@ -7,8 +7,8 @@
  * fails here instead of the page breaking in production. Types only; emits no JS.
  *
  * Not checkable yet, because the backend declares no response model for them:
- * POST /admin/payments/refund, GET /admin/billing/invoices/{id}/audit,
- * POST /admin/students/{id}/invoices. Add them here once they get one.
+ * POST /admin/students/{id}/invoices and POST /admin/enrollments/{id}/invoices/bill-period.
+ * Add them here once they get one.
  */
 import type { paths } from "./generated/v2";
 import type {
@@ -18,6 +18,8 @@ import type {
   AdminPaymentList,
   AdminPaymentView,
   BillingSetupAutopayEnableResponse,
+  InvoiceAuditResponse,
+  RefundResponse,
   FailedPaymentsResponse,
   GenerateMonthlyPaymentsResponse,
   InvoiceAttemptsResponse,
@@ -125,4 +127,8 @@ export type AdminFamilyBillingFit = Expect<
 >;
 export type AdminPauseAutopayFit = Expect<
   Fits<Res<"/api/v2/admin/families/{parent_id}/autopay/pause", "post">, PauseFamilyAutopayResponse>
+>;
+export type AdminRefundFit = Expect<Fits<Res<"/api/v2/admin/payments/refund", "post">, RefundResponse>>;
+export type AdminInvoiceAuditFit = Expect<
+  Fits<Res<"/api/v2/admin/billing/invoices/{invoice_id}/audit", "get">, InvoiceAuditResponse>
 >;

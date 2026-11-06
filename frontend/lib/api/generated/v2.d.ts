@@ -14225,6 +14225,46 @@ export interface components {
             /** Attempts */
             attempts: components["schemas"]["PaymentAttemptDto"][];
         };
+        /**
+         * InvoiceAuditEntryView
+         * @description Mirror of the billing domain's BillingAuditEntry (interfaces may not import domain).
+         */
+        InvoiceAuditEntryView: {
+            /** Academy Id */
+            academy_id: string;
+            /** Action */
+            action: string;
+            /** Actor Id */
+            actor_id: string;
+            /** After */
+            after?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Audit Id */
+            audit_id: string;
+            /** Before */
+            before?: {
+                [key: string]: unknown;
+            } | null;
+            /** Invoice Id */
+            invoice_id?: string | null;
+            /** Parent Id */
+            parent_id?: string | null;
+            /** Payment Id */
+            payment_id?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** InvoiceAuditResponse */
+        InvoiceAuditResponse: {
+            /** Entries */
+            entries: components["schemas"]["InvoiceAuditEntryView"][];
+        };
         /** InvoiceCreditUsageDto */
         InvoiceCreditUsageDto: {
             /** Amount Cents */
@@ -14407,6 +14447,17 @@ export interface components {
              * @default admin_initiated
              */
             reason: string;
+        };
+        /** IssueRefundResult */
+        IssueRefundResult: {
+            /** Payment Id */
+            payment_id: string;
+            /** Refunded Cents */
+            refunded_cents: number;
+            /** Stripe Refund Id */
+            stripe_refund_id: string;
+            /** Total Refunded Cents */
+            total_refunded_cents: number;
         };
         /** LadderDraftBody */
         LadderDraftBody: {
@@ -20324,11 +20375,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: {
-                            [key: string]: unknown;
-                        }[];
-                    };
+                    "application/json": components["schemas"]["InvoiceAuditResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23957,9 +24004,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["IssueRefundResult"];
                 };
             };
             /** @description Validation Error */
