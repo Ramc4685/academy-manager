@@ -14,4 +14,4 @@
 
 - Draft wording may be plainer than Sonnet's. Every draft is still reviewed by staff or a coach before anyone sees it. Rollback: set `DEFAULT_MODEL` back to `claude-sonnet-5-5`.
 
-PR: TBD
+PR: #1157
