@@ -146,6 +146,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "send_trial_reminders": timedelta(hours=3),
     "send_trial_no_show_follow_ups": timedelta(hours=3),
     "send_checkout_recovery_notices": timedelta(hours=3),
+    # Lead nurture (AI strategy Phase 3 C1): hourly ticks, once per local day.
+    "send_nurture_steps": timedelta(hours=3),
     # Tap-to-master: evening auto-approval of queued level-ups.
     "auto_approve_level_ups": timedelta(hours=3),
     # Issue #776: the owner's daily brief (hourly ticks, once per local day).

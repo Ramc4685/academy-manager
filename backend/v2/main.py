@@ -344,6 +344,8 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     # recovery mid-morning; the reminder the afternoon before the trial.
     "send_trial_no_show_follow_ups": LocalDailyTime(10, 0),
     "send_checkout_recovery_notices": LocalDailyTime(10, 10),
+    # Lead nurture (AI strategy Phase 3 C1): the day 2/7/21 steps mid-morning.
+    "send_nurture_steps": LocalDailyTime(10, 25),
     "send_trial_reminders": LocalDailyTime(16, 0),
     # Monthly report card: the job runs daily but only sends on the 1st.
     "send_parent_report_cards": LocalDailyTime(9, 0),
@@ -541,6 +543,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     },
     "send_checkout_recovery_notices": {
         "schedule": {"type": "crontab", "value": "10 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # Lead nurture (AI strategy Phase 3 C1): daily, idempotent per (contact,
+    # step) (nurture_sends claim, migration 0225), so an extra run sends nothing.
+    "send_nurture_steps": {
+        "schedule": {"type": "crontab", "value": "25 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -962,6 +971,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.trial_nudges import compose_trial_nudges
 
     app.state.trial_nudges = compose_trial_nudges(db, settings)
+    # Lead nurture (AI strategy Phase 3 C1): the daily job and the admin editor.
+    from backend.v2.composition.nurture import compose_nurture
+
+    app.state.nurture = compose_nurture(db, settings)
     # AI strategy Phase 2 B1: skill-ladder drafting over app.state.ai.
     from backend.v2.composition.ai_curriculum import compose_ai_curriculum
 
@@ -1445,6 +1458,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "send_checkout_recovery_notices",
             app.state.trial_nudges.send_checkout_recovery_notices.execute,
         )
+
+    async def _send_nurture_steps() -> None:
+        await _run_leased_job("send_nurture_steps", timedelta(minutes=5), _send_nurture_steps_body)
+
+    async def _send_nurture_steps_body() -> None:
+        await _send_trial_nudges("send_nurture_steps", app.state.nurture.send_steps.execute)
 
     async def _auto_approve_level_ups() -> None:
         await _run_leased_job(
@@ -2190,6 +2209,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=LOCAL_DAILY_JOBS["send_checkout_recovery_notices"].minute,
         timezone=UTC,
         id="send_checkout_recovery_notices",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _send_nurture_steps,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["send_nurture_steps"].minute,
+        timezone=UTC,
+        id="send_nurture_steps",
         replace_existing=True,
         max_instances=1,
     )

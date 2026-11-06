@@ -115,6 +115,8 @@ TENANT_OWNED_COLLECTIONS = {
     "email_prospect_opt_outs",
     # Trial nudge send claims (migration 0219, AI strategy Phase 1 #3)
     "trial_nudge_sends",
+    # Lead nurture step send claims (migration 0225, AI strategy Phase 3 C1)
+    "nurture_sends",
     # Per-inbox inquiry acknowledgement claims (migration 0218)
     "crm_inquiry_ack_throttle",
     # CSV family and student import batches (migration 0199, roadmap L8a)

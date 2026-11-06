@@ -21581,6 +21581,137 @@
         "title": "NoteBody",
         "type": "object"
       },
+      "NurturePreviewView": {
+        "properties": {
+          "body_text": {
+            "title": "Body Text",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "body_text"
+        ],
+        "title": "NurturePreviewView",
+        "type": "object"
+      },
+      "NurtureSequenceBody": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/NurtureStepBody"
+            },
+            "maxItems": 3,
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "NurtureSequenceBody",
+        "type": "object"
+      },
+      "NurtureSequenceView": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enabled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled At"
+          },
+          "merge_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Merge Fields",
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/NurtureStepView"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled",
+          "enabled_at",
+          "steps",
+          "merge_fields"
+        ],
+        "title": "NurtureSequenceView",
+        "type": "object"
+      },
+      "NurtureStepBody": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "default": "",
+            "maxLength": 8000,
+            "title": "Body",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "subject": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "title": "NurtureStepBody",
+        "type": "object"
+      },
+      "NurtureStepView": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "subject",
+          "body"
+        ],
+        "title": "NurtureStepView",
+        "type": "object"
+      },
       "OpenDisputeDto": {
         "properties": {
           "amount_cents": {
@@ -36742,6 +36873,107 @@
           }
         },
         "summary": "Move Pipeline Card",
+        "tags": [
+          "admin.people"
+        ]
+      }
+    },
+    "/api/v2/admin/crm/nurture-sequence": {
+      "get": {
+        "operationId": "get_nurture_sequence_api_v2_admin_crm_nurture_sequence_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NurtureSequenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Nurture Sequence",
+        "tags": [
+          "admin.people"
+        ]
+      },
+      "put": {
+        "operationId": "put_nurture_sequence_api_v2_admin_crm_nurture_sequence_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NurtureSequenceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NurtureSequenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Nurture Sequence",
+        "tags": [
+          "admin.people"
+        ]
+      }
+    },
+    "/api/v2/admin/crm/nurture-sequence/preview": {
+      "post": {
+        "operationId": "preview_nurture_step_api_v2_admin_crm_nurture_sequence_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NurtureStepBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NurturePreviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Nurture Step",
         "tags": [
           "admin.people"
         ]

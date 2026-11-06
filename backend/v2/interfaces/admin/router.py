@@ -33,6 +33,7 @@ from .family_record_routes import router as family_record_router
 from .hold_routes import router as hold_router
 from .inbox_routes import router as inbox_router
 from .month_close_routes import router as month_close_router
+from .nurture_routes import router as nurture_router
 from .pathway_routes import router as pathway_router
 from .pause_routes import router as pause_router
 from .payment_methods_routes import router as payment_methods_router
@@ -103,6 +104,7 @@ router.include_router(self_service_policy_router)
 router.include_router(self_service_request_router)
 router.include_router(trial_outcome_router)
 router.include_router(pipeline_router)
+router.include_router(nurture_router)
 router.include_router(departure_policy_router)
 router.include_router(hold_router)
 router.include_router(departures_router)

@@ -199,6 +199,24 @@ class MongoCrmContactRepository(TenantScopedRepository):
         cursor = self._find_many(query, sort=[("created_at", -1)], limit=limit)
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_nurture_candidates(
+        self, *, created_since: datetime, limit: int = 500
+    ) -> list[CrmContact]:
+        """The nurture sequence's audience (C1): marketing consent, stage
+        ``lead`` or ``trial``, created at or after ``created_since``, oldest
+        first. Served by ``crm_contacts_academy_created`` (0192); the other
+        conditions filter the at most ~25 days of rows that range covers."""
+        cursor = self._find_many(
+            {
+                "created_at": {"$gte": created_since},
+                "pipeline_status": {"$in": ["lead", "trial"]},
+                "consent.marketing": True,
+            },
+            sort=[("created_at", 1)],
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def count_by_source_and_status(
         self, *, created_from: datetime, created_before: datetime
     ) -> list[tuple[str, str, int]]:

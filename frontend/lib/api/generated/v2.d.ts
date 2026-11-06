@@ -1135,6 +1135,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/crm/nurture-sequence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Nurture Sequence */
+        get: operations["get_nurture_sequence_api_v2_admin_crm_nurture_sequence_get"];
+        /** Put Nurture Sequence */
+        put: operations["put_nurture_sequence_api_v2_admin_crm_nurture_sequence_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/crm/nurture-sequence/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Nurture Step */
+        post: operations["preview_nurture_step_api_v2_admin_crm_nurture_sequence_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/crm/pipeline": {
         parameters: {
             query?: never;
@@ -14938,6 +14973,55 @@ export interface components {
             /** Body */
             body: string;
         };
+        /** NurturePreviewView */
+        NurturePreviewView: {
+            /** Body Text */
+            body_text: string;
+            /** Subject */
+            subject: string;
+        };
+        /** NurtureSequenceBody */
+        NurtureSequenceBody: {
+            /** Enabled */
+            enabled: boolean;
+            /** Steps */
+            steps?: components["schemas"]["NurtureStepBody"][];
+        };
+        /** NurtureSequenceView */
+        NurtureSequenceView: {
+            /** Enabled */
+            enabled: boolean;
+            /** Enabled At */
+            enabled_at: string | null;
+            /** Merge Fields */
+            merge_fields: string[];
+            /** Steps */
+            steps: components["schemas"]["NurtureStepView"][];
+        };
+        /** NurtureStepBody */
+        NurtureStepBody: {
+            /**
+             * Body
+             * @default
+             */
+            body: string;
+            /** Day */
+            day: number;
+            /**
+             * Subject
+             * @default
+             */
+            subject: string;
+        };
+        /** NurtureStepView */
+        NurtureStepView: {
+            /** Body */
+            body: string;
+            /** Day */
+            day: number;
+            /** Subject */
+            subject: string;
+        };
         /** OpenDisputeDto */
         OpenDisputeDto: {
             /**
@@ -21262,6 +21346,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PipelineCardView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_nurture_sequence_api_v2_admin_crm_nurture_sequence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NurtureSequenceView"];
+                };
+            };
+        };
+    };
+    put_nurture_sequence_api_v2_admin_crm_nurture_sequence_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NurtureSequenceBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NurtureSequenceView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_nurture_step_api_v2_admin_crm_nurture_sequence_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NurtureStepBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NurturePreviewView"];
                 };
             };
             /** @description Validation Error */

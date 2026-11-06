@@ -179,3 +179,11 @@ class PipelineReplySendFailed(DomainError):
 
     code = "Crm.PipelineReplySendFailed"
     status_code = 502
+
+
+class InvalidNurtureSequence(DomainError):
+    """The nurture sequence failed validation (a day outside 2, 7, 21, a
+    subject without a body, an unknown merge field, over a size cap)."""
+
+    code = "Crm.InvalidNurtureSequence"
+    status_code = 422
