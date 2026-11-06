@@ -48,8 +48,10 @@ V2_ROOT = Path(__file__).resolve().parents[1]
 TENANT_OWNED_COLLECTIONS = {
     "account_credit_ledger",
     "academy_feature_flags",
+    "ai_call_counters",
     "ai_calls",
     "ai_narratives",
+    "ai_video_consents",
     "academy_roles",
     "academy_settings",
     "announcements",
@@ -115,6 +117,8 @@ TENANT_OWNED_COLLECTIONS = {
     "email_prospect_opt_outs",
     # Trial nudge send claims (migration 0219, AI strategy Phase 1 #3)
     "trial_nudge_sends",
+    # Lead nurture step send claims (migration 0225, AI strategy Phase 3 C1)
+    "nurture_sends",
     # Per-inbox inquiry acknowledgement claims (migration 0218)
     "crm_inquiry_ack_throttle",
     # CSV family and student import batches (migration 0199, roadmap L8a)

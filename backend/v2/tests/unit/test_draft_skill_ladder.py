@@ -30,6 +30,7 @@ from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmP
 from backend.v2.contexts.curriculum.domain.models import Program, ScoringType
 from backend.v2.contexts.curriculum.infrastructure.mongo_program_repo import MongoProgramRepository
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.ai_counters import counters_at
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 INPUT = SkillLadderInput(sport="badminton", age_band="8-10", level_count=2, notes="Fun first")
@@ -97,7 +98,9 @@ class FakeCap:
 
 def _use_case(llm, *, used: int = 0, cap: int = 200) -> tuple[DraftSkillLadder, FakeCalls]:
     calls = FakeCalls(used)
-    record = RecordAiCall(calls=calls, cap_source=FakeCap(cap), clock=lambda: NOW)
+    record = RecordAiCall(
+        calls=calls, counters=counters_at(used, NOW), cap_source=FakeCap(cap), clock=lambda: NOW
+    )
     return DraftSkillLadder(llm=llm, record_ai_call=record), calls
 
 
@@ -211,7 +214,7 @@ async def test_sport_lookup_is_tenant_scoped() -> None:
 
 def test_compose_reports_enabled_only_off_the_disabled_port() -> None:
     db = AsyncMongoMockClient()["test_db"]
-    record = RecordAiCall(calls=FakeCalls(), cap_source=FakeCap())
+    record = RecordAiCall(calls=FakeCalls(), counters=counters_at(), cap_source=FakeCap())
     off = compose_ai_curriculum(
         db,
         AiComposition(

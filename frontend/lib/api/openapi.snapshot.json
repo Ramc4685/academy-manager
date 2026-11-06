@@ -794,6 +794,22 @@
         "title": "AdminAcademyView",
         "type": "object"
       },
+      "AdminAiVideoConsentList": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/AiVideoConsentRow"
+            },
+            "title": "Children",
+            "type": "array"
+          }
+        },
+        "required": [
+          "children"
+        ],
+        "title": "AdminAiVideoConsentList",
+        "type": "object"
+      },
       "AdminAttentionItemView": {
         "properties": {
           "attention_id": {
@@ -9857,6 +9873,81 @@
           "month"
         ],
         "title": "AiUsageView",
+        "type": "object"
+      },
+      "AiVideoConsentRow": {
+        "description": "One child's consent status, as the parent and the admin see it.",
+        "properties": {
+          "accepted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "accepted_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted By"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "status": {
+            "enum": [
+              "granted",
+              "revoked",
+              "none"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "text_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Version"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "status"
+        ],
+        "title": "AiVideoConsentRow",
         "type": "object"
       },
       "AiWinBackPersonalisedRequest": {
@@ -19219,6 +19310,125 @@
         "title": "InvoiceAttemptsResponse",
         "type": "object"
       },
+      "InvoiceAuditEntryView": {
+        "description": "Mirror of the billing domain's BillingAuditEntry (interfaces may not import domain).",
+        "properties": {
+          "academy_id": {
+            "title": "Academy Id",
+            "type": "string"
+          },
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "audit_id": {
+            "title": "Audit Id",
+            "type": "string"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "invoice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "audit_id",
+          "academy_id",
+          "action",
+          "actor_id",
+          "at"
+        ],
+        "title": "InvoiceAuditEntryView",
+        "type": "object"
+      },
+      "InvoiceAuditResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/InvoiceAuditEntryView"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "InvoiceAuditResponse",
+        "type": "object"
+      },
       "InvoiceCreditUsageDto": {
         "properties": {
           "amount_cents": {
@@ -19727,6 +19937,34 @@
           "payment_id"
         ],
         "title": "IssueRefundRequest",
+        "type": "object"
+      },
+      "IssueRefundResult": {
+        "properties": {
+          "payment_id": {
+            "title": "Payment Id",
+            "type": "string"
+          },
+          "refunded_cents": {
+            "title": "Refunded Cents",
+            "type": "integer"
+          },
+          "stripe_refund_id": {
+            "title": "Stripe Refund Id",
+            "type": "string"
+          },
+          "total_refunded_cents": {
+            "title": "Total Refunded Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "payment_id",
+          "stripe_refund_id",
+          "refunded_cents",
+          "total_refunded_cents"
+        ],
+        "title": "IssueRefundResult",
         "type": "object"
       },
       "LadderDraftBody": {
@@ -21581,6 +21819,137 @@
         "title": "NoteBody",
         "type": "object"
       },
+      "NurturePreviewView": {
+        "properties": {
+          "body_text": {
+            "title": "Body Text",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "body_text"
+        ],
+        "title": "NurturePreviewView",
+        "type": "object"
+      },
+      "NurtureSequenceBody": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/NurtureStepBody"
+            },
+            "maxItems": 3,
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "NurtureSequenceBody",
+        "type": "object"
+      },
+      "NurtureSequenceView": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enabled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled At"
+          },
+          "merge_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Merge Fields",
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/NurtureStepView"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled",
+          "enabled_at",
+          "steps",
+          "merge_fields"
+        ],
+        "title": "NurtureSequenceView",
+        "type": "object"
+      },
+      "NurtureStepBody": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "default": "",
+            "maxLength": 8000,
+            "title": "Body",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "subject": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "title": "NurtureStepBody",
+        "type": "object"
+      },
+      "NurtureStepView": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "subject",
+          "body"
+        ],
+        "title": "NurtureStepView",
+        "type": "object"
+      },
       "OpenDisputeDto": {
         "properties": {
           "amount_cents": {
@@ -21954,6 +22323,58 @@
           "display_name"
         ],
         "title": "ParentAcademyView",
+        "type": "object"
+      },
+      "ParentAiVideoConsentGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "title": "Consent",
+            "type": "boolean"
+          },
+          "text_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Text Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text_version",
+          "consent"
+        ],
+        "title": "ParentAiVideoConsentGrantRequest",
+        "type": "object"
+      },
+      "ParentAiVideoConsentView": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/AiVideoConsentRow"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "placeholder": {
+            "title": "Placeholder",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "text_version": {
+            "title": "Text Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text_version",
+          "text",
+          "placeholder",
+          "children"
+        ],
+        "title": "ParentAiVideoConsentView",
         "type": "object"
       },
       "ParentAttendanceRecordView": {
@@ -35096,15 +35517,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "items": {
-                      "additionalProperties": true,
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "title": "Response List Invoice Audit Api V2 Admin Billing Invoices  Invoice Id  Audit Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InvoiceAuditResponse"
                 }
               }
             },
@@ -36742,6 +37155,107 @@
           }
         },
         "summary": "Move Pipeline Card",
+        "tags": [
+          "admin.people"
+        ]
+      }
+    },
+    "/api/v2/admin/crm/nurture-sequence": {
+      "get": {
+        "operationId": "get_nurture_sequence_api_v2_admin_crm_nurture_sequence_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NurtureSequenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Nurture Sequence",
+        "tags": [
+          "admin.people"
+        ]
+      },
+      "put": {
+        "operationId": "put_nurture_sequence_api_v2_admin_crm_nurture_sequence_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NurtureSequenceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NurtureSequenceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Nurture Sequence",
+        "tags": [
+          "admin.people"
+        ]
+      }
+    },
+    "/api/v2/admin/crm/nurture-sequence/preview": {
+      "post": {
+        "operationId": "preview_nurture_step_api_v2_admin_crm_nurture_sequence_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NurtureStepBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NurturePreviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Nurture Step",
         "tags": [
           "admin.people"
         ]
@@ -40378,9 +40892,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Refund Api V2 Admin Payments Refund Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IssueRefundResult"
                 }
               }
             },
@@ -46770,6 +47282,28 @@
         ]
       }
     },
+    "/api/v2/admin/waivers/ai-video-consents": {
+      "get": {
+        "description": "Read-only per-child AI/video consent status (Phase 3 E1).",
+        "operationId": "list_admin_ai_video_consents_api_v2_admin_waivers_ai_video_consents_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAiVideoConsentList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Admin Ai Video Consents",
+        "tags": [
+          "admin-waivers"
+        ]
+      }
+    },
     "/api/v2/admin/waivers/signatures/{signature_id}": {
       "get": {
         "operationId": "get_signed_waiver_detail_api_v2_admin_waivers_signatures__signature_id__get",
@@ -51939,6 +52473,121 @@
           }
         },
         "summary": "Accept Parent Waiver",
+        "tags": [
+          "parent.waivers"
+        ]
+      }
+    },
+    "/api/v2/parent/waivers/ai-video-consent": {
+      "get": {
+        "operationId": "parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAiVideoConsentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Parent Ai Video Consent",
+        "tags": [
+          "parent.waivers"
+        ]
+      }
+    },
+    "/api/v2/parent/waivers/ai-video-consent/{student_id}/grant": {
+      "post": {
+        "operationId": "grant_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__grant_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentAiVideoConsentGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAiVideoConsentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Grant Parent Ai Video Consent",
+        "tags": [
+          "parent.waivers"
+        ]
+      }
+    },
+    "/api/v2/parent/waivers/ai-video-consent/{student_id}/revoke": {
+      "post": {
+        "operationId": "revoke_parent_ai_video_consent_api_v2_parent_waivers_ai_video_consent__student_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAiVideoConsentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Parent Ai Video Consent",
         "tags": [
           "parent.waivers"
         ]

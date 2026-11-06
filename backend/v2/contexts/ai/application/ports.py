@@ -26,6 +26,25 @@ class MonthlyCapSource(Protocol):
     async def monthly_cap(self) -> int: ...
 
 
+class DailyCapSource(Protocol):
+    """The academy in scope's per-feature daily AI call ceiling
+    (``ai.daily_call_cap.<feature>``); None means no daily ceiling."""
+
+    async def daily_cap(self, feature: str) -> int | None: ...
+
+
+class AiCallCounterRepository(Protocol):
+    """Atomic reservation counters for the hard cap, one per key in scope."""
+
+    async def reserve(self, key: str, cap: int) -> bool:
+        """Take one slot when the key's count is under ``cap``; False at the cap."""
+        ...
+
+    async def release(self, key: str) -> None:
+        """Give back one slot taken by ``reserve``."""
+        ...
+
+
 class EntitlementSource(Protocol):
     """Whether the academy in scope holds a plan feature (``"ai"``)."""
 

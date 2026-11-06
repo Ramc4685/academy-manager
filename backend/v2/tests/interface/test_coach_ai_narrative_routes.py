@@ -25,6 +25,7 @@ from backend.v2.interfaces.coach.deps import get_coach_use_cases
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.tests.fixtures.ai_counters import counters_at
 from backend.v2.tests.unit.test_progress_narrative import (
     INPUT,
     FakeCalls,
@@ -75,7 +76,12 @@ def _narratives(*, llm: Any, entitled: bool = True, review: bool = True, used: i
     calls, repo = FakeCalls(used=used), FakeNarratives()
     drafter = DraftProgressNarrative(
         llm=llm,
-        record_ai_call=RecordAiCall(calls=calls, cap_source=FakeCap(), clock=lambda: NOW),
+        record_ai_call=RecordAiCall(
+            calls=calls,
+            counters=counters_at(used, NOW),
+            cap_source=FakeCap(),
+            clock=lambda: NOW,
+        ),
         entitlement=FakeEntitlement(entitled),
     )
     composition = AiNarrativesComposition(

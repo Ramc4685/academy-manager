@@ -1,12 +1,18 @@
-"""Record one model call against the academy's monthly cap. No model call here."""
+"""Reserve and record one model call against the academy's hard cap. No model call here."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from backend.v2.contexts.ai.application.ports import AiCallRepository, MonthlyCapSource
-from backend.v2.contexts.ai.domain.errors import AiMonthlyCapReached
+from backend.v2.contexts.ai.application.ports import (
+    AiCallCounterRepository,
+    AiCallRepository,
+    DailyCapSource,
+    MonthlyCapSource,
+)
+from backend.v2.contexts.ai.domain.errors import AiDailyCapReached, AiMonthlyCapReached
 from backend.v2.contexts.ai.domain.models import AiCallRecord, LlmResult
 
 #: Calls per academy per UTC month when the academy document sets no cap.
@@ -18,30 +24,53 @@ class RecordAiCall:
         self,
         *,
         calls: AiCallRepository,
+        counters: AiCallCounterRepository,
         cap_source: MonthlyCapSource,
+        daily_caps: DailyCapSource | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._calls = calls
+        self._counters = counters
         self._cap_source = cap_source
+        self._daily_caps = daily_caps
         self._clock = clock or (lambda: datetime.now(UTC))
 
-    async def assert_under_cap(self) -> None:
-        """Refuse before any tokens are spent when the month is already at the cap.
+    @asynccontextmanager
+    async def reserve(self, feature: str) -> AsyncIterator[None]:
+        """Hold one slot of the month (and of ``feature``'s day, when the
+        academy sets a daily ceiling) for the model call made inside the block.
 
-        Features call this first, then the model, then ``execute``. Only this
-        check refuses: once the model has answered the tokens are spent, so
-        ``execute`` always writes the audit row, even one past the cap."""
+        Refuses with ``AiMonthlyCapReached`` / ``AiDailyCapReached`` before any
+        tokens are spent. The slot is taken atomically, so concurrent calls at
+        the cap minus one let exactly one through. Any error raised inside the
+        block (the provider failing, or the prep before it) gives the slot
+        back. Features wrap only the model call (and its prep) in the block,
+        then call ``execute`` after it."""
         now = self._clock()
-        month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
-        used = await self._calls.count_since(month_start)
+        month_key = f"month:{now:%Y-%m}"
         cap = await self._cap_source.monthly_cap()
-        # shortcut: count-then-insert is not atomic (concurrent calls at cap-1
-        # can each pass); upgrade to a reserve on a per-month counter document
-        # ($inc with a $lt filter) when a paid feature needs a hard ceiling.
-        if used + 1 > cap:
+        if not await self._counters.reserve(month_key, cap):
             raise AiMonthlyCapReached(
-                f"monthly AI call cap reached ({used} of {cap})", used=used, cap=cap
+                f"monthly AI call cap reached ({cap} of {cap})", used=cap, cap=cap
             )
+        keys = [month_key]
+        try:
+            daily = await self._daily_caps.daily_cap(feature) if self._daily_caps else None
+            if daily is not None:
+                day_key = f"day:{now:%Y-%m-%d}:{feature}"
+                if not await self._counters.reserve(day_key, daily):
+                    raise AiDailyCapReached(
+                        f"daily AI call cap reached for {feature} ({daily} of {daily})",
+                        feature=feature,
+                        used=daily,
+                        cap=daily,
+                    )
+                keys.append(day_key)
+            yield
+        except BaseException:
+            for key in keys:
+                await self._counters.release(key)
+            raise
 
     async def execute(
         self,
@@ -51,6 +80,7 @@ class RecordAiCall:
         result: LlmResult,
         approver: str | None,
     ) -> AiCallRecord:
+        """Write the audit row. Never refuses: the tokens are already spent."""
         record = AiCallRecord(
             feature=feature,
             prompt_version=prompt_version,

@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/ds/empty-state";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { useToast } from "@/components/ds/toast";
+import { AiVideoConsentCard } from "@/components/parent/ai-video-consent";
 import { WaiverSignBlock, type WaiverSignChild } from "@/components/parent/waiver-sign-block";
 import type { ApiError } from "@/lib/api/client";
 import { waiverSignLabel } from "@/lib/parent/waiver-label";
@@ -164,6 +165,7 @@ export default function ParentWaiversPage() {
           title="No waiver required"
           description="You're all set — there are no forms to sign right now."
         />
+        <AiVideoConsentCard />
       </section>
     );
   }
@@ -283,6 +285,8 @@ export default function ParentWaiversPage() {
             : "Current waiver is signed for all active children."}
         </div>
       )}
+
+      <AiVideoConsentCard />
     </section>
   );
 }

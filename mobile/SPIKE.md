@@ -106,3 +106,9 @@ pins stay put.
   page looks cut off on the left. Fix belongs in the web UI, not the shell.
 - Not covered: Stripe Checkout, real push send, Sign in with Apple (needs a paid
   team), physical device.
+
+## Store builds
+
+Only `mobile/` changes need a new TestFlight / Play build; web deploys reach the apps
+directly. CI reports which on every push to `main`. Tag each upload as
+`ios-build-<n>` / `android-build-<n>`: see `docs/runbooks/mobile-store-builds.md`.

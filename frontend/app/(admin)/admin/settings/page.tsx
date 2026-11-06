@@ -9,6 +9,7 @@ import { AiUsageCard } from "@/components/admin/settings/ai-usage-card";
 import { BillingRulesPanel } from "@/components/admin/settings/billing-rules-panel";
 import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
+import { NurtureSequenceCard } from "@/components/admin/settings/nurture-sequence-card";
 import { SelfServicePanel } from "@/components/admin/settings/self-service-panel";
 import { DeparturePolicyPanel } from "@/components/admin/settings/departure-policy-panel";
 import { CurriculumPanel } from "@/components/admin/settings/curriculum-panel";
@@ -100,7 +101,12 @@ export default function AdminSettingsPage() {
         )}
         {active === "billing-rules" && isOwner && <BillingRulesPanel />}
         {active === "integrations" && isOwner && <GatewayPanel />}
-        {active === "notifications" && <NotifyPanel />}
+        {active === "notifications" && (
+          <div className="space-y-6">
+            <NotifyPanel />
+            <NurtureSequenceCard />
+          </div>
+        )}
         {active === "family-policies" && (
           <div className="space-y-6">
             <SelfServicePanel />

@@ -41,6 +41,9 @@ from backend.v2.contexts.enrollment.application.use_cases.waitlist_offers import
     ConfirmWaitlistOffer,
     DeclineWaitlistOffer,
 )
+from backend.v2.contexts.onboarding.application.use_cases.ai_video_consent import (
+    ParentAiVideoConsent,
+)
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
     PatchApplication,
@@ -130,6 +133,8 @@ class ParentUseCases:
     # so fixtures that predate it keep constructing; requests then carry no
     # resolved class (the raw ids are still returned).
     resolve_assigned_classes: object | None = None
+    # Per-child AI/video opt-in and revoke (Phase 3 E1). Defaulted for old fixtures.
+    ai_video_consent: ParentAiVideoConsent | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

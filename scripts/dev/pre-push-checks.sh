@@ -37,7 +37,7 @@ fail() { echo -e "${RED}✗${RESET} $*"; }
 info() { echo -e "${YELLOW}▸${RESET} $*"; }
 header() { echo -e "\n${BOLD}$*${RESET}"; }
 
-# Per-run output file: concurrent gates in other worktrees must not clobber it.
+# Per-run output file: concurrent gates in other worktrees must not overwrite it.
 CHECK_OUT="$(mktemp "${TMPDIR:-/tmp}/pre-push-out.XXXXXX")"
 trap 'rm -f "$CHECK_OUT"' EXIT
 

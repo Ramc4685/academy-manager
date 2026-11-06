@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     AdminWaiverTemplateRecord,
@@ -21,6 +22,9 @@ from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
     AdminWaiverReport,
     AdminWaiverStudentRow,
     AdminWaiverSummary,
+)
+from backend.v2.contexts.onboarding.application.use_cases.ai_video_consent import (
+    AiVideoConsentRow,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -91,6 +95,22 @@ async def list_admin_waiver_templates(
             for program in [*programs, *archived]
         ],
     )
+
+
+class AdminAiVideoConsentList(BaseModel):
+    children: list[AiVideoConsentRow]
+
+
+# Declared before ``/waivers/{waiver_id}`` so the literal path is not shadowed.
+@router.get("/waivers/ai-video-consents", response_model=AdminAiVideoConsentList)
+async def list_admin_ai_video_consents(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminAiVideoConsentList:
+    """Read-only per-child AI/video consent status (Phase 3 E1)."""
+    if use_cases.list_ai_video_consents is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return AdminAiVideoConsentList(children=await use_cases.list_ai_video_consents.execute())
 
 
 @router.post(
