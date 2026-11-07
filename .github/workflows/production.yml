@@ -400,7 +400,7 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
 
       - name: Install Playwright system dependencies
-        run: pnpm exec playwright install-deps chromium
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/playwright_install_deps.sh" chromium
 
       - name: Install Chromium browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -474,7 +474,7 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
 
       - name: Install Playwright system dependencies
-        run: pnpm exec playwright install-deps chromium
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/playwright_install_deps.sh" chromium
 
       - name: Install Chromium browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -595,7 +595,7 @@ jobs:
 
       - name: Install Playwright system dependencies
         working-directory: frontend
-        run: pnpm exec playwright install-deps chromium
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/playwright_install_deps.sh" chromium
 
       - name: Install Chromium browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'

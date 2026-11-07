@@ -150,7 +150,7 @@ jobs:
           key: playwright-webkit-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
 
       - name: Install Playwright system dependencies
-        run: pnpm exec playwright install-deps webkit
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/playwright_install_deps.sh" webkit
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -206,7 +206,7 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
 
       - name: Install Playwright system dependencies
-        run: pnpm exec playwright install-deps chromium
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/playwright_install_deps.sh" chromium
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
