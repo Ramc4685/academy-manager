@@ -116,6 +116,23 @@ class EmailSendPort(Protocol):
     ) -> SendOutcome: ...
 
 
+class WhatsAppSendPort(Protocol):
+    """Outbound WhatsApp port (posts to class groups through a gateway).
+
+    Production wires the OpenWA adapter; local dev gets a stub, or a sandbox
+    that only lets allowlisted chats through (``composition.whatsapp``).
+    ``send_text`` reports failures in its ``SendOutcome`` rather than raising,
+    but callers must still treat this channel as best-effort: it runs after
+    email and may never cost an email send.
+    """
+
+    async def resolve_group(self, invite_code: str) -> str | None:
+        """Gateway group id (``…@g.us``) for an invite code, ``None`` if unknown."""
+        ...
+
+    async def send_text(self, *, chat_id: str, text: str) -> SendOutcome: ...
+
+
 class AcademyBrandLookup(Protocol):
     """Academy name / colour / logo / contact for the email shell.
 

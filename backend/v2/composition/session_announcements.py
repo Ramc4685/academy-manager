@@ -31,19 +31,23 @@ message no preference can switch off would be a lie.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
 from backend.v2.composition.digests import _build_email_sender
 from backend.v2.composition.email_adapters import _BRAND_HEADING, _branded_shell
+from backend.v2.composition.whatsapp import build_whatsapp_sender
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     EmailSendPort,
+    WhatsAppSendPort,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SessionAudience
+from backend.v2.contexts.communications.domain.whatsapp import group_invite_code
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
 )
@@ -61,6 +65,10 @@ from backend.v2.shared.tenancy import current_academy_id
 logger = logging.getLogger(__name__)
 
 EmailStatus = Literal["skipped", "sent", "no_recipients", "failed"]
+WhatsAppStatus = Literal["skipped", "sent", "failed"]
+
+#: Whole WhatsApp step (group lookup + post), after email has already gone out.
+WHATSAPP_BUDGET_SECONDS = 6.0
 
 
 class SessionAnnouncementError(Exception):
@@ -105,6 +113,9 @@ class AnnouncementPostResult:
     email_status: EmailStatus
     sent_count: int = 0
     failed_count: int = 0
+    #: Urgent posts also go to the class WhatsApp group when the session has a
+    #: group link and the channel is configured. Independent of email.
+    whatsapp_status: WhatsAppStatus = "skipped"
 
 
 def render_announcement_email(
@@ -154,6 +165,8 @@ class SessionAnnouncementService:
         users: UserLookup,
         audiences: AudienceResolver,
         sender: EmailSendPort,
+        whatsapp: WhatsAppSendPort | None = None,
+        whatsapp_budget_seconds: float = WHATSAPP_BUDGET_SECONDS,
     ) -> None:
         self._comms = comms
         self._sessions = sessions
@@ -161,6 +174,8 @@ class SessionAnnouncementService:
         self._users = users
         self._audiences = audiences
         self._sender = sender
+        self._whatsapp = whatsapp
+        self._whatsapp_budget = whatsapp_budget_seconds
 
     async def list_for_session(self, session_id: str) -> list[Message]:
         session = await self._sessions.get(session_id)
@@ -202,13 +217,28 @@ class SessionAnnouncementService:
             return AnnouncementPostResult(message=message, email_status="skipped")
 
         try:
-            return await self._fan_out(session=session, message=message)
+            result = await self._fan_out(session=session, message=message)
         except Exception:
             logger.exception(
                 "comms.session_announcement_fanout_failed",
                 extra={"session_id": session_id, "message_id": message.message_id},
             )
-            return AnnouncementPostResult(message=message, email_status="failed")
+            result = AnnouncementPostResult(message=message, email_status="failed")
+        # WhatsApp strictly after email, and on its own: neither channel's
+        # failure may cost the other. One overall budget for both gateway calls;
+        # httpx timeouts are per phase and would not cap a trickling gateway.
+        try:
+            whatsapp_status = await asyncio.wait_for(
+                self._post_to_class_group(session=session, message=message),
+                timeout=self._whatsapp_budget,
+            )
+        except TimeoutError:
+            logger.warning(
+                "comms.session_announcement_whatsapp_timeout",
+                extra={"session_id": session_id, "message_id": message.message_id},
+            )
+            whatsapp_status = "failed"
+        return replace(result, whatsapp_status=whatsapp_status)
 
     async def delete(
         self,
@@ -238,6 +268,33 @@ class SessionAnnouncementService:
             return None
         name = str(getattr(user, "display_name", "") or "").strip()
         return name or None
+
+    async def _post_to_class_group(self, *, session: Session, message: Message) -> WhatsAppStatus:
+        """Best-effort post to the session's WhatsApp group. Never raises."""
+        invite_code = group_invite_code(session.whatsapp_group_link)
+        if self._whatsapp is None or invite_code is None:
+            return "skipped"
+        try:
+            chat_id = await self._whatsapp.resolve_group(invite_code)
+            if chat_id is None:
+                logger.warning(
+                    "comms.session_announcement_whatsapp_group_unresolved",
+                    extra={"session_id": session.session_id},
+                )
+                return "failed"
+            academy_name = (
+                await self._academies.get_academy_name(current_academy_id()) or "Your academy"
+            )
+            outcome = await self._whatsapp.send_text(
+                chat_id=chat_id, text=f"*{academy_name} · {session.title}*\n{message.body}"
+            )
+        except Exception:
+            logger.exception(
+                "comms.session_announcement_whatsapp_failed",
+                extra={"session_id": session.session_id, "message_id": message.message_id},
+            )
+            return "failed"
+        return "sent" if outcome.ok else "failed"
 
     async def _fan_out(self, *, session: Session, message: Message) -> AnnouncementPostResult:
         recipients = [
@@ -306,4 +363,5 @@ def compose_announcements(
         users=users,
         audiences=MongoAudienceResolver(db=db),
         sender=_build_email_sender(settings, db),
+        whatsapp=build_whatsapp_sender(settings),
     )

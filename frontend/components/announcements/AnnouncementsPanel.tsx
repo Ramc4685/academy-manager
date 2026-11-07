@@ -24,6 +24,7 @@ import {
   postSessionAnnouncement,
   type AnnouncementEmailStatus,
   type AnnouncementPersona,
+  type AnnouncementWhatsAppStatus,
   type SessionAnnouncement,
 } from "@/lib/api/v2/announcements";
 import { queryKeys } from "@/lib/query/keys";
@@ -55,6 +56,13 @@ function emailSummary(
     default:
       return "Posted to the portal inbox.";
   }
+}
+
+function whatsappSummary(status: AnnouncementWhatsAppStatus | undefined): string {
+  if (status === "sent") return " Also posted to the class WhatsApp group.";
+  if (status === "failed")
+    return " The WhatsApp group post failed, so share it there by hand.";
+  return "";
 }
 
 export function AnnouncementsPanel({
@@ -94,7 +102,8 @@ export function AnnouncementsPanel({
       setUrgent(false);
       setError(null);
       setNotice(
-        emailSummary(res.email_status, res.sent_count, res.failed_count),
+        emailSummary(res.email_status, res.sent_count, res.failed_count) +
+          whatsappSummary(res.whatsapp_status),
       );
       invalidate();
     },

@@ -154,6 +154,27 @@ class _RecordingSendPort:
 
 
 @dataclass
+class _RecordingWhatsApp:
+    """Records group posts; resolves invite codes from a fixed table."""
+
+    groups: dict[str, str] = field(default_factory=lambda: {"ABC123": "120363@g.us"})
+    posts: list[dict] = field(default_factory=list)
+    fail: bool = False
+    raises: bool = False
+
+    async def resolve_group(self, invite_code: str) -> str | None:
+        if self.raises:
+            raise RuntimeError("openwa is down")
+        return self.groups.get(invite_code)
+
+    async def send_text(self, *, chat_id: str, text: str) -> SendOutcome:
+        self.posts.append({"chat_id": chat_id, "text": text})
+        if self.fail:
+            return SendOutcome(ok=False, provider_message_id=None, failed_reason="http_500")
+        return SendOutcome(ok=True, provider_message_id="wa-1", failed_reason=None)
+
+
+@dataclass
 class _Harness:
     service: SessionAnnouncementService
     repo: _FakeMessageRepo
@@ -166,6 +187,7 @@ def _harness(
     sessions: dict[str, Session] | None = None,
     recipients: list[ResolvedRecipient] | None = None,
     sender: _RecordingSendPort | None = None,
+    whatsapp: _RecordingWhatsApp | None = None,
 ) -> _Harness:
     repo = _FakeMessageRepo()
     send_port = sender or _RecordingSendPort()
@@ -179,6 +201,7 @@ def _harness(
         users=_FakeUsers({"adm-1": "Priya Admin", "coach-1": "Coach Riya"}),
         audiences=audiences,
         sender=send_port,
+        whatsapp=whatsapp,
     )
     return _Harness(service=service, repo=repo, sender=send_port, audiences=audiences)
 
@@ -511,3 +534,153 @@ def test_can_delete_is_computed_per_viewer():
     by_body = {a["body"]: a["can_delete"] for a in coach_view["announcements"]}
     assert by_body == {"Coach post": True, "Admin post": False}
     assert all(a["can_delete"] for a in admin_view["announcements"])
+
+
+# --- WhatsApp class-group post ---------------------------------------------
+
+GROUP_LINK = "https://chat.whatsapp.com/ABC123"
+
+
+def _linked_session(link: str | None = GROUP_LINK) -> Session:
+    return _session().model_copy(update={"whatsapp_group_link": link})
+
+
+def _post(h: _Harness, body: str, *, urgent: bool):
+    with tenant_scope(ACADEMY), _admin_client(h) as client:
+        return client.post(
+            f"/api/v2/admin/sessions/{SESSION_ID}/announcements",
+            json={"body": body, "urgent": urgent},
+        )
+
+
+def test_urgent_announcement_is_also_posted_to_the_class_whatsapp_group():
+    wa = _RecordingWhatsApp()
+    h = _harness(sessions={SESSION_ID: _linked_session()}, whatsapp=wa)
+
+    r = _post(h, "Class is cancelled tonight.", urgent=True)
+
+    assert r.status_code == 201, r.text
+    assert r.json()["email_status"] == "sent"
+    assert r.json()["whatsapp_status"] == "sent"
+    assert wa.posts == [
+        {
+            "chat_id": "120363@g.us",
+            "text": "*Rally Badminton · Junior A*\nClass is cancelled tonight.",
+        }
+    ]
+
+
+def test_routine_announcement_never_reaches_whatsapp():
+    wa = _RecordingWhatsApp()
+    h = _harness(sessions={SESSION_ID: _linked_session()}, whatsapp=wa)
+
+    r = _post(h, "Bring an extra shirt.", urgent=False)
+
+    assert r.json()["whatsapp_status"] == "skipped"
+    assert wa.posts == []
+
+
+def test_a_session_without_a_group_link_skips_whatsapp():
+    wa = _RecordingWhatsApp()
+    h = _harness(sessions={SESSION_ID: _linked_session(None)}, whatsapp=wa)
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.json()["whatsapp_status"] == "skipped"
+    assert wa.posts == []
+
+
+def test_no_whatsapp_channel_configured_skips_whatsapp():
+    h = _harness(sessions={SESSION_ID: _linked_session()})
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.json()["email_status"] == "sent"
+    assert r.json()["whatsapp_status"] == "skipped"
+
+
+def test_an_unresolvable_group_link_fails_whatsapp_without_posting():
+    wa = _RecordingWhatsApp(groups={})
+    h = _harness(sessions={SESSION_ID: _linked_session()}, whatsapp=wa)
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.status_code == 201, r.text
+    assert r.json()["whatsapp_status"] == "failed"
+    assert wa.posts == []
+
+
+def test_whatsapp_outage_never_costs_the_email():
+    wa = _RecordingWhatsApp(raises=True)
+    h = _harness(sessions={SESSION_ID: _linked_session()}, whatsapp=wa)
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.status_code == 201, r.text
+    assert r.json()["email_status"] == "sent"
+    assert r.json()["whatsapp_status"] == "failed"
+    assert len(h.sender.sent) == 1
+
+
+def test_a_refused_whatsapp_send_is_reported_as_failed():
+    wa = _RecordingWhatsApp(fail=True)
+    h = _harness(sessions={SESSION_ID: _linked_session()}, whatsapp=wa)
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.json()["whatsapp_status"] == "failed"
+
+
+def test_an_empty_roster_still_reaches_the_class_group():
+    wa = _RecordingWhatsApp()
+    h = _harness(sessions={SESSION_ID: _linked_session()}, recipients=[], whatsapp=wa)
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.json()["email_status"] == "no_recipients"
+    assert r.json()["whatsapp_status"] == "sent"
+
+
+def test_a_broken_email_port_still_posts_to_the_class_group():
+    wa = _RecordingWhatsApp()
+    h = _harness(
+        sessions={SESSION_ID: _linked_session()},
+        sender=_RecordingSendPort(raises=True),
+        whatsapp=wa,
+    )
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.json()["email_status"] == "failed"
+    assert r.json()["whatsapp_status"] == "sent"
+
+
+def test_coach_urgent_post_reports_whatsapp_status_too():
+    wa = _RecordingWhatsApp()
+    h = _harness(sessions={SESSION_ID: _linked_session()}, whatsapp=wa)
+    with tenant_scope(ACADEMY), _coach_client(h) as client:
+        r = client.post(
+            f"/api/v2/coach/sessions/{SESSION_ID}/announcements",
+            json={"body": "Cancelled.", "urgent": True},
+        )
+
+    assert r.status_code == 201, r.text
+    assert r.json()["whatsapp_status"] == "sent"
+
+
+def test_a_hung_whatsapp_gateway_is_cut_off_by_one_overall_budget():
+    import asyncio
+
+    class _Hung(_RecordingWhatsApp):
+        async def resolve_group(self, invite_code: str) -> str | None:
+            await asyncio.sleep(5)
+            return "never@g.us"
+
+    h = _harness(sessions={SESSION_ID: _linked_session()}, whatsapp=_Hung())
+    h.service._whatsapp_budget = 0.05
+
+    r = _post(h, "Cancelled.", urgent=True)
+
+    assert r.status_code == 201, r.text
+    assert r.json()["email_status"] == "sent"
+    assert r.json()["whatsapp_status"] == "failed"

@@ -390,6 +390,7 @@ class CoachSessionAnnouncementPostResponse(BaseModel):
     email_status: Literal["skipped", "sent", "no_recipients", "failed"]
     sent_count: int = 0
     failed_count: int = 0
+    whatsapp_status: Literal["skipped", "sent", "failed"] = "skipped"
 
 
 class CoachMessagesResponse(BaseModel):

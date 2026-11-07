@@ -149,6 +149,20 @@ stripe listen --forward-to 127.0.0.1:8001/api/v2/parent/webhooks/stripe
 - Production sending requires `APP_ENV=production` and `EMAIL_DELIVERY_ENABLED=true`.
 - Resend failures should be surfaced as provider status, not hidden as successful sends.
 
+## WhatsApp Rules
+
+- Urgent session announcements are also posted to the class WhatsApp group through OpenWA
+  (self-hosted, unofficial gateway). Design: `docs/design/whatsapp-channel/`.
+- The real OpenWA adapter is built only in `composition/whatsapp.py::build_whatsapp_sender`
+  (pinned by `tests/structural/test_whatsapp_sender_construction.py`).
+- Real posts happen only in `staging`/`prod`, **or** in `dev` to chat ids listed in
+  `V2_WHATSAPP_SANDBOX_CHATS`. This allowlist is the one approved exception to
+  "local never calls a real provider" (owner-approved 2026-10-25) so the owner can test
+  against a private group. `test` always stubs. Never put a real class group on the allowlist.
+- WhatsApp runs after email and is best-effort: a WhatsApp failure must never fail, delay or
+  retry an email send.
+- Use an OpenWA operator key scoped to one session, never the OpenWA admin key.
+
 ---
 
 ## API Error Rules

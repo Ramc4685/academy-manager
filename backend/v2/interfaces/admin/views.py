@@ -1864,6 +1864,8 @@ class SessionAnnouncementPostResponse(BaseModel):
     email_status: Literal["skipped", "sent", "no_recipients", "failed"]
     sent_count: int = 0
     failed_count: int = 0
+    #: Urgent posts also go to the class WhatsApp group when configured.
+    whatsapp_status: Literal["skipped", "sent", "failed"] = "skipped"
 
 
 class DMRequest(BaseModel):

@@ -187,6 +187,26 @@ class Settings(BaseSettings):
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
     )
+    whatsapp_delivery_enabled: bool = Field(
+        default=False,
+        description=(
+            "Post urgent session announcements to the class WhatsApp group through "
+            "OpenWA. Needs openwa_base_url/api_key/session_id. Real posts only in "
+            "staging/prod, or in dev to whatsapp_sandbox_chats (composition.whatsapp)."
+        ),
+    )
+    openwa_base_url: str | None = Field(default=None)
+    openwa_api_key: str | None = Field(
+        default=None, description="OpenWA operator key scoped to one session; never the admin key."
+    )
+    openwa_session_id: str | None = Field(default=None)
+    whatsapp_sandbox_chats: str | None = Field(
+        default=None,
+        description=(
+            "Dev only: comma-separated chat ids (…@g.us) that may receive real WhatsApp "
+            "posts from a local stack. Everything else is stubbed."
+        ),
+    )
     ops_alert_email: str | None = Field(
         default=None,
         description=(

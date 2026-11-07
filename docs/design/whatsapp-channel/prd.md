@@ -276,8 +276,8 @@ same account risk.
 
 | Question | Who | Blocking? |
 |---|---|---|
-| Approve the local sandbox exception to "stub only in local"? | Owner | **Yes, before phase 1** |
-| Should coaches' urgent posts also go to WhatsApp, or admins only? | Owner | No |
+| ~~Approve the local sandbox exception to "stub only in local"?~~ **Approved 2026-10-25 (allowlist only).** | Owner | — |
+| ~~Should coaches' urgent posts also go to WhatsApp, or admins only?~~ **Decided 2026-10-25: coaches too.** | Owner | — |
 | Message format: plain "*Academy · Class*: body", or include the time and date? | Owner | No |
 | Server choice for phase 4: Fly app vs cheap VPS vs home mini PC | Owner + engineering | Before phase 4 |
 | When does the academy move off the personal number? | Owner | Before phase 6 |

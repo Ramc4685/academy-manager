@@ -224,6 +224,12 @@ Keep `V2_EMAIL_DELIVERY_ENABLED=false` until final production email verification
 Set it to `true` only after the Resend sender/domain is verified and parent
 email delivery is intentionally approved.
 
+WhatsApp class-group posts (OpenWA) stay off in production
+(`V2_WHATSAPP_DELIVERY_ENABLED` unset) until OpenWA runs on an always-on host. The pilot
+runs locally only; see `docs/design/whatsapp-channel/prd.md` (phase 4) before setting
+`V2_WHATSAPP_DELIVERY_ENABLED`, `V2_OPENWA_BASE_URL`, `V2_OPENWA_API_KEY` and
+`V2_OPENWA_SESSION_ID` as Fly secrets.
+
 ## Next Frontend
 
 The only production frontend deployable is `frontend/`.

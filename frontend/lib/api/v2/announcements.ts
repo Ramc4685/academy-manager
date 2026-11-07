@@ -16,6 +16,9 @@ export type AnnouncementEmailStatus =
   | "no_recipients"
   | "failed";
 
+/** Urgent posts also go to the class WhatsApp group when one is linked. */
+export type AnnouncementWhatsAppStatus = "skipped" | "sent" | "failed";
+
 export interface SessionAnnouncement {
   message_id: string;
   session_id: string;
@@ -47,6 +50,7 @@ export interface PostSessionAnnouncementResponse {
   email_status: AnnouncementEmailStatus;
   sent_count: number;
   failed_count: number;
+  whatsapp_status: AnnouncementWhatsAppStatus;
 }
 
 export type AnnouncementPersona = "admin" | "coach";

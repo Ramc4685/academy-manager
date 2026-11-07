@@ -124,6 +124,7 @@ async def post_announcement(
         email_status=result.email_status,
         sent_count=result.sent_count,
         failed_count=result.failed_count,
+        whatsapp_status=result.whatsapp_status,
     )
 
 
