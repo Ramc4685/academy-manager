@@ -205,12 +205,20 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
 
-      - name: Install Playwright system dependencies
-        run: pnpm exec playwright install-deps chromium
-
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install chromium
+
+      # Same skip-apt probe as frontend-e2e-chromium in production.yml.
+      - name: Install Playwright system dependencies (only if missing)
+        timeout-minutes: 5
+        run: |
+          bins=$(find ~/.cache/ms-playwright -type f \( -name chrome -o -name chrome-headless-shell \))
+          if [ -n "$bins" ] && ! echo "$bins" | xargs ldd | grep 'not found'; then
+            echo "Chromium shared libraries present; skipping apt."
+          else
+            pnpm exec playwright install-deps chromium
+          fi
 
       - name: Playwright axe gate
         env:
