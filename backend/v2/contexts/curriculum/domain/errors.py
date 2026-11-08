@@ -36,6 +36,13 @@ class LevelNotFound(DomainError):
     status_code = 404
 
 
+class LevelInUse(DomainError):
+    """Something still points at the level or its skills, so it cannot be deleted."""
+
+    code = "Curriculum.LevelInUse"
+    status_code = 409
+
+
 class SkillNotFound(DomainError):
     code = "Curriculum.SkillNotFound"
     status_code = 404

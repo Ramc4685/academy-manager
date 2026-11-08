@@ -5,7 +5,10 @@
 * ``POST /admin/curriculum/programs/{program_id}/ladder-draft``: drafts
   levels, skills and criteria for the program's sport. Read-only on the
   database except for the ``ai_calls`` audit row; the owner saves the edited
-  draft through the existing level/skill/criterion routes.
+  draft through the existing level/skill/criterion routes. Those routes append
+  new levels after the program's last one; nothing here replaces existing
+  levels. ``DELETE /admin/levels/{level_id}`` undoes an unwanted save while
+  the level is still unused.
 
 ``require_persona("admin")`` throughout. ``AiDisabled`` (503 ``Ai.Disabled``),
 ``AiMonthlyCapReached`` (429) and ``AiProviderError`` (502) pass through the

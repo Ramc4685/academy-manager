@@ -9,6 +9,7 @@ import {
   createLevel,
   createSkill,
   getFullPathway,
+  getLevelUsage,
   listLessonCards,
   seedLessonCards,
   SKILL_SCORING_TYPES,
@@ -19,6 +20,7 @@ import {
   type Skill,
   type SkillScoringType,
 } from "@/lib/api/curriculum";
+import { DeleteLevelDialog } from "@/components/admin/curriculum/delete-level-dialog";
 import { LevelColorPicker } from "@/components/admin/curriculum/level-color-picker";
 import { SkillLadderDraftCard } from "@/components/admin/curriculum/skill-ladder-draft-card";
 import { levelSwatch } from "@/lib/level-color";
@@ -44,6 +46,13 @@ export function ProgramEditor({
   const { data, isLoading, isError } = useQuery({
     queryKey: ["admin", "pathway", programId],
     queryFn: () => getFullPathway(programId),
+    enabled: Boolean(programId),
+  });
+
+  // Under the pathway key, so every pathway invalidation refreshes it too.
+  const usage = useQuery({
+    queryKey: ["admin", "pathway", programId, "level-usage"],
+    queryFn: () => getLevelUsage(programId),
     enabled: Boolean(programId),
   });
 
@@ -155,6 +164,7 @@ export function ProgramEditor({
               key={pathwayLevel.level.level_id}
               pathwayLevel={pathwayLevel}
               isBadminton={data.program.sport.toLowerCase() === "badminton"}
+              deletable={usage.data?.levels[pathwayLevel.level.level_id]?.deletable === true}
               onSkillAdded={() =>
                 void queryClient.invalidateQueries({ queryKey: ["admin", "pathway", programId] })
               }
@@ -242,13 +252,16 @@ function LessonCardsPanel({ programId }: { programId: string }) {
 function LevelAccordion({
   pathwayLevel,
   isBadminton,
+  deletable,
   onSkillAdded,
 }: {
   pathwayLevel: PathwayLevel;
   isBadminton: boolean;
+  deletable: boolean;
   onSkillAdded: () => void;
 }) {
   const [open, setOpen] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAddSkill, setShowAddSkill] = useState(false);
   const [skillName, setSkillName] = useState("");
   const [skillDescription, setSkillDescription] = useState("");
@@ -395,7 +408,17 @@ function LevelAccordion({
             </div>
           )}
 
-          <div className="flex justify-end px-4 py-2">
+          <div className="flex items-center justify-end gap-4 px-4 py-2">
+            {deletable && (
+              <button
+                type="button"
+                data-testid="delete-level"
+                onClick={() => setConfirmDelete(true)}
+                className="text-xs font-medium text-red-600 hover:underline"
+              >
+                Delete level
+              </button>
+            )}
             <button
               onClick={() => setShowAddSkill((v) => !v)}
               className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
@@ -404,6 +427,14 @@ function LevelAccordion({
             </button>
           </div>
         </div>
+      )}
+      {deletable && (
+        <DeleteLevelDialog
+          pathwayLevel={pathwayLevel}
+          open={confirmDelete}
+          onClose={() => setConfirmDelete(false)}
+          onDeleted={onSkillAdded}
+        />
       )}
     </div>
   );

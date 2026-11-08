@@ -6,8 +6,16 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.curriculum.application.ports import LevelRepository, ProgramRepository
-from backend.v2.contexts.curriculum.domain.errors import LevelNotFound, ProgramNotFound
+from backend.v2.contexts.curriculum.application.ports import (
+    LevelDeletionStore,
+    LevelRepository,
+    ProgramRepository,
+)
+from backend.v2.contexts.curriculum.domain.errors import (
+    LevelInUse,
+    LevelNotFound,
+    ProgramNotFound,
+)
 from backend.v2.contexts.curriculum.domain.models import (
     HEX_COLOR_PATTERN,
     Level,
@@ -103,3 +111,72 @@ class ListLevels:
 
     async def execute(self, program_id: str) -> list[Level]:
         return await self._levels.list_for_program(program_id)
+
+
+class DeleteLevelCommand(BaseModel):
+    model_config = {"frozen": True}
+    level_id: str
+    deleted_by: str
+
+
+class DeleteLevel:
+    """Delete a level with its skills and criteria, but only while nothing uses it.
+
+    Exists to undo a mistaken save (an AI skill ladder appends levels). Any
+    student progress, certificate, recommendation, coach note or attached
+    content on the level or its skills refuses the delete with 409, and so
+    does any level after it: level-up looks for ``sequence + 1``, so a gap
+    would strand students. An appended ladder is undone from the top down.
+    """
+
+    def __init__(self, *, levels: LevelRepository, store: LevelDeletionStore) -> None:
+        self._levels = levels
+        self._store = store
+
+    async def execute(self, cmd: DeleteLevelCommand) -> dict[str, int]:
+        level = await self._levels.get(cmd.level_id)
+        if level is None:
+            raise LevelNotFound("level not found", level_id=cmd.level_id)
+        siblings = await self._levels.list_for_program(level.program_id)
+        in_use = _with_later_levels(await self._store.usage_by_level([cmd.level_id]), siblings).get(
+            cmd.level_id, {}
+        )
+        if in_use:
+            listed = ", ".join(f"{what.replace('_', ' ')}: {n}" for what, n in in_use.items())
+            raise LevelInUse(
+                f"Level {level.name!r} is in use ({listed}), so it cannot be deleted.",
+                level_id=cmd.level_id,
+                in_use=in_use,
+            )
+        deleted = await self._store.delete_level(cmd.level_id)
+        await self._store.record_deleted(level=level, deleted=deleted, actor_id=cmd.deleted_by)
+        return deleted
+
+
+class GetLevelUsage:
+    """Per level of a program: what still uses it (empty means it can be deleted)."""
+
+    def __init__(self, *, levels: LevelRepository, store: LevelDeletionStore) -> None:
+        self._levels = levels
+        self._store = store
+
+    async def execute(self, program_id: str) -> dict[str, dict[str, int]]:
+        levels = await self._levels.list_for_program(program_id)
+        if not levels:
+            return {}
+        return _with_later_levels(
+            await self._store.usage_by_level([lv.level_id for lv in levels]), levels
+        )
+
+
+def _with_later_levels(
+    usage: dict[str, dict[str, int]], levels: list[Level]
+) -> dict[str, dict[str, int]]:
+    """Add ``later_levels`` to each level's usage; only the last level can go."""
+    out: dict[str, dict[str, int]] = {}
+    for lv in levels:
+        later = sum(1 for other in levels if other.sequence > lv.sequence)
+        out[lv.level_id] = dict(usage.get(lv.level_id, {})) | (
+            {"later_levels": later} if later else {}
+        )
+    return out

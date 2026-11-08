@@ -15,6 +15,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_criteria import
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_levels import (
     CreateLevelCommand,
+    DeleteLevelCommand,
     UpdateLevelCommand,
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_program import (
@@ -214,6 +215,46 @@ async def update_level(
     except LevelNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return level.model_dump()
+
+
+@router.delete("/levels/{level_id}")
+async def delete_level(
+    level_id: str,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    """Delete an unused level with its skills and criteria.
+
+    ``Curriculum.LevelInUse`` (409) when anything references the level or its
+    skills; the shared domain-error handler carries ``in_use`` counts.
+    """
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    try:
+        deleted = await use_cases.curriculum.delete_level.execute(
+            DeleteLevelCommand(level_id=level_id, deleted_by=claims.user_id)
+        )
+    except LevelNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"level_id": level_id, "deleted": deleted}
+
+
+@router.get("/programs/{program_id}/level-usage")
+async def get_level_usage(
+    program_id: str,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    """Per level: ``{deletable, in_use}`` so the editor only offers delete when it works."""
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    usage = await use_cases.curriculum.get_level_usage.execute(program_id)
+    return {
+        "levels": {
+            level_id: {"deletable": not in_use, "in_use": in_use}
+            for level_id, in_use in usage.items()
+        }
+    }
 
 
 @router.post("/levels/{level_id}/skills", status_code=201)
