@@ -216,3 +216,21 @@ async def test_only_the_last_level_can_go_so_level_up_never_meets_a_gap(db) -> N
         usage = await use_cases.get_level_usage.execute("prog-1")
 
     assert usage == {"lv-6": {}}
+
+
+@pytest.mark.asyncio
+async def test_an_inactive_level_in_use_is_still_refused(db) -> None:
+    # list_for_program returns active levels only; the guard must not depend on it.
+    await _seed_level(db, "lv-7")
+    await db["skill_levels"].update_one({"level_id": "lv-7"}, {"$set": {"is_active": False}})
+    await db["student_skill_progress"].insert_one(
+        {"academy_id": ACADEMY, "skill_id": "lv-7-s0", "level_id": "lv-7"}
+    )
+
+    with tenant_scope(ACADEMY), pytest.raises(LevelInUse) as exc:
+        await _use_cases(db).delete_level.execute(
+            DeleteLevelCommand(level_id="lv-7", deleted_by="admin-1")
+        )
+
+    assert exc.value.details["in_use"] == {"skill_progress_rows": 1}
+    assert await db["skills"].count_documents({"level_id": "lv-7"}) == 2

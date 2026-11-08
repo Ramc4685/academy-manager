@@ -137,10 +137,11 @@ class DeleteLevel:
         level = await self._levels.get(cmd.level_id)
         if level is None:
             raise LevelNotFound("level not found", level_id=cmd.level_id)
-        siblings = await self._levels.list_for_program(level.program_id)
-        in_use = _with_later_levels(await self._store.usage_by_level([cmd.level_id]), siblings).get(
-            cmd.level_id, {}
-        )
+        # Usage of the target itself, never looked up through the (active-only) sibling list.
+        in_use = dict((await self._store.usage_by_level([cmd.level_id])).get(cmd.level_id, {}))
+        later = _later_levels(level, await self._levels.list_for_program(level.program_id))
+        if later:
+            in_use["later_levels"] = later
         if in_use:
             listed = ", ".join(f"{what.replace('_', ' ')}: {n}" for what, n in in_use.items())
             raise LevelInUse(
@@ -164,19 +165,15 @@ class GetLevelUsage:
         levels = await self._levels.list_for_program(program_id)
         if not levels:
             return {}
-        return _with_later_levels(
-            await self._store.usage_by_level([lv.level_id for lv in levels]), levels
-        )
+        usage = await self._store.usage_by_level([lv.level_id for lv in levels])
+        out: dict[str, dict[str, int]] = {}
+        for lv in levels:
+            out[lv.level_id] = dict(usage.get(lv.level_id, {}))
+            if later := _later_levels(lv, levels):
+                out[lv.level_id]["later_levels"] = later
+        return out
 
 
-def _with_later_levels(
-    usage: dict[str, dict[str, int]], levels: list[Level]
-) -> dict[str, dict[str, int]]:
-    """Add ``later_levels`` to each level's usage; only the last level can go."""
-    out: dict[str, dict[str, int]] = {}
-    for lv in levels:
-        later = sum(1 for other in levels if other.sequence > lv.sequence)
-        out[lv.level_id] = dict(usage.get(lv.level_id, {})) | (
-            {"later_levels": later} if later else {}
-        )
-    return out
+def _later_levels(level: Level, levels: list[Level]) -> int:
+    """Levels after this one; only the last level can go (level-up needs sequence + 1)."""
+    return sum(1 for other in levels if other.sequence > level.sequence)
