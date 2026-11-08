@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+// Play upload key. Values come from the untracked android/keystore.properties
+// (see keystore.properties.example) or ANDROID_KEYSTORE_* env vars in CI; never from git.
+def keystoreProps = new Properties()
+def keystoreFile = rootProject.file('keystore.properties')
+if (keystoreFile.exists()) {
+    keystoreFile.withInputStream { keystoreProps.load(it) }
+}
+def signingValue = { String key, String env -> keystoreProps.getProperty(key) ?: System.getenv(env) }
+def hasUploadKey = signingValue('storeFile', 'ANDROID_KEYSTORE_FILE') != null
+
 android {
     namespace = "com.courtmastr.academy"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +17,9 @@ android {
         applicationId "com.courtmastr.academy"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Play rejects a reused versionCode: pass -PversionCode=<n> for every upload.
+        versionCode((project.findProperty('versionCode') ?: '1') as int)
+        versionName project.findProperty('versionName') ?: "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +27,22 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasUploadKey) {
+            release {
+                storeFile file(signingValue('storeFile', 'ANDROID_KEYSTORE_FILE'))
+                storePassword signingValue('storePassword', 'ANDROID_KEYSTORE_PASSWORD')
+                keyAlias signingValue('keyAlias', 'ANDROID_KEY_ALIAS')
+                keyPassword signingValue('keyPassword', 'ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
+            // Without an upload key the bundle is built unsigned (fine for a local check, not for Play).
+            if (hasUploadKey) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
