@@ -1,6 +1,6 @@
 # android-release-signing
 
-PR: #TBD
+PR: #1160
 
 ## What changed
 - Android release builds can now be signed with the Play upload key. `mobile/android/app/build.gradle` reads it from an untracked `keystore.properties` (template: `keystore.properties.example`) or `ANDROID_KEYSTORE_*` env vars; without one the bundle builds unsigned as before. Key files and the properties file are gitignored.
