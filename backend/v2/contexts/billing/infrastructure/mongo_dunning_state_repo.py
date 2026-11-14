@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
@@ -236,9 +236,10 @@ class MongoDunningStateRepository(TenantScopedRepository):
         return created
 
     async def claim_next_due(
-        self, *, now: datetime, worker_id: str
+        self, *, now: datetime, worker_id: str, exclude_invoice_ids: Collection[str] = ()
     ) -> tuple[LedgerInvoice, DunningState] | None:
         academy_id = current_academy_id()
+        excluded = sorted(exclude_invoice_ids)
         # Due-ness is filtered in the query so we never stream the whole active
         # backlog: an active state is a candidate when its next_attempt_at has
         # passed, or when it is parked (next_attempt_at=None) for a retryable
@@ -248,6 +249,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
         cursor = self.collection.find(
             {
                 "academy_id": academy_id,
+                **({"invoice_id": {"$nin": excluded}} if excluded else {}),
                 "$or": [
                     {"status": "active", "next_attempt_at": {"$lte": now}},
                     {

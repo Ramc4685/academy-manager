@@ -57,7 +57,9 @@ class _FakeDunningRepo:
         self.prepared.append(now)
         return 1
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str):
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=()):
+        if self.invoice.invoice_id in exclude_invoice_ids:
+            return None
         if self._claimed or self.state.status != "active" or self.state.next_attempt_at > now:
             return None
         self._claimed = True
@@ -546,8 +548,8 @@ class _RepeatClaimDunningRepo(_FakeDunningRepo):
     call within the same tick.
     """
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str):
-        if self.state.status != "active":
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=()):
+        if self.state.status != "active" or self.invoice.invoice_id in exclude_invoice_ids:
             return None
         attempt_no = self.state.attempt_count + 1
         self.state = self.state.claim(attempt_no=attempt_no, worker_id=worker_id, now=now)
@@ -579,6 +581,104 @@ async def test_a_parked_invoice_cannot_consume_the_whole_tick() -> None:
     assert result.parked == 1
     assert dunning.state.suppression_reason == "checkout_session_open"
     assert dunning.state.attempt_count == 0
+
+
+class _QueueDunningRepo:
+    """Several states, ordered like Mongo's claim query: parked (next_attempt_at=None)
+    sorts ahead of every dated state, and exclude_invoice_ids is honoured."""
+
+    def __init__(self, *invoices: LedgerInvoice) -> None:
+        self.invoices = {inv.invoice_id: inv for inv in invoices}
+        self.states = {
+            inv.invoice_id: open_initial_dunning_state(
+                academy_id=inv.academy_id,
+                invoice_id=inv.invoice_id,
+                parent_id=inv.parent_id,
+                enrollment_id=inv.enrollment_id,
+                due_at=NOW,
+                now=NOW,
+            )
+            for inv in invoices
+        }
+
+    async def prepare_due_states(self, *, now: datetime, limit: int) -> int:
+        return 0
+
+    async def list_terminal_disable_pending(self, *, limit: int):
+        return []
+
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=()):
+        candidates = [
+            s
+            for s in self.states.values()
+            if s.status == "active"
+            and s.invoice_id not in exclude_invoice_ids
+            and (s.next_attempt_at is None or s.next_attempt_at <= now)
+        ]
+        if not candidates:
+            return None
+        head = min(
+            candidates, key=lambda s: (s.next_attempt_at is not None, s.next_attempt_at or now)
+        )
+        claimed = head.claim(attempt_no=head.attempt_count + 1, worker_id=worker_id, now=now)
+        self.states[head.invoice_id] = claimed
+        return self.invoices[head.invoice_id], claimed
+
+    async def park_attempt(self, *, state, reason: str, now):
+        self.states[state.invoice_id] = state.park(reason=reason, now=now)
+        return self.states[state.invoice_id]
+
+    async def finish_attempt(self, *, state, succeeded: bool, failure_code: str | None, now):
+        from backend.v2.contexts.billing.domain.dunning import record_dunning_attempt_result
+
+        self.states[state.invoice_id] = record_dunning_attempt_result(
+            state, succeeded=succeeded, failure_code=failure_code, now=now
+        )
+        return self.states[state.invoice_id]
+
+
+class _FailFirstCharge(_FakeCharge):
+    """Raises for one invoice (like a missing saved card), succeeds for the rest."""
+
+    def __init__(self, failing_invoice_id: str) -> None:
+        super().__init__(success=True)
+        self.failing_invoice_id = failing_invoice_id
+
+    async def execute(self, invoice_id: str, retry_scope: str | None = None):
+        if invoice_id == self.failing_invoice_id:
+            self.calls.append((invoice_id, retry_scope))
+            raise ValueError("no_saved_payment_method: parent has no saved Stripe card")
+        return await super().execute(invoice_id, retry_scope)
+
+
+@pytest.mark.asyncio
+async def test_one_parked_invoice_does_not_starve_the_due_charges_behind_it() -> None:
+    """2026-11-08 regression: one charge_technical_failure park ended every tick.
+
+    The parked state (next_attempt_at=None) sorts first, so the old repeat-claim guard
+    saw "1 repeat == 1 parked" and stopped; three due autopay charges never ran.
+    """
+    invoices = [_invoice(f"inv-{n}") for n in ("blocked", "a", "b", "c")]
+    dunning = _QueueDunningRepo(*invoices)
+    blocked = dunning.states["inv-blocked"]
+    dunning.states["inv-blocked"] = blocked.claim(attempt_no=1, worker_id="earlier", now=NOW).park(
+        reason="charge_technical_failure", now=NOW
+    )
+    charge = _FailFirstCharge("inv-blocked")
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=charge,
+        notifier=_FakeNotifier(),
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        clock=lambda: NOW,
+    ).execute(limit=50, worker_id="worker-1")
+
+    charged = [call[0] for call in charge.calls]
+    assert charged.count("inv-blocked") == 1
+    assert sorted(set(charged) - {"inv-blocked"}) == ["inv-a", "inv-b", "inv-c"]
+    assert result.succeeded == 3
+    assert result.technical_failures == 1
 
 
 class _ReceiptNotifier(_FakeNotifier):
