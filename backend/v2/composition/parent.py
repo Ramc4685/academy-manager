@@ -296,6 +296,7 @@ from backend.v2.shared.comms import Message, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.profile.completeness import (
     MEDICAL_NONE_SENTINEL,
     ChildFacts,
@@ -2113,6 +2114,9 @@ def compose_parent(
         idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
         # House: unchanged key. A direct charge scopes it to the academy account.
         idempotency_key = route.idempotency_key(idempotency_key)
+        # One key per attempt, same as SendInvoice: a fixed key replays the
+        # first (possibly dead) session for 24h.
+        idempotency_key = f"{idempotency_key}:attempt-{new_ulid()}"
         # Same reasoning as the single-invoice path (issue #635): every return
         # needs a checkout_session_id so the settlement poll can run, and the
         # opted-in case also picks up autopay activation from it.

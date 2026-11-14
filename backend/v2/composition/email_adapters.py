@@ -20,6 +20,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
@@ -287,11 +288,16 @@ class InvoiceEmailAdapter:
         naming: Callable[[str], Awaitable[InvoiceNaming | None]] | None = None,
         contact_copies: InvoiceContactCopies | None = None,
         self_service_policies: Any | None = None,
+        pay_page_url: str | None = None,
     ) -> None:
         self._memberships = memberships
         self._users = users
         self._academies = academies
         self._sender = sender
+        # The academy's own /parent/payments URL. The email's Pay button points
+        # here, never at the raw Checkout URL: a Stripe session dies within 24h
+        # (or the moment it completes), but the app mints a fresh one per click.
+        self._pay_page_url = pay_page_url
         # Issue #659: resolves student / class / invoice number for one
         # invoice id. Unwired (or failing) degrades to month-only copy.
         self._naming = naming
@@ -362,6 +368,7 @@ class InvoiceEmailAdapter:
         balance_due_cents: int,
         currency: str,
         checkout_url: str | None,
+        bundled: bool = False,
     ) -> str | None:
         academy_id = current_academy_id()
         membership = await self._memberships.get_membership(academy_id, parent_id)
@@ -381,11 +388,20 @@ class InvoiceEmailAdapter:
         month = format_tuition_month(period)
         safe_amount = html.escape(amount)
         safe_total = html.escape(total)
-        pay_line = (
-            _branded_button(label="Pay invoice", url=checkout_url)
-            if checkout_url
-            else f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to arrange payment.</p>"
-        )
+        # checkout_url only says "this invoice is payable online"; the link the
+        # parent clicks is the app's, which starts a fresh Checkout session.
+        if checkout_url and self._pay_page_url:
+            # A bundled email quotes the student's whole open balance, so its
+            # button must start the balance checkout, not this one invoice.
+            pay_target = "balance" if bundled else quote(invoice_id, safe="")
+            pay_url = f"{self._pay_page_url}?pay={pay_target}"
+            pay_line = _branded_button(label="Pay invoice", url=pay_url)
+        elif checkout_url:
+            pay_line = (
+                f"<p style='color: {_BRAND_MUTED};'>Please log in to the parent portal to pay.</p>"
+            )
+        else:
+            pay_line = f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to arrange payment.</p>"
         subject = self._tuition_for(period, naming)
         if naming.session_label:
             subject = f"{subject} — {naming.session_label}"

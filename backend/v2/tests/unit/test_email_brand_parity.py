@@ -223,6 +223,7 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
             academies=academies,  # type: ignore[arg-type]
             sender=sender,
             naming=_naming,
+            pay_page_url="https://blno.example.test/parent/payments",
         )
         await invoices.send_invoice_email(
             parent_id="parent-1",
