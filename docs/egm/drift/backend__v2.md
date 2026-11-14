@@ -1,0 +1,15 @@
+## backend/v2/README.md
+
+- [stale-not-built] README:3 links `../../../.claude/plans/write-a-detailed-plan-curried-trinket.md`; the target does not exist (no such file under the repo or `~/.claude/plans`).
+- [missing] README:10-30 Layout omits top-level `composition/` (backend/v2/composition/*.py, per-context wiring; main.py:2875+ composes via it), `py.typed`, and `interfaces/` subpackages `owner`, `public`, `student` plus top-level route modules (`interfaces/me_routes.py`, `registration_routes.py`, `magic_link_routes.py`, `unsubscribe_routes.py`, `email_webhook_routes.py`).
+- [wording] README:13 says interfaces are "admin, coach, parent, platform"; code also mounts owner, student, public (backend/v2/main.py:2881-2893).
+- [missing] README:14-21 `shared/` lists 7 packages; code also has `shared/comms`, `profile`, `scheduling`, `security`, `time` and top-level modules `caching.py`, `ids.py`, `money.py`, `names.py`, `occurrences.py`. `shared/http` also holds persona/rate_limit/client_ip, not just error handlers/middleware (backend/v2/shared/http/); tenancy middleware is `shared/auth/middleware.py`.
+- [missing] README:28-29 Tests layout omits `tests/composition`, `contexts`, `fixtures`, `infrastructure`, `seed`, `shared`, plus root-level `test_no_raw_tenant_mongo_access.py` and `test_pytest_timeout_backstop.py`.
+- [contract] README:46,48-49 context template says `domain/models.py`, `domain/events.py`, `domain/errors.py`, and `application/use_cases/` + `application/ports.py`. The "canonical example" identity context (backend/v2/contexts/identity) has no `domain/events.py` (only 6 contexts have one), and keeps most use cases flat in `application/*_use_case.py` with only some in `application/use_cases/`.
+- [contract] README:50 says adapters extend `shared/tenancy/TenantScopedRepository`; the class lives in `backend/v2/shared/tenancy/repository.py:21`, and identity adapters (e.g. `contexts/identity/infrastructure/mongo_*_repo.py`) are not uniformly subclasses of it (not verified per file).
+- [contract] README:103 says `pytest v2/tests` with ">=70% coverage on `v2/shared`"; CI runs `--cov=v2 --cov-fail-under=86` over all of v2 (.github/workflows/production.yml:165).
+- [contract] README:101 says mypy is "advisory"; CI runs it blocking against a frozen baseline via `mypy -p backend.v2 | mypy-baseline filter` from repo root (.github/workflows/production.yml:265-274), not `--config-file backend/pyproject.toml v2`.
+- [undocumented] README:96-103 CI list omits `ruff format --check v2` (production.yml:264) and the separate contract-test job `pytest v2/tests/contract` (production.yml:227).
+- [wording] README:27 says contract tests use "mongo + stripe via testcontainers"; not verified that testcontainers is used (grep of tests/contract found no `testcontainers` reference).
+- [undocumented] backend/v2/tests/structural has many more checks than "layer-conformance + event-rules" (persona gates, duplicate routes, OpenAPI snapshot, no-chicago-literal, etc.), backend/v2/tests/structural/*.py.
+- [wording] README:55 "Identity context built in W1A-02": no W1A-02 reference remains in contexts/identity.
