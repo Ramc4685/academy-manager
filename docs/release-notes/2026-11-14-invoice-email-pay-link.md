@@ -1,6 +1,6 @@
 # invoice-email-pay-link
 
-PR: #TBD
+PR: #1164
 
 ## What changed
 - Invoice emails: the "Pay invoice" button now opens the academy's own `/parent/payments?pay=<invoice>` page, which starts a fresh Stripe Checkout session on every click (after login if needed). An email that bundles the student's whole open balance links to `?pay=balance` and starts the balance checkout instead. It used to embed the raw Checkout URL, and Stripe expires invoice sessions after 24 hours, so a parent who opened the monthly email days later landed on Stripe's "You're all done here" page and could not pay (a BLNO family hit this on their November invoice). Emails already sent still carry the dead Stripe link; the parent can pay from the Payments page.
