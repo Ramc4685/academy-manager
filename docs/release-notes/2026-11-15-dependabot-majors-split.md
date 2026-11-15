@@ -1,6 +1,6 @@
 # dependabot-majors-split
 
-PR: #TBD
+PR: #1169
 
 ## What changed
 - Dependabot: grouped version-update PRs (backend, frontend, docker, GitHub Actions) now carry minor and patch updates only. Each major upgrade arrives as its own PR, so one breaking package can no longer stall the safe bumps grouped with it. #1161 sat red for a week because `@sentry/browser` 11 and `@fullcalendar/core` 7 broke the frontend type check.
