@@ -1,6 +1,6 @@
 # dunning-head-of-line
 
-PR: #1164
+PR: #1165
 
 ## What changed
 - Billing: one autopay charge that fails to start (for example "no saved Stripe card") no longer stops every other autopay charge in the same run. The parked charge sorted to the front of the queue (an empty next-attempt time sorts first in Mongo), and the old "stop when only parked invoices are left" guard ended the run after one repeat. Since the Nov 8 run, three BLNO November autopay charges sat due and never ran while one family's failing charge was retried hourly. The worker now skips invoices it already parked this run and keeps going. Regression tests cover the worker loop and the real Mongo claim query.
