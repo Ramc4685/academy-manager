@@ -114,6 +114,7 @@ export const queryKeys = {
     collectionsAll: () => ["admin", "payments", "collections"] as const,
     collections: (period: string) =>
       ["admin", "payments", "collections", period] as const,
+    overdueFamilies: () => ["admin", "payments", "overdue-families"] as const,
     invoiceDetail: (invoiceId: string) =>
       ["admin", "billing", "invoice", invoiceId] as const,
     payouts: () => ["admin", "finance", "payouts"] as const,

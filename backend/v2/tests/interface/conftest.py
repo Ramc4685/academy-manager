@@ -2888,6 +2888,13 @@ def _claims(role: str) -> AuthClaims:
     )
 
 
+class _NoOverdueFamilies:
+    """Default cross-period overdue reader: nobody owes (main.py wires the real one)."""
+
+    async def counts(self) -> dict[str, int]:
+        return {"past_due": 0, "needs_action": 0}
+
+
 def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> FastAPI:
     if claims is None:
         claims = _claims("admin")
@@ -2896,6 +2903,7 @@ def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> Fast
     app.include_router(admin_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
+    app.state.admin_overdue_families = _NoOverdueFamilies()
     return app
 
 

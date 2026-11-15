@@ -2246,6 +2246,18 @@ export function getAdminCollections(period?: string): Promise<AdminCollectionsVi
   });
 }
 
+/** Academy-wide family counts past due in ANY billing month (L2 B2). */
+export interface AdminOverdueFamiliesView {
+  past_due_count: number;
+  needs_action_count: number;
+}
+
+export function getAdminOverdueFamilies(): Promise<AdminOverdueFamiliesView> {
+  return apiFetch<AdminOverdueFamiliesView>("/admin/payments/overdue-families", {
+    method: "GET",
+  });
+}
+
 export function getAdminLastPaymentByFamily(): Promise<AdminFamilyLastPaymentsResponse> {
   return apiFetch<AdminFamilyLastPaymentsResponse>("/admin/payments/last-by-family", {
     method: "GET",

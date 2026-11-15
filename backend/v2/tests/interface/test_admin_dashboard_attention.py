@@ -200,32 +200,63 @@ def test_no_dunning_alerts_means_no_autopay_cards(admin_client):
     assert "dunning-exhaustion" not in ids
 
 
-class _StubCollections:
-    def __init__(self, past_due: int, *, fail: bool = False) -> None:
-        self.past_due = past_due
-        self.fail = fail
+def _overdue_reader(invoices: list[dict]):
+    """The real cross-period reader over an in-memory Mongo (L2 B2)."""
+    import asyncio
 
-    async def build(self, period=None, *, debug=False):
-        if self.fail:
-            raise RuntimeError("collections down")
-        return {
-            "buckets": [
-                {"key": "failed_autopay", "count": 4},
-                {"key": "past_due", "count": self.past_due},
-                {"key": "awaiting", "count": 9},
-            ]
-        }
+    from mongomock_motor import AsyncMongoMockClient
+
+    from backend.v2.composition.overdue_families import OverdueFamiliesReader
+
+    db = AsyncMongoMockClient()["dash"]
+    if invoices:
+        asyncio.run(db["invoices"].insert_many(invoices))
+
+    async def chicago(_academy_id: str) -> str:
+        return "America/Chicago"
+
+    reader = OverdueFamiliesReader(
+        db, academy_timezone=chicago, clock=lambda: datetime(2026, 12, 6, 3, 0, tzinfo=UTC)
+    )
+
+    class _TenantScoped:
+        # The bare test app has no auth middleware to set the tenant.
+        async def counts(self):
+            from backend.v2.shared.tenancy import tenant_scope
+
+            with tenant_scope("test-academy"):
+                return await reader.counts()
+
+    return _TenantScoped()
 
 
-def test_overdue_card_counts_only_the_past_due_bucket(admin_client):
-    """L2 A0-0: drafts and not-yet-due invoices used to count as "overdue".
+def _owing(invoice_id: str, parent: str, due: date, status: str = "open") -> dict:
+    return {
+        "academy_id": "test-academy",
+        "invoice_id": invoice_id,
+        "parent_id": parent,
+        "status": status,
+        "due_date": datetime(due.year, due.month, due.day, tzinfo=UTC),
+        "balance_due_cents": 5000,
+    }
 
-    The card now reads the Payments page's past-due bucket (due date before
-    the academy's today, no autopay), so the two screens cannot disagree.
-    """
-    admin_client.app.state.admin_collections = _StubCollections(past_due=2)
-    admin_client.use_cases.list_dues_followup = AsyncMock(
-        return_value=[{"parent_id": f"p{i}", "total_due_cents": 100} for i in range(7)]
+
+class _BrokenOverdue:
+    async def counts(self):
+        raise RuntimeError("invoices down")
+
+
+def test_overdue_card_counts_families_past_due_in_any_month(admin_client):
+    """L2 A0-0 + B2: last month's unpaid invoice counts even when this month's
+    is not yet due; drafts and not-yet-due invoices never count."""
+    admin_client.app.state.admin_overdue_families = _overdue_reader(
+        [
+            _owing("nov", "fam-1", date(2026, 11, 5)),
+            _owing("dec", "fam-1", date(2026, 12, 10)),
+            _owing("oct", "fam-2", date(2026, 10, 5)),
+            _owing("draft", "fam-3", date(2026, 11, 5), status="draft"),
+            _owing("today", "fam-4", date(2026, 12, 5)),
+        ]
     )
 
     r = admin_client.get("/api/v2/admin/dashboard/attention")
@@ -237,20 +268,31 @@ def test_overdue_card_counts_only_the_past_due_bucket(admin_client):
 
 
 def test_no_past_due_families_means_no_overdue_card(admin_client):
-    admin_client.app.state.admin_collections = _StubCollections(past_due=0)
+    admin_client.app.state.admin_overdue_families = _overdue_reader([])
 
     r = admin_client.get("/api/v2/admin/dashboard/attention")
 
     assert all(i["kind"] != "overdue_dues" for i in r.json()["items"])
 
 
-def test_unreadable_collections_flag_overdue_as_unavailable(admin_client):
-    admin_client.app.state.admin_collections = _StubCollections(past_due=0, fail=True)
+def test_unreadable_invoices_flag_overdue_as_unavailable(admin_client):
+    admin_client.app.state.admin_overdue_families = _BrokenOverdue()
 
     r = admin_client.get("/api/v2/admin/dashboard/attention")
 
     assert r.status_code == 200, r.text
     assert {"source": "overdue_dues", "label": "overdue payments"} in r.json()["unavailable"]
+
+
+def test_overdue_families_route_returns_both_counts(admin_client):
+    admin_client.app.state.admin_overdue_families = _overdue_reader(
+        [_owing("nov", "fam-1", date(2026, 11, 5))]
+    )
+
+    r = admin_client.get("/api/v2/admin/payments/overdue-families")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"past_due_count": 1, "needs_action_count": 1}
 
 
 def test_session_pressure_reads_the_academy_local_today(admin_client, monkeypatch):

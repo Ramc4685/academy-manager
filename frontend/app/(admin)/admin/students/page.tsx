@@ -6,8 +6,7 @@ import type { Route } from "next";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 
-import { getAdminCollections, listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
-import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
+import { getAdminOverdueFamilies, listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { statText } from "@/lib/ui/load-state";
 import { useIsPhone } from "@/lib/use-is-phone";
@@ -183,13 +182,12 @@ function SummaryCards({
 }) {
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   const stat = (value: () => number) => statText(state, () => String(value()));
-  // L2 A0-11: payment risk is academy-wide, from the same bucket view as the
-  // Payments page and the dashboard — never a count of the rows loaded here.
-  const collectionsQuery = useQuery({
-    queryKey: queryKeys.admin.collections("current"),
-    queryFn: () => getAdminCollections(),
+  // L2 A0-11/B2: payment risk is academy-wide across every billing month —
+  // never a count of the rows loaded here.
+  const overdueQuery = useQuery({
+    queryKey: queryKeys.admin.overdueFamilies(),
+    queryFn: getAdminOverdueFamilies,
   });
-  const needsAction = normalizeCollections(collectionsQuery.data).totals.needs_action_count;
 
   // #865: five full-width cards stacked vertically took the whole of a
   // 400x860 screen before the first student appeared. Below `md:` they become
@@ -227,7 +225,7 @@ function SummaryCards({
       >
         <Card p={20} accent="#ef4444">
           <Overline>Payment risk</Overline>
-          <BigNum size={32}>{statText(collectionsQuery, () => String(needsAction))}</BigNum>
+          <BigNum size={32}>{statText(overdueQuery, () => String(overdueQuery.data?.needs_action_count ?? 0))}</BigNum>
           <p className="mt-1 text-[11px] text-rally-subtle">Families past due or failed autopay</p>
         </Card>
       </Link>

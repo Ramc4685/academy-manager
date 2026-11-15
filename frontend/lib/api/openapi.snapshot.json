@@ -3900,6 +3900,25 @@
         "title": "AdminOccurrenceTeachingPlanResponse",
         "type": "object"
       },
+      "AdminOverdueFamiliesView": {
+        "description": "Academy-wide family counts across every billing period (L2 B2).",
+        "properties": {
+          "needs_action_count": {
+            "title": "Needs Action Count",
+            "type": "integer"
+          },
+          "past_due_count": {
+            "title": "Past Due Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "past_due_count",
+          "needs_action_count"
+        ],
+        "title": "AdminOverdueFamiliesView",
+        "type": "object"
+      },
       "AdminPauseRequestList": {
         "properties": {
           "requests": {
@@ -40932,6 +40951,28 @@
         ]
       }
     },
+    "/api/v2/admin/payments/overdue-families": {
+      "get": {
+        "description": "Families past due (no autopay cover) and needing action, in ANY period.",
+        "operationId": "payments_overdue_families_api_v2_admin_payments_overdue_families_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverdueFamiliesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Payments Overdue Families",
+        "tags": [
+          "admin.collections"
+        ]
+      }
+    },
     "/api/v2/admin/payments/refund": {
       "post": {
         "description": "Send an ``Idempotency-Key`` (one per refund attempt, reused on retry) so\na retry replays while a second real refund is still issued (#930). Without\nit an identical repeat inside the TTL is a 409 to confirm; a key reused for\na different refund is a 422.",
@@ -44765,7 +44806,7 @@
             }
           },
           {
-            "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. Overrides 'date' when both are passed.",
+            "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed.",
             "in": "query",
             "name": "window",
             "required": false,
@@ -44778,7 +44819,7 @@
                   "type": "null"
                 }
               ],
-              "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. Overrides 'date' when both are passed.",
+              "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed.",
               "title": "Window"
             }
           },

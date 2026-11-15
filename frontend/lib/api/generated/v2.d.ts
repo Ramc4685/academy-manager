@@ -2368,6 +2368,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/payments/overdue-families": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Payments Overdue Families
+         * @description Families past due (no autopay cover) and needing action, in ANY period.
+         */
+        get: operations["payments_overdue_families_api_v2_admin_payments_overdue_families_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/payments/refund": {
         parameters: {
             query?: never;
@@ -8880,6 +8900,16 @@ export interface components {
             session_id: string;
             /** Unplaced */
             unplaced?: components["schemas"]["UnplacedStudent"][];
+        };
+        /**
+         * AdminOverdueFamiliesView
+         * @description Academy-wide family counts across every billing period (L2 B2).
+         */
+        AdminOverdueFamiliesView: {
+            /** Needs Action Count */
+            needs_action_count: number;
+            /** Past Due Count */
+            past_due_count: number;
         };
         /** AdminPauseRequestList */
         AdminPauseRequestList: {
@@ -24020,6 +24050,26 @@ export interface operations {
             };
         };
     };
+    payments_overdue_families_api_v2_admin_payments_overdue_families_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOverdueFamiliesView"];
+                };
+            };
+        };
+    };
     refund_api_v2_admin_payments_refund_post: {
         parameters: {
             query?: never;
@@ -26684,7 +26734,7 @@ export interface operations {
         parameters: {
             query?: {
                 date?: string;
-                /** @description 'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. Overrides 'date' when both are passed. */
+                /** @description 'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed. */
                 window?: string | null;
                 /** @description Filter sessions by coach ID */
                 coach_id?: string | null;

@@ -356,20 +356,13 @@ async def _no_dunning_alerts() -> dict[str, int]:
 
 
 async def _past_due_family_count(request: Request) -> int:
-    """Families in the Payments page's past-due bucket (L2 A0-0).
+    """Families past the due date without autopay cover, in ANY period (L2 B2).
 
     Overdue means the day after the due date on the academy's clock; drafts
-    and autopay-covered invoices never count. Reading the same bucket view as
-    the Payments page keeps the card and that page from disagreeing.
+    never count. A missing reader raises, so the card reads "unavailable".
     """
-    collections = getattr(request.app.state, "admin_collections", None)
-    if collections is None:
-        return 0
-    view = await collections.build()
-    return next(
-        (int(b.get("count") or 0) for b in view.get("buckets", []) if b.get("key") == "past_due"),
-        0,
-    )
+    counts = await request.app.state.admin_overdue_families.counts()
+    return int(counts["past_due"])
 
 
 async def _read_attention_source(
