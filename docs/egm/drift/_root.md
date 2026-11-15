@@ -1,4 +1,3 @@
-## README.md (repo root)
+## README.md
 
-- [undocumented] README.md:89-102 (Deployment pipeline) lists seven steps, but `.github/workflows/production.yml` also has a `sentry-release` job (`production.yml:1049`, `needs: [smoke]`, runs alongside `publish-release` at `production.yml:1119`). The README does not mention it.
-- [wording] README.md:92-93 says Validate covers "backend compile/tests, v2 DDD boundary checks, and Next.js typecheck/lint/build/E2E". The workflow also runs real-Mongo contract tests (`production.yml:167`), a backend advisory/audit job (`production.yml:229`), script validation (`production.yml:673`) and hook tests (`production.yml:718`). The summary is incomplete, not wrong.
+- [undocumented] README.md:83-84 says the `academy-next` Worker owns `academy.courtmastr.com/*`. `frontend/wrangler.jsonc:18-25` also routes `*.courtmastr.com/*` (zone `courtmastr.com`) to the Worker. The wildcard tenant route is not mentioned.

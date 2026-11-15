@@ -10,6 +10,13 @@ import backend.v2.contexts.billing.infrastructure.admin_reports_read_model as re
 from backend.v2.shared.tenancy.context import tenant_scope
 
 
+@pytest.fixture(autouse=True)
+def _aging_clock(monkeypatch):
+    """Aging is "how late now". Most fixtures here are May 2026 balances viewed
+    on June 1, so pin the clock there; aging tests below set their own."""
+    monkeypatch.setattr(reports_read_model, "_now", lambda: datetime(2026, 6, 1, 12, tzinfo=UTC))
+
+
 @pytest.mark.asyncio
 async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacity() -> None:
     mongomock_motor = pytest.importorskip("mongomock_motor")
@@ -1348,3 +1355,122 @@ async def test_payroll_completeness_ignores_non_blocking_unpaid_rows() -> None:
 
     assert dashboard["payroll"]["blocked_by"] is None
     assert dashboard["profit_and_loss"]["coach_payroll_cents"] == 5_000
+
+
+def _aging(dashboard: dict) -> dict[str, int]:
+    return {b["label"]: b["amount_cents"] for b in dashboard["collections_risk"]["aging_buckets"]}
+
+
+@pytest.mark.asyncio
+async def test_aging_ages_against_today_not_the_month_end(monkeypatch) -> None:
+    """G:ai_owner:1: a not-yet-due invoice read 1-30 during its own month, and a
+    balance viewed months later never left 1-30."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["test_db"]
+    await db["invoices"].insert_many(
+        [
+            {
+                "invoice_id": "inv-not-due",
+                "academy_id": "acad",
+                "parent_id": "parent-a",
+                "period": "2026-11",
+                "status": "open",
+                "total_cents": 4_000,
+                "balance_due_cents": 4_000,
+                "currency": "usd",
+                "created_at": datetime(2026, 11, 1, tzinfo=UTC),
+                "due_date": datetime(2026, 11, 20, tzinfo=UTC),
+            },
+            {
+                "invoice_id": "inv-sept",
+                "academy_id": "acad",
+                "parent_id": "parent-b",
+                "period": "2026-09",
+                "status": "open",
+                "total_cents": 7_000,
+                "balance_due_cents": 7_000,
+                "currency": "usd",
+                "created_at": datetime(2026, 9, 1, tzinfo=UTC),
+                "due_date": datetime(2026, 9, 5, tzinfo=UTC),
+            },
+        ]
+    )
+    monkeypatch.setattr(reports_read_model, "_now", lambda: datetime(2026, 11, 15, 18, tzinfo=UTC))
+
+    with tenant_scope("acad"):
+        november = await reports_read_model.make_reports_dashboard(db)("2026-11")
+        september = await reports_read_model.make_reports_dashboard(db)("2026-09")
+
+    assert _aging(november) == {"Current": 4_000, "1-30": 0, "31-60": 0, "60+": 0}
+    # Due Sep 5, unpaid on Nov 15: 71 days late.
+    assert _aging(september) == {"Current": 0, "1-30": 0, "31-60": 0, "60+": 7_000}
+
+
+@pytest.mark.asyncio
+async def test_month_counts_classes_that_meet_in_it_not_only_ones_that_began() -> None:
+    """G:ai_owner:2: a class that began in September vanished from November."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["test_db"]
+    await db["sessions"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "session_id": "ses-sept",
+                "start_at": datetime(2026, 9, 7, 23, tzinfo=UTC),
+                "capacity": 10,
+                "status": "scheduled",
+            },
+            {
+                # Ended in October: no November occurrence, not counted.
+                "academy_id": "acad",
+                "session_id": "ses-ended",
+                "start_at": datetime(2026, 8, 3, 23, tzinfo=UTC),
+                "capacity": 8,
+                "status": "scheduled",
+            },
+        ]
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-nov",
+                "session_id": "ses-sept",
+                "start_at": datetime(2026, 11, 9, 23, tzinfo=UTC),
+            },
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-oct",
+                "session_id": "ses-ended",
+                "start_at": datetime(2026, 10, 5, 23, tzinfo=UTC),
+            },
+            {
+                # Another academy's occurrence naming the same class id.
+                "academy_id": "other",
+                "occurrence_id": "occ-other",
+                "session_id": "ses-ended",
+                "start_at": datetime(2026, 11, 9, 23, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "academy_id": "acad",
+                "session_id": "ses-sept",
+                "student_id": f"s{i}",
+                "status": "active",
+            }
+            for i in range(4)
+        ]
+    )
+    await db["waitlist"].insert_one(
+        {"academy_id": "acad", "session_id": "ses-sept", "status": "waiting"}
+    )
+
+    with tenant_scope("acad"):
+        dashboard = await reports_read_model.make_reports_dashboard(db)("2026-11")
+
+    assert dashboard["sessions"]["scheduled_count"] == 1
+    assert dashboard["sessions"]["capacity_utilization"] == 0.4
+    assert dashboard["sessions"]["waitlist_count"] == 1

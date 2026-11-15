@@ -11,6 +11,7 @@ PR: TBD
 - A dashboard card or inbox count that fails to load shows "Could not check" or "?" instead of a silent 0.
 - Students page "Payment risk" tile shows the academy-wide count of families past due or with failed autopay and links to Payments. It used to count only the rows on screen.
 - Sessions page has an "All classes" view with text and status filters, so classes beyond the next 30 days or already ended can be found. A sessions-list date now means the academy-local day. The global waitlist covers every class that has not ended, not only the next 30 days.
+- Reports dashboard: the collections aging buckets age unpaid balances against today (academy time), not the month end, so a not-yet-due invoice reads Current and an old balance reaches 31-60 or 60+. Sessions, capacity and waitlist count every class that meets in the month, not only classes that began in it.
 - The class roster shows each seat's latest lifecycle event from the roster response instead of one request per row. Roster student and parent lookups now use the request's academy.
 
 ## Deploy notes
