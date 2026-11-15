@@ -1248,7 +1248,9 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
             bundled=True,
         )
     # Student-scoped bundle, not the parent's family-wide balance.
-    assert "https://blno.example.com/parent/payments?pay=inv-1&amp;bundle=1" in sender.calls[1]["body"]
+    assert (
+        "https://blno.example.com/parent/payments?pay=inv-1&amp;bundle=1" in sender.calls[1]["body"]
+    )
 
 
 def test_add_invoice_line_returns_refreshed_invoice_totals(admin_client):

@@ -13,7 +13,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] "Atomic invite acceptance" rollback only on admin user creation, not public parent registration.
 - [undocumented] Layout omits `mobile/`, `tests/`, `firebase-emulator/`.
 
-## `backend/v2/README.md`: 16 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 17 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -28,6 +28,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Top-level test files (`test_pytest_timeout_backstop.py`, `_route_paths.py`, `conftest.py`) missing from tests layout.
 - [contract] `pyproject.toml` cites missing `tests/structural/test_tenancy_literals.py`; tenancy check is `tests/test_no_raw_tenant_mongo_access.py`.
 - [wording] Persona list, admin router prefix (`interfaces/admin/router.py:61`), identity context shape, `views.py` not in every persona; see report.
+- [wording] README:69 says run from the repo root; CI runs from `backend/`.
 
 ## `frontend/README.md`: 20 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
