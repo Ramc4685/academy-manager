@@ -16,11 +16,9 @@ git status --short --branch
 
 Then read:
 
-1. `test_result.md`
-2. Relevant active ledger under `docs/test-results/active/`, if one exists
-3. Relevant ticket sheet, if `docs/tickets/` exists
-4. Relevant ADR or policy docs
-5. Existing code around the target files
+1. Relevant ticket sheet, if `docs/tickets/` exists
+2. Relevant ADR or policy docs
+3. Existing code around the target files
 
 Write down the current state before editing:
 
@@ -57,7 +55,7 @@ For non-ticketed bug fixes:
 
 ## Test Result Loop
 
-Use `test_result.md` as the small index. Use per-task files under
+Optional, for handoffs to a separate testing agent only: use `test_result.md` as the small index. Use per-task files under
 `docs/test-results/active/` as the agent-to-agent source of truth.
 
 Do not manually restore or edit large shared YAML status blocks in

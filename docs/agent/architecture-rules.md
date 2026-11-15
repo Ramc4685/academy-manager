@@ -14,10 +14,8 @@ Read before structural decisions:
 
 1. `README.md`
 2. `DEPLOYMENT.md`
-3. `test_result.md`
-4. The relevant active ledger under `docs/test-results/active/`, if one exists
-5. `docs/tickets/README.md`, when present on the branch
-6. The active phase or wave ticket sheet, when present
+3. `docs/tickets/README.md`, when present on the branch
+4. The active phase or wave ticket sheet, when present
 
 Architecture docs and accepted ADRs override this file.
 
