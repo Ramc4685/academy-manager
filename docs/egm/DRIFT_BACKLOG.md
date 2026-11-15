@@ -2,25 +2,9 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-<<<<<<< HEAD
-## Repo root (`README.md`): 14 items, from `drift/_root.md`
-- [stale-not-built] `edge/` Worker router listed but the directory is gone.
-- [contract] README says Next.js 15; `frontend/package.json` pins 16.4.1.
-- [stale-not-built] `scripts/` "importers" do not exist.
-- [contract] `flyctl deploy --remote-only` vs prebuilt-image deploy in `production.yml`.
-- [contract] "Non-prod cannot email real parents", but staging sends real email (`composition/digests.py`).
-- [missing] Secret rotation not in DEPLOYMENT.md.
-- [missing] Rollback procedure not in DEPLOYMENT.md.
-- [wording] "Atomic invite acceptance" rollback only on admin user creation, not public parent registration.
-- [undocumented] Layout omits `mobile/`, `tests/`, `firebase-emulator/`.
-- [undocumented] Pipeline (README.md:86-97) omits the Migrate Production and Sentry Release jobs in `production.yml`.
-- [wording] README.md:90-91 understates what the Validate step covers.
-- [undocumented] README never mentions Dependabot or the workflows besides `production.yml`.
-=======
 ## Repo root (`README.md`): 2 items, from `drift/_root.md`
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] Validate step undersells the job: it also runs real-Mongo contract tests, lint, the OpenAPI drift check, the Worker runtime smoke, real-auth E2E and scripts validation.
->>>>>>> origin/main
 
 ## `backend/v2/README.md`: 19 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
