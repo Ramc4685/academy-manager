@@ -75,8 +75,8 @@ pytest v2/tests
 
 ## Testing Agent Protocol
 
-This repo uses `test_result.md` as a small index and `docs/test-results/active/`
-files as the shared ledger between main and testing agents.
+Optional: when handing work to a separate testing agent, `test_result.md` is a
+small index and `docs/test-results/active/` files are the shared ledger.
 
 Use the CLI; do not manually edit large shared status blocks in `test_result.md`.
 

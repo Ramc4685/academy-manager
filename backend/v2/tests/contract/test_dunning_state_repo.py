@@ -702,3 +702,27 @@ async def test_list_admin_rows_hides_ladders_whose_invoice_is_void_or_paid(db, a
     rows = await repo.list_admin_rows()
 
     assert [row["invoice_id"] for row in rows] == ["inv-open"]
+
+
+@pytest.mark.asyncio
+async def test_claim_next_due_skips_excluded_parked_state_for_due_one(db, acad) -> None:
+    """A parked state (next_attempt_at=None) sorts first; excluding it must yield the
+    due state behind it, not None (2026-11-08 head-of-line regression)."""
+    repo = MongoDunningStateRepository(db)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-parked", enrollment_id="enr-p")
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-due", enrollment_id="enr-d")
+    await repo.prepare_due_states(now=NOW, limit=100)
+    await db["dunning_states"].update_one(
+        {"invoice_id": "inv-parked"},
+        {"$set": {"next_attempt_at": None, "suppression_reason": "charge_technical_failure"}},
+    )
+
+    head = await repo.claim_next_due(now=NOW, worker_id="worker-1")
+    assert head is not None and head[0].invoice_id == "inv-parked"
+    await repo.park_attempt(state=head[1], reason="charge_technical_failure", now=NOW)
+
+    nxt = await repo.claim_next_due(
+        now=NOW, worker_id="worker-1", exclude_invoice_ids={"inv-parked"}
+    )
+    assert nxt is not None
+    assert nxt[0].invoice_id == "inv-due"

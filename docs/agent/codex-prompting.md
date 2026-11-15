@@ -79,8 +79,8 @@ ledger, and acceptance evidence whenever known.
 ## Project-Specific Prompt Rules
 
 - Start from `AGENTS.md` and the focused `docs/agent/*` file for the task.
-- Require the repo feedback loop: create or update the active ledger with
-  `scripts/dev/test_result.py log/verify`.
+- Require exact verification commands and results in the final report (the
+  `scripts/dev/test_result.py` ledger only when a separate testing agent is involved).
 - Tell Codex to inspect existing code before editing.
 - Ask for a concise implementation plan before edits on non-trivial work, mapped
   to the spec or ticket acceptance criteria.
