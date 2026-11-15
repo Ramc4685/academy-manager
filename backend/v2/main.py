@@ -1628,66 +1628,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     async def _process_dunning_retries_body() -> None:
-        totals = {
-            "academy_count": 0,
-            "prepared": 0,
-            "processed": 0,
-            "succeeded": 0,
-            "failed": 0,
-            "dunned": 0,
-            "transient": 0,
-            "notifications_sent": 0,
-            "notifications_failed": 0,
-            "autopay_disabled": 0,
-            "late_fees_applied": 0,
-        }
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            scheduler_fallback_academy_id,
-        ):
-            with tenant_scope(academy_id):
-                # Late fees run BEFORE the retries: the fee raises
-                # balance_due_cents, so the dunning notice this same tick may
-                # send quotes the new total (#552). Failures are logged, never
-                # fatal — a late fee must not cost an academy its retries.
-                late_fees = getattr(app.state, "apply_late_fees", None)
-                if late_fees is not None:
-                    try:
-                        fee_result = await late_fees.execute(academy_id=academy_id)
-                    except Exception:
-                        log.exception("late_fee_pass_failed", extra={"academy_id": academy_id})
-                    else:
-                        totals["late_fees_applied"] += int(fee_result.applied)
-                worker = getattr(app.state.admin, "process_dunning_retries", None)
-                if worker is None:
-                    log.warning(
-                        "dunning_retries_worker_missing: process_dunning_retries is not "
-                        "wired on app.state.admin; dunning is NOT running",
-                        extra={"academy_id": academy_id},
-                    )
-                    continue
-                result = await worker.execute(
-                    limit=100,
-                    worker_id=f"scheduler-dunning-worker:{academy_id}",
-                )
-            totals["academy_count"] += 1
-            for key in (
-                "prepared",
-                "processed",
-                "succeeded",
-                "failed",
-                "dunned",
-                "transient",
-                "notifications_sent",
-                "notifications_failed",
-                "autopay_disabled",
-            ):
-                totals[key] += int(getattr(result, key, 0) or 0)
+        worker = getattr(app.state.admin, "process_dunning_retries", None)
+        if worker is None:
+            log.warning(
+                "dunning_retries_worker_missing: process_dunning_retries is not "
+                "wired on app.state.admin; dunning is NOT running",
+            )
+        totals = await _run_dunning_for_academies(
+            academy_ids=await _scheduler_academy_ids(
+                MongoAcademyRepository(db),
+                scheduler_fallback_academy_id,
+            ),
+            late_fees=getattr(app.state, "apply_late_fees", None),
+            worker=worker,
+        )
         if (
             totals["processed"]
             or totals["dunned"]
             or totals["autopay_disabled"]
             or totals["late_fees_applied"]
+            or totals["parked"]
+            or totals["academy_failures"]
         ):
             log.info("dunning_retries_processed", extra=totals)
 
@@ -2541,6 +2502,60 @@ async def _resolve_billing_day(
             exc_info=True,
         )
         return int(BillingSettings.default("").billing_day)
+
+
+_DUNNING_TOTAL_KEYS = (
+    "prepared",
+    "processed",
+    "succeeded",
+    "failed",
+    "dunned",
+    "transient",
+    "parked",
+    "technical_failures",
+    "notifications_sent",
+    "notifications_failed",
+    "autopay_disabled",
+)
+
+
+async def _run_dunning_for_academies(
+    *, academy_ids: list[str], late_fees: Any | None, worker: Any | None
+) -> dict[str, int]:
+    """One dunning tick across academies; one academy's failure never skips the rest.
+
+    Late fees run BEFORE the retries: the fee raises balance_due_cents, so the
+    dunning notice this same tick may send quotes the new total (#552).
+    """
+    totals = dict.fromkeys(
+        ("academy_count", "academy_failures", "late_fees_applied", *_DUNNING_TOTAL_KEYS), 0
+    )
+    for academy_id in academy_ids:
+        with tenant_scope(academy_id):
+            if late_fees is not None:
+                try:
+                    fee_result = await late_fees.execute(academy_id=academy_id)
+                except Exception:
+                    log.exception("late_fee_pass_failed", extra={"academy_id": academy_id})
+                else:
+                    totals["late_fees_applied"] += int(fee_result.applied)
+            if worker is None:
+                continue
+            try:
+                result = await worker.execute(
+                    limit=100,
+                    worker_id=f"scheduler-dunning-worker:{academy_id}",
+                )
+            except Exception:
+                # A CAS race in park/finish (or any other error) for one academy must
+                # not cost every later academy its autopay collection this tick.
+                log.exception("dunning_academy_failed", extra={"academy_id": academy_id})
+                totals["academy_failures"] += 1
+                continue
+        totals["academy_count"] += 1
+        for key in _DUNNING_TOTAL_KEYS:
+            totals[key] += int(getattr(result, key, 0) or 0)
+    return totals
 
 
 async def _run_monthly_invoice_generation(

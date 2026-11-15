@@ -634,6 +634,46 @@ async def test_fixture_autopay_ach_succeeded_allocates_after_settlement() -> Non
 
 
 @pytest.mark.asyncio
+async def test_settled_bank_debit_requests_one_receipt_per_payment() -> None:
+    """L1 A5-2: the receipt comes from the settle webhook, keyed by payment id."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_autopay_invoice(ledger)
+    outbox = FakeOutbox()
+    uc = _build_with_ledger(repo, ledger, outbox=outbox)
+
+    await uc.execute(_load("payment_intent_succeeded_ach_autopay.json"), "test_signature")
+
+    receipts = [e for e in outbox.events if e.name == "Billing.PaymentReceiptRequested"]
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt.event_id == "payment-receipt:ledger-pay-autopay:pi_ach_fixture_01"
+    assert receipt.payload.bank_debit is True
+    assert receipt.payload.autopay is True
+    assert receipt.payload.invoice_id == "inv-ach-fixture-01"
+    assert receipt.payload.amount_cents == 10_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["admin_manual", "admin_billing_setup"])
+async def test_admin_charge_now_bank_debit_settles_the_invoice(source: str) -> None:
+    """L1: an admin "charge now" bank debit is the same off-session PaymentIntent as
+    autopay; its settlement must close the invoice, not fall to the legacy path."""
+    import json
+
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger()
+    _seed_autopay_invoice(ledger)
+    uc = _build_with_ledger(repo, ledger)
+    event = json.loads(_load("payment_intent_succeeded_ach_autopay.json"))
+    event["data"]["object"]["metadata"]["source"] = source
+
+    await uc.execute(json.dumps(event).encode(), "test_signature")
+
+    assert ledger.invoices["inv-ach-fixture-01"].status == "paid"
+
+
+@pytest.mark.asyncio
 async def test_fixture_autopay_ach_return_reopens_paid_invoice() -> None:
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger()
@@ -656,7 +696,14 @@ async def test_fixture_autopay_ach_return_reopens_paid_invoice() -> None:
         attempt for attempt in ledger.payment_attempts.values() if attempt["status"] == "returned"
     )
     assert returned_attempt["failure_code"] == "R01"
-    assert outbox.events[-1].name == "Billing.PaymentRefunded"
+    names = [event.name for event in outbox.events]
+    assert "Billing.PaymentRefunded" in names
+    # L1 A4-5: the parent is told the bank took the payment back.
+    notice = outbox.events[-1]
+    assert notice.name == "Billing.DunningNoticeRequested"
+    assert notice.payload.failure_code == "R01"
+    assert notice.payload.terminal is True
+    assert notice.payload.balance_due_cents == 10_000
 
 
 @pytest.mark.asyncio

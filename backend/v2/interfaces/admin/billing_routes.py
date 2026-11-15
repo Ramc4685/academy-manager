@@ -1316,6 +1316,9 @@ class DunningRowDto(BaseModel):
     autopay_disable_status: str | None = None
     autopay_disable_error: str | None = None
     autopay_disabled_at: datetime | None = None
+    #: Set when the ladder is parked on our side (A7-1): why, and since when.
+    parked_reason: str | None = None
+    parked_since: datetime | None = None
     balance_due_cents: int
     currency: str = "usd"
 

@@ -222,8 +222,12 @@ async def test_a_platform_card_is_never_charged_on_the_connected_account(real_db
     )
     await _seed_invoice(real_db, ACAD)
 
-    with tenant_scope(ACAD), pytest.raises(ValueError, match="no_saved_payment_method"):
-        await _charge(real_db, stripe).execute(INVOICE)
+    with tenant_scope(ACAD):
+        result = await _charge(real_db, stripe).execute(INVOICE)
+
+    # A normal "parent action needed" result since L1 A4-1, not an exception.
+    assert result.success is False
+    assert result.decline_code == "no_saved_payment_method"
 
     assert stripe.off_session_payment_intents == []
 

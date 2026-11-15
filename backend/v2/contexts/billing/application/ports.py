@@ -279,6 +279,12 @@ class ParentStripeCustomerRepository(Protocol):
         stripe_account_id: str | None = None,
     ) -> None: ...
 
+    async def flag_payment_method_blocked(
+        self, *, payment_method_id: str, reason: str, at: datetime
+    ) -> int:
+        """Mark a saved method Stripe can no longer charge; returns rows flagged."""
+        ...
+
 
 class SavedPaymentMethodReader(Protocol):
     """Reads the parent's stored chargeable card on one Stripe account.
@@ -1049,6 +1055,15 @@ class LedgerRepository(Protocol):
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None: ...
+    async def record_refund_failure(
+        self,
+        *,
+        stripe_payment_intent_id: str,
+        refund_id: str,
+        reason: str,
+        amount_cents: int,
+        failed_at: datetime,
+    ) -> bool: ...
     async def get_payment_allocation_by_idempotency_key(
         self, idempotency_key: str
     ) -> PaymentAllocation | None: ...

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Protocol
 
 from backend.v2.contexts.billing.application.ports import DisputeNoticePort
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
@@ -29,6 +30,7 @@ from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
     DunningNoticeRequested,
     PaymentDisputeNoticeRequested,
+    PaymentReceiptRequested,
     PaymentSucceeded,
 )
 from backend.v2.contexts.enrollment.application.use_cases.confirm_enrollment import (
@@ -91,10 +93,26 @@ def install_handlers(deps: HandlerDeps) -> None:
 # wiring, while `install_handlers` is called by `compose_parent`. Keeping it in
 # its own holder avoids making one composition root reach into the other's
 # dependencies just to satisfy a single handler.
-_dunning_notifier: DunningNotificationPort | None = None
+class _BillingNotifier(DunningNotificationPort, Protocol):
+    """The billing e-mail adapter: dunning notices plus payment receipts (L1 A5-2)."""
+
+    async def send_autopay_receipt(
+        self,
+        *,
+        parent_id: str,
+        invoice_id: str | None,
+        period: str | None,
+        amount_cents: int,
+        currency: str,
+        autopay: bool = True,
+        bank_debit: bool = False,
+    ) -> None: ...
 
 
-def install_dunning_notifier(notifier: DunningNotificationPort | None) -> None:
+_dunning_notifier: _BillingNotifier | None = None
+
+
+def install_dunning_notifier(notifier: _BillingNotifier | None) -> None:
     """Called once by the admin composition root. ``None`` when e-mail delivery
     is not configured — the dunning worker then never enqueues a notice, so the
     handler is unreachable rather than permanently failing."""
@@ -321,6 +339,31 @@ async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
             currency=payload.currency,
             attempt_no=payload.attempt_no,
             terminal=payload.terminal,
+            failure_code=payload.failure_code,
+            next_attempt_at=payload.next_attempt_at,
+            bank_debit=payload.bank_debit,
+        )
+
+
+@handler(event=PaymentReceiptRequested, schema_version=1)  # type: ignore[arg-type]
+async def on_payment_receipt_requested(event: PaymentReceiptRequested) -> None:
+    """Deliver the parent's receipt (L1 A5-2). Raises so the dispatcher retries;
+    it dedupes per (event_id, handler), and the event id is per payment."""
+    if _dunning_notifier is None:
+        raise RuntimeError(
+            "dunning notifier not installed — composition root did not call "
+            "install_dunning_notifier()"
+        )
+    payload = event.payload
+    with tenant_scope(event.academy_id):
+        await _dunning_notifier.send_autopay_receipt(
+            parent_id=payload.parent_id,
+            invoice_id=payload.invoice_id,
+            period=payload.period,
+            amount_cents=payload.amount_cents,
+            currency=payload.currency,
+            autopay=payload.autopay,
+            bank_debit=payload.bank_debit,
         )
 
 

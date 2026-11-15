@@ -122,3 +122,74 @@ def test_success_resolves_dunning_without_more_retries() -> None:
     assert resolved.attempt_count == 1
     assert resolved.next_attempt_at is None
     assert resolved.resolved_at == NOW
+
+
+def _settled_bank_failure(*, attempt_no: int, code: str) -> DunningState:
+    return DunningState(
+        academy_id="acad-1",
+        invoice_id="inv-1",
+        parent_id="parent-1",
+        enrollment_id="enr-1",
+        status="processing",
+        attempt_count=attempt_no - 1,
+        processing_attempt_no=attempt_no,
+        first_attempt_at=NOW,
+        settling_failure_code=code,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def test_bank_insufficient_funds_retries_three_then_seven_days_after_the_report() -> None:
+    reported = NOW + timedelta(days=4)
+    first = record_dunning_attempt_result(
+        _settled_bank_failure(attempt_no=1, code="insufficient_funds"),
+        succeeded=False,
+        failure_code="insufficient_funds",
+        now=reported,
+    )
+    assert first.status == "active"
+    assert first.next_attempt_at == reported + timedelta(days=3)
+    assert first.settling_failure_code is None
+
+    second = record_dunning_attempt_result(
+        _settled_bank_failure(attempt_no=2, code="R01"),
+        succeeded=False,
+        failure_code="R01",
+        now=reported,
+    )
+    assert second.next_attempt_at == reported + timedelta(days=7)
+
+
+def test_bank_insufficient_funds_stops_after_two_retries() -> None:
+    third = record_dunning_attempt_result(
+        _settled_bank_failure(attempt_no=3, code="insufficient_funds"),
+        succeeded=False,
+        failure_code="insufficient_funds",
+        now=NOW,
+    )
+    assert third.status == "dunned"
+    assert third.autopay_disable_status == "pending"
+
+
+def test_closed_or_unknown_bank_failure_stops_on_the_first_attempt() -> None:
+    for code in ("bank_account_closed", "debit_not_authorized", "some_new_code"):
+        stopped = record_dunning_attempt_result(
+            _settled_bank_failure(attempt_no=1, code=code),
+            succeeded=False,
+            failure_code=code,
+            now=NOW,
+        )
+        assert stopped.status == "dunned", code
+        assert stopped.last_failure_code == code
+
+
+def test_card_insufficient_funds_keeps_the_card_ladder() -> None:
+    state = _settled_bank_failure(attempt_no=1, code="x").model_copy(
+        update={"settling_failure_code": None}
+    )
+    card = record_dunning_attempt_result(
+        state, succeeded=False, failure_code="insufficient_funds", now=NOW
+    )
+    assert card.status == "active"
+    assert card.next_attempt_at == NOW + timedelta(days=DUNNING_SCHEDULE_DAYS[1])

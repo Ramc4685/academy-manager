@@ -5323,3 +5323,58 @@ async def test_quarantined_unmarked_event_never_reaches_payment_or_ledger_writes
     }
     assert repo.by_id == {}
     assert outbox.events == []
+
+
+class _BlockingCustomers(FakeParentStripeCustomers):
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocked: list[tuple[str, str]] = []
+
+    async def flag_payment_method_blocked(self, *, payment_method_id: str, reason: str, at):
+        self.blocked.append((payment_method_id, reason))
+        return 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "obj", "expected"),
+    [
+        (
+            "mandate.updated",
+            {"id": "mandate_1", "status": "inactive", "payment_method": "pm_bank"},
+            [("pm_bank", "mandate_inactive")],
+        ),
+        (
+            "mandate.updated",
+            {"id": "mandate_1", "status": "active", "payment_method": "pm_bank"},
+            [],
+        ),
+        (
+            "payment_method.automatically_updated",
+            {
+                "id": "pm_bank",
+                "type": "us_bank_account",
+                "us_bank_account": {
+                    "status_details": {"blocked": {"reason": "bank_account_closed"}}
+                },
+            },
+            [("pm_bank", "bank_blocked:bank_account_closed")],
+        ),
+        (
+            "payment_method.automatically_updated",
+            {"id": "pm_card", "type": "card", "card": {"last4": "4242"}},
+            [],
+        ),
+    ],
+)
+async def test_unusable_bank_method_is_flagged(event_type: str, obj: dict, expected: list) -> None:
+    """L1 A4-8: a revoked mandate or a blocked bank is never debited again."""
+    customers = _BlockingCustomers()
+    uc = _build(FakePaymentRepo(), parent_customers=customers)
+    body = json.dumps(
+        {"id": f"evt_{event_type}", "type": event_type, "livemode": True, "data": {"object": obj}}
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert customers.blocked == expected

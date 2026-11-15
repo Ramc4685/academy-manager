@@ -304,7 +304,13 @@ async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, ac
 
     await db["payment_attempts"].update_one(
         {"attempt_id": "attempt-processing"},
-        {"$set": {"status": "failed", "updated_at": NOW + timedelta(minutes=5)}},
+        {
+            "$set": {
+                "status": "failed",
+                "failure_code": "insufficient_funds",
+                "updated_at": NOW + timedelta(minutes=5),
+            }
+        },
     )
 
     claimed = await repo.claim_next_due(now=NOW + timedelta(minutes=5), worker_id="retry-worker")
@@ -316,6 +322,8 @@ async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, ac
     assert state.status == "processing"
     assert state.processing_attempt_no == 1
     assert state.processing_worker_id == "retry-worker"
+    # L1 A4-2: the worker records the bank's answer instead of debiting again.
+    assert state.settling_failure_code == "insufficient_funds"
 
 
 @pytest.mark.asyncio
@@ -726,3 +734,37 @@ async def test_claim_next_due_skips_excluded_parked_state_for_due_one(db, acad) 
     )
     assert nxt is not None
     assert nxt[0].invoice_id == "inv-due"
+
+
+@pytest.mark.asyncio
+async def test_parked_first_attempt_ladder_is_listed_for_admin_with_reason(db, acad) -> None:
+    """L1 A7-1: a first-attempt ladder parked for a fault on our side kept
+    attempt_count 0 and never reached the admin list; ACH settling does not count."""
+    repo = MongoDunningStateRepository(db)
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-fault", enrollment_id="enr-f")
+    await _seed_invoice(db, academy_id=acad, invoice_id="inv-ach", enrollment_id="enr-a")
+    await repo.prepare_due_states(now=NOW, limit=10)
+
+    first = await repo.claim_next_due(now=NOW, worker_id="w")
+    assert first is not None
+    await repo.park_attempt(state=first[1], reason="charge_technical_failure", now=NOW)
+    second = await repo.claim_next_due(
+        now=NOW, worker_id="w", exclude_invoice_ids={first[0].invoice_id}
+    )
+    assert second is not None
+    await repo.park_attempt(state=second[1], reason="payment_processing", now=NOW)
+    fault_id = first[0].invoice_id
+
+    # Re-parking on later ticks keeps the original parked_since.
+    later = NOW + timedelta(hours=3)
+    again = await repo.claim_next_due(
+        now=later, worker_id="w", exclude_invoice_ids={second[0].invoice_id}
+    )
+    assert again is not None and again[0].invoice_id == fault_id
+    await repo.park_attempt(state=again[1], reason="charge_technical_failure", now=later)
+
+    rows = await repo.list_admin_rows()
+
+    assert [row["invoice_id"] for row in rows] == [fault_id]
+    assert rows[0]["parked_reason"] == "charge_technical_failure"
+    assert rows[0]["parked_since"].replace(tzinfo=UTC) == NOW

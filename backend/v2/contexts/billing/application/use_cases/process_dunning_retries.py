@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.domain.checkout_hold import CHECKOUT_HOLD_DECLINE_CODE
-from backend.v2.contexts.billing.domain.dunning import DunningState
+from backend.v2.contexts.billing.domain.dunning import NO_SAVED_PAYMENT_METHOD, DunningState
 from backend.v2.contexts.billing.domain.events import (
     DunningNoticeRequested,
     DunningNoticeRequestedPayload,
@@ -36,6 +36,12 @@ _PARK_REASONS = frozenset(
         # as a decline would spend a rung — and eventually a family's autopay — on our
         # own misconfiguration.
         "stripe_not_configured",
+        # Stripe API or network error: we never reached the card or bank, so no
+        # rung is spent and the parent is not told their payment failed (A4-3).
+        "stripe_unavailable",
+        # No saved card or bank: the parent has to act. Parked so it is charged as
+        # soon as a method appears, with one "add a payment method" notice (A4-1).
+        NO_SAVED_PAYMENT_METHOD,
     }
 )
 
@@ -46,8 +52,13 @@ _PARK_REASONS_NEEDING_OPERATOR = frozenset(
     {
         "connected_account_not_ready",
         "stripe_not_configured",
+        "stripe_unavailable",
     }
 )
+
+#: notification_attempts marker for the one-time "add a payment method" notice; real
+#: rungs are numbered from 1.
+_NO_METHOD_NOTICE_MARKER = 0
 
 
 class DunningStateRepository(Protocol):
@@ -113,16 +124,9 @@ class DunningNotificationPort(Protocol):
         currency: str,
         attempt_no: int,
         terminal: bool,
-    ) -> None: ...
-
-    async def send_autopay_receipt(
-        self,
-        *,
-        parent_id: str,
-        invoice_id: str,
-        period: str,
-        amount_cents: int,
-        currency: str,
+        failure_code: str | None = None,
+        next_attempt_at: datetime | None = None,
+        bank_debit: bool = False,
     ) -> None: ...
 
 
@@ -207,6 +211,20 @@ class ProcessDunningRetries:
 
             counts["processed"] += 1
 
+            if state.settling_failure_code is not None:
+                # The bank debit this rung waited on came back failed. Record that
+                # answer; debiting again now would bounce the same way (A4-2).
+                updated = await self._dunning.finish_attempt(
+                    state=state,
+                    succeeded=False,
+                    failure_code=state.settling_failure_code,
+                    now=now,
+                )
+                await self._after_failed_attempt(
+                    invoice=invoice, updated=updated, counts=counts, now=now
+                )
+                continue
+
             try:
                 raw_result = await self._charge_invoice.execute(
                     invoice.invoice_id,
@@ -254,6 +272,15 @@ class ProcessDunningRetries:
                 if failure_code in _PARK_REASONS_NEEDING_OPERATOR:
                     counts["technical_failures"] += 1
                 counts["parked"] += 1
+                if failure_code == NO_SAVED_PAYMENT_METHOD:
+                    sent = await self._notify_parent(
+                        invoice=invoice,
+                        state=state,
+                        attempt_no=_NO_METHOD_NOTICE_MARKER,
+                        failure_code=NO_SAVED_PAYMENT_METHOD,
+                    )
+                    if sent:
+                        counts["notifications_sent"] += 1
                 continue
 
             updated = await self._dunning.finish_attempt(
@@ -263,21 +290,39 @@ class ProcessDunningRetries:
                 now=now,
             )
             if succeeded:
+                # The receipt comes from the payment_intent.succeeded webhook, once
+                # per payment and for every method (L1 A5-2).
                 counts["succeeded"] += 1
-                await self._send_receipt(invoice=invoice, result=result)
                 continue
 
-            counts["failed"] += 1
-            if updated.status == "dunned":
-                counts["dunned"] += 1
-                await self._disable_autopay(updated, counts=counts, now=now)
-
-            if await self._notify_parent(invoice=invoice, state=updated):
-                counts["notifications_sent"] += 1
-            else:
-                counts["notifications_failed"] += 1
+            await self._after_failed_attempt(
+                invoice=invoice, updated=updated, counts=counts, now=now
+            )
 
         return ProcessDunningRetriesResult(**counts)
+
+    async def _after_failed_attempt(
+        self,
+        *,
+        invoice: LedgerInvoice,
+        updated: DunningState,
+        counts: dict[str, int],
+        now: datetime,
+    ) -> None:
+        counts["failed"] += 1
+        if updated.status == "dunned":
+            counts["dunned"] += 1
+            await self._disable_autopay(updated, counts=counts, now=now)
+
+        if await self._notify_parent(
+            invoice=invoice,
+            state=updated,
+            attempt_no=updated.attempt_count,
+            failure_code=updated.last_failure_code,
+        ):
+            counts["notifications_sent"] += 1
+        else:
+            counts["notifications_failed"] += 1
 
     async def _process_pending_autopay_disables(
         self,
@@ -289,29 +334,14 @@ class ProcessDunningRetries:
         for state in await self._dunning.list_terminal_disable_pending(limit=limit):
             await self._disable_autopay(state, counts=counts, now=now)
 
-    async def _send_receipt(self, *, invoice: LedgerInvoice, result: dict[str, Any]) -> None:
-        """Best-effort receipt after a successful autopay charge (issue #651).
-
-        Direct send, not via the outbox: a lost receipt is recoverable (the
-        parent portal shows the payment), a duplicate receipt is annoying, so
-        at-most-once is the right trade here.
-        """
-        send = getattr(self._notifier, "send_autopay_receipt", None)
-        if send is None:
-            return
-        amount = result.get("amount_cents")
-        try:
-            await send(
-                parent_id=invoice.parent_id,
-                invoice_id=invoice.invoice_id,
-                period=invoice.period,
-                amount_cents=int(amount) if amount is not None else invoice.balance_due_cents,
-                currency=invoice.currency,
-            )
-        except Exception:
-            log.exception("autopay_receipt_failed", extra={"invoice_id": invoice.invoice_id})
-
-    async def _notify_parent(self, *, invoice: LedgerInvoice, state: DunningState) -> bool:
+    async def _notify_parent(
+        self,
+        *,
+        invoice: LedgerInvoice,
+        state: DunningState,
+        attempt_no: int,
+        failure_code: str | None,
+    ) -> bool:
         """Tell the parent this attempt failed. Returns True once the notice is
         *durably owed* — enqueued or sent — not necessarily delivered.
 
@@ -326,9 +356,11 @@ class ProcessDunningRetries:
         notice for the same attempt. Duplicate suppression on delivery is the
         dispatcher's job — it tracks ``(event_id, handler_name)``.
         """
-        attempt_no = state.attempt_count
         if self._notifier is None or attempt_no in state.notification_attempts:
             return False
+        terminal = state.status == "dunned"
+        next_attempt_at = None if terminal else state.next_attempt_at
+        bank_debit = state.last_failure_was_bank_debit
         try:
             if self._outbox is not None:
                 await self._outbox.append(
@@ -342,7 +374,10 @@ class ProcessDunningRetries:
                             balance_due_cents=invoice.balance_due_cents,
                             currency=invoice.currency,
                             attempt_no=attempt_no,
-                            terminal=state.status == "dunned",
+                            terminal=terminal,
+                            failure_code=failure_code,
+                            next_attempt_at=next_attempt_at,
+                            bank_debit=bank_debit,
                         ),
                     )
                 )
@@ -354,7 +389,10 @@ class ProcessDunningRetries:
                     balance_due_cents=invoice.balance_due_cents,
                     currency=invoice.currency,
                     attempt_no=attempt_no,
-                    terminal=state.status == "dunned",
+                    terminal=terminal,
+                    failure_code=failure_code,
+                    next_attempt_at=next_attempt_at,
+                    bank_debit=bank_debit,
                 )
             await self._dunning.mark_notification_sent(
                 invoice_id=invoice.invoice_id,
@@ -387,9 +425,11 @@ class ProcessDunningRetries:
             )
             return
         try:
+            # Bank failures pause autopay so a re-linked bank turns it back on;
+            # a card that ran out of retries is disabled as before (owner 2026-11-15).
             disabled = await self._enrollment_autopay.set_autopay_enrollment_status(
                 enrollment_id=state.enrollment_id,
-                status="disabled",
+                status="paused" if state.last_failure_was_bank_debit else "disabled",
             )
         except Exception as exc:
             await self._dunning.mark_autopay_disable_result(

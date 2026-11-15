@@ -9,9 +9,10 @@ replays dedupe without replaying stale amounts after the invoice balance changes
 
 Where the charge runs follows the academy's ChargeRoute:
 
-* House academy (platform): the saved card is found by the platform-wide
-  Customer search (``get_default_payment_method``) and the PaymentIntent is
-  created on the platform — exactly as before direct charges existed.
+* House academy (platform): the stored (customer, payment method) for the
+  platform is used; the platform-wide Customer search
+  (``get_default_payment_method``) is only a fallback when nothing is stored.
+  The PaymentIntent is created on the platform.
 * Any other academy: a DIRECT charge on its connected account. The customer
   and payment method are the ones the app STORED for that account
   (``SavedPaymentMethodReader``); the PaymentIntent is created on that account
@@ -48,6 +49,8 @@ from backend.v2.contexts.billing.domain.checkout_hold import (
     CHECKOUT_HOLD_DECLINE_CODE,
     active_checkout_hold,
 )
+from backend.v2.contexts.billing.domain.dunning import NO_SAVED_PAYMENT_METHOD
+from backend.v2.contexts.billing.domain.errors import StripeUnavailable
 from backend.v2.contexts.billing.domain.fees import compute_ach_discount
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
@@ -57,6 +60,9 @@ from backend.v2.contexts.billing.domain.ledger import (
 )
 
 log = logging.getLogger(__name__)
+
+#: Result codes that are NOT the bank or card saying no (see ProcessDunningRetries).
+STRIPE_UNAVAILABLE = "stripe_unavailable"
 
 # ``InvoiceLine.source_type`` of a recurring tuition discount line (#244).
 _TUITION_DISCOUNT_SOURCE_TYPE = "tuition_discount"
@@ -325,11 +331,20 @@ class ChargeInvoiceViaAutopay:
         connected_account_id = route.connected_account_id
 
         if connected_account_id is None:
-            # Platform: the historical Customer search, byte-identical.
-            saved = await self._stripe.get_default_payment_method(
-                academy_id=invoice.academy_id,
-                parent_id=invoice.parent_id,
-            )
+            # Platform: the card the app STORED wins; the Customer search (limit=1)
+            # can return an older customer whose default card was replaced (L1 A4-1).
+            saved = None
+            if self._parent_customers is not None:
+                saved = await self._parent_customers.get_saved_payment_method(
+                    parent_id=invoice.parent_id, stripe_account_id=None
+                )
+            blocked = getattr(self._parent_customers, "payment_method_blocked", None)
+            if saved is None and not (blocked and await blocked(parent_id=invoice.parent_id)):
+                # A stored method Stripe has blocked must not be found again by search.
+                saved = await self._stripe.get_default_payment_method(
+                    academy_id=invoice.academy_id,
+                    parent_id=invoice.parent_id,
+                )
         elif self._parent_customers is None:
             # Fail closed: a platform-wide search cannot see the connected
             # account's customers, so there is nothing safe to charge.
@@ -344,8 +359,15 @@ class ChargeInvoiceViaAutopay:
                 stripe_account_id=connected_account_id,
             )
         if saved is None:
-            raise ValueError(
-                f"no_saved_payment_method: parent {invoice.parent_id!r} has no saved Stripe card"
+            # The parent's to fix, not a fault on our side: a normal failed result so the
+            # worker can ask them to add a card or bank (L1 A4-1). No attempt row.
+            log.info("charge_autopay: no saved payment method invoice=%s", invoice_id)
+            return ChargeResult(
+                success=False,
+                invoice_id=invoice_id,
+                status=invoice.status,
+                balance_due_cents=invoice.balance_due_cents,
+                decline_code=NO_SAVED_PAYMENT_METHOD,
             )
         customer_id, pm_id = saved
         settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
@@ -385,30 +407,17 @@ class ChargeInvoiceViaAutopay:
                 **on_account,
                 **application_fee_kwargs(fee_cents),
             )
-        except Exception as exc:
-            # Stripe card decline or API error — do NOT change invoice status
-            decline_str = str(exc)
-            await self._record_attempt(
-                invoice=invoice,
-                amount_cents=invoice.balance_due_cents,
-                status="failed",
-                stripe_payment_intent_id=None,
-                failure_code=decline_str,
-                failure_message=decline_str,
-                retry_scope=retry_scope,
-            )
-            log.warning(
-                "charge_autopay: stripe error invoice=%s err=%s",
-                invoice_id,
-                decline_str,
-            )
+        except StripeUnavailable as exc:
+            # Stripe could not be asked. Not a decline: no failed attempt row, no
+            # outcome projection; the worker parks and retries (L1 A4-3). Any other
+            # exception is a bug and propagates to the worker's technical-failure park.
+            log.warning("charge_autopay: stripe unavailable invoice=%s err=%s", invoice_id, exc)
             return ChargeResult(
                 success=False,
                 invoice_id=invoice_id,
                 status=invoice.status,
                 balance_due_cents=invoice.balance_due_cents,
-                attempted_amount_cents=invoice.balance_due_cents,
-                decline_code=decline_str,
+                decline_code=STRIPE_UNAVAILABLE,
             )
 
         # 5a. PI declined (gateway returned a decline_code without raising)

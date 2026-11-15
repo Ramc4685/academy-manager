@@ -331,6 +331,54 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return self._payment_from_doc(doc) if doc else None
 
+    async def record_refund_failure(
+        self,
+        *,
+        stripe_payment_intent_id: str,
+        refund_id: str,
+        reason: str,
+        amount_cents: int,
+        failed_at: datetime,
+    ) -> bool:
+        """A refund Stripe could not deliver: the money went back to the Stripe
+        balance and the parent was never paid (A4-8). Keyed by refund id, so a
+        redelivered event rewrites the same entry."""
+        result = await self.ledger_payments.update_one(
+            {
+                "academy_id": current_academy_id(),
+                "stripe_payment_intent_id": stripe_payment_intent_id,
+            },
+            {
+                "$set": {
+                    f"refund_failures.{refund_id}": {
+                        "refund_id": refund_id,
+                        "reason": reason,
+                        "amount_cents": amount_cents,
+                        "failed_at": failed_at,
+                    }
+                }
+            },
+        )
+        return bool(getattr(result, "matched_count", 0))
+
+    async def list_refund_failures(self, *, limit: int = 20) -> dict[str, Any]:
+        """Failed refunds for the Billing Health panel: count plus newest rows."""
+        query = {"academy_id": current_academy_id(), "refund_failures": {"$exists": True}}
+        count = await self.ledger_payments.count_documents(query)
+        rows: list[dict[str, Any]] = []
+        async for doc in self.ledger_payments.find(query).limit(limit):
+            for failure in (doc.get("refund_failures") or {}).values():
+                rows.append(
+                    {
+                        "payment_id": str(doc.get("payment_id") or ""),
+                        "parent_id": str(doc.get("parent_id") or ""),
+                        "currency": str(doc.get("currency") or "usd"),
+                        **failure,
+                    }
+                )
+        rows.sort(key=lambda row: row.get("failed_at") or datetime.min, reverse=True)
+        return {"count": count, "rows": rows[:limit], "truncated": count > limit}
+
     async def sum_stripe_settled_cents(self, *, since: datetime) -> int:
         """Succeeded Stripe payments (card or ACH) settled since ``since``, in
         cents, for the academy in scope. The upgrade instrumentation's

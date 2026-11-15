@@ -64,11 +64,15 @@ from backend.v2.contexts.billing.domain.errors import (
 from backend.v2.contexts.billing.domain.events import (
     CheckoutExpired,
     CheckoutExpiredPayload,
+    DunningNoticeRequested,
+    DunningNoticeRequestedPayload,
     InvoiceFailed,
     InvoiceLifecyclePayload,
     InvoicePaid,
     PaymentFailed,
     PaymentFailedPayload,
+    PaymentReceiptRequested,
+    PaymentReceiptRequestedPayload,
     PaymentRefunded,
     PaymentRefundedPayload,
     PaymentSucceeded,
@@ -90,6 +94,11 @@ from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import tenant_scope
 
+# Every off-session PaymentIntent ChargeInvoiceViaAutopay creates: the scheduled
+# autopay run and the two admin "charge now" buttons. A settling bank debit from
+# either admin button used to fall through to the legacy path and never close
+# the invoice (L1).
+_OFF_SESSION_CHARGE_SOURCES = frozenset({"autopay", "admin_manual", "admin_billing_setup"})
 log = logging.getLogger(__name__)
 
 # Terminal Checkout Session outcomes. After any of these the session can no longer
@@ -846,7 +855,7 @@ class HandleWebhookEvent:
                 )
         elif event_type == "payment_intent.succeeded":
             metadata = self._event_metadata(event)
-            if metadata.get("source") == "autopay":
+            if metadata.get("source") in _OFF_SESSION_CHARGE_SOURCES:
                 await self._handle_autopay_pi_succeeded(event)
             elif (
                 metadata.get("source") == "invoice_pay_link"
@@ -861,7 +870,7 @@ class HandleWebhookEvent:
                 await self._on_payment_succeeded(event)
         elif event_type == "payment_intent.payment_failed":
             metadata = self._event_metadata(event)
-            if metadata.get("source") == "autopay":
+            if metadata.get("source") in _OFF_SESSION_CHARGE_SOURCES:
                 await self._handle_autopay_pi_failed(event)
             elif await self._handle_invoice_checkout_payment_failed(event):
                 return
@@ -869,7 +878,7 @@ class HandleWebhookEvent:
                 await self._on_payment_failed(event)
         elif event_type == "payment_intent.processing":
             metadata = self._event_metadata(event)
-            if metadata.get("source") == "autopay":
+            if metadata.get("source") in _OFF_SESSION_CHARGE_SOURCES:
                 await self._handle_autopay_pi_processing(event)
             else:
                 log.info(
@@ -884,6 +893,10 @@ class HandleWebhookEvent:
             await self._on_charge_refunded(event)
         elif event_type in ("charge.dispute.created", "charge.dispute.closed"):
             await self._on_charge_dispute(event)
+        elif event_type in ("refund.failed", "refund.updated"):
+            await self._on_refund_failed(event)
+        elif event_type in ("mandate.updated", "payment_method.automatically_updated"):
+            await self._on_payment_method_unusable(event)
         elif event_type == "setup_intent.succeeded":
             metadata = self._event_metadata(event)
             if metadata.get("source") == "autopay_setup":
@@ -1083,6 +1096,12 @@ class HandleWebhookEvent:
                 invoice_id,
                 amount_total,
             )
+        await self._request_receipt(
+            payment=payment,
+            invoice=await self._billing_ledger.get_invoice(invoice_id),
+            autopay=False,
+            bank_debit=False,
+        )
 
         await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
 
@@ -1218,6 +1237,7 @@ class HandleWebhookEvent:
             payment.payment_id,
             allocated,
         )
+        await self._request_receipt(payment=payment, invoice=None, autopay=False, bank_debit=False)
 
         await self._maybe_activate_autopay_optin(obj, stripe_account=_event_account(event))
 
@@ -1689,6 +1709,13 @@ class HandleWebhookEvent:
                 pi_id,
                 amount_cents,
             )
+        await self._request_receipt(
+            payment=payment,
+            invoice=invoice,
+            autopay=True,
+            bank_debit=_payment_intent_is_ach(pi)
+            or (payment.metadata or {}).get("funding_type") == "us_bank_account",
+        )
 
     async def _autopay_discount_payment_metadata(
         self,
@@ -2123,6 +2150,65 @@ class HandleWebhookEvent:
             await self._record_dispute.execute(obj, stripe_account_id=_event_account(event))
         except StripeAccountMismatch as exc:
             raise _QuarantineStripeEvent(str(exc)) from exc
+        await self._reverse_paid_invoice_on_dispute(event, obj)
+
+    async def _on_refund_failed(self, event: dict[str, Any]) -> None:
+        """A refund that failed (closed bank, expired card) left the money in the
+        Stripe balance; flag it for the owner on Billing Health (A4-8)."""
+        if self._billing_ledger is None:
+            return
+        refund = event.get("data", {}).get("object", {})
+        if not isinstance(refund, dict) or refund.get("status") != "failed":
+            return
+        pi_id = str(refund.get("payment_intent") or "")
+        refund_id = str(refund.get("id") or "")
+        if not pi_id or not refund_id:
+            return
+        matched = await self._billing_ledger.record_refund_failure(
+            stripe_payment_intent_id=pi_id,
+            refund_id=refund_id,
+            reason=str(refund.get("failure_reason") or "unknown"),
+            amount_cents=int(refund.get("amount") or 0),
+            failed_at=self._now(),
+        )
+        log.warning("refund_failed refund=%s pi=%s recorded=%s", refund_id, pi_id, matched)
+
+    async def _on_payment_method_unusable(self, event: dict[str, Any]) -> None:
+        """A revoked bank mandate or a bank account Stripe has blocked (closed,
+        frozen) cannot be debited again. Flag the stored method so the next
+        autopay run asks the parent for a new one instead of bouncing (A4-8)."""
+        if self._parent_customers is None:
+            return
+        obj = event.get("data", {}).get("object", {})
+        if not isinstance(obj, dict):
+            return
+        if event.get("type") == "mandate.updated":
+            if obj.get("status") != "inactive":
+                return
+            payment_method_id, reason = str(obj.get("payment_method") or ""), "mandate_inactive"
+        else:
+            bank = obj.get("us_bank_account") or {}
+            blocked = (
+                (bank.get("status_details") or {}).get("blocked")
+                if isinstance(bank, dict)
+                else None
+            )
+            if not blocked:
+                return
+            payment_method_id = str(obj.get("id") or "")
+            reason = (
+                f"bank_blocked:{blocked.get('reason') or 'unknown'}"
+                if isinstance(blocked, dict)
+                else "bank_blocked"
+            )
+        if not payment_method_id:
+            return
+        flagged = await self._parent_customers.flag_payment_method_blocked(
+            payment_method_id=payment_method_id, reason=reason, at=self._now()
+        )
+        log.warning(
+            "payment_method_unusable pm=%s reason=%s flagged=%d", payment_method_id, reason, flagged
+        )
 
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
@@ -2402,6 +2488,106 @@ class HandleWebhookEvent:
                     ),
                 )
             )
+        await self._pause_autopay_after_reversal(invoice=invoice, pi_id=pi_id, code=return_code)
+
+    async def _pause_autopay_after_reversal(
+        self, *, invoice: LedgerInvoice, pi_id: str, code: str
+    ) -> None:
+        """Owner 2026-11-15: money taken back after success reopens the invoice
+        (above) and pauses autopay, so the next run does not debit the same
+        account again. A bank return is the bank's doing, so the parent is told;
+        a dispute is the parent's own claim, so it is not."""
+        if self._enrollment_autopay is not None and invoice.enrollment_id:
+            await self._enrollment_autopay.set_autopay_state(
+                enrollment_id=invoice.enrollment_id,
+                autopay_enrollment_status="paused",
+            )
+        if code.startswith("dispute:"):
+            return
+        ledger = self._billing_ledger
+        reopened = (await ledger.get_invoice(invoice.invoice_id) if ledger else None) or invoice
+        await self._append_outbox_once(
+            DunningNoticeRequested(
+                event_id=f"dunning-notice:payment-returned:{pi_id}",
+                aggregate_id=invoice.invoice_id,
+                academy_id=invoice.academy_id,
+                payload=DunningNoticeRequestedPayload(
+                    invoice_id=invoice.invoice_id,
+                    parent_id=invoice.parent_id,
+                    period=invoice.period,
+                    balance_due_cents=reopened.balance_due_cents,
+                    currency=invoice.currency,
+                    attempt_no=0,
+                    terminal=True,
+                    failure_code=code,
+                    bank_debit=True,
+                ),
+            )
+        )
+
+    async def _reverse_paid_invoice_on_dispute(self, event: dict[str, Any], dispute: Any) -> None:
+        """A bank debit dispute is final when opened (no evidence round); any
+        dispute that closes lost has taken the money back. Either reopens the
+        invoice exactly like a late bank return (A4-5)."""
+        if self._billing_ledger is None or not isinstance(dispute, dict):
+            return
+        pi_id = str(dispute.get("payment_intent") or "")
+        if not pi_id:
+            return
+        payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
+        if payment is None or payment.status not in {"succeeded", "partially_refunded"}:
+            return
+        status = str(dispute.get("status") or "")
+        details = dispute.get("payment_method_details") or {}
+        bank = _ledger_payment_is_ach(payment) or (
+            isinstance(details, dict) and details.get("type") == "us_bank_account"
+        )
+        lost = event.get("type") == "charge.dispute.closed" and status == "lost"
+        opened_on_bank = (
+            event.get("type") == "charge.dispute.created"
+            and bank
+            and not status.startswith("warning")
+        )
+        if not (lost or opened_on_bank):
+            return
+        invoice = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
+        if invoice is None:
+            return
+        await self._record_autopay_ach_return(
+            event_id=str(event.get("id") or ""),
+            pi_id=pi_id,
+            invoice=invoice,
+            payment=payment,
+            amount_cents=int(dispute.get("amount") or payment.amount_cents),
+            return_code=f"dispute:{dispute.get('reason') or 'unknown'}",
+        )
+
+    async def _request_receipt(
+        self,
+        *,
+        payment: LedgerPayment,
+        invoice: LedgerInvoice | None,
+        autopay: bool,
+        bank_debit: bool,
+    ) -> None:
+        """One receipt per ledger payment, for every way of paying (A5-2)."""
+        await self._append_outbox_once(
+            PaymentReceiptRequested(
+                event_id=f"payment-receipt:{payment.payment_id}",
+                aggregate_id=payment.payment_id,
+                academy_id=payment.academy_id,
+                payload=PaymentReceiptRequestedPayload(
+                    payment_id=payment.payment_id,
+                    parent_id=payment.parent_id,
+                    amount_cents=payment.amount_cents,
+                    currency=payment.currency,
+                    invoice_id=invoice.invoice_id if invoice else None,
+                    period=invoice.period if invoice else None,
+                    autopay=autopay,
+                    bank_debit=bank_debit,
+                ),
+            )
+        )
 
     async def _append_outbox_once(self, event: Any) -> None:
         try:

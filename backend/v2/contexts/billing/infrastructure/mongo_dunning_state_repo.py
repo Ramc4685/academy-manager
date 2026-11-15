@@ -16,6 +16,8 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
 )
 from backend.v2.contexts.billing.domain.dunning import (
     FIRST_ATTEMPT_LOCAL_HOUR,
+    NO_SAVED_PAYMENT_METHOD,
+    PARK_REASONS_ADMIN_LISTED,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -43,6 +45,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
         "connected_account_not_ready",
         "checkout_session_open",
         "stripe_not_configured",
+        "stripe_unavailable",
+        # Retried every tick so autopay picks up a card the parent adds (A4-1).
+        NO_SAVED_PAYMENT_METHOD,
     }
 
     #: Local hour (academy timezone) before which no NEW ladder is prepared on
@@ -88,6 +93,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
             "processing_started_at",
             "lease_expires_at",
             "suppressed_at",
+            "parked_since",
             "autopay_disabled_at",
             "created_at",
             "updated_at",
@@ -302,7 +308,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
             ):
                 await self._store_state(state.suppress(reason="autopay_not_active", now=now))
                 continue
-            latest_status = await self._latest_payment_attempt_status(state.invoice_id)
+            latest = await self._latest_payment_attempt(state.invoice_id)
+            latest_status = str(latest.get("status")) if latest else None
             if latest_status == "succeeded":
                 await self._store_state(state.resolve(now=now))
                 continue
@@ -316,12 +323,19 @@ class MongoDunningStateRepository(TenantScopedRepository):
             if parked_for_payment_processing and latest_status not in {"failed", "requires_action"}:
                 continue
 
+            # The bank debit this rung parked on came back failed: hand the failure to
+            # the worker to record, never a fresh debit (A4-2). A stale-lease re-claim
+            # keeps the code it was first claimed with.
+            settling_failure_code = state.settling_failure_code
+            if parked_for_payment_processing and latest_status == "failed" and latest:
+                settling_failure_code = str(latest.get("failure_code") or "unknown")
             lease_expires_at = now + timedelta(minutes=30)
             claimed = state.claim(
                 attempt_no=attempt_no,
                 worker_id=worker_id,
                 now=now,
                 lease_expires_at=lease_expires_at,
+                settling_failure_code=settling_failure_code,
             )
             filter_: dict[str, Any] = {
                 "academy_id": academy_id,
@@ -497,6 +511,12 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     {"status": "dunned"},
                     {"status": "active", "attempt_count": {"$gt": 0}},
                     {"status": "processing"},
+                    # A first-attempt ladder parked for a fault on our side (A7-1).
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": {"$in": sorted(PARK_REASONS_ADMIN_LISTED)},
+                    },
                 ],
             },
             sort=[("updated_at", -1)],
@@ -512,6 +532,11 @@ class MongoDunningStateRepository(TenantScopedRepository):
             # billing-health even if the state row was never suppressed.
             if str(invoice.get("status") or "") in {"void", "paid"}:
                 continue
+            parked = (
+                state_doc.get("status") == "active"
+                and state_doc.get("next_attempt_at") is None
+                and state_doc.get("suppression_reason")
+            )
             rows.append(
                 {
                     "invoice_id": str(state_doc["invoice_id"]),
@@ -527,6 +552,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "autopay_disable_status": state_doc.get("autopay_disable_status"),
                     "autopay_disable_error": state_doc.get("autopay_disable_error"),
                     "autopay_disabled_at": state_doc.get("autopay_disabled_at"),
+                    "parked_reason": state_doc.get("suppression_reason") if parked else None,
+                    "parked_since": state_doc.get("parked_since") if parked else None,
                     "balance_due_cents": int(invoice.get("balance_due_cents") or 0),
                     "currency": str(invoice.get("currency") or "usd"),
                 }
@@ -546,6 +573,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 "academy_id": current_academy_id(),
                 "invoice_id": invoice_id,
                 "status": {"$in": ["active", "processing"]},
+                # Waiting on the parent to add a card is not a retry in flight:
+                # the invoice stays due and earns its late fee (A4-1).
+                "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
             },
             {"_id": 1},
         )
@@ -582,8 +612,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
         )
         return state
 
-    async def _latest_payment_attempt_status(self, invoice_id: str) -> str | None:
-        """Latest CHARGE outcome for this invoice, or None.
+    async def _latest_payment_attempt(self, invoice_id: str) -> dict[str, Any] | None:
+        """Latest CHARGE attempt row for this invoice, or None.
 
         Pay-link mint failures (issue #426) share this collection but are not
         charge outcomes: a mint failure landing after a genuine ``succeeded``
@@ -596,7 +626,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
             ),
             sort=[("created_at", -1), ("attempt_id", -1)],
         )
-        return str(doc.get("status")) if doc else None
+        return dict(doc) if doc else None
 
     async def _replace_processing_state(
         self, current: DunningState, updated: DunningState
