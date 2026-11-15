@@ -1,7 +1,7 @@
 -r requirements.txt
 black==26.10.1
 flake8==7.5.0
-import-linter==2.15
+import-linter==2.16
 isort==9.0.2
 mongomock-motor==0.0.36
 mypy==2.4.1
