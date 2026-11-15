@@ -29994,6 +29994,11 @@
       },
       "StartInvoicePaymentRequest": {
         "properties": {
+          "bundle_student_balance": {
+            "default": false,
+            "title": "Bundle Student Balance",
+            "type": "boolean"
+          },
           "cancel_url": {
             "title": "Cancel Url",
             "type": "string"

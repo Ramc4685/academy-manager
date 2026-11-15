@@ -90,20 +90,22 @@ test.describe("invoice email pay link", () => {
     expect(payRequests).toHaveLength(2);
     expect(payRequests[0]).toMatchObject({
       enroll_autopay: false,
+      bundle_student_balance: false,
       success_url: expect.stringContaining("/parent/payments?invoice=paid"),
       cancel_url: expect.stringContaining("/parent/payments?invoice=cancelled"),
     });
     guard.assertNoLegacyApiCalls();
   });
 
-  test("a bundled email's link starts the balance checkout", async ({ page }) => {
+  test("a bundled email's link re-mints that student's bundle, not the family balance", async ({ page }) => {
     const payRequests = await stubPaymentsPage(page, 200);
 
-    await page.goto("/parent/payments?pay=balance");
-    await expect(page).toHaveURL(/stripe-checkout-stub\?balance=1/);
+    await page.goto("/parent/payments?pay=inv-open&bundle=1");
+    await expect(page).toHaveURL(/stripe-checkout-stub\?n=1/);
 
     expect(payRequests).toHaveLength(1);
-    expect(payRequests[0]).toMatchObject({ balance: true, enroll_autopay: false });
+    expect(payRequests[0]).toMatchObject({ enroll_autopay: false, bundle_student_balance: true });
+    expect(payRequests[0]).not.toHaveProperty("balance");
   });
 
   test("an unpayable invoice shows the error on the payments page", async ({ page }) => {

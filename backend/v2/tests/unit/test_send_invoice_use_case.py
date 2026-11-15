@@ -210,6 +210,7 @@ async def test_send_draft_invoice_finalizes_then_records_delivery_after_email() 
             "balance_due_cents": 10_000,
             "currency": "usd",
             "checkout_url": None,
+            "bundled": False,
         }
     ]
 

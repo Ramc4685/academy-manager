@@ -1152,6 +1152,7 @@ def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client
             "balance_due_cents": 7_000,
             "currency": "usd",
             "checkout_url": "https://checkout.stripe.test/invoice",
+            "bundled": False,
         }
     ]
 
@@ -1246,7 +1247,8 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
             checkout_url="https://checkout.stripe.test/balance",
             bundled=True,
         )
-    assert "https://blno.example.com/parent/payments?pay=balance" in sender.calls[1]["body"]
+    # Student-scoped bundle, not the parent's family-wide balance.
+    assert "https://blno.example.com/parent/payments?pay=inv-1&amp;bundle=1" in sender.calls[1]["body"]
 
 
 def test_add_invoice_line_returns_refreshed_invoice_totals(admin_client):

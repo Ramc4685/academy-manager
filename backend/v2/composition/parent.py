@@ -1955,6 +1955,7 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
         enroll_autopay: bool = False,
+        bundle_student_balance: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         # Tenant-scoped fetch first, then ownership against every id the
@@ -1992,7 +1993,11 @@ def compose_parent(
             settings=billing_settings_repo,
             success_url=redirect_success_url,
             cancel_url=cancel_url,
-        ).execute(invoice_id, enroll_autopay=enroll_autopay)
+        ).execute(
+            invoice_id,
+            enroll_autopay=enroll_autopay,
+            bundle_student_balance=bundle_student_balance,
+        )
         if not result.checkout_url:
             # Still 409, but now with a machine-readable code and the concrete
             # reason SendInvoice recorded (issue #426) instead of a bare string.

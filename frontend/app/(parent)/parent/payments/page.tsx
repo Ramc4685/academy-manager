@@ -186,6 +186,7 @@ export default function ParentPaymentsPage() {
   // The invoice email's "Pay invoice" button lands here with ?pay=<invoice_id>,
   // or ?pay=balance when the email quoted the student's whole open balance.
   const emailPayInvoiceId = searchParams.get("pay");
+  const emailPayBundle = searchParams.get("bundle") === "1";
   const emailPayStarted = useRef(false);
   const returnedFromAutopayCheckout = autopayReturn === "success";
   // Issue #635: EVERY return from Stripe Checkout carries a
@@ -302,7 +303,11 @@ export default function ParentPaymentsPage() {
   });
 
   const invoicePaymentMutation = useMutation({
-    mutationFn: ({ invoiceId, enrollAutopay }: { invoiceId: string; enrollAutopay: boolean }) =>
+    mutationFn: ({
+      invoiceId,
+      enrollAutopay,
+      bundleStudentBalance = false,
+    }: { invoiceId: string; enrollAutopay: boolean; bundleStudentBalance?: boolean }) =>
       startParentInvoicePayment(invoiceId, {
         // The backend appends `checkout_session_id={CHECKOUT_SESSION_ID}` to
         // every success_url (issue #635), so the settlement poll runs on any
@@ -312,6 +317,7 @@ export default function ParentPaymentsPage() {
           : `${window.location.origin}/parent/payments?invoice=paid`,
         cancel_url: `${window.location.origin}/parent/payments?invoice=cancelled`,
         enroll_autopay: enrollAutopay,
+        bundle_student_balance: bundleStudentBalance,
       }),
     onMutate: ({ invoiceId }) => {
       setPortalError(null);
@@ -361,13 +367,14 @@ export default function ParentPaymentsPage() {
     emailPayStarted.current = true;
     const url = new URL(window.location.href);
     url.searchParams.delete("pay");
+    url.searchParams.delete("bundle");
     window.history.replaceState(null, "", url.toString());
-    if (emailPayInvoiceId === "balance") {
-      balancePaymentMutation.mutate({ enrollAutopay: false });
-    } else {
-      invoicePaymentMutation.mutate({ invoiceId: emailPayInvoiceId, enrollAutopay: false });
-    }
-  }, [emailPayInvoiceId, invoicePaymentMutation, balancePaymentMutation]);
+    invoicePaymentMutation.mutate({
+      invoiceId: emailPayInvoiceId,
+      enrollAutopay: false,
+      bundleStudentBalance: emailPayBundle,
+    });
+  }, [emailPayInvoiceId, emailPayBundle, invoicePaymentMutation]);
 
   useEffect(() => {
     if (!returnedFromCheckout) return;

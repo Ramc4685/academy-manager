@@ -391,10 +391,12 @@ class InvoiceEmailAdapter:
         # checkout_url only says "this invoice is payable online"; the link the
         # parent clicks is the app's, which starts a fresh Checkout session.
         if checkout_url and self._pay_page_url:
-            # A bundled email quotes the student's whole open balance, so its
-            # button must start the balance checkout, not this one invoice.
-            pay_target = "balance" if bundled else quote(invoice_id, safe="")
-            pay_url = f"{self._pay_page_url}?pay={pay_target}"
+            # A bundled email quotes this student's whole open balance, so its
+            # button must rebuild that same student-scoped bundle (not the
+            # parent's family-wide balance, which may span other children).
+            pay_url = f"{self._pay_page_url}?pay={quote(invoice_id, safe='')}"
+            if bundled:
+                pay_url += "&bundle=1"
             pay_line = _branded_button(label="Pay invoice", url=pay_url)
         elif checkout_url:
             pay_line = (
