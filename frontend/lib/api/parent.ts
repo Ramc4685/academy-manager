@@ -453,6 +453,8 @@ export function startParentInvoicePayment(
     cancel_url: string;
     /** When true, the payment also saves the method and enrolls the covered enrollment in autopay. */
     enroll_autopay: boolean;
+    /** Also pay the same student's other open invoices (the bundle a balance invoice email quoted). */
+    bundle_student_balance?: boolean;
   },
 ): Promise<{ invoice_id: string; redirect_url: string }> {
   return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}/pay`, {

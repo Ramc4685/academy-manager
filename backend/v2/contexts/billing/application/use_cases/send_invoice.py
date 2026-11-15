@@ -85,6 +85,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     finalize,
     record_delivery,
 )
+from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
 
@@ -147,6 +148,7 @@ class InvoiceEmailPort(Protocol):
         balance_due_cents: int,
         currency: str,
         checkout_url: str | None,
+        bundled: bool = False,
     ) -> str | None:
         """Send the invoice email. Returns the provider message id when the
         provider supplies one (Resend), else None. Raises on delivery failure."""
@@ -506,6 +508,13 @@ class SendInvoice:
             if route is not None:
                 idempotency_key = route.idempotency_key(idempotency_key)
                 on_account = route.on_account_kwargs()
+            # One key per attempt. A deterministic key made Stripe replay the
+            # first session for 24h: a dead (expired/completed) session came
+            # back, or a click whose success_url differed from the email pass
+            # was rejected outright. Each attempt is a new session by design —
+            # place_checkout_hold below re-points the hold at it, so dunning
+            # still stands off the session the parent is actually on.
+            idempotency_key = f"{idempotency_key}:attempt-{new_ulid()}"
             try:
                 session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
                     invoice_id=gateway_invoice_id,
@@ -613,6 +622,7 @@ class SendInvoice:
                     balance_due_cents=email_balance_due_cents,
                     currency=invoice.currency,
                     checkout_url=checkout_url,
+                    bundled=is_bundled,
                 )
                 invoice = record_delivery(
                     invoice,

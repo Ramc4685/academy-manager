@@ -1115,10 +1115,13 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
                 "academy_id": "acad",
                 "parent_id": "parent-1",
             },
-            "idempotency_key": "invoice-checkout:inv-1:7000:acct:acct_ready_1",
+            "idempotency_key": stripe.calls[0]["idempotency_key"],
             "stripe_account": "acct_ready_1",
         }
     ]
+    assert stripe.calls[0]["idempotency_key"].startswith(
+        "invoice-checkout:inv-1:7000:acct:acct_ready_1:attempt-"
+    )
 
 
 def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client):
@@ -1149,6 +1152,7 @@ def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client
             "balance_due_cents": 7_000,
             "currency": "usd",
             "checkout_url": "https://checkout.stripe.test/invoice",
+            "bundled": False,
         }
     ]
 
@@ -1208,6 +1212,7 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
         users=users,
         academies=_FakeAcademyRepo(),
         sender=sender,
+        pay_page_url="https://blno.example.com/parent/payments",
     )
 
     with tenant_scope("acad"):
@@ -1223,7 +1228,29 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
 
     assert sender.calls[0]["recipient"].email == "parent@example.com"
     assert sender.calls[0]["recipient"].user_id == "parent-1"
-    assert "https://checkout.stripe.test/invoice" in sender.calls[0]["body"]
+    body = sender.calls[0]["body"]
+    # The button opens the app, which mints a fresh Checkout session per click.
+    # A raw Checkout URL in an email dies within 24h (or once completed) and
+    # strands the parent on Stripe's "You're all done here" page.
+    assert "https://blno.example.com/parent/payments?pay=inv-1" in body
+    assert "checkout.stripe.test" not in body
+
+    # A bundled email quotes the student's whole balance: its link pays that.
+    with tenant_scope("acad"):
+        await adapter.send_invoice_email(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            period="2026-06",
+            total_cents=14_000,
+            balance_due_cents=14_000,
+            currency="usd",
+            checkout_url="https://checkout.stripe.test/balance",
+            bundled=True,
+        )
+    # Student-scoped bundle, not the parent's family-wide balance.
+    assert (
+        "https://blno.example.com/parent/payments?pay=inv-1&amp;bundle=1" in sender.calls[1]["body"]
+    )
 
 
 def test_add_invoice_line_returns_refreshed_invoice_totals(admin_client):

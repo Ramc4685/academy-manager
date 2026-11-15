@@ -151,6 +151,9 @@ class StartInvoicePaymentRequest(BaseModel):
     # Opt into autopay for the covered enrollment(s) as part of this payment.
     # Defaults False so requests from older clients stay one-time-only.
     enroll_autopay: bool = False
+    # Pay this invoice plus the same student's other open invoices, the bundle
+    # a balance-bundled invoice email quoted.
+    bundle_student_balance: bool = False
 
 
 class StartInvoicePaymentResponse(BaseModel):

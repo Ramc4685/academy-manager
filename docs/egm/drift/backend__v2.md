@@ -1,0 +1,14 @@
+## backend/v2/README.md
+
+- [stale-not-built] README:3 links `.claude/plans/write-a-detailed-plan-curried-trinket.md` (a relative path that resolves outside the repo and does not exist).
+- [stale-not-built] README:27 says `tests/contract/` runs "mongo + stripe via testcontainers". Nothing under `backend/v2/tests` imports or references testcontainers. CI runs the contract tier against a native mongod (`.github/workflows/production.yml:227`), and Stripe uses fixtures in `tests/contract/stripe_fixtures`.
+- [stale-not-built] README:103 says "pytest v2/tests with ≥70% coverage on `v2/shared`". CI is `--cov=v2 --cov-fail-under=86` over all of v2 (`.github/workflows/production.yml:165`).
+- [contract] README:101 gives `mypy --config-file backend/pyproject.toml v2` as "advisory". CI runs `mypy --config-file backend/pyproject.toml -p backend.v2` filtered through `mypy-baseline` (`production.yml:273-274`), and new errors fail the build.
+- [undocumented] README:13 lists only the admin, coach, parent and platform personas. `backend/v2/interfaces/` also has `owner/`, `student/` and `public/`, plus top-level `me_routes.py`, `registration_routes.py`, `magic_link_routes.py`, `email_webhook_routes.py` and `unsubscribe_routes.py`.
+- [undocumented] README:60 and README:63 name only `interfaces/{coach,parent,admin}/` and a `views.py` per persona. There is no `platform/views.py`, and `admin/` has many `*_views.py` files (e.g. `interfaces/admin/collections_views.py:1`).
+- [undocumented] README:14-21 omits `shared/comms`, `shared/profile`, `shared/scheduling`, `shared/security` and `shared/time`. It also omits the top-level modules `caching.py`, `ids.py`, `money.py`, `names.py` and `occurrences.py`.
+- [undocumented] README:10-30 omits `backend/v2/composition/`, which holds about 90 wiring modules. README:30 calls `main.py` the composition root, but `main.py` is about 2,900 lines and delegates to `composition/`. ADR-0005 rule 7 (`backend/pyproject.toml:173`) covers this layer.
+- [undocumented] README:24-29 lists five test dirs. `tests/` also has `composition/`, `contexts/`, `infrastructure/`, `shared/`, `seed/`, `fixtures/`, `test_no_raw_tenant_mongo_access.py` and `test_pytest_timeout_backstop.py`.
+- [undocumented] README:23 names only `scripts/replay_event.py`. `scripts/reconcile_membership_roles.py` also exists.
+- [wording] README:46-49 prescribes `domain/models.py`, `domain/events.py`, `domain/errors.py`, `application/use_cases/` and `application/ports.py` for every context. Only 6 of 12 contexts have `domain/events.py` and only 11 have `domain/errors.py`. Many use cases are flat modules in `application/`, for example `contexts/identity/application/get_academy_use_case.py`.
+- [wording] README:69 says to run from the repo root, but CI runs from `backend/` with `lint-imports --config pyproject.toml` (`production.yml:159`) and `pytest v2/tests`. The README's `backend/` variant has no CI equivalent in the docs.

@@ -1224,7 +1224,7 @@ def compose_admin(
     async def deactivate_billing_product(product_id: str) -> None:
         await product_repo.deactivate_product(product_id)
 
-    def _invoice_email_port() -> InvoiceEmailAdapter | None:
+    def _invoice_email_port(pay_page_url: str | None = None) -> InvoiceEmailAdapter | None:
         if not (settings.email_delivery_enabled and settings.resend_api_key):
             return None
         return InvoiceEmailAdapter(
@@ -1243,6 +1243,7 @@ def compose_admin(
             ),
             self_service_policies=self_service_policy_repo,
             contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
+            pay_page_url=pay_page_url,
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
@@ -1256,7 +1257,7 @@ def compose_admin(
         result = await SendInvoice(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,
-            email=_invoice_email_port(),
+            email=_invoice_email_port(pay_page_url=f"{frontend_url}/parent/payments"),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
             # Issue #738: an autopay family gets the pre-charge notice, not a
