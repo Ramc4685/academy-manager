@@ -736,18 +736,18 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             occurrence_session = occurrence_session_id(occurrence)
             if occurrence_session:
                 month_session_ids.add(occurrence_session)
-        sessions_cursor = db["sessions"].find(
-            {
-                "academy_id": academy_id,
-                "$or": [
-                    {"start_at": {"$gte": start, "$lt": end}},
-                    {"session_id": {"$in": sorted(month_session_ids)}},
-                ],
-                "is_deleted": {"$ne": True},
-            }
-        )
-        async for session in sessions_cursor:
-            session_id = str(session.get("session_id") or session.get("_id"))
+        # Two queries, not one $or: session_id carries a partial index and the
+        # planner will not use it inside $or (docs/agent/backend-api-rules.md).
+        month_sessions: dict[str, dict[str, Any]] = {}
+        for clause in (
+            {"start_at": {"$gte": start, "$lt": end}},
+            {"session_id": {"$in": sorted(month_session_ids)}},
+        ):
+            async for doc in db["sessions"].find(
+                {"academy_id": academy_id, **clause, "is_deleted": {"$ne": True}}
+            ):
+                month_sessions.setdefault(str(doc.get("session_id") or doc.get("_id")), doc)
+        for session_id, session in month_sessions.items():
             session_ids.append(session_id)
             status = str(session.get("status") or "scheduled")
             if status == "completed":
