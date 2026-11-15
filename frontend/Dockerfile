@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22-slim AS deps
+FROM node:26-slim AS deps
 WORKDIR /app
 ENV PNPM_STORE_DIR=/pnpm/store
 RUN corepack enable \
@@ -14,7 +14,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=academy-manager-frontend-pnpm-store,target=/pnpm/store,sharing=locked \
   pnpm install --frozen-lockfile --prefer-offline
 
-FROM node:22-slim AS builder
+FROM node:26-slim AS builder
 WORKDIR /app
 RUN corepack enable
 
@@ -52,7 +52,7 @@ ENV NEXT_PUBLIC_FIREBASE_AUTH_PROXY=${NEXT_PUBLIC_FIREBASE_AUTH_PROXY}
 
 RUN pnpm build
 
-FROM node:22-slim AS runner
+FROM node:26-slim AS runner
 WORKDIR /app
 RUN corepack enable
 
