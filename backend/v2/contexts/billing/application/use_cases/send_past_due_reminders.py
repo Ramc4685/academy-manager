@@ -9,10 +9,13 @@ list meaning "send none" — which is why there is no separate on/off flag.
 
 Three properties this use case is built around:
 
-* **Exact-day matching, not "anything older than N".** A reminder fires when
-  ``due_date + N == today`` in the academy's calendar, so a family that has
-  been overdue for two months gets the two emails its schedule says and never
-  a daily drip.
+* **Offsets, not a drip.** A reminder belongs to ``due_date + N``; zero and
+  negative offsets (owner L1, 2026-11-15) give "due today" and "due in N days"
+  notices. An offset still fires up to ``CATCH_UP_DAYS`` after its day, so one
+  missed tick (an email outage, a deploy) no longer loses that reminder, and a
+  family that has been overdue for two months never gets a daily drip.
+  When several offsets matured since the last send, only the latest goes out
+  and all of them are stamped: one email per invoice per run.
 * **Idempotency per (invoice, offset).** Each send stamps the offset on the
   invoice, so a second run on the same day — a redeploy, a retried tick — is
   a no-op, while due+20 still fires five days after due+15 did.
@@ -51,8 +54,14 @@ class PastDueInvoice(BaseModel):
     reminded_days: tuple[int, ...] = ()
 
 
+#: How long after its day an unsent offset still goes out.
+CATCH_UP_DAYS = 3
+
+
 class PastDueInvoiceReader(Protocol):
-    async def list_past_due(self, *, due_on: date) -> list[PastDueInvoice]: ...
+    async def list_past_due(self, *, due_from: date, due_to: date) -> list[PastDueInvoice]:
+        """Unpaid invoices whose due date is in ``[due_from, due_to]``."""
+        ...
 
 
 class PastDueReminderSender(Protocol):
@@ -91,41 +100,51 @@ class SendPastDueReminders:
     async def execute(
         self, *, today: date, reminder_days: tuple[int, ...] | list[int] | None
     ) -> SendPastDueRemindersResult:
-        offsets = sorted({int(day) for day in (reminder_days or ()) if int(day) > 0})
+        offsets = sorted({int(day) for day in (reminder_days or ())})
         if not offsets:
             # Empty is the off switch, not a misconfiguration: say nothing.
             return SendPastDueRemindersResult()
 
         considered = sent = already = failed = 0
-        for offset in offsets:
-            due_on = date.fromordinal(today.toordinal() - offset)
-            for invoice in await self._invoices.list_past_due(due_on=due_on):
-                if invoice.balance_due_cents <= 0:
-                    continue
-                considered += 1
-                if offset in invoice.reminded_days:
-                    already += 1
-                    continue
-                try:
-                    ok = await self._sender.send_past_due_reminder(
-                        invoice=invoice, days_past_due=offset
-                    )
-                except Exception:
-                    log.warning(
-                        "past_due_reminder_send_failed",
-                        extra={"invoice_id": invoice.invoice_id, "days_past_due": offset},
-                        exc_info=True,
-                    )
-                    ok = False
-                if not ok:
-                    failed += 1
-                    continue
-                # Stamped only after a confirmed send: a family that never got
-                # the email must still be reachable on the next tick.
-                await self._stamps.stamp_reminder(
-                    invoice_id=invoice.invoice_id, days_past_due=offset
+        ordinal = today.toordinal()
+        invoices = await self._invoices.list_past_due(
+            due_from=date.fromordinal(ordinal - offsets[-1] - CATCH_UP_DAYS),
+            due_to=date.fromordinal(ordinal - offsets[0]),
+        )
+        for invoice in invoices:
+            if invoice.balance_due_cents <= 0:
+                continue
+            age = ordinal - invoice.due_date.toordinal()
+            matured = [o for o in offsets if 0 <= age - o <= CATCH_UP_DAYS]
+            if not matured:
+                continue
+            considered += 1
+            pending = [o for o in matured if o not in invoice.reminded_days]
+            if not pending:
+                already += 1
+                continue
+            # Today's position, not the stale offset: a caught-up reminder says
+            # how late the invoice is now.
+            offset = pending[-1]
+            try:
+                ok = await self._sender.send_past_due_reminder(invoice=invoice, days_past_due=age)
+            except Exception:
+                log.warning(
+                    "past_due_reminder_send_failed",
+                    extra={"invoice_id": invoice.invoice_id, "days_past_due": offset},
+                    exc_info=True,
                 )
-                sent += 1
+                ok = False
+            if not ok:
+                failed += 1
+                continue
+            # Stamped only after a confirmed send: a family that never got
+            # the email must still be reachable on the next tick.
+            for stamp in pending:
+                await self._stamps.stamp_reminder(
+                    invoice_id=invoice.invoice_id, days_past_due=stamp
+                )
+            sent += 1
 
         return SendPastDueRemindersResult(
             considered=considered, sent=sent, already_sent=already, failed=failed
