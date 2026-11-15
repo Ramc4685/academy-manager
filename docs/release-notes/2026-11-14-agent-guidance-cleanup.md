@@ -1,6 +1,6 @@
 # agent-guidance-cleanup
 
-PR: #1165
+PR: #1167
 
 ## What changed
 - Agent setup: a lead session plus five agents with pinned models (planner, builder, reviewer, risk-reviewer, mechanical) replace the old security and boundary reviewer agents. Routing, briefs and gating live in `docs/agent/agent-roles.md`.
