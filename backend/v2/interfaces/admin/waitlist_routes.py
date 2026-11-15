@@ -23,7 +23,7 @@ async def list_global_waitlist(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminGlobalWaitlistList:
     # Every class that has not ended: a waitlist on next term's class must show.
-    sessions = await use_cases.list_admin_sessions(None, window="all")  # type: ignore[operator]
+    sessions = await use_cases.list_admin_sessions(None, window="open")  # type: ignore[operator]
     grouped: list[AdminGlobalWaitlistSessionView] = []
     total = 0
     total_offered = 0

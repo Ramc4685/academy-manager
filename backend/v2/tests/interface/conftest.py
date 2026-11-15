@@ -2269,7 +2269,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         if window == "upcoming":
             today = _now().date()
             return [s for s in live if s.start_at.date() >= today]
-        if window == "all":
+        if window in {"all", "open"}:
             return live
         if on_date is None:
             on_date = _now().date()

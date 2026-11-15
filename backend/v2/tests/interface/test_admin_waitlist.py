@@ -272,5 +272,5 @@ def test_global_waitlist_covers_classes_beyond_the_30_day_window(admin_client):
     r = admin_client.get("/api/v2/admin/waitlist")
 
     assert r.status_code == 200, r.text
-    assert windows == ["all"]
+    assert windows == ["open"]
     assert [s["session_id"] for s in r.json()["sessions"]] == ["sess-1"]

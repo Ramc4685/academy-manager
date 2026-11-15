@@ -138,8 +138,8 @@ async def list_sessions(
         default=None,
         description=(
             "'upcoming': classes with a date from the academy's today through the next 30 "
-            "days. 'all': every class (active, upcoming, ended) with its phase. Overrides "
-            "'date' when both are passed."
+            "days. 'all': every class (active, upcoming, ended) with its phase. 'open': the "
+            "same without ended classes. Overrides 'date' when both are passed."
         ),
     ),
     coach_id: str | None = Query(default=None, description="Filter sessions by coach ID"),

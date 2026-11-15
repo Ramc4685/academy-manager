@@ -2690,16 +2690,23 @@ def compose_admin(
         on_date: date | None, *, window: str | None = None, coach_id: str | None = None
     ):
         # window="upcoming": classes with a date in the next 30 days (default
-        # list, transfer dropdown). window="all": every class with its phase.
+        # list, transfer dropdown). window="all": every class with its phase;
+        # window="open": the same minus ended classes (waitlist and its badge).
         # A date is the ACADEMY-LOCAL day, never the UTC day (L2 A0-3).
         fallback_timezone = await session_tz(request_academy_id())
         zone = ZoneInfo(resolve_session_timezone(None, fallback_timezone))
         local_today = datetime.now(UTC).astimezone(zone).date()
         phases: dict[str, str] = {}
-        if window == "all":
+        by_phase = window in {"all", "open"}
+        if by_phase:
             docs = [d async for d in sessions_r._find_many(_NOT_CANCELLED_SESSION)]
             templates = [d for d in docs if d.get("days_of_week")]
-            all_docs = [d for d in docs if not d.get("days_of_week")]
+            # A dated class without both instants cannot be placed or listed.
+            all_docs = [
+                d
+                for d in docs
+                if not d.get("days_of_week") and d.get("start_at") and d.get("end_at")
+            ]
             all_docs.extend(
                 synthesize_recurring_session_docs(
                     templates,
@@ -2713,6 +2720,13 @@ def compose_admin(
                 str(d.get("session_id") or d.get("_id")): session_phase(d, local_today, zone)
                 for d in all_docs
             }
+            if window == "open":
+                # Skip ended classes before the per-row seat counts below.
+                all_docs = [
+                    d
+                    for d in all_docs
+                    if phases[str(d.get("session_id") or d.get("_id"))] != "ended"
+                ]
         else:
             on_date = local_today if window == "upcoming" or on_date is None else on_date
             last_date = on_date + timedelta(days=30 if window == "upcoming" else 0)
@@ -2739,7 +2753,10 @@ def compose_admin(
         rows = await _build_admin_session_rows(all_docs)
         for row in rows:
             row["phase"] = phases.get(row["session_id"])
-        rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
+        if not by_phase:
+            # all/open list one row per class doc (one per template), so the
+            # termless, dateless series signature would only hide real classes.
+            rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
         if coach_id:
             rows = [r for r in rows if r.get("coach_id") == coach_id]
         return rows

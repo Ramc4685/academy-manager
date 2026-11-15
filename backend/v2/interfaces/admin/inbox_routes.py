@@ -121,12 +121,11 @@ async def _waiting_seats(use_cases: AdminUseCases) -> int:
     re-reading each session's waitlist: the badge only needs the total, and the
     Waitlist tab itself still loads the per-session detail.
     """
-    sessions = await use_cases.list_admin_sessions(None, window="all")  # type: ignore[operator]
+    sessions = await use_cases.list_admin_sessions(None, window="open")  # type: ignore[operator]
     total = 0
     for session in sessions:
         raw = session if isinstance(session, dict) else session.model_dump()
-        if raw.get("phase") != "ended":
-            total += int(raw.get("waitlist_count") or 0)
+        total += int(raw.get("waitlist_count") or 0)
     return total
 
 

@@ -113,6 +113,102 @@ async def test_all_window_lists_far_future_and_ended_classes_with_a_phase(mongo_
     assert phases == {"next-term": "upcoming", "last-term": "ended", "this-term": "active"}
 
 
+_SLOT = {"days_of_week": ["Tue"], "start_time": "17:00", "end_time": "18:00", "location": "Court 1"}
+
+
+@pytest.mark.asyncio
+async def test_an_ended_class_never_shadows_this_terms_class_in_the_same_slot(mongo_db) -> None:
+    """Risk review B1: the series signature has no term, so last term's class in
+    the same slot collapsed with this term's and could win, hiding its waitlist."""
+    today = datetime.now(UTC).date()
+    await mongo_db["academies"].insert_one({"academy_id": ACADEMY, "timezone": "America/Chicago"})
+    await mongo_db["sessions"].insert_many(
+        [
+            _session(
+                "last-term",
+                start_date=(today - timedelta(days=200)).isoformat(),
+                end_date=(today - timedelta(days=100)).isoformat(),
+                **_SLOT,
+            ),
+            _session("this-term", start_date=(today - timedelta(days=20)).isoformat(), **_SLOT),
+            _session(
+                "next-term",
+                start_date=(today + timedelta(days=60)).isoformat(),
+                end_date=(today + timedelta(days=150)).isoformat(),
+                **_SLOT,
+            ),
+        ]
+    )
+    await mongo_db["waitlist"].insert_one(
+        {"academy_id": ACADEMY, "session_id": "next-term", "student_id": "s1", "status": "waiting"}
+    )
+    uc = _use_cases(mongo_db)
+
+    with tenant_scope(ACADEMY):
+        everything = await uc.list_admin_sessions(None, window="all")
+        open_rows = await uc.list_admin_sessions(None, window="open")
+
+    assert {r["session_id"]: r["phase"] for r in everything} == {
+        "last-term": "ended",
+        "this-term": "active",
+        "next-term": "upcoming",
+    }
+    # The waitlist and its badge read "open": no ended class, next term's queue kept.
+    assert {r["session_id"]: r["waitlist_count"] for r in open_rows} == {
+        "this-term": 0,
+        "next-term": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_all_window_lists_one_off_workshops_in_the_same_slot(mongo_db) -> None:
+    """Main review: two Saturday 9:00 workshops, same coach and place, are two classes."""
+    shared = {"location": "Court 1", "coach_id": "coach-1"}
+    await mongo_db["sessions"].insert_many(
+        [
+            _session(
+                "workshop-a",
+                start_at=datetime(2026, 1, 3, 15, 0, tzinfo=UTC),
+                end_at=datetime(2026, 1, 3, 16, 0, tzinfo=UTC),
+                **shared,
+            ),
+            _session(
+                "workshop-b",
+                start_at=datetime(2026, 1, 10, 15, 0, tzinfo=UTC),
+                end_at=datetime(2026, 1, 10, 16, 0, tzinfo=UTC),
+                **shared,
+            ),
+        ]
+    )
+    uc = _use_cases(mongo_db)
+
+    with tenant_scope(ACADEMY):
+        rows = await uc.list_admin_sessions(None, window="all")
+
+    assert sorted(r["session_id"] for r in rows) == ["workshop-a", "workshop-b"]
+
+
+@pytest.mark.asyncio
+async def test_all_window_skips_a_dated_class_without_instants(mongo_db) -> None:
+    """Risk review N1: a dated class with no start_at made window=all a 500."""
+    await mongo_db["sessions"].insert_many(
+        [
+            _session("broken"),
+            _session(
+                "ok",
+                start_at=datetime(2026, 1, 3, 1, 0, tzinfo=UTC),
+                end_at=datetime(2026, 1, 3, 2, 0, tzinfo=UTC),
+            ),
+        ]
+    )
+    uc = _use_cases(mongo_db)
+
+    with tenant_scope(ACADEMY):
+        rows = await uc.list_admin_sessions(None, window="all")
+
+    assert [r["session_id"] for r in rows] == ["ok"]
+
+
 @pytest.mark.asyncio
 async def test_roster_rows_carry_their_latest_lifecycle_event(mongo_db) -> None:
     """L2 A0-12: the roster fired one history request per row to show this."""
