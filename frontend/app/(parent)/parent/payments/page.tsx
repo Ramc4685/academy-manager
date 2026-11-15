@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -183,6 +183,11 @@ export default function ParentPaymentsPage() {
   const queryClient = useQueryClient();
   const autopayReturn = searchParams.get("autopay");
   const checkoutSessionId = searchParams.get("checkout_session_id");
+  // The invoice email's "Pay invoice" button lands here with ?pay=<invoice_id>,
+  // or ?pay=balance when the email quoted the student's whole open balance.
+  const emailPayInvoiceId = searchParams.get("pay");
+  const emailPayBundle = searchParams.get("bundle") === "1";
+  const emailPayStarted = useRef(false);
   const returnedFromAutopayCheckout = autopayReturn === "success";
   // Issue #635: EVERY return from Stripe Checkout carries a
   // checkout_session_id now, not just autopay opt-ins, so the settlement poll
@@ -298,7 +303,11 @@ export default function ParentPaymentsPage() {
   });
 
   const invoicePaymentMutation = useMutation({
-    mutationFn: ({ invoiceId, enrollAutopay }: { invoiceId: string; enrollAutopay: boolean }) =>
+    mutationFn: ({
+      invoiceId,
+      enrollAutopay,
+      bundleStudentBalance = false,
+    }: { invoiceId: string; enrollAutopay: boolean; bundleStudentBalance?: boolean }) =>
       startParentInvoicePayment(invoiceId, {
         // The backend appends `checkout_session_id={CHECKOUT_SESSION_ID}` to
         // every success_url (issue #635), so the settlement poll runs on any
@@ -308,6 +317,7 @@ export default function ParentPaymentsPage() {
           : `${window.location.origin}/parent/payments?invoice=paid`,
         cancel_url: `${window.location.origin}/parent/payments?invoice=cancelled`,
         enroll_autopay: enrollAutopay,
+        bundle_student_balance: bundleStudentBalance,
       }),
     onMutate: ({ invoiceId }) => {
       setPortalError(null);
@@ -348,6 +358,23 @@ export default function ParentPaymentsPage() {
       setBalancePaymentError(toPaymentErrorMessage(error, PAYMENT_START_FAILED));
     },
   });
+
+  // A Stripe session dies within 24h, so the email links here and every click
+  // mints a fresh one. Strip ?pay first so Back from Stripe doesn't re-mint.
+  // No autopay opt-in: the parent never saw the checkbox on this path.
+  useEffect(() => {
+    if (!emailPayInvoiceId || emailPayStarted.current) return;
+    emailPayStarted.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("pay");
+    url.searchParams.delete("bundle");
+    window.history.replaceState(null, "", url.toString());
+    invoicePaymentMutation.mutate({
+      invoiceId: emailPayInvoiceId,
+      enrollAutopay: false,
+      bundleStudentBalance: emailPayBundle,
+    });
+  }, [emailPayInvoiceId, emailPayBundle, invoicePaymentMutation]);
 
   useEffect(() => {
     if (!returnedFromCheckout) return;

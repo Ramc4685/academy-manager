@@ -1,0 +1,15 @@
+## README.md (repo root)
+
+- [stale-not-built] README.md:162 lists `edge/` ("Retired Cloudflare Worker router kept for historical reference"); no `edge/` directory exists in the repo (`git ls-files edge` is empty).
+- [stale-not-built] README.md:164 says `scripts/` holds "importers"; no importer script exists under `scripts/` (no file name matches `*import*`, and no CSV-based importer is present). Import logic lives under `backend/v2/` (e.g. `backend/v2/migrations/0199_import_batches.py`).
+- [contract] README.md:74 and README.md:161 state Next.js 15; `frontend/package.json:37` pins `"next": "16.4.1"` (React 19.3.0 at `frontend/package.json:38` matches README:74).
+- [contract] README.md:93 says the backend deploy runs `flyctl deploy --remote-only --app courtmastr-academy-api`; `.github/workflows/production.yml:961-963` deploys a prebuilt image (`flyctl deploy --image <migrate-production output> --release-command-timeout 25m --ha=false --app courtmastr-academy-api`) and does not use `--remote-only`.
+- [contract] README.md:117-118 says non-prod environments cannot email real parents and real email requires `APP_ENV=production`. Code treats `staging` as a real-email environment too: `backend/v2/composition/digests.py:1045` (`_REAL_EMAIL_ENVS = frozenset({"staging", "prod"})`), gated in `_build_email_sender` at `digests.py:1048-1070`, and `backend/v2/shared/config/settings.py:270-275` maps `APP_ENV=staging` to `env = "staging"`.
+- [missing] README.md:99-100 says `DEPLOYMENT.md` covers "secret rotation"; `DEPLOYMENT.md` has no secret-rotation section or text (no "rotat" match).
+- [missing] README.md:99-100 says `DEPLOYMENT.md` covers a "rollback procedure"; `DEPLOYMENT.md` has no rollback procedure. Its only "rollback" mention is `DEPLOYMENT.md:165`, which describes Firebase cleanup on a failed registration. The only rollback runbook is `docs/runbooks/migrations-rollout.md`.
+- [wording] README.md:114-115 describes "Atomic invite acceptance" in which "mid-flight registration failures roll back the Firebase user via the Admin SDK." The rollback exists only in the admin user-creation path (`backend/v2/contexts/identity/infrastructure/mongo_user_repo.py:1005-1008`, inside `create_admin_user` starting at `:929`). The public parent registration path (`backend/v2/contexts/identity/application/use_cases/register_public_parent.py:85-175`) has no Firebase rollback, and it does not create the Firebase user server-side.
+- [undocumented] README.md:159-165 (Layout) omits `mobile/`, the Capacitor iOS/Android app shell (`mobile/capacitor.config.ts`, `mobile/ios/`, `mobile/android/`). It ships the native push and store builds that README:4 refers to on the phone.
+- [undocumented] README.md:159-165 (Layout) omits the top-level `tests/` directory (`tests/test_test_result_cli.py`).
+- [undocumented] README.md:159-165 (Layout) omits the top-level `firebase-emulator/` directory (`firebase-emulator/firebase.json`).
+
+Counts: [stale-not-built] 2, [contract] 3, [missing] 2, [undocumented] 3, [wording] 1. Total 11.

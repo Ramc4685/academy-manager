@@ -136,6 +136,13 @@ class _InvoiceCheckoutStripe(_PortalStripe):
         return "cs_invoice_test", "https://checkout.stripe.test/balance"
 
 
+def _key_base(idempotency_key: object) -> str:
+    """A balance-payment key minus its per-attempt suffix."""
+    base, sep, attempt = str(idempotency_key).rpartition(":attempt-")
+    assert sep and attempt, idempotency_key
+    return base
+
+
 def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, expected in query.items():
         if key == "$or":
@@ -411,7 +418,7 @@ async def test_parent_balance_payment_routes_checkout_to_ready_connected_account
     call = stripe.invoice_checkout_calls[0]
     assert call["amount_cents"] == 12_000
     assert call["stripe_account"] == "acct_ready"
-    assert str(call["idempotency_key"]).endswith(":acct:acct_ready")
+    assert _key_base(call["idempotency_key"]).endswith(":acct:acct_ready")
     assert call["metadata"]["invoice_ids"] == "inv-earlier,inv-later"
     assert call["metadata"]["type"] == "balance_payment"
 
@@ -594,7 +601,7 @@ async def test_parent_balance_payment_with_enroll_autopay_collects_distinct_enro
     assert call["autopay_enrollment_ids"] == ["enroll-a", "enroll-b"]
     # A distinct idempotency key so an earlier one-time balance session is not
     # replayed without the saved-payment-method params.
-    assert str(call["idempotency_key"]).endswith(":autopay-optin:acct:acct_ready")
+    assert _key_base(call["idempotency_key"]).endswith(":autopay-optin:acct:acct_ready")
     # Same checkout_session_id placeholder requirement as the single-invoice
     # path (see test above) — the balance payment path builds its own Stripe
     # call directly rather than delegating to SendInvoice.
@@ -642,7 +649,7 @@ async def test_parent_balance_payment_without_flag_omits_autopay_kwargs(
     call = stripe.invoice_checkout_calls[0]
     assert "save_payment_method_for_autopay" not in call
     assert "autopay_enrollment_ids" not in call
-    assert not str(call["idempotency_key"]).endswith(":autopay-optin")
+    assert not _key_base(call["idempotency_key"]).endswith(":autopay-optin")
     # Issue #635: the balance path also always returns with a
     # checkout_session_id so the settlement poll can run without autopay.
     assert call["success_url"] == (

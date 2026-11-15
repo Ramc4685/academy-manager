@@ -123,6 +123,7 @@ async def start_invoice_payment(
             success_url=body.success_url,
             cancel_url=body.cancel_url,
             enroll_autopay=body.enroll_autopay,
+            bundle_student_balance=body.bundle_student_balance,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

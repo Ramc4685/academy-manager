@@ -117,6 +117,7 @@ class _ParentUseCases:
         success_url: str,
         cancel_url: str,
         enroll_autopay: bool = False,
+        bundle_student_balance: bool = False,
     ):
         self.invoice_payment_calls.append(
             {
@@ -125,6 +126,7 @@ class _ParentUseCases:
                 "success_url": success_url,
                 "cancel_url": cancel_url,
                 "enroll_autopay": enroll_autopay,
+                "bundle_student_balance": bundle_student_balance,
             }
         )
         invoice = await self._repo.get_invoice(invoice_id)
@@ -361,6 +363,24 @@ def test_pay_body_without_enroll_autopay_defaults_to_false() -> None:
 
     assert response.status_code == 200, response.text
     assert use_cases.invoice_payment_calls[0]["enroll_autopay"] is False
+    assert use_cases.invoice_payment_calls[0]["bundle_student_balance"] is False
+
+
+def test_pay_body_with_bundle_student_balance_forwards_it() -> None:
+    # A balance-bundled invoice email links to ?pay=<invoice>&bundle=1; the
+    # page re-mints the same student-scoped bundle, not the family balance.
+    with _make_client_with_use_cases() as (client, use_cases):
+        response = client.post(
+            "/api/v2/parent/invoices/inv-a1/pay",
+            json={
+                "success_url": "https://app.example.com/parent/payments?invoice=paid",
+                "cancel_url": "https://app.example.com/parent/payments?invoice=cancelled",
+                "bundle_student_balance": True,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert use_cases.invoice_payment_calls[0]["bundle_student_balance"] is True
 
 
 def test_pay_body_with_enroll_autopay_true_forwards_true() -> None:
