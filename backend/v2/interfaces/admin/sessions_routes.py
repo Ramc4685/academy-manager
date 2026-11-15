@@ -136,7 +136,11 @@ async def list_sessions(
     on_date: str = Query(default=None, alias="date"),
     window: str | None = Query(
         default=None,
-        description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+        description=(
+            "'upcoming': classes with a date from the academy's today through the next 30 "
+            "days. 'all': every class (active, upcoming, ended) with its phase. Overrides "
+            "'date' when both are passed."
+        ),
     ),
     coach_id: str | None = Query(default=None, description="Filter sessions by coach ID"),
     _claims: AuthClaims = Depends(require_persona("admin")),

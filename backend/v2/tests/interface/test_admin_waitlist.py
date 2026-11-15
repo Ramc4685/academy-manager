@@ -249,3 +249,28 @@ def test_a_seatless_offer_is_flagged_for_staff(admin_client):
     [row] = admin_client.get("/api/v2/admin/sessions/sess-1/waitlist").json()["entries"]
 
     assert row["offer_holds_seat"] is False
+
+
+def test_global_waitlist_covers_classes_beyond_the_30_day_window(admin_client):
+    """L2 A0-6: a waitlist on a class starting next term used to be invisible.
+
+    The list reads every class that has not ended, not just the next 30 days.
+    """
+    _add(admin_client.seed, "w1", datetime(2026, 5, 16, 8, 0, tzinfo=UTC))
+    windows: list[object] = []
+    start = datetime(2027, 3, 1, 17, 0, tzinfo=UTC)
+
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        windows.append(window)
+        return [
+            {"session_id": "sess-1", "title": "Next term", "start_at": start, "phase": "upcoming"},
+            {"session_id": "sess-old", "title": "Last term", "start_at": start, "phase": "ended"},
+        ]
+
+    admin_client.use_cases.list_admin_sessions = list_admin_sessions
+
+    r = admin_client.get("/api/v2/admin/waitlist")
+
+    assert r.status_code == 200, r.text
+    assert windows == ["all"]
+    assert [s["session_id"] for s in r.json()["sessions"]] == ["sess-1"]

@@ -22,12 +22,15 @@ async def list_global_waitlist(
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminGlobalWaitlistList:
-    sessions = await use_cases.list_admin_sessions(None, window="upcoming")  # type: ignore[operator]
+    # Every class that has not ended: a waitlist on next term's class must show.
+    sessions = await use_cases.list_admin_sessions(None, window="all")  # type: ignore[operator]
     grouped: list[AdminGlobalWaitlistSessionView] = []
     total = 0
     total_offered = 0
     for session in sessions:
         raw = session if isinstance(session, dict) else session.model_dump(exclude={"academy_id"})
+        if raw.get("phase") == "ended":
+            continue
         entries = await use_cases.list_waitlist_for_session(raw["session_id"])  # type: ignore[operator]
         normalized = _normalize_waitlist_entries(entries)
         if not normalized:

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import {
-  listEnrollmentEvents,
   type AdminEnrollmentView,
   type EnrollmentStatus,
 } from "@/lib/api/admin";
@@ -348,7 +347,7 @@ export function RosterTable({
                   </div>
                   <div className="font-mono text-[11px]">
                     {formatEnrollmentDate(e.enrolled_at)}
-                    <EnrollmentHistory enrollmentId={e.enrollment_id} />
+                    <EnrollmentHistory eventType={e.latest_event_type} effectiveDate={e.latest_event_date} />
                   </div>
                 </>
               }
@@ -450,7 +449,7 @@ export function RosterTable({
                 </td>
                 <td className="px-4 py-3 font-mono text-rally-muted">
                   {formatEnrollmentDate(e.enrolled_at)}
-                  <EnrollmentHistory enrollmentId={e.enrollment_id} />
+                  <EnrollmentHistory eventType={e.latest_event_type} effectiveDate={e.latest_event_date} />
                 </td>
                 <td className={`${actionCellClass} ${rowToneClass}`}>{rowActions(e)}</td>
               </tr>
@@ -583,22 +582,19 @@ export function DuesChip({ status }: { status: "current" | "due" | "overdue" }) 
   return <Chip variant="overdue" label="OVERDUE" />;
 }
 
-export function EnrollmentHistory({ enrollmentId }: { enrollmentId: string }) {
-  const eventsQuery = useQuery({
-    queryKey: ["admin", "enrollment-events", enrollmentId],
-    queryFn: () => listEnrollmentEvents(enrollmentId, { limit: 1 }),
-    staleTime: 30_000,
-  });
-  const events = eventsQuery.data?.events ?? [];
-  // Events now come back most-recent-first (see #748), so the latest event
-  // is the first row rather than the last.
-  const latest = events[0];
-  if (!latest) {
-    return null;
-  }
+/** Latest lifecycle event, served on the roster row itself (L2 A0-12). */
+export function EnrollmentHistory({
+  eventType,
+  effectiveDate,
+}: {
+  eventType?: string | null;
+  effectiveDate?: string | null;
+}) {
+  if (!eventType) return null;
   return (
     <div className="mt-1 text-[11px] font-normal text-rally-subtle">
-      {formatLifecycleType(latest.event_type)} · {formatDateOnly(latest.effective_date)}
+      {formatLifecycleType(eventType)}
+      {effectiveDate ? ` · ${formatDateOnly(effectiveDate)}` : ""}
     </div>
   );
 }
