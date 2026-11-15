@@ -11,6 +11,7 @@ import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { queryKeys } from "@/lib/query/keys";
+import { inboxBadge } from "@/lib/admin-inbox-tabs";
 import { TenantProvider } from "@/lib/tenant/tenant-context";
 import { useIsDesktop } from "@/lib/use-is-desktop";
 import { PhoneCountryProvider } from "@/lib/phone-country";
@@ -117,7 +118,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     ...group,
     items: group.items.map((item) =>
       item.href === "/admin/inbox"
-        ? { ...item, count: inboxPending || (inboxUnknown ? ("?" as const) : undefined) }
+        ? { ...item, count: inboxBadge(inboxPending, inboxUnknown) }
         : item,
     ),
   }));

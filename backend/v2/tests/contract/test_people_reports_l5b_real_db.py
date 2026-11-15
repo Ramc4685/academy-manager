@@ -212,8 +212,13 @@ async def test_attendance_risk_by_class_and_coach(real_db) -> None:
         "sess-l5b-tue": ("Tuesday Juniors", "Testcoach One", 2, 0),
         "sess-l5b-new": ("Brand New Class", None, 1, 0),
     }
-    # Most at-risk first.
-    assert report.by_class[0].session_id == "sess-l5b-sat"
+    # Most at-risk first; ties at zero fall back to the class name.
+    assert [row.session_id for row in report.by_class] == [
+        "sess-l5b-sat",
+        "sess-l5b-new",
+        "sess-l5b-thu",
+        "sess-l5b-tue",
+    ]
     by_coach = {
         row.coach_id: (row.coach_name, row.classes, row.students, row.at_risk)
         for row in report.by_coach

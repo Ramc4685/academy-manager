@@ -2055,6 +2055,8 @@ class MongoStudentRepository(TenantScopedRepository):
                         "academy_id": academy_id,
                         "student_id": {"$in": student_ids},
                         "status": {"$ne": _VOIDED_ATTENDANCE_STATUS},
+                        # Bound the rows before the per-row $lookup.
+                        "marked_at": {"$gte": since},
                     }
                 },
                 {

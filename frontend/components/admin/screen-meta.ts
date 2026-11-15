@@ -25,8 +25,8 @@ export interface AdminNavItem {
   /** Icon key resolved against the Rally Icon set. */
   icon: AdminNavIconKey;
   /** Optional count badge. */
-  /** A number, or "?" when the count could not be read (unknown, not zero). */
-  count?: number | "?";
+  /** A number; "N+" when some queues could not be counted; "?" when nothing could. */
+  count?: number | `${number}+` | "?";
   /** Highlight the badge with volt-yellow if true. */
   urgent?: boolean;
   /** True if pathname `p` should highlight this item. */
