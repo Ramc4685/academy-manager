@@ -4,11 +4,12 @@ Attendance risk by class and coach reads the enrollment context's own
 lifecycle derivation (``MongoStudentRepository.lifecycle_snapshots``), so the
 seeds below exercise that rule, not a copy of it:
 
-* a student with no mark in the last three class dates is at risk; one who
-  was present last week is not;
-* an absent-only student and a student whose only present mark was voided
-  are at risk (absent marks and voided marks never count as "seen");
-* a class with only two past dates flags nobody;
+* at risk means the two most recent recorded marks on a live seat are both
+  absent (owner decision, L2 A0-1): two absences in a row are at risk, and
+  a voided mark between them does not break the streak;
+* a never-marked student, one present last week, and one with a single
+  absence are not at risk (unmarked classes are a coach alert, not a
+  student risk);
 * a withdrawn student holds no seat and is not counted;
 * a student in two of one coach's classes counts in both classes, once for
   the coach;
@@ -163,12 +164,12 @@ async def _seed_attendance(db: Any) -> None:
     await _occurrences(db, ACAD, "sess-l5b-new", 2, now)
 
     for student, sessions in {
-        "st-a": ("sess-l5b-tue", "sess-l5b-thu"),  # never marked: at risk
+        "st-a": ("sess-l5b-tue", "sess-l5b-thu"),  # never marked: not at risk
         "st-b": ("sess-l5b-tue",),  # present last week
-        "st-c": ("sess-l5b-sat",),  # absent-only: at risk
-        "st-d": ("sess-l5b-sat",),  # voided present only: at risk
-        "st-e": ("sess-l5b-sat",),  # present last week
-        "st-f": ("sess-l5b-new",),  # class too new to judge
+        "st-c": ("sess-l5b-sat",),  # absent twice in a row: at risk
+        "st-d": ("sess-l5b-sat",),  # absent twice, a voided present between: at risk
+        "st-e": ("sess-l5b-sat",),  # present last week after an absence
+        "st-f": ("sess-l5b-new",),  # one absence only
     }.items():
         await _student(db, ACAD, student, f"p-{student}")
         for sid in sessions:
@@ -178,14 +179,21 @@ async def _seed_attendance(db: Any) -> None:
 
     await _mark(db, ACAD, "st-b", "occ-sess-l5b-tue-1", "present", now)
     await _mark(db, ACAD, "st-c", "occ-sess-l5b-sat-1", "absent", now)
-    await _mark(db, ACAD, "st-d", "occ-sess-l5b-sat-1", "voided", now)
+    await _mark(db, ACAD, "st-c", "occ-sess-l5b-sat-2", "absent", now)
+    await _mark(db, ACAD, "st-d", "occ-sess-l5b-sat-1", "absent", now)
+    await _mark(db, ACAD, "st-d", "occ-sess-l5b-sat-2", "voided", now)
+    await _mark(db, ACAD, "st-d", "occ-sess-l5b-sat-3", "absent", now)
     await _mark(db, ACAD, "st-e", "occ-sess-l5b-sat-1", "present", now)
+    await _mark(db, ACAD, "st-e", "occ-sess-l5b-sat-2", "absent", now)
+    await _mark(db, ACAD, "st-f", "occ-sess-l5b-new-1", "absent", now)
 
     # Another academy: an at-risk student in its own class.
     await _session(db, OTHER, "sess-l5b-other", "Other Academy Class", "coach-l5b-2")
     await _occurrences(db, OTHER, "sess-l5b-other", 4, now)
     await _student(db, OTHER, "st-other", "p-other")
     await _enroll(db, OTHER, "st-other", "sess-l5b-other")
+    await _mark(db, OTHER, "st-other", "occ-sess-l5b-other-1", "absent", now)
+    await _mark(db, OTHER, "st-other", "occ-sess-l5b-other-2", "absent", now)
 
 
 async def test_attendance_risk_by_class_and_coach(real_db) -> None:
@@ -200,17 +208,12 @@ async def test_attendance_risk_by_class_and_coach(real_db) -> None:
     }
     assert by_class == {
         "sess-l5b-sat": ("Saturday Squad", None, 3, 2),
-        "sess-l5b-thu": ("Thursday Juniors", "Testcoach One", 1, 1),
-        "sess-l5b-tue": ("Tuesday Juniors", "Testcoach One", 2, 1),
+        "sess-l5b-thu": ("Thursday Juniors", "Testcoach One", 1, 0),
+        "sess-l5b-tue": ("Tuesday Juniors", "Testcoach One", 2, 0),
         "sess-l5b-new": ("Brand New Class", None, 1, 0),
     }
-    # Most at-risk first, then the highest share.
-    assert [row.session_id for row in report.by_class] == [
-        "sess-l5b-sat",
-        "sess-l5b-thu",
-        "sess-l5b-tue",
-        "sess-l5b-new",
-    ]
+    # Most at-risk first.
+    assert report.by_class[0].session_id == "sess-l5b-sat"
     by_coach = {
         row.coach_id: (row.coach_name, row.classes, row.students, row.at_risk)
         for row in report.by_coach
@@ -218,10 +221,10 @@ async def test_attendance_risk_by_class_and_coach(real_db) -> None:
     assert by_coach == {
         "coach-l5b-2": (None, 1, 3, 2),
         # st-a is in both of coach 1's classes: one student.
-        "coach-l5b-1": ("Testcoach One", 2, 2, 1),
+        "coach-l5b-1": ("Testcoach One", 2, 2, 0),
         None: (None, 1, 1, 0),
     }
-    assert (report.students, report.at_risk) == (6, 3)
+    assert (report.students, report.at_risk) == (6, 2)
 
 
 async def test_attendance_risk_never_reads_another_academy(real_db) -> None:
@@ -237,7 +240,7 @@ async def test_attendance_risk_never_reads_another_academy(real_db) -> None:
     # A member of OTHER is named on OTHER's report only.
     assert other.by_coach[0].coach_name == "Testcoach Elsewhere"
     assert "sess-l5b-other" not in {row.session_id for row in mine.by_class}
-    assert (mine.students, mine.at_risk) == (6, 3)
+    assert (mine.students, mine.at_risk) == (6, 2)
 
 
 # ------------------------------------------------------------ families lost

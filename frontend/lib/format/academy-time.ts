@@ -142,3 +142,33 @@ export function formatAcademyDay(
   }
   return formatAcademyDate(iso, academyTimezone);
 }
+
+/**
+ * The academy's calendar date ("YYYY-MM-DD") at `now`. After about 6 PM in
+ * Chicago the UTC date (`toISOString().slice(0, 10)`) is already tomorrow, so
+ * admin "today" defaults must come from here. Falls back to the browser zone
+ * when the academy zone is missing or unknown.
+ */
+export function academyDateISO(
+  academyTimezone: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  const { timeZone } = resolveAcademyTimeZone(academyTimezone);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+/** The academy's calendar month ("YYYY-MM") at `now`, `offset` months away. */
+export function academyMonthKey(
+  academyTimezone: string | null | undefined,
+  offset = 0,
+  now: Date = new Date(),
+): string {
+  const [year, month] = academyDateISO(academyTimezone, now).split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1 + offset, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
+}

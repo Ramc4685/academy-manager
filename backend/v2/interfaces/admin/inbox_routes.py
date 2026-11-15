@@ -8,9 +8,12 @@ answered by opening all eight. This route answers it in one call.
 Read-only and deliberately fan-out shaped: every count comes from the admin
 BFF use case that already backs that queue's list route (tenant-scoped through
 the same repositories), so the inbox can never disagree with the tab it labels.
-Each probe is isolated — one unavailable queue degrades to ``0`` rather than
-failing the whole badge row, exactly as ``dashboard_routes`` does for the
-attention lane.
+Each probe is isolated: one unreadable queue is reported in ``unavailable``
+(never as a silent ``0``) rather than failing the whole badge row.
+
+Only queues that hold an admin decision are counted (owner decision,
+2026-11-15). Absence notices and parent self-cancellations are history with no
+action to take, so their tabs list them without a badge.
 """
 
 from __future__ import annotations
@@ -44,12 +47,25 @@ INBOX_QUEUE_IDS: tuple[str, ...] = (
     "pauses",
 )
 
+#: Informational tabs: listed on the Inbox page, never counted.
+INFORMATIONAL_QUEUE_IDS: frozenset[str] = frozenset({"absences", "cancellations"})
+
+#: The queues whose rows wait on an admin decision; these feed the badge.
+DECISION_QUEUE_IDS: tuple[str, ...] = tuple(
+    queue for queue in INBOX_QUEUE_IDS if queue not in INFORMATIONAL_QUEUE_IDS
+)
+
 
 class AdminInboxCountsView(BaseModel):
-    """How many rows each inbox queue is holding for a human right now."""
+    """How many rows each decision queue is holding for a human right now.
+
+    A queue whose count could not be read is absent from ``counts`` and named
+    in ``unavailable`` so the page can say so instead of showing zero.
+    """
 
     counts: dict[str, int]
     total: int
+    unavailable: list[str] = []
 
 
 @router.get("/inbox/counts", response_model=AdminInboxCountsView)
@@ -65,26 +81,26 @@ async def admin_inbox_counts(
         ("level-ups", lambda: _pending_level_ups(use_cases)),
         ("makeups", lambda: _pending_self_service(use_cases, "list_makeup_requests_for_admin")),
         ("trials", lambda: _pending_self_service(use_cases, "list_trial_requests_for_admin")),
-        ("absences", lambda: _all_rows(use_cases, "list_absences_for_admin")),
-        ("cancellations", lambda: _all_rows(use_cases, "list_self_cancellations_for_admin")),
         ("pauses", lambda: _pending_pauses(use_cases)),
     )
     values = await asyncio.gather(*(_safe_count(label, probe) for label, probe in probes))
-    counts = dict(zip((label for label, _ in probes), values, strict=True))
-    return AdminInboxCountsView(counts=counts, total=sum(counts.values()))
+    counts = {
+        label: value for (label, _), value in zip(probes, values, strict=True) if value is not None
+    }
+    unavailable = [label for (label, _), value in zip(probes, values, strict=True) if value is None]
+    return AdminInboxCountsView(counts=counts, total=sum(counts.values()), unavailable=unavailable)
 
 
-async def _safe_count(label: str, probe: Callable[[], Awaitable[int]]) -> int:
-    """One queue's count, or ``0`` with a warning when it cannot be read.
+async def _safe_count(label: str, probe: Callable[[], Awaitable[int]]) -> int | None:
+    """One queue's count, or ``None`` with a warning when it cannot be read.
 
-    A badge that is missing is worse than a badge that is briefly wrong: the
-    admin still needs the other seven queues, and the tab itself still opens.
+    The other queues still answer; the caller reports this one as unavailable.
     """
     try:
         return await probe()
     except Exception:
         log.warning("admin inbox queue count unavailable: %s", label, exc_info=True)
-        return 0
+        return None
 
 
 def _len(rows: Any) -> int:
@@ -99,17 +115,18 @@ async def _pending_registrations(use_cases: AdminUseCases) -> int:
 
 
 async def _waiting_seats(use_cases: AdminUseCases) -> int:
-    """Everyone queued for a seat on an upcoming session.
+    """Everyone queued for a seat on a class that has not ended.
 
     Summed from the session rows the sessions list already carries rather than
     re-reading each session's waitlist: the badge only needs the total, and the
     Waitlist tab itself still loads the per-session detail.
     """
-    sessions = await use_cases.list_admin_sessions(None, window="upcoming")  # type: ignore[operator]
+    sessions = await use_cases.list_admin_sessions(None, window="all")  # type: ignore[operator]
     total = 0
     for session in sessions:
         raw = session if isinstance(session, dict) else session.model_dump()
-        total += int(raw.get("waitlist_count") or 0)
+        if raw.get("phase") != "ended":
+            total += int(raw.get("waitlist_count") or 0)
     return total
 
 
@@ -130,13 +147,6 @@ async def _pending_self_service(use_cases: AdminUseCases, attribute: str) -> int
     if reader is None:
         return 0
     return _len(await reader.execute("pending"))
-
-
-async def _all_rows(use_cases: AdminUseCases, attribute: str) -> int:
-    reader = getattr(use_cases, attribute, None)
-    if reader is None:
-        return 0
-    return _len(await reader.execute())
 
 
 async def _pending_pauses(use_cases: AdminUseCases) -> int:

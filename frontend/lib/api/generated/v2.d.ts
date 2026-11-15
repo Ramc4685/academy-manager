@@ -1232,6 +1232,9 @@ export interface paths {
         /**
          * Dashboard Attention
          * @description Aggregate dashboard attention signals from existing admin BFF sources.
+         *
+         *     A source that fails is named in ``unavailable`` (owner rule: a count that
+         *     fails to load is "unavailable", never a silent 0).
          */
         get: operations["dashboard_attention_api_v2_admin_dashboard_attention_get"];
         put?: never;
@@ -7709,6 +7712,21 @@ export interface components {
         AdminAttentionList: {
             /** Items */
             items: components["schemas"]["AdminAttentionItemView"][];
+            /**
+             * Unavailable
+             * @default []
+             */
+            unavailable: components["schemas"]["AdminAttentionUnavailableView"][];
+        };
+        /**
+         * AdminAttentionUnavailableView
+         * @description An attention source that could not be read: unknown, not "nothing".
+         */
+        AdminAttentionUnavailableView: {
+            /** Label */
+            label: string;
+            /** Source */
+            source: string;
         };
         /** AdminAuditLogList */
         AdminAuditLogList: {
@@ -8139,6 +8157,10 @@ export interface components {
             enrollment_id: string;
             /** Full Name */
             full_name: string;
+            /** Latest Event Date */
+            latest_event_date?: string | null;
+            /** Latest Event Type */
+            latest_event_type?: string | null;
             /** Level */
             level?: string | null;
             /** Parent Id */
@@ -8522,7 +8544,10 @@ export interface components {
         };
         /**
          * AdminInboxCountsView
-         * @description How many rows each inbox queue is holding for a human right now.
+         * @description How many rows each decision queue is holding for a human right now.
+         *
+         *     A queue whose count could not be read is absent from ``counts`` and named
+         *     in ``unavailable`` so the page can say so instead of showing zero.
          */
         AdminInboxCountsView: {
             /** Counts */
@@ -8531,6 +8556,11 @@ export interface components {
             };
             /** Total */
             total: number;
+            /**
+             * Unavailable
+             * @default []
+             */
+            unavailable: string[];
         };
         /** AdminMarkMessageReadResponse */
         AdminMarkMessageReadResponse: {
@@ -9941,6 +9971,8 @@ export interface components {
             location: string;
             /** Parking Notes */
             parking_notes?: string | null;
+            /** Phase */
+            phase?: ("active" | "upcoming" | "ended") | null;
             /** Session Id */
             session_id: string;
             /**
@@ -26652,7 +26684,7 @@ export interface operations {
         parameters: {
             query?: {
                 date?: string;
-                /** @description Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed. */
+                /** @description 'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. Overrides 'date' when both are passed. */
                 window?: string | null;
                 /** @description Filter sessions by coach ID */
                 coach_id?: string | null;

@@ -116,34 +116,36 @@ def test_legacy_and_canonical_terminal_spellings_both_derive_left() -> None:
         assert derive_lifecycle(rows).state == "left", status
 
 
-def test_active_with_stale_attendance_derives_at_risk() -> None:
+def test_two_recorded_absences_in_a_row_derive_at_risk() -> None:
+    """Owner rule (2026-11-15): at risk = 2 consecutive recorded absences."""
     rows = [LifecycleEnrollment(status="active", ordinal=_at(1))]
-    result = derive_lifecycle(rows, last_seen_at=_at(1), at_risk_cutoff=_at(5))
+    result = derive_lifecycle(rows, last_seen_at=_at(1), recent_marks=("absent", "absent"))
     assert result.state == "at_risk"
     assert result.as_of == date(2026, 9, 1)
 
 
-def test_active_with_no_attendance_at_all_derives_at_risk() -> None:
+def test_a_present_mark_between_absences_keeps_the_student_active() -> None:
     rows = [LifecycleEnrollment(status="active", ordinal=_at(1))]
-    assert derive_lifecycle(rows, last_seen_at=None, at_risk_cutoff=_at(5)).state == "at_risk"
+    marks = ("absent", "present", "absent")
+    assert derive_lifecycle(rows, recent_marks=marks).state == "active"
 
 
-def test_active_that_attended_inside_the_window_stays_active() -> None:
+def test_one_absence_is_not_at_risk() -> None:
     rows = [LifecycleEnrollment(status="active", ordinal=_at(1))]
-    result = derive_lifecycle(rows, last_seen_at=_at(6), at_risk_cutoff=_at(5))
-    assert result.state == "active"
+    assert derive_lifecycle(rows, recent_marks=("absent",)).state == "active"
 
 
-def test_without_a_cutoff_at_risk_is_never_claimed() -> None:
-    """A class with fewer than three past occurrences cannot tell us anything;
-    guessing "at risk" there would cry wolf on every brand-new session."""
+def test_no_recorded_marks_is_never_at_risk() -> None:
+    """L2 A0-1: a new student, or a class whose attendance was never taken,
+    has no recorded absences. An unmarked class is a coach alert, not a
+    student risk."""
     rows = [LifecycleEnrollment(status="active", ordinal=_at(1))]
-    assert derive_lifecycle(rows, last_seen_at=None, at_risk_cutoff=None).state == "active"
+    assert derive_lifecycle(rows, last_seen_at=None, recent_marks=()).state == "active"
 
 
 def test_paused_beats_at_risk_because_nobody_expected_them_to_attend() -> None:
     rows = [LifecycleEnrollment(status="paused", ordinal=_at(1))]
-    assert derive_lifecycle(rows, last_seen_at=None, at_risk_cutoff=_at(5)).state == "paused"
+    assert derive_lifecycle(rows, recent_marks=("absent", "absent")).state == "paused"
 
 
 def test_terminal_rows_do_not_suppress_a_live_one() -> None:

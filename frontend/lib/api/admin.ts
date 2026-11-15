@@ -53,6 +53,8 @@ export interface AdminSessionView {
   arrival_minutes_before?: number | null;
   coach_contact_policy?: string | null;
   absence_policy?: string | null;
+  /** Set only by the all-classes list (`window=all`), on the academy's clock. */
+  phase?: "active" | "upcoming" | "ended" | null;
 }
 
 export interface AdminSessionList {
@@ -225,6 +227,9 @@ export interface AdminEnrollmentView {
   pathway_completion_percentage?: number;
   pathway_next_action?: string;
   dues_status?: "current" | "due" | "overdue";
+  /** Latest lifecycle event on the seat (L2 A0-12); null when none. */
+  latest_event_type?: string | null;
+  latest_event_date?: string | null;
 }
 
 export interface AdminEnrollmentList {
@@ -1391,6 +1396,8 @@ export interface AdminAttentionItem {
 
 export interface AdminAttentionList {
   items: AdminAttentionItem[];
+  /** Sources that failed to load: unknown, not "nothing waiting" (L2 A0-5). */
+  unavailable?: { source: string; label: string }[];
 }
 
 export interface BroadcastRequest {
@@ -1848,7 +1855,7 @@ export function sendLoginInvite(userId: string): Promise<{ sent_at: string }> {
 
 export function listAdminSessions(
   date?: string,
-  opts?: { window?: "upcoming" },
+  opts?: { window?: "upcoming" | "all" },
 ): Promise<AdminSessionList> {
   const params = new URLSearchParams();
   if (date) params.set("date", date);
@@ -3384,8 +3391,11 @@ export function rejectAdminRegistration(
 
 /** Issue #776: pending counts for every admin inbox queue, keyed by queue id. */
 export interface AdminInboxCounts {
+  /** Decision queues only; absences and cancellations are never counted. */
   counts: Record<string, number>;
   total: number;
+  /** Queue ids whose count could not be read (L2 A0-5). */
+  unavailable?: string[];
 }
 
 export function getAdminInboxCounts(): Promise<AdminInboxCounts> {

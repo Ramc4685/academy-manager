@@ -29,7 +29,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [stale-not-built] `components/ui/` does not exist.
 - [stale-not-built] `public/splash/` (and the 180 icon) do not exist.
 - [stale-not-built] No workflow runs size-limit or lhci.
-- [contract] README says Next.js 15; package pins 16.4.1.
+- [contract] README says Next.js 15; package pins 16.4.6.
 - [undocumented] Route groups `(owner)`, `(platform)`, `(shared)`, `(student)`.
 - [undocumented] Many `components/` and `lib/` folders.
 - [undocumented] Capacitor, Sentry, Cloudflare/OpenNext, and test scripts.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
@@ -22,7 +22,7 @@ def test_admin_dashboard_attention_empty_state(admin_client):
     r = admin_client.get("/api/v2/admin/dashboard/attention")
 
     assert r.status_code == 200, r.text
-    assert r.json() == {"items": []}
+    assert r.json() == {"items": [], "unavailable": []}
 
 
 def test_admin_dashboard_attention_aggregates_real_signals(admin_client):
@@ -106,6 +106,11 @@ def test_admin_dashboard_attention_degrades_when_one_signal_fails(admin_client):
     body = r.json()
     assert [(item["kind"], item["count"]) for item in body["items"]] == [
         ("pause_requests", 1),
+    ]
+    # L2 A0-5: the failed source is named, so the page can say "could not
+    # check" instead of letting a missing card read as nothing waiting.
+    assert body["unavailable"] == [
+        {"source": "billing_deferral_warnings", "label": "paused billing"}
     ]
 
 
@@ -193,3 +198,80 @@ def test_no_dunning_alerts_means_no_autopay_cards(admin_client):
     ids = {item["attention_id"] for item in r.json()["items"]}
     assert "autopay-failure" not in ids
     assert "dunning-exhaustion" not in ids
+
+
+class _StubCollections:
+    def __init__(self, past_due: int, *, fail: bool = False) -> None:
+        self.past_due = past_due
+        self.fail = fail
+
+    async def build(self, period=None, *, debug=False):
+        if self.fail:
+            raise RuntimeError("collections down")
+        return {
+            "buckets": [
+                {"key": "failed_autopay", "count": 4},
+                {"key": "past_due", "count": self.past_due},
+                {"key": "awaiting", "count": 9},
+            ]
+        }
+
+
+def test_overdue_card_counts_only_the_past_due_bucket(admin_client):
+    """L2 A0-0: drafts and not-yet-due invoices used to count as "overdue".
+
+    The card now reads the Payments page's past-due bucket (due date before
+    the academy's today, no autopay), so the two screens cannot disagree.
+    """
+    admin_client.app.state.admin_collections = _StubCollections(past_due=2)
+    admin_client.use_cases.list_dues_followup = AsyncMock(
+        return_value=[{"parent_id": f"p{i}", "total_due_cents": 100} for i in range(7)]
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["kind"] == "overdue_dues")
+    assert item["count"] == 2
+    assert item["href"] == "/admin/payments#bucket-past_due"
+
+
+def test_no_past_due_families_means_no_overdue_card(admin_client):
+    admin_client.app.state.admin_collections = _StubCollections(past_due=0)
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert all(i["kind"] != "overdue_dues" for i in r.json()["items"])
+
+
+def test_unreadable_collections_flag_overdue_as_unavailable(admin_client):
+    admin_client.app.state.admin_collections = _StubCollections(past_due=0, fail=True)
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    assert {"source": "overdue_dues", "label": "overdue payments"} in r.json()["unavailable"]
+
+
+def test_session_pressure_reads_the_academy_local_today(admin_client, monkeypatch):
+    """L2 A0-3: 11:30 PM in Chicago is already tomorrow in UTC."""
+    from backend.v2.interfaces.admin import academy_clock
+
+    monkeypatch.setattr(academy_clock, "_now", lambda: datetime(2026, 1, 3, 5, 30, tzinfo=UTC))
+
+    async def chicago(_academy_id: str) -> str:
+        return "America/Chicago"
+
+    admin_client.use_cases.get_academy_timezone = chicago
+    seen: list[date] = []
+
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        seen.append(on_date)
+        return []
+
+    admin_client.use_cases.list_admin_sessions = list_admin_sessions
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    assert seen == [date(2026, 1, 2)]

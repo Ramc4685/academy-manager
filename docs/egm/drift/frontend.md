@@ -1,10 +1,10 @@
 ## frontend/README.md
 
-- [wording] README:3,10 says Next.js 15; `frontend/package.json:37` pins `next` 16.4.1.
+- [wording] README:3,10 says Next.js 15; `frontend/package.json:37` pins `next` 16.4.6.
 - [contract] README:28 says no OpenAPI snapshot is committed under `lib/api/generated/`; `frontend/lib/api/generated/v2.d.ts` and `frontend/lib/api/openapi.snapshot.json` are committed, CI checks them for drift (`.github/workflows/production.yml:312-320`), and README:88 itself says the snapshot is committed.
 - [undocumented] README:20-25 lists four route groups; `frontend/app/` also has `(owner)`, `(platform)`, `(shared)` (calendar, messages) and `(student)`, each with a `layout.tsx`.
 - [wording] README:22-23 lists only the `(marketing)` pages "landing, login"; `frontend/app/(marketing)/` also has account-deletion, auth, privacy, register, security, terms and unsubscribe.
-- [stale-not-built] README:34 and 38-41: `frontend/components/ui/` does not exist. The components dirs are `admin`, `announcements`, `calendar`, `coach`, `ds`, `marketing`, `messages`, `observability`, `parent`, `pathway`, `persona`, `progress`, `public-page`, `shared`, `skills`, `teaching`, `waivers`.
+- [stale-not-built] README:34 and 38-41: `frontend/components/ui/` does not exist (only `frontend/lib/ui/` does). The components dirs are `admin`, `announcements`, `calendar`, `coach`, `ds`, `marketing`, `messages`, `observability`, `parent`, `pathway`, `persona`, `progress`, `public-page`, `shared`, `skills`, `teaching`, `waivers`.
 - [stale-not-built] README:41 `public/splash/` (iOS splash screens) does not exist. `frontend/public/` has only `favicon.ico`, `icons/`, `manifest.webmanifest`.
 - [wording] README:40 lists icons "180/192/256/512/maskable"; `frontend/public/icons/` has 192, 256, 512 and maskable only, with no 180.
 - [wording] README:35 says `components/coach` is "dynamically imported"; no `next/dynamic` use was found in `frontend/app/(coach)/coach/today/page.tsx` or `frontend/components/coach/*`. The only coach dynamic import is the calendar view (`frontend/app/(coach)/coach/calendar/page.tsx:17`).
