@@ -6,7 +6,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] Validate step undersells the job: it also runs real-Mongo contract tests, lint, the OpenAPI drift check, the Worker runtime smoke, real-auth E2E and scripts validation.
 
-## `backend/v2/README.md`: 17 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 19 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -22,6 +22,8 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [contract] `pyproject.toml` cites missing `tests/structural/test_tenancy_literals.py`; tenancy check is `tests/test_no_raw_tenant_mongo_access.py`.
 - [wording] Persona list, admin router prefix (`interfaces/admin/router.py:61`), identity context shape, `views.py` not in every persona; see report.
 - [wording] README:69 says run from the repo root; CI runs from `backend/`.
+- [contract] README:42 says import-linter enforces six layer rules; `pyproject.toml` has five forbidden contracts plus `composition-is-outermost`, and the no-cross-context and tenancy rules are pytest checks.
+- [wording] README:12 and :46 omit the ai, communications, crm, curriculum, finance, onboarding, platform and student_progress contexts.
 
 ## `frontend/README.md`: 16 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
