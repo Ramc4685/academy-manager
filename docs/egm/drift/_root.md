@@ -10,3 +10,5 @@
 - [wording] README:80 "Scheduler timezone `America/Chicago` set on backend". It is set as `SCHEDULER_TZ` in `backend/fly.toml:16`, not a general backend timezone.
 
 Rechecked after the `fix-issue-batch.js` security-lens change: it touches nothing README.md describes.
+
+Rechecked after hardening `fix-issue-batch.js` (lane-name and commit checks, untrusted-data notes, attribution removed): nothing README.md describes changed.
