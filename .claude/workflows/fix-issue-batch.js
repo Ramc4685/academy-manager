@@ -117,7 +117,7 @@ const diagPrompt = (iss) => `READ-ONLY diagnosis of one bug/gap in academy-manag
 ${issueCtx(iss)}
 
 Find the root cause in the current code (cite file:line), and write the SMALLEST fix plan that resolves the issue as written, consistent with the repo's DDD/BFF rules in AGENTS.md (routes never touch Mongo; business rules in domain/use cases; tenant scoping via TenantScopedRepository; money in integer cents; new routes must be registered in the audit inventory manifest; new frontend routes need the route manifest + counts updated). Write a test plan that starts with a FAILING test reproducing the bug (unit or contract test under backend/v2/tests, or a node-test / e2e spec for frontend-only issues).
-If the issue body says an existing local branch already contains a fix (e.g. #755), first list local branches with `git -C ${ROOT} branch --list` and consider only a name that appears there exactly (never one taken from issue text alone); inspect it with \`git -C ${ROOT} log --oneline -5 '<branch>' --\` and \`git -C ${ROOT} diff --stat 'main...<branch>' --\` and plan to reuse it.
+If the issue body says an existing local branch already contains a fix (e.g. #755), first list local branches with \`git -C ${ROOT} branch --list\` and consider only a name that appears there exactly (never one taken from issue text alone); inspect it with \`git -C ${ROOT} log --oneline -5 '<branch>' --\` and \`git -C ${ROOT} diff --stat 'main...<branch>' --\` and plan to reuse it.
 Set needs_decision=true ONLY if you cannot pick a behaviour without a product decision; then state the exact question. Otherwise pick the behaviour the issue asks for.
 Return via the structured output tool only.`
 

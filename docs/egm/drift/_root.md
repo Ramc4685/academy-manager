@@ -12,3 +12,4 @@
 Rechecked after the `fix-issue-batch.js` security-lens change: it touches nothing README.md describes.
 
 Rechecked after hardening `fix-issue-batch.js` (lane-name and commit checks, untrusted-data notes, attribution removed): nothing README.md describes changed.
+Rechecked after the template-string fix in `fix-issue-batch.js`: no README impact.
