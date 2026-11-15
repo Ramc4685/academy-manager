@@ -4,8 +4,9 @@ This is the maintained testing guide for CourtMastr Academy Manager. Keep this
 file current when test commands, local stack behavior, staging setup, or CI
 expectations change.
 
-For task status and handoffs, keep using `test_result.md` as the index and
-`docs/test-results/active/` as the per-task ledger directory.
+The `test_result.md` / `docs/test-results/active/` ledger below is optional.
+Use it only when a separate testing agent needs shared written state; otherwise
+record verification in the PR and final response.
 
 ## Quick Decision Guide
 
@@ -18,7 +19,7 @@ For task status and handoffs, keep using `test_result.md` as the index and
 | Broad launch or "all user-facing" confidence | Production-scale local audit |
 | Before pushing | `scripts/dev/pre-push-checks.sh` |
 
-## Test Result Ledger
+## Test Result Ledger (optional)
 
 At the start of a task:
 

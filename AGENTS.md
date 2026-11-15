@@ -8,31 +8,29 @@ Applies to Claude Code, Codex, and any AI coding agent.
 
 This file is the root router. Detailed rules live in `docs/agent/`.
 
-Claude Code-specific automations may live under `.claude/` (hooks, skills,
-and subagents). Those automations support this file; they do not replace it.
-Non-Claude agents should treat `.claude/` content as optional supporting
-guidance, with `AGENTS.md` remaining the canonical cross-agent source of truth.
+Claude Code-specific automations live under `.claude/` and support this file;
+they do not replace it. Non-Claude agents should treat `.claude/` content as
+optional, with `AGENTS.md` remaining the canonical cross-agent source of truth.
+
+Agent roles and model routing: `docs/agent/agent-roles.md`. A lead session
+routes and merges; pinned agents in `.claude/agents/` (planner, builder,
+reviewer, risk-reviewer, mechanical) do the work. Everything else an agent sees
+is per-machine global setup, not part of this repo. Also tracked:
+`.claude/workflows/fix-issue-batch.js` and `.claude/hooks/` (protected-file
+guard, verification reminder).
+
+If cross-session context seems missing, a local `claude-mem` install may hold
+it; it is optional and not required for any workflow here.
 
 ---
 
-## MCP Servers
+## Review Agents
 
-Always use **Headroom MCP** when it is available. Use it proactively for any task where memory, context retrieval, or cross-session knowledge would help — do not wait to be asked. If Headroom is not connected, proceed without it but note the gap.
-
----
-
-## Cross-Session Memory (claude-mem)
-
-This project has `claude-mem` installed for both Claude Code and Codex CLI. It passively captures session activity and injects relevant prior context automatically — it does not replace the curated project memory an agent may keep separately, and it does not replace Headroom (Headroom is in-session context compression; claude-mem is cross-session recall). No explicit invocation is required in normal work. If cross-session context seems missing or stale, run `claude-mem search <query>` to check before assuming it doesn't exist.
-
----
-
-## Security Review
-
-For any change touching authentication, authorization, tenant isolation, Stripe, Firebase, Resend, cookies, CORS, secrets, webhooks, payments, or production deploy paths:
-
-1. Use the **security-reviewer** subagent (`.claude/agents/security-reviewer.md`) — it is the primary, academy-manager-specific review (tenant scoping, webhook idempotency, Firebase token handling).
-2. The **vibesec** skill supplements it with a general web-vulnerability checklist (IDOR, XSS, CSRF, SSRF, SQLi, JWT, file upload, path traversal). It is not a substitute for the project-specific checks above — use it to catch generic classes the subagent's checklist doesn't enumerate line-by-line.
+Every change gets the **reviewer** agent before merge. A change touching the
+risk paths in `docs/agent/agent-roles.md` (billing, tenancy, auth, Stripe and
+webhooks, migrations, public routes, PII) also gets the **risk-reviewer**. The
+**vibesec** skill is an optional generic checklist (IDOR, XSS, CSRF, SSRF) on
+top; it does not replace either.
 
 ---
 
@@ -42,10 +40,8 @@ Before coding, read:
 
 1. `README.md`
 2. `DEPLOYMENT.md`
-3. `test_result.md`
-4. The relevant active ledger under `docs/test-results/active/`, if one exists.
-5. The focused rule file for the task.
-6. For architecture questions, see `docs/architecture/` — generated diagrams and written analysis live there (see `docs/architecture/generated/README.md` for the index).
+3. The focused rule file for the task.
+4. For architecture questions, see `docs/architecture/` — generated diagrams and written analysis live there (see `docs/architecture/generated/README.md` for the index).
 
 If the branch contains `docs/tickets/`, also read:
 
@@ -57,21 +53,21 @@ Do not treat `.claude/worktrees/*` as canonical project source unless the user e
 
 ---
 
-## Test Result Kickoff
+## Testing
 
 Use the maintained testing runbook: `docs/testing.md`.
 
-`test_result.md` is only an index. Detailed testing state lives in
-`docs/test-results/active/`. Create, update, verify, and close task ledgers with
-`scripts/dev/test_result.py`; do not manually restore the old global YAML
-ledger in `test_result.md`.
+The `test_result.md` / `docs/test-results/active/` ledger
+(`scripts/dev/test_result.py`) is optional: use it only when handing work to a
+separate testing agent that needs a shared written state. Day-to-day work
+records verification in the PR and final response instead.
 
 ---
 
 ## Project Context Docs
 
-- **PROJECT.md** (repo root) — architecture, data flow, design decisions, critical paths. Read before structural changes.
-- **GAPS.md** (repo root) — known weaknesses ordered by severity, each with a scoped fix. Check before "discovering" a bug.
+- **PROJECT.md** (repo root) — architecture, data flow, design decisions, critical paths. Read before structural changes. Last refreshed July 2026; verify against code.
+- **GAPS.md** (repo root) — known weaknesses ordered by severity, each with a scoped fix. Check before "discovering" a bug. Last refreshed July 2026; many items have since shipped.
 
 ---
 
@@ -86,6 +82,7 @@ ledger in `test_result.md`.
 | Production-scale local real-user audit | `docs/testing.md` and `docs/agent/testing-verification.md` |
 | Status handoff / agent loop / ticket updates | `docs/agent/feedback-loop.md` |
 | Drafting Codex prompts / goals / agent handoffs | `docs/agent/codex-prompting.md` |
+| Agent roles, routing, briefs, lead handoff | `docs/agent/agent-roles.md` |
 
 ---
 
@@ -94,7 +91,7 @@ ledger in `test_result.md`.
 Current production app:
 
 - Backend: FastAPI, Motor/PyMongo, MongoDB, Firebase Admin SDK, Stripe, Resend, APScheduler.
-- Frontend: Next.js 15 App Router, React 19, Tailwind, Firebase Web SDK, PWA.
+- Frontend: Next.js 16 App Router (OpenNext on Cloudflare Workers), React 19, Tailwind, Firebase Web SDK, PWA.
 - Auth: Firebase Authentication in production; legacy password auth can be disabled with `FIREBASE_AUTH_ENABLED=true`.
 - Deployment: Fly.io backend app `courtmastr-academy-api`; Cloudflare Worker frontend `academy-next`.
 - Local services: backend `http://127.0.0.1:8001`, frontend `http://localhost:3001`, MongoDB `mongodb://127.0.0.1:27017`, Firebase Auth emulator `http://127.0.0.1:9099`. Start everything with `scripts/local_test_stack.sh all`.
@@ -142,7 +139,6 @@ SaaS direction:
 - Follow DDD boundaries in `backend/v2`.
 - Keep BFF APIs persona-shaped, not generic CRUD.
 - Keep frontend presentation-focused; business truth belongs to backend.
-- Use `scripts/dev/test_result.py` before handing work to a testing agent.
 - Verify before claiming done.
 - Be honest about skipped checks and failures.
 
@@ -150,9 +146,7 @@ SaaS direction:
 
 ## Planning Rules
 
-For non-trivial work, create a short plan before editing.
-
-The plan must include:
+When the user asks for a plan, or the work is ticketed, the plan must include:
 
 1. Current behavior found.
 2. Files likely affected.
@@ -190,7 +184,7 @@ make up            # saas-up + seed + status   (wraps scripts/dev/saas_staging.s
 make saas-down / saas-reset / saas-nuke
 
 # Backend
-cd backend && pytest v2/tests -n auto -q            # the test suite (~3,600 tests, ~60s with -n auto)
+cd backend && pytest v2/tests -n auto -q            # the test suite (~8,500 tests; a few minutes with -n auto)
 cd backend && ruff check v2 && ruff format --check v2
 cd backend && PYTHONPATH=.. lint-imports --config pyproject.toml   # DDD boundary contracts (CI-blocking)
 
@@ -238,6 +232,15 @@ Run backend commands from `backend/` (or repo root with `PYTHONPATH=.`); modules
 - Scheduler, outbox dispatcher, and rate limiting assume a **single Fly machine**. Do not scale out without adding distributed locking.
 - Seeding is idempotent-by-count (skips if `academies` non-empty) — a partially seeded DB silently stays partial; use `saas-reset`.
 - `.worktrees/` and `.claude/worktrees/` are parallel in-flight branches — not canonical source.
+- `frontend` build MUST stay `next build --webpack`. Turbopack builds silently drop the Serwist service worker (no error, no `public/sw.js`). `dev` may use Turbopack.
+- Any `next` bump must bump `@opennextjs/cloudflare` in the same PR. e2e runs `next start`, never the Workers runtime; a mismatch 500'd every prod request on 2026-10-29 (#1086). CI now runs `scripts/smoke/worker_runtime_smoke.sh`.
+- A new `page.tsx`/`route.ts` under `frontend/app/` breaks four backend inventory tests. In the same commit: add the route to `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json`, bump the hardcoded route count in `test_inventory_control_evidence.py` and `test_inventory_acceptance_coverage.py`, and satisfy `scripts/dev/audit_inventory_static_gaps.py`. Check with `pytest v2/tests/unit/test_inventory_*.py v2/tests/unit/test_audit_inventory_manifest.py -q`.
+- Unique indexes on optional string fields that also serve lookups: use `partialFilterExpression={field: {"$gt": ""}}`, never `{"$type": "string"}` (the planner ignores `$type` partials for eq/`$in` lookups → COLLSCAN). Avoid `$or` across partial-indexed fields. `explain()` on a real mongod; mongomock evaluates neither partial filters nor plans, and ignores validators.
+- Test fakes for stores must copy the real store's refusals (insert-only writes raise on duplicate keys, audit appends dedup). Permissive fakes hid two P1 money bugs on #664.
+- Real-Mongo contract tests: never run two `pre-push-checks.sh` gates against one mongod (concurrent migration replays crash it). Push branches one at a time with `V2_MONGO_URL` set to your own mongod. Local Mongo is 7.0, prod and CI are 8.0.
+- A failing e2e spec is not "the known flake" until it passes alone on an idle machine.
+- A PR with zero CI checks usually has the wrong base or conflicts with `main` (`mergeable_state: dirty`); GitHub dispatches no workflows. Retarget or merge `origin/main`, then push.
+- Subagent `isolation: "worktree"` fails here (a local WorktreeCreate hook returns a non-path). Create worktrees by hand: `git worktree add -b <branch> <path> origin/main`, then `ln -sfn <repo>/backend/.venv <path>/backend/.venv`.
 
 ---
 
@@ -386,19 +389,18 @@ Use `docs/agent/feedback-loop.md`.
 
 Minimum loop:
 
-1. Read current status: `git status`, `test_result.md`, the relevant `docs/test-results/active/` ledger, and tickets if present.
+1. Read current status: `git status` and tickets if present.
 2. Implement the smallest coherent change.
-3. Use `scripts/dev/test_result.py log` or `verify` to record what changed and what needs retesting.
-4. Run focused verification.
-5. Record results and remaining risks.
-6. Update ticket checkboxes only when acceptance criteria are verified.
-7. Leave a handoff note if work is incomplete.
+3. Run focused verification.
+4. Record results and remaining risks.
+5. Update ticket checkboxes only when acceptance criteria are verified.
+6. Leave a handoff note if work is incomplete.
 
 ---
 
 ## Final Response Format
 
-Final response must include:
+Final response must cover, in prose (bullets only for genuine lists):
 
 1. What changed.
 2. Files changed.

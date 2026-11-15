@@ -18,5 +18,5 @@ if [ -z "${changed_files}" ]; then
 fi
 
 cat <<'EOF'
-Verification reminder: this repo expects final answers to state the exact checks run, results, skipped checks, and why. Update the active docs/test-results/active ledger when code or verification state changed.
+Verification reminder: this repo expects final answers to state the exact checks run, results, skipped checks, and why.
 EOF
