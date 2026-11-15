@@ -44,6 +44,8 @@ PARENT = "parent-1"
 PARENT_ALIAS = "fb-uid-parent-1"
 PARENT_EMAIL = "primary.parent@example.com"
 PAY_URL = "https://checkout.stripe.test/pay/abc"
+PAY_PAGE = "https://blno.example.test/parent/payments"
+PAY_LINK = f"{PAY_PAGE}?pay=inv-1"
 
 
 class _Sender:
@@ -131,6 +133,7 @@ def _adapter(db: Any, sender: _Sender) -> InvoiceEmailAdapter:
         academies=_Academies(),  # type: ignore[arg-type]
         sender=sender,
         contact_copies=build_invoice_contact_copies(db, sender=sender),
+        pay_page_url=PAY_PAGE,
     )
 
 
@@ -174,7 +177,10 @@ async def test_only_opted_in_contacts_get_a_copy_without_the_pay_link(real_db: A
 
     (parent_call,) = sender.to(PARENT_EMAIL)
     (copy_call,) = sender.to("second.parent@example.test")
-    assert PAY_URL in parent_call["body"]
+    # The email links to the app page (fresh checkout per click), never the raw Stripe URL.
+    assert PAY_LINK in parent_call["body"]
+    assert PAY_URL not in parent_call["body"]
+    assert PAY_LINK not in copy_call["body"]
     assert PAY_URL not in copy_call["body"]
     assert "payment link was sent to the family's primary email" in copy_call["body"]
     assert copy_call["subject"] == parent_call["subject"]

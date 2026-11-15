@@ -18136,6 +18136,11 @@ export interface components {
         };
         /** StartInvoicePaymentRequest */
         StartInvoicePaymentRequest: {
+            /**
+             * Bundle Student Balance
+             * @default false
+             */
+            bundle_student_balance: boolean;
             /** Cancel Url */
             cancel_url: string;
             /**
