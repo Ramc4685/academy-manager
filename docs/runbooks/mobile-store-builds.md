@@ -38,3 +38,30 @@ recorded anywhere. Find it (the Xcode Organizer archive date, matched against
 `git log -- mobile/`), then place `ios-build-5` on that commit. If it cannot be
 pinned down, tag the next upload instead and start the baseline there. No
 Android build has a tag yet either.
+
+## Building the Android release bundle
+
+Needs JDK 21 (`brew install openjdk@21`; Android Studio's bundled JDK 25 fails) and
+the Android SDK. One-time: create the upload key and keep it outside the repo, then
+copy `mobile/android/keystore.properties.example` to `keystore.properties` (gitignored)
+and fill it in. CI can pass `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` instead.
+
+```bash
+keytool -genkeypair -v -keystore ~/secure/courtmastr-upload.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Each upload:
+
+```bash
+cd mobile && pnpm sync:release
+cd android && JAVA_HOME=/opt/homebrew/opt/openjdk@21 ANDROID_HOME=~/Library/Android/sdk ./gradlew bundleRelease -PversionCode=<n> -PversionName=<x.y.z>
+```
+
+The bundle is `mobile/android/app/build/outputs/bundle/release/app-release.aab`.
+`versionCode` must be higher than every earlier upload (the first one can be 1).
+Check it is signed with `jarsigner -verify <aab>` ("jar verified"); without
+`keystore.properties` Gradle still builds, but unsigned, and Play rejects it.
+Run `pnpm sync` afterwards to point the local shell back at the dev server.
+Upload to Play Console > Test and release > Internal testing first, then tag
+`android-build-<versionCode>`.
