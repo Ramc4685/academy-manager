@@ -2,7 +2,7 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-## Repo root (`README.md`): 11 items, from `drift/_root.md`
+## Repo root (`README.md`): 14 items, from `drift/_root.md`
 - [stale-not-built] `edge/` Worker router listed but the directory is gone.
 - [contract] README says Next.js 15; `frontend/package.json` pins 16.4.1.
 - [stale-not-built] `scripts/` "importers" do not exist.
@@ -12,6 +12,9 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [missing] Rollback procedure not in DEPLOYMENT.md.
 - [wording] "Atomic invite acceptance" rollback only on admin user creation, not public parent registration.
 - [undocumented] Layout omits `mobile/`, `tests/`, `firebase-emulator/`.
+- [undocumented] Pipeline (README.md:86-97) omits the Migrate Production and Sentry Release jobs in `production.yml`.
+- [wording] README.md:90-91 understates what the Validate step covers.
+- [undocumented] README never mentions Dependabot or the workflows besides `production.yml`.
 
 ## `backend/v2/README.md`: 17 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
