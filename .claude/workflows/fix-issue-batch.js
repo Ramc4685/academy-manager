@@ -24,8 +24,16 @@ const isHeavy = (iss) => {
   return l.includes('P0') || l.includes('P1') || l.includes('security') ||
     l.some(x => ['domain:billing', 'domain:stripe', 'domain:auth', 'domain:tenant-ops'].includes(x))
 }
-const needsSecurityReview = (iss) => (iss.labels || []).some(x =>
-  ['security', 'domain:billing', 'domain:stripe', 'domain:auth', 'domain:tenant-ops'].includes(x))
+// Risk paths from docs/agent/agent-roles.md rule 1; a label alone misses an unlabelled issue that touches one.
+const RISK_PATHS = [
+  /^backend\/v2\/contexts\/billing\//, /^backend\/v2\/shared\/(tenancy|auth)\//, /load_auth_claims\.py$/,
+  /stripe/i, /webhook/i, /^frontend\/app\/api\/v2\//, /^backend\/v2\/main\.py$/, /^docs\/security-matrix\.md$/,
+  /migrations?\//, /^backend\/v2\/interfaces\/public\//, /^frontend\/app\/\(marketing\)\//,
+]
+const needsSecurityReview = (iss, diag, impl) =>
+  (iss.labels || []).some(x => ['security', 'domain:billing', 'domain:stripe', 'domain:auth', 'domain:tenant-ops'].includes(x)) ||
+  Boolean(diag && diag.needs_migration) ||
+  [...((diag && diag.files) || []), ...((impl && impl.files_changed) || [])].some(f => RISK_PATHS.some(re => re.test(f)))
 const touchesFrontend = (files) => (files || []).some(f => f.startsWith('frontend/'))
 
 // ---- schemas ---------------------------------------------------------------
@@ -211,6 +219,9 @@ const issueBy = Object.fromEntries(ISSUES.map(i => [i.number, i]))
 
 // Lane names become shell paths and branch names; drop any the planner got wrong.
 plan.lanes = plan.lanes.filter(l => /^[a-z0-9][a-z0-9-]{0,40}$/.test(l.name) || (log(`dropping lane with unsafe name: ${JSON.stringify(l.name)}`), false))
+// Lanes implement in parallel but ship one at a time: each ship runs the full suite and pre-push gate against
+// the shared mongod, and concurrent migration replays crash it (AGENTS.md, Gotchas).
+let shipTail = Promise.resolve()
 const laneResults = await parallel(plan.lanes.map(lane => async () => {
   const wtLine = await agent(setupPrompt(lane), { label: `setup:${lane.name}`, phase: 'Implement', model: 'sonnet', effort: 'low' })
   const wt = `${WT}/${BATCH}-${lane.name}`
@@ -219,6 +230,7 @@ const laneResults = await parallel(plan.lanes.map(lane => async () => {
   const impls = []
   const reviews = []
   const prior = []
+  let unshippable = ''
   for (const n of lane.issues) {
     const iss = issueBy[n]
     const diag = diagBy[n]
@@ -237,7 +249,7 @@ const laneResults = await parallel(plan.lanes.map(lane => async () => {
     prior.push(`#${n}`)
 
     // Review: correctness always; security lens when the domain warrants it.
-    const lenses = ['correctness'].concat(needsSecurityReview(iss) ? ['security'] : [])
+    const lenses = ['correctness'].concat(needsSecurityReview(iss, diag, impl) ? ['security'] : [])
     const revs = (await parallel(lenses.map(lens => () =>
       // The security lens takes risk-reviewer's pinned model; passing model here would override it.
       agent(reviewPrompt(iss, impl, wt, lens), lens === 'security'
@@ -249,14 +261,27 @@ const laneResults = await parallel(plan.lanes.map(lane => async () => {
     if (blocking.length) {
       fixup = await agent(fixerPrompt(iss, impl, { blocking }, wt), { label: `fixup:#${n}`, phase: 'Review', schema: IMPL, model: heavy ? 'opus' : 'sonnet', effort: 'medium' })
     }
-    impls.push(impl)
     reviews.push({ number: n, blocking, non_blocking: revs.flatMap(r => r.non_blocking), fixup })
+    // A missing review or an unfixed blocking finding stops the lane: the commit is already on the branch,
+    // so shipping later issues would ship this one too.
+    const why = revs.length < lenses.length ? 'a review agent returned nothing'
+      : blocking.length && !(fixup && fixup.status === 'done' && /^[0-9a-f]{7,40}$/.test(fixup.commit || '')) ? 'blocking review findings were not fixed'
+      : ''
+    if (why) {
+      impls.push({ ...impl, status: 'blocked', blocker: why })
+      unshippable = `#${n}: ${why}`
+      break
+    }
+    impls.push(impl)
   }
 
   const done = impls.filter(i => i.status === 'done')
+  if (unshippable) return { lane: lane.name, worktree: wt, impls, reviews, ship: { status: 'blocked', notes: unshippable } }
   if (!done.length) return { lane: lane.name, worktree: wt, impls, reviews, ship: { status: 'blocked', notes: 'nothing implemented' } }
   const frontendTouched = done.some(i => touchesFrontend(i.files_changed))
-  const ship = await agent(shipPrompt(lane, wt, done, frontendTouched), { label: `ship:${lane.name}`, phase: 'Ship', schema: SHIP, model: 'sonnet', effort: 'medium' })
+  const turn = shipTail.then(() => agent(shipPrompt(lane, wt, done, frontendTouched), { label: `ship:${lane.name}`, phase: 'Ship', schema: SHIP, model: 'sonnet', effort: 'medium' }))
+  shipTail = turn.catch(() => null)
+  const ship = await turn
   return { lane: lane.name, worktree: wt, impls, reviews, ship }
 }))
 
