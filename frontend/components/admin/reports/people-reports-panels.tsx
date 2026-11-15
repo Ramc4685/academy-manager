@@ -395,8 +395,8 @@ export function AttendanceRiskPanel() {
     <Card p={24} data-testid="people-report-attendance-risk">
       <Overline>Attendance risk by class and coach</Overline>
       <p className="mt-1 text-sm text-rally-subtle">
-        Students with no attendance in their class&apos;s last three class dates, the same rule
-        as the At risk tab on Students.
+        Students whose last two recorded classes were both absences, the same rule as the At
+        risk tab on Students.
       </p>
 
       {isError ? (

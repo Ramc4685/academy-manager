@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import PauseRequest
-from backend.v2.interfaces.admin.inbox_routes import DECISION_QUEUE_IDS
+from backend.v2.interfaces.admin.inbox_routes import INBOX_QUEUE_IDS
 
 
 def _pause(pause_request_id: str, status: str = "pending") -> PauseRequest:
@@ -33,7 +33,7 @@ def test_inbox_counts_returns_every_queue_even_when_empty(admin_client):
 
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(body["counts"]) == set(DECISION_QUEUE_IDS)
+    assert set(body["counts"]) == set(INBOX_QUEUE_IDS)
     assert body["total"] == 0
     assert body["unavailable"] == []
 

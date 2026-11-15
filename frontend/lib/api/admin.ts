@@ -285,24 +285,6 @@ export interface RemoveEnrollmentRequest {
   reason: string;
 }
 
-export interface EnrollmentEventView {
-  event_id: string;
-  event_type: string;
-  effective_date: string;
-  reason: string | null;
-  billing_policy: string | null;
-  billing_result: string | null;
-  credit_id: string | null;
-  refund_id: string | null;
-  metadata: Record<string, string>;
-}
-
-export interface EnrollmentEventsResponse {
-  enrollment_id: string;
-  events: EnrollmentEventView[];
-  next_cursor: string | null;
-}
-
 /**
  * X2: `offered` = a seat is being held for this family until
  * `offer_expires_at`; `expired` = they did not answer in time.
@@ -2170,20 +2152,6 @@ export function returnFromHold(
   });
 }
 
-export function listEnrollmentEvents(
-  enrollmentId: string,
-  params?: { limit?: number; cursor?: string }
-): Promise<EnrollmentEventsResponse> {
-  const query = new URLSearchParams();
-  if (params?.limit != null) query.set("limit", String(params.limit));
-  if (params?.cursor) query.set("cursor", params.cursor);
-  const qs = query.toString();
-  return apiFetch<EnrollmentEventsResponse>(
-    `/admin/enrollments/${enrollmentId}/events${qs ? `?${qs}` : ""}`,
-    { method: "GET" }
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Waitlist
 // ---------------------------------------------------------------------------
@@ -3119,9 +3087,9 @@ export function getInquiryConversion(range: {
 }
 
 /**
- * People reports (roadmap L5b): students whose lifecycle is at_risk (no
- * attendance in the last three class dates), by class and by the class's
- * coach. No money.
+ * People reports (roadmap L5b): students whose lifecycle is at_risk (their
+ * last two recorded marks on a live seat are both absences), by class and by
+ * the class's coach. No money.
  */
 export interface AdminClassRiskRow {
   session_id: string;

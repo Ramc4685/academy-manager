@@ -33,26 +33,16 @@ from backend.v2.shared.http import require_persona
 router = APIRouter(tags=["admin.inbox"])
 log = logging.getLogger(__name__)
 
-#: Queue ids, in the order the Inbox page renders its tabs. The frontend keys
-#: its `?tab=` values off exactly these strings, so renaming one is a route
-#: change, not a label change.
+#: Queues whose rows wait on an admin decision; these feed the badge. The
+#: frontend's `?tab=` values key off these strings (absences and
+#: cancellations are informational tabs with no count).
 INBOX_QUEUE_IDS: tuple[str, ...] = (
     "registrations",
     "waitlist",
     "level-ups",
     "makeups",
     "trials",
-    "absences",
-    "cancellations",
     "pauses",
-)
-
-#: Informational tabs: listed on the Inbox page, never counted.
-INFORMATIONAL_QUEUE_IDS: frozenset[str] = frozenset({"absences", "cancellations"})
-
-#: The queues whose rows wait on an admin decision; these feed the badge.
-DECISION_QUEUE_IDS: tuple[str, ...] = tuple(
-    queue for queue in INBOX_QUEUE_IDS if queue not in INFORMATIONAL_QUEUE_IDS
 )
 
 

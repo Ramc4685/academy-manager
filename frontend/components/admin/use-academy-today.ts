@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { getAdminAcademy } from "@/lib/api/admin";
-import { academyDateISO } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 
 /**
@@ -17,9 +16,4 @@ export function useAcademyTimezone(): string | null {
     staleTime: 5 * 60_000,
   });
   return data?.timezone ?? null;
-}
-
-/** Today ("YYYY-MM-DD") on the academy's clock: the default for admin date fields. */
-export function useAcademyToday(): string {
-  return academyDateISO(useAcademyTimezone());
 }
