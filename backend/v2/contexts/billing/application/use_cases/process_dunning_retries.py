@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -53,7 +54,7 @@ class DunningStateRepository(Protocol):
     async def prepare_due_states(self, *, now: datetime, limit: int) -> int: ...
 
     async def claim_next_due(
-        self, *, now: datetime, worker_id: str
+        self, *, now: datetime, worker_id: str, exclude_invoice_ids: Collection[str] = ()
     ) -> tuple[LedgerInvoice, DunningState] | None: ...
 
     async def finish_attempt(
@@ -189,32 +190,20 @@ class ProcessDunningRetries:
         await self._process_pending_autopay_disables(limit=limit, counts=counts, now=now)
 
         # Parking leaves next_attempt_at=None, and claim_next_due sorts on that column
-        # ascending — BSON puts Null before Date, so a state parked a moment ago is
-        # handed straight back ahead of the invoices that are genuinely due. Left alone,
-        # one parent mid-checkout would spend the whole tick being claimed and re-parked
-        # while real retries never got a turn. Re-park a repeat immediately (no charge
-        # call), and stop once every remaining candidate is one we already parked.
+        # ascending — BSON puts Null before Date, so a state parked this tick would be
+        # handed straight back ahead of every genuinely-due invoice. Exclude it from
+        # the rest of the tick instead: a counter-based "stop on repeats" guard ended
+        # the tick after ONE parked invoice and starved all due charges behind it
+        # (2026-11-08: three BLNO autopay charges never ran for six days).
         parked_this_tick: dict[str, str] = {}
-        repeat_claims = 0
 
         for _ in range(limit):
-            claimed = await self._dunning.claim_next_due(now=now, worker_id=worker_id)
+            claimed = await self._dunning.claim_next_due(
+                now=now, worker_id=worker_id, exclude_invoice_ids=parked_this_tick.keys()
+            )
             if claimed is None:
                 break
             invoice, state = claimed
-
-            previous_reason = parked_this_tick.get(invoice.invoice_id)
-            if previous_reason is not None:
-                await self._dunning.park_attempt(
-                    state=state,
-                    reason=previous_reason,
-                    now=now,
-                )
-                repeat_claims += 1
-                if repeat_claims >= len(parked_this_tick):
-                    break
-                continue
-            repeat_claims = 0
 
             counts["processed"] += 1
 
