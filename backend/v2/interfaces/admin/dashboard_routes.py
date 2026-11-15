@@ -120,6 +120,24 @@ async def dashboard_attention(
             )
         )
 
+    stuck = int(dunning_alerts.get("autopay_stuck") or 0)
+    if stuck:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="autopay-stuck",
+                kind="autopay_stuck",
+                title="Autopay stuck",
+                detail=(
+                    f"{stuck} famil{'ies' if stuck != 1 else 'y'} could not be charged because "
+                    "of a problem on our side, not the card. Nothing was charged; "
+                    "the operator has been alerted."
+                ),
+                severity="high",
+                href="/admin/payments",
+                count=stuck,
+            )
+        )
+
     stuck_actions_reader = getattr(use_cases, "list_stuck_scheduled_actions", None)
 
     # Fan out all independent data fetches concurrently.

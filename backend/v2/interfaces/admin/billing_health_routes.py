@@ -85,6 +85,11 @@ class ConnectedAccountReadinessDto(BaseModel):
     payouts_enabled: bool = False
     ready_for_charges: bool = False
     account_id_masked: str | None = None
+    #: Direct charges need Stripe to collect fees and carry losses (#980).
+    direct_charges_supported: bool = False
+    fees_collector: str | None = None
+    losses_collector: str | None = None
+    dashboard: str | None = None
 
 
 class WebhookBacklogDto(BaseModel):
@@ -159,6 +164,26 @@ class OpenDisputesDto(BaseModel):
     truncated: bool = False
 
 
+class RefundFailureDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    refund_id: str
+    payment_id: str
+    parent_id: str = ""
+    amount_cents: int = 0
+    currency: str = "usd"
+    reason: str = "unknown"
+    failed_at: datetime | None = None
+
+
+class RefundFailuresDto(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    count: int = 0
+    rows: list[RefundFailureDto] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class ConnectReadinessResponse(BaseModel):
     model_config = {"extra": "ignore"}
 
@@ -171,11 +196,15 @@ class ConnectReadinessResponse(BaseModel):
     #: `payments_possible` is True means money is landing on the platform
     #: account through the fallback.
     funds_route_to_academy: bool = False
+    #: Why parents cannot pay right now (None when they can).
+    payments_blocked_reason: str | None = None
     webhook_events: WebhookBacklogDto
     autopay_disable_failures: AutopayDisableFailuresDto = Field(
         default_factory=AutopayDisableFailuresDto
     )
     disputes: OpenDisputesDto = Field(default_factory=OpenDisputesDto)
+    #: Refunds Stripe could not deliver; the parent has not been paid back.
+    refund_failures: RefundFailuresDto = Field(default_factory=RefundFailuresDto)
     health: BillingHealthDto
 
 

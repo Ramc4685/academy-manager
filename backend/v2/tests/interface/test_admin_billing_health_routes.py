@@ -247,6 +247,44 @@ def test_connect_readiness_carries_the_switch_off_failures(
     assert body["autopay_disable_failures"]["rows"][0]["parent_id"] == "parent-9"
 
 
+def test_connect_readiness_carries_blocked_reason_disputes_and_liability(
+    owner: TestClient, services: FakeBillingHealth
+) -> None:
+    """Issue #980: the composer already returns these; the DTO used to drop them."""
+    services.readiness = {
+        **_READINESS,
+        "connected_account": {
+            **_READINESS["connected_account"],
+            "direct_charges_supported": False,
+            "fees_collector": "application",
+            "losses_collector": "application",
+            "dashboard": "express",
+        },
+        "payments_blocked_reason": "Reconnect Stripe to accept payments.",
+        "disputes": {
+            "count": 1,
+            "rows": [
+                {
+                    "dispute_id": "dp_1",
+                    "payment_id": "pay-1",
+                    "amount_cents": 15000,
+                    "reason": "fraudulent",
+                    "status": "needs_response",
+                }
+            ],
+            "truncated": False,
+        },
+    }
+
+    body = owner.get("/api/v2/admin/billing/connect-readiness").json()
+
+    assert body["payments_blocked_reason"] == "Reconnect Stripe to accept payments."
+    assert body["connected_account"]["direct_charges_supported"] is False
+    assert body["connected_account"]["losses_collector"] == "application"
+    assert body["connected_account"]["fees_collector"] == "application"
+    assert body["disputes"]["rows"][0]["dispute_id"] == "dp_1"
+
+
 def test_connect_readiness_503s_when_not_composed(services: FakeBillingHealth) -> None:
     services.get_connect_readiness = None  # type: ignore[assignment]
     with TestClient(_make_app("owner", services)) as client:

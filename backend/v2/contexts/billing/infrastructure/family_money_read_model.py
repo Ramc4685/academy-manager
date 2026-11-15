@@ -36,6 +36,7 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    academy_card_route,
 )
 
 #: Invoice fields that may hold the family's parent reference, in preference order.
@@ -119,12 +120,16 @@ class MongoFamilyMoneyReadModel:
 
         has_card: dict[str, bool] = {}
         invited: dict[str, datetime] = {}
+        route = await academy_card_route(self._db) if customers else None
         for doc in customers:
             family = family_by_alias.get(str(doc.get("parent_id") or ""))
             if family is None:
                 continue
             label, last4 = MongoParentBillingCustomerRepository.display_payment_method(doc)
-            has_card[family] = has_card.get(family, False) or (label, last4) != (None, None)
+            counts = MongoParentBillingCustomerRepository.card_counts(doc, route)
+            has_card[family] = has_card.get(family, False) or (
+                counts and (label, last4) != (None, None)
+            )
             at = _to_utc(doc.get("billing_setup_last_invited_at"))
             if at is not None and (family not in invited or at > invited[family]):
                 invited[family] = at
@@ -172,6 +177,10 @@ class MongoFamilyMoneyReadModel:
                 "primary_payment_method_last4": 1,
                 "autopay_payment_methods": 1,
                 "billing_setup_last_invited_at": 1,
+                "stripe_account_id": 1,
+                "blocked_payment_method_id": 1,
+                "default_payment_method_id": 1,
+                "primary_payment_method_id": 1,
             },
         )
         return [doc async for doc in cursor]

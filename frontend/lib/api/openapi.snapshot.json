@@ -835,6 +835,7 @@
               "overdue_dues",
               "autopay_failure",
               "dunning_exhaustion",
+              "autopay_stuck",
               "pause_requests",
               "scheduled_resume_blocked",
               "scheduled_action_failed",
@@ -14106,10 +14107,24 @@
           "health": {
             "$ref": "#/components/schemas/BillingHealthDto"
           },
+          "payments_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payments Blocked Reason"
+          },
           "payments_possible": {
             "default": false,
             "title": "Payments Possible",
             "type": "boolean"
+          },
+          "refund_failures": {
+            "$ref": "#/components/schemas/RefundFailuresDto"
           },
           "webhook_events": {
             "$ref": "#/components/schemas/WebhookBacklogDto"
@@ -14145,6 +14160,44 @@
             "default": false,
             "title": "Configured",
             "type": "boolean"
+          },
+          "dashboard": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dashboard"
+          },
+          "direct_charges_supported": {
+            "default": false,
+            "title": "Direct Charges Supported",
+            "type": "boolean"
+          },
+          "fees_collector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees Collector"
+          },
+          "losses_collector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Losses Collector"
           },
           "payouts_enabled": {
             "default": false,
@@ -15659,6 +15712,29 @@
               }
             ],
             "title": "Parent Name"
+          },
+          "parked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked Reason"
+          },
+          "parked_since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked Since"
           },
           "period": {
             "title": "Period",
@@ -27985,6 +28061,79 @@
           "level_id"
         ],
         "title": "RecordTestBody",
+        "type": "object"
+      },
+      "RefundFailureDto": {
+        "properties": {
+          "amount_cents": {
+            "default": 0,
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "currency": {
+            "default": "usd",
+            "title": "Currency",
+            "type": "string"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "parent_id": {
+            "default": "",
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "payment_id": {
+            "title": "Payment Id",
+            "type": "string"
+          },
+          "reason": {
+            "default": "unknown",
+            "title": "Reason",
+            "type": "string"
+          },
+          "refund_id": {
+            "title": "Refund Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refund_id",
+          "payment_id"
+        ],
+        "title": "RefundFailureDto",
+        "type": "object"
+      },
+      "RefundFailuresDto": {
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RefundFailureDto"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "RefundFailuresDto",
         "type": "object"
       },
       "RegisterDeviceRequest": {

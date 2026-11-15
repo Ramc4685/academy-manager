@@ -50,6 +50,7 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import session_amount_cents
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    academy_card_route,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.shared.tenancy import current_academy_id
@@ -1017,6 +1018,10 @@ class MongoFamilyBillingReadModel:
                 last_invited_at=None,
                 has_login_account=has_login,
             )
+        if not MongoParentBillingCustomerRepository.card_counts(
+            doc, await academy_card_route(self._db)
+        ):
+            doc = {}  # #981: a card autopay cannot charge is no card on file
         label, last4 = MongoParentBillingCustomerRepository.display_payment_method(doc)
         return CustomerFacts(
             has_card=(label, last4) != (None, None),

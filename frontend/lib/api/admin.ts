@@ -1372,6 +1372,7 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "autopay_failure"
   | "dunning_exhaustion"
+  | "autopay_stuck"
   | "pause_requests"
   | "scheduled_resume_blocked"
   | "scheduled_action_failed"
@@ -2399,6 +2400,10 @@ export interface ConnectedAccountReadiness {
   payouts_enabled: boolean;
   ready_for_charges: boolean;
   account_id_masked: string | null;
+  /** Direct charges need Stripe to collect fees and carry losses (#980). */
+  direct_charges_supported?: boolean;
+  fees_collector?: string | null;
+  losses_collector?: string | null;
 }
 
 export interface ConnectReadiness {
@@ -2411,6 +2416,8 @@ export interface ConnectReadiness {
    * platform account through the fallback, not the academy's own.
    */
   funds_route_to_academy: boolean;
+  /** Why parents cannot pay right now (null when they can). */
+  payments_blocked_reason?: string | null;
   webhook_events: { quarantined: number; failed: number };
   /**
    * The one health verdict, composed on the backend (billing-health trim spec
@@ -2420,6 +2427,43 @@ export interface ConnectReadiness {
    */
   health: BillingHealthVerdict;
   autopay_disable_failures: AutopayDisableFailures;
+  disputes?: OpenDisputes;
+  /** Refunds Stripe could not deliver: the parent has not been paid back. */
+  refund_failures?: RefundFailures;
+}
+
+export interface RefundFailure {
+  refund_id: string;
+  payment_id: string;
+  parent_id: string;
+  amount_cents: number;
+  currency: string;
+  reason: string;
+  failed_at: string | null;
+}
+
+export interface RefundFailures {
+  count: number;
+  rows: RefundFailure[];
+  truncated: boolean;
+}
+
+export interface OpenDispute {
+  dispute_id: string;
+  payment_id: string | null;
+  amount_cents: number;
+  currency: string;
+  reason: string;
+  status: string;
+  evidence_due_by: string | null;
+  opened_at: string | null;
+}
+
+/** Open Stripe disputes (chargebacks); answered in the academy's Stripe dashboard. */
+export interface OpenDisputes {
+  count: number;
+  rows: OpenDispute[];
+  truncated: boolean;
 }
 
 export type BillingHealthState = "blocked" | "attention" | "ok";
@@ -2506,6 +2550,9 @@ export interface DunningRow {
   autopay_disabled_at: string | null;
   balance_due_cents: number;
   currency: string;
+  /** Why the ladder is parked on our side, and since when (null when not parked). */
+  parked_reason?: string | null;
+  parked_since?: string | null;
 }
 
 export interface DunningResponse {

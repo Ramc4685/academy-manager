@@ -193,3 +193,17 @@ def test_no_dunning_alerts_means_no_autopay_cards(admin_client):
     ids = {item["attention_id"] for item in r.json()["items"]}
     assert "autopay-failure" not in ids
     assert "dunning-exhaustion" not in ids
+    assert "autopay-stuck" not in ids
+
+
+def test_autopay_stuck_on_our_side_reaches_the_owner(admin_client):
+    """L1 A7-1: a ladder parked before any decline spends no attempt, so the
+    #774 counts never showed it."""
+    admin_client.seed["dunning_alerts"] = {"autopay_stuck": 3}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = {item["attention_id"]: item for item in r.json()["items"]}
+    assert items["autopay-stuck"]["count"] == 3
+    assert "not the card" in items["autopay-stuck"]["detail"]

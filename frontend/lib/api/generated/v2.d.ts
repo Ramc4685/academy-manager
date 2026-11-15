@@ -7696,7 +7696,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
+            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
             /**
              * Severity
              * @enum {string}
@@ -12494,11 +12494,14 @@ export interface components {
              */
             funds_route_to_academy: boolean;
             health: components["schemas"]["BillingHealthDto"];
+            /** Payments Blocked Reason */
+            payments_blocked_reason?: string | null;
             /**
              * Payments Possible
              * @default false
              */
             payments_possible: boolean;
+            refund_failures?: components["schemas"]["RefundFailuresDto"];
             webhook_events: components["schemas"]["WebhookBacklogDto"];
         };
         /** ConnectedAccountReadinessDto */
@@ -12515,6 +12518,17 @@ export interface components {
              * @default false
              */
             configured: boolean;
+            /** Dashboard */
+            dashboard?: string | null;
+            /**
+             * Direct Charges Supported
+             * @default false
+             */
+            direct_charges_supported: boolean;
+            /** Fees Collector */
+            fees_collector?: string | null;
+            /** Losses Collector */
+            losses_collector?: string | null;
             /**
              * Payouts Enabled
              * @default false
@@ -13020,6 +13034,10 @@ export interface components {
             parent_id: string;
             /** Parent Name */
             parent_name?: string | null;
+            /** Parked Reason */
+            parked_reason?: string | null;
+            /** Parked Since */
+            parked_since?: string | null;
             /** Period */
             period: string;
             /** Status */
@@ -17378,6 +17396,50 @@ export interface components {
              * @default 0
              */
             success_count: number;
+        };
+        /** RefundFailureDto */
+        RefundFailureDto: {
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /** Failed At */
+            failed_at?: string | null;
+            /**
+             * Parent Id
+             * @default
+             */
+            parent_id: string;
+            /** Payment Id */
+            payment_id: string;
+            /**
+             * Reason
+             * @default unknown
+             */
+            reason: string;
+            /** Refund Id */
+            refund_id: string;
+        };
+        /** RefundFailuresDto */
+        RefundFailuresDto: {
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+            /** Rows */
+            rows?: components["schemas"]["RefundFailureDto"][];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** RegisterDeviceRequest */
         RegisterDeviceRequest: {

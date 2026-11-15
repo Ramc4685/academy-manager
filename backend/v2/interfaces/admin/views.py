@@ -1781,6 +1781,7 @@ AdminAttentionKind = Literal[
     # reached the parent — a decline mid-ladder, and a ladder that gave up.
     "autopay_failure",
     "dunning_exhaustion",
+    "autopay_stuck",
     "pause_requests",
     "scheduled_resume_blocked",
     "scheduled_action_failed",

@@ -156,6 +156,12 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             disputes = {"count": 0, "rows": [], "truncated": False}
             unavailable.append(CHECK_DISPUTES)
 
+        try:
+            refund_failures = await billing_ledger_repo.list_refund_failures()
+        except Exception:
+            log.warning("connect_readiness_refund_failures_failed", exc_info=True)
+            refund_failures = {"count": 0, "rows": [], "truncated": False}
+
         ready = bool(account and account.is_ready_for_charges())
         # Same routing rule the charge paths use (domain/charge_route.py): the
         # house academy charges on the platform; anyone else needs a ready
@@ -211,6 +217,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
             "webhook_events": stuck,
             "autopay_disable_failures": disable_failures,
             "disputes": disputes,
+            "refund_failures": refund_failures,
             "health": verdict.as_dict(),
         }
 

@@ -25,7 +25,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [contract] README:42 says import-linter enforces six layer rules; `pyproject.toml` has five forbidden contracts plus `composition-is-outermost`, and the no-cross-context and tenancy rules are pytest checks.
 - [wording] README:12 and :46 omit the ai, communications, crm, curriculum, finance, onboarding, platform and student_progress contexts.
 
-## `frontend/README.md`: 16 items, from `drift/frontend.md`
+## `frontend/README.md`: 18 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
 - [stale-not-built] `public/splash/` (and the 180 icon) do not exist.
 - [stale-not-built] No workflow runs size-limit or lhci.
@@ -42,11 +42,14 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Audit runs via `scripts/ci/dependency_audit.sh` (soft-fails on unreachable registry).
 - [wording] Public landing is `app/page.tsx`, not under `(marketing)`.
 - [wording] `pnpm typecheck` runs `next typegen && tsc --noEmit`.
+- [undocumented] Billing Health page gained open-disputes, refund-failures and direct-charge cards; README does not describe the billing-health surface.
+- [undocumented] Billing rules form accepts negative reminder offsets (`lib/billing-rules-form.ts` `inputToDays`).
 
-## `frontend/lib/api/README.md`: 7 items, from `drift/frontend__lib__api.md`
+## `frontend/lib/api/README.md`: 8 items, from `drift/frontend__lib__api.md`
 - [stale-not-built] README says `generated/` holds only `.gitkeep`; `v2.d.ts` and `openapi.snapshot.json` are committed.
 - [stale-not-built] CI "Skipping drift check" path no longer exists; drift check is unconditional.
 - [contract] `pnpm generate:api` reads the committed snapshot, not the running app; the pytest `UPDATE_OPENAPI_SNAPSHOT=1` step is omitted.
 - [undocumented] `apiFetchBlob`, Sentry failure capture, BFF/X-Academy-Id headers, 20s timeout in `client.ts`.
 - [undocumented] Eight `admin-*` modules, twelve top-level modules, six `v2/` modules not listed.
 - [wording] "When generated types are reintroduced": they already are.
+- [undocumented] New `admin.ts` types (refund failures, open disputes, dunning parked fields, `autopay_stuck` attention kind) not described.
