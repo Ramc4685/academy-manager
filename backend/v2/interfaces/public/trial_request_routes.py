@@ -257,6 +257,7 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
         booking = None
         contact = result.contact
         if date is not None:
+            assert contact.email is not None  # the public form requires an email
             booked = await deps.book_trial.execute(
                 BookTrialGuestCommand(
                     academy_id=academy_id,
