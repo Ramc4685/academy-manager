@@ -17,6 +17,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from backend.v2.migrations.runner import run_all_migrations
 
+# Three full replays: ~40s alone, past the global 120s cap under full-suite load.
+pytestmark = pytest.mark.timeout(300)
+
 
 async def _indexes(db) -> dict[str, dict]:
     return {

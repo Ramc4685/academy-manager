@@ -422,6 +422,8 @@ class AdminSessionView(BaseModel):
     arrival_minutes_before: int | None = None
     coach_contact_policy: str | None = None
     absence_policy: str | None = None
+    # Set only by the all-classes list (``window=all``), on the academy's clock.
+    phase: Literal["active", "upcoming", "ended"] | None = None
 
 
 class AdminSessionList(BaseModel):
@@ -663,6 +665,10 @@ class AdminEnrollmentView(BaseModel):
     pathway_completion_percentage: int = 0
     pathway_next_action: str = "place_in_level"
     dues_status: Literal["current", "due", "overdue"] = "current"
+    #: Latest lifecycle event on this seat (L2 A0-12), so the roster needs no
+    #: per-row history request. None when the seat has no events.
+    latest_event_type: str | None = None
+    latest_event_date: str | None = None
 
 
 class AdminEnrollmentList(BaseModel):
@@ -1800,8 +1806,16 @@ class AdminAttentionItemView(BaseModel):
     count: int = 1
 
 
+class AdminAttentionUnavailableView(BaseModel):
+    """An attention source that could not be read: unknown, not "nothing"."""
+
+    source: str
+    label: str
+
+
 class AdminAttentionList(BaseModel):
     items: list[AdminAttentionItemView]
+    unavailable: list[AdminAttentionUnavailableView] = []
 
 
 class BroadcastRequest(BaseModel):

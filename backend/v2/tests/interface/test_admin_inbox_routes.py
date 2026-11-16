@@ -35,6 +35,7 @@ def test_inbox_counts_returns_every_queue_even_when_empty(admin_client):
     body = r.json()
     assert set(body["counts"]) == set(INBOX_QUEUE_IDS)
     assert body["total"] == 0
+    assert body["unavailable"] == []
 
 
 def test_inbox_counts_returns_per_queue_pending_counts(admin_client):
@@ -63,7 +64,8 @@ def test_inbox_counts_returns_per_queue_pending_counts(admin_client):
     )
 
 
-def test_inbox_counts_degrade_to_zero_when_one_queue_is_unreadable(admin_client):
+def test_inbox_counts_flag_an_unreadable_queue_instead_of_reading_zero(admin_client):
+    """L2 A0-5: a broken reader must say "unavailable", never a silent 0."""
     admin_client.use_cases.admin_registration_review.list_pending = AsyncMock(
         side_effect=RuntimeError("registration store down")
     )
@@ -72,9 +74,29 @@ def test_inbox_counts_degrade_to_zero_when_one_queue_is_unreadable(admin_client)
     r = admin_client.get("/api/v2/admin/inbox/counts")
 
     assert r.status_code == 200, r.text
-    counts = r.json()["counts"]
-    assert counts["registrations"] == 0
-    assert counts["pauses"] == 1
+    body = r.json()
+    assert "registrations" not in body["counts"]
+    assert body["unavailable"] == ["registrations"]
+    assert body["counts"]["pauses"] == 1
+    assert body["total"] == 1
+
+
+def test_inbox_badge_ignores_informational_absences_and_cancellations(admin_client):
+    """L2 A0-4: absence notices and parent cancellations need no admin decision,
+    so they stay in their tabs as history but never feed the badge."""
+    admin_client.use_cases.admin_registration_review.list_pending = AsyncMock(return_value=[])
+    for attribute in ("list_absences_for_admin", "list_self_cancellations_for_admin"):
+        reader = AsyncMock()
+        reader.execute = AsyncMock(return_value=[object()] * 40)
+        setattr(admin_client.use_cases, attribute, reader)
+
+    r = admin_client.get("/api/v2/admin/inbox/counts")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "absences" not in body["counts"]
+    assert "cancellations" not in body["counts"]
+    assert body["total"] == 0
 
 
 def test_inbox_counts_are_admin_only(coach_on_admin_client):

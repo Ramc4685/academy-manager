@@ -53,6 +53,8 @@ import {
   type EnrolledSessionActionKey,
 } from "./session-rows";
 import { StatusChip } from "./StatusChip";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO } from "@/lib/format/academy-time";
 
 const DISCOUNT_CATEGORIES: { value: TuitionDiscountCategory; label: string }[] = [
   { value: "owner_child", label: "Owner child" },
@@ -86,6 +88,7 @@ function SessionsPanel({
   studentName: string;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
+  const timezone = useAcademyTimezone();
   const billingHref = familyBillingHref(parentId);
   const isOwner = useIsOwner();
   // #865: one layout at a time, like every other admin list since #847.
@@ -101,7 +104,7 @@ function SessionsPanel({
   const [overrideAmount, setOverrideAmount] = useState("");
   const [targetSessionId, setTargetSessionId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(() =>
-    new Date().toISOString().slice(0, 10),
+    academyDateISO(timezone),
   );
   const [reason, setReason] = useState("");
 
@@ -115,7 +118,7 @@ function SessionsPanel({
     useState<TuitionDiscountKind>("waiver");
   const [discountValue, setDiscountValue] = useState("");
   const [discountStart, setDiscountStart] = useState(() =>
-    new Date().toISOString().slice(0, 10),
+    academyDateISO(timezone),
   );
   const [discountNote, setDiscountNote] = useState("");
 
@@ -253,7 +256,7 @@ function SessionsPanel({
         setMoving(session);
         setTargetSessionId("");
         setReason("");
-        setEffectiveDate(new Date().toISOString().slice(0, 10));
+        setEffectiveDate(academyDateISO(timezone));
         return;
       case "fee":
         setBillingOverride(session);
@@ -268,7 +271,7 @@ function SessionsPanel({
         setDiscountLabel(d?.category_label ?? "");
         setDiscountKind(d?.kind ?? "waiver");
         setDiscountValue("");
-        setDiscountStart(d?.effective_start ?? new Date().toISOString().slice(0, 10));
+        setDiscountStart(d?.effective_start ?? academyDateISO(timezone));
         setDiscountNote("");
         return;
       }

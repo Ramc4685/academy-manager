@@ -132,3 +132,10 @@ class AdminCollectionsView(_View):
     totals: AdminCollectionsTotals
     buckets: list[AdminCollectionsBucket]
     unclassified: list[dict[str, Any]] | None = None
+
+
+class AdminOverdueFamiliesView(_View):
+    """Academy-wide family counts across every billing period (L2 B2)."""
+
+    past_due_count: int
+    needs_action_count: int

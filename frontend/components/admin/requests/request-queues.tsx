@@ -22,7 +22,6 @@ import {
   listAdminCancellations,
   listAdminMakeups,
   listAdminSessions,
-  listAdminStudents,
   listAdminTrials,
   listSessionOccurrences,
   recordAdminAbsence,
@@ -39,6 +38,7 @@ import { formatPlainDateRange } from "@/lib/format/plain-date";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { StudentSearchPicker } from "@/components/admin/student-search-picker";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { Modal } from "@/components/ds/modal";
@@ -1014,10 +1014,6 @@ function RecordAbsenceDialog({
   const [occurrenceId, setOccurrenceId] = useState("");
   const [countsTowardMakeup, setCountsTowardMakeup] = useState(true);
 
-  const studentsQuery = useQuery({
-    queryKey: queryKeys.admin.students(),
-    queryFn: listAdminStudents,
-  });
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions("upcoming"),
     queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
@@ -1028,7 +1024,6 @@ function RecordAbsenceDialog({
     enabled: sessionId !== "",
   });
 
-  const students = studentsQuery.data?.students ?? [];
   const sessions = sessionsQuery.data?.sessions ?? [];
   // Newest first: an admin recording a phone call is usually looking for a
   // date that has just passed.
@@ -1046,26 +1041,12 @@ function RecordAbsenceDialog({
       </p>
       <label className="block text-xs font-semibold text-rally-muted">
         Student
-        <select
-          className={selectClass}
+        <StudentSearchPicker
           value={studentId}
-          onChange={(e) => setStudentId(e.target.value)}
-          disabled={studentsQuery.isLoading}
-          data-testid="record-absence-student-select"
-        >
-          <option value="">
-            {studentsQuery.isLoading
-              ? "Loading students…"
-              : students.length === 0
-                ? "No students found"
-                : "Select a student"}
-          </option>
-          {students.map((s) => (
-            <option key={s.student_id} value={s.student_id}>
-              {s.full_name}
-            </option>
-          ))}
-        </select>
+          onChange={(student) => setStudentId(student.student_id)}
+          selectClassName={selectClass}
+          testId="record-absence-student-select"
+        />
       </label>
       <label className="block text-xs font-semibold text-rally-muted">
         Class
@@ -1128,7 +1109,7 @@ function RecordAbsenceDialog({
         />
         Counts toward a make-up
       </label>
-      {(studentsQuery.isError || sessionsQuery.isError || occurrencesQuery.isError) && (
+      {(sessionsQuery.isError || occurrencesQuery.isError) && (
         <p className="text-xs text-red-700">Could not load the pickers; try again.</p>
       )}
       {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}

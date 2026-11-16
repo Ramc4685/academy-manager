@@ -878,12 +878,39 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "unavailable": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AdminAttentionUnavailableView"
+            },
+            "title": "Unavailable",
+            "type": "array"
           }
         },
         "required": [
           "items"
         ],
         "title": "AdminAttentionList",
+        "type": "object"
+      },
+      "AdminAttentionUnavailableView": {
+        "description": "An attention source that could not be read: unknown, not \"nothing\".",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "label"
+        ],
+        "title": "AdminAttentionUnavailableView",
         "type": "object"
       },
       "AdminAuditLogList": {
@@ -2136,6 +2163,28 @@
             "title": "Full Name",
             "type": "string"
           },
+          "latest_event_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Event Date"
+          },
+          "latest_event_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Event Type"
+          },
           "level": {
             "anyOf": [
               {
@@ -3100,7 +3149,7 @@
         "type": "object"
       },
       "AdminInboxCountsView": {
-        "description": "How many rows each inbox queue is holding for a human right now.",
+        "description": "How many rows each decision queue is holding for a human right now.\n\nA queue whose count could not be read is absent from ``counts`` and named\nin ``unavailable`` so the page can say so instead of showing zero.",
         "properties": {
           "counts": {
             "additionalProperties": {
@@ -3112,6 +3161,14 @@
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "unavailable": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable",
+            "type": "array"
           }
         },
         "required": [
@@ -3841,6 +3898,25 @@
           "coach_id"
         ],
         "title": "AdminOccurrenceTeachingPlanResponse",
+        "type": "object"
+      },
+      "AdminOverdueFamiliesView": {
+        "description": "Academy-wide family counts across every billing period (L2 B2).",
+        "properties": {
+          "needs_action_count": {
+            "title": "Needs Action Count",
+            "type": "integer"
+          },
+          "past_due_count": {
+            "title": "Past Due Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "past_due_count",
+          "needs_action_count"
+        ],
+        "title": "AdminOverdueFamiliesView",
         "type": "object"
       },
       "AdminPauseRequestList": {
@@ -6650,6 +6726,22 @@
               }
             ],
             "title": "Parking Notes"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "upcoming",
+                  "ended"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
           },
           "session_id": {
             "title": "Session Id",
@@ -37403,7 +37495,7 @@
     },
     "/api/v2/admin/dashboard/attention": {
       "get": {
-        "description": "Aggregate dashboard attention signals from existing admin BFF sources.",
+        "description": "Aggregate dashboard attention signals from existing admin BFF sources.\n\nA source that fails is named in ``unavailable`` (owner rule: a count that\nfails to load is \"unavailable\", never a silent 0).",
         "operationId": "dashboard_attention_api_v2_admin_dashboard_attention_get",
         "responses": {
           "200": {
@@ -40856,6 +40948,28 @@
         "summary": "Last Payment By Family",
         "tags": [
           "admin.billing"
+        ]
+      }
+    },
+    "/api/v2/admin/payments/overdue-families": {
+      "get": {
+        "description": "Families past due (no autopay cover) and needing action, in ANY period.",
+        "operationId": "payments_overdue_families_api_v2_admin_payments_overdue_families_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverdueFamiliesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Payments Overdue Families",
+        "tags": [
+          "admin.collections"
         ]
       }
     },
@@ -44692,7 +44806,7 @@
             }
           },
           {
-            "description": "Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+            "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed.",
             "in": "query",
             "name": "window",
             "required": false,
@@ -44705,7 +44819,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+              "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed.",
               "title": "Window"
             }
           },

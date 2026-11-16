@@ -20,6 +20,8 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO } from "@/lib/format/academy-time";
 
 const CATEGORIES: CreateExpenseRequest["category"][] = [
   "rent",
@@ -225,10 +227,11 @@ function EditExpenseDialog({
   onOpenChange: (value: boolean) => void;
   onSaved: () => void;
 }) {
+  const timezone = useAcademyTimezone();
   const [category, setCategory] = useState<CreateExpenseRequest["category"]>("equipment");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
-  const [incurredOn, setIncurredOn] = useState(new Date().toISOString().slice(0, 10));
+  const [incurredOn, setIncurredOn] = useState(academyDateISO(timezone));
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const open = expense !== null;
@@ -466,10 +469,11 @@ function AddExpenseDialog({
   onOpenChange: (value: boolean) => void;
   onAdded: () => void;
 }) {
+  const timezone = useAcademyTimezone();
   const [category, setCategory] = useState<CreateExpenseRequest["category"]>("equipment");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
-  const [incurredOn, setIncurredOn] = useState(new Date().toISOString().slice(0, 10));
+  const [incurredOn, setIncurredOn] = useState(academyDateISO(timezone));
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: (payload: CreateExpenseRequest) => createExpense(payload),

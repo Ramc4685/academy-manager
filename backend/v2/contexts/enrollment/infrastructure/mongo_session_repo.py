@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -236,6 +236,25 @@ def synthesize_recurring_session_docs(
                 break
             current_date += timedelta(days=1)
     return rows
+
+
+def session_phase(doc: dict[str, Any], today: date, zone: tzinfo) -> str:
+    """Where a class sits in its life on the academy's ``today``.
+
+    Recurring classes read their ``start_date``/``end_date``; one-off classes
+    read their own instants. Used by the admin all-classes view (L2 A0-6).
+    """
+    if doc.get("days_of_week"):
+        start = _coerce_template_date(doc.get("start_date"))
+        end = _coerce_template_date(doc.get("end_date"))
+    else:
+        start = ensure_utc(doc["start_at"]).astimezone(zone).date()
+        end = ensure_utc(doc["end_at"]).astimezone(zone).date()
+    if start is not None and start > today:
+        return "upcoming"
+    if end is not None and end < today:
+        return "ended"
+    return "active"
 
 
 def _coerce_template_date(value: object) -> date | None:
@@ -634,6 +653,8 @@ def admin_session_projection_fields(doc: dict[str, object]) -> dict[str, object 
         "arrival_minutes_before": _optional_int(doc.get("arrival_minutes_before")),
         "coach_contact_policy": _optional_str(doc.get("coach_contact_policy")),
         "absence_policy": _optional_str(doc.get("absence_policy")),
+        # Filled by the all-classes list only (L2 A0-6); None everywhere else.
+        "phase": None,
     }
 
 
