@@ -142,27 +142,30 @@ async def test_autopay_cover_and_failed_attempts(db, acad) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_parked_charge_that_never_reached_the_card_is_not_covered(db, acad) -> None:
+@pytest.mark.parametrize(
+    "reason", ["charge_technical_failure", "connected_account_not_ready", "stripe_not_configured"]
+)
+async def test_a_parked_charge_that_never_reached_the_card_is_not_covered(
+    db, acad, reason: str
+) -> None:
     nov5 = datetime(2026, 11, 5, tzinfo=UTC)
     await db["invoices"].insert_many(
         [
-            _invoice("nocard", "fam-nocard", "2026-11", nov5),
-            _invoice("noacct", "fam-noacct", "2026-11", nov5),
+            _invoice("parked", "fam-parked", "2026-11", nov5),
             _invoice("hold", "fam-hold", "2026-11", nov5),
         ]
     )
-    await _autopay(db, "enr-nocard", "enr-noacct", "enr-hold")
+    await _autopay(db, "enr-parked", "enr-hold")
     # Parking leaves the ladder active with no attempt counted.
     await db["dunning_states"].insert_many(
         [
-            _dunning("nocard", "active", 0, suppression_reason="charge_technical_failure"),
-            _dunning("noacct", "active", 0, suppression_reason="connected_account_not_ready"),
+            _dunning("parked", "active", 0, suppression_reason=reason),
             # A parent paying by checkout right now is still covered.
             _dunning("hold", "active", 0, suppression_reason="checkout_session_open"),
         ]
     )
 
-    assert await _counts(db) == {"past_due": 2, "needs_action": 2}
+    assert await _counts(db) == {"past_due": 1, "needs_action": 1}
 
 
 @pytest.mark.asyncio
