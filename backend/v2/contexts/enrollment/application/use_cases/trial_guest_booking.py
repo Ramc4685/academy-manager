@@ -14,12 +14,12 @@ like any other approved trial.
   roster entries for that date. The page shows the first
   ``BOOKABLE_DATES_PER_CLASS`` open ones, each under an opaque ``slot_key``
   (:func:`public_slot_key`), never the occurrence id.
-* :class:`BookTrialGuest`: books one date. The unique seat-number index is
-  what makes it safe: two families taking the last seat at once leave one row
-  and the other gets ``None`` (the route answers ``409 Public.SlotUnavailable``).
-  The booking limits (one active booking per mailbox per class, two per
-  academy, ``ACADEMY_DAILY_GUEST_CEILING`` per academy per day) are checked
-  first; the mailbox's contact ids come from CRM through the caller.
+* :class:`BookTrialGuest`: books one date. Unique indexes make it safe under
+  concurrency: the seat number (two families taking the last seat leave one
+  row; the route answers ``409 Public.SlotUnavailable``), one self-booking per
+  canonical inbox per class, and ``ACADEMY_DAILY_GUEST_CEILING`` numbered
+  claims per academy per UTC day. Only the two-per-academy mailbox limit is a
+  count checked first.
 * :class:`ListTrialGuests`: the seated guests of one date for the coach roster
   (parent name and player age only).
 
@@ -44,6 +44,7 @@ from backend.v2.contexts.enrollment.domain.public_catalog import (
     seats_left,
 )
 from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
+from backend.v2.shared.comms.mailbox import canonical_mailbox
 from backend.v2.shared.ids import new_ulid
 
 #: A date closer than this cannot be booked (the coach needs notice).
@@ -55,8 +56,8 @@ BOOKABLE_DATES_PER_CLASS = 3
 #: Guest bookings one academy takes in 24 hours before further requests are
 #: filed as plain leads (a bot cycling addresses cannot fill every class).
 ACADEMY_DAILY_GUEST_CEILING = 10
-#: Active guest bookings per mailbox: one per class, two per academy.
-MAILBOX_BOOKINGS_PER_CLASS = 1
+#: Active guest bookings per canonical inbox across the academy. (Per class it
+#: is one, ever: a unique index.)
 MAILBOX_BOOKINGS_PER_ACADEMY = 2
 #: Who decided a self-booked trial (``decided_by``).
 SELF_BOOKED_BY = "public_self_book"
@@ -77,13 +78,11 @@ class OccurrenceSeatCounts(Protocol):
 class GuestTrialRepository(Protocol):
     async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]: ...
 
-    async def add_guest(self, request: TrialRequest, *, max_slot: int) -> TrialRequest | None: ...
+    async def add_guest(
+        self, request: TrialRequest, *, max_slot: int, day_ceiling: int
+    ) -> TrialRequest | BookingRefusal: ...
 
-    async def count_active_guests(
-        self, contact_ids: list[str], *, since: datetime, session_id: str | None = None
-    ) -> int: ...
-
-    async def count_guests_since(self, since: datetime) -> int: ...
+    async def count_active_guests(self, mailbox: str, *, since: datetime) -> int: ...
 
     async def guests_for_occurrence(self, occurrence_id: str) -> list[TrialRequest]: ...
 
@@ -192,8 +191,8 @@ class BookTrialGuestCommand:
     academy_id: str
     date: BookableTrialDate
     contact_id: str
-    #: Every contact id CRM holds for the booker's email (the limits' mailbox).
-    mailbox_contact_ids: tuple[str, ...]
+    #: The booker's email as typed; the limits use its canonical inbox.
+    email: str | None
     guest_name: str
     guest_age: str | None
 
@@ -216,21 +215,15 @@ class BookTrialGuest:
 
     async def execute(self, cmd: BookTrialGuestCommand) -> BookTrialGuestResult:
         now = self._now()
-        if await self._trials.count_guests_since(now - timedelta(days=1)) >= (
-            ACADEMY_DAILY_GUEST_CEILING
-        ):
-            return BookTrialGuestResult(booking=None, refused="academy_ceiling")
+        mailbox = canonical_mailbox(cmd.email) or f"contact:{cmd.contact_id}"
         # A booking is "active" until its date has passed; no date is more than
         # the horizon away, so anything booked before that is over.
+        # shortcut: count-then-insert, so two concurrent bookings of different
+        # classes by one inbox can both pass the per-academy limit (at most one
+        # per class still holds); make it a claim if abuse shows up.
         since = now - BOOKABLE_HORIZON - timedelta(days=1)
-        mailbox = [*cmd.mailbox_contact_ids, cmd.contact_id]
-        if (
-            await self._trials.count_active_guests(
-                mailbox, since=since, session_id=cmd.date.session_id
-            )
-            >= MAILBOX_BOOKINGS_PER_CLASS
-            or await self._trials.count_active_guests(mailbox, since=since)
-            >= MAILBOX_BOOKINGS_PER_ACADEMY
+        if await self._trials.count_active_guests(mailbox, since=since) >= (
+            MAILBOX_BOOKINGS_PER_ACADEMY
         ):
             return BookTrialGuestResult(booking=None, refused="mailbox_limit")
         if not cmd.date.open:
@@ -251,10 +244,13 @@ class BookTrialGuest:
             created_at=now,
             guest_name=cmd.guest_name,
             guest_age=cmd.guest_age,
+            guest_mailbox=mailbox,
         )
-        booked = await self._trials.add_guest(request, max_slot=cmd.date.max_slot)
-        if booked is None:
-            return BookTrialGuestResult(booking=None, refused="full")
+        booked = await self._trials.add_guest(
+            request, max_slot=cmd.date.max_slot, day_ceiling=ACADEMY_DAILY_GUEST_CEILING
+        )
+        if isinstance(booked, str):
+            return BookTrialGuestResult(booking=None, refused=booked)
         return BookTrialGuestResult(booking=booked)
 
 

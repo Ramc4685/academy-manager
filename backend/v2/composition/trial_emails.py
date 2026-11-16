@@ -56,6 +56,10 @@ class OccurrenceLookup(Protocol):
     async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
 
 
+class GuestBookingLookup(Protocol):
+    async def latest_guest_booking(self, contact_id: str) -> TrialRequest | None: ...
+
+
 def trial_emails_enabled(academy_doc: dict[str, Any]) -> bool:
     page = academy_doc.get(PUBLIC_PAGE_FIELD)
     return isinstance(page, dict) and page.get("self_book_trials") is True
@@ -67,6 +71,7 @@ class TrialEmails(TrialNudgeEmailAdapter):
         *,
         contacts: GuestContacts,
         occurrences: OccurrenceLookup,
+        trials: GuestBookingLookup,
         prospects: ProspectEmailer,
         send_repo: SendClaimRepository,
         **adapter: Any,
@@ -74,6 +79,7 @@ class TrialEmails(TrialNudgeEmailAdapter):
         super().__init__(**adapter)
         self._contacts = contacts
         self._occurrences = occurrences
+        self._trials = trials
         self._prospects = prospects
         self._send_repo = send_repo
 
@@ -95,6 +101,24 @@ class TrialEmails(TrialNudgeEmailAdapter):
         for trial in trials:
             key = f"trial_date_cancelled:{start_at.isoformat()}"
             await self._once(trial, key, partial(self._cancelled, start_at=start_at))
+
+    async def alert_details(
+        self, contact: CrmContact, doc: dict[str, Any]
+    ) -> tuple[str | None, str | None]:
+        """For a re-sent owner alert (A6-11): the class title and, when the
+        contact holds an approved guest booking, its local date and time."""
+        title = (
+            (await self._session(contact.requested_session_id))[0]
+            if contact.requested_session_id
+            else None
+        )
+        trial = await self._trials.latest_guest_booking(contact.contact_id)
+        if trial is None or trial.status != "approved" or not trial.assigned_occurrence_id:
+            return title, None
+        occurrence = await self._occurrences.get(trial.assigned_occurrence_id)
+        if occurrence is None:
+            return title, None
+        return title, _when(ensure_utc(occurrence.start_at).astimezone(_zone(doc)))
 
     # --- templates ----------------------------------------------------------
 
@@ -275,6 +299,9 @@ def compose_trial_emails(db: Any, settings: Any) -> TrialEmails:
     from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
         MongoStudentRepository,
     )
+    from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+        MongoTrialRequestRepository,
+    )
     from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
         MongoAcademyRepository,
     )
@@ -287,6 +314,7 @@ def compose_trial_emails(db: Any, settings: Any) -> TrialEmails:
     return TrialEmails(
         contacts=MongoCrmContactRepository(db),
         occurrences=MongoSessionOccurrenceRepository(db),
+        trials=MongoTrialRequestRepository(db),
         prospects=ProspectEmailer(
             sender=sender, unsubscribe_links=compose_unsubscribe_link_builder(settings)
         ),

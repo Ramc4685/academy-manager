@@ -962,6 +962,7 @@ def compose_admin(
         enrollments=enrollments_r,
         sessions=sessions_r,
         occurrence_roster=occurrence_roster_repo,
+        guests=MongoTrialRequestRepository(db),
     )
     deny_makeup_request = DenyMakeupRequest(makeups=makeup_requests_repo)
     list_self_cancellations_for_admin = ListSelfCancellationsForAdmin(

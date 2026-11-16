@@ -213,6 +213,13 @@ class OccurrenceRosterRepository(Protocol):
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
 
 
+class GuestSeatCounts(Protocol):
+    """Website guests booked per class date (L9): they hold a seat with no
+    roster entry, so make-up capacity must count them too."""
+
+    async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]: ...
+
+
 class UpcomingOccurrenceRepository(SessionOccurrenceRepository, Protocol):
     async def list_upcoming_scheduled_between(
         self, *, start_at: datetime, end_at: datetime
@@ -229,8 +236,10 @@ class ListEligibleMakeupTargets:
         enrollments: EnrollmentRepository,
         occurrence_roster: OccurrenceRosterRepository,
         policies: SelfServicePolicyRepository,
+        guests: GuestSeatCounts,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        self._guests = guests
         self._students = students
         self._occurrences = occurrences
         self._sessions = sessions
@@ -263,6 +272,9 @@ class ListEligibleMakeupTargets:
 
         session_ids = list({c.session_id for c in candidates})
         sessions_by_id = {s.session_id: s for s in await self._sessions.get_many(session_ids)}
+        guests = await self._guests.guest_counts_for_occurrences(
+            [c.occurrence_id for c in candidates]
+        )
 
         views: list[MakeupTargetView] = []
         for occurrence in candidates:
@@ -277,7 +289,9 @@ class ListEligibleMakeupTargets:
                 await self._occurrence_roster.list_for_occurrence(occurrence.occurrence_id)
             )
             remaining = open_slots(
-                capacity=session.capacity, active_count=active_count, roster_count=roster_count
+                capacity=session.capacity,
+                active_count=active_count,
+                roster_count=roster_count + guests.get(occurrence.occurrence_id, 0),
             )
             if remaining <= 0:
                 continue
@@ -569,8 +583,10 @@ class ApproveMakeupRequest:
         enrollments: EnrollmentRepository,
         sessions: SessionRepository,
         occurrence_roster: AdminOccurrenceRosterRepository,
+        guests: GuestSeatCounts,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        self._guests = guests
         self._makeups = makeups
         self._occurrences = occurrences
         self._enrollments = enrollments
@@ -626,8 +642,14 @@ class ApproveMakeupRequest:
         roster_count = len(
             await self._occurrence_roster.list_for_occurrence(cmd.target_occurrence_id)
         )
+        # Website guests hold a seat on their date with no roster entry (L9).
+        guests = (await self._guests.guest_counts_for_occurrences([cmd.target_occurrence_id])).get(
+            cmd.target_occurrence_id, 0
+        )
         remaining = open_slots(
-            capacity=session.capacity, active_count=active_count, roster_count=roster_count
+            capacity=session.capacity,
+            active_count=active_count,
+            roster_count=roster_count + guests,
         )
         if remaining <= 0:
             raise OccurrenceFull(

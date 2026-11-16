@@ -54,3 +54,31 @@ async def test_fails_closed_on_refusal_error_outage_and_missing_token() -> None:
     ok = _verifier(lambda _r: httpx.Response(200, json={"success": True}))
     assert await ok.verify(None, remote_ip=None) is False
     assert await ok.verify("x" * 2049, remote_ip=None) is False
+
+
+async def test_required_without_a_secret_refuses_every_token() -> None:
+    required = TurnstileVerifier(None, required=True)
+    assert await required.verify("tok", remote_ip=None) is False
+    assert await required.verify(None, remote_ip=None) is False
+
+
+async def test_a_token_solved_on_another_host_is_refused() -> None:
+    ok = _verifier(
+        lambda _r: httpx.Response(200, json={"success": True, "hostname": "riverside.example.test"})
+    )
+    assert await ok.verify("tok", remote_ip=None, hostname="Riverside.example.test") is True
+    assert await ok.verify("tok", remote_ip=None, hostname="other.example.test") is False
+
+
+def test_production_composition_requires_the_secret() -> None:
+    import mongomock_motor
+
+    from backend.v2.composition.public_trial_requests import compose_public_trial_requests
+    from backend.v2.shared.config.settings import Settings
+
+    db = mongomock_motor.AsyncMongoMockClient()["turnstile-prod"]
+    base = Settings()
+    for env, required in (("prod", True), ("dev", False), ("test", False)):
+        settings = base.model_copy(update={"env": env, "turnstile_secret_key": None})
+        deps = compose_public_trial_requests(db, settings, trial_emails=object())  # type: ignore[arg-type]
+        assert deps.turnstile._required is required

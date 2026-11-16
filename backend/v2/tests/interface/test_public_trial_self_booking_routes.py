@@ -201,6 +201,18 @@ def test_turnstile_fails_closed_on_the_booking_branch_only() -> None:
     assert _client(app).post(URL, json=_form()).status_code == 200
 
 
+def test_production_without_a_secret_refuses_bookings_but_takes_inquiries() -> None:
+    app, db = _app()
+    [first, _] = _dates(app)
+    app.state.public_trial_requests = dataclasses.replace(
+        app.state.public_trial_requests, turnstile=TurnstileVerifier(None, required=True)
+    )
+    refused = _client(app).post(URL, json=_form(slot_key=first["slot_key"], turnstile_token="t"))
+    assert refused.status_code == 422
+    assert _trials(db) == []
+    assert _client(app).post(URL, json=_form()).status_code == 200
+
+
 def test_the_honeypot_books_nothing() -> None:
     app, db = _app()
     [first, _] = _dates(app)

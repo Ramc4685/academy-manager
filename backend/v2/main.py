@@ -1008,6 +1008,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.trial_emails import compose_trial_emails
 
     app.state.trial_emails = compose_trial_emails(db, settings)
+    # A website guest booked on a cancelled date hears it is off; attached
+    # here because composition/admin.py is at its line cap (#743 pattern).
+    app.state.admin.cancel_session_occurrence._guest_notifier = app.state.trial_emails
     # Lead nurture (AI strategy Phase 3 C1): the daily job and the admin editor.
     from backend.v2.composition.nurture import compose_nurture
 
@@ -1130,7 +1133,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Anonymous public tenant page read (Lane B2), GET /api/v2/public/academy.
     app.state.public_page = compose_public_page_read(db)
     # Anonymous public trial request (Lane B4), POST /api/v2/public/trial-requests.
-    app.state.public_trial_requests = compose_public_trial_requests(db, settings)
+    app.state.public_trial_requests = compose_public_trial_requests(
+        db, settings, trial_emails=app.state.trial_emails
+    )
     app.state.unsubscribe_prospect = compose_unsubscribe_prospect(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)

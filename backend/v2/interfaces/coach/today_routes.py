@@ -144,7 +144,7 @@ async def get_today(
             marks_by_occurrence[s.occurrence_id] = {m.student_id: m for m in marks}
 
     # L9: website guests (no account, no student row) booked on each date.
-    list_trial_guests = getattr(use_cases, "list_trial_guests", None)
+    list_trial_guests = use_cases.list_trial_guests
     guests: list[list[Any]] = (
         list(await asyncio.gather(*[list_trial_guests.execute(s.occurrence_id) for s in sessions]))
         if list_trial_guests is not None

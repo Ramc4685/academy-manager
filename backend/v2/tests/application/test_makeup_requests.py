@@ -602,8 +602,17 @@ class _FakeOccurrencesForTargets:
         ]
 
 
+class _FakeGuestSeats:
+    def __init__(self, counts: dict[str, int] | None = None) -> None:
+        self.counts = counts or {}
+
+    async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]:
+        return {oid: self.counts[oid] for oid in occurrence_ids if oid in self.counts}
+
+
 def _make_targets_use_case(
     *,
+    guest_counts: dict[str, int] | None = None,
     missed_start_at: datetime = datetime(2026, 7, 1, 10, 0, tzinfo=UTC),
     candidates: list[SessionOccurrence] | None = None,
     sessions: list[Session] | None = None,
@@ -631,6 +640,7 @@ def _make_targets_use_case(
         enrollments=_FakeEnrollments(enrollments or []),
         occurrence_roster=_FakeOccurrenceRoster(roster_entries or []),
         policies=_FakePolicies(policy),
+        guests=_FakeGuestSeats(guest_counts),
         clock=clock,
     )
 
@@ -747,6 +757,7 @@ async def test_list_eligible_makeup_targets_rejects_other_parents_student() -> N
         enrollments=_FakeEnrollments(),
         occurrence_roster=_FakeOccurrenceRoster(),
         policies=_FakePolicies(),
+        guests=_FakeGuestSeats(),
         clock=_now,
     )
 
@@ -754,3 +765,18 @@ async def test_list_eligible_makeup_targets_rejects_other_parents_student() -> N
         await use_case.execute(
             parent_id="parent-1", student_id="student-1", missed_occurrence_id="occ-missed"
         )
+
+
+@pytest.mark.asyncio
+async def test_list_eligible_makeup_targets_counts_website_guests() -> None:
+    open_count = len(
+        await _make_targets_use_case().execute(
+            parent_id="parent-1", student_id="student-1", missed_occurrence_id="occ-missed"
+        )
+    )
+    use_case = _make_targets_use_case(guest_counts={"occ-target": 100})
+    targets = await use_case.execute(
+        parent_id="parent-1", student_id="student-1", missed_occurrence_id="occ-missed"
+    )
+    assert open_count == 1
+    assert targets == []

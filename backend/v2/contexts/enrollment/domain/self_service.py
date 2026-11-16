@@ -357,6 +357,13 @@ class TrialRequest(BaseModel):
     #: player's age as typed. Copied at booking so the roster never reads CRM.
     guest_name: str | None = None
     guest_age: str | None = None
+    #: Booking caps as unique claims (migration 0236), so concurrent bookings
+    #: cannot overrun them. ``guest_mailbox``: the booker's canonical inbox; one
+    #: self-booking per inbox per class, ever. ``guest_day_claim``:
+    #: ``"YYYY-MM-DD#n"``, one of the academy's daily guest numbers (UTC day).
+    #: Internal: never shown.
+    guest_mailbox: str | None = None
+    guest_day_claim: str | None = None
 
     @model_validator(mode="after")
     def _one_requester(self) -> TrialRequest:

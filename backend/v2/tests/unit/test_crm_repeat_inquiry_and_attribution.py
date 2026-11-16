@@ -102,7 +102,7 @@ async def test_a_double_tap_inside_a_day_changes_nothing() -> None:
     assert again.contact.updated_at == first.contact.updated_at
 
 
-async def test_asking_again_after_a_day_bumps_appends_upgrades_and_realerts_once() -> None:
+async def test_asking_again_after_a_day_bumps_keeps_the_note_aside_and_realerts_once() -> None:
     clock = _Clock()
     use_case, _repo = await _use_case(clock)
     first = await _submit(use_case, stage="lead")
@@ -114,7 +114,9 @@ async def test_asking_again_after_a_day_bumps_appends_upgrades_and_realerts_once
     assert again.created is False and again.alert_owner is True
     contact = again.contact
     assert contact.contact_id == first.contact.contact_id
-    assert contact.message == "Is Saturday ok?\n\nAny seats now?"
+    # The original stays; the unverified repeat note is kept beside it.
+    assert contact.message == "Is Saturday ok?"
+    assert [m.text for m in contact.repeat_messages] == ["Any seats now?"]
     assert contact.pipeline_status == "trial"
     assert contact.updated_at == T0 + timedelta(days=30)
     assert contact.owner_alert_due_at == T0 + timedelta(days=30)
@@ -122,6 +124,22 @@ async def test_asking_again_after_a_day_bumps_appends_upgrades_and_realerts_once
     assert contact.attribution == first.contact.attribution
     # A third ask an hour later is a double tap of the second.
     assert third.alert_owner is False
+
+
+async def test_a_long_repeat_never_pushes_out_the_original_message() -> None:
+    clock = _Clock()
+    use_case, repo = await _use_case(clock)
+    first = await _submit(use_case)
+    for day in range(1, 8):
+        clock.now = T0 + timedelta(days=day * 2)
+        await _submit(use_case, message=f"{day}" + "x" * 999)
+    with tenant_scope(ACADEMY):
+        stored = await repo.get(first.contact.contact_id)
+    assert stored is not None
+    assert stored.message == "Is Saturday ok?"
+    assert len(stored.repeat_messages) == 5
+    assert [m.text[0] for m in stored.repeat_messages] == ["3", "4", "5", "6", "7"]
+    assert all(len(m.text) == 1000 for m in stored.repeat_messages)
 
 
 async def test_a_trial_contact_is_never_moved_down_to_lead() -> None:

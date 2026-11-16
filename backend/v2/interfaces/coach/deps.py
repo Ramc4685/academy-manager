@@ -57,6 +57,9 @@ from backend.v2.contexts.enrollment.application.use_cases.get_session_roster imp
 from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences_for_date import (
     ListCoachOccurrencesForDate,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    ListTrialGuests,
+)
 from backend.v2.shared.comms import Message
 
 
@@ -110,7 +113,7 @@ class CoachUseCases:
     get_occurrence_roster: GetOccurrenceRoster | None = None
     # L9: website guests booked on a date (ListTrialGuests). Optional for
     # fixtures that predate it.
-    list_trial_guests: object | None = None
+    list_trial_guests: ListTrialGuests | None = None
     # Messages inbox (UIM13). Optional for backward compat with fixtures that
     # predate it; real coach composition always sets both.
     list_messages: Callable[[str], Awaitable[list[Message]]] | None = None

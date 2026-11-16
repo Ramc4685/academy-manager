@@ -349,12 +349,13 @@ def compose_trial_requests_for_test(db: Any, stub: StubEmailSendPort) -> PublicT
         submit_inquiry=SubmitWebsiteInquiry(CreateContact(contacts), contacts),
         list_trial_dates=compose_list_bookable_trial_dates(db),
         book_trial=BookTrialGuest(trials=MongoTrialRequestRepository(db)),
-        mailbox_contacts=contacts,
+        contacts=contacts,
         turnstile=TurnstileVerifier(None),
         notifier=TrialRequestOwnerEmail(
             bookings=TrialEmails(
                 contacts=contacts,
                 occurrences=MongoSessionOccurrenceRepository(db),
+                trials=MongoTrialRequestRepository(db),
                 prospects=prospects,
                 send_repo=MongoTrialNudgeSendRepository(db),
                 audiences=MongoAudienceResolver(db=db),

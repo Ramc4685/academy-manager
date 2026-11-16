@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, cast
+from datetime import UTC, datetime
+from typing import Any, Literal, cast
 
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time import ensure_utc
+
+#: Which booking limit refused a guest insert.
+GuestRefusal = Literal["full", "mailbox_limit", "academy_ceiling"]
 
 
 class MongoTrialRequestRepository(TenantScopedRepository):
@@ -42,6 +45,8 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             guest_slot=_optional_int(doc.get("guest_slot")),
             guest_name=_optional_str(doc.get("guest_name")),
             guest_age=_optional_str(doc.get("guest_age")),
+            guest_mailbox=_optional_str(doc.get("guest_mailbox")),
+            guest_day_claim=_optional_str(doc.get("guest_day_claim")),
         )
 
     @staticmethod
@@ -71,6 +76,8 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             "guest_slot": request.guest_slot,
             "guest_name": request.guest_name,
             "guest_age": request.guest_age,
+            "guest_mailbox": request.guest_mailbox,
+            "guest_day_claim": request.guest_day_claim,
         }
 
     async def add(self, request: TrialRequest) -> None:
@@ -155,22 +162,38 @@ class MongoTrialRequestRepository(TenantScopedRepository):
 
     # --- website guest bookings (L9 A6-1, migration 0236) -------------------
 
-    async def add_guest(self, request: TrialRequest, *, max_slot: int) -> TrialRequest | None:
-        """Insert a guest booking on the lowest free seat number in
-        ``1..max_slot`` of its assigned date, or return None when every seat
-        is taken. The unique ``trial_requests_guest_slot_unique`` index is the
-        arbiter: a concurrent booking that took the same number makes this
-        insert fail and move on, so the last seat goes to exactly one row."""
-        for slot in range(1, max_slot + 1):
-            seated = request.model_copy(update={"guest_slot": slot})
+    async def add_guest(
+        self, request: TrialRequest, *, max_slot: int, day_ceiling: int
+    ) -> TrialRequest | GuestRefusal:
+        """Insert a guest booking with the lowest free seat number in
+        ``1..max_slot`` on its date and the lowest free daily number in
+        ``1..day_ceiling`` for its UTC day, or say which limit refused it.
+
+        Three unique indexes (migration 0236) are the arbiters, so concurrent
+        bookings cannot overrun any of them: a taken seat or day number moves
+        that counter on, and a second booking of the same class by the same
+        ``guest_mailbox`` is refused outright."""
+        day = request.created_at.astimezone(UTC).date().isoformat()
+        slot, number = 1, 1
+        while slot <= max_slot and number <= day_ceiling:
+            seated = request.model_copy(
+                update={"guest_slot": slot, "guest_day_claim": f"{day}#{number}"}
+            )
             try:
                 await self._insert_one(self._to_doc(seated))
             except DuplicateKeyError as exc:
-                if not _is_guest_slot_collision(exc):
+                field = _collided_guest_field(exc)
+                if field == "guest_slot":
+                    slot += 1
+                elif field == "guest_day_claim":
+                    number += 1
+                elif field == "guest_mailbox":
+                    return "mailbox_limit"
+                else:
                     raise
                 continue
             return seated
-        return None
+        return "full" if slot > max_slot else "academy_ceiling"
 
     async def approve_guest(
         self, request_id: str, updates: dict[str, object], *, max_slot: int
@@ -178,14 +201,13 @@ class MongoTrialRequestRepository(TenantScopedRepository):
         """``transition_from_pending`` for a guest: the approval also takes the
         lowest free seat number on the new date. None when the request is no
         longer pending or every seat number up to ``max_slot`` is taken."""
-        occurrence_id = updates.get("assigned_occurrence_id")
         for slot in range(1, max_slot + 1):
             try:
                 return await self.transition_from_pending(
                     request_id, {**updates, "guest_slot": slot}
                 )
             except DuplicateKeyError as exc:
-                if not _is_guest_slot_collision(exc) or occurrence_id is None:
+                if _collided_guest_field(exc) != "guest_slot":
                     raise
         return None
 
@@ -214,26 +236,23 @@ class MongoTrialRequestRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
-    async def count_active_guests(
-        self, contact_ids: list[str], *, since: datetime, session_id: str | None = None
-    ) -> int:
-        """Approved guest bookings of these contacts made at or after ``since``
-        (optionally for one class): the per-mailbox booking limits."""
-        ids = [cid for cid in dict.fromkeys(contact_ids) if cid]
-        if not ids:
-            return 0
-        query: dict[str, object] = {
-            "contact_id": {"$in": ids, "$gt": ""},
-            "status": "approved",
-            "created_at": {"$gte": since},
-        }
-        if session_id is not None:
-            query["requested_session_id"] = session_id
-        return await self._count(query)
+    async def latest_guest_booking(self, contact_id: str) -> TrialRequest | None:
+        """This contact's newest guest booking, on the contact index."""
+        cursor = self._find_many(
+            {"contact_id": {"$eq": contact_id, "$gt": ""}}, sort=[("created_at", -1)], limit=1
+        )
+        return next(iter([self._to_domain(doc) async for doc in cursor]), None)
 
-    async def count_guests_since(self, since: datetime) -> int:
-        """Every guest booking this academy took at or after ``since``."""
-        return await self._count({"contact_id": {"$gt": ""}, "created_at": {"$gte": since}})
+    async def count_active_guests(self, mailbox: str, *, since: datetime) -> int:
+        """Approved guest bookings of this canonical inbox made at or after
+        ``since``: the per-academy mailbox limit."""
+        return await self._count(
+            {
+                "guest_mailbox": {"$eq": mailbox, "$gt": ""},
+                "status": "approved",
+                "created_at": {"$gte": since},
+            }
+        )
 
     async def transition_from_pending(
         self, request_id: str, updates: dict[str, object]
@@ -286,11 +305,14 @@ def _optional_int(value: object | None) -> int | None:
     return None if value is None else int(cast(int, value))
 
 
-def _is_guest_slot_collision(exc: DuplicateKeyError) -> bool:
+_GUEST_CLAIM_FIELDS = ("guest_slot", "guest_day_claim", "guest_mailbox")
+
+
+def _collided_guest_field(exc: DuplicateKeyError) -> str | None:
+    """Which guest claim index a duplicate hit, or None for any other index."""
     details = exc.details or {}
-    if details.get("keyPattern"):
-        return "guest_slot" in details["keyPattern"]
-    return "guest_slot" in str(exc)
+    where = " ".join(details["keyPattern"]) if details.get("keyPattern") else str(exc)
+    return next((f for f in _GUEST_CLAIM_FIELDS if f in where), None)
 
 
 def _utc(value: object) -> datetime:

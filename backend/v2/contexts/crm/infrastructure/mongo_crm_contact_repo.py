@@ -8,11 +8,14 @@ from typing import Any, cast
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.crm.domain.models import (
+    MAX_MESSAGE_LEN,
+    MAX_REPEAT_MESSAGES,
     ContactAttribution,
     ContactConsent,
     CrmContact,
     PipelineOverride,
     PipelineStatus,
+    RepeatMessage,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time import ensure_utc
@@ -75,6 +78,10 @@ class MongoCrmContactRepository(TenantScopedRepository):
             ),
             owner_alert_due_at=_optional_utc(doc.get("owner_alert_due_at")),
             owner_alert_sent_at=_optional_utc(doc.get("owner_alert_sent_at")),
+            repeat_messages=[
+                RepeatMessage(at=_utc(item["at"]), text=str(item["text"]))
+                for item in doc.get("repeat_messages") or []
+            ],
         )
 
     async def add_if_absent(self, contact: CrmContact) -> tuple[CrmContact, bool]:
@@ -117,12 +124,13 @@ class MongoCrmContactRepository(TenantScopedRepository):
         contact_id: str,
         *,
         seen_before: datetime,
-        message: str | None,
+        repeat_message: str | None,
         pipeline_status: PipelineStatus,
         at: datetime,
     ) -> CrmContact | None:
-        """A website family asking again (A6-4): bump ``updated_at``, store the
-        merged message and stage, and make the owner alert due again.
+        """A website family asking again (A6-4): bump ``updated_at`` and the
+        stage, keep the new note in the capped ``repeat_messages`` (never over
+        the original ``message``) and make the owner alert due again.
 
         Compare-and-swap on ``updated_at < seen_before``: of two concurrent
         repeats only one lands, and a repeat within the window changes nothing.
@@ -133,12 +141,27 @@ class MongoCrmContactRepository(TenantScopedRepository):
             "owner_alert_due_at": at,
             "pipeline_status": pipeline_status,
         }
-        if message is not None:
-            fields["message"] = message
+        update: dict[str, Any] = {"$set": fields}
+        if repeat_message:
+            update["$push"] = {
+                "repeat_messages": {
+                    "$each": [{"at": at, "text": repeat_message[:MAX_MESSAGE_LEN]}],
+                    "$slice": -MAX_REPEAT_MESSAGES,
+                }
+            }
         doc = await self._find_one_and_update(
-            {"contact_id": contact_id, "updated_at": {"$lt": seen_before}}, {"$set": fields}
+            {"contact_id": contact_id, "updated_at": {"$lt": seen_before}}, update
         )
         return self._to_domain(doc) if doc else None
+
+    async def promote_lead_to_trial(self, contact_id: str) -> CrmContact | None:
+        """A website lead just booked a trial: lead becomes trial (never down).
+        The contact as it is now, or None when it does not exist."""
+        doc = await self._find_one_and_update(
+            {"contact_id": contact_id, "pipeline_status": "lead"},
+            {"$set": {"pipeline_status": "trial"}},
+        )
+        return self._to_domain(doc) if doc else await self.get(contact_id)
 
     async def mark_owner_alerted(self, contact_id: str, *, at: datetime) -> None:
         """The owner alert went out: clear the due marker the sweep reads."""

@@ -75,15 +75,6 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.
 - [undocumented] `password-reset.ts` (from #1180) is not in the README's wrapper list.
 
-## `backend/v2/contexts/crm/README.md`: 7 items, from `drift/backend__v2__contexts__crm.md`
-- [wording] README:17-20 says the context ships no route or wiring; staff pipeline routes and `composition/crm_pipeline.py` exist.
-- [missing] Record table omits `attribution`, `owner_alert_due_at`, `owner_alert_sent_at` and `acknowledged_at`.
+## `backend/v2/contexts/crm/README.md`: 2 items, from `drift/backend__v2__contexts__crm.md`
 - [undocumented] `SubmitWebsiteInquiry` / `WebsiteInquiryResult` / `RepeatInquiryWriter` missing from the Layout table.
-- [undocumented] `clean_attribution`, `ATTRIBUTION_FIELDS`, `MAX_ATTRIBUTION_LEN`, `REPEAT_INQUIRY_AFTER` and first-touch attribution rules not in the README.
-- [undocumented] `send_pipeline_reply.py` (`SendPipelineReply`) has no Layout row or contract.
-- [undocumented] Family contacts (use cases, domain, repo, routes, composition) have no section.
-- [undocumented] `infrastructure/mongo_family_erasure.py` is not mentioned.
-
-## `backend/v2/contexts/onboarding/README.md`: 2 items, from `drift/backend__v2__contexts__onboarding.md`
-- [undocumented] Applications, waiver templates and waiver signatures are in scope but only AI/video consent is documented.
-- [undocumented] `ParentProfile.heard_from` (optional, max 80, `[A-Za-z0-9_.-]*`) is not mentioned.
+- [undocumented] `clean_attribution`, `ATTRIBUTION_FIELDS`, `MAX_ATTRIBUTION_LEN`, `REPEAT_INQUIRY_AFTER` constants not named in the README (the record table covers the rules).

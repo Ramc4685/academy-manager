@@ -92,6 +92,21 @@ _ATTRIBUTION_VALUE = re.compile(rf"^[A-Za-z0-9_.-]{{1,{MAX_ATTRIBUTION_LEN}}}$")
 ATTRIBUTION_FIELDS = ("heard_from", "utm_source", "utm_medium", "utm_campaign", "referral_code")
 
 
+class RepeatMessage(BaseModel):
+    """A note sent with a repeat website inquiry (A6-4). UNVERIFIED: anyone who
+    types this family's details into the public form lands here, so it never
+    replaces ``message`` and is shown to staff only with that warning."""
+
+    model_config = {"frozen": True}
+
+    at: datetime
+    text: str
+
+
+#: Newest repeat notes kept on a contact; older ones drop off.
+MAX_REPEAT_MESSAGES = 5
+
+
 class ContactAttribution(BaseModel):
     """Where a website lead came from (L9 A6-10). First touch: a repeat
     inquiry keeps the attribution already on file. No cookies, no referrer."""
@@ -154,10 +169,13 @@ class CrmContact(BaseModel):
     #: (L9 A6-11). Rows from before the field never become due.
     owner_alert_due_at: datetime | None = None
     owner_alert_sent_at: datetime | None = None
+    #: Notes from repeat inquiries, newest last, at most ``MAX_REPEAT_MESSAGES``.
+    repeat_messages: list[RepeatMessage] = []
 
 
 #: A website inquiry repeated after this long is a family asking again: the
-#: row is bumped, the new message appended and the owners alerted again (A6-4).
+#: row is bumped, the new note kept in ``repeat_messages`` and the owners
+#: alerted again (A6-4).
 #: Inside it, a repeat is a double tap and changes nothing.
 REPEAT_INQUIRY_AFTER = timedelta(hours=24)
 

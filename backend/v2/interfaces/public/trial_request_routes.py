@@ -53,6 +53,7 @@ from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking im
 from backend.v2.interfaces.public.academy_page_routes import not_found_response
 from backend.v2.interfaces.public.dtos import PublicTrialFormRequest, PublicTrialRequestAckDto
 from backend.v2.shared.http.client_ip import request_ip
+from backend.v2.shared.http.rate_limit import request_host
 from backend.v2.shared.tenancy.context import tenant_scope
 
 router = APIRouter()
@@ -199,7 +200,7 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
             else None
         )
         if date is not None and not await deps.turnstile.verify(
-            body.turnstile_token, remote_ip=request_ip(request)
+            body.turnstile_token, remote_ip=request_ip(request), hostname=request_host(request)
         ):
             return _invalid({"turnstile_token": "Please confirm you are not a robot."})
         # A booked date names its class; it wins over any class_id sent with it.
@@ -230,8 +231,10 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
             return _ack()
         # A trial needs a seat to try: a full chosen class, or an academy with
         # nothing open (or nothing listed yet), files the inquiry as a lead
-        # (the waitlist and "tell me when classes open" variants).
-        wants_trial = date is not None or (
+        # (the waitlist and "tell me when classes open" variants). A booking
+        # starts as a lead and becomes a trial only once a seat is taken, so a
+        # booking refused on a limit stays a lead.
+        wants_trial = date is None and (
             (not chosen.full) if chosen is not None else choice.any_open
         )
         result = await deps.submit_inquiry.execute(
@@ -249,15 +252,14 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
         if result.field_errors or result.contact is None:
             return _invalid(result.field_errors)
         booking = None
+        contact = result.contact
         if date is not None:
-            contact = result.contact
-            mailbox = await deps.mailbox_contacts.find_by_email(contact.email or "")
             booked = await deps.book_trial.execute(
                 BookTrialGuestCommand(
                     academy_id=academy_id,
                     date=date,
                     contact_id=contact.contact_id,
-                    mailbox_contact_ids=tuple(c.contact_id for c in mailbox),
+                    email=contact.email,
                     guest_name=contact.name,
                     guest_age=contact.child_age,
                 )
@@ -267,14 +269,17 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
                 # sweep tells the owners even though this answer is a 409.
                 return _slot_unavailable()
             booking = booked.booking
+            if booking is not None:
+                contact = await deps.contacts.promote_lead_to_trial(contact.contact_id) or contact
     background_tasks.add_task(
         deps.notifier.notify,
         academy_id=academy_id,
-        contact=result.contact,
+        contact=contact,
         created=result.created,
         class_title=chosen.title if chosen else None,
         alert_owner=result.alert_owner,
         booking=booking,
         booked_start=date.start_at if booking is not None and date is not None else None,
+        date_requested=date is not None and booking is None,
     )
     return _ack()

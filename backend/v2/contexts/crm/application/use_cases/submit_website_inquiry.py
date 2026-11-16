@@ -125,7 +125,7 @@ class RepeatInquiryWriter(Protocol):
         contact_id: str,
         *,
         seen_before: datetime,
-        message: str | None,
+        repeat_message: str | None,
         pipeline_status: PipelineStatus,
         at: datetime,
     ) -> CrmContact | None: ...
@@ -200,23 +200,22 @@ class SubmitWebsiteInquiry:
     async def _bump_repeat(
         self, existing: CrmContact, message: str | None, wanted: Literal["lead", "trial"]
     ) -> CrmContact | None:
-        """The same family asking again after a day: keep both messages, move a
-        lead up to trial when a seat is there now (never down), alert again."""
+        """The same family asking again after a day: move a lead up to trial
+        when a seat is there now (never down) and alert again. The new note goes
+        to ``repeat_messages``: the sender is unverified, so it never rewrites
+        the family's original ``message``."""
         if self._contacts is None:
             return None
         now = self._now()
         added = (message or "").strip()
-        merged = existing.message
-        if added and added != (existing.message or ""):
-            joined = f"{existing.message}\n\n{added}" if existing.message else added
-            merged = joined[-MAX_MESSAGE_LEN:]
+        repeat = added if added and added != (existing.message or "") else None
         stage: PipelineStatus = existing.pipeline_status
         if stage == "lead" and wanted == "trial":
             stage = "trial"
         return await self._contacts.bump_repeat(
             existing.contact_id,
             seen_before=now - REPEAT_INQUIRY_AFTER,
-            message=merged,
+            repeat_message=repeat,
             pipeline_status=stage,
             at=now,
         )

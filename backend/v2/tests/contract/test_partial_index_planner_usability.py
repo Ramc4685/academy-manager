@@ -190,7 +190,7 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
         {"academy_id_1_parent_user_id_1_created_at_-1"},
     ),
     # L9 self-booked trials (migration 0236): seated guests per date and the
-    # per-mailbox booking limit.
+    # contact and per-mailbox lookups.
     (
         "trial_requests",
         {
@@ -202,8 +202,17 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
     ),
     (
         "trial_requests",
-        {"academy_id": "acad_0", "contact_id": {"$in": ["c-1", "c-2"], "$gt": ""}},
+        {"academy_id": "acad_0", "contact_id": {"$eq": "c-1", "$gt": ""}},
         {"trial_requests_contact"},
+    ),
+    (
+        "trial_requests",
+        {
+            "academy_id": "acad_0",
+            "guest_mailbox": {"$eq": "jamie@example.test", "$gt": ""},
+            "status": "approved",
+        },
+        {"trial_requests_guest_mailbox_class_unique"},
     ),
 ]
 
