@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
 import { safeHttpsUrl } from "@/lib/public-page/format";
-import { captureReferralCode } from "@/lib/referral-capture";
+import { storedReferralCode } from "@/lib/referral-capture";
 import {
   EMPTY_TRIAL_FORM,
   HEARD_FROM_OPTIONS,
@@ -85,14 +85,17 @@ export function TrialRequestForm({
   }, [phase.kind]);
 
   // A6-5 / A6-10: preselect a class from ?class= or a "Try a class free" tap,
-  // and keep any utm_* tags and ?ref= referral code from the landing URL (no cookies).
+  // and keep any utm_* tags and the referral code (the landing URL's ?ref=, else
+  // the one ReferralCapture remembered) with the request (no cookies).
   useEffect(() => {
     const known = new Set(classOptions.map((option) => option.value));
     const fromUrl = new URLSearchParams(window.location.search).get("class") ?? "";
-    captureReferralCode(window.location.search);
+    const utm = utmFromSearch(window.location.search);
+    const stored = storedReferralCode();
+    if (!utm.referral_code && stored) utm.referral_code = stored;
     setValues((current) => ({
       ...current,
-      utm: utmFromSearch(window.location.search),
+      utm,
       class_id: !current.class_id && known.has(fromUrl) ? fromUrl : current.class_id,
     }));
     function onClick(event: MouseEvent) {
