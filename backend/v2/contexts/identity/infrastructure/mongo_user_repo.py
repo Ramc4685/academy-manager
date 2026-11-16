@@ -172,10 +172,46 @@ class MongoUserRepository:
         )
 
     async def get_by_email(self, email: str) -> User | None:
-        doc = await self.collection.find_one(
-            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
-        )
+        doc = await self._find_by_email(email)
         return self._to_domain(doc) if doc else None
+
+    async def _find_by_email(self, email: str) -> dict[str, Any] | None:
+        """Exact match on ``normalized_email`` (served by
+        ``users_normalized_email_unique``); this runs on every authenticated
+        request. A row still missing the field (migration 0228 backfills it)
+        falls back to the old case-insensitive scan.
+        """
+        normalized = normalize_email(email)
+        doc = await self.collection.find_one({"normalized_email": normalized})
+        if doc is not None:
+            return cast(dict[str, Any], doc)
+        # shortcut: legacy rows without normalized_email; delete once the
+        # warning below stops appearing in prod logs after 0228.
+        doc = await self.collection.find_one(
+            {"email": {"$regex": f"^{re.escape(normalized)}$", "$options": "i"}}
+        )
+        if doc is not None:
+            _log.warning(
+                "identity.users_email_regex_fallback", extra={"user_doc_id": str(doc["_id"])}
+            )
+            await self._backfill_normalized_email(doc, normalized)
+        return cast(dict[str, Any] | None, doc)
+
+    async def _backfill_normalized_email(self, doc: dict[str, Any], normalized: str) -> None:
+        """Best-effort: stamp ``normalized_email`` on a row that lacks it. A
+        case-duplicate row already owning the value keeps it (unique index)."""
+        if doc.get("normalized_email"):
+            return
+        try:
+            await self.collection.update_one(
+                {"_id": doc["_id"], "normalized_email": {"$exists": False}},
+                {"$set": {"normalized_email": normalized}},
+            )
+        except DuplicateKeyError:
+            _log.warning(
+                "identity.users_normalized_email_duplicate",
+                extra={"user_doc_id": str(doc["_id"])},
+            )
 
     async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
         doc = await self.collection.find_one(
@@ -219,9 +255,7 @@ class MongoUserRepository:
         ``self._default_academy_id``, dropping every SaaS-mode parent
         into ``default-academy``.
         """
-        existing = await self.collection.find_one(
-            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
-        )
+        existing = await self._find_by_email(email)
         now = datetime.now(UTC)
         if existing:
             roles = set(self._to_domain(existing).roles)
@@ -252,6 +286,7 @@ class MongoUserRepository:
             "firebase_uid": firebase_uid,
             "auth_provider": "firebase",
             "email": email,
+            "normalized_email": normalize_email(email),
             "display_name": display_name,
             "roles": ["parent"],
             "role": "parent",
@@ -590,6 +625,7 @@ class MongoUserRepository:
                     if existing is None:
                         raise
             else:
+                await self._backfill_normalized_email(existing, normalized_email)
                 await self.collection.update_one(
                     {"_id": existing["_id"]},
                     {
@@ -766,6 +802,7 @@ class MongoUserRepository:
                     if existing is None:
                         raise
             else:
+                await self._backfill_normalized_email(existing, normalized_email)
                 await self.collection.update_one(
                     {"_id": existing["_id"]},
                     {
