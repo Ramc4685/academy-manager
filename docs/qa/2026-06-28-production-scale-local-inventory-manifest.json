@@ -1933,23 +1933,33 @@
       "source": "frontend/app/(admin)/admin/students/[studentId]/progress/certificates/[certId]/page.tsx",
       "workflows": [
         "View level certificate",
-        "Print certificate"
+        "Print certificate",
+        "Revoke certificate with a reason"
       ],
       "controls": {
         "buttons": [
           "Back to progress",
-          "Print or save as PDF"
+          "Print or save as PDF",
+          "Revoke",
+          "Revoke certificate"
         ],
-        "inputs": [],
-        "modals": []
+        "inputs": [
+          "Reason"
+        ],
+        "modals": [
+          "Revoke certificate"
+        ]
       },
       "states": [
         "loading",
         "not found",
-        "error"
+        "error",
+        "validation",
+        "revoked"
       ],
       "risk_edges": [
         "Certificate id from another student",
+        "Revoking an already revoked certificate (409)",
         "Print layout spills onto a second page"
       ],
       "acceptance": [

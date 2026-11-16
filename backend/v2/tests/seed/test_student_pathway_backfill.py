@@ -78,6 +78,8 @@ async def test_backfill_places_mapped_students_and_is_idempotent() -> None:
             {
                 "academy_id": academy_id,
                 "student_id": "student-beginner",
+                "parent_id": "parent-1",
+                "full_name": "Beginner Kid",
                 "status": "active",
                 "skill_level": "beginner",
                 "created_at": datetime(2026, 1, 1, tzinfo=UTC),
@@ -85,6 +87,8 @@ async def test_backfill_places_mapped_students_and_is_idempotent() -> None:
             {
                 "academy_id": academy_id,
                 "student_id": "student-unmapped",
+                "parent_id": "parent-1",
+                "full_name": "Unmapped Kid",
                 "status": "active",
                 "skill_level": "expert",
                 "created_at": datetime(2026, 1, 2, tzinfo=UTC),

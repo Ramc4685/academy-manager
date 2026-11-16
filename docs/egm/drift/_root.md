@@ -1,3 +1,3 @@
-## README.md (root)
+## README.md
 
 No drift detected.

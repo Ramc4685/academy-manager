@@ -51,6 +51,10 @@ COACH = "coach-colour"
 
 
 async def _seed(db: Any) -> tuple[Any, Any, str, list[Any]]:
+    # Placement refuses a student this academy does not have.
+    await db["students"].insert_one(
+        {"academy_id": ACADEMY, "student_id": STUDENT, "parent_id": "parent", "full_name": "Kid"}
+    )
     await db["enrollments"].insert_one(
         {
             "academy_id": ACADEMY,
