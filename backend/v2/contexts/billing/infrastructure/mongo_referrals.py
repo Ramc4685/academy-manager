@@ -133,14 +133,13 @@ class MongoReferralRepository(TenantScopedRepository):
 
     async def clear_qualification(self, referral_id: str, *, now: datetime) -> None:
         await self._update_one(
-            {"referral_id": referral_id, "status": "pending"},
+            # A claimed slot always finishes granting: credits may already exist.
+            {"referral_id": referral_id, "status": "pending", "reward_key": None},
             {
                 "$set": {
                     "qualified_invoice_id": None,
                     "qualified_at": None,
                     "grant_due_at": None,
-                    "reward_key": None,
-                    "reward_year": None,
                     "updated_at": now,
                 }
             },
@@ -346,7 +345,13 @@ class MongoReferralSources(TenantScopedRepository):
         return not _refunded_in_full(doc) and not await self._disputed(invoice_id)
 
     async def _disputed(self, invoice_id: str) -> bool:
-        """A dispute still open, or lost, on any payment applied to the invoice."""
+        """A dispute still open, or lost, on any payment applied to the invoice.
+
+        Allocations carry the ledger payment id, but a dispute may be stored
+        under the legacy ``payments`` row's id instead (``RecordPaymentDispute``
+        prefers it), so it is also matched by the PaymentIntent the ledger
+        payment records. One equality question per field, never an ``$or``.
+        """
         payment_ids = [
             str(doc["payment_id"])
             async for doc in self._find_many_in_collection(
@@ -356,11 +361,25 @@ class MongoReferralSources(TenantScopedRepository):
         ]
         if not payment_ids:
             return False
-        doc = await self._find_one_in_collection(
-            "payment_disputes",
-            {"payment_id": {"$in": payment_ids}, "outcome": {"$nin": _SETTLED_FOR_ACADEMY}},
-        )
-        return doc is not None
+        intents = [
+            str(doc["stripe_payment_intent_id"])
+            async for doc in self._find_many_in_collection(
+                "ledger_payments",
+                {"payment_id": {"$in": payment_ids}},
+                {"stripe_payment_intent_id": 1},
+            )
+            if doc.get("stripe_payment_intent_id")
+        ]
+        unsettled = {"outcome": {"$nin": _SETTLED_FOR_ACADEMY}}
+        for field_name, values in (
+            ("payment_id", payment_ids),
+            ("stripe_payment_intent_id", intents),
+        ):
+            if values and await self._find_one_in_collection(
+                "payment_disputes", {field_name: {"$in": values}, **unsettled}
+            ):
+                return True
+        return False
 
     async def billing_parent_id(self, parent_ids: frozenset[str]) -> str | None:
         ids = sorted(parent_ids)

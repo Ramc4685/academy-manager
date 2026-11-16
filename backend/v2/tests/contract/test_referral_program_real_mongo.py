@@ -792,3 +792,87 @@ async def test_the_cap_holds_with_six_qualified_families_racing(real_db, acad) -
     rows = await _referrals(real_db)
     assert sum(r["status"] == "granted" for r in rows) == 2
     assert len([c for c in await _credits(real_db) if c["parent_id"] == "u-ref"]) == 2
+
+
+async def test_a_dispute_stored_under_the_legacy_payment_id_still_blocks(real_db, acad) -> None:
+    """``RecordPaymentDispute`` keys the dispute on the legacy ``payments`` row
+    when one exists, while the allocation carries the ledger payment id: the
+    two only meet through the PaymentIntent."""
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code)  # allocation payment_id = pay-u-new
+    await real_db["ledger_payments"].insert_one(
+        {
+            "academy_id": acad,
+            "payment_id": "pay-u-new",
+            "parent_id": "u-new",
+            "stripe_payment_intent_id": "pi_1",
+            "amount_cents": 10_000,
+            "unapplied_amount_cents": 0,
+            "currency": "usd",
+            "status": "succeeded",
+            "created_at": T0,
+            "updated_at": T0,
+        }
+    )
+    await _process(real_db, DUE - timedelta(days=6)).execute()
+    await real_db["payment_disputes"].insert_one(
+        {
+            "academy_id": acad,
+            "dispute_id": "dp_1",
+            "payment_id": "legacy-pay-1",
+            "stripe_payment_intent_id": "pi_1",
+            "status": "needs_response",
+            "outcome": None,
+            "is_open": True,
+            "opened_at": T0 + timedelta(days=4),
+            "updated_at": T0 + timedelta(days=4),
+        }
+    )
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    assert row["status"] == "pending" and row["qualified_at"] is None
+    assert await _credits(real_db) == []
+
+
+async def test_a_refund_after_the_slot_is_claimed_still_finishes_the_grant(real_db, acad) -> None:
+    """The run died after claiming the slot and writing the referrer credit,
+    then the invoice was refunded. Freeing the slot would let a second
+    referral take it while the first credit stays spendable."""
+    await _settings(real_db, max_rewards_per_referrer_per_year=1)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-a", code)
+    await _process(real_db, DUE - timedelta(days=6)).execute()
+    [a] = await _referrals(real_db)
+    await real_db["referrals"].update_one(
+        {"referral_id": a["referral_id"]},
+        {"$set": {"reward_key": "u-ref:2026:1", "reward_year": 2026}},
+    )
+    await real_db["account_credit_ledger"].insert_one(
+        {
+            "academy_id": acad,
+            "credit_id": "cr-before-crash",
+            "parent_id": "u-ref",
+            "type": "REFERRAL_CREDIT",
+            "status": "APPROVED",
+            "amount_cents": 2_500,
+            "remaining_amount_cents": 2_500,
+            "currency": "usd",
+            "reason": "x",
+            "source_type": "REFERRAL",
+            "source_id": f"{a['referral_id']}:referrer",
+            "created_at": DUE,
+            "updated_at": DUE,
+        }
+    )
+    await real_db["invoices"].update_one(
+        {"invoice_id": "inv-u-a"}, {"$set": {"refunded_cents": 10_000}}
+    )
+    await _referred_family(real_db, "u-b", code)
+    await _process(real_db, DUE).execute()
+    rows = {r["referred_parent_id"]: r for r in await _referrals(real_db)}
+    assert rows["u-a"]["reward_key"] == "u-ref:2026:1"
+    assert rows["u-a"]["status"] == "granted"
+    assert rows["u-a"]["referrer_credit_id"] == "cr-before-crash"
+    assert (rows["u-b"]["status"], rows["u-b"]["reason"]) == ("ineligible", "yearly_cap_reached")
+    assert len([c for c in await _credits(real_db) if c["parent_id"] == "u-ref"]) == 1

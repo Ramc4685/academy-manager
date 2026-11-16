@@ -130,8 +130,8 @@ class ReferralStore(Protocol):
     ) -> None: ...
 
     async def clear_qualification(self, referral_id: str, *, now: datetime) -> None:
-        """A pending, not-yet-granted referral forgets its invoice, hold and
-        slot, so a later good invoice can qualify it again."""
+        """A pending referral with no reward slot claimed forgets its invoice
+        and hold, so a later good invoice can qualify it again."""
         ...
 
     async def mark_ineligible(
@@ -207,10 +207,6 @@ class ReferralRunResult:
     granted: int = 0
 
 
-async def _utc_zone(_academy_id: str) -> str:
-    return "UTC"
-
-
 class ProcessReferrals:
     def __init__(
         self,
@@ -221,7 +217,7 @@ class ProcessReferrals:
         sources: ReferralSources,
         credits: ReferralCredits,
         academy_id: Callable[[], str],
-        timezone_for: Callable[[str], Awaitable[str]] = _utc_zone,
+        timezone_for: Callable[[str], Awaitable[str]],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._settings = settings
@@ -338,18 +334,17 @@ class ProcessReferrals:
     async def _advance(
         self, referral: Referral, program: Any, now: datetime, result: ReferralRunResult
     ) -> None:
-        if referral.qualified_invoice_id is not None and not await self._sources.invoice_still_paid(
-            referral.qualified_invoice_id
+        # Refunded, reversed or disputed since it qualified: start over. Once a
+        # slot is claimed a credit may already be written, so the grant always
+        # finishes (no clawback) rather than freeing the slot for another.
+        if (
+            referral.reward_key is None
+            and referral.qualified_invoice_id is not None
+            and not await self._sources.invoice_still_paid(referral.qualified_invoice_id)
         ):
-            # Refunded, reversed or disputed since it qualified: start over.
             await self._referrals.clear_qualification(referral.referral_id, now=now)
             referral = referral.model_copy(
-                update={
-                    "qualified_invoice_id": None,
-                    "qualified_at": None,
-                    "grant_due_at": None,
-                    "reward_key": None,
-                }
+                update={"qualified_invoice_id": None, "qualified_at": None, "grant_due_at": None}
             )
         if referral.qualified_at is None:
             household = await self._sources.household(referral.referred_parent_id)
