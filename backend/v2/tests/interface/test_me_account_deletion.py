@@ -81,18 +81,32 @@ async def db() -> Any:
     return database
 
 
+class RecordingFollowUp:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, bool]] = []
+        self._fail = fail
+
+    async def on_requested(self, request: Any, *, fresh: bool) -> None:
+        self.calls.append((request.request_id, fresh))
+        if self._fail:
+            raise RuntimeError("billing down")
+
+
 def _app(
     db: Any,
     *,
     firebase: FakeFirebase | None = None,
     signed_in_at: datetime | None = None,
     authenticated: bool = True,
+    follow_up: RecordingFollowUp | None = None,
 ) -> FastAPI:
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(me_router, prefix="/api/v2")
     app.state.request_account_deletion = RequestAccountDeletion(
-        store=MongoAccountDeletionStore(db), firebase=firebase or FakeFirebase()
+        store=MongoAccountDeletionStore(db),
+        firebase=firebase or FakeFirebase(),
+        follow_up=follow_up,
     )
     app.state.forget_push_devices = ForgetPushDevices(devices=MongoPushDeviceRepository(db))
 
@@ -249,3 +263,38 @@ async def test_a_coach_with_upcoming_classes_is_refused_until_reassigned(db: Any
     await db["session_occurrences"].update_many({}, {"$set": {"status": "cancelled"}})
     with TestClient(_app(db)) as client:
         assert client.post(URL, json=CONFIRM).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_classes_autopay_and_confirmation_start_at_request_time(db: Any) -> None:
+    # identity_auth:4: nothing used to stop until the 14-day executor ran.
+    follow_up = RecordingFollowUp()
+    with TestClient(_app(db, follow_up=follow_up)) as client:
+        client.post(URL, json=CONFIRM)
+        client.post(URL, json=CONFIRM)
+    request_id = (await db["account_deletion_requests"].find_one({}))["request_id"]
+
+    # A repeat re-runs the idempotent stop but never re-sends the email.
+    assert follow_up.calls == [(request_id, True), (request_id, False)]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_crash_reruns_the_stop_without_a_second_email(db: Any) -> None:
+    with TestClient(_app(db)) as client:
+        client.post(URL, json=CONFIRM)
+    request_id = (await db["account_deletion_requests"].find_one({}))["request_id"]
+    await db["academy_memberships"].update_many(
+        {"user_id": {"$in": ["u-parent", "fb-1"]}}, {"$set": {"status": "active"}}
+    )
+    follow_up = RecordingFollowUp()
+    with TestClient(_app(db, follow_up=follow_up)) as client:
+        assert client.post(URL, json=CONFIRM).status_code == 200
+
+    assert follow_up.calls == [(request_id, False)]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_follow_up_still_locks_the_account(db: Any) -> None:
+    with TestClient(_app(db, follow_up=RecordingFollowUp(fail=True))) as client:
+        assert client.post(URL, json=CONFIRM).status_code == 200
+    assert (await _membership_statuses(db))[("acad-b", "fb-1")] == "removed"

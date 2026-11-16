@@ -64,6 +64,14 @@ class FirebaseAccountSwitch(Protocol):
     async def set_user_disabled(self, uid: str, disabled: bool) -> None: ...
 
 
+class AccountDeletionFollowUp(Protocol):
+    """What other contexts do the moment a deletion is requested: stop future
+    classes and autopay, and (``fresh`` only) email the confirmation. Built in
+    composition; must be idempotent, since a retried request runs it again."""
+
+    async def on_requested(self, request: AccountDeletionRequest, *, fresh: bool) -> None: ...
+
+
 @dataclass(frozen=True)
 class RequestAccountDeletionCommand:
     user_id: str
@@ -75,6 +83,7 @@ class RequestAccountDeletionCommand:
 class RequestAccountDeletion:
     store: AccountDeletionStore
     firebase: FirebaseAccountSwitch
+    follow_up: AccountDeletionFollowUp | None = None
 
     async def execute(
         self, cmd: RequestAccountDeletionCommand, *, now: datetime | None = None
@@ -93,6 +102,7 @@ class RequestAccountDeletion:
                 # lockout; both steps are idempotent.
                 await self.store.remove_memberships(aliases=account.aliases, now=now)
                 await self._disable_firebase(existing.auth_uid)
+                await self._follow_up(existing, fresh=False)
             return existing
 
         live = [m for m in account.memberships if m.status != "removed"]
@@ -133,7 +143,28 @@ class RequestAccountDeletion:
         for m in live:
             await self.store.record_audit(academy_id=m.academy_id, request=request, roles=m.roles)
         await self._disable_firebase(request.auth_uid)
+        await self._follow_up(request, fresh=True)
         return request
+
+    async def _follow_up(self, request: AccountDeletionRequest, *, fresh: bool) -> None:
+        # Best-effort: the account is already locked, and the executor drops
+        # classes again at the end of the grace period, so a failure here is
+        # alerted rather than surfaced to the parent as a failed deletion.
+        if self.follow_up is None:
+            return
+        try:
+            await self.follow_up.on_requested(request, fresh=fresh)
+        except Exception:
+            _log.warning(
+                "identity.account_deletion_follow_up_failed",
+                extra={"request_id": request.request_id},
+                exc_info=True,
+            )
+            capture_message(
+                f"Account deletion {request.request_id}: stopping classes/autopay or the "
+                "confirmation email failed at request time; the executor retries the drop",
+                level="warning",
+            )
 
     async def _disable_firebase(self, auth_uid: str | None) -> None:
         # Best-effort like the admin disable (#785): the membership removal
