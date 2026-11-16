@@ -225,6 +225,12 @@ class _FakeSkillProgressRepo:
         self.rows[(sp.student_id, sp.skill_id)] = sp
         return sp
 
+    async def insert_if_missing(self, sp) -> bool:
+        if (sp.student_id, sp.skill_id) in self.rows:
+            return False
+        self.rows[(sp.student_id, sp.skill_id)] = sp
+        return True
+
     async def get(self, student_id: str, skill_id: str):
         return self.rows.get((student_id, skill_id))
 
@@ -505,10 +511,12 @@ def env():
             level_progress=level_repo,
             skill_progress=skill_repo,
             skill_lookup=skill_lookup,
+            recommendations=rec_repo,
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_repo,
             skill_progress=skill_repo,
+            skill_lookup=skill_lookup,
         ),
         record_test_attempt=RecordTestAttempt(
             level_progress=level_repo,

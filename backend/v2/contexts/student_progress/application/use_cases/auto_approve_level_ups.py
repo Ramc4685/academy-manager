@@ -81,7 +81,7 @@ class AutoApproveLevelUps:
                 continue
             display = await display_for(rec.rec_id)
             try:
-                await self._review.execute(
+                result = await self._review.execute(
                     ReviewLevelUpCommand(
                         rec_id=rec.rec_id,
                         action="approve",
@@ -92,7 +92,10 @@ class AutoApproveLevelUps:
                         level_sequence=int(display.get("level_sequence") or 1),  # type: ignore[call-overload]
                     )
                 )
-                approved += 1
+                if result.status == "COMPLETED":
+                    approved += 1
+                else:  # superseded by a placement: closed, nothing approved
+                    skipped += 1
             except (EnrollmentEnded, RecommendationAlreadyReviewed) as exc:
                 # Withdrawn student, or the owner/coach acted first: leave it.
                 log.info("auto_level_up_skipped", extra={"rec_id": rec.rec_id, "reason": exc.code})

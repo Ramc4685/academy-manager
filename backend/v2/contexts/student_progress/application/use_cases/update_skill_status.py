@@ -8,11 +8,13 @@ from typing import Literal
 from pydantic import BaseModel
 
 from backend.v2.contexts.student_progress.application.ports import (
+    SkillLookup,
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     SkillAlreadyPassed,
+    SkillNotOnCurrentLevel,
     StudentNotPlaced,
 )
 from backend.v2.contexts.student_progress.domain.events import (
@@ -38,7 +40,8 @@ class UpdateSkillStatusCommand(BaseModel):
     model_config = {"frozen": True}
     student_id: str
     skill_id: str
-    level_id: str
+    #: Ignored: the status is written on the student's active level.
+    level_id: str | None = None
     program_id: str
     new_status: CoachSettableStatus
     updated_by: str
@@ -50,10 +53,12 @@ class UpdateSkillStatus:
         *,
         level_progress: StudentLevelProgressRepository,
         skill_progress: StudentSkillProgressRepository,
+        skill_lookup: SkillLookup,
         outbox: Outbox | None = None,
     ) -> None:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
+        self._skill_lookup = skill_lookup
         self._outbox = outbox
 
     async def execute(self, cmd: UpdateSkillStatusCommand) -> StudentSkillProgress:
@@ -64,6 +69,14 @@ class UpdateSkillStatus:
                 "student has no active level in this program",
                 student_id=cmd.student_id,
                 program_id=cmd.program_id,
+            )
+
+        skill = await self._skill_lookup.get_skill(cmd.skill_id)
+        if getattr(skill, "level_id", None) != active.level_id:
+            raise SkillNotOnCurrentLevel(
+                "skill is not on the student's current level",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
             )
 
         existing = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
@@ -81,7 +94,7 @@ class UpdateSkillStatus:
                 academy_id=_resolve_academy_id(),
                 student_id=cmd.student_id,
                 skill_id=cmd.skill_id,
-                level_id=cmd.level_id,
+                level_id=active.level_id,
                 program_id=cmd.program_id,
                 status=cmd.new_status,
                 introduced_at=now if cmd.new_status == "INTRODUCED" else None,
@@ -108,7 +121,7 @@ class UpdateSkillStatus:
                     payload=SkillStatusUpdatedPayload(
                         student_id=cmd.student_id,
                         skill_id=cmd.skill_id,
-                        level_id=cmd.level_id,
+                        level_id=active.level_id,
                         old_status=existing.status if existing is not None else "NONE",
                         new_status=cmd.new_status,
                         updated_by=cmd.updated_by,

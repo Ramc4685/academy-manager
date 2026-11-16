@@ -14,6 +14,7 @@ from backend.v2.contexts.student_progress.application.ports import (
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     OverrideNotPermitted,
+    SkillNotOnCurrentLevel,
     StudentNotPlaced,
 )
 from backend.v2.contexts.student_progress.domain.events import (
@@ -46,7 +47,9 @@ class RecordTestAttemptCommand(BaseModel):
     model_config = {"frozen": True}
     student_id: str
     skill_id: str
-    level_id: str
+    #: Ignored: the attempt is always recorded on the student's active level
+    #: (the skill must belong to it). Kept so older clients still validate.
+    level_id: str | None = None
     program_id: str
     coach_id: str
     session_id: str | None = None
@@ -117,13 +120,18 @@ class RecordTestAttempt:
                 program_id=cmd.program_id,
             )
 
-        # Determine threshold from skill configuration
         skill_meta = await self._skill_lookup.get_skill(cmd.skill_id)
-        threshold_pct: float = 70.0
-        coach_override_allowed: bool = False
-        if skill_meta is not None:
-            threshold_pct = getattr(skill_meta, "pass_threshold_pct", 70.0)
-            coach_override_allowed = getattr(skill_meta, "coach_override_allowed", False)
+        # Only the active level's skills count: a client-sent level_id used to
+        # land attempts (and passes) on a level the student is not in.
+        if getattr(skill_meta, "level_id", None) != active.level_id:
+            raise SkillNotOnCurrentLevel(
+                "skill is not on the student's current level",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
+            )
+        level_id = active.level_id
+        threshold_pct: float = getattr(skill_meta, "pass_threshold_pct", 70.0)
+        coach_override_allowed: bool = getattr(skill_meta, "coach_override_allowed", False)
 
         if cmd.coach_override and not coach_override_allowed:
             raise OverrideNotPermitted(
@@ -144,7 +152,7 @@ class RecordTestAttempt:
             academy_id=_resolve_academy_id(),
             student_id=cmd.student_id,
             skill_id=cmd.skill_id,
-            level_id=cmd.level_id,
+            level_id=level_id,
             program_id=cmd.program_id,
             session_id=cmd.session_id,
             occurrence_id=cmd.occurrence_id,
@@ -170,7 +178,7 @@ class RecordTestAttempt:
                 academy_id=_resolve_academy_id(),
                 student_id=cmd.student_id,
                 skill_id=cmd.skill_id,
-                level_id=cmd.level_id,
+                level_id=level_id,
                 program_id=cmd.program_id,
                 status=new_status,
                 introduced_at=now,
@@ -183,6 +191,8 @@ class RecordTestAttempt:
                     "status": new_status,
                     "last_updated_at": now,
                     "last_updated_by": cmd.coach_id,
+                    # A real pass is always announced, even over a silent credit.
+                    "silent": False,
                 }
             )
         await self._skill_progress.upsert(updated_prog)
@@ -190,10 +200,10 @@ class RecordTestAttempt:
         # Check level completion if skill just passed
         level_completed = False
         if passed:
-            all_skills = await self._skill_lookup.list_skills_for_level(cmd.level_id)
+            all_skills = await self._skill_lookup.list_skills_for_level(level_id)
             required_ids = [s.skill_id for s in all_skills if getattr(s, "is_required", True)]
             passed_records = await self._skill_progress.list_passed_for_student_level(
-                cmd.student_id, cmd.level_id
+                cmd.student_id, level_id
             )
             passed_ids = {sp.skill_id for sp in passed_records}
             # Include the one we just passed
@@ -209,7 +219,7 @@ class RecordTestAttempt:
                     payload=SkillTestAttemptedPayload(
                         student_id=cmd.student_id,
                         skill_id=cmd.skill_id,
-                        level_id=cmd.level_id,
+                        level_id=level_id,
                         program_id=cmd.program_id,
                         coach_id=cmd.coach_id,
                         attempt_id=attempt.attempt_id,
@@ -228,7 +238,7 @@ class RecordTestAttempt:
                         payload=SkillPassedPayload(
                             student_id=cmd.student_id,
                             skill_id=cmd.skill_id,
-                            level_id=cmd.level_id,
+                            level_id=level_id,
                             program_id=cmd.program_id,
                             coach_id=cmd.coach_id,
                             attempt_id=attempt.attempt_id,
@@ -242,7 +252,7 @@ class RecordTestAttempt:
                         academy_id=academy_id,
                         payload=LevelCompletedPayload(
                             student_id=cmd.student_id,
-                            level_id=cmd.level_id,
+                            level_id=level_id,
                             program_id=cmd.program_id,
                             progress_id=active.progress_id,
                         ),

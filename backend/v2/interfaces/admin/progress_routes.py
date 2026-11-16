@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from backend.v2.contexts.student_progress.application.errors import (
     ProgressNextAction,
@@ -86,15 +86,17 @@ AdminSettableSkillStatus = Literal[
 
 
 class UpdateSkillStatusBody(BaseModel):
-    level_id: str
+    #: Ignored: the use case writes the student's active level.
+    level_id: str | None = None
     program_id: str
     status: AdminSettableSkillStatus
 
 
 class RecordTestBody(BaseModel):
     program_id: str
-    level_id: str
-    attempts_count: int = 1
+    #: Ignored: the use case records on the student's active level.
+    level_id: str | None = None
+    attempts_count: int = Field(default=1, ge=1)
     success_count: int = 0
     session_id: str | None = None
     notes: str = ""
@@ -304,7 +306,6 @@ async def update_admin_skill_status(
             UpdateSkillStatusCommand(
                 student_id=student_id,
                 skill_id=skill_id,
-                level_id=body.level_id,
                 program_id=body.program_id,
                 new_status=body.status,
                 updated_by=claims.user_id,

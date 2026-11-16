@@ -199,6 +199,10 @@ class _SkillProgressRepo:
         self.upserts.append(sp)
         return sp
 
+    async def insert_if_missing(self, sp) -> bool:
+        self.upserts.append(sp)
+        return True
+
     async def get(self, student_id, skill_id):
         return None
 

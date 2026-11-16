@@ -361,11 +361,13 @@ def compose_student_progress(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
+            recommendations=recommendation_repo,
             outbox=outbox,
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
             outbox=outbox,
         ),
         record_test_attempt=record_test_attempt,
