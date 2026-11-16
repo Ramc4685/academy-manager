@@ -260,7 +260,13 @@ async function stubShell(page: Page, owner: boolean): Promise<void> {
 
 async function setup(
   page: Page,
-  opts: { owner: boolean; view?: unknown; invoiceDueDays?: number; sibling?: unknown },
+  opts: {
+    owner: boolean;
+    view?: unknown;
+    invoiceDueDays?: number;
+    sibling?: unknown;
+    record?: Record<string, unknown>;
+  },
 ) {
   const errors = collectConsoleErrors(page);
   installTenantGuard(page);
@@ -274,7 +280,11 @@ async function setup(
     if (req.method() === "GET" && new URL(req.url()).pathname.endsWith("/record")) {
       return fulfillJson(route, {
         generated_at: "2026-09-10T15:00:00Z",
-        family: familyIndexRow({ family_id: "parent-1", parent_name: "Test Parent One" }),
+        family: familyIndexRow({
+          family_id: "parent-1",
+          parent_name: "Test Parent One",
+          ...opts.record,
+        }),
         money_visible: true,
         warnings: [],
       });
@@ -418,6 +428,56 @@ test.describe("Family billing", () => {
     });
     await expect(page.getByTestId("admin-family-sibling-summary")).toHaveText(
       "Sibling discount this month: Arjun pays full price; Hannah gets 10% off.",
+    );
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("a sibling family is marked, and a month billed before the setting says what comes next", async ({
+    page,
+  }) => {
+    const row = (enrollment_id: string, student_id: string, over: Record<string, unknown>) => ({
+      enrollment_id,
+      student_id,
+      session_id: "sess-1",
+      status: "not_eligible",
+      reason: "already_invoiced",
+      percent_bps: null,
+      exclusion: null,
+      billing_type: null,
+      ...over,
+    });
+    const kid = (student_id: string, name: string) => ({
+      student_id,
+      name,
+      lifecycle: "active",
+      lifecycle_as_of: null,
+      classes: [],
+      matched: false,
+    });
+    const { errors } = await setup(page, {
+      owner: true,
+      record: {
+        children: [kid("stu-hannah", "Hannah"), kid("stu-arjun", "Arjun")],
+        sibling_student_ids: ["stu-hannah", "stu-arjun"],
+      },
+      sibling: {
+        period: "2026-09",
+        enabled: true,
+        percent_bps: 1000,
+        enrollments: [
+          row("enr-arjun", "stu-arjun", {}),
+          row("enr-hannah", "stu-hannah", {
+            reason: "not_billed_this_month",
+            exclusion: "billing_type",
+            billing_type: "subscription",
+          }),
+        ],
+        next_period: { period: "2026-10", enrollments: [] },
+      },
+    });
+    await expect(page.getByTestId("family-siblings-parent-1")).toHaveText("Siblings · 2");
+    await expect(page.getByTestId("admin-family-sibling-summary")).toHaveText(
+      "September was invoiced before the sibling discount. Hannah: not on monthly invoices (billed by autopay subscription), so no sibling discount.",
     );
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });

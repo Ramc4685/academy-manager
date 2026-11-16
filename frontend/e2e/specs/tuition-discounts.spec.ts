@@ -4,7 +4,7 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
-import { familyIndexRow } from "../fixtures/family-index";
+import { familyIndexRow, stubFamilyRecord } from "../fixtures/family-index";
 import { openMonthCloseSection } from "../helpers/month-close-sections";
 import { rowActionControl } from "../helpers/row-actions";
 import {
@@ -292,6 +292,7 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
   // "Failed to load resource" lines rather than a missing mock.
   // `admin-students.spec.ts` already stubs the same pair for the same reason.
   await stubFamilySiblingDiscount(page);
+  await stubFamilyRecord(page);
   await page.route("**/api/v2/admin/billing-enrollments*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { enrollments: [] });

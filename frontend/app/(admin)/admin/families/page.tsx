@@ -27,6 +27,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, ArrowUpDown, Mail } from "lucide-react";
 
+import { SiblingsChip } from "@/components/admin/siblings";
 import {
   fetchBillingSetup,
   inviteBillingSetupParent,
@@ -744,6 +745,9 @@ function FamilyTableRow({
       </td>
       <td className="px-4 py-3">
         <ChildrenChips kids={family.children} />
+        <div className="mt-1">
+          <SiblingsChip family={family} />
+        </div>
       </td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -868,6 +872,7 @@ function FamilyPhoneRow({
             <AtRiskChip family={family} />
             {!family.has_account ? <NoAccountChip /> : null}
             <CardLogin family={family} />
+            <SiblingsChip family={family} />
           </div>
           <ChildrenChips kids={family.children} />
           {classes.length > 0 ? (

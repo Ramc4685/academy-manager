@@ -101,6 +101,9 @@ class AdminFamilyIndexRow(_View):
     #: who may not see money, like ``owes_money``.
     at_risk: bool = False
     at_risk_reasons: list[AtRiskReason] = Field(default_factory=list)
+    #: The children with an active, held or paused class, when there are two
+    #: or more (the "Siblings" chip); empty otherwise. Not a billing fact.
+    sibling_student_ids: list[str] = Field(default_factory=list)
 
 
 class AdminFamilyIndexPage(_View):
@@ -234,6 +237,7 @@ def _row(row: FamilyIndexRow, *, view: MoneyView) -> AdminFamilyIndexRow:
         matched_parent=bool(row.hit and row.hit.matched_parent),
         at_risk=bool(reasons),
         at_risk_reasons=reasons,
+        sibling_student_ids=list(record.sibling_student_ids),
     )
 
 

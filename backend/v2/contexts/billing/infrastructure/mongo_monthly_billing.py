@@ -43,7 +43,10 @@ from backend.v2.contexts.billing.domain.ledger import (
     LedgerInvoice,
 )
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
-from backend.v2.contexts.billing.domain.plan_price_change import stored_class_fee_cents
+from backend.v2.contexts.billing.domain.plan_price_change import (
+    next_period,
+    stored_class_fee_cents,
+)
 from backend.v2.contexts.billing.domain.proration import (
     BILLABLE_CLASSES_PER_MONTH,
     MOVE_SOURCE_TYPE,
@@ -2020,17 +2023,22 @@ async def preview_family_sibling_discount(
     discounts: MoveDiscountReader,
 ) -> dict[str, Any]:
     """Who gets the sibling discount on this family's invoices for the
-    academy's current month. Read-only: it runs the same
-    ``decide_sibling_discount`` and ``best_tuition_discount`` the monthly run
-    prices with and writes nothing, so the admin badge cannot disagree with
-    the invoice.
+    academy's current month, and for the next month. Read-only: it runs the
+    same ``decide_sibling_discount`` and ``best_tuition_discount`` the monthly
+    run prices with and writes nothing, so the admin badge cannot disagree
+    with the invoice.
 
     Per active or paused enrollment: ``status`` is ``discounted``,
     ``full_price``, ``not_eligible`` or ``off``, with ``reason`` and the
-    sibling ``percent_bps`` when one was decided.
+    sibling ``percent_bps`` when one was decided. A ``not_billed_this_month``
+    row names its ``exclusion`` (``_family_exclusion``) and, for
+    ``billing_type``, the enrollment's ``billing_type``. ``next_period``
+    previews the month after (``None`` while the setting is off), so a month
+    invoiced before the setting went on still says what happens next.
     """
     academy_id = current_academy_id()
-    period = _local_period_label(now, await _academy_timezone(db) or "UTC")
+    academy_timezone = await _academy_timezone(db) or "UTC"
+    period = _local_period_label(now, academy_timezone)
     offer = await _sibling_offer(db, academy_id, page=False)
     aliases = await _parent_aliases(db, parent_id)
     students = await _family_students(db, academy_id=academy_id, aliases=aliases)
@@ -2050,32 +2058,70 @@ async def preview_family_sibling_discount(
         str(row.get("enrollment_id") or row.get("_id")): str(row.get("student_id") or "")
         for row in enrollments
     }
-    rows = []
-    for enrollment in enrollments:
-        status, reason, percent_bps = await _sibling_preview_status(
-            db,
-            enrollment=enrollment,
-            period=period,
-            now=now,
-            discounts=discounts,
-            student_of=student_of,
-            enabled=offer is not None,
-        )
-        rows.append(
-            {
-                "enrollment_id": str(enrollment.get("enrollment_id") or enrollment.get("_id")),
-                "student_id": str(enrollment.get("student_id") or ""),
-                "session_id": str(enrollment.get("session_id") or ""),
-                "status": status,
-                "reason": reason,
-                "percent_bps": percent_bps,
-            }
-        )
+
+    async def rows_for(month: str) -> list[dict[str, Any]]:
+        return [
+            await _sibling_preview_row(
+                db,
+                enrollment=enrollment,
+                period=month,
+                now=now,
+                discounts=discounts,
+                student_of=student_of,
+                enabled=offer is not None,
+                academy_timezone=academy_timezone,
+            )
+            for enrollment in enrollments
+        ]
+
+    following = next_period(period)
     return {
         "period": period,
         "enabled": offer is not None,
         "percent_bps": offer[0] if offer else None,
-        "enrollments": rows,
+        "enrollments": await rows_for(period),
+        "next_period": (
+            {"period": following, "enrollments": await rows_for(following)} if offer else None
+        ),
+    }
+
+
+async def _sibling_preview_row(
+    db: Any,
+    *,
+    enrollment: Mapping[str, Any],
+    period: str,
+    now: datetime,
+    discounts: MoveDiscountReader,
+    student_of: Mapping[str, str],
+    enabled: bool,
+    academy_timezone: str,
+) -> dict[str, Any]:
+    status, reason, percent_bps = await _sibling_preview_status(
+        db,
+        enrollment=enrollment,
+        period=period,
+        now=now,
+        discounts=discounts,
+        student_of=student_of,
+        enabled=enabled,
+    )
+    exclusion: str | None = None
+    if reason == "not_billed_this_month":
+        exclusion, _ = await _family_exclusion(
+            db, enrollment, period=period, today=now.date(), academy_timezone=academy_timezone
+        )
+    return {
+        "enrollment_id": str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+        "student_id": str(enrollment.get("student_id") or ""),
+        "session_id": str(enrollment.get("session_id") or ""),
+        "status": status,
+        "reason": reason,
+        "percent_bps": percent_bps,
+        "exclusion": exclusion,
+        "billing_type": (
+            str(enrollment.get("billing_type") or "") if exclusion == "billing_type" else None
+        ),
     }
 
 
@@ -2292,19 +2338,10 @@ async def _sibling_family(
         if resolved_parent_id(row, students.get(student_id)) not in aliases:
             continue
         relatives.append((str(row.get("enrollment_id") or row.get("_id")), student_id))
-        if str(row.get("status") or "") != MONTHLY_INVOICED_ENROLLMENT_STATUS:
-            continue
-        if str(row.get("billing_type") or "standard").lower() not in MONTHLY_INVOICED_BILLING_TYPES:
-            continue
-        if await monthly_skip_reason(
-            db, enrollment=row, period=period, today=today, academy_timezone=academy_timezone
-        ):
-            continue
-        session = await db["sessions"].find_one(
-            {"academy_id": academy_id, "session_id": str(row.get("session_id") or "")}
+        exclusion, fee = await _family_exclusion(
+            db, row, period=period, today=today, academy_timezone=academy_timezone
         )
-        fee = await class_fee_cents_for_period(db, session or {}, period)
-        if fee <= 0:
+        if exclusion is not None:
             continue
         family.append(
             FamilyEnrollment(
@@ -2317,6 +2354,52 @@ async def _sibling_family(
             )
         )
     return parent_id, family, relatives
+
+
+#: Why an active or paused enrollment is not in the sibling family for a
+#: month (the run does not invoice it): ``_family_exclusion``'s answers.
+SiblingExclusion = Literal[
+    "paused",
+    "not_active",
+    "billing_type",
+    "deferral",
+    "pending_cancellation",
+    "skip_period",
+    "no_class_fee",
+]
+
+_SKIP_EXCLUSIONS: dict[str, SiblingExclusion] = {
+    "deferral": "deferral",
+    "paused": "paused",
+    "pending_cancellation": "pending_cancellation",
+    "skip_period": "skip_period",
+}
+
+
+async def _family_exclusion(
+    db: Any, row: Mapping[str, Any], *, period: str, today: date, academy_timezone: str
+) -> tuple[SiblingExclusion | None, int]:
+    """``(None, class fee)`` when the monthly run invoices this enrollment for
+    ``period``, else ``(why not, 0)``. The run's filters in the run's order:
+    active, a monthly-invoiced ``billing_type``, no ``monthly_skip_reason``, a
+    class fee. The one predicate the sibling family and the badge share."""
+    status = str(row.get("status") or "")
+    if status != MONTHLY_INVOICED_ENROLLMENT_STATUS:
+        return ("paused" if status == "paused" else "not_active"), 0
+    if str(row.get("billing_type") or "standard").lower() not in MONTHLY_INVOICED_BILLING_TYPES:
+        return "billing_type", 0
+    skip = await monthly_skip_reason(
+        db, enrollment=row, period=period, today=today, academy_timezone=academy_timezone
+    )
+    if skip is not None:
+        return _SKIP_EXCLUSIONS.get(skip[0], "not_active"), 0
+    session = await db["sessions"].find_one(
+        {"academy_id": current_academy_id(), "session_id": str(row.get("session_id") or "")}
+    )
+    fee = await class_fee_cents_for_period(db, session or {}, period)
+    if fee <= 0:
+        return "no_class_fee", 0
+    return None, fee
 
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:

@@ -2783,6 +2783,13 @@
             ],
             "title": "Registration"
           },
+          "sibling_student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sibling Student Ids",
+            "type": "array"
+          },
           "stage": {
             "enum": [
               "pending_cancel",
@@ -18267,6 +18274,16 @@
             "title": "Enrollments",
             "type": "array"
           },
+          "next_period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiblingDiscountPeriodView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "percent_bps": {
             "anyOf": [
               {
@@ -30920,9 +30937,40 @@
       },
       "SiblingDiscountEnrollmentView": {
         "properties": {
+          "billing_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Type"
+          },
           "enrollment_id": {
             "title": "Enrollment Id",
             "type": "string"
+          },
+          "exclusion": {
+            "anyOf": [
+              {
+                "enum": [
+                  "paused",
+                  "not_active",
+                  "billing_type",
+                  "deferral",
+                  "pending_cancellation",
+                  "skip_period",
+                  "no_class_fee"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclusion"
           },
           "percent_bps": {
             "anyOf": [
@@ -30976,6 +31024,27 @@
           "reason"
         ],
         "title": "SiblingDiscountEnrollmentView",
+        "type": "object"
+      },
+      "SiblingDiscountPeriodView": {
+        "properties": {
+          "enrollments": {
+            "items": {
+              "$ref": "#/components/schemas/SiblingDiscountEnrollmentView"
+            },
+            "title": "Enrollments",
+            "type": "array"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "enrollments"
+        ],
+        "title": "SiblingDiscountPeriodView",
         "type": "object"
       },
       "SiblingDiscountRequest": {

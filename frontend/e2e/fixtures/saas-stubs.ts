@@ -211,7 +211,13 @@ export async function stubFamilySiblingDiscount(page: Page, body?: unknown): Pro
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(
       route,
-      body ?? { period: "2026-09", enabled: false, percent_bps: null, enrollments: [] },
+      body ?? {
+        period: "2026-09",
+        enabled: false,
+        percent_bps: null,
+        enrollments: [],
+        next_period: null,
+      },
     );
   });
 }
