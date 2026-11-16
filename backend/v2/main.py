@@ -272,7 +272,6 @@ from backend.v2.shared.observability import (
 )
 from backend.v2.shared.observability.health import build_health_report, watch_for_dead_workers
 from backend.v2.shared.observability.ops_alerts import (
-    capture_exception,
     capture_message,
     cron_checkin,
     handle_scheduler_job_event,
@@ -2040,10 +2039,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                             admin_cc_enabled=bool(notifs.get("daily_digest_to_admin", False)),
                         )
                     )
-            except Exception as exc:
+            except Exception:
                 totals["failed_academies"] += 1
+                # Reaches Sentry once, through its logging integration (ERROR).
                 log.exception("coach_daily_digest_academy_failed academy=%s", academy_id)
-                capture_exception(exc)
                 continue
             totals["academy_count"] += 1
             totals["coaches"] += result.total_coaches
@@ -2115,10 +2114,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                             digest_date=on_date,
                         )
                     )
-            except Exception as exc:
+            except Exception:
                 totals["failed_academies"] += 1
+                # Reaches Sentry once, through its logging integration (ERROR).
                 log.exception("parent_daily_digest_academy_failed academy=%s", academy_id)
-                capture_exception(exc)
                 continue
             totals["academy_count"] += 1
             totals["parents"] += result.total_parents

@@ -11,7 +11,8 @@ import { dropById, getById, list, listQueued, type QueuedMutation, update } from
  * Per docs/offline-policy.md:
  * - Serial per device.
  * - Retry 5xx, network errors, and the 4xx that are not about the mark
- *   (401 sign-in hiccup, 408 timeout, 429 rate limit) with backoff
+ *   (401 sign-in hiccup, 408 timeout, 429 rate limit, 409 request_in_flight
+ *   while the server still runs the same mutation_id) with backoff
  *   1/4/16/60s (cap 60s).
  * - Other 4xx domain errors → `needs_review` ("tray") with structured code.
  * - A mark queued by another signed-in user is never sent (lib/offline/owner.ts).
@@ -24,9 +25,17 @@ const MAX_ATTEMPTS = RETRY_DELAYS_MS.length;
 export const PERIODIC_RETRY_MS = 45_000;
 /** 4xx answers that say nothing about the mark itself: retry, don't tray. */
 const RETRYABLE_4XX = new Set([401, 408, 429]);
+/** 409 codes that say the server is still working on this very mark: retry. */
+const RETRYABLE_CODES = new Set(["request_in_flight"]);
 
-function isTrayStatus(status: unknown): status is number {
-  return typeof status === "number" && status >= 400 && status < 500 && !RETRYABLE_4XX.has(status);
+function isTrayError(status: unknown, code: unknown): status is number {
+  return (
+    typeof status === "number" &&
+    status >= 400 &&
+    status < 500 &&
+    !RETRYABLE_4XX.has(status) &&
+    !(typeof code === "string" && RETRYABLE_CODES.has(code))
+  );
 }
 
 type SyncEvent =
@@ -150,7 +159,7 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
         emit({ kind: "succeeded", mutation: { ...m, status: "queued", attempts: m.attempts + attempt } });
         return "succeeded";
       }
-      if (isTrayStatus(status)) {
+      if (isTrayError(status, (err as { code?: unknown }).code)) {
         // Domain error — move to tray, unless a fresh tap already replaced it.
         const updated = await patchRecord(m.mutation_id, {
           status: "needs_review",
@@ -173,7 +182,7 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
         emit({ kind: "needs_review", mutation: updated });
         return "needs_review";
       }
-      // Transient (5xx, network, 401/408/429) — try again.
+      // Transient (5xx, network, 401/408/429, request_in_flight) — try again.
       emit({
         kind: "transient_error",
         mutation: { ...m, attempts: m.attempts + attempt },

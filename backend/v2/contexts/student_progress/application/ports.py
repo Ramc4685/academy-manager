@@ -228,6 +228,25 @@ class MilestoneRepository(Protocol):
         ...
 
 
+class PlacementAuditLog(Protocol):
+    async def record_placed(
+        self,
+        *,
+        student_id: str,
+        program_id: str,
+        level_id: str,
+        progress_id: str,
+        placed_by: str,
+        reason: str,
+        credited_skill_ids: list[str],
+    ) -> bool:
+        """Write the one ``student.pathway_placed`` row for this placement.
+
+        Idempotent (deterministic id): True only when this call wrote it.
+        """
+        ...
+
+
 class CertificateNumbers(Protocol):
     """Mints the next human-facing certificate number for the current academy."""
 

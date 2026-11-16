@@ -53,6 +53,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     ParentWaiverStudent,
 )
 from backend.v2.shared.tenancy import TenantContextUnset, current_academy_id, tenant_scope
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 BOOT = "academy-a"
 REQUEST = "academy-b"
@@ -74,7 +75,7 @@ def _boot_fallback_provider(boot: str = BOOT):
 # --- shared fakes -----------------------------------------------------------
 
 
-class InMemoryIdempotency:
+class InMemoryIdempotency(ClaimableStore):
     def __init__(self) -> None:
         self.data: dict[str, dict[str, Any]] = {}
 

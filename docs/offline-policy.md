@@ -57,7 +57,7 @@ Every offline mutation carries:
 - **Server idempotency** keyed on `mutation_id`. Replays are no-ops returning the original result, including when the row was written but the idempotency record was lost (the attendance id is the `mutation_id`, or `<mutation_id>:<index>` for a batch row). A half-written batch finishes on replay.
 - **Server timestamp wins** for the audit record (`marked_at`). The client timestamp is preserved as `marked_at_client` for forensic clarity.
 - **Sync is serial per device** to keep ordering simple. A burst of 50 mutations on reconnect dispatches one at a time.
-- **No automatic retry on 4xx** — those are conflicts, not transient failures. Each 4xx surfaces in the "Needs review" tray, except `401`, `408` and `429`, which stay queued and retry like a network error.
+- **No automatic retry on 4xx** — those are conflicts, not transient failures. Each 4xx surfaces in the "Needs review" tray, except `401`, `408`, `429` and a `409` with code `request_in_flight` (the server is still running the same `mutation_id`), which stay queued and retry like a network error.
 - **Retry on 5xx / network error** with exponential backoff: 1s, 4s, 16s, capped at 60s. After 5 attempts in a single sync run, sync pauses and surfaces a banner. Coach can tap to retry.
 - **Queued marks retry on their own**: on app start, on reconnect, and every 45 seconds while anything is waiting. The Today screen shows how many marks are waiting to send.
 - **Each queued mark is stamped with the signed-in user and academy.** A device only replays marks for the account and academy that queued them; others wait until that coach signs back in.

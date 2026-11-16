@@ -45,7 +45,6 @@ from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_assistant_only, require_persona
 from backend.v2.shared.http.errors import DomainError
-from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.time.academy_timezone import (
     LEGACY_FALLBACK_TIMEZONE,
     resolve_academy_clock_timezone,
@@ -224,15 +223,6 @@ async def _place_student_in_pathway(
             reason=body.reason or "admin_pathway_placement",
         )
     )
-    await _write_pathway_placement_audit(
-        request,
-        claims=claims,
-        student_id=student_id,
-        program_id=program_id,
-        level_id=body.level_id,
-        progress_id=progress.progress_id,
-        reason=body.reason or "admin_pathway_placement",
-    )
     return progress.model_dump()
 
 
@@ -269,56 +259,10 @@ async def place_students_in_bulk(
         except DomainError as exc:
             results.append({"student_id": student_id, "outcome": "refused", "code": exc.code})
             continue
-        await _write_pathway_placement_audit(
-            request,
-            claims=claims,
-            student_id=student_id,
-            program_id=program_id,
-            level_id=body.level_id,
-            progress_id=progress.progress_id,
-            reason=reason,
-            credited_skill_ids=body.credited_skill_ids,
-        )
         results.append(
             {"student_id": student_id, "outcome": "placed", "progress_id": progress.progress_id}
         )
     return {"results": results}
-
-
-async def _write_pathway_placement_audit(
-    request: Request,
-    *,
-    claims: AuthClaims,
-    student_id: str,
-    program_id: str,
-    level_id: str,
-    progress_id: str,
-    reason: str,
-    credited_skill_ids: list[str] | None = None,
-) -> None:
-    db = getattr(request.app.state, "db", None)
-    if db is None:
-        return
-    await db["audit_logs"].insert_one(
-        {
-            "audit_id": str(new_ulid()),
-            "academy_id": claims.academy_id,
-            "actor_id": claims.user_id,
-            "action": "student.pathway_placed",
-            "entity_type": "student",
-            "entity_id": student_id,
-            "reason": reason,
-            "changed_keys": ["program_id", "level_id", "progress_id"]
-            + (["credited_skill_ids"] if credited_skill_ids else []),
-            "after": {
-                "program_id": program_id,
-                "level_id": level_id,
-                "progress_id": progress_id,
-                **({"credited_skill_ids": credited_skill_ids} if credited_skill_ids else {}),
-            },
-            "created_at": datetime.now(UTC),
-        }
-    )
 
 
 @router.get("/students/{student_id}/progress")
