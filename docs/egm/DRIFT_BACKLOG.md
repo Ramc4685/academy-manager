@@ -76,13 +76,14 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.
 - [undocumented] `password-reset.ts` (from #1180) is not in the README's wrapper list.
 
-## `frontend/lib/api/v2/README.md`: 11 items, from `drift/frontend__lib__api__v2.md`
+## `frontend/lib/api/v2/README.md`: 12 items, from `drift/frontend__lib__api__v2.md`
 - [stale-not-built] `memberships.ts` calls `GET /me/memberships`, not a `/me` derivation (README:29-31).
 - [stale-not-built] `sessions.ts` covers only occurrence endpoints (README:24).
 - [stale-not-built] `students.ts` has no progress or placement functions (README:25).
 - [undocumented] `announcements.ts`, `departure-policy.ts`, `messages.ts`, `owner.ts`, `pricing.ts` are not listed.
 - [wording] Session-type archive is reversible in the client (README:27-28).
 - [wording] `payroll.ts` and `payouts.ts` entries omit export, reopen, override, mark-paid and audit-trail calls (README:22-23).
+- [contract] README:27-28 says session types GET returns active only; `session-types.ts:54-60` can include archived.
 
 ## `backend/v2/contexts/crm/README.md`: 2 items, from `drift/backend__v2__contexts__crm.md`
 - [undocumented] `SubmitWebsiteInquiry` / `WebsiteInquiryResult` / `RepeatInquiryWriter` missing from the Layout table.

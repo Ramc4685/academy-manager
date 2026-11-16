@@ -1,13 +1,11 @@
 ## frontend/lib/api/v2/README.md
 
-- [stale-not-built] README:29-31 says `memberships.ts` is a deliberate fallback that derives one academy from `/me` because `/me/memberships` is not exposed. The code calls `GET /me/memberships` and maps the response (`memberships.ts:1-8`, `memberships.ts:45`). It has no `/me` derivation.
-- [stale-not-built] README:24 says `sessions.ts` calls admin session and occurrence endpoints. Code only covers `/admin/session-occurrences/{id}/coach-attendance`, `/coach` and `/replacement` (`sessions.ts:28,37,46`). There are no session endpoints.
-- [stale-not-built] README:25 says `students.ts` calls student progress and placement endpoints. `students.ts` has no progress or placement function. It has `getAdminStudent` (`:123`), `updateAdminStudent` (`:148`), `createAdminStudentInvoice` (`:161`), `transferEnrollment` (`:180`), `setTuitionDiscount` and `removeTuitionDiscount` (`:206`, `:219`), and `overrideEnrollmentFee` (`:248`).
-- [wording] README:27-28 says `GET` returns active types only, so archiving is not reversible through this client. `listSessionTypes({ includeArchived })` sends `?include_archived=true` (`session-types.ts:54-60`). `updateSessionType` also accepts `is_active` (`session-types.ts:47`). Archived types can be listed and reactivated through the client.
-- [wording] README:22 says `payroll.ts` covers monthly payroll under `/admin/payroll/*` plus `/admin/payroll-settings`. It omits that `payroll.ts` also does the XLSX export (`payroll.ts:48-51`). It also omits that settings are read with GET and written with PUT (`payroll.ts:61-70`).
-- [wording] README:23 says `payouts.ts` calls `/admin/payout-periods/*`. It does not mention the reopen, override, mark-paid, audit-trail or export operations (`payouts.ts:149-207`).
-- [undocumented] `announcements.ts` is a v2 client (session announcements, `announcements.ts:62-83`) and is missing from "Current clients" (README:20-31).
-- [undocumented] `departure-policy.ts` is a v2 client and is missing from README:20-31. It covers `/admin/enrollment/departure-policy`, hold, return, stop-all-classes and the leaving report (`departure-policy.ts:29-145`).
-- [undocumented] `messages.ts` is a v2 client and is missing from README:20-31. It covers `/coach/messages` and `/parent/messages` (`messages.ts:39-54`).
-- [undocumented] `owner.ts` is a v2 client and is missing from README:20-31. It covers `/owner/rollup` (`owner.ts:38`).
-- [undocumented] `pricing.ts` is a v2 client and is missing from README:20-31. It covers `/admin/pricing/*`, including plans, price changes and scheduled class fees (`pricing.ts:77-184`).
+- [stale-not-built] README:25 says `students.ts` calls "admin student progress and placement endpoints"; `students.ts` has no progress or placement calls. It covers student detail (`students.ts:127,153`), invoices (`:166`), and enrollment transfer, tuition-discount and fee (`:185,211,223,253`).
+- [stale-not-built] README:24 says `sessions.ts` calls "admin session and occurrence endpoints". It only calls `/admin/session-occurrences/*` coach-attendance, coach and replacement (`sessions.ts:28,37,46`). There are no session endpoints.
+- [contract] README:27-28 says `GET` returns active types only. `listSessionTypes` accepts `includeArchived` and sends `?include_archived=true` (`session-types.ts:54-60`), so archived types can be listed through this client.
+- [contract] README:29-31 says `memberships.ts` derives a single active academy from `/me` because `/me/memberships` is not exposed yet. The code calls `GET /me/memberships` directly (`memberships.ts:45`). The only fallback left is a placeholder academy name (`memberships.ts:46-52`, `deriveAcademyLabel`).
+- [undocumented] `announcements.ts` (session announcements authoring, `:62,72,83`) is not listed under "Current clients".
+- [undocumented] `messages.ts` (`/coach/messages`, `/parent/messages` inbox and mark-read, `:39-54`) is not listed.
+- [undocumented] `departure-policy.ts` (`/admin/enrollment/departure-policy`, hold, return, stop-all-classes, leaving report, `:29-145`) is not listed.
+- [undocumented] `pricing.ts` (`/admin/pricing/*`, `:77-184`) is not listed.
+- [undocumented] `owner.ts` (`/owner/rollup`, `:38`) is not listed.

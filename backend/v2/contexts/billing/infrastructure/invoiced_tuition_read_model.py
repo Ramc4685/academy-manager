@@ -47,6 +47,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
     MongoBillingSettingsRepository,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
+from backend.v2.shared.tenancy import tenant_scope
 
 _TUITION_LINE_TYPES = frozenset({"tuition", "discount"})
 _ACH_LINE_TYPE = "ach_discount"
@@ -109,7 +110,9 @@ class MongoInvoicedTuitionReadModel:
         session_ids: Iterable[str],
         months: Iterable[str],
     ) -> InvoicedTuition:
-        settings = await MongoBillingSettingsRepository(self._db).get()
+        # The caller's academy_id is authoritative, inside or outside a request.
+        with tenant_scope(academy_id):
+            settings = await MongoBillingSettingsRepository(self._db).get()
         result = InvoicedTuition(
             cancelled_class_share=settings.payroll_cancelled_class_share,
             missing_invoices=settings.payroll_missing_invoices,
