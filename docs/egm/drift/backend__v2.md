@@ -14,3 +14,5 @@
 - [missing] README:48 requires `domain/events.py` per context, but `contexts/identity/domain/` has no `events.py`. README:55 names Identity as the canonical example to copy. The same gap exists for `ai`, `communications`, `crm`, `finance` and `platform`.
 - [missing] README:63 says views live in `interfaces/<persona>/views.py`. `views.py` exists only for admin, coach, parent and student (`backend/v2/interfaces/*/views.py`). Platform and owner have none, and README:59 lists no student persona.
 - [wording] README:93-94 and README:5 say all routes mount under `/api/v2/*`. `main.py:2877-2899` does this via `prefix="/api/v2"`, but the platform, student and owner routers are conditional on settings flags (`enable_platform_routes`, `enable_student_login`, `enable_owner_role`).
+
+Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance): no new drift; items above still hold.

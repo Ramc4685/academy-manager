@@ -9,3 +9,5 @@
 - [undocumented] README:21-25 lists four route groups; `frontend/app/` also has `(owner)`, `(platform)`, `(student)` and `(shared)`, each with its own `layout.tsx`.
 - [undocumented] README:33-37 lists `components/ui|coach|parent|admin`; `frontend/components/` also has `ds`, `calendar`, `public-page`, `marketing`, `messages`, `pathway`, `persona`, `progress`, `skills`, `teaching`, `waivers`, `announcements`, `observability` and `shared`.
 - [undocumented] README:26-32 lists five `lib/` subfolders; `frontend/lib/` also has `admin`, `coach`, `parent`, `design`, `format`, `navigation`, `observability`, `public-page`, `tenant`, `time`, `ui` and `waivers`, plus many top-level modules.
+
+Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance): no new drift; items above still hold.
