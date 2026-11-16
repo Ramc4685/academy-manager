@@ -166,7 +166,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     (marks: { student_id: string; status: AttendanceStatus }[]) => {
       const byStudent = new Map(marks.map((m) => [m.student_id, m.status]));
       const markedAt = new Date().toISOString();
-      queryClient.setQueryData<typeof today>(queryKeys.coach.today(date), (prev) =>
+      const key = queryKeys.coach.today(date);
+      queryClient.setQueryData<typeof today>(key, (prev) =>
         prev
           ? {
               ...prev,
@@ -188,6 +189,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               ),
             }
           : prev,
+        // A local patch is not a refetch: keep dataUpdatedAt so state keyed
+        // to the roster version (the 422 ineligible set) survives it.
+        { updatedAt: queryClient.getQueryState(key)?.dataUpdatedAt },
       );
     },
     [queryClient, date, occurrenceId],

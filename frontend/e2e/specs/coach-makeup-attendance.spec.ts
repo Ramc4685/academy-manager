@@ -95,8 +95,9 @@ test.describe("Coach make-up attendance", () => {
     });
     await expect(page.getByTestId("bulk-attendance-error")).toHaveCount(0);
     // Bob stays out after the retry succeeds: the button does not offer a
-    // "Mark rest present (1)" that would only re-send him and 422 again.
-    await expect(bulkButton).toContainText("All marked");
+    // "Mark rest present (1)" that would only re-send him and 422 again, nor
+    // claim "All marked" while his row still needs a decision (#1040).
+    await expect(bulkButton).toContainText("Mark the rest one by one");
     await expect(bulkButton).toBeDisabled();
     await expect(page.getByTestId("mark-error-st2")).toContainText("no approved make-up");
     await expect(page.getByTestId("mark-st2-present")).toHaveAttribute("aria-pressed", "false");
@@ -144,7 +145,8 @@ test.describe("Coach make-up attendance", () => {
         { student_id: "st-makeup", status: "present" },
       ],
     });
-    await expect(bulkButton).toContainText("All marked");
+    // Bob (named ineligible) still needs a decision, so not "All marked" (#1040).
+    await expect(bulkButton).toContainText("Mark the rest one by one");
     await expect(page.getByTestId("mark-error-st1")).toHaveCount(0);
   });
 
