@@ -1,6 +1,6 @@
 # auth-and-accounts
 
-PR: TBD
+PR: #1180
 
 ## What changed
 Sign-in and account fixes. Forgot-password and email-verification mail now come from the academy's own branded sender and open on the academy's own page in any browser; digest login links go only to parents who have never signed in; and magic links sign in the right account, survive a Firebase hiccup, and replace older unused links. Deleting an account now takes the children off upcoming classes, stops autopay and sends a confirmation email at once (personal data is still erased after 14 days), and email lookups use an exact indexed match.
