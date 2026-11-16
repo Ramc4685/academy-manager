@@ -143,7 +143,14 @@ async def test_autopay_cover_and_failed_attempts(db, acad) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "reason", ["charge_technical_failure", "connected_account_not_ready", "stripe_not_configured"]
+    "reason",
+    [
+        "charge_technical_failure",
+        "connected_account_not_ready",
+        "stripe_not_configured",
+        # A7-6: a ladder capped after a day of technical parks is past due too.
+        "technical_failure_capped",
+    ],
 )
 async def test_a_parked_charge_that_never_reached_the_card_is_not_covered(
     db, acad, reason: str
