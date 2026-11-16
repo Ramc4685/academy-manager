@@ -28,7 +28,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
-from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.admin import AcademyPortalUrlAdapter, compose_admin
 from backend.v2.composition.admin_platform_fee import compose_admin_platform_fee
 from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.composition.billing_rules import compose_admin_billing_rules
@@ -298,7 +298,6 @@ from backend.v2.shared.scheduling.local_clock import (
     run_daily_at_local_time,
     seed_markers_from_legacy_heartbeats,
 )
-from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
 from backend.v2.shared.tenancy.origins import TenantOriginsResolver
@@ -731,31 +730,29 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         saas_mode=settings.saas_mode,
     )
 
-    class _AcademyPortalUrls:
-        """Academy's own portal origin, so the reset link lands on its host."""
-
-        async def get_academy_portal_url(self, academy_id: str) -> str | None:
-            doc = await MongoAcademyRepository(db).find_by_id(academy_id)
-            slug = str(doc.get("slug") or "") if doc else ""
-            return (
-                academy_frontend_url(frontend_url=settings.frontend_url, academy_slug=slug) or None
-            )
+    _portal_urls = AcademyPortalUrlAdapter(
+        MongoAcademyRepository(db), frontend_url=settings.frontend_url
+    )
+    # `build_user_facing_invite_sender`, not the plain adapter: a parent is
+    # watching these sends (verification, forgot password, deletion
+    # confirmation), so a stub port in a real environment must fail loudly
+    # rather than report the stub's `ok=True`.
+    _user_facing_sender = build_user_facing_invite_sender(
+        sender=_build_email_sender(settings, db),
+        env=str(getattr(settings, "env", "") or ""),
+        real_email_envs=REAL_EMAIL_ENVS,
+    )
 
     app.state.send_registration_verification_email = SendRegistrationVerificationEmail(
         verifier=verifier,
         links=get_firebase_admin_adapter(),
-        # `build_user_facing_invite_sender`, not the plain adapter: a parent is
-        # watching this send, so a stub port in a real environment must fail
-        # loudly rather than report the stub's `ok=True`.
-        sender=build_user_facing_invite_sender(
-            sender=_build_email_sender(settings, db),
-            env=str(getattr(settings, "env", "") or ""),
-            real_email_envs=REAL_EMAIL_ENVS,
-        ),
+        sender=_user_facing_sender,
         academies=MongoAcademyRepository(db),
         cooldown=MongoVerificationEmailCooldown(db),
+        users=users_repo,
+        password_links=get_firebase_admin_adapter(),
         brands=AcademyEmailBrands(MongoAcademyRepository(db)),
-        portals=_AcademyPortalUrls(),
+        portals=_portal_urls,
     )
 
     # Branded "forgot password" mail (replaces Firebase's client-side sender).
@@ -763,14 +760,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         users=users_repo,
         memberships=membership_repo,
         links=get_firebase_admin_adapter(),
-        sender=build_user_facing_invite_sender(
-            sender=_build_email_sender(settings, db),
-            env=str(getattr(settings, "env", "") or ""),
-            real_email_envs=REAL_EMAIL_ENVS,
-        ),
+        sender=_user_facing_sender,
         academies=MongoAcademyRepository(db),
         cooldown=MongoVerificationEmailCooldown(db, purpose="password_reset"),
-        portals=_AcademyPortalUrls(),
+        portals=_portal_urls,
         brands=AcademyEmailBrands(MongoAcademyRepository(db)),
     )
     app.state.bootstrap_academy = BootstrapAcademy(
@@ -798,12 +791,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
     app.state.forget_push_devices = ForgetPushDevices(devices=_push_device_repo)
-    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
-    # Its follow-up (stop classes/autopay, confirmation email) is wired below,
-    # once the stop-all-classes use case exists.
-    app.state.request_account_deletion = RequestAccountDeletion(
-        store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
-    )
     # D4: GET /api/v2/admin/account-deletions.
     app.state.list_account_deletions = ListAccountDeletions(store=MongoAccountDeletionStore(db))
     # Support-only restore: POST /api/v2/platform/account-deletions/{id}/cancel.
@@ -1084,13 +1071,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.execute_account_deletions = compose_execute_account_deletions(
         db, stop_all_classes=_departures.stop_all_classes, stripe=stripe_gw
     )
-    app.state.request_account_deletion.follow_up = compose_deletion_request_follow_up(
-        db,
-        stop_all_classes=_departures.stop_all_classes,
-        sender=build_user_facing_invite_sender(
-            sender=_build_email_sender(settings, db),
-            env=str(getattr(settings, "env", "") or ""),
-            real_email_envs=REAL_EMAIL_ENVS,
+    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
+    # The follow-up stops classes and autopay and sends the confirmation at
+    # request time, through the same stop-all-classes use case the executor uses.
+    app.state.request_account_deletion = RequestAccountDeletion(
+        store=MongoAccountDeletionStore(db),
+        firebase=get_firebase_admin_adapter(),
+        follow_up=compose_deletion_request_follow_up(
+            db, stop_all_classes=_departures.stop_all_classes, sender=_user_facing_sender
         ),
     )
     # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back

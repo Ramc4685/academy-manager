@@ -88,6 +88,23 @@ class FakeCooldown:
         return self._allow
 
 
+class FakeUsers:
+    def __init__(self, existing: object | None = None) -> None:
+        self._existing = existing
+
+    async def get_by_email(self, email: str) -> object | None:
+        return self._existing
+
+
+class FakePasswordLinks:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def generate_password_reset_link(self, email: str, **kwargs: object) -> str:
+        self.calls.append({"email": email, **kwargs})
+        return "https://reset.example/set"
+
+
 def _use_case(
     *,
     verifier: FakeVerifier | None = None,
@@ -106,6 +123,8 @@ def _use_case(
         sender=sender,
         academies=academies or FakeAcademies(),
         cooldown=cooldown,
+        users=FakeUsers(),
+        password_links=FakePasswordLinks(),
     )
     return use_case, sender, cooldown, links
 
@@ -289,6 +308,8 @@ async def test_verification_email_carries_the_academy_brand() -> None:
         sender=sender,
         academies=FakeAcademies(),
         cooldown=FakeCooldown(),
+        users=FakeUsers(),
+        password_links=FakePasswordLinks(),
         brands=brands,  # type: ignore[arg-type]
     )
     await use_case.execute("token-1", academy_id="acad-1")
@@ -316,9 +337,48 @@ async def test_verification_link_is_rehosted_on_the_academy_portal() -> None:
         sender=FakeSender(),
         academies=FakeAcademies(),
         cooldown=FakeCooldown(),
+        users=FakeUsers(),
+        password_links=FakePasswordLinks(),
         portals=_FakePortals(),
     )
 
     await use_case.execute("token-1", academy_id="acad-1")
 
     assert links.seen_portals == ["https://acad-1.example.test"]
+
+
+@pytest.mark.asyncio
+async def test_an_address_we_already_hold_gets_the_set_password_mail_not_verify() -> None:
+    # Regression (pre-hijack): someone signs up in Firebase with a roster
+    # parent's address; a "verify" mail the parent clicks would hand that
+    # account to them. A known address gets the set-password link instead.
+    from types import SimpleNamespace
+
+    links = FakeLinks()
+    password_links = FakePasswordLinks()
+    sender = FakeSender()
+    use_case = SendRegistrationVerificationEmail(
+        verifier=FakeVerifier({"email": "parent@example.com", "uid": "fb-squatter"}),
+        links=links,
+        sender=sender,
+        academies=FakeAcademies(),
+        cooldown=FakeCooldown(),
+        users=FakeUsers(SimpleNamespace(user_id="parent-1", display_name="Pat")),
+        password_links=password_links,
+        portals=_FakePortals(),
+    )
+
+    await use_case.execute("token-1", academy_id="acad-1")
+
+    assert links.seen_emails == []
+    assert password_links.calls == [
+        {
+            "email": "parent@example.com",
+            "uid": "parent-1",
+            "display_name": "Pat",
+            "portal_url": "https://acad-1.example.test",
+        }
+    ]
+    assert sender.sent[0]["subject"] == "Set your password for BLNO Badminton"
+    assert sender.sent[0]["user_id"] == "parent-1"
+    assert "https://reset.example/set" in sender.sent[0]["body"]

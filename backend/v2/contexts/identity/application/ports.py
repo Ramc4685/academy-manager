@@ -220,3 +220,9 @@ class UserGovernanceAudit(Protocol):
         reason: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None: ...
+
+
+class VerificationEmailCooldownPort(Protocol):
+    """Per-recipient send budget. ``False`` means "throttled, do not send"."""
+
+    async def claim_send(self, email: str) -> bool: ...

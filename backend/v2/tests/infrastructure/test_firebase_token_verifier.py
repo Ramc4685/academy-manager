@@ -540,3 +540,72 @@ async def test_email_verification_link_is_rehosted_on_the_tenant_portal(
 
     assert link == "https://blno.example.test/auth/action?mode=verifyEmail&oobCode=abc"
     assert seen == ["https://blno.example.test/login"]
+
+
+def _squat_auth(seen: list[tuple[str, object]], *, verified: bool) -> type:
+    class UserNotFoundError(Exception):
+        pass
+
+    _err = UserNotFoundError
+
+    class FakeAuth:
+        UserNotFoundError = _err
+
+        @staticmethod
+        def get_user_by_email(email: str) -> object:
+            return SimpleNamespace(
+                uid="fb-squat",
+                email_verified=verified,
+                provider_data=[
+                    SimpleNamespace(provider_id="password"),
+                    SimpleNamespace(provider_id="google.com"),
+                ],
+            )
+
+        @staticmethod
+        def update_user(uid: str, **kwargs: object) -> None:
+            seen.append(("update", (uid, kwargs)))
+
+        @staticmethod
+        def revoke_refresh_tokens(uid: str) -> None:
+            seen.append(("revoke", uid))
+
+        @staticmethod
+        def generate_password_reset_link(email: str) -> str:
+            seen.append(("link", email))
+            return "https://reset.example/x"
+
+    return FakeAuth
+
+
+@pytest.mark.asyncio
+async def test_link_for_an_unverified_account_evicts_a_pre_hijacker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: someone who pre-created an unverified account for a roster
+    # parent's address kept their linked Google login and live sessions after
+    # the real parent set a password.
+    seen: list[tuple[str, object]] = []
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", _squat_auth(seen, verified=False))
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    await FirebaseAdminAdapter().generate_password_reset_link("p@example.com", uid="u-1")
+
+    assert seen == [
+        ("update", ("fb-squat", {"providers_to_delete": ["google.com"]})),
+        ("revoke", "fb-squat"),
+        ("link", "p@example.com"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_link_for_a_verified_account_leaves_its_providers_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, object]] = []
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", _squat_auth(seen, verified=True))
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    await FirebaseAdminAdapter().generate_password_reset_link("p@example.com", uid="u-1")
+
+    assert seen == [("link", "p@example.com")]

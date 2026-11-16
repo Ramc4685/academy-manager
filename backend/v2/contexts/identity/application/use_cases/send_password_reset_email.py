@@ -23,6 +23,7 @@ from html import escape
 from backend.v2.contexts.identity.application.ports import (
     MembershipLookup,
     UserRepository,
+    VerificationEmailCooldownPort,
 )
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     AcademyBrandLookup,
@@ -32,9 +33,6 @@ from backend.v2.contexts.identity.application.use_cases.send_login_invite import
     PasswordResetLinkPort,
     resolve_email_brand,
 )
-from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
-    VerificationEmailCooldownPort,
-)
 from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
 from backend.v2.shared.comms.email_brand import branded_as
 from backend.v2.shared.comms.email_theme import INK, MUTED, EmailBrand, button, shell
@@ -42,7 +40,9 @@ from backend.v2.shared.comms.email_theme import INK, MUTED, EmailBrand, button, 
 logger = logging.getLogger(__name__)
 
 
-def _reset_body(*, academy_name: str, reset_link: str, brand: EmailBrand | None = None) -> str:
+def password_reset_body(
+    *, academy_name: str, reset_link: str, brand: EmailBrand | None = None
+) -> str:
     safe_academy_name = escape(academy_name)
     inner = (
         f'<h2 style="color:{INK};font-size:20px;margin:0 0 12px;">'
@@ -115,7 +115,9 @@ class SendPasswordResetEmail:
                 email=str(user.email),
                 display_name=user.display_name,
                 subject=f"Set your password for {academy_name}",
-                body=_reset_body(academy_name=academy_name, reset_link=reset_link, brand=brand),
+                body=password_reset_body(
+                    academy_name=academy_name, reset_link=reset_link, brand=brand
+                ),
             )
         except Exception:
             logger.exception("password reset email for user %s failed", user.user_id)
