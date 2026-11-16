@@ -521,18 +521,29 @@ def compose_coach(
     student_progress_comp = compose_student_progress(
         db, outbox, idempotency_store=idempotency_store
     )
+    get_roster = GetSessionRoster(enrollments=enrollments_repo, students=students_repo)
+    get_occurrence_roster = GetOccurrenceRoster(
+        get_roster=get_roster,
+        absence_notices=absence_notice_repo,
+        occurrence_roster=occurrence_roster_repo,
+        students=students_repo,
+        occurrences=occurrences_repo,
+        trial_outcomes=MongoTrialRequestRepository(db),
+        marks=attendance_repo,
+    )
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
         occurrences=ListCoachOccurrencesForDate(
             occurrences=occurrences_repo, sessions=sessions_repo
         ),
-        get_roster=GetSessionRoster(enrollments=enrollments_repo, students=students_repo),
+        get_roster=get_roster,
         teaching_focus=student_progress_comp.get_teaching_focus,
         lesson_cards=MongoLessonCardRepository(db),
         video_refs=MongoCurriculumVideoRefRepository(db),
         criteria=MongoCriterionRepository(db),
+        # The plan teaches the day's class, the same roster the register shows.
+        occurrence_roster=get_occurrence_roster,
     )
 
-    get_roster = GetSessionRoster(enrollments=enrollments_repo, students=students_repo)
     # Attendance eligibility reads the same one-time roster the coach sees (#672).
     enrollment_lookup = EnrollmentLookupAdapter(enrollments_repo, occurrence_roster_repo)
 
@@ -541,14 +552,7 @@ def compose_coach(
             occurrences=occurrences_repo, sessions=sessions_repo
         ),
         get_roster=get_roster,
-        get_occurrence_roster=GetOccurrenceRoster(
-            get_roster=get_roster,
-            absence_notices=absence_notice_repo,
-            occurrence_roster=occurrence_roster_repo,
-            students=students_repo,
-            occurrences=occurrences_repo,
-            trial_outcomes=MongoTrialRequestRepository(db),
-        ),
+        get_occurrence_roster=get_occurrence_roster,
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),
