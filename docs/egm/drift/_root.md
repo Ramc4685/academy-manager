@@ -4,3 +4,5 @@
 - [wording] README.md:92-93 says Validate covers "backend compile/tests, v2 DDD boundary checks, and Next.js typecheck/lint/build/E2E". The workflow also runs real-Mongo contract tests (`production.yml:167`), ruff/mypy/advisory scans (`production.yml:229`), an OpenAPI drift check, scripts validation (`production.yml:673`) and hook tests (`production.yml:718`). The summary is incomplete, not wrong.
 - [wording] README:98 says backend deploy is `flyctl deploy --remote-only --app courtmastr-academy-api`; actual command is `flyctl deploy --image <migrate-production image> --release-command-timeout 25m --ha=false --app courtmastr-academy-api` (nothing rebuilt) at `.github/workflows/production.yml:961-963`.
 - [wording] README:51 calls the service "managed, multi-region"; the API is a single Fly machine in one region (`backend/fly.toml:2` `primary_region = "ord"`, `--ha=false` at `.github/workflows/production.yml:963`).
+
+Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance, incl. review fix round and PR stamp): no new drift; items above still hold.

@@ -14,3 +14,6 @@
 - [undocumented] README:24-29 test layout omits `tests/composition`, `tests/contexts`, `tests/infrastructure`, `tests/shared`, `tests/seed`, `tests/fixtures`; `tests/structural` holds many policy tests beyond "layer-conformance + event-rules".
 - [wording] README:5 and :93 say all routes mount under `/api/v2/*`; true, but platform, student and owner routers are conditional on `enable_platform_routes`, `enable_student_login`, `enable_owner_role` (`main.py:2899-2910`).
 - [wording] README:46 says each context has `{domain,application,infrastructure}`; `curriculum/` also has `content/` and some contexts nest subcontexts.
+- [wording] README:36-40 diagram shows interfaces -> application -> domain. The linter (`backend/pyproject.toml:128-142`) lets interfaces import application only, not domain directly, but transitive imports are allowed. README:42 says "six layer rules" while pyproject has Rules 1-7 plus 4b.
+
+Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance, incl. review fix round and main merge): no new drift; items above still hold.

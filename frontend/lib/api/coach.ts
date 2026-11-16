@@ -43,7 +43,10 @@ export interface CoachRosterEntry {
   /** Issue #773: ISO calendar date a hold ends; null unless the row is held. */
   hold_return_on?: string | null;
   /** Mark already recorded for this occurrence (hydrates state on reload). */
-  attendance_status?: AttendanceStatus | null;
+  /** "voided": an admin annulled the mark; it counts as unmarked and only an admin can change it. */
+  attendance_status?: AttendanceStatus | "voided" | null;
+  /** When the mark was recorded; a coach may change it for 48 hours. */
+  attendance_marked_at?: string | null;
   /** True when a parent submitted an absence notice for this occurrence. */
   expected_absence?: boolean;
   /** "enrollment" for regular roster rows; "makeup"/"trial" for one-time entries. */
@@ -429,6 +432,8 @@ export async function bulkMarkAttendance(
     {
       method: "POST",
       body: JSON.stringify(payload),
+      // A held batch is flushed on pagehide (#846): let it outlive the page.
+      keepalive: true,
     },
   );
 }

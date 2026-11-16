@@ -382,3 +382,5 @@ class RosterEntry(BaseModel):
     pending_cancellation_at: datetime | None = None
     # Issue #697: so the roster can show "On hold until <return_on>".
     hold_return_on: date | None = None
+    # So a past occurrence's roster can leave out children who joined later.
+    enrolled_at: datetime | None = None

@@ -38,6 +38,11 @@ vi.mock("@/lib/api/client", () => ({
   apiFetch: (...args: unknown[]) => apiFetch(...args),
 }));
 vi.mock("./audit", () => ({ recordAudit: async () => undefined }));
+const owner = vi.hoisted(() => ({ current: null as { user_id: string; academy_id: string | null } | null }));
+vi.mock("./owner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./owner")>()),
+  currentOwner: () => owner.current,
+}));
 
 import { queueMark } from "./attendance-queue";
 import { syncNow } from "./sync";
@@ -58,6 +63,7 @@ describe("syncNow", () => {
   beforeEach(() => {
     store.clear();
     apiFetch.mockReset();
+    owner.current = null;
   });
 
   it("claims the mutation as in_flight before the first POST", async () => {
@@ -109,17 +115,107 @@ describe("syncNow", () => {
     expect(survivor.error).toBeUndefined();
   });
 
-  it("releases an exhausted mutation back to queued rather than leaving it claimed", async () => {
+  it("gives a mark exhausted in an earlier run a fresh budget on the next run", async () => {
     const queued = await queueMark({ ...base, student_id: "st1", status: "present" });
-    // Five transient failures already burned the retry budget.
+    // Five transient failures burned an earlier run's budget.
     store.set(queued.mutation_id, { ...queued, attempts: 5 });
+    apiFetch.mockResolvedValue({});
+
+    await syncNow();
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(store.size).toBe(0);
+  });
+
+  it("releases an exhausted mark to queued and still sends the marks behind it", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = await queueMark({ ...base, student_id: "st1", status: "present" });
+      await queueMark({ ...base, student_id: "st2", status: "present" });
+      apiFetch.mockImplementation(async (_url: string, init: { body: string }) => {
+        if (JSON.parse(init.body).student_id === "st1") {
+          throw Object.assign(new Error("slow down"), { status: 429 });
+        }
+        return {};
+      });
+
+      const run = syncNow();
+      await vi.runAllTimersAsync();
+      await run;
+
+      const left = only();
+      expect(left.mutation_id).toBe(first.mutation_id);
+      expect(left.status).toBe("queued");
+      expect(left.attempts).toBe(5);
+      expect(left.last_attempt_at).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a 429 instead of parking a good mark in the tray", async () => {
+    vi.useFakeTimers();
+    try {
+      await queueMark({ ...base, student_id: "st1", status: "present" });
+      apiFetch.mockRejectedValue(Object.assign(new Error("slow down"), { status: 429 }));
+
+      const run = syncNow();
+      await vi.runAllTimersAsync();
+      await run;
+
+      expect(apiFetch).toHaveBeenCalledTimes(5);
+      expect(only().status).toBe("queued");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still trays a real domain rejection", async () => {
+    await queueMark({ ...base, student_id: "st1", status: "present" });
+    apiFetch.mockRejectedValue(
+      Object.assign(new Error("not enrolled"), { status: 409, code: "Coaching.StudentNotEnrolled" }),
+    );
+
+    await syncNow();
+
+    expect(only().status).toBe("needs_review");
+  });
+
+  it("never replays a mark queued by another signed-in user", async () => {
+    const queued = await queueMark({ ...base, student_id: "st1", status: "present" });
+    store.set(queued.mutation_id, { ...queued, owner: { user_id: "coach-a", academy_id: "acad" } });
+    owner.current = { user_id: "coach-b", academy_id: "acad" };
 
     await syncNow();
 
     expect(apiFetch).not.toHaveBeenCalled();
-    const released = only();
-    expect(released.status).toBe("queued");
-    expect(released.attempts).toBe(5);
-    expect(released.last_attempt_at).toBeTruthy();
+    expect(only().status).toBe("queued");
+  });
+
+  it("replays a mark for the user who queued it", async () => {
+    const queued = await queueMark({ ...base, student_id: "st1", status: "present" });
+    store.set(queued.mutation_id, { ...queued, owner: { user_id: "coach-a", academy_id: "acad" } });
+    owner.current = { user_id: "coach-a", academy_id: "acad" };
+    apiFetch.mockResolvedValue({});
+
+    await syncNow();
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(store.size).toBe(0);
+  });
+
+  it("drops a mark the server already holds with the same status", async () => {
+    await queueMark({ ...base, student_id: "st1", status: "present" });
+    apiFetch.mockRejectedValue(
+      Object.assign(new Error("exists"), {
+        status: 409,
+        code: "Coaching.ConflictAttendanceExists",
+        details: { existing_status: "present" },
+      }),
+    );
+
+    await syncNow();
+
+    expect(store.size).toBe(0);
   });
 });

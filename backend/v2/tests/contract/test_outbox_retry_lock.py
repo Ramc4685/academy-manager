@@ -286,3 +286,19 @@ def test_audit_only_events_name_real_event_classes() -> None:
         if isinstance(cls, type) and issubclass(cls, DomainEvent) and cls is not DomainEvent
     }
     assert AUDIT_ONLY_EVENTS <= real, AUDIT_ONLY_EVENTS - real
+
+
+def test_every_coaching_event_is_handled_or_audit_only() -> None:
+    """An unhandled coaching event outside AUDIT_ONLY_EVENTS dead-letters on
+    every emit (an admin void did, each time)."""
+    import backend.v2.composition.event_handlers  # noqa: F401  registers handlers
+    from backend.v2.contexts.coaching.domain import events as coaching
+    from backend.v2.shared.events.dispatcher import _REGISTRY, AUDIT_ONLY_EVENTS
+
+    emitted = {
+        (cls.model_fields["name"].default, cls.model_fields["schema_version"].default)
+        for cls in vars(coaching).values()
+        if isinstance(cls, type) and issubclass(cls, DomainEvent) and cls is not DomainEvent
+    }
+    uncovered = emitted - AUDIT_ONLY_EVENTS - set(_REGISTRY)
+    assert not uncovered, uncovered

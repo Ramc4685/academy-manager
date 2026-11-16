@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 
 from pymongo.errors import DuplicateKeyError
 
@@ -13,6 +14,7 @@ from backend.v2.contexts.coaching.domain.models import (
     CoachAttendanceAuditEntry,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository
+from backend.v2.shared.time.mongo import ensure_utc
 
 
 class MongoAttendanceRepository(TenantScopedRepository):
@@ -27,7 +29,7 @@ class MongoAttendanceRepository(TenantScopedRepository):
             session_id=str(doc["session_id"]),
             student_id=str(doc["student_id"]),
             marked_by=str(doc["marked_by"]),
-            marked_at=doc["marked_at"],
+            marked_at=ensure_utc(cast(datetime, doc["marked_at"])),
             marked_at_client=doc.get("marked_at_client"),
             status=doc["status"],
             client_app_version=str(doc.get("client_app_version", "unknown")),
@@ -35,7 +37,7 @@ class MongoAttendanceRepository(TenantScopedRepository):
             # enrollment-gated, so ``enrollment`` is the faithful default.
             entry_source=doc.get("entry_source") or "enrollment",
             corrected_by=doc.get("corrected_by"),
-            corrected_at=doc.get("corrected_at"),
+            corrected_at=ensure_utc(cast(datetime, c)) if (c := doc.get("corrected_at")) else None,
             previous_status=doc.get("previous_status"),
             correction_reason=doc.get("correction_reason"),
         )
@@ -71,6 +73,7 @@ class MongoAttendanceRepository(TenantScopedRepository):
                 occurrence_id=attendance.occurrence_id,
                 student_id=attendance.student_id,
                 existing_attendance_id=existing.attendance_id if existing else None,
+                existing_status=existing.status if existing else None,
             ) from None
 
     async def update_status(self, attendance: Attendance) -> None:

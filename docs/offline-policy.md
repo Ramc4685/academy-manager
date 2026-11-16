@@ -35,7 +35,7 @@ These six cases cover the realistic conflicts. Each has a deterministic server-s
 | 1 | Same student marked twice while offline | Single mutation queued (last-write-wins on device) | One toggle state shown; second tap silently updates the queued state |
 | 2 | Coach marked attendance; admin **cancelled the session** while coach offline | `409 SessionCancelled` | "This session was cancelled. Your marks for *{N}* students were not saved." Tap to view + export the queued data. |
 | 3 | Coach marked attendance; admin **removed the student** from roster while coach offline | `409 StudentNotEnrolled` | "{Student name} is no longer in this session. Mark not saved." Goes to "Needs review" tray. |
-| 4 | Two devices, same coach, both mark the same student differently while offline | First arrival wins (`201`); second returns `409 ConflictAttendanceExists` | Surfaces both states ("Device A marked present at 10:04, Device B marked absent at 10:07") with a "Use Device A" / "Use Device B" choice. |
+| 4 | Two devices, same coach, both mark the same student differently while offline | First arrival wins (`201`); second returns `409 ConflictAttendanceExists` with the recorded status | Same status as recorded: dropped as done. Different status: the tray shows both ("Recorded present, you marked absent") with "Keep present" (dismiss) and "Change to absent" (sends a correction, inside the correction window). |
 | 5 | Coach marked wrong session (stale session_id, e.g., schedule changed) | `409 SessionNotAssigned` | "This session is no longer assigned to you. Marks not saved." Logged to local audit. |
 | 6 | Payment status changes while coach offline | Not applicable — coach UI never reads or writes payment. | — |
 
@@ -54,11 +54,13 @@ Every offline mutation carries:
 }
 ```
 
-- **Server idempotency** keyed on `mutation_id`. Replays are no-ops returning the original result.
+- **Server idempotency** keyed on `mutation_id`. Replays are no-ops returning the original result, including when the row was written but the idempotency record was lost (the attendance id is the `mutation_id`, or `<mutation_id>:<index>` for a batch row). A half-written batch finishes on replay.
 - **Server timestamp wins** for the audit record (`marked_at`). The client timestamp is preserved as `marked_at_client` for forensic clarity.
 - **Sync is serial per device** to keep ordering simple. A burst of 50 mutations on reconnect dispatches one at a time.
-- **No automatic retry on 4xx** — those are conflicts, not transient failures. Each 4xx surfaces in the "Needs review" tray.
+- **No automatic retry on 4xx** — those are conflicts, not transient failures. Each 4xx surfaces in the "Needs review" tray, except `401`, `408` and `429`, which stay queued and retry like a network error.
 - **Retry on 5xx / network error** with exponential backoff: 1s, 4s, 16s, capped at 60s. After 5 attempts in a single sync run, sync pauses and surfaces a banner. Coach can tap to retry.
+- **Queued marks retry on their own**: on app start, on reconnect, and every 45 seconds while anything is waiting. The Today screen shows how many marks are waiting to send.
+- **Each queued mark is stamped with the signed-in user and academy.** A device only replays marks for the account and academy that queued them; others wait until that coach signs back in.
 
 ## The "Needs review" tray
 
@@ -66,7 +68,7 @@ A coach-side surface listing all mutations that did not apply cleanly. For each:
 
 - The original action (session, student, status, time).
 - The reason it didn't apply (one of the six cases above).
-- An option: dismiss, export to email, or — for case #4 — choose which device wins.
+- An option: dismiss, export to email, or — for case #4 — keep the recorded status or change it to the queued one.
 
 The tray is the **only** UX surface for offline-write failure. Toasts at sync time are noisy and easy to miss.
 
@@ -81,7 +83,7 @@ The server is the source of truth. The client cannot override the server's confl
 Server-side validations (in `coaching.mark_attendance` use case):
 
 1. `mutation_id` deduplication via `@idempotent`.
-2. Session must exist, not be cancelled (`SessionCancelled`).
+2. Session must exist, not be cancelled (`SessionCancelled`), and must start within the next hour (`OccurrenceNotStarted`).
 3. Session must be assigned to the requesting coach for the date (`SessionNotAssigned`).
 4. Student must be enrolled in the session at the time of the request (`StudentNotEnrolled`).
 5. No prior attendance row for `(session_id, student_id)` with a different `mutation_id` (`ConflictAttendanceExists`).
@@ -94,7 +96,7 @@ Validation 5 prevents the case where two devices both mark the same student befo
 - **Queued mutations**: IndexedDB via a custom Serwist queue. Max 200 pending; if exceeded, oldest non-conflict mutations are dropped after surfacing in the tray.
 - **Reviewed dismissals**: stored locally only. Server never sees dismissed mutations.
 
-On logout, all coach IndexedDB stores are cleared.
+On logout, all coach IndexedDB stores and the cached coach API responses are cleared. If marks are still waiting to send, the coach is asked to confirm first; confirming discards them. Progress notes are never kept in the offline cache.
 
 ## Out of scope for the offline policy
 

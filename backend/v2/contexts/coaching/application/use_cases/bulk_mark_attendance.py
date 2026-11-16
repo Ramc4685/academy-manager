@@ -7,7 +7,11 @@ Validates:
   miss; ``BulkStudentNotEnrolled.details["student_ids"]`` names them).
 
 Idempotent on ``mutation_id`` (batch-level): replays return the cached result.
-Writes ``Coaching.AttendanceMarked`` to the outbox per entry.
+Row ids are deterministic (``{mutation_id}:{index}``), so a replay of a batch
+that was cut off midway (some rows written, no idempotency record) skips the
+rows it already wrote and finishes the rest instead of 409ing; a row written
+by any other mutation is still a conflict. Writes ``Coaching.AttendanceMarked``
+to the outbox per row it writes.
 """
 
 from __future__ import annotations
@@ -16,12 +20,15 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.v2.contexts.coaching.application.ports import (
     AttendanceRepository,
     EnrollmentLookup,
     OccurrenceLookup,
+)
+from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
+    ensure_occurrence_started,
 )
 from backend.v2.contexts.coaching.domain.errors import (
     BulkSessionNotAssigned,
@@ -45,13 +52,17 @@ class BulkAttendanceEntry(BaseModel):
     status: Literal["present", "absent", "late"]
 
 
+# Bigger than any class; bounds the per-student lookups one batch costs.
+BULK_MARK_MAX_ENTRIES = 100
+
+
 class BulkMarkAttendanceCommand(BaseModel):
     model_config = {"frozen": True}
 
     mutation_id: str  # idempotency key for the whole batch
     occurrence_id: str
     session_id: str
-    entries: list[BulkAttendanceEntry]
+    entries: list[BulkAttendanceEntry] = Field(max_length=BULK_MARK_MAX_ENTRIES)
 
 
 class BulkAttendanceEntryResult(BaseModel):
@@ -140,6 +151,13 @@ class BulkMarkAttendance:
                 coach_id=coach_id,
             )
 
+        ensure_occurrence_started(
+            occurrence.starts_at,
+            self._now(),
+            session_id=cmd.session_id,
+            occurrence_id=cmd.occurrence_id,
+        )
+
         # 2. Validate every student is eligible for this occurrence — an
         # active enrollment, or an approved make-up / trial roster entry
         # (issue #672). The whole batch fails on any miss, and the error
@@ -175,15 +193,25 @@ class BulkMarkAttendance:
 
         # 2c. Pre-flight: check for existing attendance before writing any rows so
         # a conflict never causes a partial batch (raises before first write).
-        for entry in cmd.entries:
+        # A row carrying this batch's own id was written by an earlier,
+        # interrupted run of this same batch: keep it and skip the write.
+        already_written: set[int] = set()
+        for i, entry in enumerate(cmd.entries):
             existing = await self._attendance.find_existing(cmd.occurrence_id, entry.student_id)
-            if existing is not None:
+            if (
+                existing is not None
+                and existing.attendance_id == f"{cmd.mutation_id}:{i}"
+                and existing.status != "voided"
+            ):
+                already_written.add(i)
+            elif existing is not None:
                 raise ConflictAttendanceExists(
                     "attendance already recorded for this occurrence and student",
                     session_id=cmd.session_id,
                     occurrence_id=cmd.occurrence_id,
                     student_id=entry.student_id,
                     existing_attendance_id=existing.attendance_id,
+                    existing_status=existing.status,
                 )
 
         # 3. Persist attendance and emit events per entry.
@@ -193,6 +221,15 @@ class BulkMarkAttendance:
         entry_results: list[BulkAttendanceEntryResult] = []
         for i, entry in enumerate(cmd.entries):
             attendance_id = f"{cmd.mutation_id}:{i}"
+            entry_results.append(
+                BulkAttendanceEntryResult(
+                    student_id=entry.student_id,
+                    status=entry.status,
+                    attendance_id=attendance_id,
+                )
+            )
+            if i in already_written:
+                continue
             attendance = Attendance(
                 attendance_id=attendance_id,
                 academy_id=academy_id,
@@ -206,7 +243,13 @@ class BulkMarkAttendance:
                 client_app_version="bulk",
                 entry_source=sources[entry.student_id],
             )
-            await self._attendance.save(attendance)
+            try:
+                await self._attendance.save(attendance)
+            except ConflictAttendanceExists as exc:
+                # A concurrent replay of this batch won this row's insert.
+                if exc.details.get("existing_attendance_id") != attendance_id:
+                    raise
+                continue
             await self._outbox.append(
                 AttendanceMarked(
                     aggregate_id=attendance.attendance_id,
@@ -221,13 +264,6 @@ class BulkMarkAttendance:
                         status=attendance.status,
                         entry_source=attendance.entry_source,
                     ),
-                )
-            )
-            entry_results.append(
-                BulkAttendanceEntryResult(
-                    student_id=entry.student_id,
-                    status=entry.status,
-                    attendance_id=attendance_id,
                 )
             )
 

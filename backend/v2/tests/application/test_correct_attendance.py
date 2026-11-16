@@ -1,6 +1,6 @@
 """Use-case tests for CorrectAttendance (#517).
 
-Coach corrections are allowed inside the 24h grace window on an occurrence
+Coach corrections are allowed inside the 48h grace window on an occurrence
 they are assigned to; admin corrections are allowed any time. Every real
 correction stamps the audit trail and emits Coaching.AttendanceCorrected.
 """
@@ -20,6 +20,7 @@ from backend.v2.contexts.coaching.application.use_cases.correct_attendance impor
 from backend.v2.contexts.coaching.domain.errors import (
     AttendanceNotFound,
     CorrectionWindowExpired,
+    MarkVoided,
     SessionNotAssigned,
 )
 from backend.v2.contexts.coaching.domain.models import Attendance
@@ -141,20 +142,20 @@ async def test_coach_corrects_within_window_with_audit_trail_and_event() -> None
 
 @pytest.mark.asyncio
 async def test_coach_outside_window_rejected() -> None:
-    # Owner decision 2026-09-12 (#554): the coach self-correction window is
-    # 24h, not the 48h #517 shipped with.
+    # The coach self-correction window is 48h, the figure the coach screen
+    # and the API summary state.
     repo = FakeAttendanceRepo()
     repo.saved.append(_mark("present"))
-    uc = _build(now=MARKED_AT + timedelta(hours=25), repo=repo)
+    uc = _build(now=MARKED_AT + timedelta(hours=48, minutes=1), repo=repo)
     with pytest.raises(CorrectionWindowExpired):
         await uc.execute(_cmd("absent"), actor_id="coach-1", actor_role="coach")
 
 
 @pytest.mark.asyncio
-async def test_coach_just_inside_24h_window_allowed() -> None:
+async def test_coach_just_inside_48h_window_allowed() -> None:
     repo = FakeAttendanceRepo()
     repo.saved.append(_mark("present"))
-    uc = _build(now=MARKED_AT + timedelta(hours=23, minutes=59), repo=repo)
+    uc = _build(now=MARKED_AT + timedelta(hours=47, minutes=59), repo=repo)
 
     result = await uc.execute(_cmd("absent"), actor_id="coach-1", actor_role="coach")
 
@@ -241,3 +242,17 @@ async def test_second_correction_keeps_latest_previous_status() -> None:
     assert result.previous_status == "absent"
     assert result.corrected_by == "admin-1"
     assert len(outbox.appended) == 2
+
+
+@pytest.mark.asyncio
+async def test_coach_cannot_reverse_an_admin_void() -> None:
+    """A voided row must not be silently un-voided by a coach tap."""
+    repo = FakeAttendanceRepo()
+    repo.saved.append(_mark("voided"))
+    outbox = FakeOutbox()
+    uc = _build(now=MARKED_AT + timedelta(hours=1), repo=repo, outbox=outbox)
+
+    with pytest.raises(MarkVoided):
+        await uc.execute(_cmd("present"), actor_id="coach-1", actor_role="coach")
+    assert repo.updated == []
+    assert outbox.appended == []

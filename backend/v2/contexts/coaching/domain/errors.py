@@ -42,6 +42,14 @@ class StudentNotEnrolled(DomainError):
     status_code = 409
 
 
+class OccurrenceNotStarted(DomainError):
+    """Mark rejected because the class starts more than the marking lead time
+    from now: a future class cannot have attendance yet."""
+
+    code = "Coaching.OccurrenceNotStarted"
+    status_code = 409
+
+
 class ConflictAttendanceExists(DomainError):
     """A different mutation already recorded attendance for this (session, student)."""
 
@@ -60,6 +68,14 @@ class CorrectionWindowExpired(DomainError):
     """Coach correction rejected because the grace window has passed (admin can still correct)."""
 
     code = "Coaching.CorrectionWindowExpired"
+    status_code = 403
+
+
+class MarkVoided(DomainError):
+    """Coach correction rejected because an admin voided the mark; only an
+    admin may un-void it."""
+
+    code = "Coaching.MarkVoided"
     status_code = 403
 
 
