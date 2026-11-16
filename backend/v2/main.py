@@ -1126,7 +1126,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_overdue_families = compose_overdue_families(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
     app.state.admin_family_offers = compose_admin_family_offers(db)
-    app.state.referrals = compose_referrals(db)
+    app.state.referrals = compose_referrals(db, frontend_url=settings.frontend_url)
     app.state.admin_payment_methods = compose_admin_payment_methods(db)
     # Pricing page under Money (Settings overhaul PR 11b).
     app.state.admin_pricing = compose_admin_pricing(db)

@@ -24082,6 +24082,17 @@
             "default": 0,
             "title": "Rewards Earned",
             "type": "integer"
+          },
+          "share_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Url"
           }
         },
         "required": [
@@ -28643,6 +28654,19 @@
       },
       "ReferralRowView": {
         "properties": {
+          "attributed_at": {
+            "format": "date-time",
+            "title": "Attributed At",
+            "type": "string"
+          },
+          "competing_codes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Competing Codes",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -28765,6 +28789,14 @@
             ],
             "title": "Reviewed At"
           },
+          "source": {
+            "enum": [
+              "contact",
+              "application"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
           "status": {
             "enum": [
               "needs_review",
@@ -28779,6 +28811,8 @@
         "required": [
           "referral_id",
           "referral_code",
+          "source",
+          "attributed_at",
           "status",
           "created_at"
         ],

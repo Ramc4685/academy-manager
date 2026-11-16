@@ -79,13 +79,13 @@ def is_self_referral(
     referrer_ids: Iterable[str],
     referrer_emails: Iterable[str | None],
     referrer_phones: Iterable[str | None],
-    referred_parent_id: str,
+    referred_ids: Iterable[str],
     referred_emails: Iterable[str | None],
     referred_phones: Iterable[str | None],
 ) -> bool:
-    """Same parent (any id the parent answers to), same email, or same
+    """Same parent (any id either account answers to), same email, or same
     household phone."""
-    if referred_parent_id in set(referrer_ids):
+    if set(referrer_ids) & set(referred_ids):
         return True
     mine = {e.strip().lower() for e in referrer_emails if e and e.strip()}
     if mine & {e.strip().lower() for e in referred_emails if e and e.strip()}:
@@ -109,6 +109,9 @@ class Referral(BaseModel):
     source: ReferralSource
     source_id: str
     attributed_at: datetime
+    #: Other codes seen for this family (an inquiry's code when the
+    #: registration's won, or vice versa), for the owner's review.
+    competing_codes: tuple[str, ...] = ()
     status: ReferralStatus
     reason: IneligibleReason | None = None
     referrer_credit_cents: int | None = None

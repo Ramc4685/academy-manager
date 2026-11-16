@@ -40,7 +40,7 @@ def _client(db: Any, *, user_id: str, roles: tuple[str, ...]) -> httpx.AsyncClie
         user_id=user_id, email=f"{user_id}@example.com", academy_id="test-academy", roles=roles
     )  # type: ignore[arg-type]
     app.dependency_overrides[get_auth_claims] = lambda: claims
-    app.state.referrals = compose_referrals(db)
+    app.state.referrals = compose_referrals(db, frontend_url="https://app.courtmastr.test")
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
 
@@ -65,10 +65,14 @@ async def _switch(db: Any, **program: Any) -> None:
 
 
 async def test_parent_card_is_off_until_the_programme_is_on(parent, real_db) -> None:
+    await real_db["academies"].insert_one(
+        {"academy_id": "test-academy", "slug": "acme", "display_name": "Acme"}
+    )
     off = (await parent.get("/api/v2/parent/referral")).json()
     assert off == {
         "enabled": False,
         "referral_code": None,
+        "share_url": None,
         "rewards_earned": 0,
         "referrer_credit_cents": None,
         "referred_credit_cents": None,
@@ -81,6 +85,8 @@ async def test_parent_card_is_off_until_the_programme_is_on(parent, real_db) -> 
     assert first["enabled"] is True and first["referral_code"]
     assert again["referral_code"] == first["referral_code"]
     assert first["rewards_earned"] == 0 and first["referrer_credit_cents"] == 2_500
+    # Built on the server from the academy's slug, never the browser's address.
+    assert first["share_url"] == f"https://acme.courtmastr.test/?ref={first['referral_code']}"
 
 
 async def test_admin_lists_referrals_with_state_and_names(admin, real_db) -> None:
@@ -101,6 +107,7 @@ async def test_admin_lists_referrals_with_state_and_names(admin, real_db) -> Non
             "source": "contact",
             "source_id": "c1",
             "attributed_at": now,
+            "competing_codes": ["AB23CD45"],
             "status": "ineligible",
             "reason": "self_referral",
             "created_at": now,
@@ -111,6 +118,8 @@ async def test_admin_lists_referrals_with_state_and_names(admin, real_db) -> Non
     [row] = body["referrals"]
     assert row["referrer_name"] == "Riley Ref" and row["referred_name"] == "Nova New"
     assert (row["status"], row["reason"]) == ("ineligible", "self_referral")
+    assert (row["source"], row["competing_codes"]) == ("contact", ["AB23CD45"])
+    assert row["attributed_at"].startswith("2026-12-01")
 
 
 async def test_admin_email_preview_renders_and_sends_nothing(admin, real_db) -> None:

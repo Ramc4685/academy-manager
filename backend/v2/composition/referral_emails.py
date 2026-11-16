@@ -13,7 +13,7 @@ from __future__ import annotations
 import html
 from dataclasses import dataclass
 
-from backend.v2.composition.trial_nudges import _para
+from backend.v2.shared.comms.email_theme import format_money
 
 
 @dataclass(frozen=True)
@@ -23,12 +23,16 @@ class ReferralEmail:
     inner_html: str
 
 
-def _dollars(cents: int) -> str:
-    return f"${cents / 100:,.2f}".replace(".00", "")
+def _para(text: str) -> str:
+    return f'<p style="margin:0 0 12px;">{text}</p>'
+
+
+def _money(cents: int, currency: str) -> str:
+    return format_money(cents, currency, drop_zero_cents=True)
 
 
 def referrer_reward_email(
-    *, academy_name: str, referred_first_name: str, credit_cents: int
+    *, academy_name: str, referred_first_name: str, credit_cents: int, currency: str
 ) -> ReferralEmail:
     return ReferralEmail(
         key="referral_reward",
@@ -40,8 +44,8 @@ def referrer_reward_email(
                     f"{html.escape(academy_name)} with your referral link. Thank you!"
                 ),
                 _para(
-                    f"We have added a <strong>{_dollars(credit_cents)}</strong> credit to "
-                    "your account. It comes off your next invoice automatically."
+                    f"We have added a <strong>{_money(credit_cents, currency)}</strong> "
+                    "credit to your account. It comes off your next invoice automatically."
                 ),
                 _para("You can find your link to share again on your profile page."),
             ]
@@ -49,7 +53,7 @@ def referrer_reward_email(
     )
 
 
-def referred_welcome_email(*, academy_name: str, credit_cents: int) -> ReferralEmail:
+def referred_welcome_email(*, academy_name: str, credit_cents: int, currency: str) -> ReferralEmail:
     return ReferralEmail(
         key="referral_welcome",
         subject=f"A welcome credit from {academy_name}",
@@ -57,8 +61,8 @@ def referred_welcome_email(*, academy_name: str, credit_cents: int) -> ReferralE
             [
                 _para(
                     f"Welcome to {html.escape(academy_name)}! Because a friend referred you, "
-                    f"we have added a <strong>{_dollars(credit_cents)}</strong> credit to "
-                    "your account."
+                    f"we have added a <strong>{_money(credit_cents, currency)}</strong> "
+                    "credit to your account."
                 ),
                 _para("It comes off your next invoice automatically."),
             ]
@@ -67,12 +71,21 @@ def referred_welcome_email(*, academy_name: str, credit_cents: int) -> ReferralE
 
 
 def preview(
-    *, academy_name: str, referrer_credit_cents: int, referred_credit_cents: int
+    *,
+    academy_name: str,
+    referrer_credit_cents: int,
+    referred_credit_cents: int,
+    currency: str,
 ) -> list[ReferralEmail]:
     """Both messages with sample values, for the owner to read."""
     return [
         referrer_reward_email(
-            academy_name=academy_name, referred_first_name="Sam", credit_cents=referrer_credit_cents
+            academy_name=academy_name,
+            referred_first_name="Sam",
+            credit_cents=referrer_credit_cents,
+            currency=currency,
         ),
-        referred_welcome_email(academy_name=academy_name, credit_cents=referred_credit_cents),
+        referred_welcome_email(
+            academy_name=academy_name, credit_cents=referred_credit_cents, currency=currency
+        ),
     ]

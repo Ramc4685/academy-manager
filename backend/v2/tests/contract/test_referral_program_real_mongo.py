@@ -36,6 +36,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_referrals import (
     MongoReferralRepository,
     MongoReferralSources,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.shared.tenancy import current_academy_id, tenant_scope
 
 pytestmark = pytest.mark.asyncio
@@ -67,16 +68,35 @@ class _Rotated(MongoReferralRepository):
         return rows[k:] + rows[:k]
 
 
-def _process(db: Any, now: datetime, *, shift: int = 0) -> ProcessReferrals:
+def _sources(db: Any) -> MongoReferralSources:
+    return MongoReferralSources(db, users=MongoUserRepository(db))
+
+
+def _process(
+    db: Any,
+    now: datetime,
+    *,
+    shift: int = 0,
+    zone: str = "UTC",
+    sources: MongoReferralSources | None = None,
+) -> ProcessReferrals:
+    async def timezone_for(_academy_id: str) -> str:
+        return zone
+
     return ProcessReferrals(
         settings=MongoBillingSettingsRepository(db),
         referrals=_Rotated(db, shift),
         codes=MongoReferralCodeRepository(db),
-        sources=MongoReferralSources(db),
+        sources=sources or _sources(db),
         credits=MongoCreditLedgerRepository(db),
         academy_id=current_academy_id,
+        timezone_for=timezone_for,
         clock=lambda: now,
     )
+
+
+async def _base_url(academy_id: str) -> str:
+    return f"https://{academy_id}.courtmastr.test"
 
 
 def _parent_view(db: Any) -> GetParentReferral:
@@ -84,6 +104,8 @@ def _parent_view(db: Any) -> GetParentReferral:
         settings=MongoBillingSettingsRepository(db),
         referrals=MongoReferralRepository(db),
         codes=MongoReferralCodeRepository(db),
+        academy_id=current_academy_id,
+        base_url_for=_base_url,
         clock=lambda: T0,
     )
 
@@ -544,3 +566,229 @@ async def test_approval_is_refused_while_the_programme_is_off(real_db, acad) -> 
     with pytest.raises(ReferralNotReviewable):
         await _approve(real_db, DUE).execute(row["referral_id"], actor_id="u-owner")
     assert (await _referrals(real_db))[0]["status"] == "needs_review"
+
+
+# Fix round (risk review): the money must have stayed with the academy, the
+# credit must land on the id the family is billed under, and the owner must
+# see how a family was attributed.
+
+
+async def _invoice(db: Any, parent_id: str, invoice_id: str, **fields: Any) -> None:
+    at = fields.pop("created_at", T0 + timedelta(days=5))
+    await db["invoices"].insert_one(
+        {
+            "academy_id": current_academy_id(),
+            "invoice_id": invoice_id,
+            "parent_id": parent_id,
+            "enrollment_id": f"e-{parent_id}",
+            "status": "paid",
+            "total_cents": 10_000,
+            "balance_due_cents": 0,
+            "currency": "usd",
+            "created_at": at,
+            "updated_at": at,
+            **fields,
+        }
+    )
+
+
+async def test_a_fully_refunded_first_invoice_never_qualifies(real_db, acad) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code)
+    # A full refund leaves the invoice "paid" with refunded_cents == total.
+    await real_db["invoices"].update_one(
+        {"invoice_id": "inv-u-new"}, {"$set": {"refunded_cents": 10_000}}
+    )
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    assert (row["status"], row["qualified_at"]) == ("pending", None)
+    assert await _credits(real_db) == []
+
+
+async def test_a_zero_dollar_paid_invoice_never_qualifies(real_db, acad) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code)
+    await real_db["invoices"].update_one({"invoice_id": "inv-u-new"}, {"$set": {"total_cents": 0}})
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    assert row["qualified_at"] is None and await _credits(real_db) == []
+
+
+async def test_a_payment_reversed_in_the_hold_clears_it_and_a_later_payment_requalifies(
+    real_db, acad
+) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code)
+    await _process(real_db, DUE - timedelta(days=6)).execute()  # qualifies at once
+    [row] = await _referrals(real_db)
+    assert row["qualified_invoice_id"] == "inv-u-new"
+    # An ACH return (R01) reopens the invoice before the hold ends.
+    await real_db["invoices"].update_one(
+        {"invoice_id": "inv-u-new"}, {"$set": {"status": "open", "balance_due_cents": 10_000}}
+    )
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    assert (row["status"], row["qualified_at"], row["qualified_invoice_id"]) == (
+        "pending",
+        None,
+        None,
+    )
+    assert await _credits(real_db) == []
+
+    paid = T0 + timedelta(days=20)
+    await _invoice(real_db, "u-new", "inv-u-new-2", created_at=paid)
+    await _process(real_db, paid + timedelta(days=8)).execute()
+    [row] = await _referrals(real_db)
+    assert (row["status"], row["qualified_invoice_id"]) == ("granted", "inv-u-new-2")
+    assert len(await _credits(real_db)) == 2
+
+
+@pytest.mark.parametrize(("outcome", "grants"), [(None, False), ("lost", False), ("won", True)])
+async def test_a_dispute_on_the_payment_blocks_the_grant(
+    real_db, acad, outcome: str | None, grants: bool
+) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code)
+    await _process(real_db, DUE - timedelta(days=6)).execute()
+    await real_db["payment_disputes"].insert_one(
+        {
+            "academy_id": acad,
+            "dispute_id": "dp_1",
+            "payment_id": "pay-u-new",
+            "status": outcome or "needs_response",
+            "outcome": outcome,
+            "is_open": outcome is None,
+            "opened_at": T0 + timedelta(days=4),
+            "updated_at": T0 + timedelta(days=4),
+        }
+    )
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    assert (row["status"] == "granted") is grants
+    assert len(await _credits(real_db)) == (2 if grants else 0)
+
+
+async def test_an_old_open_invoice_does_not_block_a_later_paid_one(real_db, acad) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code, paid_at=None)
+    await _invoice(real_db, "u-new", "inv-u-new-2")
+    await _process(real_db, DUE + timedelta(days=30)).execute()
+    [row] = await _referrals(real_db)
+    assert (row["status"], row["qualified_invoice_id"]) == ("granted", "inv-u-new-2")
+
+
+async def test_credits_land_on_the_ids_the_families_are_billed_under(real_db, acad) -> None:
+    await _settings(real_db)
+    await real_db["users"].update_one(
+        {"user_id": "u-ref"}, {"$set": {"firebase_uid": "fb-ref"}}, upsert=True
+    )
+    code = await _referrer(real_db)
+    # The referrer's monthly invoices are keyed by enrollment.parent_id = firebase uid.
+    await real_db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "e-ref",
+            "student_id": "s-ref",
+            "session_id": "sess-1",
+            "parent_id": "fb-ref",
+            "status": "active",
+            "created_at": T0,
+        }
+    )
+    await _referred_family(real_db, "u-new", code)
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    assert row["status"] == "granted"
+    owners = {c["source_id"].rsplit(":", 1)[1]: c["parent_id"] for c in await _credits(real_db)}
+    assert owners == {"referrer": "fb-ref", "referred": "u-new"}
+    ledger = MongoCreditLedgerRepository(real_db)
+    applied = await ledger.apply_available_credits(
+        parent_id="fb-ref", invoice_id="inv-ref-next", amount_due_cents=10_000
+    )
+    assert applied == 2_500
+
+
+async def test_the_reward_year_is_the_academy_local_year(real_db, acad) -> None:
+    """Paid 03:00 UTC on 1 January is still 31 December in Chicago."""
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    paid = datetime(2027, 1, 1, 3, 0, tzinfo=UTC)
+    await _referred_family(real_db, "u-new", code, invoice_at=paid, paid_at=paid)
+    await _process(real_db, paid + timedelta(days=8), zone="America/Chicago").execute()
+    [row] = await _referrals(real_db)
+    assert (row["status"], row["reward_year"]) == ("granted", 2026)
+
+
+async def test_the_row_records_the_source_and_competing_codes(real_db, acad) -> None:
+    await _settings(real_db)
+    real = await _referrer(real_db, "u-real", email="real@example.test")
+    other = await _referrer(real_db, "u-other", email="other@example.test")
+    await _referred_family(real_db, "u-new", real, contact_code=other)
+    await _process(real_db, T0 + timedelta(days=2)).execute()
+    [row] = await _referrals(real_db)
+    assert (row["source"], row["referral_code"], row["competing_codes"]) == (
+        "application",
+        real,
+        [other],
+    )
+
+
+class _CountingSources(MongoReferralSources):
+    def __init__(self, db: Any) -> None:
+        super().__init__(db, users=MongoUserRepository(db))
+        self.lookups = 0
+
+    async def household(self, parent_id: str) -> Any:
+        self.lookups += 1
+        return await super().household(parent_id)
+
+
+async def test_a_settled_family_costs_no_lookups_on_later_runs(real_db, acad) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code)
+    await _process(real_db, DUE).execute()
+    assert (await _referrals(real_db))[0]["status"] == "granted"
+    counting = _CountingSources(real_db)
+    await _process(real_db, DUE + timedelta(days=1), sources=counting).execute()
+    assert counting.lookups == 0
+
+
+async def test_the_share_link_is_on_the_academy_host(real_db, acad) -> None:
+    await _settings(real_db)
+    view = await _parent_view(real_db).execute("u-ref")
+    assert view.share_url == f"https://test-academy.courtmastr.test/?ref={view.referral_code}"
+
+
+# The risk reviewer's concurrency repros, kept as regression tests.
+
+
+async def test_approve_racing_the_sweep_grants_once(real_db, acad) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code, via="contact")
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    assert row["status"] == "needs_review"
+    await asyncio.gather(
+        _approve(real_db, DUE).execute(row["referral_id"], actor_id="owner"),
+        *[_process(real_db, DUE, shift=i).execute() for i in range(5)],
+    )
+    assert len(await _credits(real_db)) == 2
+
+
+async def test_the_cap_holds_with_six_qualified_families_racing(real_db, acad) -> None:
+    await _settings(real_db, max_rewards_per_referrer_per_year=2)
+    code = await _referrer(real_db)
+    for i in range(6):
+        await _referred_family(real_db, f"u-new{i}", code)
+    await _process(real_db, DUE - timedelta(days=6)).execute()  # record + qualify
+    await asyncio.gather(*[_process(real_db, DUE, shift=i).execute() for i in range(6)])
+    rows = await _referrals(real_db)
+    assert sum(r["status"] == "granted" for r in rows) == 2
+    assert len([c for c in await _credits(real_db) if c["parent_id"] == "u-ref"]) == 2

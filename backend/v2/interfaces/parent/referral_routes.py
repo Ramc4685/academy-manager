@@ -19,6 +19,8 @@ router = APIRouter(tags=["parent.referral"])
 class ParentReferralResponse(BaseModel):
     enabled: bool
     referral_code: str | None = None
+    #: The academy's own public page with ``?ref=<code>``, built server side.
+    share_url: str | None = None
     rewards_earned: int = 0
     referrer_credit_cents: int | None = None
     referred_credit_cents: int | None = None
@@ -37,6 +39,7 @@ async def get_referral(
     return ParentReferralResponse(
         enabled=view.enabled,
         referral_code=view.referral_code,
+        share_url=view.share_url,
         rewards_earned=view.rewards_earned,
         referrer_credit_cents=view.referrer_credit_cents,
         referred_credit_cents=view.referred_credit_cents,

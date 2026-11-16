@@ -16257,6 +16257,8 @@ export interface components {
              * @default 0
              */
             rewards_earned: number;
+            /** Share Url */
+            share_url?: string | null;
         };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
@@ -17864,6 +17866,16 @@ export interface components {
         /** ReferralRowView */
         ReferralRowView: {
             /**
+             * Attributed At
+             * Format: date-time
+             */
+            attributed_at: string;
+            /**
+             * Competing Codes
+             * @default []
+             */
+            competing_codes: string[];
+            /**
              * Created At
              * Format: date-time
              */
@@ -17890,6 +17902,11 @@ export interface components {
             referrer_name?: string | null;
             /** Reviewed At */
             reviewed_at?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "contact" | "application";
             /**
              * Status
              * @enum {string}

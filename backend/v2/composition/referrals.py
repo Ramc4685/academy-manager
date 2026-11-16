@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.v2.composition import referral_emails
+from backend.v2.composition.academy_links import academy_frontend_base_url_lookup
 from backend.v2.contexts.billing.application.use_cases.referrals import (
     ApproveReferral,
     GetParentReferral,
@@ -27,7 +28,13 @@ from backend.v2.contexts.billing.infrastructure.mongo_referrals import (
     MongoReferralRepository,
     MongoReferralSources,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.time.academy_timezone import (
+    academy_timezone_lookup,
+    resolve_academy_clock_timezone,
+)
 
 
 @dataclass(frozen=True)
@@ -39,26 +46,31 @@ class ReferralProgram:
     parent_view: GetParentReferral
     admin_list: ListReferrals
     approve: ApproveReferral
-    db: Any
+    settings: MongoBillingSettingsRepository
+    academies: MongoAcademyRepository
 
     async def email_preview(self) -> list[referral_emails.ReferralEmail]:
         """The two messages with sample values; never sends."""
-        program = (await MongoBillingSettingsRepository(self.db).get()).referral_program
-        academy = await self.db["academies"].find_one(
-            {"academy_id": current_academy_id()}, {"name": 1}
-        )
+        program = (await self.settings.get()).referral_program
+        academy = await self.academies.find_by_id(current_academy_id()) or {}
         return referral_emails.preview(
-            academy_name=str((academy or {}).get("name") or "your academy"),
+            academy_name=str(academy.get("name") or "your academy"),
             referrer_credit_cents=program.referrer_credit_cents or 0,
             referred_credit_cents=program.referred_credit_cents or 0,
+            currency=str(academy.get("currency") or "usd"),
         )
 
 
-def compose_referrals(db: Any) -> ReferralProgram:
+def compose_referrals(db: Any, *, frontend_url: str | None) -> ReferralProgram:
     settings = MongoBillingSettingsRepository(db)
     referrals = MongoReferralRepository(db)
     codes = MongoReferralCodeRepository(db)
-    sources = MongoReferralSources(db)
+    sources = MongoReferralSources(db, users=MongoUserRepository(db))
+    zone_reader = academy_timezone_lookup(db)
+
+    async def timezone_for(academy_id: str) -> str:
+        return await resolve_academy_clock_timezone(zone_reader, academy_id)
+
     process = ProcessReferrals(
         settings=settings,
         referrals=referrals,
@@ -66,11 +78,19 @@ def compose_referrals(db: Any) -> ReferralProgram:
         sources=sources,
         credits=MongoCreditLedgerRepository(db),
         academy_id=current_academy_id,
+        timezone_for=timezone_for,
     )
     return ReferralProgram(
         process=process,
         approve=ApproveReferral(settings=settings, referrals=referrals, process=process),
-        parent_view=GetParentReferral(settings=settings, referrals=referrals, codes=codes),
+        parent_view=GetParentReferral(
+            settings=settings,
+            referrals=referrals,
+            codes=codes,
+            academy_id=current_academy_id,
+            base_url_for=academy_frontend_base_url_lookup(db, frontend_url=frontend_url),
+        ),
         admin_list=ListReferrals(referrals=referrals, sources=sources),
-        db=db,
+        settings=settings,
+        academies=MongoAcademyRepository(db),
     )

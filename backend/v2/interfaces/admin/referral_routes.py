@@ -28,6 +28,12 @@ class ReferralRowView(BaseModel):
     referral_code: str
     referrer_name: str | None = None
     referred_name: str | None = None
+    #: Where the code came from (``application``: the parent's own signed-in
+    #: registration; ``contact``: the public inquiry form), when it arrived,
+    #: and any other codes seen for the family, so the owner can judge it.
+    source: Literal["contact", "application"]
+    attributed_at: datetime
+    competing_codes: list[str] = []
     status: Literal["needs_review", "pending", "granted", "ineligible"]
     reason: (
         Literal["unknown_code", "self_referral", "existing_family", "yearly_cap_reached"] | None
