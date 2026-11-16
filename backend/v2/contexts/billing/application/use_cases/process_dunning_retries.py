@@ -15,6 +15,7 @@ from backend.v2.contexts.billing.domain.dunning import (
     NO_SAVED_PAYMENT_METHOD,
     PARK_REASONS_NEEDING_ATTENTION,
     STRIPE_UNAVAILABLE,
+    TECHNICAL_FAILURE_CAPPED,
     DunningState,
 )
 from backend.v2.contexts.billing.domain.events import (
@@ -234,7 +235,7 @@ class ProcessDunningRetries:
                     state.processing_attempt_no,
                     exc,
                 )
-                await self._dunning.park_attempt(
+                await self._park(
                     state=state,
                     reason="charge_technical_failure",
                     now=now,
@@ -253,14 +254,14 @@ class ProcessDunningRetries:
                     if bool(result.get("processing"))
                     else "attempt_indeterminate"
                 )
-                await self._dunning.park_attempt(state=state, reason=reason, now=now)
+                await self._park(state=state, reason=reason, now=now)
                 parked_this_tick[invoice.invoice_id] = reason
                 counts["parked"] += 1
                 if not bool(result.get("processing")):
                     counts["transient"] += 1
                 continue
             if failure_code in _PARK_REASONS:
-                await self._dunning.park_attempt(
+                await self._park(
                     state=state,
                     reason=failure_code,
                     now=now,
@@ -298,6 +299,18 @@ class ProcessDunningRetries:
             )
 
         return ProcessDunningRetriesResult(**counts)
+
+    async def _park(self, *, state: DunningState, reason: str, now: datetime) -> None:
+        parked = await self._dunning.park_attempt(state=state, reason=reason, now=now)
+        if parked.suppression_reason == TECHNICAL_FAILURE_CAPPED:
+            # No longer retried; the admin sees it in Failed autopay (A7-6).
+            log.error(
+                "dunning_technical_failure_capped invoice=%s since=%s last_reason=%s",
+                state.invoice_id,
+                parked.technical_parked_since,
+                reason,
+                extra={"invoice_id": state.invoice_id, "academy_id": state.academy_id},
+            )
 
     async def _after_failed_attempt(
         self,

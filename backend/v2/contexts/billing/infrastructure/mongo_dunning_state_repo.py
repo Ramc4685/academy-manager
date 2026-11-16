@@ -94,6 +94,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
             "lease_expires_at",
             "suppressed_at",
             "parked_since",
+            "technical_parked_since",
             "autopay_disabled_at",
             "created_at",
             "updated_at",

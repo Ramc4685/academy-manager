@@ -401,6 +401,7 @@ _PARK_REASONS_NEEDING_ATTENTION = (
     "connected_account_not_ready",
     "stripe_not_configured",
     "stripe_unavailable",
+    "technical_failure_capped",
 )
 PARKED_STALE_AFTER = timedelta(hours=2)
 
