@@ -38,9 +38,13 @@ class FakeLinks:
     def __init__(self, raises: Exception | None = None) -> None:
         self._raises = raises
         self.seen_emails: list[str] = []
+        self.seen_portals: list[str | None] = []
 
-    async def generate_email_verification_link(self, email: str) -> str:
+    async def generate_email_verification_link(
+        self, email: str, *, portal_url: str | None = None
+    ) -> str:
         self.seen_emails.append(email)
+        self.seen_portals.append(portal_url)
         if self._raises is not None:
             raise self._raises
         return f"https://verify.example/?email={email}"
@@ -294,3 +298,27 @@ async def test_verification_email_carries_the_academy_brand() -> None:
     assert '<img src="https://cdn.test/blno.png" alt="BLNO Badminton"' in body
     assert "background:#112233" in body
     assert sender.sent[0]["subject"] == "Verify your email for BLNO Badminton"
+
+
+class _FakePortals:
+    async def get_academy_portal_url(self, academy_id: str) -> str | None:
+        return f"https://{academy_id}.example.test"
+
+
+@pytest.mark.asyncio
+async def test_verification_link_is_rehosted_on_the_academy_portal() -> None:
+    # Regression: the link used to land on Firebase's generic page with no
+    # way back to the academy, so a parent verifying on another device was lost.
+    links = FakeLinks()
+    use_case = SendRegistrationVerificationEmail(
+        verifier=FakeVerifier({"email": "parent@example.com", "uid": "uid-1"}),
+        links=links,
+        sender=FakeSender(),
+        academies=FakeAcademies(),
+        cooldown=FakeCooldown(),
+        portals=_FakePortals(),
+    )
+
+    await use_case.execute("token-1", academy_id="acad-1")
+
+    assert links.seen_portals == ["https://acad-1.example.test"]

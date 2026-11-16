@@ -26,6 +26,7 @@ from typing import Protocol
 from backend.v2.contexts.identity.application.ports import TokenVerifier
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     AcademyBrandLookup,
+    AcademyPortalUrlLookup,
     InviteEmailOutcome,
     InviteEmailPort,
     resolve_email_brand,
@@ -41,7 +42,9 @@ from backend.v2.shared.http.errors import DomainError
 
 
 class EmailVerificationLinkPort(Protocol):
-    async def generate_email_verification_link(self, email: str) -> str: ...
+    async def generate_email_verification_link(
+        self, email: str, *, portal_url: str | None = None
+    ) -> str: ...
 
 
 class AcademyNameLookup(Protocol):
@@ -80,7 +83,9 @@ class SendRegistrationVerificationEmail:
         academies: AcademyNameLookup,
         cooldown: VerificationEmailCooldownPort,
         brands: AcademyBrandLookup | None = None,
+        portals: AcademyPortalUrlLookup | None = None,
     ) -> None:
+        self._portals = portals
         self._verifier = verifier
         self._links = links
         self._sender = sender
@@ -113,7 +118,14 @@ class SendRegistrationVerificationEmail:
             )
 
         try:
-            verify_link = await self._links.generate_email_verification_link(email)
+            # Re-hosted on the academy's own /auth/action page so the parent
+            # can verify from any browser and continue to that academy's login.
+            portal_url = (
+                await self._portals.get_academy_portal_url(academy_id) if self._portals else None
+            )
+            verify_link = await self._links.generate_email_verification_link(
+                email, portal_url=portal_url
+            )
             academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
         except Exception as exc:
             raise LoginInviteSendFailed(f"could not prepare verification email: {exc}") from exc

@@ -86,7 +86,7 @@ def _mailbox_key(email: str) -> str:
     return f"{local}@{domain}"
 
 
-def _key(email: str) -> str:
+def _key(email: str, purpose: str = "") -> str:
     """Stable id for an address, hashed rather than stored in the clear.
 
     The row is a throttling artifact, not a user record: it has no owner, no
@@ -95,7 +95,10 @@ def _key(email: str) -> str:
     hash keeps the collection from becoming an unauthenticated log of "someone
     typed this email address here".
     """
-    return hashlib.sha256(_mailbox_key(email).encode("utf-8")).hexdigest()
+    # ``purpose`` keeps separate budgets per mail type; the verification
+    # budget keeps its original unprefixed key.
+    raw = f"{purpose}:{_mailbox_key(email)}" if purpose else _mailbox_key(email)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class MongoVerificationEmailCooldown:
@@ -106,8 +109,10 @@ class MongoVerificationEmailCooldown:
         db: AsyncIOMotorDatabase[Any],
         *,
         now: Callable[[], datetime] | None = None,
+        purpose: str = "",
     ) -> None:
         self._collection = db[COLLECTION]
+        self._purpose = purpose
         self._now = now or (lambda: datetime.now(UTC))
 
     async def claim_send(self, email: str) -> bool:
@@ -123,7 +128,7 @@ class MongoVerificationEmailCooldown:
         try:
             await self._collection.update_one(
                 {
-                    "_id": _key(email),
+                    "_id": _key(email, self._purpose),
                     "cooldown_until": {"$lte": now},
                     "$or": [
                         # Fewer than MAX_PER_DAY sends recorded at all...

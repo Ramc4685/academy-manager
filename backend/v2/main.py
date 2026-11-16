@@ -169,6 +169,9 @@ from backend.v2.contexts.identity.application.use_cases.register_public_parent i
 from backend.v2.contexts.identity.application.use_cases.request_account_deletion import (
     RequestAccountDeletion,
 )
+from backend.v2.contexts.identity.application.use_cases.send_password_reset_email import (
+    SendPasswordResetEmail,
+)
 from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
     SendRegistrationVerificationEmail,
 )
@@ -241,6 +244,7 @@ from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
+from backend.v2.interfaces.password_reset_routes import router as password_reset_router
 from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.public.router import router as public_router
 from backend.v2.interfaces.registration_routes import router as registration_router
@@ -294,6 +298,7 @@ from backend.v2.shared.scheduling.local_clock import (
     run_daily_at_local_time,
     seed_markers_from_legacy_heartbeats,
 )
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.tenancy.context import current_tenant_origins, tenant_scope
 from backend.v2.shared.tenancy.lookup_cache import CachingAcademyLookup
 from backend.v2.shared.tenancy.origins import TenantOriginsResolver
@@ -725,6 +730,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         default_academy_id=runtime_academy_id,
         saas_mode=settings.saas_mode,
     )
+
+    class _AcademyPortalUrls:
+        """Academy's own portal origin, so the reset link lands on its host."""
+
+        async def get_academy_portal_url(self, academy_id: str) -> str | None:
+            doc = await MongoAcademyRepository(db).find_by_id(academy_id)
+            slug = str(doc.get("slug") or "") if doc else ""
+            return (
+                academy_frontend_url(frontend_url=settings.frontend_url, academy_slug=slug) or None
+            )
+
     app.state.send_registration_verification_email = SendRegistrationVerificationEmail(
         verifier=verifier,
         links=get_firebase_admin_adapter(),
@@ -739,6 +755,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         academies=MongoAcademyRepository(db),
         cooldown=MongoVerificationEmailCooldown(db),
         brands=AcademyEmailBrands(MongoAcademyRepository(db)),
+        portals=_AcademyPortalUrls(),
+    )
+
+    # Branded "forgot password" mail (replaces Firebase's client-side sender).
+    app.state.send_password_reset_email = SendPasswordResetEmail(
+        users=users_repo,
+        memberships=membership_repo,
+        links=get_firebase_admin_adapter(),
+        sender=build_user_facing_invite_sender(
+            sender=_build_email_sender(settings, db),
+            env=str(getattr(settings, "env", "") or ""),
+            real_email_envs=REAL_EMAIL_ENVS,
+        ),
+        academies=MongoAcademyRepository(db),
+        cooldown=MongoVerificationEmailCooldown(db, purpose="password_reset"),
+        portals=_AcademyPortalUrls(),
+        brands=AcademyEmailBrands(MongoAcademyRepository(db)),
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
@@ -749,6 +782,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.consume_magic_link = ConsumeMagicLink(
         links=MongoMagicLinkRepository(db),
         tokens=get_firebase_admin_adapter(),
+        users=users_repo,
     )
 
     # Recipient email preferences (#555). Both the public token-authenticated
@@ -765,6 +799,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
     app.state.forget_push_devices = ForgetPushDevices(devices=_push_device_repo)
     # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
+    # Its follow-up (stop classes/autopay, confirmation email) is wired below,
+    # once the stop-all-classes use case exists.
     app.state.request_account_deletion = RequestAccountDeletion(
         store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
     )
@@ -1040,10 +1076,22 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
-    from backend.v2.composition.account_deletion import compose_execute_account_deletions
+    from backend.v2.composition.account_deletion import (
+        compose_deletion_request_follow_up,
+        compose_execute_account_deletions,
+    )
 
     app.state.execute_account_deletions = compose_execute_account_deletions(
         db, stop_all_classes=_departures.stop_all_classes, stripe=stripe_gw
+    )
+    app.state.request_account_deletion.follow_up = compose_deletion_request_follow_up(
+        db,
+        stop_all_classes=_departures.stop_all_classes,
+        sender=build_user_facing_invite_sender(
+            sender=_build_email_sender(settings, db),
+            env=str(getattr(settings, "env", "") or ""),
+            real_email_envs=REAL_EMAIL_ENVS,
+        ),
     )
     # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back
     # (and re-offer it); a bare status write leaked the seat. Same promote
@@ -2877,6 +2925,7 @@ def create_app() -> FastAPI:
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
     app.include_router(magic_link_router, prefix="/api/v2")
+    app.include_router(password_reset_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
     app.include_router(email_webhook_router, prefix="/api/v2")
     # Anonymous, host-resolved, rate limited (interfaces/public/__init__.py).

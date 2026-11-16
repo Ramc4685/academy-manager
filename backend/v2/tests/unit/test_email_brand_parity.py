@@ -166,7 +166,7 @@ class _ResetLinks:
 
 
 class _VerifyLinks:
-    async def generate_email_verification_link(self, email: str) -> str:
+    async def generate_email_verification_link(self, email: str, **_: Any) -> str:
         return "https://verify.example.test/?oob=xyz"
 
 
