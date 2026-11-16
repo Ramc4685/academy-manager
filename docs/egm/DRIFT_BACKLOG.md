@@ -18,7 +18,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 32 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 33 items, from `drift/backend__v2.md`
 - [missing] README:64 requires a wrong-persona 404 test for every route; only per-area gate tests exist (e.g. `tests/structural/test_owner_gate_policy.py`).
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
@@ -53,6 +53,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] README:18 does not mention the `shared/idempotency` claim/release protocol or `IdempotentRequestInFlight` (409 `request_in_flight`), the 5-minute stale-claim takeover, or the owner token `release(key, token)` and replay-on-duplicate-put in `mongo_store.py` / `decorator.py`.
 - [undocumented] README:14 does not mention the dispatcher's throttled failure warning plus gated `capture_exception` (`dispatcher.py:134-152`).
 - [undocumented] README:22,52 does not mention migration `0240_audit_logs_audit_id_unique` (unique partial index on `audit_logs (academy_id, audit_id)`).
+- [undocumented] README:18 does not mention `RecordTestAttempt._replay_legacy_key` reading the old unscoped key outside the claim protocol (temporary; delete 7 days after #1193 deploys).
 
 ## `frontend/README.md`: 18 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
