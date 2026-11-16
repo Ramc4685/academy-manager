@@ -68,13 +68,16 @@ run_check() {
 
 # ── Collect changed files vs upstream ─────────────────────────────────────────
 FULL="${1:-}"
-UPSTREAM_REF="$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || true)"
-BASE=""
-if [ -n "${UPSTREAM_REF}" ]; then
-  BASE="$(git merge-base HEAD "${UPSTREAM_REF}" 2>/dev/null || true)"
-fi
+# Diff against the merge-base with origin/main, i.e. the branch's own changes.
+# Diffing against the pushed upstream instead counted every file a
+# `git merge origin/main` brought in, so merging main re-ran main's frontend
+# and E2E changes locally on the next push.
+BASE="$(git merge-base HEAD origin/main 2>/dev/null || true)"
 if [ -z "${BASE}" ]; then
-  BASE="$(git merge-base HEAD origin/main 2>/dev/null || true)"
+  UPSTREAM_REF="$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || true)"
+  if [ -n "${UPSTREAM_REF}" ]; then
+    BASE="$(git merge-base HEAD "${UPSTREAM_REF}" 2>/dev/null || true)"
+  fi
 fi
 if [ -n "${BASE}" ]; then
   CHANGED="$(git diff --name-only "${BASE}"..HEAD 2>/dev/null || true)"
