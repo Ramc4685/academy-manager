@@ -95,18 +95,24 @@ class PayoutPeriodRepository(Protocol):
         """
         ...
 
-    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
+    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
         """Replace an existing period (state-machine update).
 
-        Raises ``LookupError`` if no period matches ``period.period_id``.
+        Writes only while the stored status is still ``expected_status`` (the
+        status the use case loaded); otherwise raises
+        ``PayoutPeriodConflictError`` and changes nothing. Raises
+        ``LookupError`` if no period matches ``period.period_id``.
         """
         ...
 
-    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+    async def replace_with_lines(
+        self, period: PayoutPeriod, *, expected_status: str
+    ) -> PayoutPeriod:
         """Replace an existing period AND rewrite its lines.
 
         Used by recompute and line-override flows where the line set
-        itself changes. Raises ``LookupError`` if the period is missing.
+        itself changes. Same ``expected_status`` guard as ``replace``.
+        Raises ``LookupError`` if the period is missing.
         """
         ...
 

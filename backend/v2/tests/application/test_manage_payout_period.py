@@ -30,6 +30,7 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
 from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     PayoutWarning,
     PersistedPayoutLine,
@@ -77,16 +78,26 @@ class FakeRepo:
         self._by_id[period.period_id] = period
         return period
 
-    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
-        if period.period_id not in self._by_id:
+    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
+        current = self._by_id.get(period.period_id)
+        if current is None:
             raise LookupError(period.period_id)
+        if current.status != expected_status:
+            # Same refusal as the Mongo repo's status-filtered write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
         self.replace_calls += 1
         self._by_id[period.period_id] = period
         return period
 
-    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
-        if period.period_id not in self._by_id:
+    async def replace_with_lines(
+        self, period: PayoutPeriod, *, expected_status: str
+    ) -> PayoutPeriod:
+        current = self._by_id.get(period.period_id)
+        if current is None:
             raise LookupError(period.period_id)
+        if current.status != expected_status:
+            # Same refusal as the Mongo repo's status-filtered write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
         self.replace_with_lines_calls += 1
         self._by_id[period.period_id] = period
         return period
@@ -186,6 +197,7 @@ def _period(lines: list[PersistedPayoutLine], **overrides) -> PayoutPeriod:
         unpaid_occurrences=[],
         payout_warnings=[],
         generated_at=_dt("2026-06-01T00:00:00"),
+        revenue_basis="invoiced",
     )
     base.update(overrides)
     return PayoutPeriod(**base)

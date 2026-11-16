@@ -1,9 +1,9 @@
 "use client";
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
-import { listAdminUsers, listPayouts } from "@/lib/api/admin";
-import { listMonthlyPayroll, type AdminMonthlyPayrollRow } from "@/lib/api/v2/payroll";
+import { listAdminUsers } from "@/lib/api/admin";
+import { listMonthlyPayroll } from "@/lib/api/v2/payroll";
 import { payslipChipFor } from "@/lib/payslip-chip";
 import { money } from "@/lib/format-money";
 import { Card } from "@/components/ds/card";
@@ -15,58 +15,35 @@ import { EmptyState } from "@/components/ds/empty-state";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 
-/** All-coaches payslip overview, moved from the standalone `/admin/coach-payslip` page onto the Payslips tab of Payouts. */
-export function PayslipsPanel() {
+/**
+ * All-coaches payslip overview for one month, read from the same monthly
+ * payroll list as the Payroll tab (L7), so a coach's figure and status here
+ * always match their payout period.
+ */
+export function PayslipsPanel({ month }: { month: string }) {
   const coachesQuery = useQuery({
     queryKey: ["admin", "users", "coach"],
     queryFn: () => listAdminUsers("coach"),
   });
-  const payoutsQuery = useQuery({
-    queryKey: ["admin", "finance", "payouts", "coach-payslip"],
-    queryFn: listPayouts,
+  const payrollQuery = useQuery({
+    queryKey: ["admin", "payroll", month],
+    queryFn: () => listMonthlyPayroll(month),
   });
 
-  const payouts = payoutsQuery.data?.payouts ?? [];
-
-  // #845: paid_at alone can't tell an approved-but-unpaid payslip from a draft
-  // one, so also pull the payroll status per coach for the *same period* as
-  // each coach's most recent payout — not always the current calendar month,
-  // since that payout is very commonly for the previous month.
-  const payoutMonths = Array.from(
-    new Set(payouts.map((payout) => payout.period_start.slice(0, 7))),
-  );
-  const payrollQueries = useQueries({
-    queries: payoutMonths.map((month) => ({
-      queryKey: ["admin", "payroll", month, "coach-payslip"],
-      queryFn: () => listMonthlyPayroll(month),
-    })),
-  });
-  const payrollRowsByMonth = new Map<string, AdminMonthlyPayrollRow[]>();
-  payoutMonths.forEach((month, index) => {
-    payrollRowsByMonth.set(month, payrollQueries[index]?.data?.rows ?? []);
-  });
-  const payrollLoading = payrollQueries.some((query) => query.isLoading);
-  const payrollError = payrollQueries.some((query) => query.isError);
-
+  const payrollRows = payrollQuery.data?.rows ?? [];
   const coaches = coachesQuery.data?.users ?? [];
   const rows = coaches.map((coach) => {
-    const payout = payouts.find((row) => row.coach_id === coach.user_id) ?? null;
-    const payoutMonth = payout?.period_start.slice(0, 7) ?? null;
-    const payrollRows = payoutMonth ? payrollRowsByMonth.get(payoutMonth) ?? [] : [];
     const payrollRow = payrollRows.find((row) => row.coach_id === coach.user_id) ?? null;
     return {
       coach,
-      payout,
-      sessions: payout?.sessions_count ?? 0,
-      students: payout?.students_count ?? 0,
-      expectedRevenueCents: payout?.expected_revenue_cents ?? 0,
-      netEarningsCents: payout?.amount_cents ?? 0,
-      chip: payslipChipFor(payrollRow?.status, payout?.paid_at ?? null),
+      sessions: payrollRow?.session_count ?? 0,
+      netEarningsCents: payrollRow?.total_amount_cents ?? 0,
+      chip: payslipChipFor(payrollRow?.status ?? "not_generated", null),
     };
   });
 
-  const loading = coachesQuery.isLoading || payoutsQuery.isLoading || payrollLoading;
-  const error = coachesQuery.isError || payoutsQuery.isError || payrollError;
+  const loading = coachesQuery.isLoading || payrollQuery.isLoading;
+  const error = coachesQuery.isError || payrollQuery.isError;
 
   return (
     <section data-testid="admin-coach-payslip" className="space-y-5">
@@ -95,10 +72,7 @@ export function PayslipsPanel() {
 
 type PayslipRow = {
   coach: { user_id: string; display_name: string; email: string };
-  payout: { rule_label?: string | null } | null;
   sessions: number;
-  students: number;
-  expectedRevenueCents: number;
   netEarningsCents: number;
   chip: ReturnType<typeof payslipChipFor>;
 };
@@ -134,12 +108,7 @@ function PayslipRows({ rows }: { rows: PayslipRow[] }) {
                   </div>
                   <div className="break-words">{row.coach.email}</div>
                   <div>
-                    {row.sessions} session{row.sessions === 1 ? "" : "s"} · {row.students} student
-                    {row.students === 1 ? "" : "s"}
-                  </div>
-                  <div>
-                    {row.payout?.rule_label ?? "No payout rule"} ·{" "}
-                    {money(row.expectedRevenueCents)} expected revenue
+                    {row.sessions} session{row.sessions === 1 ? "" : "s"}
                   </div>
                 </>
               }
@@ -173,19 +142,12 @@ function PayslipRows({ rows }: { rows: PayslipRow[] }) {
                 <BigNum size={32}>
                   {money(row.netEarningsCents)}
                 </BigNum>
-                <p className="mt-1 text-xs text-neutral-500">
-                  {row.payout?.rule_label ?? "No payout rule"} · {money(row.expectedRevenueCents)} expected revenue
-                </p>
               </div>
 
               <div className="flex flex-col gap-1 border-t border-neutral-100 pt-3 dark:border-neutral-800 text-sm">
                 <div className="flex justify-between items-center">
                   <span className="text-neutral-500">Sessions</span>
                   <span className="font-mono font-medium">{row.sessions}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-neutral-500">Students</span>
-                  <span className="font-mono font-medium">{row.students}</span>
                 </div>
               </div>
             </Card>

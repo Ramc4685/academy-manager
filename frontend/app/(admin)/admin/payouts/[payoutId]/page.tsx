@@ -45,7 +45,9 @@ import {
   type PayoutAuditEntryView,
 } from "@/lib/api/v2/payouts";
 import {
+  approvalBlock,
   approvalWarningMessage,
+  percentBasisLabel,
   payoutWarningLabel,
   payoutWarningRepairAction,
   unpaidReasonGuidance,
@@ -75,7 +77,7 @@ function formatPayRuleLabel(rate: AdminCoachPayRateView): string {
     year: "numeric",
   });
   if (rate.billing_unit === "percent_of_revenue") {
-    return `Pay rule: ${rate.percent ?? 0}% of expected session revenue · effective since ${since}`;
+    return `Pay rule: ${rate.percent ?? 0}% of invoiced tuition · effective since ${since}`;
   }
   const unit = rate.billing_unit === "per_hour" ? "per hour" : "per session";
   return `Pay rule: ${money(rate.amount_cents, rate.currency)} ${unit} · effective since ${since}`;
@@ -230,6 +232,7 @@ export default function AdminPayoutReviewPage() {
         periodEnd={period.period_end}
         onChanged={refresh}
       />
+      <ApprovalBanner period={period} />
       <WarningBanner period={period} />
       <SummaryCards period={period} />
       <PayLog
@@ -302,6 +305,14 @@ function Header({
                   {period.paid_method ? ` · ${period.paid_method}` : ""}
                 </span>
               )}
+              {period?.paid_amount_differs && period.paid_amount_cents !== null && (
+                <span
+                  data-testid="payout-paid-amount-differs"
+                  className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800"
+                >
+                  Paid {money(period.paid_amount_cents, period.currency)}, not the total
+                </span>
+              )}
               <span className="font-mono text-sm font-semibold tabular-nums text-rally-ink">
                 {money(period?.total_amount_cents ?? fallbackAmountCents, period?.currency)}
               </span>
@@ -332,6 +343,29 @@ function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
           </div>
         </Card>
       ))}
+    </div>
+  );
+}
+
+/** The academy-local last day of the period, e.g. "Oct 31". */
+function useMonthEndLabel(periodEnd: string): string {
+  const timezone = useAcademyTimezone();
+  return new Date(new Date(periodEnd).getTime() - 1).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: timezone ?? undefined,
+  });
+}
+
+function ApprovalBanner({ period }: { period: AdminPayoutPeriodView }) {
+  const block = approvalBlock(period, new Date(), useMonthEndLabel(period.period_end));
+  if (!block) return null;
+  return (
+    <div
+      data-testid={`payout-approval-${block.kind}`}
+      className="rounded-md border border-rally-line bg-neutral-50 px-4 py-3 text-sm text-rally-ink"
+    >
+      {block.message}
     </div>
   );
 }
@@ -444,6 +478,7 @@ function Actions({
   }
   const unresolvedCount = unresolvedOccurrenceIds.size;
   const unresolvedMessage = approvalWarningMessage(unresolvedCount);
+  const block = approvalBlock(period, new Date(), useMonthEndLabel(period.period_end));
 
   return (
     <div className="space-y-2">
@@ -469,11 +504,13 @@ function Actions({
             icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
             label="Approve"
             title={
-              unresolvedCount > 0
-                ? "Repair unpaid occurrences and recompute before approval."
-                : "Lock the lines and move this payout to approved."
+              block
+                ? block.message
+                : unresolvedCount > 0
+                  ? "Repair unpaid occurrences and recompute before approval."
+                  : "Lock the lines and move this payout to approved."
             }
-            disabled={busy || unresolvedCount > 0}
+            disabled={busy || unresolvedCount > 0 || block !== null}
             onClick={() => approve.mutate()}
             primary
           />
@@ -588,7 +625,7 @@ function PayLog({
                 <th className={TH}>Session</th>
                 <th className={TH}>Role</th>
                 <th className={TH}>Status</th>
-                <th className={`${TH} text-right`}>%</th>
+                <th className={`${TH} text-right`}>{percentBasisLabel(period.revenue_basis)}</th>
                 <th className={`${TH} text-right`}>Pay</th>
                 <th className="px-3 py-3" aria-label="Line actions" />
               </tr>
@@ -758,12 +795,19 @@ function PaidRow({
         </div>
         {line.expected_revenue_cents !== null && (
           <div className="font-mono text-[10px] text-rally-muted">
-            of {money(line.expected_revenue_cents, line.currency)} expected revenue
+            of {money(line.expected_revenue_cents, line.currency)}{" "}
+            {period.revenue_basis === "invoiced" ? "invoiced tuition" : "expected revenue (legacy)"}
           </div>
         )}
       </td>
       <td className="px-3 py-3 text-xs text-rally-muted">
-        {line.basis === "substitute" ? "Replacement" : "Scheduled"}
+        {line.basis === "assistant" ? (
+          <Chip variant="draft" label="Assistant" />
+        ) : line.basis === "substitute" ? (
+          "Replacement"
+        ) : (
+          "Scheduled"
+        )}
       </td>
       <td className="px-3 py-3">
         <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-emerald-800">

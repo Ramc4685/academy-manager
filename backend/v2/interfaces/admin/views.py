@@ -1200,23 +1200,6 @@ class GenerateInvoiceArtifactResponse(BaseModel):
 # --- Finance (# FINANCE) ---
 
 
-class AdminPayoutView(BaseModel):  # FINANCE
-    payout_id: str
-    coach_id: str
-    amount_cents: int
-    period_start: datetime
-    period_end: datetime
-    paid_at: datetime | None
-    expected_revenue_cents: int | None = None
-    students_count: int | None = None
-    sessions_count: int | None = None
-    rule_label: str | None = None
-
-
-class AdminPayoutList(BaseModel):  # FINANCE
-    payouts: list[AdminPayoutView]
-
-
 class GeneratePayoutPeriodRequest(BaseModel):
     coach_id: str
     period_start: datetime
@@ -1233,7 +1216,7 @@ class MarkPayoutPeriodPaidRequest(BaseModel):
 class AdminPayoutPeriodLineView(BaseModel):
     occurrence_id: str
     coach_id: str
-    basis: Literal["scheduled", "substitute", "actual"]
+    basis: Literal["scheduled", "substitute", "actual", "assistant"]
     minutes: str
     amount_cents: int
     currency: str
@@ -1263,6 +1246,8 @@ class AdminUnpaidOccurrenceView(BaseModel):
         "no_rate_configured",
         "rate_gap",
         "missing_session_price_for_percent_revenue",
+        "missing_invoiced_tuition_for_percent_revenue",
+        "percent_rate_on_assistant",
         "attendance_override",
         "replaced_by_actual_coach",
         "unknown_unpaid_reason",
@@ -1283,6 +1268,8 @@ class AdminPayoutWarningView(BaseModel):
     occurrence_id: str
     reason: Literal[
         "missing_session_price_for_percent_revenue",
+        "missing_invoiced_tuition_for_percent_revenue",
+        "percent_rate_on_assistant",
         "missing_rate",
         "missing_percent",
     ]
@@ -1307,12 +1294,16 @@ class AdminPayoutPeriodView(BaseModel):
     unpaid_occurrence_ids: list[str]
     unpaid_occurrences: list[AdminUnpaidOccurrenceView] = Field(default_factory=list)
     payout_warnings: list[AdminPayoutWarningView] = Field(default_factory=list)
+    revenue_basis: Literal["expected", "invoiced"] = "expected"
+    """What percent lines are a percent of; ``expected`` is a legacy draft."""
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
     paid_method: str | None = None
     paid_amount_cents: int | None = None
     paid_reference: str | None = None
+    paid_amount_differs: bool = False
+    """The recorded payment is not the period total (mark-paid stores any amount)."""
 
 
 class AdminPayoutPayslipView(BaseModel):

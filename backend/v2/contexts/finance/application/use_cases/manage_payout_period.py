@@ -37,6 +37,9 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PersistedPayoutLine,
     reopen,
 )
+from backend.v2.contexts.finance.domain.payout_period import (
+    PayoutPeriodConflictError as PayoutPeriodConflictError,  # re-exported for interfaces (ADR-0006)
+)
 from backend.v2.shared.ids import new_ulid
 
 
@@ -147,10 +150,11 @@ class RecomputePayoutPeriod(_Audited):
                     )
                     for warning in getattr(calc, "payout_warnings", [])
                 ],
+                "revenue_basis": "invoiced",
                 "generated_at": self._clock(),
             }
         )
-        stored = await self._repo.replace_with_lines(updated)
+        stored = await self._repo.replace_with_lines(updated, expected_status=period.status)
         await self._record(
             stored,
             action="recomputed",
@@ -174,7 +178,7 @@ class ReopenPayoutPeriod(_Audited):
             raise ValueError("reason is required to reopen a payout period")
         period = await self._load(period_id)
         reopened = reopen(period, acknowledge_paid_clawback=acknowledge_paid_clawback)
-        stored = await self._repo.replace(reopened)
+        stored = await self._repo.replace(reopened, expected_status=period.status)
         await self._record(
             stored,
             action="reopened",
@@ -254,7 +258,7 @@ class OverridePayoutLine(_Audited):
         updated = period.model_copy(
             update={"lines": lines, "total_minor": sum(ln.amount_minor for ln in lines)}
         )
-        stored = await self._repo.replace_with_lines(updated)
+        stored = await self._repo.replace_with_lines(updated, expected_status=period.status)
         await self._record(
             stored,
             action=action,

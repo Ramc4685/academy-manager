@@ -7,6 +7,7 @@ off unless an academy admin explicitly opts in.
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -161,6 +162,18 @@ class BillingSettings(BaseModel):
     application_fee_agreement_version: str | None = None
     application_fee_accepted_at: datetime | None = None
     application_fee_accepted_by: str | None = None
+
+    # Coach payroll on percent-of-invoiced-tuition (L7). Owner policy, read
+    # when a payout period is generated or recomputed; approved and paid
+    # periods never move. ACH discount lines stay out of the coach's base
+    # unless the first is on; a registration checkout's first month counts
+    # unless the second is off; ``ran_only`` divides a month's tuition by the
+    # classes that ran; ``block`` stops approval when a class-month has no
+    # invoices instead of paying 0.
+    payroll_ach_discount_reduces_base: bool = False
+    payroll_count_checkout_first_month: bool = True
+    payroll_cancelled_class_share: Literal["ran_only", "all_scheduled"] = "ran_only"
+    payroll_missing_invoices: Literal["block", "pay_zero"] = "block"
 
     @field_validator("reminder_days", mode="before")
     @classmethod

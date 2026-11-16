@@ -146,6 +146,7 @@ export const queryKeys = {
     fees: () => ["admin", "academy", "fees"] as const,
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
+    payrollSettings: () => ["admin", "payroll-settings"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     // Shared with slice B1's AI status card: both read the same key.
     aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,

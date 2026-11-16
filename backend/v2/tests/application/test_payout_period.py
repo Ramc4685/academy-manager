@@ -32,6 +32,7 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
 )
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     PayoutWarning,
     PersistedPayoutLine,
@@ -178,9 +179,13 @@ class FakeRepo:
         self._by_id[period.period_id] = period
         return period
 
-    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
-        if period.period_id not in self._by_id:
+    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
+        current = self._by_id.get(period.period_id)
+        if current is None:
             raise LookupError(period.period_id)
+        if current.status != expected_status:
+            # Same refusal as the Mongo repo's status-filtered write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
         self.replace_calls += 1
         self._by_id[period.period_id] = period
         return period
@@ -266,6 +271,7 @@ def _draft_period(**overrides) -> PayoutPeriod:
         unpaid_occurrence_ids=[],
         payout_warnings=[],
         generated_at=_dt("2026-06-01T00:00:00"),
+        revenue_basis="invoiced",
         paid_method=None,
         paid_amount_minor=None,
         paid_reference=None,
@@ -646,7 +652,9 @@ async def test_mark_paid_use_case_blocks_unresolved_payout_warnings() -> None:
         repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-03T12:00:00")
     )
     approved = await approver.execute(period_id="pp-1")
-    await repo.replace(approved.model_copy(update={"payout_warnings": [_warning()]}))
+    await repo.replace(
+        approved.model_copy(update={"payout_warnings": [_warning()]}), expected_status="approved"
+    )
 
     with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
         await payer.execute(
@@ -763,3 +771,33 @@ async def test_replaced_occurrence_does_not_block_approval() -> None:
 
     assert approved.status == "approved"
     assert approved.unpaid_occurrences[0].reason == "replaced_by_actual_coach"
+
+
+# ---------------------------------------------------------------------------
+# L7: approval needs a post-month snapshot on the invoiced basis
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("overrides", "at"),
+    [
+        ({}, "2026-05-31T23:59:59"),  # the month is not over yet
+        ({"generated_at": _dt("2026-05-20T00:00:00")}, "2026-06-02T00:00:00"),  # stale preview
+        ({"revenue_basis": "expected"}, "2026-06-02T00:00:00"),  # legacy draft
+    ],
+)
+def test_approve_refuses_until_recomputed_after_the_month(overrides, at) -> None:
+    with pytest.raises(PayoutPeriodStateError, match="recompute first"):
+        approve(_draft_period(**overrides), at=_dt(at))
+
+
+def test_approve_accepts_a_post_month_invoiced_snapshot() -> None:
+    approved = approve(_draft_period(), at=_dt("2026-06-01T00:00:00"))
+    assert approved.status == "approved"
+
+
+def test_a_period_without_revenue_basis_is_a_legacy_draft() -> None:
+    legacy = _draft_period()
+    data = legacy.model_dump()
+    data.pop("revenue_basis")
+    assert PayoutPeriod(**data).revenue_basis == "expected"

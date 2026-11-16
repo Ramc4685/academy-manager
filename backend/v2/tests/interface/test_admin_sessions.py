@@ -24,6 +24,9 @@ from fastapi.testclient import TestClient
 import backend.v2.composition.admin as admin_composition
 from backend.v2.composition.admin import compose_admin
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+from backend.v2.contexts.billing.infrastructure.invoiced_tuition_read_model import (
+    MongoInvoicedTuitionReadModel,
+)
 from backend.v2.contexts.coaching.domain.payout import CoachRate
 from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import (
     MongoPayableOccurrenceQuery,
@@ -2717,7 +2720,7 @@ async def test_cancelled_session_occurrences_leave_payroll_and_coach_day_view(
     await _seed_cancel_fixture(db)
 
     occurrences_repo = MongoSessionOccurrenceRepository(db)
-    payable_query = MongoPayableOccurrenceQuery(db)
+    payable_query = MongoPayableOccurrenceQuery(db, tuition=MongoInvoicedTuitionReadModel(db))
     period_start = datetime(2026, 6, 1, tzinfo=UTC)
     period_end = datetime(2026, 7, 1, tzinfo=UTC)
 

@@ -95,10 +95,12 @@ class _FakePeriodRepo:
     async def find_by_id(self, period_id: str):
         return None
 
-    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
+    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
         return period
 
-    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+    async def replace_with_lines(
+        self, period: PayoutPeriod, *, expected_status: str
+    ) -> PayoutPeriod:
         return period
 
 

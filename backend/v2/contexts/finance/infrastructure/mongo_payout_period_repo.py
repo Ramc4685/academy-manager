@@ -26,11 +26,17 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutPeriodConflictError,
     PayoutWarning,
     PersistedPayoutLine,
     PersistedUnpaidOccurrence,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time.mongo import ensure_utc
+
+
+def _utc_or_none(value: datetime | None) -> datetime | None:
+    return None if value is None else ensure_utc(value)
 
 
 def _line_to_doc(line: PersistedPayoutLine, *, period_id: str) -> dict[str, Any]:
@@ -100,6 +106,7 @@ def _period_to_doc(period: PayoutPeriod) -> dict[str, Any]:
             warning.model_dump(mode="python") for warning in period.payout_warnings
         ],
         "unpaid_occurrences": [_unpaid_to_doc(row) for row in period.unpaid_occurrences],
+        "revenue_basis": period.revenue_basis,
         "generated_at": period.generated_at,
         "approved_at": period.approved_at,
         "paid_at": period.paid_at,
@@ -135,8 +142,8 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             period_id=str(doc["period_id"]),
             academy_id=academy_id,
             coach_id=str(doc["coach_id"]),
-            period_start=doc["period_start"],
-            period_end=doc["period_end"],
+            period_start=ensure_utc(doc["period_start"]),
+            period_end=ensure_utc(doc["period_end"]),
             status=doc.get("status", "draft"),
             currency=str(doc["currency"]),
             total_minor=int(doc["total_minor"]),
@@ -144,11 +151,15 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             unpaid_occurrence_ids=unpaid_occurrence_ids,
             unpaid_occurrences=unpaid_occurrences,
             payout_warnings=[
-                PayoutWarning.model_validate(warning) for warning in doc.get("payout_warnings", [])
+                PayoutWarning.model_validate(
+                    {**warning, "occurred_at": _utc_or_none(warning.get("occurred_at"))}
+                )
+                for warning in doc.get("payout_warnings", [])
             ],
-            generated_at=doc["generated_at"],
-            approved_at=doc.get("approved_at"),
-            paid_at=doc.get("paid_at"),
+            revenue_basis=doc.get("revenue_basis") or "expected",
+            generated_at=ensure_utc(doc["generated_at"]),
+            approved_at=_utc_or_none(doc.get("approved_at")),
+            paid_at=_utc_or_none(doc.get("paid_at")),
             paid_method=doc.get("paid_method"),
             paid_amount_minor=doc.get("paid_amount_minor"),
             paid_reference=doc.get("paid_reference"),
@@ -248,13 +259,23 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             raise RuntimeError("payout period save did not persist")
         return stored
 
-    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
+    async def _guarded_set(self, period: PayoutPeriod, expected_status: str) -> None:
+        # Filter on the status the caller loaded: of two concurrent
+        # transitions (reopen vs mark-paid), only the first lands (L7).
         result = await self._update_one(
-            {"period_id": period.period_id},
+            {"period_id": period.period_id, "status": expected_status},
             {"$set": _period_to_doc(period)},
         )
         if result.matched_count == 0:
-            raise LookupError(f"PayoutPeriod {period.period_id!r} not found")
+            if await self._find_one({"period_id": period.period_id}) is None:
+                raise LookupError(f"PayoutPeriod {period.period_id!r} not found")
+            raise PayoutPeriodConflictError(
+                f"payout period {period.period_id!r} changed since it was loaded "
+                f"(expected status {expected_status!r}); reload and try again"
+            )
+
+    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
+        await self._guarded_set(period, expected_status)
         # Lines are immutable once written, so we don't touch them here.
         stored = await self.find_by_id(period.period_id)
         if stored is None:  # pragma: no cover - defensive
@@ -274,19 +295,16 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         )
         return [await self._hydrate(doc) async for doc in cursor]
 
-    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+    async def replace_with_lines(
+        self, period: PayoutPeriod, *, expected_status: str
+    ) -> PayoutPeriod:
         """Replace the period document AND rewrite its line set.
 
         Used by recompute and line-override flows, which legitimately
         change lines (unlike ``replace``, which only moves the state
         machine). Drafts only — callers enforce that rule.
         """
-        result = await self._update_one(
-            {"period_id": period.period_id},
-            {"$set": _period_to_doc(period)},
-        )
-        if result.matched_count == 0:
-            raise LookupError(f"PayoutPeriod {period.period_id!r} not found")
+        await self._guarded_set(period, expected_status)
 
         academy_id = current_academy_id()
         await self._db[self.LINES_COLLECTION].delete_many(

@@ -811,8 +811,8 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         rent_cents = int(expense_categories.get("rent", {}).get("amount_cents", 0))
         misc_expenses_cents = expenses_total_cents - rent_cents
 
-        # Which coaches owe payroll this month? Same paying-coach rule payroll
-        # generation uses: actual_coach_id when set, else scheduled_coach_id.
+        # Which coaches owe payroll this month? Same rule payroll generation
+        # uses: actual_coach_id when set, else scheduled_coach_id, plus assistants.
         # Completion is clock-derived, matching MonthlyCoachOccurrenceReader —
         # nothing in the app writes status="completed".
         now = datetime.now(UTC)
@@ -825,7 +825,7 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "status": {"$ne": "cancelled"},
                 "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
             },
-            {"scheduled_coach_id": 1, "actual_coach_id": 1},
+            {"scheduled_coach_id": 1, "actual_coach_id": 1, "assistant_coach_ids": 1},
         )
         async for occurrence in expected_cursor:
             paying_coach = str(
@@ -833,6 +833,10 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             )
             if paying_coach:
                 expected_coach_ids.add(paying_coach)
+            # Assistants are paid their own line (L7), so they owe payroll too.
+            expected_coach_ids.update(
+                str(c) for c in occurrence.get("assistant_coach_ids") or [] if c
+            )
 
         estimated_payroll_cents = 0
         approved_payroll_cents = 0

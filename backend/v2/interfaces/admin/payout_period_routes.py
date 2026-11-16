@@ -19,11 +19,13 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     ListPayoutAuditEntries,
     OverridePayoutLine,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     RecomputePayoutPeriod,
     ReopenPayoutPeriod,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.payroll_routes import PAYROLL_ROLE_LABELS
 from backend.v2.interfaces.admin.views import (
     AdminPayoutPayslipView,
     AdminPayoutPeriodLineView,
@@ -55,6 +57,13 @@ class PayoutPeriodInvalidTransition(DomainError):
 
 class PayoutPeriodOverlap(DomainError):
     code = "Finance.PayoutPeriodOverlap"
+    status_code = 409
+
+
+class PayoutPeriodConflict(DomainError):
+    """Someone else changed the period between load and write; nothing was saved."""
+
+    code = "Finance.PayoutPeriodConflict"
     status_code = 409
 
 
@@ -141,12 +150,16 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
         unpaid_occurrence_ids=list(period.unpaid_occurrence_ids),
         unpaid_occurrences=structured_unpaid,
         payout_warnings=payout_warnings,
+        revenue_basis=getattr(period, "revenue_basis", "expected"),
         generated_at=period.generated_at,
         approved_at=period.approved_at,
         paid_at=period.paid_at,
         paid_method=period.paid_method,
         paid_amount_cents=period.paid_amount_minor,
         paid_reference=period.paid_reference,
+        paid_amount_differs=(
+            period.paid_amount_minor is not None and period.paid_amount_minor != period.total_minor
+        ),
     )
 
 
@@ -331,6 +344,8 @@ async def approve_payout_period(
         period = await _approve_payout_period(use_cases).execute(
             period_id=period_id, actor_id=claims.user_id
         )
+    except PayoutPeriodConflictError as exc:
+        raise PayoutPeriodConflict(str(exc)) from exc
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
     except ValueError as exc:
@@ -356,6 +371,8 @@ async def mark_payout_period_paid(
             ),
             actor_id=claims.user_id,
         )
+    except PayoutPeriodConflictError as exc:
+        raise PayoutPeriodConflict(str(exc)) from exc
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
     except ValueError as exc:
@@ -373,6 +390,8 @@ async def recompute_payout_period(
         period = await _recompute_payout_period(use_cases).execute(
             period_id=period_id, actor_id=claims.user_id
         )
+    except PayoutPeriodConflictError as exc:
+        raise PayoutPeriodConflict(str(exc)) from exc
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
     except PayoutPeriodStateError as exc:
@@ -394,6 +413,8 @@ async def reopen_payout_period(
             reason=body.reason,
             acknowledge_paid_clawback=body.acknowledge_paid_clawback,
         )
+    except PayoutPeriodConflictError as exc:
+        raise PayoutPeriodConflict(str(exc)) from exc
     except LookupError as exc:
         raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
     except ValueError as exc:
@@ -420,6 +441,8 @@ async def override_payout_period_line(
             reason=body.reason,
             actor_id=claims.user_id,
         )
+    except PayoutPeriodConflictError as exc:
+        raise PayoutPeriodConflict(str(exc)) from exc
     except LookupError as exc:
         raise PayoutPeriodNotFound(str(exc)) from exc
     except ValueError as exc:
@@ -490,7 +513,7 @@ async def export_payout_period_xlsx(
             "Role",
             "Status",
             "Percent",
-            "Expected revenue",
+            "Tuition basis",
             "Pay",
             "Adjustment",
             "Warning reason",
@@ -502,7 +525,7 @@ async def export_payout_period_xlsx(
             [
                 f"{line.occurred_at:%Y-%m-%d}" if line.occurred_at else "",
                 line.session_title or line.occurrence_id,
-                "Replacement" if line.basis == "substitute" else "Scheduled",
+                PAYROLL_ROLE_LABELS.get(line.basis, "Scheduled"),
                 "Paid",
                 (line.percent_bps / 100) if line.percent_bps is not None else None,
                 (line.expected_revenue_cents / 100)

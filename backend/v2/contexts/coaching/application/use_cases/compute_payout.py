@@ -34,9 +34,17 @@ Amount calculation (in precedence order):
 - ``per_hour`` rates yield
   ``int(round_half_even(amount_minor * minutes / 60))``.
 - ``percent_of_revenue`` rates yield
-  ``int(round_half_even(expected_revenue_minor * percent_bps / 10000))``.
-  If the occurrence has no ``expected_revenue_minor`` (session has no
-  price), it is reported in ``unpaid_occurrence_ids``.
+  ``int(round_half_even(expected_revenue_minor * percent_bps / 10000))``,
+  where ``expected_revenue_minor`` is the occurrence's share of the class's
+  invoiced tuition for the month (L7). A class-month with no invoices is a
+  blocking ``missing_invoiced_tuition_for_percent_revenue`` warning.
+
+Assistants (L7): a coach in ``assistant_coach_ids`` who is not the paying
+coach gets a line with basis ``assistant`` from their attendance override or
+their own per-session / per-hour rate, unless marked absent. A percent rate
+on an assisting line, or no rate at all, is a blocking warning (a volunteer
+gets a $0 rate). The paying-coach check runs first, so nobody is paid twice
+for one class.
 """
 
 from __future__ import annotations
@@ -145,9 +153,12 @@ def _warning_for_unpaid(
     elif reason == "missing_percent":
         message = "Percent-of-revenue pay is missing its percent value."
         repair_action = "set_coach_rate_and_recompute"
+    elif reason == "percent_rate_on_assistant":
+        message = "An assistant cannot be paid a percent of the class's tuition."
+        repair_action = "set_coach_rate_and_recompute"
     else:
-        message = "Missing session price for percent-of-revenue pay."
-        repair_action = "set_session_fee_and_recompute"
+        message = "No invoices for this class this month, so a percent rate has no base."
+        repair_action = "invoice_class_month_and_recompute"
     return PayoutWarning(
         occurrence_id=occ.occurrence_id,
         reason=reason,
@@ -167,7 +178,7 @@ def _uncomputed_warning_reason(
         if rate.percent_bps is None:
             return "missing_percent"
         if expected_revenue_minor is None:
-            return "missing_session_price_for_percent_revenue"
+            return "missing_invoiced_tuition_for_percent_revenue"
     return "missing_rate"
 
 
@@ -301,7 +312,12 @@ class ComputeCoachPayout:
 
             paying_coach, basis = _paying_coach(occ)
             if paying_coach != coach_id:
-                if coach_id == occ.scheduled_coach_id:
+                if coach_id in occ.assistant_coach_ids:
+                    # L7: an assistant who is not the paying coach is paid a
+                    # line of their own, on their own rate. Paying-coach wins
+                    # above, so nobody is paid twice for one class.
+                    basis = "assistant"
+                elif coach_id == occ.scheduled_coach_id:
                     # The scheduled coach was displaced by an ``actual_coach_id``.
                     # Paying the substitute is correct, but the displaced coach
                     # must keep a trace: without one, a mistaken attribution
@@ -320,7 +336,9 @@ class ComputeCoachPayout:
                             attributed_coach_id=paying_coach,
                         )
                     )
-                continue
+                    continue
+                else:
+                    continue
 
             attendance = _attendance_for(occ, coach_id)
             if attendance is not None and attendance.status == "absent":
@@ -354,6 +372,11 @@ class ComputeCoachPayout:
                             "No coach pay rate has ever been configured for this occurrence."
                             if reason == "no_rate_configured"
                             else "Coach pay-rate history has a gap at this occurrence time."
+                        )
+                        + (
+                            " Set a $0 rate for a volunteer assistant."
+                            if basis == "assistant"
+                            else ""
                         ),
                     )
                 )
@@ -362,6 +385,26 @@ class ComputeCoachPayout:
             minutes = _occurrence_minutes(occ)
             if override_minor is not None:
                 amount_minor = override_minor
+            elif (
+                basis == "assistant"
+                and rate is not None
+                and rate.billing_unit == "percent_of_revenue"
+            ):
+                # A percent of the class's tuition belongs to the coach who ran
+                # it; an assistant on a percent rate would be paid that share
+                # a second time, so it blocks until the rate is fixed.
+                unpaid.append(occ.occurrence_id)
+                warnings.append(
+                    _warning_for_unpaid(occ, coach_id=coach_id, reason="percent_rate_on_assistant")
+                )
+                unpaid_occurrences.append(
+                    PayoutUnpaidOccurrence(
+                        occurrence_id=occ.occurrence_id,
+                        reason="percent_rate_on_assistant",
+                        detail="An assisting class needs a per-session or per-hour rate.",
+                    )
+                )
+                continue
             else:
                 assert rate is not None
                 computed = _compute_line_amount_minor(rate, minutes, occ.expected_revenue_minor)
@@ -379,13 +422,13 @@ class ComputeCoachPayout:
                         PayoutUnpaidOccurrence(
                             occurrence_id=occ.occurrence_id,
                             reason=(
-                                "missing_session_price_for_percent_revenue"
-                                if warning_reason == "missing_session_price_for_percent_revenue"
+                                "missing_invoiced_tuition_for_percent_revenue"
+                                if warning_reason == "missing_invoiced_tuition_for_percent_revenue"
                                 else "unknown_unpaid_reason"
                             ),
                             detail=(
-                                "Percent-of-revenue rate needs a session price basis."
-                                if warning_reason == "missing_session_price_for_percent_revenue"
+                                "This class has no invoices for the month to take a percent of."
+                                if warning_reason == "missing_invoiced_tuition_for_percent_revenue"
                                 else "Percent-of-revenue rate is missing its percent value."
                             ),
                         )

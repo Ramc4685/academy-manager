@@ -69,7 +69,7 @@ class ApprovePayoutPeriod(_BaseTransition):
         approved = approve(period, at=self._clock())
         if approved is period:
             return period
-        stored = await self._repo.replace(approved)
+        stored = await self._repo.replace(approved, expected_status=period.status)
         await self._audit.record(
             stored,
             action="approved",
@@ -111,7 +111,7 @@ class MarkPayoutPaid(_BaseTransition):
         )
         if paid is period:
             return period
-        stored = await self._repo.replace(paid)
+        stored = await self._repo.replace(paid, expected_status=period.status)
         await self._audit.record(
             stored,
             action="marked_paid",

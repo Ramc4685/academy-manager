@@ -30,6 +30,8 @@ PayoutBasis = Literal["scheduled", "substitute", "actual", "lead", "assistant"]
 PayableOccurrenceStatus = Literal["scheduled", "cancelled", "completed"]
 PayoutWarningReason = Literal[
     "missing_session_price_for_percent_revenue",
+    "missing_invoiced_tuition_for_percent_revenue",
+    "percent_rate_on_assistant",
     "missing_rate",
     "missing_percent",
 ]
@@ -47,6 +49,8 @@ UnpaidOccurrenceReason = Literal[
     "no_rate_configured",
     "rate_gap",
     "missing_session_price_for_percent_revenue",
+    "missing_invoiced_tuition_for_percent_revenue",
+    "percent_rate_on_assistant",
     "attendance_override",
     "replaced_by_actual_coach",
     "unknown_unpaid_reason",
@@ -83,12 +87,15 @@ class PayableOccurrence(BaseModel):
     scheduled_coach_id: str
     actual_coach_id: str | None = None
     substitute_coach_id: str | None = None
+    assistant_coach_ids: list[str] = Field(default_factory=list)
+    """Assistants listed on the occurrence; each is paid a line of their own."""
     is_payable: bool = True
     coach_attendance: list[CoachAttendanceForPayout] = Field(default_factory=list)
     expected_revenue_minor: int | None = Field(default=None, ge=0)
-    """Expected revenue for this occurrence (session price x enrolled
-    students), used as the basis for ``percent_of_revenue`` rates. ``None``
-    when the session has no price configured."""
+    """This occurrence's share of its class's invoiced tuition for the
+    academy-local month: the basis for ``percent_of_revenue`` rates. The
+    field name is kept from the old expected-revenue basis. ``None`` when the
+    class-month has no invoices."""
 
     @model_validator(mode="after")
     def _end_after_start(self) -> PayableOccurrence:

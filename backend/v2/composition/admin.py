@@ -159,7 +159,6 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
-    MongoPayoutRepository,
     MongoTuitionDiscountSummaryQuery,
     RecordExpense,
 )
@@ -218,6 +217,9 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_revenue_by_category_report,
     make_session_economics_report,
 )
+from backend.v2.contexts.billing.infrastructure.invoiced_tuition_read_model import (
+    MongoInvoicedTuitionReadModel,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
     MongoAcademyBillingRegionReader,
 )
@@ -253,7 +255,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoClassFeeResolver,
-    MongoProjectedClassFees,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
     MongoProductRepository,
@@ -1103,11 +1104,10 @@ def compose_admin(
 
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
-    payouts_repo = MongoPayoutRepository(db, academy_timezone=academy_timezone_lookup(db))
     payout_periods_repo = MongoPayoutPeriodRepository(db)
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
-            occurrences=MongoPayableOccurrenceQuery(db, class_fees=MongoProjectedClassFees(db)),
+            occurrences=MongoPayableOccurrenceQuery(db, tuition=MongoInvoicedTuitionReadModel(db)),
             rates=MongoCoachRateLookup(db),
         )
     )
@@ -4264,7 +4264,6 @@ def compose_admin(
         edit_expense=edit_expense,
         delete_expense=delete_expense,
         expenses=expenses_repo,
-        payouts=payouts_repo,
         revenue_query=revenue_query,
         payout_periods=payout_periods_repo,
         list_monthly_payroll=ListMonthlyPayroll(

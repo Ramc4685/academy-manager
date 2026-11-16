@@ -2,7 +2,8 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-## Repo root (`README.md`): 11 items, from `drift/_root.md`
+## Repo root (`README.md`): 12 items, from `drift/_root.md`
+- [wording] README:28 Coach Payouts omits percent-of-invoiced-tuition rates and the payout-period approval flow.
 - [undocumented] README:83-84 says `academy-next` owns `academy.courtmastr.com/*`; `frontend/wrangler.jsonc:18-25` also routes `*.courtmastr.com/*`.
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] README:98 shows `flyctl deploy --remote-only`; production.yml deploys a prebuilt `--image` with `--ha=false`.
@@ -74,6 +75,14 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] "When generated types are reintroduced": they already are.
 - [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.
 - [undocumented] `password-reset.ts` (from #1180) is not in the README's wrapper list.
+
+## `frontend/lib/api/v2/README.md`: 11 items, from `drift/frontend__lib__api__v2.md`
+- [stale-not-built] `memberships.ts` calls `GET /me/memberships`, not a `/me` derivation (README:29-31).
+- [stale-not-built] `sessions.ts` covers only occurrence endpoints (README:24).
+- [stale-not-built] `students.ts` has no progress or placement functions (README:25).
+- [undocumented] `announcements.ts`, `departure-policy.ts`, `messages.ts`, `owner.ts`, `pricing.ts` are not listed.
+- [wording] Session-type archive is reversible in the client (README:27-28).
+- [wording] `payroll.ts` and `payouts.ts` entries omit export, reopen, override, mark-paid and audit-trail calls (README:22-23).
 
 ## `backend/v2/contexts/crm/README.md`: 2 items, from `drift/backend__v2__contexts__crm.md`
 - [undocumented] `SubmitWebsiteInquiry` / `WebsiteInquiryResult` / `RepeatInquiryWriter` missing from the Layout table.

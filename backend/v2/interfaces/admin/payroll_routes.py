@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, tzinfo
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -19,7 +21,50 @@ from backend.v2.shared.http import require_owner
 
 log = logging.getLogger(__name__)
 
+#: Spreadsheet role per line basis, shared with the period export.
+PAYROLL_ROLE_LABELS = {"substitute": "Replacement", "assistant": "Assistant"}
+
 router = APIRouter(tags=["admin.payroll"])
+
+
+class PayrollSettingsView(BaseModel):
+    """How a percent coach's invoiced-tuition base is counted (L7).
+
+    Applies to periods generated or recomputed after a change.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    payroll_ach_discount_reduces_base: bool
+    payroll_count_checkout_first_month: bool
+    payroll_cancelled_class_share: Literal["ran_only", "all_scheduled"]
+    payroll_missing_invoices: Literal["block", "pay_zero"]
+
+
+@router.get("/payroll-settings", response_model=PayrollSettingsView)
+async def get_payroll_settings(
+    _claims: AuthClaims = Depends(require_owner()),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PayrollSettingsView:
+    uc = use_cases.get_payroll_settings
+    if uc is None:
+        raise HTTPException(status_code=503, detail="Payroll settings not configured")
+    return PayrollSettingsView(**await uc.execute())
+
+
+@router.put("/payroll-settings", response_model=PayrollSettingsView)
+async def update_payroll_settings(
+    body: PayrollSettingsView,
+    claims: AuthClaims = Depends(require_owner()),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PayrollSettingsView:
+    uc = use_cases.update_payroll_settings
+    if uc is None:
+        raise HTTPException(status_code=503, detail="Payroll settings not configured")
+    saved = await uc.execute(
+        academy_id=claims.academy_id, actor_id=claims.user_id, values=body.model_dump()
+    )
+    return PayrollSettingsView(**saved)
 
 
 def _month_window(month: str, tz: tzinfo = UTC) -> tuple[datetime, datetime]:
@@ -180,7 +225,7 @@ async def export_monthly_payroll_xlsx(
             ws.append(
                 [
                     line.occurrence_id,
-                    "Replacement" if line.basis == "substitute" else "Scheduled",
+                    PAYROLL_ROLE_LABELS.get(line.basis, "Scheduled"),
                     line.amount_minor / 100,
                     "",
                     "",
