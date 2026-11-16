@@ -170,3 +170,20 @@ async def test_the_setting_off_reads_off_and_nothing_is_discounted(
     body = await _badges(admin)
     assert body["enabled"] is False and body["percent_bps"] is None
     assert await real_db[SIBLING_DECISIONS_COLLECTION].count_documents({}) == 0
+
+
+async def test_a_billed_month_reads_its_invoice_not_a_later_manual_discount(
+    admin: httpx.AsyncClient, real_db: Any, acad: str
+) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    # The invoice already carries the sibling line; a larger manual discount
+    # set afterwards prices next month, not this one.
+    await _manual(real_db, percent_bps=2_000)
+
+    assert _by_enrollment(await _badges(admin))["enr-b"] == ("discounted", "sibling_discount")
+    assert (await _invoiced_discount_sources(real_db, acad, "enr-b")) == {
+        "enr-b": f"sibling-auto-{PERIOD}"
+    }

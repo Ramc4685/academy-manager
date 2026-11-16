@@ -163,6 +163,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setDiscounting(null);
     },
   });
@@ -173,6 +179,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setDiscounting(null);
     },
   });
@@ -194,6 +206,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setMoving(null);
       setTargetSessionId("");
       setReason("");
@@ -209,6 +227,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setBillingOverride(null);
       setOverrideAmount("");
     },

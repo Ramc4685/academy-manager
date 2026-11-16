@@ -53,6 +53,7 @@ from backend.v2.contexts.billing.domain.proration import (
     snapshot_classes_charged,
 )
 from backend.v2.contexts.billing.domain.sibling_discount import (
+    SIBLING_DISCOUNT_ID_PREFIX,
     FamilyEnrollment,
     best_tuition_discount,
     full_price_student,
@@ -1922,7 +1923,7 @@ class TuitionDiscountReader(Protocol):
 
 
 async def decide_sibling_discount(
-    db: Any, *, enrollment: Mapping[str, Any], period: str, now: datetime
+    db: Any, *, enrollment: Mapping[str, Any], period: str, now: datetime, page: bool = True
 ) -> tuple[dict[str, Any] | None, SiblingDecisionOutcome]:
     """This enrollment-month's sibling decision, read-only: ``(row, outcome)``.
 
@@ -1930,6 +1931,7 @@ async def decide_sibling_discount(
     (``resolve_sibling_discount`` inserts it; the admin badge only shows it).
     ``invoiced`` / ``off``: no row and no discount, because the month is
     already billed or the setting is off. Rules: ``resolve_sibling_discount``.
+    ``page=False`` keeps an unreadable setting out of Sentry (badge reads).
     """
     academy_id = current_academy_id()
     enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
@@ -1941,7 +1943,7 @@ async def decide_sibling_discount(
         return dict(decision), "recorded"
     if await _existing_period_invoice_id(db, enrollment_id=enrollment_id, period=period):
         return None, "invoiced"
-    offer = await _sibling_offer(db, academy_id)
+    offer = await _sibling_offer(db, academy_id, page=page)
     if offer is None:
         return None, "off"
     percent_bps, full_price_child, applies_to = offer
@@ -2013,7 +2015,7 @@ async def preview_family_sibling_discount(
     academy_id = current_academy_id()
     if period is None:
         period = _local_period_label(now, await _academy_timezone(db) or "UTC")
-    offer = await _sibling_offer(db, academy_id)
+    offer = await _sibling_offer(db, academy_id, page=False)
     aliases = await _parent_aliases(db, parent_id)
     students: dict[str, Mapping[str, Any]] = {}
     for field_name in _STUDENT_PARENT_FIELDS:
@@ -2080,7 +2082,7 @@ async def _sibling_preview_status(
     enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
     student_id = str(enrollment.get("student_id") or "")
     decision, outcome = await decide_sibling_discount(
-        db, enrollment=enrollment, period=period, now=now
+        db, enrollment=enrollment, period=period, now=now, page=False
     )
     if decision is None:
         # Invoiced with no row and the setting off reads "off": it was never on.
@@ -2089,6 +2091,22 @@ async def _sibling_preview_status(
         return "not_eligible", "already_invoiced", None
     percent_bps = decision.get("percent_bps")
     if decision.get("discounted") and _valid_percent_bps(percent_bps):
+        invoice_id = await _existing_period_invoice_id(
+            db, enrollment_id=enrollment_id, period=period
+        )
+        if invoice_id:
+            # Billed: the invoice's own discount line says which one won.
+            sibling_line = await db["invoice_lines"].find_one(
+                {
+                    "academy_id": current_academy_id(),
+                    "invoice_id": invoice_id,
+                    "line_type": "discount",
+                    "source_id": f"{SIBLING_DISCOUNT_ID_PREFIX}{period}",
+                }
+            )
+            if sibling_line is not None:
+                return "discounted", "sibling_discount", percent_bps
+            return "not_eligible", "manual_discount_larger", percent_bps
         # Same weighing as resolve_monthly_charge: the larger of the manual
         # policy and the sibling one at this month's class fee.
         session_doc = (
@@ -2162,7 +2180,7 @@ def _frozen_percent_bps(decision: Mapping[str, Any]) -> int | None:
 
 
 async def _sibling_offer(
-    db: Any, academy_id: str
+    db: Any, academy_id: str, *, page: bool = True
 ) -> tuple[int, SiblingFullPriceChild, SiblingAppliesTo] | None:
     """``(percent_bps, full_price_child, applies_to)`` when the sibling block is
     switched on and valid, else ``None``.
@@ -2191,6 +2209,8 @@ async def _sibling_offer(
         logging.getLogger(__name__).warning("sibling_discount_incomplete")
     except ValidationError:
         logging.getLogger(__name__).warning("sibling_discount_unreadable", exc_info=True)
+    if not page:
+        return None
     # Generating without it would overcharge every sibling family, so page.
     capture_message(
         "Monthly generation could not read the sibling discount setting; "

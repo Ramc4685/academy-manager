@@ -9,4 +9,4 @@ Admins can now see the automatic sibling discount before the invoice goes out. O
 None. No migration, no env vars. It reads the existing `sibling_discount_decisions` collection (migration 0237).
 
 ## Risk / rollback
-Read-only. If a badge is wrong, the invoice is still priced by the monthly run, which this change only refactors (it moves the decision step into `decide_sibling_discount`; the run still inserts the row exactly as before). Roll back by reverting the PR. One known cost: if the setting is switched on but incomplete (only possible through a hand edit), every badge load pages the same Sentry alert the monthly run raises.
+Read-only. If a badge is wrong, the invoice is still priced by the monthly run, which this change only refactors (it moves the decision step into `decide_sibling_discount`; the run still inserts the row exactly as before). Roll back by reverting the PR. Badge reads never page Sentry; an unreadable setting (only possible through a hand edit) shows as off, and the monthly run still pages for it. Each badge read rebuilds the family once per enrollment, which is fine at family sizes but is not cached.
