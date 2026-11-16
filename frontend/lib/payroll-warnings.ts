@@ -29,12 +29,17 @@ const WARNING_LABELS: Record<PayoutWarningReason, string> = {
   percent_rate_on_assistant: "Percent rate on an assistant",
   missing_rate: "Missing coach pay rate",
   missing_percent: "Missing percent on coach pay rate",
+  unattributed_manual_invoices: "Invoices with no class",
 };
 
 const REPAIR_ACTIONS: Record<string, string> = {
   set_session_fee_and_recompute: "Set session fee, then recompute payout.",
   set_coach_rate_and_recompute: "Set coach rate, then recompute payout.",
   invoice_class_month_and_recompute: "Invoice the class for the month, then recompute payout.",
+  override_assistant_pay_and_recompute:
+    "Set an attendance pay override for this class, or give the coach a per-session or per-hour rate, then recompute payout.",
+  attach_invoice_to_enrollment_and_recompute:
+    "Check those invoices: tuition on an invoice with no enrollment is in no coach's base.",
 };
 
 export function rowHasUnresolvedWarnings(row: AdminMonthlyPayrollRow): boolean {

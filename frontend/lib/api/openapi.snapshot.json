@@ -25358,6 +25358,18 @@
             "title": "Payroll Ach Discount Reduces Base",
             "type": "boolean"
           },
+          "payroll_assistant_pay_from": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Assistant Pay From"
+          },
           "payroll_cancelled_class_share": {
             "enum": [
               "ran_only",
@@ -25383,7 +25395,8 @@
           "payroll_ach_discount_reduces_base",
           "payroll_count_checkout_first_month",
           "payroll_cancelled_class_share",
-          "payroll_missing_invoices"
+          "payroll_missing_invoices",
+          "payroll_assistant_pay_from"
         ],
         "title": "PayrollSettingsView",
         "type": "object"

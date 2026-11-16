@@ -25,6 +25,7 @@ from typing import Any
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.finance.domain.payout_period import (
+    PAYOUT_TRANSITION_FIELDS,
     PayoutPeriod,
     PayoutPeriodConflictError,
     PayoutWarning,
@@ -113,6 +114,7 @@ def _period_to_doc(period: PayoutPeriod) -> dict[str, Any]:
         "paid_method": period.paid_method,
         "paid_amount_minor": period.paid_amount_minor,
         "paid_reference": period.paid_reference,
+        "version": period.version,
     }
 
 
@@ -163,6 +165,7 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             paid_method=doc.get("paid_method"),
             paid_amount_minor=doc.get("paid_amount_minor"),
             paid_reference=doc.get("paid_reference"),
+            version=int(doc.get("version") or 0),
         )
 
     async def find_by_window(
@@ -259,24 +262,31 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             raise RuntimeError("payout period save did not persist")
         return stored
 
-    async def _guarded_set(self, period: PayoutPeriod, expected_status: str) -> None:
-        # Filter on the status the caller loaded: of two concurrent
-        # transitions (reopen vs mark-paid), only the first lands (L7).
+    async def _guarded_set(self, period: PayoutPeriod, fields: dict[str, Any]) -> None:
+        # Compare-and-set on the version the caller loaded (L7): of two
+        # concurrent writes (approve vs recompute, a stale mark-paid after
+        # reopen and re-approve, two recomputes) only the first lands.
+        loaded = period.version
         result = await self._update_one(
-            {"period_id": period.period_id, "status": expected_status},
-            {"$set": _period_to_doc(period)},
+            {
+                "period_id": period.period_id,
+                # A document written before versions existed reads as 0.
+                "version": loaded if loaded else {"$in": [0, None]},
+            },
+            {"$set": fields, "$inc": {"version": 1}},
         )
         if result.matched_count == 0:
             if await self._find_one({"period_id": period.period_id}) is None:
                 raise LookupError(f"PayoutPeriod {period.period_id!r} not found")
             raise PayoutPeriodConflictError(
                 f"payout period {period.period_id!r} changed since it was loaded "
-                f"(expected status {expected_status!r}); reload and try again"
+                f"(version {loaded}); reload and try again"
             )
 
-    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
-        await self._guarded_set(period, expected_status)
-        # Lines are immutable once written, so we don't touch them here.
+    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
+        await self._guarded_set(
+            period, {field: getattr(period, field) for field in PAYOUT_TRANSITION_FIELDS}
+        )
         stored = await self.find_by_id(period.period_id)
         if stored is None:  # pragma: no cover - defensive
             raise RuntimeError("payout period replace lost the document")
@@ -295,17 +305,19 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         )
         return [await self._hydrate(doc) async for doc in cursor]
 
-    async def replace_with_lines(
-        self, period: PayoutPeriod, *, expected_status: str
-    ) -> PayoutPeriod:
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
         """Replace the period document AND rewrite its line set.
 
         Used by recompute and line-override flows, which legitimately
         change lines (unlike ``replace``, which only moves the state
         machine). Drafts only — callers enforce that rule.
         """
-        await self._guarded_set(period, expected_status)
+        header = _period_to_doc(period)
+        header.pop("version")
+        await self._guarded_set(period, header)
 
+        # shortcut: the header write and the line rewrite are two writes; a
+        # crash between them leaves stale lines. Made atomic in PR 2.
         academy_id = current_academy_id()
         await self._db[self.LINES_COLLECTION].delete_many(
             {"academy_id": academy_id, "period_id": period.period_id}

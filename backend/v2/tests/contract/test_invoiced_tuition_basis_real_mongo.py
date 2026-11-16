@@ -43,7 +43,7 @@ async def _invoice(
     db: Any,
     invoice_id: str,
     *,
-    enrollment_id: str,
+    enrollment_id: str | None,
     lines: list[tuple[str, int] | tuple[str, int, str]],
     discount_cents: int = 0,
     status: str = "open",
@@ -200,53 +200,158 @@ async def test_basis_nets_tuition_discounts_and_leaves_out_everything_else(real_
     assert basis.amounts == {("sess-1", "2026-10"): 15_900}
 
 
-async def test_checkout_first_month_counts_once_and_follows_the_setting(real_db, acad) -> None:
+async def _checkout(
+    db: Any,
+    payment_id: str,
+    *,
+    parent_id: str,
+    status: str = "succeeded",
+    enrollment_id: str | None = None,
+    application_status: str = "APPROVED",
+    refunded_cents: int = 0,
+) -> None:
+    """A registration checkout: payment, its first-month snapshot, its application."""
+    snapshot_id = f"snap-{payment_id}"
+    await db["payments"].insert_one(
+        {
+            "payment_id": payment_id,
+            "academy_id": ACAD,
+            "parent_id": parent_id,
+            "session_id": "sess-1",
+            "calculation_snapshot_id": snapshot_id,
+            "amount_cents": 4_000,
+            "refunded_cents": refunded_cents,
+            "status": status,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+    await db["billing_calculation_snapshots"].insert_one(
+        {
+            "academy_id": ACAD,
+            "snapshot_id": snapshot_id,
+            "calculation_type": "FIRST_MONTH_PRORATION",
+            "billing_period_label": "2026-10",
+            "final_amount_cents": 4_000,
+            "session_id": "sess-1",
+            "status": "CONSUMED",
+        }
+    )
+    await db["onboarding_applications"].insert_one(
+        {
+            "academy_id": ACAD,
+            "application_id": f"app-{payment_id}",
+            "parent_user_id": parent_id,
+            "status": application_status,
+            "payment_id": payment_id,
+            "enrollment_id": enrollment_id,
+        }
+    )
+
+
+async def test_checkout_first_month_counts_per_enrollment_and_follows_the_setting(
+    real_db, acad
+) -> None:
+    # Two siblings in one class: A was invoiced for October, B registered
+    # through checkout. Same parent, so a per-family dedup dropped B's month.
+    await _enroll(real_db, "enr-a", "sess-1")
+    await _enroll(real_db, "enr-b", "sess-1")
+    await _invoice(real_db, "inv-a", enrollment_id="enr-a", lines=[("tuition", 10_000)])
+    await _checkout(real_db, "pay-b", parent_id="parent-1", enrollment_id="enr-b")
+    # Enrollment 2 has a ledger invoice for October: its checkout must not add again.
     await _enroll(real_db, "enr-2", "sess-1")
-    # Family 2 has a ledger invoice for October: their checkout must not add again.
     await _invoice(
         real_db, "inv-2", enrollment_id="enr-2", parent_id="parent-2", lines=[("tuition", 10_000)]
     )
-    payments = [
-        ("pay-1", "parent-1", "snap-1", "succeeded"),
-        ("pay-2", "parent-2", "snap-2", "succeeded"),
-        ("pay-3", "parent-3", "snap-3", "pending"),
-    ]
-    for payment_id, parent_id, snapshot_id, status in payments:
-        await real_db["payments"].insert_one(
-            {
-                "payment_id": payment_id,
-                "academy_id": ACAD,
-                "parent_id": parent_id,
-                "session_id": "sess-1",
-                "calculation_snapshot_id": snapshot_id,
-                "amount_cents": 4_000,
-                "status": status,
-                "created_at": NOW,
-                "updated_at": NOW,
-            }
-        )
-        await real_db["billing_calculation_snapshots"].insert_one(
-            {
-                "academy_id": ACAD,
-                "snapshot_id": snapshot_id,
-                "calculation_type": "FIRST_MONTH_PRORATION",
-                "billing_period_label": "2026-10",
-                "final_amount_cents": 4_000,
-                "status": "CONSUMED",
-            }
-        )
+    await _checkout(real_db, "pay-2", parent_id="parent-2", enrollment_id="enr-2")
+    # A rejected application's paid checkout taught nobody; a pending payment is unpaid.
+    await _checkout(real_db, "pay-r", parent_id="parent-3", application_status="REJECTED")
+    await _checkout(real_db, "pay-p", parent_id="parent-4", status="pending", enrollment_id="x")
+    # An approved application whose enrollment no longer exists does not count either.
+    await _checkout(real_db, "pay-gone", parent_id="parent-5", enrollment_id="enr-deleted")
 
     model = MongoInvoicedTuitionReadModel(real_db)
     basis = await model.tuition_by_class_month(
         academy_id=ACAD, session_ids=["sess-1"], months=["2026-10"]
     )
-    assert basis.amounts == {("sess-1", "2026-10"): 14_000}
+    assert basis.amounts == {("sess-1", "2026-10"): 24_000}
 
     await _settings(real_db, payroll_count_checkout_first_month=False)
     basis = await model.tuition_by_class_month(
         academy_id=ACAD, session_ids=["sess-1"], months=["2026-10"]
     )
+    assert basis.amounts == {("sess-1", "2026-10"): 20_000}
+
+
+async def test_refunds_come_off_the_basis_floored_at_zero(real_db, acad) -> None:
+    await _enroll(real_db, "enr-1", "sess-1")
+    await _enroll(real_db, "enr-2", "sess-1")
+    await _enroll(real_db, "enr-3", "sess-1")
+    await _invoice(real_db, "inv-1", enrollment_id="enr-1", lines=[("tuition", 10_000)])
+    await _invoice(real_db, "inv-2", enrollment_id="enr-2", lines=[("tuition", 5_000)])
+    await real_db["invoices"].update_one(
+        {"invoice_id": "inv-1"}, {"$set": {"refunded_cents": 3_000}}
+    )
+    # Refunded past its tuition (a late fee refunded too): floored at 0, not negative.
+    await real_db["invoices"].update_one(
+        {"invoice_id": "inv-2"}, {"$set": {"refunded_cents": 9_000}}
+    )
+    await _checkout(
+        real_db,
+        "pay-3",
+        parent_id="parent-3",
+        status="partially_refunded",
+        enrollment_id="enr-3",
+        refunded_cents=1_500,
+    )
+
+    basis = await MongoInvoicedTuitionReadModel(real_db).tuition_by_class_month(
+        academy_id=ACAD, session_ids=["sess-1"], months=["2026-10"]
+    )
+    assert basis.amounts == {("sess-1", "2026-10"): 7_000 + 0 + 2_500}
+
+
+async def test_a_class_move_keeps_past_months_with_the_class_that_was_billed(real_db, acad) -> None:
+    # The kid was in X all October and moved to Y on Nov 3: the move rewrites
+    # the enrollment's session, but October's snapshot says X.
+    await _enroll(real_db, "enr-1", "Y")
+    await _invoice(real_db, "inv-oct", enrollment_id="enr-1", lines=[("tuition", 10_000)])
+    await real_db["billing_calculation_snapshots"].insert_one(
+        {
+            "academy_id": ACAD,
+            "snapshot_id": "snap-oct",
+            "calculation_type": "MONTHLY_TUITION",
+            "billing_period_label": "2026-10",
+            "enrollment_id": "enr-1",
+            "session_id": "X",
+            "status": "CONSUMED",
+            "calculated_at": NOW,
+            "final_amount_cents": 10_000,
+        }
+    )
+    # November has no snapshot: it falls back to the enrollment's class now.
+    await _invoice(
+        real_db, "inv-nov", enrollment_id="enr-1", period="2026-11", lines=[("tuition", 8_000)]
+    )
+
+    basis = await MongoInvoicedTuitionReadModel(real_db).tuition_by_class_month(
+        academy_id=ACAD, session_ids=["X", "Y"], months=["2026-10", "2026-11"]
+    )
+    assert basis.amounts == {("X", "2026-10"): 10_000, ("Y", "2026-11"): 8_000}
+
+
+async def test_manual_invoices_without_an_enrollment_are_counted_not_dropped(real_db, acad) -> None:
+    await _enroll(real_db, "enr-1", "sess-1")
+    await _invoice(real_db, "inv-1", enrollment_id="enr-1", lines=[("tuition", 10_000)])
+    await _invoice(real_db, "inv-manual", enrollment_id=None, lines=[("tuition", 6_000)])
+    # A manual invoice with no tuition (merchandise, a fee) is not a gap in anyone's base.
+    await _invoice(real_db, "inv-fee", enrollment_id=None, lines=[("late_fee", 1_500)])
+
+    basis = await MongoInvoicedTuitionReadModel(real_db).tuition_by_class_month(
+        academy_id=ACAD, session_ids=["sess-1"], months=["2026-10"]
+    )
     assert basis.amounts == {("sess-1", "2026-10"): 10_000}
+    assert basis.unattributed_invoices == 1
 
 
 async def test_shares_bucket_on_the_academy_clock_and_sum_to_the_basis(real_db, acad) -> None:

@@ -422,3 +422,15 @@ def test_period_view_flags_basis_and_a_paid_amount_that_differs(admin_client):
 
     assert body["revenue_basis"] == "invoiced"
     assert body["paid_amount_differs"] is True
+
+
+def test_period_export_labels_the_basis_column_per_period(admin_client):
+    def header(period: PayoutPeriod) -> tuple:
+        _wire(admin_client, period)
+        response = admin_client.get("/api/v2/admin/payout-periods/pp-1/export")
+        assert response.status_code == 200, response.text
+        rows = load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True)
+        return next(row for row in rows if row and row[0] == "Date")
+
+    assert "Tuition basis" in header(_period(revenue_basis="invoiced"))
+    assert "Expected revenue (legacy)" in header(_period(revenue_basis="expected"))

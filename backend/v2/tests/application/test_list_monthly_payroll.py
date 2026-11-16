@@ -84,13 +84,11 @@ class FakePayoutPeriodRepository:
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None:
         return next((p for p in self._periods if p.period_id == period_id), None)
 
-    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
+    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
         self._periods = [period if p.period_id == period.period_id else p for p in self._periods]
         return period
 
-    async def replace_with_lines(
-        self, period: PayoutPeriod, *, expected_status: str
-    ) -> PayoutPeriod:
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
         self._periods = [period if p.period_id == period.period_id else p for p in self._periods]
         return period
 

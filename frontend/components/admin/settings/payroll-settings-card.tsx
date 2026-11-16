@@ -130,6 +130,21 @@ export function PayrollSettingsCard() {
           </label>
           {radios(CANCELLED)}
           {radios(MISSING)}
+          <label className="mt-4 flex flex-col gap-1 text-sm">
+            <span className="font-medium text-rally-ink">Pay assistant coaches in the app from</span>
+            <input
+              type="month"
+              value={form.payroll_assistant_pay_from ?? ""}
+              onChange={(e) => set("payroll_assistant_pay_from", e.target.value || null)}
+              className="w-44 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+              aria-describedby="payroll-settings-assistant-hint"
+              data-testid="payroll-settings-assistant-pay-from"
+            />
+            <span id="payroll-settings-assistant-hint" className="text-rally-muted">
+              Leave empty while assistants are paid outside the app. From this month on, each
+              assisted class gets its own line on the assistant&apos;s payslip.
+            </span>
+          </label>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button
               variant={dirty ? "volt" : "secondary"}

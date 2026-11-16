@@ -27,10 +27,10 @@ def _dt(value: str) -> datetime:
 
 
 @pytest.mark.asyncio
-async def test_payable_occurrence_query_attaches_coach_attendance(db) -> None:
+async def test_payable_occurrence_query_attaches_coach_attendance(db, acad) -> None:
     await db["session_occurrences"].insert_one(
         {
-            "academy_id": "acad",
+            "academy_id": "test-academy",
             "occurrence_id": "occ-1",
             "session_id": "sess-1",
             "start_at": _dt("2026-05-27T18:00:00"),
@@ -42,7 +42,7 @@ async def test_payable_occurrence_query_attaches_coach_attendance(db) -> None:
     )
     await db["coach_attendance"].insert_one(
         {
-            "academy_id": "acad",
+            "academy_id": "test-academy",
             "attendance_id": "coach-att-1",
             "occurrence_id": "occ-1",
             "coach_id": "coach-2",
@@ -57,7 +57,7 @@ async def test_payable_occurrence_query_attaches_coach_attendance(db) -> None:
     )
 
     rows = await _query(db).list_in_period(
-        academy_id="acad",
+        academy_id="test-academy",
         period_start=_dt("2026-05-01T00:00:00"),
         period_end=_dt("2026-06-01T00:00:00"),
     )
@@ -69,7 +69,7 @@ async def test_payable_occurrence_query_attaches_coach_attendance(db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_assistant_coaches_get_a_period_and_their_assisted_classes(db) -> None:
+async def test_assistant_coaches_get_a_period_and_their_assisted_classes(db, acad) -> None:
     """Payroll contract (L7): an assistant listed on an occurrence is paid their
     own line, so the monthly reader returns them with their assisted classes and
     the payable rows carry ``assistant_coach_ids``. The paying coach listed as
@@ -81,7 +81,7 @@ async def test_assistant_coaches_get_a_period_and_their_assisted_classes(db) -> 
     await db["session_occurrences"].insert_many(
         [
             {
-                "academy_id": "acad",
+                "academy_id": "test-academy",
                 "occurrence_id": "occ-scheduled",
                 "session_id": "sess-1",
                 "start_at": _dt("2026-05-06T18:00:00"),
@@ -92,7 +92,7 @@ async def test_assistant_coaches_get_a_period_and_their_assisted_classes(db) -> 
                 "is_payable": True,
             },
             {
-                "academy_id": "acad",
+                "academy_id": "test-academy",
                 "occurrence_id": "occ-replaced",
                 "session_id": "sess-1",
                 "start_at": _dt("2026-05-13T18:00:00"),
@@ -107,13 +107,31 @@ async def test_assistant_coaches_get_a_period_and_their_assisted_classes(db) -> 
     )
     period_start, period_end = _dt("2026-05-01T00:00:00"), _dt("2026-06-01T00:00:00")
 
-    grouped = await MonthlyCoachOccurrenceReaderAdapter(
-        db["session_occurrences"]
-    ).coaches_with_occurrences(academy_id="acad", period_start=period_start, period_end=period_end)
-    by_coach = {row.coach_id: row.session_count for row in grouped}
-    assert by_coach == {"coach-1": 1, "coach-2": 1, "asst-1": 2, "asst-2": 1}
+    async def counts(pay_from: str | None) -> dict[str, int]:
+        async def reader() -> str | None:
+            return pay_from
 
-    rows = await _query(db).list_in_period(
-        academy_id="acad", period_start=period_start, period_end=period_end
+        grouped = await MonthlyCoachOccurrenceReaderAdapter(
+            db["session_occurrences"], assistant_pay_from=reader
+        ).coaches_with_occurrences(
+            academy_id="test-academy", period_start=period_start, period_end=period_end
+        )
+        return {row.coach_id: row.session_count for row in grouped}
+
+    async def assistants() -> list[list[str]]:
+        rows = await _query(db).list_in_period(
+            academy_id="test-academy", period_start=period_start, period_end=period_end
+        )
+        return [r.assistant_coach_ids for r in rows]
+
+    # Default: assistants are paid outside the app, so they get no rows or lines.
+    assert await counts(None) == {"coach-1": 1, "coach-2": 1}
+    assert await assistants() == [[], []]
+    # A pay-from month after May leaves May alone too.
+    assert await counts("2026-06") == {"coach-1": 1, "coach-2": 1}
+
+    await db["billing_settings"].insert_one(
+        {"academy_id": "test-academy", "payroll_assistant_pay_from": "2026-05"}
     )
-    assert [r.assistant_coach_ids for r in rows] == [["asst-1", "coach-1"], ["asst-1", "asst-2"]]
+    assert await counts("2026-05") == {"coach-1": 1, "coach-2": 1, "asst-1": 2, "asst-2": 1}
+    assert await assistants() == [["asst-1", "coach-1"], ["asst-1", "asst-2"]]

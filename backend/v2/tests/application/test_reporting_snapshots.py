@@ -136,7 +136,7 @@ class FakePayoutRepo:
     async def save(self, period):  # pragma: no cover - unused
         return period
 
-    async def replace(self, period, *, expected_status):  # pragma: no cover - unused
+    async def replace(self, period):  # pragma: no cover - unused
         return period
 
 

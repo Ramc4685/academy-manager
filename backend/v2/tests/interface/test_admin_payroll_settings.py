@@ -17,6 +17,7 @@ DEFAULTS = {
     "payroll_count_checkout_first_month": True,
     "payroll_cancelled_class_share": "ran_only",
     "payroll_missing_invoices": "block",
+    "payroll_assistant_pay_from": None,
 }
 
 
@@ -29,8 +30,8 @@ class _Store:
     async def get(self) -> BillingSettings:
         return self.settings
 
-    async def upsert(self, settings: BillingSettings) -> None:
-        self.settings = settings
+    async def set_payroll_settings(self, values: dict) -> None:
+        self.settings = self.settings.model_copy(update=values)
 
 
 class _Audit:
@@ -78,8 +79,9 @@ def test_bad_values_and_unknown_fields_are_refused(admin_client) -> None:
     bad_literal = admin_client.put(URL, json={**DEFAULTS, "payroll_cancelled_class_share": "x"})
     extra = admin_client.put(URL, json={**DEFAULTS, "application_fee_bps": 900})
     missing = admin_client.put(URL, json={"payroll_missing_invoices": "pay_zero"})
+    bad_month = admin_client.put(URL, json={**DEFAULTS, "payroll_assistant_pay_from": "2026-13"})
 
-    assert [r.status_code for r in (bad_literal, extra, missing)] == [422, 422, 422]
+    assert [r.status_code for r in (bad_literal, extra, missing, bad_month)] == [422] * 4
     assert store.settings.application_fee_bps == 0
     assert audit.entries == []
 

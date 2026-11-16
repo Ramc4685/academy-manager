@@ -225,7 +225,7 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
   const isPercent = billingUnit === "percent_of_revenue";
   const valueInvalid = isPercent
     ? !(Number(percent) > 0 && Number(percent) <= 100)
-    : !(Number(amount) > 0);
+    : amount.trim() === "" || !(Number(amount) >= 0);
   const repairInvalid = valueInvalid || !repairFrom || !repairUntil || !repairReason.trim();
   useReportUnsavedChanges(
     "admin-coach-pay-rate",
@@ -334,7 +334,7 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
             </label>
           ) : (
             <label className="flex flex-col gap-1 text-xs font-medium text-neutral-500">
-              Amount (USD)
+              Amount (USD, 0 for a volunteer)
               <input
                 type="number"
                 min={0}

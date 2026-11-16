@@ -10,6 +10,11 @@ from backend.v2.contexts.finance.application.ports import (
     PayoutCalculator,
     PayoutPeriodRepository,
 )
+from backend.v2.contexts.finance.domain.payout_period import PayoutWarning, blocking_warnings
+
+
+def _blocking(calc: object) -> list[PayoutWarning]:
+    return [w for w in getattr(calc, "payout_warnings", []) if w.severity == "blocking"]
 
 
 @dataclass(frozen=True)
@@ -103,10 +108,10 @@ class ListMonthlyPayroll:
                             [row for row in period.unpaid_occurrences if row.unresolved]
                         )
                         or len(period.unpaid_occurrence_ids),
-                        warning_count=len(period.payout_warnings),
+                        warning_count=len(blocking_warnings(period)),
                         warning_status=(
                             "unresolved"
-                            if period.payout_warnings
+                            if blocking_warnings(period)
                             or period.unpaid_occurrence_ids
                             or any(row.unresolved for row in period.unpaid_occurrences)
                             else "clear"
@@ -124,11 +129,10 @@ class ListMonthlyPayroll:
                         status="not_generated",
                         period_id=None,
                         unresolved_unpaid_count=len(calc.unpaid_occurrence_ids),
-                        warning_count=len(getattr(calc, "payout_warnings", [])),
+                        warning_count=len(_blocking(calc)),
                         warning_status=(
                             "unresolved"
-                            if getattr(calc, "payout_warnings", [])
-                            or getattr(calc, "unpaid_occurrence_ids", [])
+                            if _blocking(calc) or getattr(calc, "unpaid_occurrence_ids", [])
                             else "clear"
                         ),
                     )

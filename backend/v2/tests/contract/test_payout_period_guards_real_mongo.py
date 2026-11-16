@@ -3,7 +3,8 @@
 The driver hands datetimes back naive, so hydration must re-attach UTC before
 ``approve`` compares them with the clock; legacy drafts (no ``revenue_basis``)
 must be recomputed first; and a write built from a stale load (reopen racing
-mark-paid) must refuse with a conflict and leave the stored period alone.
+mark-paid, approve racing recompute, two recomputes) must refuse with a
+conflict and leave the stored period alone.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriodConflictError,
     PayoutPeriodStateError,
     PersistedPayoutLine,
+    approve,
     mark_paid,
     reopen,
 )
@@ -104,15 +106,103 @@ async def test_a_stale_mark_paid_loses_to_a_reopen_and_changes_nothing(real_db, 
 
     # Both writers loaded the approved period; the reopen lands first.
     stale = approved
-    await repo.replace(reopen(approved), expected_status="approved")
+    await repo.replace(reopen(approved))
 
     paid = mark_paid(stale, at=JUNE_2, method="check", amount_minor=2_500, reference="r-1")
     with pytest.raises(PayoutPeriodConflictError):
-        await repo.replace(paid, expected_status=stale.status)
+        await repo.replace(paid)
 
     stored = await real_db["payout_periods"].find_one({"period_id": "pp-1"})
     assert stored["status"] == "draft"
     assert stored.get("paid_at") is None and stored.get("paid_reference") is None
 
     with pytest.raises(LookupError):
-        await repo.replace(_period(period_id="pp-missing"), expected_status="draft")
+        await repo.replace(_period(period_id="pp-missing"))
+
+
+def _recomputed(period: PayoutPeriod, *, amount_minor: int) -> PayoutPeriod:
+    line = period.lines[0].model_copy(update={"amount_minor": amount_minor})
+    return period.model_copy(update={"lines": [line], "total_minor": amount_minor})
+
+
+async def _stored(real_db) -> dict:
+    doc = await real_db["payout_periods"].find_one({"period_id": "pp-1"}, {"_id": 0})
+    lines = (
+        await real_db["payout_period_lines"].find({"period_id": "pp-1"}, {"_id": 0}).to_list(None)
+    )
+    return {"doc": doc, "lines": sorted(line["amount_minor"] for line in lines)}
+
+
+async def test_an_approve_built_before_a_recompute_conflicts_and_changes_nothing(
+    real_db, acad
+) -> None:
+    repo = MongoPayoutPeriodRepository(real_db)
+    await repo.save(_period())
+    stale = await repo.find_by_id("pp-1")
+    assert stale is not None
+
+    # Tab B recomputes first: new lines and a new total land.
+    await repo.replace_with_lines(_recomputed(stale, amount_minor=4_000))
+    before = await _stored(real_db)
+
+    # Tab A approves what it loaded before the recompute.
+    with pytest.raises(PayoutPeriodConflictError):
+        await repo.replace(approve(stale, at=JUNE_2))
+
+    after = await _stored(real_db)
+    assert after == before
+    assert after["doc"]["status"] == "draft"
+    assert after["doc"]["total_minor"] == 4_000 and after["lines"] == [4_000]
+    # The page still loads: header total and lines agree.
+    reloaded = await repo.find_by_id("pp-1")
+    assert reloaded is not None and reloaded.total_minor == 4_000
+
+
+async def test_a_stale_mark_paid_after_reopen_recompute_and_reapprove_conflicts(
+    real_db, acad
+) -> None:
+    """ABA: the status is back to ``approved``, but it is not the same approval."""
+    repo = MongoPayoutPeriodRepository(real_db)
+    await repo.save(_period())
+    first = await _approve(real_db).execute(period_id="pp-1")
+
+    stale = first  # tab A loaded the first approval and walks away
+    reopened = await repo.replace(reopen(first))
+    recomputed = await repo.replace_with_lines(_recomputed(reopened, amount_minor=1_000))
+    await repo.replace(approve(recomputed, at=JUNE_2))
+    before = await _stored(real_db)
+    assert before["doc"]["status"] == "approved"
+
+    paid = mark_paid(stale, at=JUNE_2, method="check", amount_minor=2_500, reference="r-1")
+    with pytest.raises(PayoutPeriodConflictError):
+        await repo.replace(paid)
+
+    after = await _stored(real_db)
+    assert after == before
+    assert after["doc"].get("paid_at") is None
+
+
+async def test_two_recomputes_from_one_load_conflict_instead_of_both_landing(real_db, acad) -> None:
+    repo = MongoPayoutPeriodRepository(real_db)
+    await repo.save(_period())
+    loaded = await repo.find_by_id("pp-1")
+    assert loaded is not None
+
+    await repo.replace_with_lines(_recomputed(loaded, amount_minor=3_000))
+    before = await _stored(real_db)
+    with pytest.raises(PayoutPeriodConflictError):
+        await repo.replace_with_lines(_recomputed(loaded, amount_minor=9_000))
+
+    assert await _stored(real_db) == before
+    assert before["lines"] == [3_000]
+
+
+async def test_a_period_stored_before_versions_existed_reads_as_version_zero(real_db, acad) -> None:
+    repo = MongoPayoutPeriodRepository(real_db)
+    await repo.save(_period())
+    await real_db["payout_periods"].update_one({"period_id": "pp-1"}, {"$unset": {"version": ""}})
+
+    loaded = await repo.find_by_id("pp-1")
+    assert loaded is not None and loaded.version == 0
+    approved = await repo.replace(approve(loaded, at=JUNE_2))
+    assert approved.status == "approved" and approved.version == 1

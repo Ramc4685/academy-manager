@@ -34,6 +34,9 @@ PayoutWarningReason = Literal[
     "percent_rate_on_assistant",
     "missing_rate",
     "missing_percent",
+    # Non-blocking (L7): manual invoices with no enrollment name no class, so
+    # they are in no percent coach's base.
+    "unattributed_manual_invoices",
 ]
 PayoutWarningSeverity = Literal["blocking", "warning"]
 CoachRateTimelineIssueType = Literal[

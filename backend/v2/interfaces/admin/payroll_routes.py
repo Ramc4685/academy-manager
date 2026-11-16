@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime, tzinfo
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -18,8 +17,7 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner
-
-log = logging.getLogger(__name__)
+from backend.v2.shared.time.academy_timezone import resolve_academy_clock_timezone
 
 #: Spreadsheet role per line basis, shared with the period export.
 PAYROLL_ROLE_LABELS = {"substitute": "Replacement", "assistant": "Assistant"}
@@ -39,6 +37,8 @@ class PayrollSettingsView(BaseModel):
     payroll_count_checkout_first_month: bool
     payroll_cancelled_class_share: Literal["ran_only", "all_scheduled"]
     payroll_missing_invoices: Literal["block", "pay_zero"]
+    #: First month (YYYY-MM) assistants are paid in the app; null = never.
+    payroll_assistant_pay_from: str | None = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 @router.get("/payroll-settings", response_model=PayrollSettingsView)
@@ -89,16 +89,13 @@ def _month_window(month: str, tz: tzinfo = UTC) -> tuple[datetime, datetime]:
 async def _academy_month_window(
     month: str, *, academy_id: str, use_cases: AdminUseCases
 ) -> tuple[datetime, datetime]:
-    tz: tzinfo = UTC
-    get_academy = getattr(use_cases, "get_academy_use_case", None)
-    if get_academy is not None:
-        try:
-            academy = await get_academy.execute(academy_id)
-            if academy.timezone:
-                tz = ZoneInfo(academy.timezone)
-        except (KeyError, ValueError):
-            log.warning("Invalid academy timezone for %s; defaulting to UTC", academy_id)
-    return _month_window(month, tz)
+    """The academy-local month, on the same clock the pay base buckets invoices by."""
+
+    async def academy_timezone(aid: str) -> str | None:
+        return (await use_cases.get_academy_use_case.execute(aid)).timezone
+
+    zone = await resolve_academy_clock_timezone(academy_timezone, academy_id)
+    return _month_window(month, ZoneInfo(zone))
 
 
 @router.get("/payroll/{month}", response_model=AdminMonthlyPayrollView)

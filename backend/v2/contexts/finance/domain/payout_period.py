@@ -47,6 +47,9 @@ PayoutWarningReason = Literal[
     "percent_rate_on_assistant",
     "missing_rate",
     "missing_percent",
+    # Non-blocking (L7): manual invoices with no enrollment name no class, so
+    # they are in no percent coach's base.
+    "unattributed_manual_invoices",
 ]
 PayoutWarningSeverity = Literal["blocking", "warning"]
 PersistedUnpaidReason = Literal[
@@ -145,6 +148,9 @@ class PayoutPeriod(BaseModel):
     paid_method: str | None = None
     paid_amount_minor: int | None = Field(default=None, ge=0)
     paid_reference: str | None = None
+    #: Bumped by every stored write; a write lands only on the version it
+    #: was loaded at (L7). A document without one reads as 0.
+    version: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _validate_window_and_totals(self) -> PayoutPeriod:
@@ -174,11 +180,29 @@ class PayoutPeriodStateError(ValueError):
     """Raised when a state transition is illegal (e.g. approve a paid period)."""
 
 
+#: The fields a state transition (approve, mark paid, reopen) writes. A
+#: transition never rewrites the header or lines, so it cannot store a stale
+#: total over lines a concurrent recompute wrote.
+PAYOUT_TRANSITION_FIELDS = (
+    "status",
+    "approved_at",
+    "paid_at",
+    "paid_method",
+    "paid_amount_minor",
+    "paid_reference",
+)
+
+
 class PayoutPeriodConflictError(Exception):
-    """The period's status changed between load and write (a concurrent edit).
+    """The period changed between load and write (a concurrent edit).
 
     Nothing was written; the caller reloads and decides again.
     """
+
+
+def blocking_warnings(period: PayoutPeriod) -> list[PayoutWarning]:
+    """The warnings that stop approval and payment; ``warning`` severity only informs."""
+    return [w for w in period.payout_warnings if w.severity == "blocking"]
 
 
 def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
@@ -209,8 +233,9 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
             "or on the old expected-revenue basis; recompute first"
         )
     unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
-    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
-        count = len(period.payout_warnings) or len(unresolved) or len(period.unpaid_occurrence_ids)
+    blocking = blocking_warnings(period)
+    if unresolved or period.unpaid_occurrence_ids or blocking:
+        count = len(blocking) or len(unresolved) or len(period.unpaid_occurrence_ids)
         raise PayoutPeriodStateError(
             f"cannot approve payout period {period.period_id!r} with "
             f"{count} unresolved payout warnings or unresolved unpaid occurrences; "
@@ -279,7 +304,7 @@ def mark_paid(
             f"cannot mark payout period {period.period_id!r} paid from status 'draft'"
         )
     unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
-    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
+    if unresolved or period.unpaid_occurrence_ids or blocking_warnings(period):
         raise PayoutPeriodStateError(
             f"cannot mark payout period {period.period_id!r} paid with unresolved payout warnings "
             "or unresolved unpaid occurrences"

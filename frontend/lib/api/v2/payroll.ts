@@ -56,6 +56,8 @@ export interface PayrollSettings {
   payroll_count_checkout_first_month: boolean;
   payroll_cancelled_class_share: "ran_only" | "all_scheduled";
   payroll_missing_invoices: "block" | "pay_zero";
+  /** First month (YYYY-MM) assistant coaches are paid in the app; null = never. */
+  payroll_assistant_pay_from: string | null;
 }
 
 export async function getPayrollSettings(): Promise<PayrollSettings> {

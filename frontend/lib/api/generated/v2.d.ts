@@ -16606,6 +16606,8 @@ export interface components {
         PayrollSettingsView: {
             /** Payroll Ach Discount Reduces Base */
             payroll_ach_discount_reduces_base: boolean;
+            /** Payroll Assistant Pay From */
+            payroll_assistant_pay_from: string | null;
             /**
              * Payroll Cancelled Class Share
              * @enum {string}

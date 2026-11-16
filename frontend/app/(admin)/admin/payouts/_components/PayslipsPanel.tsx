@@ -38,7 +38,7 @@ export function PayslipsPanel({ month }: { month: string }) {
       coach,
       sessions: payrollRow?.session_count ?? 0,
       netEarningsCents: payrollRow?.total_amount_cents ?? 0,
-      chip: payslipChipFor(payrollRow?.status ?? "not_generated", null),
+      chip: payslipChipFor(payrollRow?.status ?? "not_generated"),
     };
   });
 

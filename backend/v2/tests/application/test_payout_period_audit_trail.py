@@ -29,6 +29,7 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
 )
 from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
+    PAYOUT_TRANSITION_FIELDS,
     PayoutPeriod,
     PayoutPeriodConflictError,
     PayoutPeriodStateError,
@@ -81,20 +82,30 @@ class FakeRepo:
         self._by_id[period.period_id] = period
         return period
 
-    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
+    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
         current = self._by_id.get(period.period_id)
         if current is None:
             raise LookupError(period.period_id)
-        if current.status != expected_status:
-            # Same refusal as the Mongo repo's status-filtered write (L7).
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
             raise PayoutPeriodConflictError(period.period_id)
-        self._by_id[period.period_id] = period
-        return period
+        stored = current.model_copy(
+            update={f: getattr(period, f) for f in PAYOUT_TRANSITION_FIELDS}
+            | {"version": current.version + 1}
+        )
+        self._by_id[period.period_id] = stored
+        return stored
 
-    async def replace_with_lines(
-        self, period: PayoutPeriod, *, expected_status: str
-    ) -> PayoutPeriod:
-        return await self.replace(period, expected_status=expected_status)
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+        current = self._by_id.get(period.period_id)
+        if current is None:
+            raise LookupError(period.period_id)
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
+        stored = period.model_copy(update={"version": current.version + 1})
+        self._by_id[period.period_id] = stored
+        return stored
 
 
 class FakeAudit:

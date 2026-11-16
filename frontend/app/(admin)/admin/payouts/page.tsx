@@ -426,6 +426,6 @@ function PayrollRows({
 }
 
 function PayrollStatusChip({ status }: { status: MonthlyPayrollStatus }) {
-  const chip = payslipChipFor(status, null);
+  const chip = payslipChipFor(status);
   return <Chip variant={chip.variant} label={chip.label} />;
 }

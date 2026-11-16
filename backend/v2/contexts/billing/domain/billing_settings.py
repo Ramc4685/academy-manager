@@ -174,6 +174,9 @@ class BillingSettings(BaseModel):
     payroll_count_checkout_first_month: bool = True
     payroll_cancelled_class_share: Literal["ran_only", "all_scheduled"] = "ran_only"
     payroll_missing_invoices: Literal["block", "pay_zero"] = "block"
+    # First month (YYYY-MM) assistant coaches are paid in the app; None means
+    # assistants are paid outside it and get no payroll rows.
+    payroll_assistant_pay_from: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
     @field_validator("reminder_days", mode="before")
     @classmethod

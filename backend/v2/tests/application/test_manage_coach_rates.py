@@ -138,17 +138,13 @@ async def test_percent_rate_requires_percent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_flat_rate_requires_positive_amount() -> None:
+async def test_a_zero_flat_rate_is_a_volunteer_rate() -> None:
     writer = FakeRateWriter()
     with tenant_scope("acad-1"):
-        with pytest.raises(ValueError, match="amount must be positive"):
-            await _use_case(writer).execute(
-                SetCoachPayRateCommand(
-                    coach_id="coach-A",
-                    billing_unit="per_session",
-                    amount_minor=0,
-                )
-            )
+        rate = await _use_case(writer).execute(
+            SetCoachPayRateCommand(coach_id="coach-A", billing_unit="per_session", amount_minor=0)
+        )
+    assert rate.amount_minor == 0
 
 
 @pytest.mark.asyncio

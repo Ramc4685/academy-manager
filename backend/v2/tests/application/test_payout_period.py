@@ -31,6 +31,7 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
     OverlappingPayoutPeriodError,
 )
 from backend.v2.contexts.finance.domain.payout_period import (
+    PAYOUT_TRANSITION_FIELDS,
     PayoutPeriod,
     PayoutPeriodConflictError,
     PayoutPeriodStateError,
@@ -179,16 +180,20 @@ class FakeRepo:
         self._by_id[period.period_id] = period
         return period
 
-    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
+    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
         current = self._by_id.get(period.period_id)
         if current is None:
             raise LookupError(period.period_id)
-        if current.status != expected_status:
-            # Same refusal as the Mongo repo's status-filtered write (L7).
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
             raise PayoutPeriodConflictError(period.period_id)
+        stored = current.model_copy(
+            update={f: getattr(period, f) for f in PAYOUT_TRANSITION_FIELDS}
+            | {"version": current.version + 1}
+        )
         self.replace_calls += 1
-        self._by_id[period.period_id] = period
-        return period
+        self._by_id[period.period_id] = stored
+        return stored
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +312,18 @@ def test_approve_rejects_unresolved_payout_warnings() -> None:
     period = _draft_period(payout_warnings=[_warning()])
     with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
         approve(period, at=_dt("2026-06-02T12:00:00"))
+
+
+def test_a_non_blocking_warning_does_not_stop_approval_or_payment() -> None:
+    note = _warning(
+        occurrence_id="unattributed-invoices",
+        reason="unattributed_manual_invoices",
+        severity="warning",
+        repair_action="attach_invoice_to_enrollment_and_recompute",
+    )
+    approved = approve(_draft_period(payout_warnings=[note]), at=_dt("2026-06-02T12:00:00"))
+    paid = mark_paid(approved, at=_dt("2026-06-03T12:00:00"), method="cash", amount_minor=0)
+    assert paid.status == "paid"
 
 
 def test_approve_is_idempotent_on_approved() -> None:
@@ -652,9 +669,7 @@ async def test_mark_paid_use_case_blocks_unresolved_payout_warnings() -> None:
         repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-03T12:00:00")
     )
     approved = await approver.execute(period_id="pp-1")
-    await repo.replace(
-        approved.model_copy(update={"payout_warnings": [_warning()]}), expected_status="approved"
-    )
+    repo._by_id["pp-1"] = approved.model_copy(update={"payout_warnings": [_warning()]})
 
     with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
         await payer.execute(

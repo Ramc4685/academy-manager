@@ -1105,11 +1105,20 @@ def compose_admin(
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
     payout_periods_repo = MongoPayoutPeriodRepository(db)
+    payable_occurrences = MongoPayableOccurrenceQuery(db, tuition=MongoInvoicedTuitionReadModel(db))
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
-            occurrences=MongoPayableOccurrenceQuery(db, tuition=MongoInvoicedTuitionReadModel(db)),
+            occurrences=payable_occurrences,
             rates=MongoCoachRateLookup(db),
+            invoice_gaps=payable_occurrences,
         )
+    )
+
+    async def _assistant_pay_from() -> str | None:
+        return (await billing_settings_repo.get()).payroll_assistant_pay_from
+
+    monthly_coach_reader = MonthlyCoachOccurrenceReaderAdapter(
+        db["session_occurrences"], assistant_pay_from=_assistant_pay_from
     )
     payout_audit_log = MongoPayoutAuditLogRepository(db)
     # #787: generation, approval and payment are money-moving transitions and
@@ -4267,12 +4276,12 @@ def compose_admin(
         revenue_query=revenue_query,
         payout_periods=payout_periods_repo,
         list_monthly_payroll=ListMonthlyPayroll(
-            reader=MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            reader=monthly_coach_reader,
             periods=payout_periods_repo,
             calculator=coach_payout_calculator,
         ),
         bulk_generate_payroll=BulkGeneratePayroll(
-            reader=MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            reader=monthly_coach_reader,
             periods=payout_periods_repo,
             generate=generate_payout_period,
         ),

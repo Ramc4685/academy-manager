@@ -1557,6 +1557,8 @@ async def test_assistant_on_percent_rate_or_no_rate_blocks() -> None:
     assert [(w.reason, w.severity) for w in percent.payout_warnings] == [
         ("percent_rate_on_assistant", "blocking")
     ]
+    # Rates are per coach, not per role: the fix is a per-class override or a flat rate.
+    assert percent.payout_warnings[0].repair_action == "override_assistant_pay_and_recompute"
 
     no_rate = await _statement(_assisted(), [])
     assert [(w.reason, w.severity) for w in no_rate.payout_warnings] == [
@@ -1573,3 +1575,46 @@ async def test_paying_coach_listed_as_assistant_is_paid_once() -> None:
     occ = _assisted().model_copy(update={"assistant_coach_ids": ["coach-A", "coach-A"]})
     statement = await _statement(occ, [_rate("coach-A")], coach_id="coach-A")
     assert [(line.basis, line.amount_minor) for line in statement.lines] == [("scheduled", 2_500)]
+
+
+class _Gaps:
+    def __init__(self, count: int) -> None:
+        self.count = count
+
+    async def unattributed_invoices(
+        self, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> int:
+        return self.count
+
+
+@pytest.mark.asyncio
+async def test_unattributed_manual_invoices_warn_a_percent_coach_without_blocking() -> None:
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        expected_revenue_minor=10_000,
+    )
+    percent = [_rate("coach-A", unit="percent_of_revenue", amount=0, percent_bps=5_000)]
+
+    async def statement(rates: list[CoachRate], gaps: int):
+        return await ComputeCoachPayout(
+            occurrences=FakeOccurrenceQuery([occ]),
+            rates=FakeRateRepo(rates),
+            invoice_gaps=_Gaps(gaps),
+        ).execute(
+            coach_id="coach-A",
+            academy_id="acad-1",
+            period_start=_dt("2026-05-01T00:00:00"),
+            period_end=_dt("2026-06-01T00:00:00"),
+        )
+
+    warned = await statement(percent, 2)
+    assert warned.total_minor == 5_000
+    assert [(w.reason, w.severity) for w in warned.payout_warnings] == [
+        ("unattributed_manual_invoices", "warning")
+    ]
+    assert "2 invoices" in warned.payout_warnings[0].message
+    # No gaps, or a coach whose pay does not depend on invoices: no warning.
+    assert (await statement(percent, 0)).payout_warnings == []
+    assert (await statement([_rate("coach-A")], 2)).payout_warnings == []

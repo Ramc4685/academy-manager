@@ -41,10 +41,16 @@ Amount calculation (in precedence order):
 
 Assistants (L7): a coach in ``assistant_coach_ids`` who is not the paying
 coach gets a line with basis ``assistant`` from their attendance override or
-their own per-session / per-hour rate, unless marked absent. A percent rate
-on an assisting line, or no rate at all, is a blocking warning (a volunteer
-gets a $0 rate). The paying-coach check runs first, so nobody is paid twice
-for one class.
+their own per-session / per-hour rate, unless marked absent. The occurrence
+query only lists assistants from the academy's ``payroll_assistant_pay_from``
+month on. A percent rate on an assisting line, or no rate at all, is a
+blocking warning; a volunteer is an explicit $0 rate and gets a $0 line. The
+paying-coach check runs first, so nobody is paid twice for one class.
+
+A percent coach's statement also carries a non-blocking
+``unattributed_manual_invoices`` warning when the period's months have
+invoices with tuition but no enrollment (``invoice_gaps``): they are in no
+class's base.
 """
 
 from __future__ import annotations
@@ -83,6 +89,14 @@ class PayableOccurrenceQuery(Protocol):
         period_start: datetime,
         period_end: datetime,
     ) -> list[PayableOccurrence]: ...
+
+
+class UnattributedInvoices(Protocol):
+    """Counted invoices in the period's months with tuition but no class (L7)."""
+
+    async def unattributed_invoices(
+        self, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> int: ...
 
 
 class CoachRateRepository(Protocol):
@@ -154,8 +168,14 @@ def _warning_for_unpaid(
         message = "Percent-of-revenue pay is missing its percent value."
         repair_action = "set_coach_rate_and_recompute"
     elif reason == "percent_rate_on_assistant":
-        message = "An assistant cannot be paid a percent of the class's tuition."
-        repair_action = "set_coach_rate_and_recompute"
+        # Rates are per coach, not per role: this coach may lead other classes
+        # on the same percent rate, so the fix is per class or a flat rate.
+        message = (
+            "An assistant cannot be paid a percent of the class's tuition. Set an "
+            "attendance pay override for this class, or give the coach a per-session "
+            "or per-hour rate."
+        )
+        repair_action = "override_assistant_pay_and_recompute"
     else:
         message = "No invoices for this class this month, so a percent rate has no base."
         repair_action = "invoice_class_month_and_recompute"
@@ -231,9 +251,18 @@ class ComputeCoachPayout:
         self,
         occurrences: PayableOccurrenceQuery,
         rates: CoachRateRepository,
+        invoice_gaps: UnattributedInvoices | None = None,
     ) -> None:
         self._occurrences = occurrences
         self._rates = rates
+        self._invoice_gaps = invoice_gaps
+
+    async def _unattributed(
+        self, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> int:
+        if self._invoice_gaps is None:
+            return 0
+        return await self._invoice_gaps.unattributed_invoices(academy_id, period_start, period_end)
 
     async def execute(
         self,
@@ -253,6 +282,7 @@ class ComputeCoachPayout:
             period_start=period_start,
             period_end=period_end,
             occs=occs,
+            unattributed=await self._unattributed(academy_id, period_start, period_end),
         )
 
     async def execute_many(
@@ -275,6 +305,7 @@ class ComputeCoachPayout:
             raise ValueError("period_end must be after period_start")
 
         occs = await self._occurrences.list_in_period(academy_id, period_start, period_end)
+        unattributed = await self._unattributed(academy_id, period_start, period_end)
         return {
             coach_id: await self._statement_from_occurrences(
                 coach_id=coach_id,
@@ -282,6 +313,7 @@ class ComputeCoachPayout:
                 period_start=period_start,
                 period_end=period_end,
                 occs=occs,
+                unattributed=unattributed,
             )
             for coach_id in coach_ids
         }
@@ -294,6 +326,7 @@ class ComputeCoachPayout:
         period_start: datetime,
         period_end: datetime,
         occs: list[PayableOccurrence],
+        unattributed: int = 0,
     ) -> PayoutStatement:
         lines: list[PayoutLine] = []
         unpaid: list[str] = []
@@ -401,7 +434,10 @@ class ComputeCoachPayout:
                     PayoutUnpaidOccurrence(
                         occurrence_id=occ.occurrence_id,
                         reason="percent_rate_on_assistant",
-                        detail="An assisting class needs a per-session or per-hour rate.",
+                        detail=(
+                            "Set an attendance pay override for this class, or give the "
+                            "coach a per-session or per-hour rate."
+                        ),
                     )
                 )
                 continue
@@ -462,6 +498,24 @@ class ComputeCoachPayout:
                 )
             )
 
+        percent_paid = any(line.percent_bps is not None for line in lines) or any(
+            w.reason == "missing_invoiced_tuition_for_percent_revenue" for w in warnings
+        )
+        if unattributed and percent_paid:
+            warnings.append(
+                PayoutWarning(
+                    occurrence_id="unattributed-invoices",
+                    reason="unattributed_manual_invoices",
+                    severity="warning",
+                    message=(
+                        f"{unattributed} invoice{'s' if unattributed != 1 else ''} this month "
+                        "have tuition but no enrollment, so they are in no class's base."
+                    ),
+                    occurred_at=period_start,
+                    coach_id=coach_id,
+                    repair_action="attach_invoice_to_enrollment_and_recompute",
+                )
+            )
         return PayoutStatement(
             coach_id=coach_id,
             academy_id=academy_id,

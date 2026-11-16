@@ -154,7 +154,7 @@ class RecomputePayoutPeriod(_Audited):
                 "generated_at": self._clock(),
             }
         )
-        stored = await self._repo.replace_with_lines(updated, expected_status=period.status)
+        stored = await self._repo.replace_with_lines(updated)
         await self._record(
             stored,
             action="recomputed",
@@ -178,7 +178,7 @@ class ReopenPayoutPeriod(_Audited):
             raise ValueError("reason is required to reopen a payout period")
         period = await self._load(period_id)
         reopened = reopen(period, acknowledge_paid_clawback=acknowledge_paid_clawback)
-        stored = await self._repo.replace(reopened, expected_status=period.status)
+        stored = await self._repo.replace(reopened)
         await self._record(
             stored,
             action="reopened",
@@ -258,7 +258,7 @@ class OverridePayoutLine(_Audited):
         updated = period.model_copy(
             update={"lines": lines, "total_minor": sum(ln.amount_minor for ln in lines)}
         )
-        stored = await self._repo.replace_with_lines(updated, expected_status=period.status)
+        stored = await self._repo.replace_with_lines(updated)
         await self._record(
             stored,
             action=action,

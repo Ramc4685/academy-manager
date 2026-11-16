@@ -438,7 +438,7 @@ async def test_replace_persists_state_transition(db, acad) -> None:
     updated = saved.model_copy(
         update={"status": "approved", "approved_at": _dt("2026-06-02T12:00:00")}
     )
-    replaced = await repo.replace(updated, expected_status="draft")
+    replaced = await repo.replace(updated)
     assert replaced.status == "approved"
 
     fetched = await repo.find_by_id(saved.period_id)
@@ -453,7 +453,7 @@ async def test_replace_missing_period_raises(db, acad) -> None:
     repo = MongoPayoutPeriodRepository(db)
     period = _make_period(period_id="pp-missing")
     with pytest.raises(LookupError):
-        await repo.replace(period, expected_status="draft")
+        await repo.replace(period)
 
 
 @pytest.mark.asyncio

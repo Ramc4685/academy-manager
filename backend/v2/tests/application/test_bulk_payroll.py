@@ -11,7 +11,11 @@ from backend.v2.contexts.finance.application.use_cases.bulk_payroll import (
     BulkGeneratePayroll,
     BulkRecomputePayroll,
 )
-from backend.v2.contexts.finance.domain.payout_period import PayoutPeriod
+from backend.v2.contexts.finance.domain.payout_period import (
+    PayoutPeriod,
+    PayoutPeriodConflictError,
+    PayoutPeriodStateError,
+)
 
 UTC_ = UTC
 START = datetime(2026, 6, 1, tzinfo=UTC_)
@@ -95,12 +99,10 @@ class _FakePeriodRepo:
     async def find_by_id(self, period_id: str):
         return None
 
-    async def replace(self, period: PayoutPeriod, *, expected_status: str) -> PayoutPeriod:
+    async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
         return period
 
-    async def replace_with_lines(
-        self, period: PayoutPeriod, *, expected_status: str
-    ) -> PayoutPeriod:
+    async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
         return period
 
 
@@ -157,3 +159,26 @@ async def test_bulk_recompute_skips_non_draft() -> None:
     assert result.recomputed == 1
     assert result.skipped == 2
     assert recompute.calls == ["p-c1"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_recompute_skips_periods_that_changed_under_it() -> None:
+    """A concurrent approve or recompute is a skip, never a 500 partway through."""
+
+    class _Racing(_FakeRecompute):
+        async def execute(self, *, period_id: str, actor_id: str):
+            await super().execute(period_id=period_id, actor_id=actor_id)
+            if period_id == "p-c1":
+                raise PayoutPeriodConflictError(period_id)
+            if period_id == "p-c2":
+                raise PayoutPeriodStateError(period_id)
+
+    periods = [_make_period(coach) for coach in ("c1", "c2", "c3")]
+    recompute = _Racing()
+    uc = BulkRecomputePayroll(periods=_FakePeriodRepo(periods), recompute=recompute)
+
+    result = await uc.execute(
+        academy_id="a1", period_start=START, period_end=END, actor_id="admin-1"
+    )
+    assert (result.recomputed, result.skipped) == (1, 2)
+    assert recompute.calls == ["p-c1", "p-c2", "p-c3"]

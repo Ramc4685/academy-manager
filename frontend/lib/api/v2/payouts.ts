@@ -17,7 +17,8 @@ export type PayoutWarningReason =
   | "missing_invoiced_tuition_for_percent_revenue"
   | "percent_rate_on_assistant"
   | "missing_rate"
-  | "missing_percent";
+  | "missing_percent"
+  | "unattributed_manual_invoices";
 export type PayoutWarningSeverity = "blocking" | "warning";
 
 export interface PayoutWarning {

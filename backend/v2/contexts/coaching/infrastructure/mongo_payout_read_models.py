@@ -9,8 +9,8 @@ the read side of the payout flow: they turn raw ``session_occurrences``,
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -52,6 +52,12 @@ class InvoicedTuitionBasis(Protocol):
     @property
     def missing_invoices(self) -> str: ...
 
+    @property
+    def assistant_pay_from(self) -> str | None: ...
+
+    @property
+    def unattributed_invoices(self) -> int: ...
+
 
 class InvoicedClassTuition(Protocol):
     async def tuition_by_class_month(
@@ -90,7 +96,9 @@ class MongoPayableOccurrenceQuery:
         )
         docs = [doc async for doc in cursor]
         occurrence_ids = [str(doc["occurrence_id"]) for doc in docs]
-        revenue_by_occurrence = await self._invoiced_share_by_occurrence(academy_id, docs)
+        revenue_by_occurrence, assistants_paid = await self._invoiced_share_by_occurrence(
+            academy_id, docs
+        )
         attendance_by_occurrence: dict[str, list[CoachAttendanceForPayout]] = {
             occurrence_id: [] for occurrence_id in occurrence_ids
         }
@@ -127,7 +135,13 @@ class MongoPayableOccurrenceQuery:
                 scheduled_coach_id=str(doc["scheduled_coach_id"]),
                 actual_coach_id=optional_str(doc.get("actual_coach_id")),
                 substitute_coach_id=optional_str(doc.get("substitute_coach_id")),
-                assistant_coach_ids=[str(c) for c in doc.get("assistant_coach_ids") or [] if c],
+                # Before the academy's assistant pay-from month, assistants are
+                # paid outside the app and get no lines (L7).
+                assistant_coach_ids=(
+                    [str(c) for c in doc.get("assistant_coach_ids") or [] if c]
+                    if str(doc["occurrence_id"]) in assistants_paid
+                    else []
+                ),
                 is_payable=bool(doc.get("is_payable", True)),
                 coach_attendance=attendance_by_occurrence.get(str(doc["occurrence_id"]), []),
                 expected_revenue_minor=revenue_by_occurrence.get(str(doc["occurrence_id"])),
@@ -135,11 +149,27 @@ class MongoPayableOccurrenceQuery:
             for doc in docs
         ]
 
+    async def unattributed_invoices(
+        self, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> int:
+        """Counted invoices in the window's academy-local months with no class."""
+        tz = ZoneInfo(await resolve_academy_clock_timezone(self._academy_timezone, academy_id))
+        first = _as_utc(period_start).astimezone(tz)
+        last = (_as_utc(period_end) - timedelta(microseconds=1)).astimezone(tz)
+        months, (year, mon) = [], (first.year, first.month)
+        while (year, mon) <= (last.year, last.month):
+            months.append(f"{year:04d}-{mon:02d}")
+            year, mon = year + (mon == 12), mon % 12 + 1
+        basis = await self._tuition.tuition_by_class_month(
+            academy_id=academy_id, session_ids=(), months=months
+        )
+        return basis.unattributed_invoices
+
     async def _invoiced_share_by_occurrence(
         self,
         academy_id: str,
         occurrence_docs: list[dict[str, Any]],
-    ) -> dict[str, int]:
+    ) -> tuple[dict[str, int], set[str]]:
         """Each occurrence's share of its class's invoiced tuition for the month.
 
         The month is the academy-local month (the clock that labels invoice
@@ -153,21 +183,34 @@ class MongoPayableOccurrenceQuery:
 
         A class-month with no invoices is left out (a blocking warning for a
         percent coach downstream), unless the academy pays 0 for it.
+
+        Also returns the occurrences whose assistants are paid in the app: those
+        in or after the academy's ``assistant_pay_from`` month.
         """
+        if not occurrence_docs:
+            return {}, set()
         tz = ZoneInfo(await resolve_academy_clock_timezone(self._academy_timezone, academy_id))
+        local_month = {
+            str(doc["occurrence_id"]): f"{_as_utc(doc['start_at']).astimezone(tz):%Y-%m}"
+            for doc in occurrence_docs
+        }
         month_of: dict[str, tuple[str, str]] = {}
         for doc in occurrence_docs:
             session_id = occurrence_session_id(doc)
             if session_id:
-                local = _as_utc(doc["start_at"]).astimezone(tz)
-                month_of[str(doc["occurrence_id"])] = (session_id, f"{local:%Y-%m}")
-        if not month_of:
-            return {}
+                month_of[str(doc["occurrence_id"])] = (
+                    session_id,
+                    local_month[str(doc["occurrence_id"])],
+                )
 
         basis = await self._tuition.tuition_by_class_month(
             academy_id=academy_id,
             session_ids={sid for sid, _ in month_of.values()},
-            months={month for _, month in month_of.values()},
+            months=set(local_month.values()),
+        )
+        pay_from = basis.assistant_pay_from
+        assistants_paid = (
+            {occ for occ, month in local_month.items() if month >= pay_from} if pay_from else set()
         )
         share_of: dict[str, int] = {}
         for session_id, month in sorted(set(month_of.values())):
@@ -200,7 +243,7 @@ class MongoPayableOccurrenceQuery:
             occurrence_id: share_of[occurrence_id]
             for occurrence_id in month_of
             if occurrence_id in share_of
-        }
+        }, assistants_paid
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -259,8 +302,16 @@ class MonthlyCoachOccurrenceReaderAdapter:
     them to carry the ``replaced_by_actual_coach`` trace.
     """
 
-    def __init__(self, collection: Any) -> None:
+    def __init__(
+        self,
+        collection: Any,
+        *,
+        assistant_pay_from: Callable[[], Awaitable[str | None]] | None = None,
+    ) -> None:
         self._col = collection
+        #: The academy's first month assistants are paid in the app; no
+        #: reader (or ``None``) means assistants get no payroll rows.
+        self._assistant_pay_from = assistant_pay_from
 
     async def coaches_with_occurrences(
         self,
@@ -315,6 +366,12 @@ class MonthlyCoachOccurrenceReaderAdapter:
 
         # Assistants are paid their own line per assisted class (L7), so they
         # need a payout period too; their assisted classes add to their count.
+        # Only from the academy's assistant pay-from month on. The window's UTC
+        # midpoint always falls inside the academy-local month it bounds.
+        pay_from = await self._assistant_pay_from() if self._assistant_pay_from else None
+        month = f"{period_start + (period_end - period_start) / 2:%Y-%m}"
+        if pay_from is None or month < pay_from:
+            return rows
         assisted: dict[str, int] = {}
         cursor = self._col.find(
             {**match, "assistant_coach_ids.0": {"$exists": True}},

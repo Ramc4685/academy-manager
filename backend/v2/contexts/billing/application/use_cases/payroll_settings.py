@@ -1,6 +1,6 @@
 """Coach payroll settings (L7): the owner's rules for percent-of-invoiced-tuition pay.
 
-The four fields live on the academy's ``BillingSettings`` document (the money
+The fields live on the academy's ``BillingSettings`` document (the money
 settings section). A change is owner-only, validated at the API, audited
 through ``RecordMoneySettingChange`` and read only when a payout period is
 generated or recomputed, so approved and paid periods never move.
@@ -20,13 +20,14 @@ PAYROLL_SETTING_FIELDS = (
     "payroll_count_checkout_first_month",
     "payroll_cancelled_class_share",
     "payroll_missing_invoices",
+    "payroll_assistant_pay_from",
 )
 
 
 class PayrollSettingsStore(Protocol):
     async def get(self) -> BillingSettings: ...
 
-    async def upsert(self, settings: BillingSettings) -> None: ...
+    async def set_payroll_settings(self, values: dict[str, Any]) -> None: ...
 
 
 def payroll_settings_of(settings: BillingSettings) -> dict[str, Any]:
@@ -58,7 +59,9 @@ class UpdatePayrollSettings:
         before, after = payroll_settings_of(current), payroll_settings_of(updated)
         if before == after:
             return after
-        await self._settings.upsert(updated)
+        # Write only these fields, so a stale save elsewhere on the settings
+        # page cannot revert them, and this one cannot revert that page's.
+        await self._settings.set_payroll_settings(after)
         await self._audit.execute(
             academy_id=academy_id,
             action="payroll_settings_changed",

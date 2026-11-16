@@ -239,8 +239,9 @@ class SetCoachPayRate:
         if command.billing_unit == "percent_of_revenue":
             if command.percent_bps is None:
                 raise ValueError("percent is required for percent_of_revenue rates")
-        elif command.amount_minor <= 0:
-            raise ValueError("amount must be positive for per_session/per_hour rates")
+        elif command.amount_minor < 0:
+            # 0 is allowed: a volunteer gets a $0 line (L7).
+            raise ValueError("amount cannot be negative for per_session/per_hour rates")
 
         effective_from = normalize_effective_datetime(command.effective_from or self._clock())
 
@@ -343,8 +344,9 @@ class RepairCoachRateWindow:
         if command.billing_unit == "percent_of_revenue":
             if command.percent_bps is None:
                 raise ValueError("percent is required for percent_of_revenue rates")
-        elif command.amount_minor <= 0:
-            raise ValueError("amount must be positive for per_session/per_hour rates")
+        elif command.amount_minor < 0:
+            # 0 is allowed: a volunteer gets a $0 line (L7).
+            raise ValueError("amount cannot be negative for per_session/per_hour rates")
 
         start = normalize_effective_datetime(command.effective_from)
         until = normalize_effective_datetime(command.effective_until)

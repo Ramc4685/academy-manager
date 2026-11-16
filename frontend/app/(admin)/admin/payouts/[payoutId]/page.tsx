@@ -371,15 +371,33 @@ function ApprovalBanner({ period }: { period: AdminPayoutPeriodView }) {
 }
 
 function WarningBanner({ period }: { period: AdminPayoutPeriodView }) {
-  if (period.payout_warnings.length === 0) return null;
+  const blocking = period.payout_warnings.filter((w) => w.severity === "blocking");
+  const notes = period.payout_warnings.filter((w) => w.severity !== "blocking");
+  return (
+    <>
+      {notes.map((warning) => (
+        <div
+          key={warning.occurrence_id}
+          className="rounded-md border border-rally-line bg-neutral-50 px-4 py-3 text-sm text-rally-ink"
+          data-testid={`payout-note-${warning.reason}`}
+        >
+          {warning.message} {payoutWarningRepairAction(warning)}
+        </div>
+      ))}
+      {blocking.length > 0 && <BlockingWarnings warnings={blocking} />}
+    </>
+  );
+}
+
+function BlockingWarnings({ warnings }: { warnings: AdminPayoutPeriodView["payout_warnings"] }) {
   return (
     <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
       <div className="font-semibold">
-        Resolve {period.payout_warnings.length} payout warning
-        {period.payout_warnings.length === 1 ? "" : "s"} before approval or payment.
+        Resolve {warnings.length} payout warning
+        {warnings.length === 1 ? "" : "s"} before approval or payment.
       </div>
       <ul className="mt-2 space-y-1">
-        {period.payout_warnings.map((warning) => (
+        {warnings.map((warning) => (
           <li key={warning.occurrence_id}>
             {payoutWarningLabel(warning)}
             {warning.session_title ? ` · ${warning.session_title}` : ""}:{" "}
@@ -468,7 +486,7 @@ function Actions({
   const busy = recompute.isPending || approve.isPending || reopen.isPending || markPaid.isPending;
   const unresolvedOccurrenceIds = new Set<string>();
   for (const warning of period.payout_warnings) {
-    unresolvedOccurrenceIds.add(warning.occurrence_id);
+    if (warning.severity === "blocking") unresolvedOccurrenceIds.add(warning.occurrence_id);
   }
   for (const occ of period.unpaid_occurrences) {
     if (occ.unresolved) unresolvedOccurrenceIds.add(occ.occurrence_id);
