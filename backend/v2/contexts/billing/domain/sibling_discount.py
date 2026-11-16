@@ -25,10 +25,16 @@ from backend.v2.contexts.billing.domain.billing_settings import (
     SiblingAppliesTo,
     SiblingFullPriceChild,
 )
-from backend.v2.contexts.billing.domain.tuition_discount import TuitionDiscount
+from backend.v2.contexts.billing.domain.tuition_discount import (
+    TuitionDiscount,
+    monthly_discount_cents,
+)
 
 #: Category of the synthetic policy; its display label is "Sibling discount".
 SIBLING_CATEGORY = "sibling"
+#: ``discount_id`` prefix of the synthetic policy, so an invoice's discount line
+#: says whether the month was priced with it.
+SIBLING_DISCOUNT_ID_PREFIX = "sibling-auto-"
 
 
 @dataclass(frozen=True)
@@ -86,7 +92,7 @@ def sibling_policy(
 ) -> TuitionDiscount:
     """The synthetic percent policy the resolver weighs against a manual one."""
     return TuitionDiscount(
-        discount_id=f"sibling-auto-{period}",
+        discount_id=f"{SIBLING_DISCOUNT_ID_PREFIX}{period}",
         enrollment_id=enrollment_id,
         student_id=student_id,
         category=SIBLING_CATEGORY,
@@ -94,6 +100,20 @@ def sibling_policy(
         percent_bps=percent_bps,
         effective_start=period_start,
     )
+
+
+def best_tuition_discount(
+    manual: TuitionDiscount | None, sibling: TuitionDiscount | None, *, monthly_price_cents: int
+) -> TuitionDiscount | None:
+    """One discount line per invoice: the larger of the manual policy and the
+    sibling one at this price, never both. Manual wins a tie."""
+    if sibling is None:
+        return manual
+    if manual is None:
+        return sibling
+    manual_cents = monthly_discount_cents(manual, monthly_price_cents=monthly_price_cents)
+    sibling_cents = monthly_discount_cents(sibling, monthly_price_cents=monthly_price_cents)
+    return sibling if sibling_cents > manual_cents else manual
 
 
 def _utc_naive(at: datetime) -> datetime:

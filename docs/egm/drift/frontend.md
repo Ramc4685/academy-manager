@@ -1,7 +1,7 @@
 ## frontend/README.md
 
 - [contract] README:3,10 say Next.js 15; code pins `next` 16.4.6 (`frontend/package.json:37`, `eslint-config-next` at :60s). The ADR title also says 15.
-- [contract] README:90 lists `pnpm build` as a plain production build; `frontend/package.json:7` builds with `next build --webpack` (the service worker needs webpack). README:84 "next dev (Turbopack)" matches `package.json:6`, but the README does not mention that build is webpack.
+- [contract] README:84 says `pnpm dev` is "next dev (Turbopack)" and README:90 lists `pnpm build` as a plain production build; `frontend/package.json:7` builds with `next build --webpack` (the service worker needs webpack). The README does not mention this.
 - [stale-not-built] README:56-58 say the CI workflow reports the size-limit gate with `continue-on-error: true`. No workflow runs `pnpm size` or `lhci` (grep of `.github/workflows/*.yml` finds neither). The budgets exist at `frontend/package.json:73-88` (360 KB each) but are not run in CI.
 - [stale-not-built] README:90 documents `pnpm lhci`; the script exists (`frontend/package.json:18`), but no CI step runs it.
 - [stale-not-built] README:41 lists `public/splash/` (iOS splash screens). `frontend/public/` has no `splash` directory. README:40 also lists a 180 icon, but `frontend/public/icons/` holds only 192, 256, 512 and maskable.

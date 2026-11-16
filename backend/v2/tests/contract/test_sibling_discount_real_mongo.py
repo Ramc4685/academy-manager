@@ -8,11 +8,15 @@ production indexes. The family is parent-1: Ava (``stu-a``) and Ben
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
 
+from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move import (
+    ApplyEnrollmentMove,
+    ApplyEnrollmentMoveCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     _discount_base_subtotal_cents,
 )
@@ -24,13 +28,25 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
+    MongoCreditLedgerRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
     MongoMonthlyBillingGenerator,
+    resolve_sibling_discount,
+    sibling_decision_percent_bps,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_move_schedule_reader import (
+    MongoMoveScheduleReader,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_occurrence_cancellation import (
+    MongoOccurrenceCancellationReader,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
     MongoTuitionDiscountRepository,
 )
+from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.tenancy import tenant_scope
 
 pytestmark = pytest.mark.asyncio
@@ -382,9 +398,12 @@ async def test_the_decision_is_frozen_across_orphan_recovery_after_a_sibling_dro
 
     assert result.repaired_orphan_keys == 1
     assert await _discount(real_db, acad, "enr-b") == 800
-    # Ben's decision from the crashed run; Ava (dropped, offer off) never got one.
-    decisions = [d["enrollment_id"] async for d in real_db["sibling_discount_decisions"].find({})]
-    assert decisions == ["enr-b"]
+    # Both rows were written together by the crashed run's family decision.
+    decisions = {
+        d["enrollment_id"]: d["discounted"]
+        async for d in real_db["sibling_discount_decisions"].find({})
+    }
+    assert decisions == {"enr-a": False, "enr-b": True}
 
 
 async def test_the_family_charge_key_is_unchanged_across_a_retry(real_db, acad) -> None:
@@ -432,6 +451,226 @@ async def test_a_concurrent_decision_is_reread_not_duplicated(real_db, acad) -> 
     assert (
         await real_db["sibling_discount_decisions"].count_documents({"enrollment_id": "enr-b"}) == 1
     )
+
+
+# --- the family is the set the run bills (review P1-1) ---------------------------
+
+
+@pytest.mark.parametrize(
+    "skip",
+    [
+        "deferral",
+        {"pending_cancellation_at": datetime(2026, 8, 31, 12, 0, tzinfo=UTC)},
+        {"skip_periods": [PERIOD]},
+    ],
+)
+async def test_a_skipped_full_price_child_does_not_make_a_sibling(real_db, acad, skip: Any) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    if skip == "deferral":
+        await real_db["enrollment_billing_deferrals"].insert_one(
+            {
+                "academy_id": acad,
+                "deferral_id": "def-1",
+                "enrollment_id": "enr-a",
+                "student_id": "stu-a",
+                "status": "active",
+                "billing_period": PERIOD,
+                "deferral_type": "manual_skip",
+                "created_at": NOW,
+            }
+        )
+    else:
+        await real_db["enrollments"].update_one({"enrollment_id": "enr-a"}, {"$set": skip})
+
+    result = await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert result.created == 1
+    assert await real_db["invoices"].find_one({"enrollment_id": "enr-a"}) is None
+    assert await _discount(real_db, acad, "enr-b") == 0
+
+
+# --- one decision for the whole family (review P2a, P2b) -------------------------
+
+
+async def _resolve(db: Any, enrollment_id: str) -> TuitionDiscount | None:
+    enrollment = await db["enrollments"].find_one({"enrollment_id": enrollment_id})
+    return await resolve_sibling_discount(
+        db, enrollment=enrollment, period=PERIOD, period_start=date(2026, 9, 1), now=NOW
+    )
+
+
+async def _rows(db: Any) -> dict[str, bool]:
+    return {
+        d["enrollment_id"]: d["discounted"] async for d in db["sibling_discount_decisions"].find({})
+    }
+
+
+async def test_a_setting_change_between_members_keeps_one_full_price_child(real_db, acad) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    assert await _resolve(real_db, "enr-b") is not None  # Ava is the full-price child
+
+    await _offer(real_db, full_price_child="lowest_tuition")  # now Ben would be
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert await _rows(real_db) == {"enr-a": False, "enr-b": True}
+    assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 800}
+
+
+async def test_the_top_child_leaving_between_members_keeps_the_family_snapshot(
+    real_db, acad
+) -> None:
+    await _family(real_db, acad)
+    await _session(real_db, acad, "sess-mini", 5_000)
+    await _child(real_db, acad, "stu-c")
+    await _enroll(real_db, acad, "enr-c", "stu-c", "sess-mini")
+    await _offer(real_db)
+    await _resolve(real_db, "enr-b")
+
+    # Ava withdraws; Ben would now be the top child if Cal were decided alone.
+    await real_db["enrollments"].update_one(
+        {"enrollment_id": "enr-a"}, {"$set": {"status": "dropped"}}
+    )
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    rows = await _rows(real_db)
+    assert rows == {"enr-a": False, "enr-b": True, "enr-c": True}
+    assert [eid for eid, discounted in rows.items() if not discounted] == ["enr-a"]
+    assert await _discounts(real_db, acad, "enr-b", "enr-c") == {"enr-b": 800, "enr-c": 500}
+
+
+async def _other_invoice(db: Any, acad: str, enrollment_id: str, status: str) -> None:
+    await db["invoices"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": f"inv-01ULID{enrollment_id}",
+            "enrollment_id": enrollment_id,
+            "parent_id": "parent-1",
+            "period": PERIOD,
+            "status": status,
+            "total_cents": 8_000,
+            "balance_due_cents": 8_000,
+            "currency": "usd",
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+
+async def test_a_month_billed_under_another_invoice_id_gets_no_decision(real_db, acad) -> None:
+    """A "Bill this month" or checkout invoice (``inv-{ulid}``) is the month's bill."""
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await _other_invoice(real_db, acad, "enr-b", "open")
+
+    assert await _resolve(real_db, "enr-b") is None
+    assert await _rows(real_db) == {}
+
+
+async def test_a_void_invoice_does_not_count_as_billed(real_db, acad) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await _other_invoice(real_db, acad, "enr-b", "void")
+
+    assert await _resolve(real_db, "enr-b") is not None
+    assert await _rows(real_db) == {"enr-a": False, "enr-b": True}
+
+
+async def test_an_already_billed_sibling_gets_no_row_but_still_counts(real_db, acad) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await _other_invoice(real_db, acad, "enr-a", "paid")
+
+    assert await _resolve(real_db, "enr-b") is not None
+    assert await _rows(real_db) == {"enr-b": True}
+
+
+# --- a bad stored block, parent aliases (review P2c, P2d) ------------------------
+
+
+async def test_a_stored_block_on_without_its_values_applies_nothing_and_finishes(
+    real_db, acad
+) -> None:
+    await _family(real_db, acad)
+    await real_db["billing_settings"].insert_one(
+        {"academy_id": acad, "sibling_discount": {"enabled": True, "percent_bps": 1_000}}
+    )
+
+    result = await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert result.created == 2
+    assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 0}
+    assert await _rows(real_db) == {}
+
+
+async def test_siblings_stored_under_different_aliases_of_one_parent_count(real_db, acad) -> None:
+    await real_db["users"].insert_one({"user_id": "parent-1", "firebase_uid": "fb-parent-1"})
+    await _session(real_db, acad, "sess-hi", 12_000)
+    await _session(real_db, acad, "sess-lo", 8_000)
+    await _child(real_db, acad, "stu-a")
+    await _child(real_db, acad, "stu-b", parent_id="fb-parent-1")
+    await _enroll(real_db, acad, "enr-a", "stu-a", "sess-hi")
+    await _enroll(real_db, acad, "enr-b", "stu-b", "sess-lo", parent_id="fb-parent-1")
+    await _offer(real_db)
+
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 800}
+
+
+# --- a mid-month move prices with the invoice's discount (review P1-2) ------------
+
+
+def _move(db: Any, *, with_paid_snapshot: bool) -> ApplyEnrollmentMove:
+    async def _tz() -> str | None:
+        return "America/Chicago"
+
+    async def _decision(**kwargs: Any) -> int | None:
+        return await sibling_decision_percent_bps(db, **kwargs)
+
+    return ApplyEnrollmentMove(
+        ledger=MongoBillingLedgerRepository(db, clock=_clock),
+        credits=MongoCreditLedgerRepository(db),
+        schedules=MongoMoveScheduleReader(db),
+        charge_basis=MongoOccurrenceCancellationReader(db) if with_paid_snapshot else None,
+        discounts=MongoTuitionDiscountRepository(db),
+        sibling_decisions=_decision,
+        idempotency_store=MongoIdempotencyStore(db),
+        academy_timezone=_tz,
+        clock=_clock,
+    )
+
+
+@pytest.mark.parametrize("with_paid_snapshot", [True, False])
+@pytest.mark.parametrize("drop_the_line", [False, True])
+async def test_a_move_prices_both_sides_with_the_sibling_discount(
+    real_db, acad, with_paid_snapshot: bool, drop_the_line: bool
+) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+    assert await _discount(real_db, acad, "enr-b") == 800
+    if drop_the_line:
+        # No discount line to read: the recorded decision decides instead.
+        await real_db["invoice_lines"].delete_many(
+            {"invoice_id": f"inv-monthly-enr-b-{PERIOD}", "source_type": "tuition_discount"}
+        )
+
+    # Ben moves before September's first Monday from his 80.00 class to a
+    # 120.00 one, so every class is still to come on both sides.
+    result = await _move(real_db, with_paid_snapshot=with_paid_snapshot).execute(
+        ApplyEnrollmentMoveCommand(
+            enrollment_id="enr-b",
+            from_session_id="sess-lo",
+            to_session_id="sess-hi",
+            effective_at=NOW,
+            effective_date=date(2026, 9, 1),
+        )
+    )
+
+    # 10% off both sides: 108.00 - 72.00, not 120.00 - 72.00 or 120.00 - 80.00.
+    assert result.delta_cents == 3_600
 
 
 # --- tenancy ------------------------------------------------------------------

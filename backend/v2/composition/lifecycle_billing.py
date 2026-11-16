@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
+from functools import partial
 from typing import Any
 
 from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycle import (
@@ -61,6 +62,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
     MongoDunningStateRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+    sibling_decision_percent_bps,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_move_schedule_reader import (
     MongoMoveScheduleReader,
@@ -294,6 +298,8 @@ def compose_enrollment_move_billing_sync(
         # Price the delta net of the same recurring tuition discount the
         # monthly generator priced the invoice with (issue #669 review).
         discounts=MongoTuitionDiscountRepository(db),
+        # ...or the automatic sibling discount it was priced with (L9 C1).
+        sibling_decisions=partial(sibling_decision_percent_bps, db),
         idempotency_store=idempotency,
         academy_timezone=request_academy_timezone,
         # A move that grows an already-noticed autopay invoice re-notices the
