@@ -12155,11 +12155,77 @@
         "title": "BulkPayrollResultView",
         "type": "object"
       },
-      "BulkStatusBody": {
+      "BulkPlacementBody": {
         "properties": {
+          "credited_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Credited Skill Ids",
+            "type": "array"
+          },
           "level_id": {
             "title": "Level Id",
             "type": "string"
+          },
+          "notify_parents": {
+            "default": false,
+            "title": "Notify Parents",
+            "type": "boolean"
+          },
+          "program_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Program Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Student Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level_id",
+          "student_ids"
+        ],
+        "title": "BulkPlacementBody",
+        "type": "object"
+      },
+      "BulkStatusBody": {
+        "properties": {
+          "level_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -12170,6 +12236,13 @@
             "type": "string"
           },
           "status": {
+            "enum": [
+              "INTRODUCED",
+              "LEARNING",
+              "PRACTICING",
+              "TEST_READY",
+              "NEEDS_REVIEW"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -12184,7 +12257,6 @@
         "required": [
           "skill_id",
           "program_id",
-          "level_id",
           "student_ids",
           "status"
         ],
@@ -14761,15 +14833,9 @@
             "default": true,
             "title": "Requires Coach Recommendation",
             "type": "boolean"
-          },
-          "sequence": {
-            "minimum": 1.0,
-            "title": "Sequence",
-            "type": "integer"
           }
         },
         "required": [
-          "sequence",
           "name"
         ],
         "title": "CreateLevelBody",
@@ -15274,12 +15340,35 @@
             "title": "Name",
             "type": "string"
           },
+          "pass_rule": {
+            "default": "ONE_TAP",
+            "enum": [
+              "ONE_TAP",
+              "N_TRIES",
+              "LEAD_COACH"
+            ],
+            "title": "Pass Rule",
+            "type": "string"
+          },
           "pass_threshold_pct": {
             "default": 70.0,
             "maximum": 100.0,
             "minimum": 0.0,
             "title": "Pass Threshold Pct",
             "type": "number"
+          },
+          "pass_tries": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 2.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Tries"
           },
           "program_id": {
             "title": "Program Id",
@@ -15297,16 +15386,10 @@
             ],
             "title": "Scoring Type",
             "type": "string"
-          },
-          "sequence": {
-            "minimum": 1.0,
-            "title": "Sequence",
-            "type": "integer"
           }
         },
         "required": [
           "program_id",
-          "sequence",
           "name"
         ],
         "title": "CreateSkillBody",
@@ -28123,6 +28206,7 @@
         "properties": {
           "attempts_count": {
             "default": 1,
+            "minimum": 1.0,
             "title": "Attempts Count",
             "type": "integer"
           },
@@ -28132,8 +28216,15 @@
             "type": "boolean"
           },
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "mutation_id": {
             "anyOf": [
@@ -28184,8 +28275,7 @@
           }
         },
         "required": [
-          "program_id",
-          "level_id"
+          "program_id"
         ],
         "title": "RecordTestBody",
         "type": "object"
@@ -28496,6 +28586,24 @@
           "reason"
         ],
         "title": "ReopenPayoutPeriodRequest",
+        "type": "object"
+      },
+      "ReorderBody": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "ReorderBody",
         "type": "object"
       },
       "RepairCoachPayRateWindowRequest": {
@@ -33203,6 +33311,17 @@
             ],
             "title": "Description"
           },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
           "name": {
             "anyOf": [
               {
@@ -34091,6 +34210,17 @@
             ],
             "title": "Description"
           },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
           "is_required": {
             "anyOf": [
               {
@@ -34113,9 +34243,27 @@
             ],
             "title": "Name"
           },
+          "pass_rule": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ONE_TAP",
+                  "N_TRIES",
+                  "LEAD_COACH"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rule"
+          },
           "pass_threshold_pct": {
             "anyOf": [
               {
+                "maximum": 100.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -34124,9 +34272,30 @@
             ],
             "title": "Pass Threshold Pct"
           },
+          "pass_tries": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 2.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Tries"
+          },
           "scoring_type": {
             "anyOf": [
               {
+                "enum": [
+                  "ATTEMPT_BASED",
+                  "CHECKLIST_BASED",
+                  "COACH_APPROVAL",
+                  "RALLY_COUNT",
+                  "TIME_BASED",
+                  "POINTS_BASED"
+                ],
                 "type": "string"
               },
               {
@@ -34142,8 +34311,15 @@
       "UpdateSkillStatusBody": {
         "properties": {
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -34162,7 +34338,6 @@
           }
         },
         "required": [
-          "level_id",
           "program_id",
           "status"
         ],
@@ -34184,8 +34359,15 @@
             "title": "Introduced At"
           },
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -34204,7 +34386,6 @@
           }
         },
         "required": [
-          "level_id",
           "program_id",
           "status"
         ],
@@ -40499,6 +40680,58 @@
         ]
       }
     },
+    "/api/v2/admin/levels/{level_id}/skills/order": {
+      "put": {
+        "operationId": "reorder_skills_api_v2_admin_levels__level_id__skills_order_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "level_id",
+            "required": true,
+            "schema": {
+              "title": "Level Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Reorder Skills Api V2 Admin Levels  Level Id  Skills Order Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Skills",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
     "/api/v2/admin/messages": {
       "get": {
         "operationId": "list_messages_api_v2_admin_messages_get",
@@ -40690,6 +40923,48 @@
           }
         },
         "summary": "Get Pathway Dashboard",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
+    "/api/v2/admin/pathway/placements": {
+      "post": {
+        "description": "Place up to 50 students on one level, crediting skills they already have.\n\nEach student is placed (and audited) on its own: one refusal, such as a\nlevel-up already being approved, does not stop the rest.",
+        "operationId": "place_students_in_bulk_api_v2_admin_pathway_placements_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkPlacementBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Place Students In Bulk Api V2 Admin Pathway Placements Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place Students In Bulk",
         "tags": [
           "admin-progress"
         ]
@@ -42818,6 +43093,58 @@
           }
         },
         "summary": "Create Level",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
+    "/api/v2/admin/programs/{program_id}/levels/order": {
+      "put": {
+        "operationId": "reorder_levels_api_v2_admin_programs__program_id__levels_order_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Reorder Levels Api V2 Admin Programs  Program Id  Levels Order Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Levels",
         "tags": [
           "admin-pathway"
         ]

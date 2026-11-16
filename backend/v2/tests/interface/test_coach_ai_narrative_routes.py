@@ -260,19 +260,30 @@ def test_unconfigured_state_is_503_and_unknown_body_keys_are_422() -> None:
     assert client.post(DRAFT, json={"student_name": "x"}).status_code == 422
 
 
-def test_omitted_date_is_the_academy_s_day_not_utc(monkeypatch: pytest.MonkeyPatch) -> None:
-    """02:00 UTC on the 5th is still the evening of the 4th in Chicago, so a
-    no-date draft and the pending list both land on 2026-11-04."""
-    from backend.v2.interfaces.coach import today_routes
+@pytest.mark.parametrize(
+    ("utc_now", "expected"),
+    [
+        # 18:30 on the 4th in Chicago (00:30 UTC on the 5th): tonight's email.
+        (datetime(2026, 11, 5, 0, 30, tzinfo=UTC), "2026-11-04"),
+        # 20:00 on the 4th in Chicago: tonight's email has gone, so tomorrow's.
+        (datetime(2026, 11, 5, 2, 0, tzinfo=UTC), "2026-11-05"),
+    ],
+)
+def test_omitted_date_is_the_academy_s_next_evening_email(
+    monkeypatch: pytest.MonkeyPatch, utc_now: datetime, expected: str
+) -> None:
+    """A no-date draft and the pending list land on the evening email the
+    note will go out in, by the academy's clock, not UTC's."""
+    from backend.v2.interfaces.coach import ai_narrative_routes
 
     class _Clock(datetime):
         @classmethod
         def now(cls, tz=None):  # type: ignore[override]
-            return datetime(2026, 11, 5, 2, 0, tzinfo=UTC).astimezone(tz)
+            return utc_now.astimezone(tz)
 
-    monkeypatch.setattr(today_routes, "datetime", _Clock)
+    monkeypatch.setattr(ai_narrative_routes, "datetime", _Clock)
     composition, _, _ = _narratives(llm=FakeLlm())
     client = _client(_claims(COACH, "coach"), composition)
-    assert client.post(DRAFT, json={}).json()["for_date"] == "2026-11-04"
+    assert client.post(DRAFT, json={}).json()["for_date"] == expected
     pending = client.get("/api/v2/coach/narratives/pending").json()["narratives"]
-    assert [r["for_date"] for r in pending] == ["2026-11-04"]
+    assert [r["for_date"] for r in pending] == [expected]

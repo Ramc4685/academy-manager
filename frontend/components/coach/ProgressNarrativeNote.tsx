@@ -25,7 +25,8 @@ export function ProgressNarrativeNote({
 }: {
   studentId: string;
   studentName: string;
-  date: string;
+  /** Omitted for today's session: the backend picks tonight's or tomorrow's email. */
+  date?: string;
 }) {
   const queryClient = useQueryClient();
   const [local, setLocal] = useState<CoachNarrative | null>(null);

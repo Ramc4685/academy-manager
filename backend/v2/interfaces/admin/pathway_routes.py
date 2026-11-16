@@ -24,13 +24,19 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_refs import (
     AddExternalReferenceCommand,
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
+    MAX_PASS_TRIES,
+    MIN_PASS_TRIES,
     CreateSkillCommand,
+    PassRule,
     ScoringType,
     UpdateSkillCommand,
 )
 from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards import (
     LessonCardSeedError,
     PathwayNotSeededError,
+)
+from backend.v2.contexts.student_progress.application.use_cases.curriculum_change_checks import (
+    CurriculumChangeChecks,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
@@ -57,7 +63,6 @@ class CreateProgramBody(BaseModel):
 
 
 class CreateLevelBody(BaseModel):
-    sequence: int = Field(ge=1)
     name: str
     description: str = ""
     completion_rule: str = "ALL_REQUIRED_SKILLS"
@@ -73,26 +78,38 @@ class UpdateLevelBody(BaseModel):
     requires_admin_approval: bool | None = None
     #: Hex like ``#2563EB``; ``""`` resets to the default colour for the level.
     color: str | None = Field(default=None, pattern=r"^(#[0-9A-Fa-f]{6})?$")
+    #: False retires the level: refused (409) while students are on it.
+    is_active: bool | None = None
 
 
 class CreateSkillBody(BaseModel):
     program_id: str
-    sequence: int = Field(ge=1)
     name: str
     description: str = ""
     is_required: bool = True
     scoring_type: ScoringType = "ATTEMPT_BASED"
     pass_threshold_pct: float = Field(default=70.0, ge=0.0, le=100.0)
     coach_override_allowed: bool = False
+    pass_rule: PassRule = "ONE_TAP"
+    pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
 
 
 class UpdateSkillBody(BaseModel):
     name: str | None = None
     description: str | None = None
     is_required: bool | None = None
-    scoring_type: str | None = None
-    pass_threshold_pct: float | None = None
+    scoring_type: ScoringType | None = None
+    pass_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     coach_override_allowed: bool | None = None
+    pass_rule: PassRule | None = None
+    pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
+    #: False retires the skill; it stops counting toward its level.
+    is_active: bool | None = None
+
+
+class ReorderBody(BaseModel):
+    #: Every active level (or skill) in the new order; retired ones follow.
+    ids: list[str] = Field(min_length=1, max_length=200)
 
 
 class AddCriterionBody(BaseModel):
@@ -175,7 +192,6 @@ async def create_level(
         level = await use_cases.curriculum.create_level.execute(
             CreateLevelCommand(
                 program_id=program_id,
-                sequence=body.sequence,
                 name=body.name,
                 description=body.description,
                 completion_rule=body.completion_rule,
@@ -198,6 +214,27 @@ async def update_level(
 ) -> object:
     if use_cases.curriculum is None:
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    if body.is_active is False:
+        checks = _progress_checks(use_cases)
+        if await checks.pending_level_ups_into(level_id):
+            # The evening auto-approve would place those students on it.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "Curriculum.LevelUpsPending",
+                    "message": "approve or reject the level-ups into this level before retiring it",
+                },
+            )
+        on_level = await checks.active_student_ids(level_id)
+        if on_level:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "Curriculum.LevelHasStudents",
+                    "message": "move the students on this level before retiring it",
+                    "active_students": len(on_level),
+                },
+            )
     try:
         level = await use_cases.curriculum.update_level.execute(
             UpdateLevelCommand(
@@ -208,6 +245,7 @@ async def update_level(
                 requires_coach_recommendation=body.requires_coach_recommendation,
                 requires_admin_approval=body.requires_admin_approval,
                 color=body.color,
+                is_active=body.is_active,
                 updated_by=claims.user_id,
             )
         )
@@ -230,13 +268,14 @@ async def create_skill(
             CreateSkillCommand(
                 level_id=level_id,
                 program_id=body.program_id,
-                sequence=body.sequence,
                 name=body.name,
                 description=body.description,
                 is_required=body.is_required,
                 scoring_type=body.scoring_type,
                 pass_threshold_pct=body.pass_threshold_pct,
                 coach_override_allowed=body.coach_override_allowed,
+                pass_rule=body.pass_rule,
+                pass_tries=body.pass_tries,
                 created_by=claims.user_id,
             )
         )
@@ -254,6 +293,7 @@ async def update_skill(
 ) -> object:
     if use_cases.curriculum is None:
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    checks = _progress_checks(use_cases) if body.is_active is False else None
     try:
         skill = await use_cases.curriculum.update_skill.execute(
             UpdateSkillCommand(
@@ -264,12 +304,62 @@ async def update_skill(
                 scoring_type=body.scoring_type,
                 pass_threshold_pct=body.pass_threshold_pct,
                 coach_override_allowed=body.coach_override_allowed,
+                pass_rule=body.pass_rule,
+                pass_tries=body.pass_tries,
+                is_active=body.is_active,
                 updated_by=claims.user_id,
             )
         )
     except SkillNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if checks is not None:
+        # The retired skill no longer counts: students it held back move on.
+        return skill.model_dump() | {
+            "active_students": len(await checks.active_student_ids(skill.level_id)),
+            "level_ups_queued": await checks.recheck_level(skill.level_id, claims.user_id),
+        }
     return skill.model_dump()
+
+
+@router.put("/programs/{program_id}/levels/order")
+async def reorder_levels(
+    program_id: str,
+    body: ReorderBody,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    if await _progress_checks(use_cases).has_pending_level_ups(program_id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "Curriculum.LevelUpsPending",
+                "message": "approve or reject the waiting level-ups before reordering levels",
+            },
+        )
+    ordered = await use_cases.curriculum.reorder_levels.execute(program_id, body.ids)
+    return {"ids": ordered}
+
+
+@router.put("/levels/{level_id}/skills/order")
+async def reorder_skills(
+    level_id: str,
+    body: ReorderBody,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    if use_cases.curriculum is None:
+        raise HTTPException(status_code=503, detail="Curriculum service not configured")
+    ordered = await use_cases.curriculum.reorder_skills.execute(level_id, body.ids)
+    return {"ids": ordered}
+
+
+def _progress_checks(use_cases: AdminUseCases) -> CurriculumChangeChecks:
+    # Retire and reorder must see the students; without them, refuse.
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    return use_cases.student_progress.curriculum_change_checks
 
 
 @router.post("/skills/{skill_id}/criteria", status_code=201)

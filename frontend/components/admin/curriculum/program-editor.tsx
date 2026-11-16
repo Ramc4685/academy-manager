@@ -11,12 +11,15 @@ import {
   getFullPathway,
   listLessonCards,
   seedLessonCards,
+  SKILL_PASS_RULES,
   SKILL_SCORING_TYPES,
+  updateSkillPassRule,
   type ExternalLessonReference,
   type ExternalSource,
   type PathwayLevel,
   type SeedLessonCardsResult,
   type Skill,
+  type SkillPassRule,
   type SkillScoringType,
 } from "@/lib/api/curriculum";
 import { LevelColorPicker } from "@/components/admin/curriculum/level-color-picker";
@@ -56,7 +59,6 @@ export function ProgramEditor({
       createLevel(programId, {
         name: levelName,
         description: levelDescription,
-        sequence: (data?.levels.length ?? 0) + 1,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "pathway", programId] });
@@ -103,10 +105,7 @@ export function ProgramEditor({
 
       <LessonCardsPanel programId={programId} />
 
-      <SkillLadderDraftCard
-        programId={programId}
-        lastLevelSequence={Math.max(0, ...data.levels.map((l) => l.level.sequence))}
-      />
+      <SkillLadderDraftCard programId={programId} />
 
       {showAddLevel && (
         <Card p={20}>
@@ -254,16 +253,20 @@ function LevelAccordion({
   const [skillDescription, setSkillDescription] = useState("");
   const [skillRequired, setSkillRequired] = useState(true);
   const [skillScoringType, setSkillScoringType] = useState<SkillScoringType>("ATTEMPT_BASED");
+  const [skillPassRule, setSkillPassRule] = useState<SkillPassRule>("ONE_TAP");
+  const [skillPassTries, setSkillPassTries] = useState(3);
 
   const addSkillMutation = useMutation({
     mutationFn: () =>
       createSkill(
         pathwayLevel.level.level_id,
-        buildCreateSkillBody(pathwayLevel.level, pathwayLevel.skills.map((s) => s.skill), {
+        buildCreateSkillBody(pathwayLevel.level, {
           name: skillName,
           description: skillDescription,
           is_required: skillRequired,
           scoring_type: skillScoringType,
+          pass_rule: skillPassRule,
+          pass_tries: skillPassTries,
         }),
       ),
     onSuccess: () => {
@@ -374,6 +377,12 @@ function LevelAccordion({
                       </option>
                     ))}
                   </select>
+                  <PassRuleFields
+                    rule={skillPassRule}
+                    tries={skillPassTries}
+                    onRule={setSkillPassRule}
+                    onTries={setSkillPassTries}
+                  />
                 </div>
                 {addSkillMutation.isError && (
                   <p className="text-xs text-red-600">Failed to add skill.</p>
@@ -458,6 +467,14 @@ function SkillRow({
     },
   });
 
+  const passRule = useMutation({
+    mutationFn: (body: { pass_rule: SkillPassRule; pass_tries?: number }) =>
+      updateSkillPassRule(skill.skill_id, body),
+    onSuccess: () => onRefAdded(),
+  });
+  const rule = skill.pass_rule ?? "ONE_TAP";
+  const tries = skill.pass_tries ?? 3;
+
   const canSubmitRef =
     sourceTitle.trim() && moduleName.trim() && lessonRange.trim() && referenceTitle.trim();
 
@@ -483,6 +500,16 @@ function SkillRow({
           {skill.pass_threshold_pct > 0 && (
             <span className="text-xs text-neutral-400">{skill.pass_threshold_pct}%</span>
           )}
+          <PassRuleFields
+            rule={rule}
+            tries={tries}
+            disabled={passRule.isPending}
+            onRule={(next) =>
+              passRule.mutate({ pass_rule: next, ...(next === "N_TRIES" ? { pass_tries: tries } : {}) })
+            }
+            onTries={(next) => passRule.mutate({ pass_rule: "N_TRIES", pass_tries: next })}
+          />
+          {passRule.isError && <span className="text-xs text-red-600">Not saved</span>}
           <button
             onClick={() => setShowAddRef((v) => !v)}
             className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
@@ -593,5 +620,53 @@ function Skeleton() {
         <div key={i} className="h-32 animate-pulse rounded-lg bg-neutral-100 dark:bg-neutral-800" />
       ))}
     </div>
+  );
+}
+
+/** The skill's pass rule: one tap, N tries (2 to 10) or a lead coach's tap. */
+function PassRuleFields({
+  rule,
+  tries,
+  disabled,
+  onRule,
+  onTries,
+}: {
+  rule: SkillPassRule;
+  tries: number;
+  disabled?: boolean;
+  onRule: (rule: SkillPassRule) => void;
+  onTries: (tries: number) => void;
+}) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <select
+        aria-label="How a coach passes this skill"
+        value={rule}
+        disabled={disabled}
+        onChange={(e) => onRule(e.target.value as SkillPassRule)}
+        className="rounded-md border border-neutral-300 px-2 py-1 text-sm focus:outline-none"
+      >
+        {SKILL_PASS_RULES.map((r) => (
+          <option key={r.value} value={r.value}>
+            {r.label}
+          </option>
+        ))}
+      </select>
+      {rule === "N_TRIES" && (
+        <select
+          aria-label="Tries needed to pass"
+          value={tries}
+          disabled={disabled}
+          onChange={(e) => onTries(Number(e.target.value))}
+          className="rounded-md border border-neutral-300 px-2 py-1 text-sm focus:outline-none"
+        >
+          {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+            <option key={n} value={n}>
+              {n} tries
+            </option>
+          ))}
+        </select>
+      )}
+    </span>
   );
 }

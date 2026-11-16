@@ -17,6 +17,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_lesson_cards im
 from backend.v2.contexts.curriculum.application.use_cases.manage_levels import (
     CreateLevel,
     ListLevels,
+    ReorderLevels,
     UpdateLevel,
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_program import (
@@ -29,6 +30,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_refs import Add
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
     CreateSkill,
     ListSkills,
+    ReorderSkills,
     UpdateSkill,
 )
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
@@ -56,6 +58,9 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
 )
 from backend.v2.contexts.student_progress.application.use_cases.auto_approve_level_ups import (
     AutoApproveLevelUps,
+)
+from backend.v2.contexts.student_progress.application.use_cases.curriculum_change_checks import (
+    CurriculumChangeChecks,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
     GetCertificateDetail,
@@ -225,6 +230,8 @@ class CurriculumComposition:
     create_skill: CreateSkill
     update_skill: UpdateSkill
     list_skills: ListSkills
+    reorder_levels: ReorderLevels
+    reorder_skills: ReorderSkills
     add_criterion: AddSkillCriterion
     add_external_ref: AddExternalReference
     get_full_pathway: GetFullPathway
@@ -258,6 +265,7 @@ class StudentProgressComposition:
     set_mastery_note: SetMasteryNote
     auto_approve_level_ups: AutoApproveLevelUps
     get_pathway_dashboard: GetPathwayDashboard
+    curriculum_change_checks: CurriculumChangeChecks
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +300,8 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
         create_skill=CreateSkill(levels=levels_repo, skills=skills_repo),
         update_skill=UpdateSkill(skills=skills_repo),
         list_skills=ListSkills(skills=skills_repo),
+        reorder_levels=ReorderLevels(levels=levels_repo),
+        reorder_skills=ReorderSkills(skills=skills_repo),
         add_criterion=AddSkillCriterion(skills=skills_repo, criteria=criteria_repo),
         add_external_ref=AddExternalReference(skills=skills_repo, refs=refs_repo),
         get_full_pathway=GetFullPathway(pathway_query=pathway_query),
@@ -361,11 +371,13 @@ def compose_student_progress(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
+            recommendations=recommendation_repo,
             outbox=outbox,
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
             outbox=outbox,
         ),
         record_test_attempt=record_test_attempt,
@@ -461,5 +473,10 @@ def compose_student_progress(
             recommendations=recommendation_repo,
             certificates=certificate_repo,
             levels=skill_lookup,
+        ),
+        curriculum_change_checks=CurriculumChangeChecks(
+            level_progress=level_progress_repo,
+            recommendations=recommendation_repo,
+            recommend_level_up=recommend_level_up,
         ),
     )

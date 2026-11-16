@@ -99,6 +99,12 @@ class StudentSkillProgress(BaseModel):
     last_updated_by: str
     #: Optional one-line coach message to the parent about this mastery.
     coach_note: str | None = None
+    #: Taps toward an ``N_TRIES`` skill. Written only by ``$inc``
+    #: (``increment_tries``), never by ``upsert``, so a stale read cannot reset it.
+    tries: int = 0
+    #: A placement credit the owner chose not to announce: the evening wins
+    #: email skips it. Any real pass clears it.
+    silent: bool = False
 
 
 class TestAttempt(BaseModel):
@@ -273,6 +279,7 @@ class SkillBoardCell(BaseModel):
     status: SkillStatus = "NOT_STARTED"
     last_updated_at: datetime | None = None
     coach_note: str | None = None
+    tries: int = 0
 
 
 class SkillBoardSkill(BaseModel):
@@ -286,6 +293,8 @@ class SkillBoardSkill(BaseModel):
     is_required: bool
     #: Observable criterion descriptions, in display order: the coach's quick-tags.
     criteria: list[str] = Field(default_factory=list)
+    pass_rule: str = "ONE_TAP"
+    pass_tries: int | None = None
 
 
 class SkillBoardStudentRow(BaseModel):

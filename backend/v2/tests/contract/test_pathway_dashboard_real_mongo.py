@@ -49,7 +49,11 @@ NAMES = {ALMOST: "Ava", STUCK: "Sid", FRESH: "Fay", QUEUED: "Quinn", UNPLACED: "
 async def _tap(progress: Any, program_id: str, skill_id: str, student_id: str) -> None:
     await progress.mark_skill_mastered.execute(
         MarkSkillMasteredCommand(
-            skill_id=skill_id, program_id=program_id, student_ids=[student_id], coach_id="coach-x"
+            can_sign_off=True,
+            skill_id=skill_id,
+            program_id=program_id,
+            student_ids=[student_id],
+            coach_id="coach-x",
         )
     )
 

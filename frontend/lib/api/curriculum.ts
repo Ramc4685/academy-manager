@@ -49,8 +49,19 @@ export interface Skill {
   is_required: boolean;
   scoring_type: string;
   pass_threshold_pct: number;
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
   is_active: boolean;
 }
+
+/** How a coach's tap passes a skill (absent on older payloads means ONE_TAP). */
+export type SkillPassRule = "ONE_TAP" | "N_TRIES" | "LEAD_COACH";
+
+export const SKILL_PASS_RULES: ReadonlyArray<{ value: SkillPassRule; label: string }> = [
+  { value: "ONE_TAP", label: "One tap" },
+  { value: "N_TRIES", label: "Several tries" },
+  { value: "LEAD_COACH", label: "Lead coach signs off" },
+];
 
 export interface SkillCriterion {
   criterion_id: string;
@@ -268,7 +279,6 @@ export function createLevel(
   body: {
     name: string;
     description: string;
-    sequence: number;
     completion_rule?: string;
   },
 ): Promise<Level> {
@@ -293,37 +303,73 @@ export type SkillScoringType = (typeof SKILL_SCORING_TYPES)[number]["value"];
 
 export interface CreateSkillBody {
   program_id: string;
-  sequence: number;
   name: string;
   description: string;
   is_required: boolean;
   scoring_type: SkillScoringType;
   pass_threshold_pct?: number;
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
 }
 
-// The new skill goes after the level's existing skills.
+// The server numbers the new skill after the level's existing ones.
 export function buildCreateSkillBody(
   level: Pick<Level, "program_id">,
-  existingSkills: ReadonlyArray<Pick<Skill, "sequence">>,
   form: {
     name: string;
     description: string;
     is_required: boolean;
     scoring_type: SkillScoringType;
+    pass_rule?: SkillPassRule;
+    pass_tries?: number | null;
   },
 ): CreateSkillBody {
-  const lastSequence = existingSkills.reduce(
-    (max, s) => Math.max(max, s.sequence),
-    0,
-  );
   return {
     program_id: level.program_id,
-    sequence: lastSequence + 1,
     name: form.name.trim(),
     description: form.description.trim(),
     is_required: form.is_required,
     scoring_type: form.scoring_type,
+    ...(form.pass_rule ? { pass_rule: form.pass_rule } : {}),
+    ...(form.pass_rule === "N_TRIES" ? { pass_tries: form.pass_tries ?? 3 } : {}),
   };
+}
+
+// Mirrors POST /admin/pathway/placements (BulkPlacementBody).
+export interface BulkPlacementBody {
+  program_id: string;
+  level_id: string;
+  student_ids: string[];
+  credited_skill_ids: string[];
+  notify_parents: boolean;
+  reason?: string;
+}
+
+export interface BulkPlacementResult {
+  student_id: string;
+  outcome: "placed" | "refused";
+  progress_id?: string;
+  code?: string;
+}
+
+export function placeStudentsInBulk(
+  body: BulkPlacementBody,
+): Promise<{ results: BulkPlacementResult[] }> {
+  return apiFetch<{ results: BulkPlacementResult[] }>("/admin/pathway/placements", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// Mirrors PUT /admin/skills/{skill_id} (UpdateSkillBody); omitted fields stay as they are.
+export function updateSkillPassRule(
+  skillId: string,
+  body: { pass_rule: SkillPassRule; pass_tries?: number },
+): Promise<Skill> {
+  return apiFetch<Skill>(`/admin/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }
 
 export function createSkill(
@@ -781,6 +827,8 @@ export interface SkillBoardCell {
   status: SkillStatus;
   last_updated_at: string | null;
   coach_note?: string | null;
+  /** Taps counted so far on an N_TRIES skill. */
+  tries?: number;
 }
 
 export interface SkillBoardSkill {
@@ -791,6 +839,8 @@ export interface SkillBoardSkill {
   /** Observable criterion descriptions, in display order: the coach's quick-tags.
    *  Absent on boards cached before the field shipped (persisted for 24h). */
   criteria?: string[];
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
 }
 
 export interface SkillBoardStudentRow {

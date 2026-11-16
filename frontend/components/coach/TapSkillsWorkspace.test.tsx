@@ -87,6 +87,17 @@ describe("TapSkillsWorkspace", () => {
     expect(out).toContain("1 of 2 skills");
   });
 
+  it("offers to undo a mistaken try on a skill that is not passed yet", () => {
+    const b = board();
+    b.groups[0].skills[1] = { ...b.groups[0].skills[1], pass_rule: "N_TRIES", pass_tries: 3 };
+    expect(html(b)).not.toContain("Undo last try");
+    b.groups[0].students[0].statuses = { grip: passed, rally: { ...practicing, tries: 1 } };
+    const out = html(b);
+    expect(out.match(/Undo last try/g)).toHaveLength(1);
+    expect(out).toContain('aria-label="Undo Avery Test&#x27;s last try"');
+    expect(out).toContain("1 of 3");
+  });
+
   it("points the coach at placement when nobody is on a level", () => {
     const out = html(board({ groups: [], unplaced: [{ student_id: "s3", student_name: "C" }] }));
     expect(out).toContain("No one in this class is placed on a level yet");
