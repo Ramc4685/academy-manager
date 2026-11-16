@@ -1,6 +1,6 @@
 # curriculum-placement-and-pass-rule
 
-PR: TBD
+PR: #1183
 
 ## What changed
 Placing a student on a level now keeps every skill they already earned, and withdraws a level-up that was waiting for approval. The old level is marked completed only when every required skill was passed. Progress taps and tests always land on the student's current level, and the next level skips retired ones.
