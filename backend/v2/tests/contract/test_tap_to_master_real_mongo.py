@@ -105,7 +105,11 @@ async def test_tap_undo_and_evening_level_up(real_db: Any) -> None:
         # Undo the last tap: skill back to practicing, queued level-up withdrawn.
         undone = await progress.unmark_skill_mastered.execute(
             UnmarkSkillMasteredCommand(
-                student_id=STUDENT, skill_id=skill_ids[-1], program_id=program_id, updated_by=COACH
+                can_sign_off=True,
+                student_id=STUDENT,
+                skill_id=skill_ids[-1],
+                program_id=program_id,
+                updated_by=COACH,
             )
         )
         assert undone.status == "PRACTICING"
@@ -133,6 +137,7 @@ async def test_tap_undo_and_evening_level_up(real_db: Any) -> None:
         with pytest.raises(SkillNotOnCurrentLevel):
             await progress.unmark_skill_mastered.execute(
                 UnmarkSkillMasteredCommand(
+                    can_sign_off=True,
                     student_id=STUDENT,
                     skill_id=skill_ids[0],
                     program_id=program_id,
@@ -244,6 +249,7 @@ async def test_undo_refuses_a_level_up_already_being_approved(real_db: Any) -> N
         with pytest.raises(LevelUpInProgress):
             await progress.unmark_skill_mastered.execute(
                 UnmarkSkillMasteredCommand(
+                    can_sign_off=True,
                     student_id=STUDENT,
                     skill_id=skills[-1]["skill_id"],
                     program_id=program_id,

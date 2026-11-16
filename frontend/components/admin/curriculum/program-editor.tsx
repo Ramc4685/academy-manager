@@ -59,7 +59,6 @@ export function ProgramEditor({
       createLevel(programId, {
         name: levelName,
         description: levelDescription,
-        sequence: (data?.levels.length ?? 0) + 1,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "pathway", programId] });
@@ -106,10 +105,7 @@ export function ProgramEditor({
 
       <LessonCardsPanel programId={programId} />
 
-      <SkillLadderDraftCard
-        programId={programId}
-        lastLevelSequence={Math.max(0, ...data.levels.map((l) => l.level.sequence))}
-      />
+      <SkillLadderDraftCard programId={programId} />
 
       {showAddLevel && (
         <Card p={20}>
@@ -264,7 +260,7 @@ function LevelAccordion({
     mutationFn: () =>
       createSkill(
         pathwayLevel.level.level_id,
-        buildCreateSkillBody(pathwayLevel.level, pathwayLevel.skills.map((s) => s.skill), {
+        buildCreateSkillBody(pathwayLevel.level, {
           name: skillName,
           description: skillDescription,
           is_required: skillRequired,

@@ -23,7 +23,6 @@ from backend.v2.shared.ids import new_ulid
 class CreateLevelCommand(BaseModel):
     model_config = {"frozen": True}
     program_id: str
-    sequence: int = Field(ge=1)
     name: str
     description: str = ""
     completion_rule: LevelCompletionRule = "ALL_REQUIRED_SKILLS"
@@ -61,7 +60,8 @@ class CreateLevel:
             level_id=str(new_ulid()),
             program_id=cmd.program_id,
             academy_id="",  # injected by repo
-            sequence=cmd.sequence,
+            # Numbered by the server past every row, retired ones included.
+            sequence=await self._levels.next_sequence(cmd.program_id),
             name=cmd.name,
             description=cmd.description,
             completion_rule=cmd.completion_rule,

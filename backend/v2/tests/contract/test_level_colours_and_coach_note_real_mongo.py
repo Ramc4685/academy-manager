@@ -174,7 +174,11 @@ async def test_coach_note_is_tenant_scoped_cleared_on_undo_and_only_on_fresh_win
         )
         await progress.unmark_skill_mastered.execute(
             UnmarkSkillMasteredCommand(
-                student_id=STUDENT, skill_id=first, program_id=program_id, updated_by=COACH
+                can_sign_off=True,
+                student_id=STUDENT,
+                skill_id=first,
+                program_id=program_id,
+                updated_by=COACH,
             )
         )
         doc = await real_db["student_skill_progress"].find_one({"skill_id": first})
@@ -224,7 +228,11 @@ async def test_a_note_saved_after_an_undo_does_not_bring_the_win_back(real_db: A
         stale = await repo.get(STUDENT, skill)
         await progress.unmark_skill_mastered.execute(
             UnmarkSkillMasteredCommand(
-                student_id=STUDENT, skill_id=skill, program_id=program_id, updated_by=COACH
+                can_sign_off=True,
+                student_id=STUDENT,
+                skill_id=skill,
+                program_id=program_id,
+                updated_by=COACH,
             )
         )
 

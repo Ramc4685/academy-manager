@@ -22,6 +22,7 @@ from backend.v2.contexts.student_progress.application.use_cases.place_student im
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     EnrollmentEnded,
+    LevelNotConfigured,
     RecommendationAlreadyReviewed,
     RecommendationNotFound,
 )
@@ -133,6 +134,17 @@ class ReviewLevelUpRecommendation:
                     rec_id=cmd.rec_id,
                     student_id=rec.student_id,
                 )
+
+            if rec.to_level_id != rec.from_level_id:
+                target = await self._skill_lookup.get_level(rec.to_level_id)
+                if target is None or not getattr(target, "is_active", True):
+                    # Retired after the level-up was queued: never place a
+                    # student on it. The row stays RECOMMENDED for the owner.
+                    raise LevelNotConfigured(
+                        "the next level was retired; place the student by hand or reject",
+                        rec_id=cmd.rec_id,
+                        level_id=rec.to_level_id,
+                    )
 
         # Issue #548: claim the row before any side effect. The approval's
         # writes (certificate, level advance, skill seeding) cannot be undone,

@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { CoachNarrative } from "@/lib/api/coach";
 
-import { AI_STATUS_KEY, masteredOn, narrativeErrorCopy, narrativePanel } from "./progress-narrative";
+import {
+  AI_STATUS_KEY,
+  masteredOn,
+  narrativeDate,
+  narrativeErrorCopy,
+  narrativePanel,
+} from "./progress-narrative";
 
 const today = new Date(2026, 10, 4, 15, 30); // local
 const key = "2026-11-04";
@@ -21,6 +27,17 @@ describe("masteredOn", () => {
   it("treats a naive timestamp as UTC, like the rest of the coach UI", () => {
     const naive = iso(today).replace(/Z$/, "");
     expect(masteredOn({ a: { status: "PASSED", last_updated_at: naive } }, key)).toBe(true);
+  });
+});
+
+describe("narrativeDate", () => {
+  it("leaves today's date to the backend, so a tap after 19:00 drafts tomorrow's email", () => {
+    expect(narrativeDate(key, today)).toBeUndefined();
+    expect(narrativeDate(key, new Date(2026, 10, 4, 20, 15))).toBeUndefined();
+  });
+
+  it("keeps a past session's date", () => {
+    expect(narrativeDate("2026-11-03", today)).toBe("2026-11-03");
   });
 });
 

@@ -136,6 +136,16 @@ class PlaceStudentInLevel:
         now = datetime.now(UTC)
         active = await self._level_progress.get_active(cmd.student_id, cmd.program_id)
         if active is not None and active.level_id == cmd.level_id:
+            # Skills added to the level since the student was placed need rows first.
+            await seed_level_skills(
+                skill_progress=self._skill_progress,
+                skill_lookup=self._skill_lookup,
+                student_id=cmd.student_id,
+                program_id=cmd.program_id,
+                level_id=cmd.level_id,
+                actor=cmd.placed_by,
+                now=now,
+            )
             await self._credit(cmd, now)
             return active
         if active is not None:

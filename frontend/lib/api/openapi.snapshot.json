@@ -14773,13 +14773,18 @@
             "type": "boolean"
           },
           "sequence": {
-            "minimum": 1.0,
-            "title": "Sequence",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
           }
         },
         "required": [
-          "sequence",
           "name"
         ],
         "title": "CreateLevelBody",
@@ -15332,14 +15337,19 @@
             "type": "string"
           },
           "sequence": {
-            "minimum": 1.0,
-            "title": "Sequence",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
           }
         },
         "required": [
           "program_id",
-          "sequence",
           "name"
         ],
         "title": "CreateSkillBody",

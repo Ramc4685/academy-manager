@@ -40,8 +40,6 @@ class UpdateSkillStatusCommand(BaseModel):
     model_config = {"frozen": True}
     student_id: str
     skill_id: str
-    #: Ignored: the status is written on the student's active level.
-    level_id: str | None = None
     program_id: str
     new_status: CoachSettableStatus
     updated_by: str

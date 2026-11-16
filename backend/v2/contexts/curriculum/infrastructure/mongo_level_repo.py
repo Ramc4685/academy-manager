@@ -4,15 +4,58 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from pymongo.errors import DuplicateKeyError
+
+from backend.v2.contexts.curriculum.domain.errors import DuplicateSequence
 from backend.v2.contexts.curriculum.domain.models import Level
 from backend.v2.shared.tenancy import TenantScopedRepository
 
-#: Lifts every row clear of 1..n during a reorder's first pass.
-RESEQUENCE_OFFSET = 10_000
+
+class SequencedRepository(TenantScopedRepository):
+    """Shared numbering for levels and skills (unique sequence index, 0120)."""
+
+    id_field: str
+
+    async def _next_sequence(self, scope: dict[str, object]) -> int:
+        """One past the highest sequence in ``scope``, retired rows included."""
+        cursor = self._find_many(scope, sort=[("sequence", -1)], limit=1)
+        top = [int(doc["sequence"]) async for doc in cursor]  # type: ignore[call-overload]
+        return (top[0] if top else 0) + 1
+
+    async def _insert_sequenced(self, doc: dict[str, object]) -> None:
+        try:
+            await self._insert_one(doc)
+        except DuplicateKeyError as exc:  # a concurrent create took the number
+            raise DuplicateSequence(
+                "another item took that position; try again", sequence=doc.get("sequence")
+            ) from exc
+
+    async def resequence(self, ordered_ids: list[str]) -> None:
+        """Number ``ordered_ids`` 1..n in two passes, so the unique sequence
+        index never sees two rows on one number mid-way. Pass one lifts every
+        row above the current highest, so a retry after a crash (or a reorder
+        racing this one) starts from a free range instead of colliding again.
+
+        shortcut: not atomic; a crash between passes leaves sequences high
+        (still ordered) until the next reorder.
+        """
+        cursor = self._find_many(
+            {self.id_field: {"$in": ordered_ids}}, sort=[("sequence", -1)], limit=1
+        )
+        top = [int(doc["sequence"]) async for doc in cursor]  # type: ignore[call-overload]
+        lift = (top[0] if top else 0) + 1
+        now = datetime.now(UTC)
+        for i, item_id in enumerate(ordered_ids):
+            await self._update_one({self.id_field: item_id}, {"$set": {"sequence": lift + i}})
+        for i, item_id in enumerate(ordered_ids, start=1):
+            await self._update_one(
+                {self.id_field: item_id}, {"$set": {"sequence": i, "updated_at": now}}
+            )
 
 
-class MongoLevelRepository(TenantScopedRepository):
+class MongoLevelRepository(SequencedRepository):
     collection_name = "skill_levels"
+    id_field = "level_id"
 
     @staticmethod
     def _to_domain(doc: dict[str, object]) -> Level:
@@ -35,7 +78,7 @@ class MongoLevelRepository(TenantScopedRepository):
         )
 
     async def save(self, level: Level) -> None:
-        await self._insert_one(
+        await self._insert_sequenced(
             {
                 "level_id": level.level_id,
                 "program_id": level.program_id,
@@ -87,19 +130,5 @@ class MongoLevelRepository(TenantScopedRepository):
         cursor = self._find_many({"program_id": program_id}, sort=[("sequence", 1)])
         return [self._to_domain(doc) async for doc in cursor]
 
-    async def resequence(self, ordered_ids: list[str]) -> None:
-        """Number ``ordered_ids`` 1..n in two passes, so the unique sequence
-        index never sees two rows on one number mid-way.
-
-        shortcut: not atomic; a crash between passes leaves sequences above
-        RESEQUENCE_OFFSET (still ordered) until the next reorder.
-        """
-        now = datetime.now(UTC)
-        for i, item_id in enumerate(ordered_ids, start=1):
-            await self._update_one(
-                {"level_id": item_id}, {"$set": {"sequence": RESEQUENCE_OFFSET + i}}
-            )
-        for i, item_id in enumerate(ordered_ids, start=1):
-            await self._update_one(
-                {"level_id": item_id}, {"$set": {"sequence": i, "updated_at": now}}
-            )
+    async def next_sequence(self, program_id: str) -> int:
+        return await self._next_sequence({"program_id": program_id})

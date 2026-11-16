@@ -9,8 +9,16 @@ from typing import Any
 
 import pytest
 
-from backend.v2.contexts.curriculum.application.errors import InvalidOrder, LevelNotFound
-from backend.v2.contexts.curriculum.application.use_cases.manage_levels import ReorderLevels
+from backend.v2.contexts.curriculum.application.errors import (
+    DuplicateSequence,
+    InvalidOrder,
+    LevelNotFound,
+)
+from backend.v2.contexts.curriculum.application.use_cases.manage_levels import (
+    CreateLevel,
+    CreateLevelCommand,
+    ReorderLevels,
+)
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
     CreateSkill,
     CreateSkillCommand,
@@ -32,6 +40,7 @@ from backend.v2.tests.contract.test_curriculum_placement_real_mongo import (
     _Live,
     _pass,
     _place,
+    _rec,
     _seed_curriculum,
     _wire,
 )
@@ -81,7 +90,7 @@ async def test_create_skill_refuses_a_level_from_another_program(real_db: Any) -
         with pytest.raises(LevelNotFound):
             await create.execute(
                 CreateSkillCommand(
-                    level_id="OTHER", program_id="prog", sequence=9, name="X", created_by="owner"
+                    level_id="OTHER", program_id="prog", name="X", created_by="owner"
                 )
             )
 
@@ -115,3 +124,62 @@ async def test_retiring_the_skill_holding_a_student_back_queues_the_level_up(
 
     assert on_level == ["kid"]
     assert queued == 1 and pending is True
+
+
+async def test_new_levels_and_skills_number_past_retired_rows(real_db: Any) -> None:
+    """The UI used to send levels.length + 1, which collided with a retired row."""
+    await _seed_curriculum(real_db)
+    await real_db["programs"].insert_one({"academy_id": ACADEMY, "program_id": "prog", "name": "P"})
+    with tenant_scope(ACADEMY):
+        levels, skills = MongoLevelRepository(real_db), MongoSkillRepository(real_db)
+        await UpdateSkill(skills=skills).execute(
+            UpdateSkillCommand(skill_id="s2", is_active=False, updated_by="owner")
+        )
+        level = await CreateLevel(programs=_Programs(), levels=levels).execute(
+            CreateLevelCommand(program_id="prog", name="Four", created_by="owner")
+        )
+        skill = await CreateSkill(levels=levels, skills=skills).execute(
+            CreateSkillCommand(level_id="L1", program_id="prog", name="Drop", created_by="owner")
+        )
+        taken = level.model_copy(update={"level_id": "dup", "name": "Clash"})
+        with pytest.raises(DuplicateSequence):
+            await levels.save(taken)
+
+    assert level.sequence == 4  # L1=1, L2 (retired)=2, L3=3
+    assert skill.sequence == 3  # s1=1, s2 (retired)=2
+
+
+class _Programs:
+    async def get(self, program_id: str) -> object:
+        return {"program_id": program_id}
+
+
+async def test_a_reorder_left_half_done_does_not_wedge_the_next_one(real_db: Any) -> None:
+    """A crash after pass one left L1 at 10001; a fixed +10000 lift collided forever."""
+    await _seed_curriculum(real_db)
+    await real_db["skill_levels"].update_one({"level_id": "L1"}, {"$set": {"sequence": 10001}})
+    with tenant_scope(ACADEMY):
+        await ReorderLevels(levels=MongoLevelRepository(real_db)).execute("prog", ["L3", "L1"])
+
+    assert await _sequences(real_db, "skill_levels", "level_id", program_id="prog") == [
+        ("L3", 1),
+        ("L1", 2),
+        ("L2", 3),
+    ]
+
+
+async def test_a_level_a_pending_level_up_targets_counts_as_in_use(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        checks = CurriculumChangeChecks(
+            level_progress=w["level_progress"],
+            recommendations=w["recs"],
+            recommend_level_up=None,  # type: ignore[arg-type]
+        )
+        await w["place"].execute(_place("L1"))
+        await _rec(w)  # L1 -> L3, waiting for the evening auto-approve
+        into_l3 = await checks.pending_level_ups_into("L3")
+        into_l1 = await checks.pending_level_ups_into("L1")
+
+    assert (into_l3, into_l1) == (1, 0)

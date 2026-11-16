@@ -63,7 +63,8 @@ class CreateProgramBody(BaseModel):
 
 
 class CreateLevelBody(BaseModel):
-    sequence: int = Field(ge=1)
+    #: Ignored: the server numbers new levels. Kept so older clients validate.
+    sequence: int | None = None
     name: str
     description: str = ""
     completion_rule: str = "ALL_REQUIRED_SKILLS"
@@ -85,7 +86,8 @@ class UpdateLevelBody(BaseModel):
 
 class CreateSkillBody(BaseModel):
     program_id: str
-    sequence: int = Field(ge=1)
+    #: Ignored: the server numbers new skills. Kept so older clients validate.
+    sequence: int | None = None
     name: str
     description: str = ""
     is_required: bool = True
@@ -194,7 +196,6 @@ async def create_level(
         level = await use_cases.curriculum.create_level.execute(
             CreateLevelCommand(
                 program_id=program_id,
-                sequence=body.sequence,
                 name=body.name,
                 description=body.description,
                 completion_rule=body.completion_rule,
@@ -218,7 +219,17 @@ async def update_level(
     if use_cases.curriculum is None:
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
     if body.is_active is False:
-        on_level = await _progress_checks(use_cases).active_student_ids(level_id)
+        checks = _progress_checks(use_cases)
+        if await checks.pending_level_ups_into(level_id):
+            # The evening auto-approve would place those students on it.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "Curriculum.LevelUpsPending",
+                    "message": "approve or reject the level-ups into this level before retiring it",
+                },
+            )
+        on_level = await checks.active_student_ids(level_id)
         if on_level:
             raise HTTPException(
                 status_code=409,
@@ -261,7 +272,6 @@ async def create_skill(
             CreateSkillCommand(
                 level_id=level_id,
                 program_id=body.program_id,
-                sequence=body.sequence,
                 name=body.name,
                 description=body.description,
                 is_required=body.is_required,

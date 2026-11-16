@@ -20,6 +20,7 @@ from backend.v2.contexts.student_progress.application.ports import (
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     LevelUpInProgress,
+    PassNeedsLeadCoach,
     SkillNotOnCurrentLevel,
     SkillProgressNotFound,
     StudentNotPlaced,
@@ -40,6 +41,8 @@ class UnmarkSkillMasteredCommand(BaseModel):
     skill_id: str
     program_id: str
     updated_by: str
+    #: False for an assistant-only coach: a lead-coach pass is theirs to keep.
+    can_sign_off: bool
 
 
 class UnmarkSkillMasteredResult(BaseModel):
@@ -85,15 +88,29 @@ class UnmarkSkillMastered:
                 "skill has no progress to undo", student_id=cmd.student_id, skill_id=cmd.skill_id
             )
 
+        passed = existing.status == "PASSED"
+        if (
+            passed
+            and getattr(skill, "pass_rule", "ONE_TAP") == "LEAD_COACH"
+            and not cmd.can_sign_off
+        ):
+            raise PassNeedsLeadCoach(
+                "a lead coach takes this pass back",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
+            )
+
         now = datetime.now(UTC)
         withdrawn: list[str] = []
         # The withdrawal must win before the skill is demoted: a level-up the
         # owner or the evening job is already approving (APPROVING) would
-        # otherwise certify a level with this skill back at PRACTICING.
+        # otherwise certify a level with this skill back at PRACTICING. Undoing
+        # a try below N takes no pass away, so it leaves the level-up alone.
         pending = await self._recs.get_active_for_student(cmd.student_id, cmd.program_id)
         # A REJECTING row ends rejected anyway, so it does not block the undo.
         if (
-            pending is not None
+            passed
+            and pending is not None
             and pending.from_level_id == active.level_id
             and pending.status != "REJECTING"
         ):
@@ -115,7 +132,7 @@ class UnmarkSkillMastered:
         # One undo takes back one tap (N_TRIES); a no-op when none are counted.
         await self._skill_progress.increment_tries(cmd.student_id, cmd.skill_id, -1)
 
-        if existing.status != "PASSED":
+        if not passed:
             return UnmarkSkillMasteredResult(
                 student_id=cmd.student_id,
                 skill_id=cmd.skill_id,

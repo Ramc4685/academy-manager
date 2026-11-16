@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -2078,6 +2079,38 @@ def test_real_skill_router_unmark_mastered_runs_undo() -> None:
     assert response.json()["status"] == "PRACTICING"
     command = spies.unmark_skill_mastered.args[0]
     assert (command.student_id, command.skill_id) == (STUDENT_ID, SKILL_ID)
+
+
+def test_real_skill_router_undo_is_403_for_an_assistant_on_a_lead_coach_pass() -> None:
+    """The undo route passes the caller's sign-off right; the use case refuses
+    an assistant taking back a lead-coach pass (real-Mongo test covers the rule)."""
+    from backend.v2.contexts.student_progress.domain.errors import PassNeedsLeadCoach
+    from backend.v2.shared.http import register_exception_handlers
+
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    register_exception_handlers(app)
+    seen: list[Any] = []
+
+    async def lead_only(cmd: Any) -> Any:
+        seen.append(cmd)
+        if not cmd.can_sign_off:
+            raise PassNeedsLeadCoach("a lead coach takes this pass back")
+        return _Dumpable(status="PRACTICING")
+
+    spies.unmark_skill_mastered.execute = lead_only
+    app.dependency_overrides[get_auth_claims] = lambda: _real_router_claims().model_copy(
+        update={"roles": ("assistant_coach",)}
+    )
+    response = TestClient(app).delete(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{STUDENT_ID}/skills/{SKILL_ID}/mastered",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "StudentProgress.PassNeedsLeadCoach"
+    assert [c.can_sign_off for c in seen] == [False]
 
 
 def test_real_skill_router_sets_the_mastery_note_for_a_roster_student() -> None:

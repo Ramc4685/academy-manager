@@ -25,6 +25,7 @@ from backend.v2.contexts.student_progress.application.use_cases.review_level_up 
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     EnrollmentEnded,
+    LevelNotConfigured,
     RecommendationAlreadyReviewed,
 )
 from backend.v2.contexts.student_progress.domain.logic import check_level_completion
@@ -96,8 +97,9 @@ class AutoApproveLevelUps:
                     approved += 1
                 else:  # superseded by a placement: closed, nothing approved
                     skipped += 1
-            except (EnrollmentEnded, RecommendationAlreadyReviewed) as exc:
-                # Withdrawn student, or the owner/coach acted first: leave it.
+            except (EnrollmentEnded, LevelNotConfigured, RecommendationAlreadyReviewed) as exc:
+                # Withdrawn student, a retired next level, or the owner/coach
+                # acted first: leave it for the owner.
                 log.info("auto_level_up_skipped", extra={"rec_id": rec.rec_id, "reason": exc.code})
                 skipped += 1
         return AutoApproveLevelUpsResult(

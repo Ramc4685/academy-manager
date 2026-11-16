@@ -44,6 +44,10 @@ class CurriculumChangeChecks:
         """A queued level-up names its target level; renumbering would move it."""
         return any(rec.program_id == program_id for rec in await self._recs.list_pending())
 
+    async def pending_level_ups_into(self, level_id: str) -> int:
+        """Queued level-ups that would place students on ``level_id``."""
+        return sum(rec.to_level_id == level_id for rec in await self._recs.list_pending())
+
     async def recheck_level(self, level_id: str, actor: str) -> int:
         """Queue the level-up for students a retired skill was holding back."""
         queued = 0

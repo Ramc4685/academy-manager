@@ -45,9 +45,6 @@ from backend.v2.shared.idempotency import IdempotencyStore, idempotent
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
 
-#: Taps an N_TRIES skill needs when none is stored (the curriculum default).
-DEFAULT_PASS_TRIES = 3
-
 
 def _resolve_academy_id() -> str:
     return current_academy_id()
@@ -57,13 +54,11 @@ class RecordTestAttemptCommand(BaseModel):
     model_config = {"frozen": True}
     student_id: str
     skill_id: str
-    #: Ignored: the attempt is always recorded on the student's active level
-    #: (the skill must belong to it). Kept so older clients still validate.
-    level_id: str | None = None
     program_id: str
     coach_id: str
     #: False for an assistant-only coach. Required, so no route can forget
     #: it: a LEAD_COACH skill refuses a pass when it is False.
+    #: It also guards taking a lead-coach pass away with a failing attempt.
     can_sign_off: bool
     session_id: str | None = None
     occurrence_id: str | None = None
@@ -161,7 +156,10 @@ class RecordTestAttempt:
             or cmd.coach_override
         )
         pass_rule = getattr(skill_meta, "pass_rule", "ONE_TAP")
-        if passed and pass_rule == "LEAD_COACH" and not cmd.can_sign_off:
+        existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
+        already_passed = existing_prog is not None and existing_prog.status == "PASSED"
+        # A lead-coach skill is signed off, and taken back, by a lead coach only.
+        if pass_rule == "LEAD_COACH" and not cmd.can_sign_off and (passed or already_passed):
             raise PassNeedsLeadCoach(
                 "a lead coach signs this skill off",
                 student_id=cmd.student_id,
@@ -192,11 +190,16 @@ class RecordTestAttempt:
         await self._test_attempts.save(attempt)
 
         # Update skill status
-        existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
         tries = 0
-        if passed and pass_rule == "N_TRIES":
+        written = False
+        if passed and pass_rule == "N_TRIES" and already_passed:
+            # A pass stays a pass: a credit (0 tries) or a pass from before the
+            # skill moved to N_TRIES is not demoted by a later passing test.
+            tries = existing_prog.tries if existing_prog is not None else 0
+            new_status = "PASSED"
+        elif passed and pass_rule == "N_TRIES":
             # A passing attempt is one try; the skill passes on the Nth.
-            needed = getattr(skill_meta, "pass_tries", None) or DEFAULT_PASS_TRIES
+            needed: int = skill_meta.pass_tries  # type: ignore[attr-defined]
             if existing_prog is None:
                 await self._skill_progress.insert_if_missing(
                     StudentSkillProgress(
@@ -216,9 +219,20 @@ class RecordTestAttempt:
             tries = await self._skill_progress.increment_tries(cmd.student_id, cmd.skill_id, 1) or 0
             passed = tries >= needed
             new_status = "PASSED" if passed else "PRACTICING"
+            if not passed:
+                # Conditional: a concurrent tap may have passed it meanwhile.
+                await self._skill_progress.set_status_unless_passed(
+                    cmd.student_id, cmd.skill_id, "PRACTICING", at=now, by=cmd.coach_id
+                )
+                current = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
+                new_status = current.status if current is not None else new_status
+                written = True
         else:
             new_status = "PASSED" if passed else "NEEDS_REVIEW"
-        if existing_prog is None:
+        updated_prog: StudentSkillProgress | None = None
+        if written:
+            pass
+        elif existing_prog is None:
             updated_prog = StudentSkillProgress(
                 skill_progress_id=str(new_ulid()),
                 academy_id=_resolve_academy_id(),
@@ -241,7 +255,8 @@ class RecordTestAttempt:
                     "silent": False,
                 }
             )
-        await self._skill_progress.upsert(updated_prog)
+        if updated_prog is not None:
+            await self._skill_progress.upsert(updated_prog)
 
         # Check level completion if skill just passed
         level_completed = False

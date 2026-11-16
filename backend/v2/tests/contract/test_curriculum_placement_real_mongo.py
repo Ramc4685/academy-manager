@@ -403,7 +403,11 @@ async def test_n_tries_passes_on_the_nth_tap_and_undo_takes_one_back(real_db: An
         passed = await w["skill_progress"].get("kid", "s1")
         await w["unmark"].execute(
             UnmarkSkillMasteredCommand(
-                student_id="kid", skill_id="s1", program_id="prog", updated_by="coach"
+                can_sign_off=True,
+                student_id="kid",
+                skill_id="s1",
+                program_id="prog",
+                updated_by="coach",
             )
         )
         undone = await w["skill_progress"].get("kid", "s1")
@@ -429,7 +433,11 @@ async def test_undo_of_a_try_below_n_takes_the_try_back(real_db: Any) -> None:
         for _ in range(2):  # the second undo has nothing left and stays at 0
             await w["unmark"].execute(
                 UnmarkSkillMasteredCommand(
-                    student_id="kid", skill_id="s1", program_id="prog", updated_by="coach"
+                    can_sign_off=True,
+                    student_id="kid",
+                    skill_id="s1",
+                    program_id="prog",
+                    updated_by="coach",
                 )
             )
         row = await w["skill_progress"].get("kid", "s1")
@@ -588,3 +596,162 @@ async def test_a_detailed_test_counts_one_try_on_an_n_tries_skill(real_db: Any) 
 
     assert (first.passed, first.skill_status, first.tries) == (False, "PRACTICING", 1)
     assert (second.passed, second.skill_status, second.tries) == (True, "PASSED", 2)
+
+
+# --- Fix round: a pass stays a pass, undo, lead-coach demotion -------------
+
+
+def _test(skill_id: str, *, passing: bool = True, lead: bool = True) -> RecordTestAttemptCommand:
+    return RecordTestAttemptCommand(
+        student_id="kid",
+        skill_id=skill_id,
+        program_id="prog",
+        coach_id="coach",
+        can_sign_off=lead,
+        attempts_count=1,
+        success_count=1 if passing else 0,
+    )
+
+
+def _undo(skill_id: str, *, lead: bool = True) -> UnmarkSkillMasteredCommand:
+    return UnmarkSkillMasteredCommand(
+        student_id="kid",
+        skill_id=skill_id,
+        program_id="prog",
+        updated_by="coach",
+        can_sign_off=lead,
+    )
+
+
+async def test_a_credited_skill_switched_to_n_tries_stays_passed(real_db: Any) -> None:
+    """A credit has tries 0; a passing test after the switch must not demote it."""
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_credit("L1", ["s1"]))
+        await _set_rule(real_db, "s1", "N_TRIES", 3)
+        result = await w["record"].execute(_test("s1"))
+        row = await w["skill_progress"].get("kid", "s1")
+
+    assert (result.passed, result.skill_status) == (True, "PASSED")
+    assert row is not None and row.status == "PASSED"
+
+
+async def test_a_one_tap_pass_switched_to_n_tries_stays_passed(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await _pass(w, "s1")
+        await _set_rule(real_db, "s1", "N_TRIES", 3)
+        result = await w["record"].execute(_test("s1"))
+        row = await w["skill_progress"].get("kid", "s1")
+
+    assert (result.passed, result.skill_status) == (True, "PASSED")
+    assert row is not None and row.status == "PASSED"
+
+
+async def test_a_practicing_write_never_lands_on_a_passed_row(real_db: Any) -> None:
+    """The lost-pass race: a stale try that reads before a pass writes after it."""
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await _pass(w, "s1")
+        landed = await w["skill_progress"].set_status_unless_passed(
+            "kid", "s1", "PRACTICING", at=AT, by="coach"
+        )
+        row = await w["skill_progress"].get("kid", "s1")
+
+    assert landed is False
+    assert row is not None and row.status == "PASSED"
+
+
+async def test_a_same_level_credit_seeds_a_skill_added_after_placement(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await real_db["skills"].insert_one(
+            {
+                "academy_id": ACADEMY,
+                "program_id": "prog",
+                "level_id": "L1",
+                "skill_id": "s3",
+                "sequence": 3,
+                "name": "Drop",
+                "is_active": True,
+                "created_at": AT,
+                "updated_at": AT,
+                "created_by": "owner",
+            }
+        )
+        await w["place"].execute(_credit("L1", ["s3"]))
+        row = await w["skill_progress"].get("kid", "s3")
+
+    assert row is not None and row.status == "PASSED"
+
+
+async def test_approval_refuses_a_retired_target_and_leaves_the_rec_pending(
+    real_db: Any,
+) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await _rec(w)
+        await real_db["skill_levels"].update_one({"level_id": "L3"}, {"$set": {"is_active": False}})
+        with pytest.raises(LevelNotConfigured):
+            await w["review"].execute(
+                ReviewLevelUpCommand(
+                    rec_id="rec-1",
+                    action="approve",
+                    reviewed_by="owner",
+                    student_name="Kid",
+                    level_name="One",
+                    program_name="Prog",
+                    level_sequence=1,
+                )
+            )
+        rec = await w["recs"].get("rec-1")
+        active = await w["level_progress"].get_active("kid", "prog")
+
+    assert rec is not None and rec.status == "RECOMMENDED"
+    assert active is not None and active.level_id == "L1"
+
+
+async def test_undoing_a_try_keeps_the_pending_level_up(real_db: Any) -> None:
+    """Only undoing a pass withdraws the level-up; a try below N does not."""
+    await _seed_curriculum(real_db)
+    await _set_rule(real_db, "s1", "N_TRIES", 3)
+    with tenant_scope(ACADEMY):
+        w = _wire_tap(real_db)
+        await w["place"].execute(_place("L1"))
+        await _tap(w, "s1")
+        await _rec(w)
+        result = await w["unmark"].execute(_undo("s1"))
+        rec = await w["recs"].get("rec-1")
+
+    assert result.withdrawn_rec_ids == []
+    assert rec is not None and rec.status == "RECOMMENDED"
+
+
+async def test_an_assistant_cannot_undo_or_fail_a_lead_coach_pass(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    await _set_rule(real_db, "s1", "LEAD_COACH")
+    with tenant_scope(ACADEMY):
+        w = _wire_tap(real_db)
+        await w["place"].execute(_place("L1"))
+        await _tap(w, "s1")
+        with pytest.raises(PassNeedsLeadCoach):
+            await w["unmark"].execute(_undo("s1", lead=False))
+        with pytest.raises(PassNeedsLeadCoach):
+            await w["record"].execute(_test("s1", passing=False, lead=False))
+        kept = await w["skill_progress"].get("kid", "s1")
+        attempts = await real_db["test_attempts"].count_documents({"skill_id": "s1"})
+        await w["unmark"].execute(_undo("s1"))
+        undone = await w["skill_progress"].get("kid", "s1")
+
+    assert kept is not None and kept.status == "PASSED"
+    assert attempts == 1  # the refused failing test wrote nothing
+    assert undone is not None and undone.status == "PRACTICING"

@@ -544,6 +544,7 @@ async def unmark_skill_mastered(
             skill_id=skill_id,
             program_id=program_id,
             updated_by=claims.user_id,
+            can_sign_off=not is_assistant_only(claims),
         )
     )
     return result.model_dump()

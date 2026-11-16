@@ -15,7 +15,7 @@ import {
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
 import { NOTE_MAX, criterionFits, pickedCriteria, toggleCriterion } from "@/lib/coach/mastery-note";
-import { AI_STATUS_KEY, masteredOn } from "@/lib/coach/progress-narrative";
+import { AI_STATUS_KEY, masteredOn, narrativeDate } from "@/lib/coach/progress-narrative";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
@@ -298,7 +298,8 @@ export function TapSkillsWorkspace({
                 <button
                   type="button"
                   aria-pressed={has}
-                  disabled={busy || (leadOnly && !has)}
+                  // A lead-coach pass is given and taken back by a lead coach only.
+                  disabled={busy || leadOnly}
                   onClick={() =>
                     has
                       ? unmark.mutate({ studentId: student.student_id, skillId: skill.skill_id })
@@ -339,6 +340,18 @@ export function TapSkillsWorkspace({
                     </span>
                   )}
                 </button>
+                {!has && !leadOnly && (cell?.tries ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      unmark.mutate({ studentId: student.student_id, skillId: skill.skill_id })
+                    }
+                    className="min-h-touch px-1 text-sm font-semibold text-rally-cobalt-700 disabled:opacity-40"
+                  >
+                    Undo last try
+                  </button>
+                )}
                 {has && noteOpen(cell) && (
                   <MasteryNote
                     studentName={student.student_name}
@@ -371,7 +384,7 @@ export function TapSkillsWorkspace({
                   <ProgressNarrativeNote
                     studentId={student.student_id}
                     studentName={student.student_name}
-                    date={date}
+                    date={narrativeDate(date)}
                   />
                 )}
               </li>

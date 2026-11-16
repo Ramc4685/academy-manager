@@ -279,7 +279,6 @@ export function createLevel(
   body: {
     name: string;
     description: string;
-    sequence: number;
     completion_rule?: string;
   },
 ): Promise<Level> {
@@ -304,7 +303,6 @@ export type SkillScoringType = (typeof SKILL_SCORING_TYPES)[number]["value"];
 
 export interface CreateSkillBody {
   program_id: string;
-  sequence: number;
   name: string;
   description: string;
   is_required: boolean;
@@ -314,10 +312,9 @@ export interface CreateSkillBody {
   pass_tries?: number | null;
 }
 
-// The new skill goes after the level's existing skills.
+// The server numbers the new skill after the level's existing ones.
 export function buildCreateSkillBody(
   level: Pick<Level, "program_id">,
-  existingSkills: ReadonlyArray<Pick<Skill, "sequence">>,
   form: {
     name: string;
     description: string;
@@ -327,13 +324,8 @@ export function buildCreateSkillBody(
     pass_tries?: number | null;
   },
 ): CreateSkillBody {
-  const lastSequence = existingSkills.reduce(
-    (max, s) => Math.max(max, s.sequence),
-    0,
-  );
   return {
     program_id: level.program_id,
-    sequence: lastSequence + 1,
     name: form.name.trim(),
     description: form.description.trim(),
     is_required: form.is_required,

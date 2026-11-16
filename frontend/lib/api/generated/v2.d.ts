@@ -12833,7 +12833,7 @@ export interface components {
              */
             requires_coach_recommendation: boolean;
             /** Sequence */
-            sequence: number;
+            sequence?: number | null;
         };
         /** CreateMakeupRequestRequest */
         CreateMakeupRequestRequest: {
@@ -13019,7 +13019,7 @@ export interface components {
              */
             scoring_type: "ATTEMPT_BASED" | "CHECKLIST_BASED" | "COACH_APPROVAL" | "RALLY_COUNT" | "TIME_BASED" | "POINTS_BASED";
             /** Sequence */
-            sequence: number;
+            sequence?: number | null;
         };
         /** CreateSkillNoteBody */
         CreateSkillNoteBody: {

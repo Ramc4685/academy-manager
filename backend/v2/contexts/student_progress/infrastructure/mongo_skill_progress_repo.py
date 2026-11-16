@@ -99,6 +99,17 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         doc = await self._find_one_and_update(filter_, {"$inc": {"tries": delta}})
         return int(doc.get("tries") or 0) if doc else None
 
+    async def set_status_unless_passed(
+        self, student_id: str, skill_id: str, status: str, *, at: datetime, by: str
+    ) -> bool:
+        """Write a non-pass status, but never over a PASSED row: a stale try
+        that read before a concurrent pass must not take the pass away."""
+        result = await self._update_one(
+            {"student_id": student_id, "skill_id": skill_id, "status": {"$ne": "PASSED"}},
+            {"$set": {"status": status, "last_updated_at": at, "last_updated_by": by}},
+        )
+        return bool(result.matched_count == 1)
+
     async def set_coach_note(
         self, student_id: str, skill_id: str, *, passed_at: datetime, note: str | None
     ) -> bool:

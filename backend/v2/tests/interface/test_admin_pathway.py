@@ -553,11 +553,13 @@ def test_add_skill_accepts_the_payload_the_admin_ui_sends():
 
     assert r.status_code == 201, r.text
     cmd = create.execute.await_args.args[0]
-    assert (cmd.level_id, cmd.program_id, cmd.sequence) == ("level-1", "prog-1", 3)
+    # An old client's sequence is ignored; the server numbers the skill.
+    assert (cmd.level_id, cmd.program_id) == ("level-1", "prog-1")
+    assert not hasattr(cmd, "sequence")
     assert cmd.scoring_type == "COACH_APPROVAL"
 
 
-def test_add_skill_without_program_id_and_sequence_is_422():
+def test_add_skill_without_program_id_is_422():
     create = SimpleNamespace(execute=AsyncMock())
     client = TestClient(_build_real_router_app(curriculum=SimpleNamespace(create_skill=create)))
 
@@ -568,8 +570,7 @@ def test_add_skill_without_program_id_and_sequence_is_422():
 
     assert r.status_code == 422, r.text
     missing = {tuple(e["loc"]) for e in r.json()["detail"]}
-    assert ("body", "program_id") in missing
-    assert ("body", "sequence") in missing
+    assert missing == {("body", "program_id")}
     create.execute.assert_not_awaited()
 
 
@@ -656,9 +657,12 @@ def test_real_router_seed_badminton_409s_for_non_badminton_academy():
     seed.execute.assert_not_awaited()
 
 
-def _retire_app(*, curriculum: Any, on_level: list[str], pending: bool = False) -> TestClient:
+def _retire_app(
+    *, curriculum: Any, on_level: list[str], pending: bool = False, pending_into: int = 0
+) -> TestClient:
     checks = SimpleNamespace(
         active_student_ids=AsyncMock(return_value=on_level),
+        pending_level_ups_into=AsyncMock(return_value=pending_into),
         recheck_level=AsyncMock(return_value=1),
         has_pending_level_ups=AsyncMock(return_value=pending),
     )
@@ -678,6 +682,20 @@ def test_retiring_a_level_with_students_on_it_is_409_and_writes_nothing():
 
     assert r.status_code == 409, r.text
     assert r.json()["detail"]["active_students"] == 2
+    update.execute.assert_not_awaited()
+
+
+def test_retiring_a_level_a_pending_level_up_targets_is_409():
+    """Else the 18:30 auto-approve would place students on the retired level."""
+    update = SimpleNamespace(execute=AsyncMock())
+    client = _retire_app(
+        curriculum=SimpleNamespace(update_level=update), on_level=[], pending_into=2
+    )
+
+    r = client.put("/api/v2/admin/levels/level-1", json={"is_active": False})
+
+    assert r.status_code == 409, r.text
+    assert "level-ups" in r.text
     update.execute.assert_not_awaited()
 
 

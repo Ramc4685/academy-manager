@@ -30,7 +30,6 @@ class CreateSkillCommand(BaseModel):
     model_config = {"frozen": True}
     level_id: str
     program_id: str
-    sequence: int = Field(ge=1)
     name: str
     description: str = ""
     is_required: bool = True
@@ -77,7 +76,8 @@ class CreateSkill:
             level_id=cmd.level_id,
             program_id=cmd.program_id,
             academy_id="",  # injected by repo
-            sequence=cmd.sequence,
+            # Numbered by the server past every row, retired ones included.
+            sequence=await self._skills.next_sequence(cmd.level_id),
             name=cmd.name,
             description=cmd.description,
             is_required=cmd.is_required,

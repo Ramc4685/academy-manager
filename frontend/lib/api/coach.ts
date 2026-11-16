@@ -800,11 +800,11 @@ export function draftCoachNarrative(studentId: string, date?: string): Promise<C
 /** The day's note for one student, whatever its status; null when none was drafted. */
 export async function getCoachStudentNarrative(
   studentId: string,
-  date: string,
+  date?: string,
 ): Promise<CoachNarrative | null> {
   try {
     return await apiFetch<CoachNarrative>(
-      `/coach/students/${encodeURIComponent(studentId)}/narrative?date=${encodeURIComponent(date)}`,
+      `/coach/students/${encodeURIComponent(studentId)}/narrative${date ? `?date=${encodeURIComponent(date)}` : ""}`,
       { method: "GET" },
     );
   } catch (error) {

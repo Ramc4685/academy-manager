@@ -244,7 +244,8 @@ class _SkillLookup:
         return None
 
     async def get_level(self, level_id):
-        return None
+        # Approval refuses a missing or retired target level.
+        return SimpleNamespace(level_id=level_id, is_active=True)
 
     async def list_skills_for_level(self, level_id):
         return []

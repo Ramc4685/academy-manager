@@ -396,7 +396,6 @@ async def record_admin_skill_test(
                 student_id=student_id,
                 skill_id=skill_id,
                 program_id=body.program_id,
-                level_id=body.level_id,
                 coach_id=claims.user_id,
                 can_sign_off=not is_assistant_only(claims),
                 session_id=body.session_id,

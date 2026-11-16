@@ -12,6 +12,11 @@ Two lists, per academy:
 * ``false_completions``: a ``completed`` level row whose student has not
   passed every active required skill of that level.
 
+Both lists can hold false positives, so check each row before a repair:
+a ``COACH_APPROVAL_ONLY`` or ``POINTS_BASED`` level completes without every
+skill passed, and a skill added after a student finished the level shows up
+as not passed on a ``completed`` row.
+
 A repair (restore the passes, relabel the levels) needs the owner's approval
 and is not part of this script.
 
@@ -26,15 +31,10 @@ import argparse
 import asyncio
 import json
 import os
-import sys
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
 
 
 async def audit(db: Any) -> dict[str, Any]:
