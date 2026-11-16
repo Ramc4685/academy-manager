@@ -125,6 +125,7 @@ class GeneratePayoutPeriod:
                 )
                 for warning in getattr(calc, "payout_warnings", [])
             ],
+            revenue_basis="invoiced",
             generated_at=self._clock(),
             approved_at=None,
             paid_at=None,

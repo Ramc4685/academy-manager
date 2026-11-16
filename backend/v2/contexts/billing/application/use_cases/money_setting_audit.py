@@ -36,6 +36,7 @@ MoneySettingAction = Literal[
     "plan_price_change_scheduled",
     "plan_price_change_cancelled",
     "plan_price_change_applied",
+    "payroll_settings_changed",
 ]
 
 

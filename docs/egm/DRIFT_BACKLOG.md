@@ -2,7 +2,8 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-## Repo root (`README.md`): 11 items, from `drift/_root.md`
+## Repo root (`README.md`): 12 items, from `drift/_root.md`
+- [wording] README:28 Coach Payouts omits percent-of-invoiced-tuition rates and the payout-period approval flow.
 - [undocumented] README:83-84 says `academy-next` owns `academy.courtmastr.com/*`; `frontend/wrangler.jsonc:18-25` also routes `*.courtmastr.com/*`.
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] README:98 shows `flyctl deploy --remote-only`; production.yml deploys a prebuilt `--image` with `--ha=false`.
@@ -16,7 +17,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 25 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 26 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -31,6 +32,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Top-level test files (`test_pytest_timeout_backstop.py`, `_route_paths.py`, `conftest.py`) missing from tests layout.
 - [contract] `pyproject.toml` cites missing `tests/structural/test_tenancy_literals.py`; tenancy check is `tests/test_no_raw_tenant_mongo_access.py`.
 - [wording] Persona list, admin router prefix (`interfaces/admin/router.py:61`), identity context shape, `views.py` not in every persona; see report.
+- [undocumented] README CI list omits the `compileall` and real-Mongo contract steps.
 - [wording] README:69 says run from the repo root; CI runs from `backend/`.
 - [contract] README:42 says import-linter enforces six layer rules; `pyproject.toml` has five forbidden contracts plus `composition-is-outermost`, and the no-cross-context and tenancy rules are pytest checks.
 - [wording] README:49 places `ports.py` as a sibling of `use_cases/` under `application/`; minor.
@@ -64,7 +66,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:84-86 omit that `build` runs `--webpack` and `dev` honors `$PORT`.
 - [wording] README:23 mentions coach teaching-plan flows; no such route under `app/(coach)/coach/`.
 
-## `frontend/lib/api/README.md`: 10 items, from `drift/frontend__lib__api.md`
+## `frontend/lib/api/README.md`: 11 items, from `drift/frontend__lib__api.md`
 - [undocumented] README calls `admin.ts` a thin wrapper; `chargeAdminInvoiceAutopay` keeps per-invoice retry state (reused `request_id` for 10 min; kept on 409 only for `charge_in_progress`).
 - [stale-not-built] README says `generated/` holds only `.gitkeep`; `v2.d.ts` and `openapi.snapshot.json` are committed.
 - [stale-not-built] CI "Skipping drift check" path no longer exists; drift check is unconditional.
@@ -74,6 +76,16 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] "When generated types are reintroduced": they already are.
 - [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.
 - [undocumented] `password-reset.ts` (from #1180) is not in the README's wrapper list.
+- [wording] README calls `ApiError` a class; `client.ts` declares it as an interface.
+
+## `frontend/lib/api/v2/README.md`: 12 items, from `drift/frontend__lib__api__v2.md`
+- [stale-not-built] `memberships.ts` calls `GET /me/memberships`, not a `/me` derivation (README:29-31).
+- [stale-not-built] `sessions.ts` covers only occurrence endpoints (README:24).
+- [stale-not-built] `students.ts` has no progress or placement functions (README:25).
+- [undocumented] `announcements.ts`, `departure-policy.ts`, `messages.ts`, `owner.ts`, `pricing.ts` are not listed.
+- [wording] Session-type archive is reversible in the client (README:27-28).
+- [wording] `payroll.ts` and `payouts.ts` entries omit export, reopen, override, mark-paid and audit-trail calls (README:22-23).
+- [contract] README:27-28 says session types GET returns active only; `session-types.ts:54-60` can include archived.
 
 ## `backend/v2/contexts/crm/README.md`: 2 items, from `drift/backend__v2__contexts__crm.md`
 - [undocumented] `SubmitWebsiteInquiry` / `WebsiteInquiryResult` / `RepeatInquiryWriter` missing from the Layout table.

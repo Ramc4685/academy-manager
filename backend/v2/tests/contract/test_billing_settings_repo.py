@@ -99,3 +99,28 @@ async def test_first_tenant_upsert_stores_no_ceiling_so_the_code_default_applies
     raw = await repo.collection.find_one({"academy_id": acad})
     assert raw is not None and "max_ach_discount_percent" not in raw
     assert (await repo.get()).max_ach_discount_percent == 3.0
+
+
+async def test_payroll_rules_and_other_billing_saves_do_not_revert_each_other(
+    real_db, acad
+) -> None:
+    """L7: two settings forms open at once each keep their own save."""
+    repo = MongoBillingSettingsRepository(real_db)
+    stale = await repo.get()  # the billing-rules form loaded before the payroll save
+
+    await repo.set_payroll_settings(
+        {"payroll_missing_invoices": "pay_zero", "payroll_assistant_pay_from": "2026-11"}
+    )
+    await repo.upsert(stale.model_copy(update={"ach_discount_enabled": True}))
+
+    fetched = await repo.get()
+    assert fetched.ach_discount_enabled is True
+    assert fetched.payroll_missing_invoices == "pay_zero"
+    assert fetched.payroll_assistant_pay_from == "2026-11"
+
+    # And the reverse: a payroll save leaves the billing-rules fields alone.
+    await repo.set_payroll_settings({"payroll_missing_invoices": "block"})
+    fetched = await repo.get()
+    assert fetched.ach_discount_enabled is True
+    assert fetched.payroll_missing_invoices == "block"
+    assert fetched.payroll_assistant_pay_from == "2026-11"

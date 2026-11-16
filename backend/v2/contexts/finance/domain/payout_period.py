@@ -36,17 +36,28 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 PayoutPeriodStatus = Literal["draft", "approved", "paid"]
-PayoutLineBasis = Literal["scheduled", "substitute", "actual"]
+PayoutLineBasis = Literal["scheduled", "substitute", "actual", "assistant"]
+#: What a percent coach's lines were a percent of: ``expected`` (legacy: class
+#: fee x active enrollments) or ``invoiced`` (L7: the class's invoiced tuition
+#: for the academy-local month). Periods stored before L7 read as expected.
+RevenueBasis = Literal["expected", "invoiced"]
 PayoutWarningReason = Literal[
     "missing_session_price_for_percent_revenue",
+    "missing_invoiced_tuition_for_percent_revenue",
+    "percent_rate_on_assistant",
     "missing_rate",
     "missing_percent",
+    # Non-blocking (L7): manual invoices with no enrollment name no class, so
+    # they are in no percent coach's base.
+    "unattributed_manual_invoices",
 ]
 PayoutWarningSeverity = Literal["blocking", "warning"]
 PersistedUnpaidReason = Literal[
     "no_rate_configured",
     "rate_gap",
     "missing_session_price_for_percent_revenue",
+    "missing_invoiced_tuition_for_percent_revenue",
+    "percent_rate_on_assistant",
     "attendance_override",
     "replaced_by_actual_coach",
     "unknown_unpaid_reason",
@@ -130,12 +141,16 @@ class PayoutPeriod(BaseModel):
     unpaid_occurrence_ids: list[str] = Field(default_factory=list)
     unpaid_occurrences: list[PersistedUnpaidOccurrence] = Field(default_factory=list)
     payout_warnings: list[PayoutWarning] = Field(default_factory=list)
+    revenue_basis: RevenueBasis = "expected"
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
     paid_method: str | None = None
     paid_amount_minor: int | None = Field(default=None, ge=0)
     paid_reference: str | None = None
+    #: Bumped by every stored write; a write lands only on the version it
+    #: was loaded at (L7). A document without one reads as 0.
+    version: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _validate_window_and_totals(self) -> PayoutPeriod:
@@ -165,11 +180,41 @@ class PayoutPeriodStateError(ValueError):
     """Raised when a state transition is illegal (e.g. approve a paid period)."""
 
 
+#: The fields a state transition (approve, mark paid, reopen) writes. A
+#: transition never rewrites the header or lines, so it cannot store a stale
+#: total over lines a concurrent recompute wrote.
+PAYOUT_TRANSITION_FIELDS = (
+    "status",
+    "approved_at",
+    "paid_at",
+    "paid_method",
+    "paid_amount_minor",
+    "paid_reference",
+)
+
+
+class PayoutPeriodConflictError(Exception):
+    """The period changed between load and write (a concurrent edit).
+
+    Nothing was written; the caller reloads and decides again.
+    """
+
+
+def blocking_warnings(warnings: list[PayoutWarning]) -> list[PayoutWarning]:
+    """The warnings that stop approval and payment; ``warning`` severity only informs."""
+    return [w for w in warnings if w.severity == "blocking"]
+
+
 def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
     """Return a new ``PayoutPeriod`` with status=approved.
 
     Idempotent: approving an already-approved period returns it unchanged.
     Approving a paid period raises ``PayoutPeriodStateError``.
+
+    L7: a period can be generated mid-month as a preview, but only approved
+    once its window has ended, from a snapshot taken after that (a stale
+    snapshot misses the month's last classes and invoices) on the invoiced
+    tuition basis. Anything else must be recomputed first.
     """
     if period.status == "approved":
         return period
@@ -177,9 +222,20 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
         raise PayoutPeriodStateError(
             f"cannot approve payout period {period.period_id!r} in status 'paid'"
         )
+    if at < period.period_end:
+        raise PayoutPeriodStateError(
+            f"cannot approve payout period {period.period_id!r} before it ends "
+            f"({period.period_end.isoformat()}); recompute first once the month is over"
+        )
+    if period.generated_at < period.period_end or period.revenue_basis != "invoiced":
+        raise PayoutPeriodStateError(
+            f"payout period {period.period_id!r} was calculated before the month ended "
+            "or on the old expected-revenue basis; recompute first"
+        )
     unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
-    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
-        count = len(period.payout_warnings) or len(unresolved) or len(period.unpaid_occurrence_ids)
+    blocking = blocking_warnings(period.payout_warnings)
+    if unresolved or period.unpaid_occurrence_ids or blocking:
+        count = len(blocking) or len(unresolved) or len(period.unpaid_occurrence_ids)
         raise PayoutPeriodStateError(
             f"cannot approve payout period {period.period_id!r} with "
             f"{count} unresolved payout warnings or unresolved unpaid occurrences; "
@@ -248,7 +304,7 @@ def mark_paid(
             f"cannot mark payout period {period.period_id!r} paid from status 'draft'"
         )
     unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
-    if unresolved or period.unpaid_occurrence_ids or period.payout_warnings:
+    if unresolved or period.unpaid_occurrence_ids or blocking_warnings(period.payout_warnings):
         raise PayoutPeriodStateError(
             f"cannot mark payout period {period.period_id!r} paid with unresolved payout warnings "
             "or unresolved unpaid occurrences"

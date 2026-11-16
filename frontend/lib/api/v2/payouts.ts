@@ -1,8 +1,6 @@
 /**
  * v2 payouts client.
  *
- * - `listAdminPayouts()` — calls the v2 BFF `/admin/finance/payouts`
- *   (rolled-up rows for the payouts list page).
  * - Payout periods — the persisted, line-level record behind a payout.
  *   `generatePayoutPeriod` is idempotent on (coach, window): opening a
  *   payout review materialises the draft period if it does not exist
@@ -13,24 +11,14 @@
  * No SaaS page should call `/api/*` legacy routes.
  */
 import { apiFetch, apiFetchBlob } from "../client";
-import { listPayouts } from "../admin";
-
-export type { AdminPayoutView } from "../admin";
-
-/**
- * @deprecated Use `listMonthlyPayroll()` from `v2/payroll.ts` instead.
- * Calls the legacy derived-list route which will be removed after
- * feat/coach-payroll-month-first ships.
- */
-export async function listAdminPayouts() {
-  return listPayouts();
-}
-
 export type PayoutPeriodStatus = "draft" | "approved" | "paid";
 export type PayoutWarningReason =
   | "missing_session_price_for_percent_revenue"
+  | "missing_invoiced_tuition_for_percent_revenue"
+  | "percent_rate_on_assistant"
   | "missing_rate"
-  | "missing_percent";
+  | "missing_percent"
+  | "unattributed_manual_invoices";
 export type PayoutWarningSeverity = "blocking" | "warning";
 
 export interface PayoutWarning {
@@ -48,7 +36,7 @@ export interface PayoutWarning {
 export interface AdminPayoutPeriodLineView {
   occurrence_id: string;
   coach_id: string;
-  basis: "scheduled" | "substitute" | "actual";
+  basis: "scheduled" | "substitute" | "actual" | "assistant";
   minutes: string;
   amount_cents: number;
   currency: string;
@@ -102,6 +90,10 @@ export interface AdminPayoutPeriodView {
   paid_method: string | null;
   paid_amount_cents: number | null;
   paid_reference: string | null;
+  /** "expected" = a legacy draft priced on expected revenue: recompute before approving. */
+  revenue_basis: "expected" | "invoiced";
+  /** True when the recorded paid amount is not the period total. */
+  paid_amount_differs: boolean;
 }
 
 export type PayoutAuditAction =

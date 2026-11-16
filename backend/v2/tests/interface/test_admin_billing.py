@@ -17,7 +17,6 @@ from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period im
     BillEnrollmentPeriodCommand,
     EnrollmentBillingTarget,
 )
-from backend.v2.contexts.billing.application.use_cases.finance import Payout
 from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
     RemoveInvoiceLine,
     RemoveInvoiceLineCommand,
@@ -987,25 +986,6 @@ def test_list_payments_hides_voided_rows_by_default(admin_client):
 
 
 # --- # FINANCE ---
-
-
-def test_list_payouts_returns_seeded(admin_client):
-    admin_client.seed["payouts"].rows["po-1"] = Payout(
-        payout_id="po-1",
-        academy_id="acad",
-        coach_id="coach-1",
-        amount_cents=80000,
-        period_start=datetime(2026, 4, 1, tzinfo=UTC),
-        period_end=datetime(2026, 4, 30, tzinfo=UTC),
-    )
-    r = admin_client.get("/api/v2/admin/finance/payouts")
-    assert r.status_code == 200
-    assert r.json()["payouts"][0]["payout_id"] == "po-1"
-
-
-def test_list_payouts_wrong_persona_404(coach_on_admin_client):
-    r = coach_on_admin_client.get("/api/v2/admin/finance/payouts")
-    assert r.status_code == 404
 
 
 def test_record_expense_creates_entry(admin_client):

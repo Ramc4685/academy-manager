@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     PayoutWarning,
     PersistedPayoutLine,
@@ -386,3 +387,50 @@ def test_payout_period_export_includes_replaced_occurrence(admin_client):
 def test_payout_period_routes_wrong_persona_404(coach_on_admin_client):
     response = coach_on_admin_client.get("/api/v2/admin/payout-periods/pp-1")
     assert response.status_code == 404
+
+
+class _MarkPaidLosesRace:
+    async def execute(self, command, *, actor_id: str = "system") -> PayoutPeriod:
+        raise PayoutPeriodConflictError("payout period 'pp-1' changed since it was loaded")
+
+
+def test_mark_paid_that_lost_a_race_is_a_409(admin_client):
+    _wire(admin_client, _period(status="approved", approved_at=_dt("2026-06-02T10:00:00")))
+    admin_client.use_cases.mark_payout_paid = _MarkPaidLosesRace()
+
+    response = admin_client.post(
+        "/api/v2/admin/payout-periods/pp-1/mark-paid",
+        json={"method": "check", "paid_at": "2026-06-03T10:00:00Z", "amount_cents": 7500},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "Finance.PayoutPeriodConflict" in response.text
+
+
+def test_period_view_flags_basis_and_a_paid_amount_that_differs(admin_client):
+    period = _period(
+        status="paid",
+        approved_at=_dt("2026-06-02T10:00:00"),
+        paid_at=_dt("2026-06-03T10:00:00"),
+        paid_method="check",
+        paid_amount_minor=7000,
+        revenue_basis="invoiced",
+    )
+    _wire(admin_client, period)
+
+    body = admin_client.get("/api/v2/admin/payout-periods/pp-1").json()
+
+    assert body["revenue_basis"] == "invoiced"
+    assert body["paid_amount_differs"] is True
+
+
+def test_period_export_labels_the_basis_column_per_period(admin_client):
+    def header(period: PayoutPeriod) -> tuple:
+        _wire(admin_client, period)
+        response = admin_client.get("/api/v2/admin/payout-periods/pp-1/export")
+        assert response.status_code == 200, response.text
+        rows = load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True)
+        return next(row for row in rows if row and row[0] == "Date")
+
+    assert "Tuition basis" in header(_period(revenue_basis="invoiced"))
+    assert "Expected revenue (legacy)" in header(_period(revenue_basis="expected"))

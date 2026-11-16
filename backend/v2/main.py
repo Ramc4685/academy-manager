@@ -1079,6 +1079,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
+    # Coach payroll settings card (L7), same reason.
+    from backend.v2.composition.payroll_settings import compose_payroll_settings
+
+    (
+        app.state.admin.get_payroll_settings,
+        app.state.admin.update_payroll_settings,
+    ) = compose_payroll_settings(db)
     from backend.v2.composition.account_deletion import (
         compose_deletion_request_follow_up,
         compose_execute_account_deletions,

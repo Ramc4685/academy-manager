@@ -265,9 +265,6 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/finance/expenses*", (route) =>
     fulfillJson(route, { expenses: [] })
   );
-  await page.route("**/api/v2/admin/finance/payouts*", (route) =>
-    fulfillJson(route, { payouts: [] })
-  );
   await page.route("**/api/v2/admin/finance/revenue*", (route) =>
     fulfillJson(route, { by_month: {} })
   );

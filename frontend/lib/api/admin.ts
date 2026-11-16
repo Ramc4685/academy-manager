@@ -886,23 +886,6 @@ export interface WithdrawalCreditPreviewResponse {
   no_credit_reason?: string | null;
 }
 
-export interface AdminPayoutView {
-  payout_id: string;
-  coach_id: string;
-  amount_cents: number;
-  period_start: string;
-  period_end: string;
-  paid_at: string | null;
-  expected_revenue_cents?: number | null;
-  students_count?: number | null;
-  sessions_count?: number | null;
-  rule_label?: string | null;
-}
-
-export interface AdminPayoutList {
-  payouts: AdminPayoutView[];
-}
-
 export type CoachPayBillingUnit = "per_session" | "per_hour" | "percent_of_revenue";
 export type CoachRateTimelineIssueType =
   | "gap"
@@ -2960,9 +2943,6 @@ export function generateAdminInvoiceArtifact(
 // Finance
 // ---------------------------------------------------------------------------
 
-export function listPayouts(): Promise<AdminPayoutList> {
-  return apiFetch<AdminPayoutList>("/admin/finance/payouts", { method: "GET" });
-}
 
 export function listExpenses(): Promise<AdminExpenseList> {
   return apiFetch<AdminExpenseList>("/admin/finance/expenses", { method: "GET" });

@@ -19,7 +19,7 @@ multi-academy switching it is the simplest path.
 
 ## Current clients
 
-- `payroll.ts` calls admin monthly payroll endpoints under `/admin/payroll/*`.
+- `payroll.ts` calls admin monthly payroll endpoints under `/admin/payroll/*` and the owner coach payroll settings at `/admin/payroll-settings`.
 - `payouts.ts` calls admin payout-period endpoints under `/admin/payout-periods/*`.
 - `sessions.ts` calls admin session and occurrence endpoints.
 - `students.ts` calls admin student progress and placement endpoints.

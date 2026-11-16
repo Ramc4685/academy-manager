@@ -49,3 +49,24 @@ export async function exportMonthlyPayrollXlsx(month: string): Promise<Blob> {
   return apiFetchBlob(
     `/admin/payroll/${encodeURIComponent(month)}/export`, { method: "GET" });
 }
+
+/** How a percent coach's invoiced-tuition base is counted (owner only, audited). */
+export interface PayrollSettings {
+  payroll_ach_discount_reduces_base: boolean;
+  payroll_count_checkout_first_month: boolean;
+  payroll_cancelled_class_share: "ran_only" | "all_scheduled";
+  payroll_missing_invoices: "block" | "pay_zero";
+  /** First month (YYYY-MM) assistant coaches are paid in the app; null = never. */
+  payroll_assistant_pay_from: string | null;
+}
+
+export async function getPayrollSettings(): Promise<PayrollSettings> {
+  return apiFetch<PayrollSettings>("/admin/payroll-settings", { method: "GET" });
+}
+
+export async function updatePayrollSettings(settings: PayrollSettings): Promise<PayrollSettings> {
+  return apiFetch<PayrollSettings>("/admin/payroll-settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}

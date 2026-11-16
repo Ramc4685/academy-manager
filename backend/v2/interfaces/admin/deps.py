@@ -30,12 +30,15 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
-    MongoPayoutRepository,
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.money_setting_audit import (
     RecordMoneySettingChange,
+)
+from backend.v2.contexts.billing.application.use_cases.payroll_settings import (
+    GetPayrollSettings,
+    UpdatePayrollSettings,
 )
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
@@ -263,7 +266,6 @@ class AdminUseCases:
     edit_expense: EditExpense
     delete_expense: DeleteExpense
     expenses: MongoExpenseRepository
-    payouts: MongoPayoutRepository
     revenue_query: AdminRevenueQuery
     # reads
     list_admin_sessions: object  # callable
@@ -333,6 +335,8 @@ class AdminUseCases:
     admin_registration_review: AdminRegistrationReview | None = None
     payout_periods: PayoutPeriodRepository | None = None
     list_monthly_payroll: ListMonthlyPayroll | None = None
+    get_payroll_settings: GetPayrollSettings | None = None
+    update_payroll_settings: UpdatePayrollSettings | None = None
     bulk_generate_payroll: BulkGeneratePayroll | None = None
     bulk_recompute_payroll: BulkRecomputePayroll | None = None
     generate_payout_period: GeneratePayoutPeriod | None = None

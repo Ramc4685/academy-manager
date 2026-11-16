@@ -1,7 +1,30 @@
 ## frontend/lib/api/README.md
 
-- [stale-not-built] README lines 13-14 say `generated/` "currently contains only `.gitkeep`; no ... generated `v2.d.ts` is committed". Code: `frontend/lib/api/generated/v2.d.ts` exists (about 1 MB) and there is no `.gitkeep`.
-- [stale-not-built] README lines 14, 35-39 say no OpenAPI snapshot is committed and CI skips the drift check with "No openapi.snapshot.json yet. Skipping drift check." Code: `frontend/lib/api/openapi.snapshot.json` exists (about 1.4 MB). `.github/workflows/production.yml:312-320` runs the drift check unconditionally (`openapi-typescript` against the snapshot, `diff -q` against `generated/v2.d.ts`, fails if out of date). There is no skip message.
-- [contract] README lines 16-31 describe regenerating types by running uvicorn and then `pnpm generate:api`. Code: `frontend/package.json:16` runs `openapi-typescript lib/api/openapi.snapshot.json -o lib/api/generated/v2.d.ts`, so it reads the committed snapshot and needs no running server. The snapshot is kept equal to the live API by a backend structural test (`production.yml:313`). README line 30 ("When generated types are reintroduced") is also stale.
-- [undocumented] The README "Files" list (lines 8-9) omits many top-level modules: `admin-account-deletions.ts`, `admin-ai-import.ts`, `admin-crm-pipeline.ts`, `admin-families.ts`, `admin-family-contacts.ts`, `admin-family-crm.ts`, `admin-family-import.ts`, `admin-people-duplicates.ts`, `auth-bridge-cookie.ts`, `auth-token.ts`, `billing-contract.ts`, `coach-paths.ts`, `magic-link.ts`, `parent-home.ts`, `password-reset.ts`, `payment-error.ts`, `platform.ts`, `proxy-headers.ts`, `proxy-origin.ts`, `student.ts`, `unsubscribe.ts`. All are in `frontend/lib/api/`.
-- [undocumented] `frontend/lib/api/v2/` has modules not covered in the README's v2 summary (line 11-12 lists "memberships, payouts, payroll, sessions, students"): `announcements.ts`, `departure-policy.ts`, `messages.ts`, `owner.ts`, `pricing.ts`, `session-types.ts`. The README for `v2/` is a separate report.
+- [stale-not-built] README lines 13-14 say `generated/` contains only `.gitkeep` and that no generated `v2.d.ts` is committed. Code: `frontend/lib/api/generated/v2.d.ts` is committed (about 1 MB, tracked in git) and there is no `.gitkeep`.
+- [stale-not-built] README lines 36-38 and 30 say the OpenAPI snapshot is not committed. Code: `frontend/lib/api/openapi.snapshot.json` is committed (about 1.4 MB, tracked in git).
+- [contract] README lines 35-39 say CI runs the drift check only if the snapshot exists, prints "No openapi.snapshot.json yet. Skipping drift check.", and relies on hand-written clients. Code: `.github/workflows/production.yml:316-320` always runs `openapi-typescript` on the snapshot and fails the job if `lib/api/generated/v2.d.ts` differs. The snapshot-presence check and skip message were not found in the lines checked.
+- [contract] README lines 18-28 say regeneration needs the FastAPI app running via uvicorn on port 8001. Code: `frontend/package.json:16` has `generate:api` as `openapi-typescript lib/api/openapi.snapshot.json -o lib/api/generated/v2.d.ts`. It reads the committed snapshot and needs no running server. The README does not say how the snapshot itself is refreshed.
+- [wording] README line 30 says "When generated types are reintroduced, commit `generated/v2.d.ts`". They are already present. The "review the PR diff as the API contract change" guidance still applies.
+- [undocumented] README lines 7-11 list `client.ts` and the persona wrappers. Many other modules in `frontend/lib/api/` are not mentioned:
+  - `student.ts`
+  - `platform.ts`
+  - `parent-home.ts`
+  - `magic-link.ts`
+  - `password-reset.ts`
+  - `unsubscribe.ts`
+  - `payment-error.ts`
+  - `billing-contract.ts`
+  - `auth-token.ts`
+  - `auth-bridge-cookie.ts`
+  - `proxy-origin.ts`
+  - `proxy-headers.ts`
+  - `coach-paths.ts`
+  - `admin-ai-import.ts`
+  - `admin-account-deletions.ts`
+  - `admin-crm-pipeline.ts`
+  - `admin-families.ts`
+  - `admin-family-contacts.ts`
+  - `admin-family-crm.ts`
+  - `admin-family-import.ts`
+  - `admin-people-duplicates.ts`
+- [undocumented] README line 7 describes `client.ts` as `apiFetch<T>`, in-flight dedup and `ApiError`. Also exported from `frontend/lib/api/client.ts`: `apiFetchBlob` (line 249), `setActiveAcademyId` and `getActiveAcademyId` (lines 31 and 40), `readRequestId` (line 56) and `apiRouteTemplate` (line 74). `apiFetch` also takes `dedup`, `authToken` and `timeoutMs` options (line 168, default 20s).
