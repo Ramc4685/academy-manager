@@ -143,6 +143,63 @@ async def test_dispatcher_dead_letters_after_attempts_exhausted(db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_dead_letter_logs_an_error_and_reports_to_sentry(db, monkeypatch, caplog) -> None:
+    """G:jobs_data_infra:5: a dead letter used to surface only in the next
+    morning's ops digest."""
+    import logging
+
+    from backend.v2.shared.events import dispatcher as dispatcher_module
+
+    reported: list[BaseException] = []
+    monkeypatch.setattr(dispatcher_module, "capture_exception", reported.append)
+    now = datetime.now(UTC)
+    await db["outbox_events"].insert_one(
+        _event_doc(
+            "alerting",
+            status="pending",
+            attempt_count=MAX_ATTEMPTS - 1,
+            next_retry_at=now,
+            created_at=now,
+        )
+    )
+    dispatcher = EventDispatcher(db, worker_id="worker-alert")
+
+    with caplog.at_level(logging.ERROR, logger=dispatcher_module.__name__):
+        await dispatcher._process_event(await dispatcher._claim_next_event())
+
+    assert [str(exc) for exc in reported] == ["retry me"]
+    assert any(
+        record.levelno == logging.ERROR and record.getMessage().startswith("event_dead_lettered")
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_unregistered_event_dead_letter_reports_a_message(db, monkeypatch) -> None:
+    from backend.v2.shared.events import dispatcher as dispatcher_module
+
+    messages: list[str] = []
+    monkeypatch.setattr(dispatcher_module, "capture_message", messages.append)
+    now = datetime.now(UTC)
+    doc = _event_doc("unknown", status="pending", next_retry_at=now, created_at=now)
+    doc["name"] = "Test.NobodyListens"
+    await db["outbox_events"].insert_one(doc)
+    dispatcher = EventDispatcher(db, worker_id="worker-unknown")
+
+    await dispatcher._process_event(await dispatcher._claim_next_event())
+
+    assert messages == ["Event dead-lettered: Test.NobodyListens (unregistered_schema_version)"]
+
+
+def test_retries_ride_out_an_hour_long_outage() -> None:
+    from backend.v2.shared.events.dispatcher import RETRY_DELAYS_SECONDS
+
+    # Delay after attempt n is RETRY_DELAYS_SECONDS[n]; the first is dispatch.
+    total = sum(RETRY_DELAYS_SECONDS[1:MAX_ATTEMPTS])
+    assert 50 * 60 <= total <= 70 * 60
+
+
+@pytest.mark.asyncio
 async def test_replay_dead_letter_rewrites_nested_event_id_and_resolves_original(db) -> None:
     _observed_replay_event_ids.clear()
     outbox = MongoOutbox(db)
