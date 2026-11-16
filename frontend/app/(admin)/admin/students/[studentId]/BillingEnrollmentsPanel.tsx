@@ -28,12 +28,10 @@ import {
   getErrorMessage,
 } from "./format";
 import { Field } from "./StudentEditForm";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO } from "@/lib/format/academy-time";
 
 type EnrollmentDialog = "move" | "override" | null;
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /**
  * Calendar-month period for a YYYY-MM-DD move date, mirroring the backend's
@@ -259,9 +257,10 @@ function MoveEnrollmentDialog({
   onCancel: () => void;
   onDone: (result: MoveBillingEnrollmentResponse) => void;
 }) {
+  const timezone = useAcademyTimezone();
   const [step, setStep] = useState<"form" | "confirm">("form");
   const [toSessionTypeId, setToSessionTypeId] = useState("");
-  const [moveDate, setMoveDate] = useState(todayISO);
+  const [moveDate, setMoveDate] = useState(() => academyDateISO(timezone));
   const [reason, setReason] = useState("");
 
   const targets = sessionTypes.filter(

@@ -29,10 +29,12 @@ import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/for
 import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
 
 import { statHint, statText } from "@/lib/ui/load-state";
+import { academyDateISO, academyMonthKey } from "@/lib/format/academy-time";
 
 import { MyFollowUpsCard } from "@/components/admin/my-follow-ups-card";
 import { SetupChecklistCard } from "@/components/admin/setup-checklist-card";
 import { useIsOwner } from "@/components/admin/owner-context";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
@@ -44,25 +46,13 @@ const RevenueChart = dynamic(() => import("@/components/admin/RevenueChart"), {
   loading: () => <div className="h-48 animate-pulse rounded-xl bg-rally-line/40" />,
 });
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function currentMonthKey(): string {
-  return new Date().toISOString().slice(0, 7);
-}
-
-function prevMonthKey(): string {
-  const d = new Date();
-  d.setUTCDate(1);
-  d.setUTCMonth(d.getUTCMonth() - 1);
-  return d.toISOString().slice(0, 7);
-}
-
 const RECENT_PAYMENTS_LIMIT = 5;
 
 export default function AdminDashboardPage() {
-  const today = todayISO();
+  // "Today" and "this month" are the academy's, not UTC's: after ~6 PM in
+  // Chicago the UTC date is already tomorrow (L2 A0-3).
+  const timezone = useAcademyTimezone();
+  const today = academyDateISO(timezone);
   const isOwner = useIsOwner();
 
   const sessionsQuery = useQuery({
@@ -115,7 +105,8 @@ export default function AdminDashboardPage() {
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
 
   const todayCount = sessions.length;
-  const monthRevenue = revenueByMonth[currentMonthKey()] ?? 0;
+  const monthRevenue = revenueByMonth[academyMonthKey(timezone)] ?? 0;
+  const unavailable = attentionQuery.data?.unavailable ?? [];
 
   const recentPayments = (paymentFeedQuery.data?.payments ?? []).slice(0, RECENT_PAYMENTS_LIMIT);
 
@@ -144,8 +135,19 @@ export default function AdminDashboardPage() {
             onRetry={() => void attentionQuery.refetch()}
             retrying={attentionQuery.isFetching}
           />
-        ) : (attentionQuery.data?.items ?? []).length > 0 ? (
+        ) : (attentionQuery.data?.items ?? []).length > 0 || unavailable.length > 0 ? (
           <div className="grid gap-3 lg:grid-cols-2" data-testid="admin-dashboard-attention">
+            {/* L2 A0-5: a source that failed is unknown, never "nothing waiting". */}
+            {unavailable.map((source) => (
+              <div
+                key={source.source}
+                role="status"
+                data-testid={`admin-dashboard-attention-unavailable-${source.source}`}
+                className="rounded-lg border border-dashed border-rally-line bg-rally-paper p-4 text-sm text-rally-muted"
+              >
+                Could not check {source.label}. Open the page directly to see it.
+              </div>
+            ))}
             {(attentionQuery.data?.items ?? []).map((item) => (
               <a
                 key={item.attention_id}
@@ -197,7 +199,7 @@ export default function AdminDashboardPage() {
             hint={statHint(
               revenueQuery,
               () =>
-                `Last month ${formatCents(revenueByMonth[prevMonthKey()] ?? 0, { whole: true })}`,
+                `Last month ${formatCents(revenueByMonth[academyMonthKey(timezone, -1)] ?? 0, { whole: true })}`,
             )}
             testId="admin-dashboard-revenue"
           />

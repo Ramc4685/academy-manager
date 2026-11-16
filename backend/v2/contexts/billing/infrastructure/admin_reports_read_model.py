@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from bson import ObjectId as BsonObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -560,6 +561,11 @@ def _period_has_unresolved_pay_issues(payout_period: dict[str, Any]) -> bool:
     )
 
 
+def _now() -> datetime:
+    """Seam for tests: the dashboard's aging buckets age against this instant."""
+    return datetime.now(UTC)
+
+
 def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
     """Returns an async callable for the owner finance/operations dashboard."""
     from backend.v2.shared.tenancy import current_academy_id
@@ -568,6 +574,10 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         academy_id = current_academy_id()
         timezone_name = await _reporting_timezone(db, academy_id)
         start, end = month_bounds(period, timezone_name)
+        # How late a balance is NOW, on the academy's clock. Aging against the
+        # month end made a not-yet-due invoice read 1-30 and an old one never
+        # leave 1-30.
+        aging_as_of = _now().astimezone(ZoneInfo(timezone_name)).date()
 
         # Spec 2026-09-07 §3.2: one reader is the definition of cash received.
         cash_collected_cents = (
@@ -613,7 +623,7 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 if family_id:
                     collection_family_ids.add(family_id)
                 due_date = invoice_due_date(invoice, end.date())
-                days_late = max((end.date() - due_date).days, 0)
+                days_late = max((aging_as_of - due_date).days, 0)
                 label = aging_label(days_late)
                 bucket = aging_totals[label]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
@@ -685,7 +695,7 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 if family_id:
                     collection_family_ids.add(family_id)
                 due_date = payment_due_date(payment, end.date())
-                days_late = max((end.date() - due_date).days, 0)
+                days_late = max((aging_as_of - due_date).days, 0)
                 label = aging_label(days_late)
                 bucket = aging_totals[label]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
@@ -715,15 +725,29 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         completed_count = 0
         cancelled_count = 0
         capacity = 0
-        sessions_cursor = db["sessions"].find(
-            {
-                "academy_id": academy_id,
-                "start_at": {"$gte": start, "$lt": end},
-                "is_deleted": {"$ne": True},
-            }
-        )
-        async for session in sessions_cursor:
-            session_id = str(session.get("session_id") or session.get("_id"))
+        # A class counts in every month it meets, not only the month it began:
+        # its occurrences in the month name it (as session economics does),
+        # plus any class whose first date falls in the month.
+        month_session_ids: set[str] = set()
+        async for occurrence in db["session_occurrences"].find(
+            {"academy_id": academy_id, "start_at": {"$gte": start, "$lt": end}},
+            {"session_id": 1, "template_session_id": 1},
+        ):
+            occurrence_session = occurrence_session_id(occurrence)
+            if occurrence_session:
+                month_session_ids.add(occurrence_session)
+        # Two queries, not one $or: session_id carries a partial index and the
+        # planner will not use it inside $or (docs/agent/backend-api-rules.md).
+        month_sessions: dict[str, dict[str, Any]] = {}
+        for clause in (
+            {"start_at": {"$gte": start, "$lt": end}},
+            {"session_id": {"$in": sorted(month_session_ids)}},
+        ):
+            async for doc in db["sessions"].find(
+                {"academy_id": academy_id, **clause, "is_deleted": {"$ne": True}}
+            ):
+                month_sessions.setdefault(str(doc.get("session_id") or doc.get("_id")), doc)
+        for session_id, session in month_sessions.items():
             session_ids.append(session_id)
             status = str(session.get("status") or "scheduled")
             if status == "completed":

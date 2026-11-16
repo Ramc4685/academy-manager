@@ -7,7 +7,6 @@ import {
   createEnrollment,
   deleteEnrollment,
   listAdminSessions,
-  listAdminStudents,
   pauseEnrollment,
   previewWithdrawalCredit,
   quoteAdminEnrollment,
@@ -37,6 +36,7 @@ import {
 import type { ApiError } from "@/lib/api/client";
 
 import { useIsOwner } from "@/components/admin/owner-context";
+import { StudentSearchPicker } from "@/components/admin/student-search-picker";
 import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
@@ -81,12 +81,6 @@ export function AddToRosterDialog({
     setForm(prefill ?? { student_id: "", parent_id: "", full_name: "" });
   }, [open, prefill]);
   const [error, setError] = useState<string | null>(null);
-  const studentsQuery = useQuery({
-    queryKey: queryKeys.admin.students(),
-    queryFn: listAdminStudents,
-    enabled: open,
-  });
-  const students = studentsQuery.data?.students ?? [];
   const quoteQuery = useQuery<AdminEnrollmentQuote>({
     queryKey: ["admin", "enrollment-quote", sessionId, form.student_id],
     queryFn: () => quoteAdminEnrollment({ session_id: sessionId, student_id: form.student_id }),
@@ -129,53 +123,21 @@ export function AddToRosterDialog({
         </p>
       )}
       <form onSubmit={handleSubmit} className="space-y-3">
-        {students.length > 0 ? (
-          <Field label="Student" required>
-            <StudentSelect
-              students={students}
-              value={form.student_id}
-              onChange={(student) =>
-                setForm({
-                  student_id: student.student_id,
-                  parent_id: student.parent_id,
-                  full_name: student.full_name,
-                })
-              }
-            />
-          </Field>
-        ) : (
-          <>
-            <Field label="Full name" required>
-              <input
-                type="text"
-                required
-                value={form.full_name}
-                onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Student reference" required>
-              <input
-                type="text"
-                required
-                value={form.student_id}
-                onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))}
-                className={inputClass}
-                placeholder={studentsQuery.isLoading ? "Loading students…" : "Student reference"}
-              />
-            </Field>
-            <Field label="Parent reference" required>
-              <input
-                type="text"
-                required
-                value={form.parent_id}
-                onChange={(e) => setForm((f) => ({ ...f, parent_id: e.target.value }))}
-                className={inputClass}
-                placeholder="Parent reference"
-              />
-            </Field>
-          </>
-        )}
+        <Field label="Student" required>
+          <StudentSearchPicker
+            enabled={open}
+            value={form.student_id}
+            selected={form.student_id ? form : undefined}
+            selectClassName={inputClass}
+            onChange={(student) =>
+              setForm({
+                student_id: student.student_id,
+                parent_id: student.parent_id,
+                full_name: student.full_name,
+              })
+            }
+          />
+        </Field>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
             Cancel
@@ -839,35 +801,6 @@ export function RemoveEnrollmentDialog({
         </DialogActions>
       </form>
     </RallyDialog>
-  );
-}
-
-export function StudentSelect({
-  students,
-  value,
-  onChange,
-}: {
-  students: AdminStudentView[];
-  value: string;
-  onChange: (student: AdminStudentView) => void;
-}) {
-  return (
-    <select
-      required
-      value={value}
-      onChange={(e) => {
-        const selected = students.find((s) => s.student_id === e.target.value);
-        if (selected) onChange(selected);
-      }}
-      className={inputClass}
-    >
-      <option value="">Select student</option>
-      {students.map((student) => (
-        <option key={student.student_id} value={student.student_id}>
-          {student.full_name}
-        </option>
-      ))}
-    </select>
   );
 }
 

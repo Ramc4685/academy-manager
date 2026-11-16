@@ -16,7 +16,7 @@ export type InboxTab =
   | "cancellations"
   | "pauses";
 
-/** Ids match the backend's `INBOX_QUEUE_IDS`; `?tab=` values key off them. */
+/** Counted ids match the backend's `INBOX_QUEUE_IDS`; `?tab=` values key off them. */
 export const INBOX_TABS: { id: InboxTab; label: string }[] = [
   { id: "registrations", label: "Registrations" },
   { id: "waitlist", label: "Waitlist" },
@@ -45,4 +45,16 @@ export function defaultInboxTab(
   if (isInboxTab(requested)) return requested;
   if (!counts) return INBOX_TABS[0].id;
   return INBOX_TABS.find((t) => (counts[t.id] ?? 0) > 0)?.id ?? INBOX_TABS[0].id;
+}
+
+/**
+ * Inbox nav badge (L2 A0-5): a count with failed queues is a floor, never the
+ * whole story — "N+" when some queues failed, "?" when none were counted.
+ */
+export function inboxBadge(
+  total: number,
+  someUnavailable: boolean
+): number | `${number}+` | "?" | undefined {
+  if (someUnavailable) return total > 0 ? `${total}+` : "?";
+  return total || undefined;
 }
