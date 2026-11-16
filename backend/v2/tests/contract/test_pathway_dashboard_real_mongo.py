@@ -63,6 +63,14 @@ async def test_dashboard_almost_stuck_and_kpis(real_db: Any) -> None:
     now = datetime.now(UTC)
     with tenant_scope(ACADEMY):
         for student_id in NAMES:
+            await real_db["students"].insert_one(
+                {
+                    "academy_id": ACADEMY,
+                    "student_id": student_id,
+                    "parent_id": "p",
+                    "full_name": "Kid",
+                }
+            )
             await real_db["enrollments"].insert_one(
                 {
                     "academy_id": ACADEMY,
@@ -130,17 +138,21 @@ async def test_dashboard_almost_stuck_and_kpis(real_db: Any) -> None:
         )
 
         certs = MongoSkillCertificateRepository(real_db)
-        for cert_id, issued_at in (("c-now", now), ("c-old", now - timedelta(days=400))):
+        # One issued certificate per level (0234), so each sits on its own level.
+        for cert_id, issued_at, level in (
+            ("c-now", now, level1),
+            ("c-old", now - timedelta(days=400), levels[1]),
+        ):
             await certs.save(
                 SkillCertificate(
                     cert_id=cert_id,
                     academy_id=ACADEMY,
                     student_id=STUCK,
                     program_id=program_id,
-                    level_id=level1.level_id,
+                    level_id=level.level_id,
                     cert_number=cert_id,
                     student_name="Sid",
-                    level_name=level1.name,
+                    level_name=level.name,
                     program_name=program.name,
                     completed_at=issued_at,
                     issued_by="owner",

@@ -79,6 +79,9 @@ class _AlwaysEnrolled:
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
         return True
 
+    async def student_exists(self, student_id: str) -> bool:
+        return True
+
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         return set(student_ids)
 
@@ -123,6 +126,13 @@ class _FakeSkillProgressRepo:
 
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None:
         return self._store.get((student_id, skill_id))
+
+    async def insert_if_missing(self, skill_progress: StudentSkillProgress) -> bool:
+        key = (skill_progress.student_id, skill_progress.skill_id)
+        if key in self._store:
+            return False
+        self._store[key] = skill_progress
+        return True
 
     async def list_for_student_level(
         self, student_id: str, level_id: str

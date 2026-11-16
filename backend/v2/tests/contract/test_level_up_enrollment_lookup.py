@@ -11,16 +11,22 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from bson import ObjectId
 
 from backend.v2.composition.level_up_lifecycle import (
     compose_expire_level_up_recommendations,
     enrollment_status_lookup,
 )
-from backend.v2.composition.pathway import compose_student_progress
+from backend.v2.composition.pathway import compose_curriculum, compose_student_progress
+from backend.v2.contexts.student_progress.application.use_cases.place_student import (
+    PlaceStudentInLevelCommand,
+)
+from backend.v2.contexts.student_progress.domain.errors import StudentNotFound
 from backend.v2.contexts.student_progress.domain.models import LevelUpRecommendation
 from backend.v2.contexts.student_progress.infrastructure.mongo_recommendation_repo import (
     MongoLevelUpRecommendationRepository,
 )
+from backend.v2.shared.tenancy.context import tenant_scope
 
 _NOW = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
 
@@ -86,6 +92,32 @@ async def test_lookup_never_sees_another_tenants_enrollment(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_student_exists_only_for_this_academys_students(db, acad) -> None:
+    """Placement's existence check (F3): another academy's id is not a student here."""
+    await db["students"].insert_many(
+        [
+            {
+                "academy_id": "test-academy",
+                "student_id": "st-here",
+                "full_name": "Here",
+                "parent_id": "p1",
+            },
+            {
+                "academy_id": "other-academy",
+                "student_id": "st-there",
+                "full_name": "There",
+                "parent_id": "p2",
+            },
+        ]
+    )
+    lookup = enrollment_status_lookup(db)
+
+    assert await lookup.student_exists("st-here") is True
+    assert await lookup.student_exists("st-there") is False
+    assert await lookup.student_exists("st-nobody") is False
+
+
+@pytest.mark.asyncio
 async def test_pending_for_student_is_scoped_and_ordered(db, acad) -> None:
     repo = MongoLevelUpRecommendationRepository(db)
     await repo.save(_pending("rec-later", "st-1", datetime(2026, 8, 21, tzinfo=UTC)))
@@ -140,3 +172,38 @@ def test_student_progress_composition_wires_the_enrollment_lookup(db) -> None:
     for use_case in (comp.recommend_level_up, comp.review_level_up, comp.get_level_up_queue):
         lookup = use_case._enrollments
         assert type(lookup).__name__ == "EnrollmentStatusAdapter", use_case
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_student_row_places_and_a_raw_object_id_is_refused(real_db) -> None:
+    """Rows from before parent_id only carry parent_user_id: placement must not 500 on them."""
+    raw_id = ObjectId()
+    await real_db["students"].insert_one(
+        {"academy_id": "acad-legacy", "student_id": "st-legacy", "parent_user_id": "p1"},
+        bypass_document_validation=True,
+    )
+    await real_db["students"].insert_one(
+        {"_id": raw_id, "academy_id": "acad-legacy", "student_id": "st-other"},
+        bypass_document_validation=True,
+    )
+    with tenant_scope("acad-legacy"):
+        program = await compose_curriculum(real_db).seed_badminton.execute(created_by="owner")
+        level = min(
+            await compose_curriculum(real_db).list_levels.execute(program.program_id),
+            key=lambda lv: lv.sequence,
+        )
+        progress = compose_student_progress(real_db)
+
+        def place(student_id: str) -> PlaceStudentInLevelCommand:
+            return PlaceStudentInLevelCommand(
+                student_id=student_id,
+                program_id=program.program_id,
+                level_id=level.level_id,
+                placed_by="owner",
+            )
+
+        await progress.place_student.execute(place("st-legacy"))
+        with pytest.raises(StudentNotFound):
+            await progress.place_student.execute(place(str(raw_id)))
+
+    assert await real_db["student_level_progress"].count_documents({"student_id": "st-legacy"}) == 1

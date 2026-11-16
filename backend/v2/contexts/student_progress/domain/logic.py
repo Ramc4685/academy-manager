@@ -44,20 +44,12 @@ def check_level_completion(
     return all(skill_id in passed_skill_ids for skill_id in required_skill_ids)
 
 
-def generate_cert_number(
-    academy_id: str,
-    student_id: str,
-    level_sequence: int,
-    timestamp_ms: int,
-) -> str:
-    """Generate a unique, human-readable certificate number.
+def format_cert_number(prefix: str | None, seq: int) -> str:
+    """``BLNO-C-0042``: the academy's invoice prefix, ``C`` and the sequence.
 
-    Format: {ACADEMY_PREFIX}-L{SEQ}-{STUDENT_SUFFIX}-{TIMESTAMP}
-    Example: ACM-L3-A1B2-1717613400000
+    No prefix gives ``C-0042`` rather than borrowing another academy's.
     """
-    academy_prefix = (academy_id[:3]).upper()
-    student_suffix = (student_id[-4:]).upper()
-    return f"{academy_prefix}-L{level_sequence}-{student_suffix}-{timestamp_ms}"
+    return f"{prefix}-C-{seq:04d}" if prefix else f"C-{seq:04d}"
 
 
 #: Pace estimates only look at recent passes, so a long break doesn't drag the

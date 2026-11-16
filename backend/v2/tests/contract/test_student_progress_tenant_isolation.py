@@ -144,3 +144,18 @@ async def test_certificate_repo_isolates_tenants(db) -> None:
 
     with tenant_scope("academy-b"):
         assert await repo.list_for_student("stu-a") == []
+
+
+@pytest.mark.asyncio
+async def test_certificate_writes_never_reach_another_academy(db) -> None:
+    repo = MongoSkillCertificateRepository(db)
+    with tenant_scope("academy-a"):
+        await repo.save(_certificate("stu-a"))
+
+    with tenant_scope("academy-b"):
+        assert not await repo.revoke("stu-a", "cert-stu-a", at=_NOW, by="b", reason="x")
+        await repo.anonymise_student("stu-a", student_name="Student X")
+
+    with tenant_scope("academy-a"):
+        [cert] = await repo.list_for_student("stu-a", include_revoked=True)
+    assert (cert.status, cert.student_name) == ("issued", "Alice")

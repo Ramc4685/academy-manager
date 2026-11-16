@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -8,8 +8,13 @@ import {
   buildCreateSkillBody,
   createLevel,
   createSkill,
+  getAdminPathwayDashboard,
   getFullPathway,
   listLessonCards,
+  reorderLevels,
+  reorderSkills,
+  retireLevel,
+  retireSkill,
   seedLessonCards,
   SKILL_PASS_RULES,
   SKILL_SCORING_TYPES,
@@ -27,6 +32,7 @@ import { SkillLadderDraftCard } from "@/components/admin/curriculum/skill-ladder
 import { levelSwatch } from "@/lib/level-color";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { queryKeys } from "@/lib/query/keys";
 import { defaultExternalSourceForSport, sourceTitlePlaceholder } from "@/lib/pathway-sport";
 
@@ -48,6 +54,24 @@ export function ProgramEditor({
     queryKey: ["admin", "pathway", programId],
     queryFn: () => getFullPathway(programId),
     enabled: Boolean(programId),
+  });
+
+  // Players on each level: a level with players cannot be retired.
+  const { data: dashboard } = useQuery({
+    queryKey: [...queryKeys.admin.pathwayDashboard(), programId],
+    queryFn: () => getAdminPathwayDashboard(programId),
+    enabled: Boolean(programId),
+  });
+  const playerCounts = new Map(dashboard?.levels.map((l) => [l.level_id, l.player_count]));
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "pathway", programId] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.pathwayDashboard() });
+  };
+
+  const moveLevel = useMutation({
+    mutationFn: (ids: string[]) => reorderLevels(programId, ids),
+    onSuccess: refresh,
   });
 
   const [showAddLevel, setShowAddLevel] = useState(false);
@@ -149,14 +173,29 @@ export function ProgramEditor({
         <p className="text-sm text-neutral-500">No levels yet. Add one to build the pathway.</p>
       ) : (
         <div className="space-y-4">
-          {data.levels.map((pathwayLevel) => (
+          {moveLevel.isError && (
+            <p role="alert" className="text-sm text-red-600">
+              {moveLevel.error.message || "Could not reorder the levels."}
+            </p>
+          )}
+          {data.levels.map((pathwayLevel, index) => (
             <LevelAccordion
               key={pathwayLevel.level.level_id}
               pathwayLevel={pathwayLevel}
               isBadminton={data.program.sport.toLowerCase() === "badminton"}
-              onSkillAdded={() =>
-                void queryClient.invalidateQueries({ queryKey: ["admin", "pathway", programId] })
+              playerCount={playerCounts.get(pathwayLevel.level.level_id)}
+              move={
+                <MoveButtons
+                  label={`level ${pathwayLevel.level.name}`}
+                  index={index}
+                  count={data.levels.length}
+                  disabled={moveLevel.isPending}
+                  onMove={(offset) =>
+                    moveLevel.mutate(swapped(data.levels.map((l) => l.level.level_id), index, offset))
+                  }
+                />
               }
+              onSkillAdded={refresh}
             />
           ))}
         </div>
@@ -238,15 +277,77 @@ function LessonCardsPanel({ programId }: { programId: string }) {
   );
 }
 
+/** ids with the item at `index` moved one place by `offset` (-1 up, +1 down). */
+export function swapped(ids: string[], index: number, offset: -1 | 1): string[] {
+  const next = [...ids];
+  [next[index], next[index + offset]] = [next[index + offset], next[index]];
+  return next;
+}
+
+function MoveButtons({
+  label,
+  index,
+  count,
+  disabled,
+  onMove,
+}: {
+  label: string;
+  index: number;
+  count: number;
+  disabled: boolean;
+  onMove: (offset: -1 | 1) => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Move ${label} up`}
+        disabled={disabled || index === 0}
+        onClick={() => onMove(-1)}
+        className="rounded px-1.5 text-xs text-neutral-500 hover:bg-neutral-100 disabled:opacity-40 dark:hover:bg-neutral-800"
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        aria-label={`Move ${label} down`}
+        disabled={disabled || index === count - 1}
+        onClick={() => onMove(1)}
+        className="rounded px-1.5 text-xs text-neutral-500 hover:bg-neutral-100 disabled:opacity-40 dark:hover:bg-neutral-800"
+      >
+        ↓
+      </button>
+    </>
+  );
+}
+
 function LevelAccordion({
   pathwayLevel,
   isBadminton,
+  playerCount,
+  move,
   onSkillAdded,
 }: {
   pathwayLevel: PathwayLevel;
   isBadminton: boolean;
+  /** Undefined until the dashboard loads; Retire waits for it. */
+  playerCount: number | undefined;
+  move: ReactNode;
   onSkillAdded: () => void;
 }) {
+  const [confirmRetire, setConfirmRetire] = useState(false);
+  const [skillNotice, setSkillNotice] = useState<string | null>(null);
+  const retire = useMutation({
+    mutationFn: () => retireLevel(pathwayLevel.level.level_id),
+    onSuccess: () => {
+      setConfirmRetire(false);
+      onSkillAdded();
+    },
+  });
+  const moveSkill = useMutation({
+    mutationFn: (ids: string[]) => reorderSkills(pathwayLevel.level.level_id, ids),
+    onSuccess: onSkillAdded,
+  });
   const [open, setOpen] = useState(true);
   const [showAddSkill, setShowAddSkill] = useState(false);
   const [skillName, setSkillName] = useState("");
@@ -324,18 +425,78 @@ function LevelAccordion({
 
       {open && (
         <div className="divide-y divide-neutral-100 dark:divide-neutral-800">
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+            {move}
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={playerCount !== 0}
+              onClick={() => setConfirmRetire(true)}
+            >
+              Retire level
+            </Button>
+            {playerCount !== undefined && playerCount > 0 && (
+              <span className="text-xs text-neutral-500">
+                {playerCount} player{playerCount !== 1 ? "s" : ""} on this level: move them before
+                retiring it
+              </span>
+            )}
+            {moveSkill.isError && (
+              <span role="alert" className="text-xs text-red-600">
+                {moveSkill.error.message || "Could not reorder the skills."}
+              </span>
+            )}
+            {skillNotice && (
+              <span role="status" className="text-xs text-neutral-600">
+                {skillNotice}
+              </span>
+            )}
+          </div>
+          <ConfirmActionDialog
+            open={confirmRetire}
+            onOpenChange={(next) => {
+              setConfirmRetire(next);
+              if (!next) retire.reset();
+            }}
+            overline="Retire level"
+            title={`Retire ${level.name}?`}
+            consequence="The level leaves the pathway. Certificates already issued for it stay."
+            confirmLabel="Retire level"
+            pending={retire.isPending}
+            error={retire.isError ? retire.error.message || "Could not retire the level." : null}
+            onConfirm={() => retire.mutate()}
+          />
           <LevelColorPicker level={level} onSaved={onSkillAdded} />
           {skills.length === 0 && !showAddSkill && (
             <p className="px-4 py-3 text-sm text-neutral-400">No skills yet.</p>
           )}
 
-          {skills.map(({ skill, external_refs }) => (
+          {skills.map(({ skill, external_refs }, index) => (
             <SkillRow
               key={skill.skill_id}
               skill={skill}
               externalRefs={external_refs}
               isBadminton={isBadminton}
               onRefAdded={onSkillAdded}
+              move={
+                <MoveButtons
+                  label={`skill ${skill.name}`}
+                  index={index}
+                  count={skills.length}
+                  disabled={moveSkill.isPending}
+                  onMove={(offset) =>
+                    moveSkill.mutate(swapped(skills.map((s) => s.skill.skill_id), index, offset))
+                  }
+                />
+              }
+              onRetired={(queued) => {
+                setSkillNotice(
+                  queued > 0
+                    ? `Skill retired. ${queued} student${queued !== 1 ? "s" : ""} queued for a level-up.`
+                    : "Skill retired.",
+                )
+                onSkillAdded();
+              }}
             />
           ))}
 
@@ -429,12 +590,24 @@ function SkillRow({
   externalRefs,
   isBadminton,
   onRefAdded,
+  move,
+  onRetired,
 }: {
   skill: Skill;
   externalRefs: ExternalLessonReference[];
   isBadminton: boolean;
   onRefAdded: () => void;
+  move: ReactNode;
+  onRetired: (levelUpsQueued: number) => void;
 }) {
+  const [confirmRetire, setConfirmRetire] = useState(false);
+  const retire = useMutation({
+    mutationFn: () => retireSkill(skill.skill_id),
+    onSuccess: (result) => {
+      setConfirmRetire(false);
+      onRetired(result.level_ups_queued);
+    },
+  });
   const [showAddRef, setShowAddRef] = useState(false);
   const [source, setSource] = useState<ExternalSource>(defaultExternalSourceForSport(isBadminton));
   const [sourceTitle, setSourceTitle] = useState("");
@@ -516,8 +689,30 @@ function SkillRow({
           >
             {showAddRef ? "Cancel" : "+ Reference"}
           </button>
+          {move}
+          <button
+            type="button"
+            onClick={() => setConfirmRetire(true)}
+            className="text-xs font-medium text-red-600 hover:underline"
+          >
+            Retire
+          </button>
         </div>
       </div>
+      <ConfirmActionDialog
+        open={confirmRetire}
+        onOpenChange={(next) => {
+          setConfirmRetire(next);
+          if (!next) retire.reset();
+        }}
+        overline="Retire skill"
+        title={`Retire ${skill.name}?`}
+        consequence="The skill leaves the level. Students who were waiting only on it are queued for a level-up."
+        confirmLabel="Retire skill"
+        pending={retire.isPending}
+        error={retire.isError ? retire.error.message || "Could not retire the skill." : null}
+        onConfirm={() => retire.mutate()}
+      />
 
       {externalRefs.length > 0 && (
         <ul className="ml-8 mt-2 space-y-1">

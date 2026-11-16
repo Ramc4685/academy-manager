@@ -212,7 +212,8 @@ export function LevelCertificate({
   const levelIndex = detail.level_number ? detail.level_number - 1 : -1;
   // The band wears this level's curriculum colour (the academy colour if the
   // level is gone); the number is volt wherever volt still reads on it.
-  const band = ladder[levelIndex] ?? accent;
+  // The colour snapshotted at issue wins, so a later recolour cannot change it.
+  const band = safeHexColor(cert.level_color, ladder[levelIndex] ?? accent);
   const ink = inkOn(band);
   const numberColor = contrastRatio(VOLT, band) >= 3 ? VOLT : ink;
   return (

@@ -226,6 +226,12 @@ export interface SkillCertificate {
   program_name: string;
   completed_at: string;
   issued_at: string;
+  /** Only admin reads return revoked certificates. */
+  status?: "issued" | "revoked";
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+  /** The level colour when it was issued; null on older certificates. */
+  level_color?: string | null;
 }
 
 /** One certificate plus what the printable certificate shows (read from the curriculum). */
@@ -691,10 +697,55 @@ export interface PathwayDashboard {
   coaches: { coach_id: string; coach_name: string; skills_ticked: number }[];
 }
 
-export function getAdminPathwayDashboard(): Promise<PathwayDashboard> {
-  return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", {
+export function getAdminPathwayDashboard(programId?: string): Promise<PathwayDashboard> {
+  const query = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
+  return apiFetch<PathwayDashboard>(`/admin/pathway/dashboard${query}`, {
     method: "GET",
   });
+}
+
+/** Retire a level. 409s: Curriculum.LevelHasStudents, Curriculum.LevelUpsPending (message says what to do). */
+export function retireLevel(levelId: string): Promise<Level> {
+  return apiFetch<Level>(`/admin/levels/${encodeURIComponent(levelId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ is_active: false }),
+  });
+}
+
+/** Retire a skill; students it alone held back are queued for a level-up. */
+export function retireSkill(
+  skillId: string,
+): Promise<Skill & { active_students: number; level_ups_queued: number }> {
+  return apiFetch(`/admin/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ is_active: false }),
+  });
+}
+
+/** 409 Curriculum.LevelUpsPending while level-ups in this program wait for review. */
+export function reorderLevels(programId: string, ids: string[]): Promise<{ ids: string[] }> {
+  return apiFetch(`/admin/programs/${encodeURIComponent(programId)}/levels/order`, {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function reorderSkills(levelId: string, ids: string[]): Promise<{ ids: string[] }> {
+  return apiFetch(`/admin/levels/${encodeURIComponent(levelId)}/skills/order`, {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function revokeCertificate(
+  studentId: string,
+  certId: string,
+  reason: string,
+): Promise<SkillCertificate> {
+  return apiFetch<SkillCertificate>(
+    `/admin/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/revoke`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
 }
 
 /** A hex colour for the level, or "" to go back to its default. */
