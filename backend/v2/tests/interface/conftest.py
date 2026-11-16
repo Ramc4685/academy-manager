@@ -474,6 +474,11 @@ def _now() -> datetime:
     return datetime(2026, 5, 16, 9, 0, tzinfo=UTC)
 
 
+def _marking_now() -> datetime:
+    # After every fixture class has started: a future class cannot be marked.
+    return datetime(2026, 5, 16, 19, 0, tzinfo=UTC)
+
+
 @pytest.fixture()
 def seed():
     sessions = [
@@ -848,7 +853,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             outbox=_outbox,
             idempotency_store=_idempotency_store,
             academy_id=lambda: "test-academy",
-            clock=_now,
+            clock=_marking_now,
         ),
         bulk_mark_attendance=BulkMarkAttendance(
             attendance_repo=_attendance_repo,
@@ -857,14 +862,14 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             outbox=_outbox,
             idempotency_store=_idempotency_store,
             academy_id=lambda: "test-academy",
-            clock=_now,
+            clock=_marking_now,
         ),
         correct_attendance=CorrectAttendance(
             attendance_repo=_attendance_repo,
             occurrence_lookup=_occurrence_lookup,
             outbox=_outbox,
             academy_id=lambda: "test-academy",
-            clock=_now,
+            clock=_marking_now,
         ),
         list_attendance_for_occurrence=_attendance_repo.list_for_occurrence,
         overdue_cents_by_student=_overdue_cents_by_student,

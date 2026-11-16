@@ -71,6 +71,7 @@ class MongoAttendanceRepository(TenantScopedRepository):
                 occurrence_id=attendance.occurrence_id,
                 student_id=attendance.student_id,
                 existing_attendance_id=existing.attendance_id if existing else None,
+                existing_status=existing.status if existing else None,
             ) from None
 
     async def update_status(self, attendance: Attendance) -> None:
