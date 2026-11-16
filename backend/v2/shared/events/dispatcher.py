@@ -41,6 +41,8 @@ AUDIT_ONLY_EVENTS: frozenset[tuple[str, int]] = frozenset(
         ("Billing.SubscriptionUpdated", 1),
         ("Coaching.AttendanceCorrected", 1),
         ("Coaching.AttendanceMarked", 1),
+        ("Coaching.AttendanceVoided", 1),
+        ("Coaching.SessionFeedbackPosted", 1),
         ("Enrollment.WaitlistPromoted", 1),
         ("StudentProgress.SkillStatusUpdated", 1),
     }

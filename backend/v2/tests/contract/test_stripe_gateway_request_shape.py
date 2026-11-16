@@ -375,6 +375,11 @@ async def test_invoice_checkout_with_autopay_optin_saves_payment_method(
     assert pi_data["application_fee_amount"] == fee_cents
     # Dynamic payment methods: never pin payment_method_types.
     assert "payment_method_types" not in call
+    # A saved bank account needs the Financial Connections permission (A4-10).
+    assert call["payment_method_options"]["us_bank_account"] == {
+        "financial_connections": {"permissions": ["payment_method"]},
+        "verification_method": "automatic",
+    }
 
 
 async def test_invoice_checkout_autopay_optin_without_enrollment_ids_omits_metadata_key(

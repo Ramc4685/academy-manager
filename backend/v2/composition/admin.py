@@ -34,6 +34,7 @@ from backend.v2.composition.autopay_comms import (
     build_send_autopay_notice,
 )
 from backend.v2.composition.billing_setup_roster import BillingSetupRosterAdapter
+from backend.v2.composition.collections import parent_payments_link
 from backend.v2.composition.connected_account_adapters import (
     ConnectedAccountGatewayDisabler,
     ConnectedAccountGatewayReader,
@@ -56,6 +57,7 @@ from backend.v2.composition.event_handlers import (
     install_dispute_notifier,
     install_dunning_notifier,
 )
+from backend.v2.composition.families import compose_system_family_autopay_pause
 from backend.v2.composition.invoice_contact_copies import build_invoice_contact_copies
 from backend.v2.composition.invoice_naming import (
     build_invoice_naming_resolver,
@@ -1265,6 +1267,7 @@ def compose_admin(
             self_service_policies=self_service_policy_repo,
             contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
             pay_page_url=pay_page_url,
+            pay_link=parent_payments_link(db),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
@@ -1516,6 +1519,7 @@ def compose_admin(
         parent_customers=parent_customers_repo,
         email_port=_invoice_email_port,
         outbox=outbox,
+        family_autopay=compose_system_family_autopay_pause(db),
     )
 
     # ---- Failed autopay reads (#235). The Billing Health plumbing wiring
@@ -2058,7 +2062,7 @@ def compose_admin(
         async def get_customer(
             self, parent_id: str, *, academy_id: str
         ) -> ParentBillingCustomerSnapshot | None:
-            doc = await self._customers.get_academy_customer(parent_id=parent_id)
+            doc = await self._customers.get_display_customer(parent_id=parent_id)
             return self._snapshot(doc) if doc else None
 
     class _BillingSetupAutopayAdapter:

@@ -835,6 +835,8 @@
               "overdue_dues",
               "autopay_failure",
               "dunning_exhaustion",
+              "autopay_stuck",
+              "bank_return_review",
               "pause_requests",
               "scheduled_resume_blocked",
               "scheduled_action_failed",
@@ -12025,6 +12027,7 @@
             "items": {
               "$ref": "#/components/schemas/BulkAttendanceEntryRequest"
             },
+            "maxItems": 100,
             "title": "Entries",
             "type": "array"
           },
@@ -13295,6 +13298,18 @@
       },
       "CoachRosterEntry": {
         "properties": {
+          "attendance_marked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendance Marked At"
+          },
           "attendance_status": {
             "anyOf": [
               {
@@ -14198,10 +14213,24 @@
           "health": {
             "$ref": "#/components/schemas/BillingHealthDto"
           },
+          "payments_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payments Blocked Reason"
+          },
           "payments_possible": {
             "default": false,
             "title": "Payments Possible",
             "type": "boolean"
+          },
+          "refund_failures": {
+            "$ref": "#/components/schemas/RefundFailuresDto"
           },
           "webhook_events": {
             "$ref": "#/components/schemas/WebhookBacklogDto"
@@ -14236,6 +14265,11 @@
           "configured": {
             "default": false,
             "title": "Configured",
+            "type": "boolean"
+          },
+          "direct_charges_supported": {
+            "default": false,
+            "title": "Direct Charges Supported",
             "type": "boolean"
           },
           "payouts_enabled": {
@@ -28092,6 +28126,79 @@
           "level_id"
         ],
         "title": "RecordTestBody",
+        "type": "object"
+      },
+      "RefundFailureDto": {
+        "properties": {
+          "amount_cents": {
+            "default": 0,
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "currency": {
+            "default": "usd",
+            "title": "Currency",
+            "type": "string"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "parent_id": {
+            "default": "",
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "payment_id": {
+            "title": "Payment Id",
+            "type": "string"
+          },
+          "reason": {
+            "default": "unknown",
+            "title": "Reason",
+            "type": "string"
+          },
+          "refund_id": {
+            "title": "Refund Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refund_id",
+          "payment_id"
+        ],
+        "title": "RefundFailureDto",
+        "type": "object"
+      },
+      "RefundFailuresDto": {
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RefundFailureDto"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "RefundFailuresDto",
         "type": "object"
       },
       "RegisterDeviceRequest": {

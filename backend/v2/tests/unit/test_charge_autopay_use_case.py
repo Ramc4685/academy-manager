@@ -4,7 +4,7 @@ All tests use in-memory fakes — no Mongo, no real Stripe, no email.
 
 Invariants verified:
 - Happy path: open invoice + succeeded PI → LedgerPayment recorded + allocated → invoice paid
-- No saved card → ValueError("no_saved_payment_method")
+- No saved card → decline_code "no_saved_payment_method" (parent action needed)
 - Already paid → ValueError (not chargeable)
 - Void → ValueError (not chargeable)
 - Decline (decline_code returned) → ChargeResult(success=False), status unchanged
@@ -23,6 +23,7 @@ from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopa
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+from backend.v2.contexts.billing.domain.errors import StripeUnavailable
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -274,9 +275,19 @@ class FakeStripeSucceeds:
 class FakeSavedCards:
     """The stored-card reader: one (customer, pm) per Stripe account."""
 
-    def __init__(self, cards: dict[str | None, tuple[str, str]] | None = None) -> None:
+    def __init__(
+        self,
+        cards: dict[str | None, tuple[str, str]] | None = None,
+        blocked: set[str] | None = None,
+    ) -> None:
         self._cards = cards or {}
+        self._blocked = blocked or set()
         self.calls: list[dict[str, str | None]] = []
+        self.blocked_checks: list[tuple[str, str]] = []
+
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        self.blocked_checks.append((parent_id, payment_method_id))
+        return payment_method_id in self._blocked
 
     async def get_saved_payment_method(
         self, *, parent_id: str, stripe_account_id: str | None
@@ -345,7 +356,7 @@ class FakeStripeRaises:
         return {"id": stripe_payment_method_id, "type": "card"}
 
     async def create_off_session_payment_intent(self, **kwargs) -> tuple[str, str, str | None]:
-        raise RuntimeError("Stripe API unreachable")
+        raise StripeUnavailable("Stripe API unreachable")
 
 
 class FakeStripeNoCard:
@@ -909,14 +920,60 @@ async def test_happy_path_partially_paid_invoice() -> None:
     assert call["amount_cents"] == 3_000
 
 
-async def test_no_saved_card_raises_value_error() -> None:
-    """Parent with no saved card raises ValueError containing 'no_saved_payment_method'."""
+async def test_no_saved_card_returns_parent_action_needed() -> None:
+    """L1 A4-1: no card/bank is the parent's to fix, not a technical fault: a normal
+    failed result the worker turns into an "add a payment method" notice. No
+    Stripe call and no attempt row (nothing was attempted)."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
-    with pytest.raises(ValueError, match="no_saved_payment_method"):
-        await _uc(repo, FakeStripeNoCard()).execute("inv-1")
+    result = await _uc(repo, FakeStripeNoCard()).execute("inv-1")
 
-    # No payment should be recorded
+    assert result.success is False
+    assert result.decline_code == "no_saved_payment_method"
+    assert result.status == "open"
     assert repo.recorded_payments == []
+    assert repo.payment_attempts == []
+
+
+async def test_platform_charge_uses_the_stripe_default_not_a_stored_id() -> None:
+    """A parent can change cards in the Stripe Billing Portal and nothing syncs it
+    back, so the house path charges the customer's current default (L1 B2)."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds(customer_id="cus_s", pm_id="pm_portal")
+    saved = FakeSavedCards({None: ("cus_s", "pm_stale")})
+
+    await _uc(repo, stripe, parent_customers=saved).execute("inv-1")
+
+    assert len(stripe.lookup_calls) == 1
+    assert stripe.create_calls[0]["payment_method_id"] == "pm_portal"
+    assert saved.calls == []
+    assert saved.blocked_checks == [("parent-1", "pm_portal")]
+
+
+async def test_platform_charge_skips_a_method_stripe_blocked() -> None:
+    """L1 A4-8: Stripe blocked this bank; the search still returns it as default."""
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds(customer_id="cus_s", pm_id="pm_s")
+
+    result = await _uc(repo, stripe, parent_customers=FakeSavedCards(blocked={"pm_s"})).execute(
+        "inv-1"
+    )
+
+    assert result.decline_code == "no_saved_payment_method"
+    assert stripe.create_calls == []
+
+
+async def test_platform_charge_parks_when_the_customer_search_is_unavailable() -> None:
+    """The lookup itself can hit a Stripe outage: park, not a technical failure (B2)."""
+
+    class _Down(FakeStripeSucceeds):
+        async def get_default_payment_method(self, *, academy_id: str, parent_id: str):
+            raise StripeUnavailable("timeout")
+
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    result = await _uc(repo, _Down()).execute("inv-1")
+
+    assert result.decline_code == "stripe_unavailable"
+    assert repo.payment_attempts == []
 
 
 async def test_already_paid_invoice_raises_value_error() -> None:
@@ -1142,17 +1199,30 @@ async def test_requires_action_projects_requires_action_outcome() -> None:
     ]
 
 
-async def test_stripe_exception_returns_charge_result_false() -> None:
-    """Gateway raises (network/API error) → ChargeResult(success=False), status unchanged."""
+async def test_stripe_unavailable_is_not_a_decline() -> None:
+    """L1 A4-3: Stripe down / bad key / rate limit → a parkable result. No failed
+    attempt row (it would read as the parent's decline), status unchanged."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     result = await _uc(repo, FakeStripeRaises()).execute("inv-1")
 
     assert result.success is False
     assert result.status == "open"
-    assert result.balance_due_cents == 10_000
-    assert "Stripe API unreachable" in (result.decline_code or "")
-
+    assert result.decline_code == "stripe_unavailable"
     assert repo.recorded_payments == []
+    assert repo.payment_attempts == []
+
+
+async def test_unexpected_gateway_error_propagates_to_the_worker() -> None:
+    """Anything else is a bug on our side; the worker parks it as a technical failure."""
+
+    class _Boom(FakeStripeRaises):
+        async def create_off_session_payment_intent(self, **kwargs):
+            raise RuntimeError("bug")
+
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    with pytest.raises(RuntimeError):
+        await _uc(repo, _Boom()).execute("inv-1")
+    assert repo.payment_attempts == []
 
 
 async def test_requires_action_returns_charge_result_false_with_flag() -> None:
@@ -1303,26 +1373,6 @@ async def test_idempotency_key_changes_when_invoice_period_changes() -> None:
         "autopay:inv-period:2026-06:10000",
         "autopay:inv-period:2026-07:10000",
     ]
-
-
-async def test_stripe_exception_failed_attempt_key_includes_period_amount_and_status() -> None:
-    """Stripe-error attempts are scoped so different amount attempts do not collapse."""
-    repo = FakeLedgerRepo(
-        invoices=[
-            _invoice(
-                invoice_id="inv-stripe-error",
-                status="open",
-                balance_due_cents=7_500,
-                period="2026-07",
-            )
-        ]
-    )
-
-    await _uc(repo, FakeStripeRaises()).execute("inv-stripe-error")
-
-    assert repo.payment_attempts[0]["idempotency_key"] == (
-        "autopay-attempt:inv-stripe-error:2026-07:7500:failed:stripe-error"
-    )
 
 
 async def test_stripe_not_configured_returns_decline() -> None:

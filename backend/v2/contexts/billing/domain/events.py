@@ -159,6 +159,17 @@ class DunningNoticeRequestedPayload(BaseModel):
     currency: str
     attempt_no: int
     terminal: bool
+    #: Additive (L1): which copy to send. ``attempt_no == 0`` with
+    #: ``failure_code == "no_saved_payment_method"`` is the "add a card" notice.
+    failure_code: str | None = None
+    next_attempt_at: datetime | None = None
+    bank_debit: bool = False
+
+
+#: Event-id prefix of the notice sent when money is taken back after it settled
+#: (late bank return): its handler skips an unreachable parent instead of
+#: dead-lettering (L1 B5).
+PAYMENT_RETURNED_NOTICE_PREFIX = "dunning-notice:payment-returned:"
 
 
 class DunningNoticeRequested(DomainEvent):
@@ -171,6 +182,34 @@ class DunningNoticeRequested(DomainEvent):
     name: Literal["Billing.DunningNoticeRequested"] = "Billing.DunningNoticeRequested"
     schema_version: Literal[1] = 1
     payload: DunningNoticeRequestedPayload
+
+
+class PaymentReceiptRequestedPayload(BaseModel):
+    """The parent's receipt for one settled ledger payment (L1 A5-2).
+
+    Emitted from the webhook that settles the payment, for every method, with
+    ``event_id = payment-receipt:{payment_id}`` so a replayed webhook (or the
+    card path that also settles synchronously) never sends a second one.
+    """
+
+    model_config = {"frozen": True}
+
+    payment_id: str
+    parent_id: str
+    amount_cents: int
+    currency: str
+    #: Single-invoice payments name the tuition month; a balance payment
+    #: spanning several invoices leaves these empty.
+    invoice_id: str | None = None
+    period: str | None = None
+    autopay: bool = False
+    bank_debit: bool = False
+
+
+class PaymentReceiptRequested(DomainEvent):
+    name: Literal["Billing.PaymentReceiptRequested"] = "Billing.PaymentReceiptRequested"
+    schema_version: Literal[1] = 1
+    payload: PaymentReceiptRequestedPayload
 
 
 class PaymentDisputeNoticePayload(BaseModel):

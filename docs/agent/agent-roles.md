@@ -9,7 +9,7 @@ the table doesn't decide. Agent definitions live in `.claude/agents/`, each with
 |---|---|---|---|---|
 | Lead | Opus | the coordinating session; a new session each day or milestone, started from `docs/agent/lead-handoff.md` | owns the roadmap, writes each brief, routes each task to a role, merges reviewed work, reports to the owner | writes or edits product code |
 | Planner | Fable, high | `planner` subagent | called only when the lead cannot write a confident brief, or before building anything in the risk areas below; one call per question | edits files, assumes a product decision |
-| Builder | Opus, medium | its OWN CHIP SESSION in its own worktree for any feature or fix round, kept through review fixes; the `builder` subagent only for a fix of a few lines | builds one slice end to end; runs the full suite after its last merge before reporting ready; reports once, at the end | merges to the default branch, touches another chip's files |
+| Builder | Opus, medium | its OWN CHIP SESSION in its own worktree for any feature or fix round, kept through review fixes; the `builder` subagent only for a fix of a few lines | builds one slice end to end; runs the full backend suite locally once (`PREPUSH_FULL=1`, or `pytest v2/tests -n 4`) after its last merge, before reporting ready; reports once, at the end | merges to the default branch, touches another chip's files |
 | Reviewer | Opus, medium | `reviewer` subagent | reviews every change before merge | edits code |
 | Risk reviewer | Fable, high | `risk-reviewer` subagent | one pass per risky branch (rule 1); the lead verifies fixes by reading the diff | edits code |
 | Mechanical | Haiku, low | `mechanical` subagent | seeds, fixtures, status tables, docs sync, lint and format, regenerated files | design decisions, domain logic |
@@ -41,8 +41,17 @@ Notes Gate). The global guard mod (`~/.claude/mods/guard`) blocks force pushes a
 
 No AI attribution anywhere: branch names, commit messages and PR bodies never mention Claude, Codex or AI, and
 carry no `Co-Authored-By` or "Generated with" lines. In this repo the pre-push hook runs
-`scripts/dev/pre-push-checks.sh` (about 40 minutes), so run the push in the background. A PR also needs a release
-note (`AGENTS.md`, Release Notes) and a `/code-review` pass before it opens.
+`scripts/dev/pre-push-checks.sh` (about 10 minutes at most), so run the push in the background. A PR also needs a
+release note (`AGENTS.md`, Release Notes; `PR: TBD` is fine before the PR exists) and a `/code-review` pass before it
+opens.
+
+**One local full run per lane.** The hook no longer runs the full backend suite; CI does, about 7 minutes after the
+push. The builder's single full run after its last merge (Roles) is the only local one. Do not repeat it for review
+fixes; CI covers those.
+
+**Drift once per lane.** The repo's `.claude/settings.json` sets `EGM_DRIFT_GATE=off`, so commits (merge commits
+included) no longer stop for a drift report. The lead runs the `drift` agent once per lane, after its last commit
+and before the PR opens, for each folder the lane changed, and commits the reports with the lane.
 
 ## Capacity
 

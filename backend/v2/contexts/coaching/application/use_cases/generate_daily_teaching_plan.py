@@ -4,7 +4,10 @@ Cross-context orchestrator (coaching application layer). It composes, with no
 new write paths:
 
 * ``ListCoachOccurrencesForDate`` — the coach's sessions for a date,
-* ``GetSessionRoster`` — students per session,
+* ``GetOccurrenceRoster`` — who is in the room for each class: make-up and
+  trial children included, children on hold or with an absence notice left
+  out (``GetSessionRoster``, the standing roster, when no occurrence roster
+  is wired or for the per-session route),
 * ``GetTeachingFocus`` (student_progress) — the next skill per student,
 * curriculum lesson cards + level/skill YouTube refs + skill criteria,
 
@@ -40,6 +43,18 @@ class OccurrenceLister(Protocol):
 
 class RosterGetter(Protocol):
     async def execute(self, session_id: str) -> list[Any]: ...
+
+
+class OccurrenceRosterGetter(Protocol):
+    async def execute(self, *, session_id: str, occurrence_id: str) -> list[Any]: ...
+
+
+def _in_the_room(row: Any) -> bool:
+    if getattr(row, "expected_absence", False):
+        return False
+    # One-time (make-up / trial) rows have no enrollment status; an enrollment
+    # row counts only while active (not held, not departed).
+    return getattr(row, "entry_source", "enrollment") != "enrollment" or row.status == "active"
 
 
 class TeachingFocusGetter(Protocol):
@@ -210,7 +225,9 @@ class GenerateDailyTeachingPlan:
         lesson_cards: LessonCardReader,
         video_refs: VideoRefReader,
         criteria: CriterionReader,
+        occurrence_roster: OccurrenceRosterGetter | None = None,
     ) -> None:
+        self._occurrence_roster = occurrence_roster
         self._occurrences = occurrences
         self._get_roster = get_roster
         self._teaching_focus = teaching_focus
@@ -275,10 +292,20 @@ class GenerateDailyTeachingPlan:
         cards_by_level: dict[str, list[Any]],
     ) -> SessionTeachingPlan:
         session_id = str(getattr(occurrence, "session_id", ""))
-        groups = await self._build_groups(session_id, program_id, cards_by_skill, cards_by_level)
+        occurrence_id = getattr(occurrence, "occurrence_id", None)
+        roster = None
+        if self._occurrence_roster is not None and occurrence_id:
+            rows = await self._occurrence_roster.execute(
+                session_id=str(getattr(occurrence, "roster_session_id", None) or session_id),
+                occurrence_id=str(occurrence_id),
+            )
+            roster = [r for r in rows if _in_the_room(r)]
+        groups = await self._build_groups(
+            session_id, program_id, cards_by_skill, cards_by_level, roster=roster
+        )
         return SessionTeachingPlan(
             session_id=session_id,
-            occurrence_id=getattr(occurrence, "occurrence_id", None),
+            occurrence_id=occurrence_id,
             title=str(getattr(occurrence, "title", "")),
             location=str(getattr(occurrence, "location", "")),
             start_at=getattr(occurrence, "start_at", None),
@@ -294,8 +321,11 @@ class GenerateDailyTeachingPlan:
         program_id: str | None,
         cards_by_skill: dict[str, list[Any]],
         cards_by_level: dict[str, list[Any]],
+        *,
+        roster: list[Any] | None = None,
     ) -> SessionGroups:
-        roster = await self._get_roster.execute(session_id)
+        if roster is None:
+            roster = await self._get_roster.execute(session_id)
 
         if not program_id:
             return SessionGroups(

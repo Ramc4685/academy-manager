@@ -375,3 +375,69 @@ async def test_build_session_groups_for_single_session() -> None:
     assert len(groups.groups) == 1
     assert groups.groups[0].students[0].next_skill.skill_id == "sk-a"
     assert groups.unplaced == []
+
+
+class _FakeOccurrenceRoster:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+        self.calls: list[tuple[str, str]] = []
+
+    async def execute(self, *, session_id: str, occurrence_id: str) -> list[object]:
+        self.calls.append((session_id, occurrence_id))
+        return self._rows
+
+
+@pytest.mark.asyncio
+async def test_plan_uses_the_days_roster_not_the_standing_one() -> None:
+    """Make-up and trial children are planned for; held children and those
+    with an absence notice are not."""
+    occurrence_roster = _FakeOccurrenceRoster(
+        [
+            SimpleNamespace(
+                student_id="stu-1",
+                full_name="Alice",
+                status="active",
+                entry_source="enrollment",
+                expected_absence=False,
+            ),
+            SimpleNamespace(
+                student_id="stu-held",
+                full_name="Hal",
+                status="held",
+                entry_source="enrollment",
+                expected_absence=False,
+            ),
+            SimpleNamespace(
+                student_id="stu-away",
+                full_name="Ava",
+                status="active",
+                entry_source="enrollment",
+                expected_absence=True,
+            ),
+            SimpleNamespace(
+                student_id="stu-makeup",
+                full_name="Max",
+                status=None,
+                entry_source="makeup",
+                expected_absence=False,
+            ),
+        ]
+    )
+    use_case = GenerateDailyTeachingPlan(
+        occurrences=_FakeOccurrences([_occurrence(SESSION_ID)]),
+        get_roster=_FakeRoster({SESSION_ID: [_roster_entry("stu-standing", "Standing")]}),
+        teaching_focus=GetTeachingFocus(
+            level_progress=_FakeLevelProgressRepo([]),
+            skill_progress=_FakeSkillProgressRepo([]),
+            skill_lookup=_FakeSkillLookup(),
+        ),
+        lesson_cards=_FakeLessonCards([]),
+        video_refs=_FakeVideoRefs({}, {}),
+        criteria=_FakeCriteria({}),
+        occurrence_roster=occurrence_roster,
+    )
+
+    plan = await use_case.execute(coach_id=COACH_ID, on_date=ON_DATE, program_id=None)
+
+    assert occurrence_roster.calls == [(SESSION_ID, f"occ-{SESSION_ID}")]
+    assert [u.student_id for u in plan.sessions[0].unplaced] == ["stu-1", "stu-makeup"]

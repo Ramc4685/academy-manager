@@ -94,9 +94,9 @@ export function NotifyPanel() {
         <div className="mt-5 grid gap-3">
           {/* Issue #774: the "Dues reminders" toggle used to live here. It was
               persisted and read by nothing. The real control is Billing rules
-              → Past-due reminder days, where an empty list is the off switch. */}
+              → Payment reminder days, where an empty list is the off switch. */}
           <p className="text-sm text-rally-muted" data-testid="notify-dues-reminders-moved">
-            Past-due reminder emails are configured in Settings &rarr; Billing rules.
+            Payment reminder emails are configured in Settings &rarr; Billing rules.
           </p>
           <Toggle
             label="Win-back emails (30/60/90 days after leaving)"

@@ -9,7 +9,7 @@ infrastructure, but they are NOT charge outcomes and must never be read as one.
 
 Three consumers key off charge statuses and would misread a mint failure:
 
-* ``MongoDunningStateRepository._latest_payment_attempt_status`` — a mint
+* ``MongoDunningStateRepository._latest_payment_attempt`` — a mint
   failure written after a genuine ``succeeded`` row would stop dunning from
   resolving an invoice that just paid, and keep escalating it (terminal rung:
   autopay disabled).

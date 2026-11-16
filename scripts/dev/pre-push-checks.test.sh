@@ -44,13 +44,27 @@ assert_tier "backend only"    $'backend/v2/contexts/curriculum/service.py\nbacke
 assert_tier "frontend only"   'frontend/app/admin/page.tsx'                              ""    false false true  false false false
 assert_tier "billing risk"    'backend/v2/contexts/billing/invoice.py'                   ""    false true  false true  true  false
 assert_tier "auth risk"       'frontend/lib/auth/auth-domain.ts'                         ""    false false true  true  true  false
-assert_tier "tenancy risk"    'backend/v2/shared/tenancy.py'                             ""    false true  false true  true  false
+assert_tier "tenancy risk"    'backend/v2/shared/tenancy/context.py'                     ""    false true  false true  true  false
 assert_tier "migration risk"  'backend/v2/migrations/m042_x.py'                          ""    false true  false true  true  false
+assert_tier "composition risk" 'backend/v2/composition/overdue_families.py'              ""    false true  false true  true  false
+assert_tier "webhook risk"    'backend/v2/interfaces/parent/webhook_routes.py'           ""    false true  false true  true  false
+assert_tier "bff proxy risk"  'frontend/app/api/v2/[...path]/route.ts'                   ""    false false true  true  true  false
 assert_tier "workflow risk"   '.github/workflows/production.yml'                         ""    false false false true  true  false
 assert_tier "scripts risk"    'scripts/dev/pre-push-checks.sh'                           ""    false false false true  true  false
 assert_tier "lockfile risk"   'frontend/pnpm-lock.yaml'                                  ""    false false true  true  true  false
-assert_tier "mixed be+fe"     $'backend/v2/main.py\nfrontend/app/page.tsx'               ""    false true  true  false true  false
-assert_tier "e2e billing"     'frontend/e2e/parent-billing.spec.ts'                      ""    false false true  true  true  true
+assert_tier "manifest risk"   'frontend/package.json'                                    ""    false false true  true  true  false
+assert_tier "requirements risk" 'backend/requirements-dev.txt'                           ""    false true  false true  true  false
+assert_tier "dockerfile risk" 'backend/Dockerfile'                                       ""    false true  false true  true  false
+assert_tier "money route risk" 'backend/v2/interfaces/parent/payment_routes.py'          ""    false true  false true  true  false
+assert_tier "auth token risk" 'frontend/lib/api/auth-token.ts'                           ""    false false true  true  true  false
+# Anchored regex: substrings outside the risk paths no longer escalate.
+assert_tier "authoring not auth" 'backend/v2/contexts/curriculum/authoring.py'           ""    false true  false false false false
+assert_tier "billing UI page" 'frontend/app/(admin)/admin/billing/page.tsx'              ""    false false true  false false false
+assert_tier "billing test"    'backend/v2/tests/unit/test_billing_math.py'               ""    false true  false false false false
+# Mixed backend+frontend is focused on both sides, not broad.
+assert_tier "mixed be+fe"     $'backend/v2/contexts/curriculum/api.py\nfrontend/app/page.tsx' \
+                                                                                         ""    false true  true  false false false
+assert_tier "e2e billing"     'frontend/e2e/parent-billing.spec.ts'                      ""    false false true  false false true
 assert_tier "e2e non-risk"    'frontend/e2e/smoke.spec.ts'                               ""    false false true  false false true
 assert_tier "docs + backend"  $'docs/testing.md\nbackend/v2/contexts/curriculum/api.py'  ""    false true  false false false false
 assert_tier "full flag docs"  'README.md'                                                "--full" true false false false true true

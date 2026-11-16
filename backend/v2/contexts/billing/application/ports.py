@@ -279,6 +279,12 @@ class ParentStripeCustomerRepository(Protocol):
         stripe_account_id: str | None = None,
     ) -> None: ...
 
+    async def flag_payment_method_blocked(
+        self, *, payment_method_id: str, reason: str, at: datetime
+    ) -> int:
+        """Mark a saved method Stripe can no longer charge; returns rows flagged."""
+        ...
+
 
 class SavedPaymentMethodReader(Protocol):
     """Reads the parent's stored chargeable card on one Stripe account.
@@ -294,6 +300,23 @@ class SavedPaymentMethodReader(Protocol):
     ) -> tuple[str, str] | None:
         """(stripe_customer_id, payment_method_id) on ``stripe_account_id``, or None."""
         ...
+
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        """Stripe has blocked this exact method (closed bank, revoked mandate)."""
+        ...
+
+
+class FamilyAutopayPauser(Protocol):
+    """Pauses every active-autopay enrollment of one parent, audited as the system.
+
+    Money taken back (late bank return, lost dispute) or a bank that cannot be
+    debited again stops autopay for the whole family, not one enrollment (L1 B4).
+    Idempotent per ``request_id``; returns how many enrollments were paused.
+    """
+
+    async def pause_family(
+        self, *, academy_id: str, parent_id: str, reason: str, request_id: str
+    ) -> int: ...
 
 
 class AutopayConsentRepository(Protocol):
@@ -1049,6 +1072,15 @@ class LedgerRepository(Protocol):
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None: ...
+    async def record_refund_failure(
+        self,
+        *,
+        stripe_payment_intent_id: str,
+        refund_id: str,
+        reason: str,
+        amount_cents: int,
+        failed_at: datetime,
+    ) -> bool: ...
     async def get_payment_allocation_by_idempotency_key(
         self, idempotency_key: str
     ) -> PaymentAllocation | None: ...
@@ -1120,6 +1152,17 @@ class LedgerRepository(Protocol):
     ) -> dict[str, Any] | None: ...
 
     async def list_allocations_for_payment(self, payment_id: str) -> list[PaymentAllocation]: ...
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        """Allocation reversal rows already written for this payment."""
+        ...
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        """Redo the invoice/payment repair of a reversal that already ran, for a
+        replay after a crash between the allocation delete and the repair."""
+        ...
 
     async def sum_allocations_for_invoice(self, invoice_id: str) -> int: ...
 

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 
 import { listAudit, recordAudit, toCsv } from "@/lib/offline/audit";
-import { describeQueuedMutation } from "@/lib/offline/mutation-label";
+import { correctAttendance } from "@/lib/api/coach";
+import { attendanceConflict, describeQueuedMutation } from "@/lib/offline/mutation-label";
 import {
   dropById,
   getById,
@@ -21,7 +22,8 @@ import { useIsNativeApp } from "@/lib/use-native-app";
  * Lists mutations that failed with a domain error (4xx) and were therefore
  * not applied server-side. For each entry the coach can retry, dismiss, export
  * their audit log, or — for case #4 (two-device same student) — pick which
- * device's mark to keep.
+ * mark to keep: the recorded one, or theirs (sent as a correction, since
+ * replaying the same first mark would only 409 again).
  */
 
 export default function NeedsReviewPage() {
@@ -29,6 +31,7 @@ export default function NeedsReviewPage() {
   const [loading, setLoading] = useState(true);
   const isNativeApp = useIsNativeApp();
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [choiceError, setChoiceError] = useState<Record<string, string>>({});
 
   async function refresh() {
     setItems(await listNeedsReview());
@@ -104,6 +107,38 @@ export default function NeedsReviewPage() {
     await refresh();
   }
 
+  /** Case #4: replace the recorded mark with the one queued on this phone. */
+  async function keepMine(m: QueuedMutation) {
+    const conflict = attendanceConflict(m);
+    if (!conflict) return;
+    setRetrying(m.mutation_id);
+    try {
+      await correctAttendance(conflict.occurrence_id, conflict.student_id, {
+        status: conflict.mine as "present" | "absent" | "late",
+        reason: "coach kept the mark queued on their phone",
+      });
+      await dropById(m.mutation_id);
+      await recordAudit({
+        kind: "synced",
+        mutation_id: m.mutation_id,
+        endpoint: m.endpoint,
+        error_code: m.error?.code,
+        ts: new Date().toISOString(),
+      });
+    } catch (err) {
+      setChoiceError((prev) => ({
+        ...prev,
+        [m.mutation_id]:
+          (err as { code?: string }).code === "Coaching.CorrectionWindowExpired"
+            ? "This mark is older than 48 hours, so only an admin can change it."
+            : "Couldn’t change the mark. Try again in a moment.",
+      }));
+    } finally {
+      setRetrying(null);
+      await refresh();
+    }
+  }
+
   async function exportCsv() {
     const audit = await listAudit();
     const csv = toCsv(audit);
@@ -155,28 +190,56 @@ export default function NeedsReviewPage() {
             <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
               {reviewReason(m)}
             </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {/*
-                The action ids deliberately do NOT extend the row's own
-                `tray-<id>` prefix, so a prefix match for rows never picks up
-                an action (see e2e/helpers/row-actions.ts).
-              */}
-              <RetryButton
-                disabled={retrying !== null}
-                busy={retrying === m.mutation_id}
-                testId={`tray-retry-${m.mutation_id}`}
-                onClick={() => void retry(m)}
-              />
-              <button
-                type="button"
-                disabled={retrying !== null}
-                data-testid={`tray-dismiss-${m.mutation_id}`}
-                onClick={() => void dismiss(m)}
-                className="min-h-touch rounded-md border border-amber-300 px-3 text-sm disabled:opacity-50 dark:border-amber-700"
-              >
-                Dismiss
-              </button>
-            </div>
+            {choiceError[m.mutation_id] && (
+              <p role="alert" className="mt-1 text-xs text-red-700">
+                {choiceError[m.mutation_id]}
+              </p>
+            )}
+            {attendanceConflict(m) ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={retrying !== null}
+                  data-testid={`tray-keep-recorded-${m.mutation_id}`}
+                  onClick={() => void dismiss(m)}
+                  className="min-h-touch rounded-md border border-amber-300 px-3 text-sm disabled:opacity-50 dark:border-amber-700"
+                >
+                  Keep {attendanceConflict(m)!.recorded}
+                </button>
+                <button
+                  type="button"
+                  disabled={retrying !== null}
+                  data-testid={`tray-use-mine-${m.mutation_id}`}
+                  onClick={() => void keepMine(m)}
+                  className="min-h-touch rounded-md border border-amber-300 px-3 text-sm font-semibold disabled:opacity-50 dark:border-amber-700"
+                >
+                  Change to {attendanceConflict(m)!.mine}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {/*
+                  The action ids deliberately do NOT extend the row's own
+                  `tray-<id>` prefix, so a prefix match for rows never picks up
+                  an action (see e2e/helpers/row-actions.ts).
+                */}
+                <RetryButton
+                  disabled={retrying !== null}
+                  busy={retrying === m.mutation_id}
+                  testId={`tray-retry-${m.mutation_id}`}
+                  onClick={() => void retry(m)}
+                />
+                <button
+                  type="button"
+                  disabled={retrying !== null}
+                  data-testid={`tray-dismiss-${m.mutation_id}`}
+                  onClick={() => void dismiss(m)}
+                  className="min-h-touch rounded-md border border-amber-300 px-3 text-sm disabled:opacity-50 dark:border-amber-700"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
           </li>
         ))}
       </ul>
@@ -192,11 +255,16 @@ const REVIEW_REASONS: Record<string, string> = {
     "This student is no longer enrolled in the session, so your mark wasn’t saved.",
   "Coaching.ConflictAttendanceExists":
     "Attendance was already recorded for this student, so your mark wasn’t applied.",
+  "Coaching.OccurrenceNotStarted": "That class hadn’t started yet, so your mark wasn’t saved.",
   "Coaching.SessionNotAssigned":
     "This session isn’t assigned to you for that date, so your mark wasn’t saved.",
 };
 
 function reviewReason(m: QueuedMutation): string {
+  const conflict = attendanceConflict(m);
+  if (conflict) {
+    return `Already recorded as ${conflict.recorded}; you marked ${conflict.mine}. Which should stand?`;
+  }
   const code = m.error?.code;
   if (code && REVIEW_REASONS[code]) return REVIEW_REASONS[code];
   return "This change couldn’t be saved. Retry it, or dismiss it and mark again from the session.";

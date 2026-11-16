@@ -1787,6 +1787,9 @@ AdminAttentionKind = Literal[
     # reached the parent — a decline mid-ladder, and a ladder that gave up.
     "autopay_failure",
     "dunning_exhaustion",
+    "autopay_stuck",
+    # L1: a bank return or dispute the ledger could not reverse on its own.
+    "bank_return_review",
     "pause_requests",
     "scheduled_resume_blocked",
     "scheduled_action_failed",

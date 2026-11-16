@@ -38,6 +38,7 @@ class GetSessionRoster:
                     status=e.status,
                     pending_cancellation_at=e.pending_cancellation_at,
                     hold_return_on=e.hold_return_on,
+                    enrolled_at=e.enrolled_at,
                 )
             )
         return out

@@ -198,6 +198,61 @@ def test_no_dunning_alerts_means_no_autopay_cards(admin_client):
     ids = {item["attention_id"] for item in r.json()["items"]}
     assert "autopay-failure" not in ids
     assert "dunning-exhaustion" not in ids
+    assert "autopay-stuck" not in ids
+
+
+def test_autopay_stuck_on_our_side_reaches_the_owner(admin_client):
+    """L1 A7-1: a ladder parked before any decline spends no attempt, so the
+    #774 counts never showed it."""
+    admin_client.seed["dunning_alerts"] = {"autopay_stuck": 3}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = {item["attention_id"]: item for item in r.json()["items"]}
+    assert items["autopay-stuck"]["count"] == 3
+    assert "not the card" in items["autopay-stuck"]["detail"]
+    assert "operator" not in items["autopay-stuck"]["detail"]
+
+
+def test_autopay_waiting_on_stripe_setup_says_finish_setup(admin_client):
+    """L1 should-fix 8: an unfinished Stripe account is the academy's to fix."""
+    admin_client.seed["dunning_alerts"] = {"autopay_needs_stripe_setup": 2}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = {i["attention_id"]: i for i in r.json()["items"]}["autopay-stuck"]
+    assert item["count"] == 2
+    assert "finish Stripe setup" in item["detail"]
+    assert "our side" not in item["detail"]
+    assert item["href"] == "/admin/billing-health"
+
+
+def test_autopay_stuck_on_our_side_does_not_point_at_billing_health(admin_client):
+    """Fix round 2: Billing health lists only Stripe setup, so a fault on our
+    side must not send the owner there."""
+    admin_client.seed["dunning_alerts"] = {"autopay_stuck": 1}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    item = {i["attention_id"]: i for i in r.json()["items"]}["autopay-stuck"]
+    assert "Billing health" not in item["detail"]
+    assert "tries again" in item["detail"]
+    assert item["href"] == "/admin/payments"
+
+
+def test_bank_returns_needing_a_manual_look_reach_the_owner(admin_client):
+    """Fix round 2: partial or unreversible returns show in admin."""
+    admin_client.seed["dunning_alerts"] = {"bank_returns_to_review": 2}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = {i["attention_id"]: i for i in r.json()["items"]}["bank-return-review"]
+    assert item["count"] == 2
+    assert item["kind"] == "bank_return_review"
+    assert "manual look" in item["detail"]
 
 
 def _overdue_reader(invoices: list[dict]):

@@ -20,6 +20,7 @@ from typing import Any
 
 from backend.v2.contexts.billing.application.use_cases.pause_family_autopay import (
     PauseFamilyAutopay,
+    SystemFamilyAutopayPause,
 )
 from backend.v2.contexts.billing.infrastructure.family_billing_read_model import (
     MongoFamilyBillingReadModel,
@@ -72,9 +73,17 @@ def compose_admin_families(db: Any) -> AdminFamilies:
         # this academy mailing the same address — and this page must say so.
         suppressions=MongoSuppressionRepository(db),
     )
-    pause = PauseFamilyAutopay(
+    return AdminFamilies(reader=reader, pause_autopay=_family_pause(db, audit))
+
+
+def _family_pause(db: Any, audit: MongoBillingAuditLogRepository) -> PauseFamilyAutopay:
+    return PauseFamilyAutopay(
         enrollments=MongoStudentBillingEnrollmentRepository(db),
         audit=audit,
         idempotency=MongoIdempotencyStore(db),
     )
-    return AdminFamilies(reader=reader, pause_autopay=pause)
+
+
+def compose_system_family_autopay_pause(db: Any) -> SystemFamilyAutopayPause:
+    """The family pause money reversals and dead banks trigger (L1 B4)."""
+    return SystemFamilyAutopayPause(_family_pause(db, MongoBillingAuditLogRepository(db)))

@@ -184,7 +184,7 @@ make up            # saas-up + seed + status   (wraps scripts/dev/saas_staging.s
 make saas-down / saas-reset / saas-nuke
 
 # Backend
-cd backend && pytest v2/tests -n auto -q            # the test suite (~8,500 tests; a few minutes with -n auto)
+cd backend && pytest v2/tests -n 4 -q               # the full suite (~9,400 tests); cap workers at 4 locally, each replays migrations against your mongod
 cd backend && ruff check v2 && ruff format --check v2
 cd backend && PYTHONPATH=.. lint-imports --config pyproject.toml   # DDD boundary contracts (CI-blocking)
 
@@ -237,6 +237,7 @@ Run backend commands from `backend/` (or repo root with `PYTHONPATH=.`); modules
 - A new `page.tsx`/`route.ts` under `frontend/app/` breaks four backend inventory tests. In the same commit: add the route to `docs/qa/2026-06-28-production-scale-local-inventory-manifest.json`, bump the hardcoded route count in `test_inventory_control_evidence.py` and `test_inventory_acceptance_coverage.py`, and satisfy `scripts/dev/audit_inventory_static_gaps.py`. Check with `pytest v2/tests/unit/test_inventory_*.py v2/tests/unit/test_audit_inventory_manifest.py -q`.
 - Unique indexes on optional string fields that also serve lookups: use `partialFilterExpression={field: {"$gt": ""}}`, never `{"$type": "string"}` (the planner ignores `$type` partials for eq/`$in` lookups → COLLSCAN). Avoid `$or` across partial-indexed fields. `explain()` on a real mongod; mongomock evaluates neither partial filters nor plans, and ignores validators.
 - Test fakes for stores must copy the real store's refusals (insert-only writes raise on duplicate keys, audit appends dedup). Permissive fakes hid two P1 money bugs on #664.
+- A real-Mongo test must use the `real_db` fixture. `db` is mongomock unless `CONTRACT_TESTS_MONGO_URL` is set, so a test written against `db` silently skips the indexes and validators it meant to exercise.
 - Real-Mongo contract tests: never run two `pre-push-checks.sh` gates against one mongod (concurrent migration replays crash it). Push branches one at a time with `V2_MONGO_URL` set to your own mongod. Local Mongo is 7.0, prod and CI are 8.0. Start that mongod with `--wiredTigerEngineConfigString "file_manager=(close_idle_time=10,close_scan_interval=5)"`: dropped per-test collections keep their file handles open for WiredTiger's default 10 minutes, and one gate run passes macOS's 61,440 open files per process (`FileNotOpen`, then every test fails on connection refused).
 - A failing e2e spec is not "the known flake" until it passes alone on an idle machine.
 - A PR with zero CI checks usually has the wrong base or conflicts with `main` (`mergeable_state: dirty`); GitHub dispatches no workflows. Retarget or merge `origin/main`, then push.
@@ -256,7 +257,7 @@ Run backend commands from `backend/` (or repo root with `PYTHONPATH=.`); modules
 - **Never weaken:** `backend/v2/shared/tenancy/*`, `shared/auth/middleware.py`, `load_auth_claims.py`, `contexts/billing/domain/ledger.py`, webhook handling/dedup, the import-linter contracts, the structural tests, `docs/security-matrix.md` semantics (404-on-wrong-persona), CORS wildcard rejection in `main.py`.
 - **Migrations are append-only** once merged; never renumber or edit an applied migration — write a new one.
 - **`backend/scripts/archive_legacy_payments.py` is destructive and manual** — never run or automate without the runbook (`docs/runbooks/legacy-payments-retirement.md`).
-- Generated/derived files — don't hand-edit: `frontend/lib/api/generated/`, `graphify-out/`, `.open-next/`, `docs/architecture/generated/`, release notes (CI-generated).
+- Generated/derived files — don't hand-edit: `frontend/lib/api/generated/`, `graphify-out/`, `.open-next/`, `docs/architecture/generated/`.
 
 ---
 
@@ -313,12 +314,6 @@ session used. Forgotten worktree caches (~1.3 GB of `frontend/node_modules`
 plus `backend/.venv` each) have filled the disk before and broken local e2e
 runs and Docker with ENOSPC.
 
-```bash
-scripts/dev/cleanup_worktrees.sh                 # dry run — report what would be freed
-scripts/dev/cleanup_worktrees.sh --apply         # delete gitignored caches (keeps worktrees)
-scripts/dev/cleanup_worktrees.sh --prune-merged  # also remove worktrees whose branch merged
-```
-
 Concretely, after your PR merges:
 
 - Remove the worktree you created: `git worktree remove <path>` (from the main
@@ -328,9 +323,6 @@ Concretely, after your PR merges:
   `pnpm install` and a venv symlink restore them in minutes.
 - Never leave a temp checkout under `.claude/worktrees/` or `.worktrees/`
   carrying caches after its branch is merged.
-
-The cleanup script only touches gitignored, regenerable artifacts; it is the
-sanctioned path and does not need the `rm -rf` approval below.
 
 Never run without explicit approval:
 
@@ -347,9 +339,13 @@ git clean -fd
 Write this yourself as part of the change, before pushing — do not leave it
 to CI. `.github/workflows/release-notes.yml` is validation-only: it fails when
 `backend/` or `frontend/` changed without a complete note, and it never writes
-to the PR branch. To create a local starting point after the PR number is
-known, run `python3 scripts/dev/release_notes_check.py --generate --pr-number
-<number>`, then replace every generated placeholder before pushing.
+to the PR branch. Write the note before the PR exists with `PR: TBD`: the gate
+accepts a complete note added in the PR whose `PR:` line is a placeholder, so
+stamping the number never costs an extra push (the release publisher reads it
+from the squash subject's `(#NNNN)`). Stamp it on a later push if you have one.
+To create a local starting point after the PR number is known, run
+`python3 scripts/dev/release_notes_check.py --generate --pr-number <number>`,
+then replace every generated placeholder before pushing.
 
 Before merging a PR to `main` (or when batching several PRs into one deploy),
 add a file to `docs/release-notes/YYYY-MM-DD-<slug>.md`:
@@ -357,7 +353,7 @@ add a file to `docs/release-notes/YYYY-MM-DD-<slug>.md`:
 ```markdown
 # <slug>
 
-PR: #<number>
+PR: #<number>   (or `PR: TBD` before the PR exists)
 
 ## What changed
 <1-3 sentences, user/operator-facing framing>

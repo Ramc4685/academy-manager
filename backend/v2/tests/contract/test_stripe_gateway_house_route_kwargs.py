@@ -21,6 +21,13 @@ from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripe
 
 ACCT = "acct_tenant_1"
 
+_BANK_SAVE_OPTIONS = {
+    "us_bank_account": {
+        "financial_connections": {"permissions": ["payment_method"]},
+        "verification_method": "automatic",
+    }
+}
+
 
 class _Obj(dict):
     def __getattr__(self, item: str) -> Any:
@@ -201,6 +208,7 @@ async def test_house_autopay_setup_checkout_kwargs(calls: _Calls) -> None:
         "customer_creation": "always",
         "metadata": setup_metadata,
         "setup_intent_data": {"metadata": setup_metadata},
+        "payment_method_options": _BANK_SAVE_OPTIONS,
     }
 
     await _gw().create_autopay_setup_checkout_session(**kwargs, stripe_account=ACCT)
@@ -254,6 +262,7 @@ async def test_house_invoice_checkout_kwargs(calls: _Calls, autopay_optin: bool)
     }
     if autopay_optin:
         expected["customer_creation"] = "always"
+        expected["payment_method_options"] = _BANK_SAVE_OPTIONS
     assert house == expected
 
     await _gw().create_invoice_checkout_session(**kwargs, stripe_account=ACCT)
@@ -555,6 +564,9 @@ class _StoredCard:
         self.calls.append(stripe_account_id)
         return ("cus_on_acct", "pm_on_acct") if stripe_account_id == ACCT else None
 
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        return False
+
 
 async def _autopay(*, house: bool, fee_bps: int = 0) -> _StoredCard:
     from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
@@ -576,7 +588,8 @@ async def _autopay(*, house: bool, fee_bps: int = 0) -> _StoredCard:
 
 async def test_house_autopay_use_case_sends_the_historical_calls(calls: _Calls) -> None:
     stored = await _autopay(house=True, fee_bps=250)
-    # The platform Customer search, not the stored-card reader.
+    # The house path never reads a stored method: the historical platform Customer
+    # search runs, byte-identical (L1 B2).
     assert stored.calls == []
     _, search = calls.last("Customer.search")
     assert search == {

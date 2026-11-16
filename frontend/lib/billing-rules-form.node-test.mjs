@@ -266,6 +266,15 @@ test("out-of-range and non-numeric reminder days are refused inline", () => {
   assert.deepEqual(junk.payload, {});
 });
 
+test("reminder days before and on the due date are accepted (L1 A4-6)", () => {
+  const row = { ...reminderRow([15]), min_value: -7 };
+  const v = { groups: [{ key: "parent_messages", title: "Parent messages", note: null, rows: [row] }] };
+  const diff = diffForm(v, { reminder_days: "0, -2, 15" }, MONEY);
+  assert.deepEqual(diff.payload, { reminder_days: [-2, 0, 15] });
+  const tooEarly = diffForm(v, { reminder_days: "-8" }, MONEY);
+  assert.ok(tooEarly.errors.reminder_days);
+});
+
 // --- Money audit 2026-09-25 ---------------------------------------------------
 
 function viewWith(key, value) {

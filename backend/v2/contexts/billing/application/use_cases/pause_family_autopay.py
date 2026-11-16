@@ -192,3 +192,31 @@ class PauseFamilyAutopay:
                 after={"enrollment_ids": paused, "status": PAUSED_STATUS},
             )
         )
+
+
+#: Audit actor for pauses the billing system makes on its own (L1 B4).
+SYSTEM_ACTOR_ID = "system:billing"
+
+
+class SystemFamilyAutopayPause:
+    """``FamilyAutopayPauser`` for the webhook and the dunning worker: the same
+    planned, audited family pause the admin button uses, with a system actor. A
+    family with nothing active left is not an error here."""
+
+    def __init__(self, pause: PauseFamilyAutopay) -> None:
+        self._pause = pause
+
+    async def pause_family(
+        self, *, academy_id: str, parent_id: str, reason: str, request_id: str
+    ) -> int:
+        try:
+            result = await self._pause.execute(
+                academy_id=academy_id,
+                parent_id=parent_id,
+                actor_id=SYSTEM_ACTOR_ID,
+                reason=reason,
+                request_id=request_id,
+            )
+        except NothingToPause:
+            return 0
+        return result.paused_count

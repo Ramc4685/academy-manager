@@ -154,6 +154,7 @@ async def _seed_family(db, acad: str, *, parent_id: str = "p-1") -> None:
             "stripe_customer_id": "cus_1",
             "payment_method_label": "Visa",
             "payment_method_last4": "4242",
+            "stripe_account_id": "acct_1",  # the academy's account, seeded below
         }
     )
     await db["academy_connected_accounts"].insert_one(

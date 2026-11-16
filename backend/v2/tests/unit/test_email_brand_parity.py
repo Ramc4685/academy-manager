@@ -257,7 +257,7 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
             charge_on=date(2026, 9, 8),
             portal_url="https://portal.example.test/parent/payments",
         )
-        await invoices.send_autopay_receipt(
+        await invoices.send_payment_receipt(
             parent_id="parent-1",
             invoice_id="inv-1",
             period="2026-09",

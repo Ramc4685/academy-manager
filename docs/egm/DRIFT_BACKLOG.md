@@ -2,16 +2,17 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-## Repo root (`README.md`): 7 items, from `drift/_root.md`
+## Repo root (`README.md`): 8 items, from `drift/_root.md`
 - [undocumented] README:83-84 says `academy-next` owns `academy.courtmastr.com/*`; `frontend/wrangler.jsonc:18-25` also routes `*.courtmastr.com/*`.
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] README:98 shows `flyctl deploy --remote-only`; production.yml deploys a prebuilt `--image` with `--ha=false`.
 - [wording] Validate step undersells the job: it also runs real-Mongo contract tests, lint, the OpenAPI drift check, the Worker runtime smoke, real-auth E2E and scripts validation.
-- [wording] README:51 says multi-region; `backend/fly.toml:2` is single region `ord`, one machine (`--ha=false`).
+- [wording] README:173 lists importers under `scripts/`; none exist there.
+- [wording] README:51 says multi-region; the API runs one machine in one region (`backend/fly.toml:2`).
 - [wording] Auth methods: README:31,142 name only Google and email/password; code also has Apple and magic links, and self-registration is email/password only.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 25 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 24 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -36,7 +37,6 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 
 - [missing] Identity (the canonical example) and several other contexts have no `domain/events.py`.
 - [wording] Platform, student and owner routers mount behind settings flags, not always under `/api/v2`.
-- [stale-not-built] README:3 migration-plan link points to a file that does not exist.
 
 ## `frontend/README.md`: 17 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
@@ -57,10 +57,12 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] `pnpm typecheck` runs `next typegen && tsc --noEmit`.
 - [wording] README:84-86 omit that `build` runs `--webpack` and `dev` honors `$PORT`.
 
-## `frontend/lib/api/README.md`: 7 items, from `drift/frontend__lib__api.md`
+## `frontend/lib/api/README.md`: 9 items, from `drift/frontend__lib__api.md`
+- [undocumented] README calls `admin.ts` a thin wrapper; `chargeAdminInvoiceAutopay` keeps per-invoice retry state (reused `request_id` for 10 min; kept on 409 only for `charge_in_progress`).
 - [stale-not-built] README says `generated/` holds only `.gitkeep`; `v2.d.ts` and `openapi.snapshot.json` are committed.
 - [stale-not-built] CI "Skipping drift check" path no longer exists; drift check is unconditional.
 - [contract] `pnpm generate:api` reads the committed snapshot, not the running app; the pytest `UPDATE_OPENAPI_SNAPSHOT=1` step is omitted.
 - [undocumented] `apiFetchBlob`, Sentry failure capture, BFF/X-Academy-Id headers, 20s timeout in `client.ts`.
 - [undocumented] Eight `admin-*` modules, twelve top-level modules, six `v2/` modules not listed.
 - [wording] "When generated types are reintroduced": they already are.
+- [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.

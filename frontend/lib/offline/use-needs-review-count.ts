@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { listNeedsReview } from "./queue";
+import { listNeedsReview, listQueued, type QueuedMutation } from "./queue";
 
 /**
  * How many marks are waiting in the coach's Needs-review tray (issue #841).
@@ -17,6 +17,18 @@ import { listNeedsReview } from "./queue";
  * handful of rows.
  */
 export function useNeedsReviewCount(enabled = true): number {
+  return usePolledQueueCount(listNeedsReview, enabled);
+}
+
+/** Marks still waiting on this phone to be sent (A1-3: "N marks waiting"). */
+export function useQueuedMarkCount(enabled = true): number {
+  return usePolledQueueCount(listQueued, enabled);
+}
+
+function usePolledQueueCount(
+  reader: () => Promise<QueuedMutation[]>,
+  enabled: boolean,
+): number {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
@@ -27,7 +39,7 @@ export function useNeedsReviewCount(enabled = true): number {
     let cancelled = false;
     async function read() {
       try {
-        const items = await listNeedsReview();
+        const items = await reader();
         if (!cancelled) setCount(items.length);
       } catch {
         // No IndexedDB (private mode, SSR hydration race): no badge, no crash.
@@ -39,7 +51,7 @@ export function useNeedsReviewCount(enabled = true): number {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [enabled]);
+  }, [reader, enabled]);
 
   return count;
 }

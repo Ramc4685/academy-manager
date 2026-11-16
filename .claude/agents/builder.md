@@ -19,5 +19,5 @@ Keep it lean: the smallest complete change. Reuse an existing helper, component 
 no options, abstractions or "for later" code the brief did not ask for; deletion beats addition. Never cut
 validation at trust boundaries, security, accessibility, error handling that prevents data loss, or tests.
 
-Before you report a branch as ready to merge: after your LAST merge, run the full suite (``scripts/dev/pre-push-checks.sh` with `V2_MONGO_URL` set to your own mongod; about 40 minutes, so run it in the background, and never two gates against one mongod`).
+Before you report a branch as ready to merge: after your LAST merge, run the full backend suite once (`PREPUSH_FULL=1 scripts/dev/pre-push-checks.sh` with `V2_MONGO_URL` set to your own mongod; the hook alone no longer runs it). Run it in the background and never two gates against one mongod. This is the lane's only local full run: review-fix pushes rely on CI.
 Module tests alone let integration bugs reach CI.

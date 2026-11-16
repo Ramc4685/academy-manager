@@ -32,7 +32,9 @@ import {
   type AutopayDisableFailures,
   type ConnectedAccountReadiness,
   type ConnectReadiness,
+  type OpenDisputes,
   type ReconciliationRun,
+  type RefundFailures,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
@@ -427,6 +429,10 @@ export default function BillingHealthPage() {
         <ReconciliationLookupPanel />
 
         <AutopaySwitchOffLine failures={readiness?.autopay_disable_failures} />
+
+        <OpenDisputesCard disputes={readiness?.disputes} />
+
+        <RefundFailuresCard failures={readiness?.refund_failures} />
       </Section>
 
       {/* Link a Stripe charge */}
@@ -472,6 +478,91 @@ function AutopaySwitchOffLine({ failures }: { failures?: AutopayDisableFailures 
                 {row.invoice_id}
               </Link>
               <span className="text-xs text-rally-muted">{row.error ?? "no error recorded"}</span>
+              <span className="text-xs text-rally-subtle">{formatTimestamp(row.failed_at)}</span>
+            </li>
+          ))}
+        </ul>
+        {failures.truncated && (
+          <p className="text-xs text-rally-subtle">
+            Showing the {failures.rows.length} most recent of {failures.count}.
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Open Stripe disputes (#980). A dispute is answered in the academy's own Stripe
+ * dashboard; the page only makes sure the owner sees it before the deadline.
+ */
+function OpenDisputesCard({ disputes }: { disputes?: OpenDisputes }) {
+  if (!disputes || disputes.count === 0) return null;
+  return (
+    <Card p={16}>
+      <div data-testid="open-disputes" className="space-y-2 text-sm">
+        <p className="font-medium text-red-700">
+          {disputes.count} open {disputes.count === 1 ? "dispute" : "disputes"}
+        </p>
+        <p className="text-xs text-rally-muted">
+          Respond in your Stripe dashboard before the evidence deadline, or the money is lost.
+        </p>
+        <ul className="space-y-1">
+          {disputes.rows.map((row) => (
+            <li key={row.dispute_id} className="flex flex-wrap items-baseline gap-2">
+              <span className="font-mono text-xs">{row.dispute_id}</span>
+              <span className="text-xs font-medium">{formatCents(row.amount_cents)}</span>
+              <span className="text-xs text-rally-muted">
+                {row.reason} · {row.status}
+              </span>
+              <span className="text-xs text-rally-subtle">
+                {row.evidence_due_by ? `Evidence due ${formatTimestamp(row.evidence_due_by)}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {disputes.truncated && (
+          <p className="text-xs text-rally-subtle">
+            Showing the {disputes.rows.length} most recent of {disputes.count}.
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Refunds Stripe could not deliver (L1 A4-8): the money went back to the Stripe
+ * balance and the family was not paid back. Refund again in Stripe or pay them
+ * another way.
+ */
+function RefundFailuresCard({ failures }: { failures?: RefundFailures }) {
+  if (!failures || failures.count === 0) return null;
+  return (
+    <Card p={16}>
+      <div data-testid="refund-failures" className="space-y-2 text-sm">
+        <p className="font-medium text-red-700">
+          {failures.count} {failures.count === 1 ? "refund" : "refunds"} failed
+        </p>
+        <p className="text-xs text-rally-muted">
+          Stripe could not return this money to the family. Refund again in Stripe or pay them
+          back another way.
+        </p>
+        <ul className="space-y-1">
+          {failures.rows.map((row) => (
+            <li key={row.refund_id} className="flex flex-wrap items-baseline gap-2">
+              {row.parent_id ? (
+                <Link
+                  href={`/admin/families/${encodeURIComponent(row.parent_id)}`}
+                  className="font-mono text-xs underline"
+                >
+                  {row.refund_id}
+                </Link>
+              ) : (
+                <span className="font-mono text-xs">{row.refund_id}</span>
+              )}
+              <span className="text-xs font-medium">{formatCents(row.amount_cents)}</span>
+              <span className="text-xs text-rally-muted">{row.reason}</span>
               <span className="text-xs text-rally-subtle">{formatTimestamp(row.failed_at)}</span>
             </li>
           ))}
@@ -718,7 +809,9 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
       ? "Ready to take payments"
       : "Payments can be taken, but money is landing on the platform account";
   const detail = !data.payments_possible
-    ? account.configured
+    ? data.payments_blocked_reason
+      ? data.payments_blocked_reason
+      : account.configured
       ? "The academy's Stripe account is connected but not ready to take charges, and the platform fallback is off."
       : "No Stripe account is connected, and the platform fallback is off."
     : data.funds_route_to_academy
@@ -747,6 +840,12 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
           <Row label="Account status" value={account.status ?? "—"} />
           <Row label="Charges enabled" value={account.charges_enabled ? "Yes" : "No"} />
           <Row label="Payouts enabled" value={account.payouts_enabled ? "Yes" : "No"} />
+          {account.configured && account.direct_charges_supported !== undefined && (
+            <Row
+              label="Stripe carries fees and losses"
+              value={account.direct_charges_supported ? "Yes" : "No — reconnect Stripe"}
+            />
+          )}
           <Row
             label="Charges settle on"
             value={data.allow_platform_charge_fallback ? "Platform account (house academy)" : "Connected account"}
