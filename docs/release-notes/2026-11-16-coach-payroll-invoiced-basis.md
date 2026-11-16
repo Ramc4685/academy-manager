@@ -1,6 +1,6 @@
 # coach-payroll-invoiced-basis
 
-PR: TBD
+PR: #1192
 
 ## What changed
 Coaches on a percent-of-revenue rate are now paid a share of the tuition actually invoiced for each class and academy-local month. Before, the base was the class fee times the class's active enrollments on the day payroll ran, so a family dropping on the 25th re-priced classes the coach had already taught.
