@@ -59,10 +59,22 @@ async def test_one_row_per_placement_and_none_for_a_refused_one(real_db: Any) ->
             await placer.execute(_place("no-such-level"))
 
     (row,) = await _rows(real_db)
-    assert row["audit_id"] == f"student.pathway_placed:{progress.progress_id}"
+    assert row["audit_id"].startswith(f"student.pathway_placed:{progress.progress_id}:")
     assert row["academy_id"] == ACADEMY
     assert row["actor_id"] == "owner"
     assert row["after"]["level_id"] == "L1"
+
+
+async def test_a_re_placement_by_another_admin_keeps_its_own_row(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        placer = _placer(real_db, MongoPlacementAuditLog(real_db))
+        await placer.execute(_place("L1"))
+        await placer.execute(_place("L1").model_copy(update={"placed_by": "admin-2"}))
+        await placer.execute(_place("L1").model_copy(update={"placed_by": "admin-2"}))  # replay
+
+    rows = await _rows(real_db)
+    assert sorted(r["actor_id"] for r in rows) == ["admin-2", "owner"]
 
 
 async def test_a_failed_audit_write_is_repaired_by_the_retry(real_db: Any) -> None:

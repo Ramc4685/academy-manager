@@ -22,12 +22,13 @@ class MongoPlacementAuditLog(TenantScopedRepository):
         reason: str,
         credited_skill_ids: list[str],
     ) -> bool:
-        # A deterministic id makes the write an upsert, so a retry never doubles
-        # it. A re-placement on the same level that credits skills is its own row.
-        audit_id = f"student.pathway_placed:{progress_id}"
-        if credited_skill_ids:
-            digest = hashlib.sha256(",".join(sorted(credited_skill_ids)).encode()).hexdigest()
-            audit_id += f":{digest[:16]}"
+        # A deterministic id makes the write an upsert, so a retry of the same
+        # request never doubles it. The id covers who placed, why and what was
+        # credited, so another admin (or reason, or credit set) re-placing on the
+        # same level is its own row; a new placement has a new progress_id.
+        action = "\x1f".join([placed_by, reason, *sorted(credited_skill_ids)])
+        digest = hashlib.sha256(action.encode()).hexdigest()[:16]
+        audit_id = f"student.pathway_placed:{progress_id}:{digest}"
         credited = {"credited_skill_ids": credited_skill_ids} if credited_skill_ids else {}
         result = await self._update_one(
             {"audit_id": audit_id},
