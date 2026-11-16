@@ -2,6 +2,7 @@
 
 import { apiFetch } from "@/lib/api/client";
 import { recordAudit } from "./audit";
+import { currentOwner, heldForOtherOwner } from "./owner";
 import { dropById, getById, list, listQueued, type QueuedMutation, update } from "./queue";
 
 /**
@@ -9,13 +10,24 @@ import { dropById, getById, list, listQueued, type QueuedMutation, update } from
  *
  * Per docs/offline-policy.md:
  * - Serial per device.
- * - Retry 5xx + network errors with backoff 1/4/16/60s (cap 60s).
- * - 4xx domain errors → `needs_review` ("tray") with structured code.
+ * - Retry 5xx, network errors, and the 4xx that are not about the mark
+ *   (401 sign-in hiccup, 408 timeout, 429 rate limit) with backoff
+ *   1/4/16/60s (cap 60s).
+ * - Other 4xx domain errors → `needs_review` ("tray") with structured code.
+ * - A mark queued by another signed-in user is never sent (lib/offline/owner.ts).
  * - Idempotent on `mutation_id` server-side; replays return original result.
  */
 
 const RETRY_DELAYS_MS = [0, 1_000, 4_000, 16_000, 60_000];
 const MAX_ATTEMPTS = RETRY_DELAYS_MS.length;
+/** While the app is open, queued marks are retried this often (weak signal). */
+export const PERIODIC_RETRY_MS = 45_000;
+/** 4xx answers that say nothing about the mark itself: retry, don't tray. */
+const RETRYABLE_4XX = new Set([401, 408, 429]);
+
+function isTrayStatus(status: unknown): status is number {
+  return typeof status === "number" && status >= 400 && status < 500 && !RETRYABLE_4XX.has(status);
+}
 
 type SyncEvent =
   | { kind: "started"; total: number }
@@ -43,7 +55,8 @@ export async function syncNow(): Promise<void> {
   if (_running) return;
   _running = true;
   try {
-    const queue = await listQueued();
+    const owner = currentOwner();
+    const queue = (await listQueued()).filter((m) => !heldForOtherOwner(m.owner, owner));
     emit({ kind: "started", total: queue.length });
     let processed = 0;
     let tray = 0;
@@ -65,6 +78,15 @@ export async function syncNow(): Promise<void> {
   } finally {
     _running = false;
   }
+}
+
+function recordedAsQueued(err: unknown, m: QueuedMutation): boolean {
+  const e = err as { code?: string; details?: Record<string, unknown> };
+  return (
+    e.code === "Coaching.ConflictAttendanceExists" &&
+    e.details?.existing_status !== undefined &&
+    e.details.existing_status === (m.payload as { status?: unknown }).status
+  );
 }
 
 type SendOutcome = "succeeded" | "needs_review" | "paused" | "superseded";
@@ -118,7 +140,14 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
       return "succeeded";
     } catch (err) {
       const status = (err as { status?: number }).status;
-      if (typeof status === "number" && status >= 400 && status < 500) {
+      if (recordedAsQueued(err, m)) {
+        // The server already holds exactly this mark (an earlier send that
+        // timed out, or a batch that did land): nothing to review.
+        await dropById(m.mutation_id);
+        emit({ kind: "succeeded", mutation: { ...m, status: "queued", attempts: attempt } });
+        return "succeeded";
+      }
+      if (isTrayStatus(status)) {
         // Domain error — move to tray, unless a fresh tap already replaced it.
         const updated = await patchRecord(m.mutation_id, {
           status: "needs_review",
@@ -141,7 +170,7 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
         emit({ kind: "needs_review", mutation: updated });
         return "needs_review";
       }
-      // Transient (5xx, network) — try again.
+      // Transient (5xx, network, 401/408/429) — try again.
       emit({
         kind: "transient_error",
         mutation: { ...m, attempts: attempt },
@@ -161,18 +190,31 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
   return "paused";
 }
 
-/** Wire `online` to auto-sync. Call once in the coach layout. */
+/** Send whatever is waiting, if anything is and the browser thinks it is online. */
+async function syncIfWaiting(): Promise<void> {
+  const items = await list();
+  // `in_flight` too: a run killed mid-replay (tab closed, reload) leaves its
+  // claim behind, and that mark still has to go out.
+  if (items.some((m) => m.status === "queued" || m.status === "in_flight") && navigator.onLine) {
+    await syncNow();
+  }
+}
+
+/**
+ * Wire auto-sync. Call once in the coach layout. Sends on `online`, once on
+ * mount, and every PERIODIC_RETRY_MS while the app is open: gym wifi that is
+ * "connected" but passes no traffic never fires `online`, so without the timer
+ * a queued mark waited for the coach to reopen the app.
+ */
 export function startAutoSync(): () => void {
   if (typeof window === "undefined") return () => undefined;
   const handler = () => void syncNow();
   window.addEventListener("online", handler);
-  // Kick once on mount in case we mounted online with queued items.
-  void list().then((items) => {
-    // `in_flight` too: a run killed mid-replay (tab closed, reload) leaves its
-    // claim behind, and that mark still has to go out.
-    if (items.some((m) => m.status === "queued" || m.status === "in_flight") && navigator.onLine) {
-      void syncNow();
-    }
-  });
-  return () => window.removeEventListener("online", handler);
+  const tick = () => void syncIfWaiting().catch(() => undefined);
+  tick();
+  const timer = setInterval(tick, PERIODIC_RETRY_MS);
+  return () => {
+    window.removeEventListener("online", handler);
+    clearInterval(timer);
+  };
 }

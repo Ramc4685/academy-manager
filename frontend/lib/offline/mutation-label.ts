@@ -29,3 +29,37 @@ export function describeQueuedMutation(m: QueuedMutation): string {
   if (status) return `Attendance mark (${status})`;
   return "Attendance mark";
 }
+
+export interface AttendanceConflict {
+  occurrence_id: string;
+  student_id: string;
+  /** What the server holds (docs/offline-policy.md case #4). */
+  recorded: string;
+  /** What this device queued. */
+  mine: string;
+}
+
+/**
+ * The two marks a coach chooses between when a queued mark met one already
+ * recorded (another device, or an earlier send). Null for any other tray row,
+ * or for a conflict from before the server named the recorded status.
+ */
+export function attendanceConflict(m: QueuedMutation): AttendanceConflict | null {
+  if (m.error?.code !== "Coaching.ConflictAttendanceExists") return null;
+  const payload = m.payload as { occurrence_id?: unknown; student_id?: unknown; status?: unknown };
+  const recorded = m.error.details?.existing_status;
+  if (
+    typeof recorded !== "string" ||
+    typeof payload.occurrence_id !== "string" ||
+    typeof payload.student_id !== "string" ||
+    typeof payload.status !== "string"
+  ) {
+    return null;
+  }
+  return {
+    occurrence_id: payload.occurrence_id,
+    student_id: payload.student_id,
+    recorded,
+    mine: payload.status,
+  };
+}
