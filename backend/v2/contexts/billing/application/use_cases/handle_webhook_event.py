@@ -2523,7 +2523,12 @@ class HandleWebhookEvent:
             elif partial:
                 # Never applied to an invoice, so no attempt row can carry it. The
                 # returned part must stop being spendable unapplied money; the
-                # audit entry is the owner's trail (L8).
+                # audit entry is the owner's trail (L8). ``amount_cents`` is Stripe's
+                # cumulative ``charge.amount_refunded``, so take the max, never add:
+                # a replay or an older event cannot lower or double the total.
+                refunded = min(payment.amount_cents, max(payment.refunded_cents, amount_cents))
+                if refunded == payment.refunded_cents:
+                    return
                 if self._billing_audit is not None:
                     await self._billing_audit.append(
                         BillingAuditEntry(
@@ -2536,12 +2541,12 @@ class HandleWebhookEvent:
                             parent_id=payment.parent_id or None,
                             reason=f"{label} {return_code}",
                             before={"refunded_cents": payment.refunded_cents},
-                            after={"refunded_cents": amount_cents},
+                            after={"refunded_cents": refunded},
                         )
                     )
                 await ledger.mark_payment_refunded(
                     payment.payment_id,
-                    refunded_cents=amount_cents,
+                    refunded_cents=refunded,
                     status="partially_refunded",
                     updated_at=self._now(),
                 )

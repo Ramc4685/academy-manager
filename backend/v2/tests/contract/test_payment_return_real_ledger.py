@@ -308,6 +308,49 @@ async def test_partial_return_of_unallocated_money_stops_it_being_spendable(real
 
 
 @pytest.mark.asyncio
+async def test_second_partial_return_raises_the_total_and_stale_events_never_lower_it(
+    real_db, acad
+) -> None:
+    """Stripe's ``charge.amount_refunded`` is cumulative: a 4,000 return and then a
+    3,000 return arrive as 4,000 and 7,000. The total ends at 7,000 whether the
+    events replay or arrive out of order."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_two"), idempotency_key="p:two")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+
+    for cumulative in (4_000, 7_000, 7_000, 4_000):
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_two")
+        assert payment is not None
+        await uc._reverse_returned_payment(
+            event_id="evt",
+            pi_id="pi_two",
+            payment=payment,
+            amount_cents=cumulative,
+            return_code="R01",
+        )
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_two"})
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "partially_refunded",
+        7_000,
+        3_000,
+    )
+    audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_two"}).to_list(10)
+    assert sorted(a["after"]["refunded_cents"] for a in audits) == [4_000, 7_000]
+
+
+@pytest.mark.asyncio
 async def test_reopened_invoice_moves_both_dates_and_no_ladder_opens_before_then(
     real_db, acad
 ) -> None:

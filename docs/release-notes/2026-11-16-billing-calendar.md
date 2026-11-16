@@ -9,7 +9,7 @@ Smaller fixes from the same review:
 - A reopened invoice moves both its due date and its charge date to reopen day + 5, so autopay cannot retry before then.
 - Payment reminders skip invoices whose dunning ladder is active or processing, including parked ladders.
 - A blocked bank account is now matched by Stripe customer too. For `mandate.updated` the customer comes from looking up the payment method.
-- A partial bank return on a payment with no invoice allocations now marks the payment `partially_refunded` and writes a `payment_return_unreconciled` billing audit row. Before, it was silently dropped. The returned amount comes off the payment, and the rest stays as the family's unapplied credit.
+- A partial bank return on a payment with no invoice allocations now marks the payment `partially_refunded` and writes a `payment_return_unreconciled` billing audit row. Before, it was silently dropped. The returned amount comes off the payment, and the rest stays as the family's unapplied credit. The refunded total follows Stripe's cumulative refunded amount, so a second return raises it, and a replayed or older event never lowers or doubles it.
 - The owner overdue-families counts now use the shared failed-attempt and park-reason rules. Ladders parked on `attempt_indeterminate` or `stripe_unavailable` now count as needing attention.
 
 Defaults chosen by the lead, not the owner:
