@@ -9,6 +9,17 @@
 
 import { test as base, expect, type Page, type Route } from "@playwright/test";
 
+// Today's class has already started whatever hour the suite runs: coaches
+// can only mark once a class is within an hour of starting.
+const TODAY_CLASS = (() => {
+  const nineUtc = Date.parse(`${new Date().toISOString().slice(0, 10)}T09:00:00Z`);
+  const start = Math.min(nineUtc, Date.now());
+  return {
+    start_at: new Date(start).toISOString(),
+    end_at: new Date(start + 90 * 60 * 1000).toISOString(),
+  };
+})();
+
 export interface MockState {
   /**
    * What `GET /api/v2/me` answers. Mutate before the first navigation to run a
@@ -210,8 +221,8 @@ export const test = base.extend<{
             occurrence_id: "occ-today-1",
             title: "Junior A",
             location: "Court 1",
-            start_at: `${new Date().toISOString().slice(0, 10)}T09:00:00Z`,
-            end_at: `${new Date().toISOString().slice(0, 10)}T10:30:00Z`,
+            start_at: TODAY_CLASS.start_at,
+            end_at: TODAY_CLASS.end_at,
             roster: [
               {
                 student_id: "st1",
@@ -256,8 +267,8 @@ export const test = base.extend<{
             occurrence_id: "occ-today-1",
             title: "Junior A",
             location: "Court 1",
-            start_at: `${new Date().toISOString().slice(0, 10)}T09:00:00Z`,
-            end_at: `${new Date().toISOString().slice(0, 10)}T10:30:00Z`,
+            start_at: TODAY_CLASS.start_at,
+            end_at: TODAY_CLASS.end_at,
             groups: [
               {
                 level_id: "lvl-1",

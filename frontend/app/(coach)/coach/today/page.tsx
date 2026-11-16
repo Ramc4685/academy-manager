@@ -17,6 +17,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { useQueuedMarkCount } from "@/lib/offline/use-needs-review-count";
 
 function todayISO(offset = 0): string {
   const d = new Date();
@@ -75,6 +76,7 @@ export default function CoachTodayPage() {
   const pendingCount = pendingNotes.data?.narratives.length ?? 0;
 
   useMemo(() => reportVitals("coach.today"), []);
+  const waitingMarks = useQueuedMarkCount();
 
   return (
     <section data-testid="coach-today">
@@ -102,6 +104,17 @@ export default function CoachTodayPage() {
           <DatePicker date={date} onChange={setDate} />
         </div>
       </header>
+
+      {waitingMarks > 0 && (
+        <p
+          data-testid="marks-waiting"
+          role="status"
+          className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800"
+        >
+          {waitingMarks} {waitingMarks === 1 ? "mark is" : "marks are"} waiting to send. They go
+          out automatically when the signal comes back.
+        </p>
+      )}
 
       {pendingCount > 0 && (
         <p

@@ -14,6 +14,36 @@
 export interface MarkableRosterEntry {
   student_id: string;
   attendance_status?: string | null;
+  enrollment_status?: string | null;
+}
+
+/** A status that counts as a mark. "voided" (an admin annulled it) does not. */
+export function isRecordedMark(status: string | null | undefined): boolean {
+  return status === "present" || status === "absent" || status === "late";
+}
+
+/** Seats the server refuses to mark (#1040): they cannot make a register incomplete. */
+const UNMARKABLE_ENROLLMENT: ReadonlySet<string> = new Set(["held", "reclaim_pending"]);
+
+/** How long a coach may change their own mark; after that only an admin can. */
+export const COACH_CORRECTION_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** How early before the start time a class can be marked (server: MARK_LEAD_TIME). */
+export const MARK_LEAD_TIME_MS = 60 * 60 * 1000;
+
+export function correctionWindowClosed(
+  markedAt: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!markedAt) return false;
+  const at = new Date(markedAt).getTime();
+  return !Number.isNaN(at) && now.getTime() - at > COACH_CORRECTION_WINDOW_MS;
+}
+
+/** True when the class is still too far in the future to take attendance. */
+export function markingNotOpenYet(startAt: string, now: Date = new Date()): boolean {
+  const start = new Date(startAt).getTime();
+  return !Number.isNaN(start) && start - now.getTime() > MARK_LEAD_TIME_MS;
 }
 
 export interface MarkableSession {
@@ -43,10 +73,15 @@ export function markProgress(
   roster: readonly MarkableRosterEntry[],
   alsoMarked: ReadonlySet<string> = new Set(),
 ): MarkProgress {
-  const total = roster.length;
-  const marked = roster.filter(
-    (entry) => Boolean(entry.attendance_status) || alsoMarked.has(entry.student_id),
-  ).length;
+  const isMarked = (entry: MarkableRosterEntry): boolean =>
+    isRecordedMark(entry.attendance_status) || alsoMarked.has(entry.student_id);
+  // A held seat with no mark is shown for context but cannot be marked, so it
+  // is not owed a mark; once marked it counts like any other row.
+  const owed = roster.filter(
+    (entry) => isMarked(entry) || !UNMARKABLE_ENROLLMENT.has(entry.enrollment_status ?? ""),
+  );
+  const total = owed.length;
+  const marked = owed.filter(isMarked).length;
   return {
     marked,
     total,
