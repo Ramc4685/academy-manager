@@ -285,6 +285,10 @@ class MongoStudentRepository(TenantScopedRepository):
         )
         return enrollment is not None
 
+    async def exists(self, student_id: str) -> bool:
+        """This academy has the student; ``student_id`` only, never a raw ``_id``."""
+        return await self._count({"student_id": student_id}) > 0
+
     async def get_by_id(self, student_id: str) -> Student | None:
         doc = await self._find_one(self._id_filter(student_id))
         return self._to_domain(doc) if doc else None
@@ -307,17 +311,19 @@ class MongoStudentRepository(TenantScopedRepository):
             students.append(self._to_domain(doc))
         return students
 
-    async def anonymise(self, student_id: str, *, now: datetime) -> None:
+    async def anonymise(self, student_id: str, *, now: datetime) -> str:
         """Strip a child's personal details after the parent's account deletion.
 
         The row stays (as "Student 4F2A") so attendance, progress and payroll
         history keep resolving; nothing that identifies the child survives.
+        Returns that placeholder name.
         """
+        label = f"Student {student_id[-4:].upper()}"
         await self._update_one(
             {"student_id": student_id},
             {
                 "$set": {
-                    "full_name": f"Student {student_id[-4:].upper()}",
+                    "full_name": label,
                     "anonymised_at": now,
                     "updated_at": now,
                 },
@@ -339,6 +345,7 @@ class MongoStudentRepository(TenantScopedRepository):
                 ),
             },
         )
+        return label
 
     async def get_parent_user_doc(self, parent_id: str) -> dict[str, Any] | None:
         # Raw parent ``users`` doc (tenant-scoped), used by the parent daily

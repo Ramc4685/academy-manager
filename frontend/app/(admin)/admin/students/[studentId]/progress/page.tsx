@@ -363,6 +363,9 @@ export default function AdminStudentProgressPage() {
                   <p className="font-medium text-rally-base">{cert.level_name}</p>
                   <p className="text-xs text-rally-muted">
                     {cert.program_name} · #{cert.cert_number}
+                    {cert.status === "revoked" && (
+                      <span className="ml-2 font-semibold text-red-700">Revoked</span>
+                    )}
                   </p>
                 </div>
                 <div className="text-right text-xs text-rally-muted">

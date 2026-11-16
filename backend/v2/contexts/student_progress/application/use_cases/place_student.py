@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from backend.v2.contexts.student_progress.application.ports import (
+    EnrollmentStatusLookup,
     LevelUpRecommendationRepository,
     SkillLookup,
     StudentLevelProgressRepository,
@@ -16,6 +17,7 @@ from backend.v2.contexts.student_progress.domain.errors import (
     LevelNotConfigured,
     LevelUpInProgress,
     SkillNotOnCurrentLevel,
+    StudentNotFound,
 )
 from backend.v2.contexts.student_progress.domain.events import (
     StudentPlacedInLevel,
@@ -100,15 +102,20 @@ class PlaceStudentInLevel:
         skill_progress: StudentSkillProgressRepository,
         skill_lookup: SkillLookup,
         recommendations: LevelUpRecommendationRepository,
+        enrollment_lookup: EnrollmentStatusLookup,
         outbox: Outbox | None = None,
     ) -> None:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._skill_lookup = skill_lookup
         self._recs = recommendations
+        self._students = enrollment_lookup
         self._outbox = outbox
 
     async def execute(self, cmd: PlaceStudentInLevelCommand) -> StudentLevelProgress:
+        # A typo or another academy's id would otherwise get level rows of its own.
+        if not await self._students.student_exists(cmd.student_id):
+            raise StudentNotFound("student not found", student_id=cmd.student_id)
         level = await self._skill_lookup.get_level(cmd.level_id)
         if (
             level is None

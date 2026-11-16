@@ -3,14 +3,16 @@
 import type { Route } from "next";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { Button } from "@/components/ds/button";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Skeleton } from "@/components/ds/skeleton";
 import { CertificatePreview } from "@/components/progress/level-certificate";
 import { getAdminAcademy } from "@/lib/api/admin";
-import { getAdminCertificateDetail } from "@/lib/api/curriculum";
+import { getAdminCertificateDetail, revokeCertificate } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsNativeApp } from "@/lib/use-native-app";
 
@@ -30,6 +32,20 @@ export default function AdminCertificatePage() {
     queryKey: queryKeys.admin.academy(),
     queryFn: getAdminAcademy,
   });
+  const queryClient = useQueryClient();
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [reason, setReason] = useState("");
+  const revoke = useMutation({
+    mutationFn: () => revokeCertificate(studentId, certId, reason.trim()),
+    onSuccess: () => {
+      setConfirmRevoke(false);
+      setReason("");
+      void queryClient.invalidateQueries({ queryKey: ["admin", "certificate", studentId, certId] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "student-certificates", studentId] });
+    },
+  });
+  const cert = detail.data?.certificate;
+  const revoked = cert?.status === "revoked";
 
   return (
     <section className="mx-auto max-w-4xl space-y-4" data-testid="admin-certificate">
@@ -54,8 +70,51 @@ export default function AdminCertificatePage() {
             <h1 className="font-display text-xl font-bold text-rally-ink">
               {detail.data.certificate.student_name}: {detail.data.certificate.level_name}
             </h1>
-            {!isNativeApp && <Button onClick={() => window.print()}>Print or save as PDF</Button>}
+            <div className="flex flex-wrap gap-2">
+              {!revoked && (
+                <Button variant="secondary" onClick={() => setConfirmRevoke(true)}>
+                  Revoke
+                </Button>
+              )}
+              {!isNativeApp && !revoked && (
+                <Button onClick={() => window.print()}>Print or save as PDF</Button>
+              )}
+            </div>
           </div>
+          {revoked && (
+            <p
+              role="status"
+              data-testid="certificate-revoked-banner"
+              className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+            >
+              Revoked
+              {cert?.revoked_at ? ` on ${new Date(cert.revoked_at).toLocaleDateString()}` : ""}
+              {cert?.revoke_reason ? `: ${cert.revoke_reason}` : ""}. The family no longer sees this
+              certificate.
+            </p>
+          )}
+          <ConfirmActionDialog
+            open={confirmRevoke}
+            onOpenChange={(next) => {
+              setConfirmRevoke(next);
+              if (!next) revoke.reset();
+            }}
+            overline="Revoke certificate"
+            title={`Revoke ${detail.data.certificate.cert_number}?`}
+            subject={`${detail.data.certificate.student_name}: ${detail.data.certificate.level_name}`}
+            consequence="The family stops seeing it and any share link stops working. The student stays on their current level; if they earn this level again, a new certificate is issued."
+            confirmLabel="Revoke certificate"
+            pending={revoke.isPending}
+            reason={{
+              label: "Reason",
+              value: reason,
+              onChange: setReason,
+              required: true,
+              placeholder: "Approved by mistake",
+            }}
+            error={revoke.isError ? revoke.error.message || "Could not revoke it." : null}
+            onConfirm={() => revoke.mutate()}
+          />
           <CertificatePreview
             detail={detail.data}
             academy={{

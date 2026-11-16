@@ -88,6 +88,11 @@ class RejectLevelUpBody(BaseModel):
     rejection_reason: str | None = None
 
 
+class RevokeCertificateBody(BaseModel):
+    #: Why it was taken back; kept on the certificate and in the audit log.
+    reason: str = Field(min_length=1, max_length=500, pattern=r"\S")
+
+
 AdminSettableSkillStatus = Literal[
     "INTRODUCED",
     "LEARNING",
@@ -672,7 +677,6 @@ async def approve_level_up(
                 student_name=display["student_name"],
                 level_name=display["level_name"],
                 program_name=display["program_name"],
-                level_sequence=display["level_sequence"],
             )
         )
     except RecommendationNotFound as exc:
@@ -688,7 +692,7 @@ async def resolve_certificate_display(rec_id: str, use_cases: AdminUseCases) -> 
     """Best-effort lookup of certificate display fields for a pending rec.
 
     Uses only the existing admin composition surface. Falls back to blank
-    names / sequence 1 if anything is unavailable so approval never fails on a
+    names if anything is unavailable so approval never fails on a
     cosmetic lookup.
     """
     from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
@@ -699,7 +703,6 @@ async def resolve_certificate_display(rec_id: str, use_cases: AdminUseCases) -> 
         "student_name": "",
         "level_name": "",
         "program_name": "",
-        "level_sequence": 1,
     }
     if use_cases.student_progress is None:
         return display
@@ -720,7 +723,6 @@ async def resolve_certificate_display(rec_id: str, use_cases: AdminUseCases) -> 
         level = next((lv for lv in levels if lv.level_id == rec.from_level_id), None)
         if level is not None:
             display["level_name"] = level.name
-            display["level_sequence"] = level.sequence
 
     return display
 
@@ -765,7 +767,7 @@ async def get_certificates(
     )
 
     certs = await use_cases.student_progress.get_certificates.execute(
-        GetStudentCertificatesCommand(student_id=student_id)
+        GetStudentCertificatesCommand(student_id=student_id, include_revoked=True)
     )
     return {"certificates": [c.model_dump() for c in certs]}
 
@@ -784,11 +786,37 @@ async def get_certificate_detail(
     )
 
     detail = await use_cases.student_progress.get_certificate_detail.execute(
-        GetCertificateDetailCommand(student_id=student_id, cert_id=cert_id)
+        GetCertificateDetailCommand(student_id=student_id, cert_id=cert_id, include_revoked=True)
     )
     if detail is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
     return detail.model_dump(mode="json")
+
+
+@router.post("/students/{student_id}/certificates/{cert_id}/revoke")
+async def revoke_certificate(
+    student_id: str,
+    cert_id: str,
+    body: RevokeCertificateBody,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    """Take back a certificate issued in error. The student stays on their level."""
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    from backend.v2.contexts.student_progress.application.use_cases.revoke_certificate import (
+        RevokeCertificateCommand,
+    )
+
+    reason = body.reason.strip()
+    # CertificateNotFound (404) and CertificateAlreadyRevoked (409) render
+    # through the DomainError handler.
+    cert = await use_cases.student_progress.revoke_certificate.execute(
+        RevokeCertificateCommand(
+            student_id=student_id, cert_id=cert_id, reason=reason, revoked_by=claims.user_id
+        )
+    )
+    return cert.model_dump(mode="json")
 
 
 # Mirrors coach/skill_routes.py get_session_skill_board (per-persona twin).

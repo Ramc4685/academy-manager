@@ -663,7 +663,8 @@ def _retire_app(
     checks = SimpleNamespace(
         active_student_ids=AsyncMock(return_value=on_level),
         pending_level_ups_into=AsyncMock(return_value=pending_into),
-        recheck_level=AsyncMock(return_value=1),
+        held_back_by=AsyncMock(return_value=["a"]),
+        recheck_students=AsyncMock(return_value=1),
         has_pending_level_ups=AsyncMock(return_value=pending),
     )
     app = _build_real_router_app(curriculum=curriculum)

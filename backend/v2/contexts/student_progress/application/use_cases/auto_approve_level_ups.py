@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 AUTO_REVIEWER = "system:auto_level_up"
 
 #: rec_id -> certificate display fields (student_name, level_name,
-#: program_name, level_sequence). Resolved by the caller, as the admin
+#: program_name). Resolved by the caller, as the admin
 #: approve route does, because the names live outside this context.
 CertificateDisplayResolver = Callable[[str], Awaitable[dict[str, object]]]
 
@@ -90,7 +90,6 @@ class AutoApproveLevelUps:
                         student_name=str(display.get("student_name") or ""),
                         level_name=str(display.get("level_name") or ""),
                         program_name=str(display.get("program_name") or ""),
-                        level_sequence=int(display.get("level_sequence") or 1),  # type: ignore[call-overload]
                     )
                 )
                 if result.status == "COMPLETED":

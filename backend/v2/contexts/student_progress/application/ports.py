@@ -150,9 +150,34 @@ class LevelUpRecommendationRepository(Protocol):
 
 
 class CertificateRepository(Protocol):
+    """Reads skip revoked certificates unless ``include_revoked`` (admin only)."""
+
     async def save(self, cert: SkillCertificate) -> None: ...
-    async def list_for_student(self, student_id: str) -> list[SkillCertificate]: ...
+    async def list_for_student(
+        self, student_id: str, *, include_revoked: bool = False
+    ) -> list[SkillCertificate]: ...
     async def list_for_students(self, student_ids: list[str]) -> list[SkillCertificate]: ...
+    async def revoke(
+        self, student_id: str, cert_id: str, *, at: datetime, by: str, reason: str
+    ) -> bool:
+        """Issued -> revoked, dropping the share link. False when nothing was issued."""
+        ...
+
+
+class CertificateAuditLog(Protocol):
+    async def record_revoked(self, cert: SkillCertificate) -> bool:
+        """Write the one ``certificate.revoked`` row for this certificate.
+
+        Idempotent: True only when this call wrote it, so a retry after a
+        failed write can tell it still owes the audit row.
+        """
+        ...
+
+
+class CertificateNumbers(Protocol):
+    """Mints the next human-facing certificate number for the current academy."""
+
+    async def next_number(self) -> str: ...
 
 
 class SkillLookup(Protocol):
@@ -181,6 +206,10 @@ class EnrollmentStatusLookup(Protocol):
     """
 
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool: ...
+    async def student_exists(self, student_id: str) -> bool:
+        """The student is on this academy's books (tenant-scoped)."""
+        ...
+
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         """Batch form for the queue: the subset of ``student_ids`` that is live."""
         ...

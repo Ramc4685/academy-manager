@@ -11,6 +11,8 @@ from backend.v2.contexts.student_progress.domain.models import SkillCertificate
 @dataclass(frozen=True)
 class GetStudentCertificatesCommand:
     student_id: str
+    #: Admin only: list revoked certificates too, marked by their status.
+    include_revoked: bool = False
 
 
 class GetStudentCertificates:
@@ -18,4 +20,6 @@ class GetStudentCertificates:
         self._certs = certificates
 
     async def execute(self, cmd: GetStudentCertificatesCommand) -> list[SkillCertificate]:
-        return await self._certs.list_for_student(cmd.student_id)
+        return await self._certs.list_for_student(
+            cmd.student_id, include_revoked=cmd.include_revoked
+        )

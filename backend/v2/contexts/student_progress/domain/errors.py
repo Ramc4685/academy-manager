@@ -88,3 +88,20 @@ class LevelUpInProgress(DomainError):
 
     code = "StudentProgress.LevelUpInProgress"
     status_code = 409
+
+
+class StudentNotFound(DomainError):
+    """No student with this id in the academy: placement writes nothing."""
+
+    code = "StudentProgress.StudentNotFound"
+    status_code = 404
+
+
+class CertificateNotFound(DomainError):
+    code = "StudentProgress.CertificateNotFound"
+    status_code = 404
+
+
+class CertificateAlreadyRevoked(DomainError):
+    code = "StudentProgress.CertificateAlreadyRevoked"
+    status_code = 409
