@@ -247,7 +247,7 @@ def test_connect_readiness_carries_the_switch_off_failures(
     assert body["autopay_disable_failures"]["rows"][0]["parent_id"] == "parent-9"
 
 
-def test_connect_readiness_carries_blocked_reason_disputes_and_liability(
+def test_connect_readiness_carries_blocked_reason_and_disputes(
     owner: TestClient, services: FakeBillingHealth
 ) -> None:
     """Issue #980: the composer already returns these; the DTO used to drop them."""
@@ -256,8 +256,6 @@ def test_connect_readiness_carries_blocked_reason_disputes_and_liability(
         "connected_account": {
             **_READINESS["connected_account"],
             "direct_charges_supported": False,
-            "fees_collector": "application",
-            "losses_collector": "application",
         },
         "payments_blocked_reason": "Reconnect Stripe to accept payments.",
         "disputes": {
@@ -279,8 +277,6 @@ def test_connect_readiness_carries_blocked_reason_disputes_and_liability(
 
     assert body["payments_blocked_reason"] == "Reconnect Stripe to accept payments."
     assert body["connected_account"]["direct_charges_supported"] is False
-    assert body["connected_account"]["losses_collector"] == "application"
-    assert body["connected_account"]["fees_collector"] == "application"
     assert body["disputes"]["rows"][0]["dispute_id"] == "dp_1"
 
 

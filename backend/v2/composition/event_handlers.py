@@ -316,9 +316,6 @@ async def on_welcome_email_requested(event: WelcomeEmailRequested) -> None:
     )
 
 
-# The decorator is typed against the DomainEvent base while every handler here
-# narrows to its own event — same as the handlers above, which predate the
-# mypy baseline. Ignored locally rather than widening the baseline.
 @contextmanager
 def _skip_undeliverable(event: DomainEvent, *, enabled: bool) -> Iterator[None]:
     try:
@@ -332,6 +329,9 @@ def _skip_undeliverable(event: DomainEvent, *, enabled: bool) -> Iterator[None]:
         )
 
 
+# The decorator is typed against the DomainEvent base while every handler here
+# narrows to its own event — same as the handlers above, which predate the
+# mypy baseline. Ignored locally rather than widening the baseline.
 @handler(event=DunningNoticeRequested, schema_version=1)  # type: ignore[arg-type]
 async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
     """Deliver the "autopay attempt failed" notice (issue #435).

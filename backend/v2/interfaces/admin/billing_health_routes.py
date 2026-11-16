@@ -87,8 +87,6 @@ class ConnectedAccountReadinessDto(BaseModel):
     account_id_masked: str | None = None
     #: Direct charges need Stripe to collect fees and carry losses (#980).
     direct_charges_supported: bool = False
-    fees_collector: str | None = None
-    losses_collector: str | None = None
 
 
 class WebhookBacklogDto(BaseModel):
