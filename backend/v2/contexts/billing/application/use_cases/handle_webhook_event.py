@@ -2436,11 +2436,20 @@ class HandleWebhookEvent:
         ]
         dispute = return_code.startswith("dispute:")
         partial = amount_cents < payment.amount_cents
+        # Nothing to reverse (no allocation, or a legacy one without a key): the
+        # payment must not read "refunded" while its invoices still read paid.
+        unreversible = not allocations or any(
+            not _alloc_field(allocation, "idempotency_key") for allocation in allocations
+        )
         await self._pause_family_after_return(payment=payment, pi_id=pi_id, code=return_code)
-        if partial:
+        if partial or unreversible:
             # shortcut: allocations reverse whole, so a partial return is not taken
             # off the invoices: autopay pauses, a failed attempt is recorded and ops
             # is alerted to reconcile by hand. Upgrade when partial reversal exists.
+            failure_code = (
+                "unsupported_partial_ach_return" if partial else "unreconciled_payment_return"
+            )
+            label = "Unsupported partial ACH return" if partial else "Unreconciled payment return"
             for invoice in invoices[:1]:
                 await ledger.record_payment_attempt(
                     invoice_id=invoice.invoice_id,
@@ -2450,20 +2459,23 @@ class HandleWebhookEvent:
                     status="failed",
                     stripe_payment_intent_id=pi_id or None,
                     stripe_checkout_session_id=None,
-                    failure_code="unsupported_partial_ach_return",
+                    failure_code=failure_code,
                     failure_message=(
-                        f"Unsupported partial ACH return {return_code} for "
-                        f"{amount_cents} of {payment.amount_cents} cents"
+                        f"{label} {return_code} for {amount_cents} of {payment.amount_cents} cents"
                     ),
                     idempotency_key=(
                         f"autopay-ach-return-unsupported-partial:"
                         f"{invoice.invoice_id}:{pi_id}:{return_code}:{amount_cents}"
+                        if partial
+                        else f"payment-return-unreconciled:{invoice.invoice_id}:{pi_id}:"
+                        f"{return_code}:{amount_cents}"
                     ),
                     created_by_event_id=event_id or None,
                 )
             capture_message(
-                f"Partial payment return not reversed: pi={pi_id} {amount_cents} of "
-                f"{payment.amount_cents} cents ({return_code}); reconcile by hand",
+                f"{'Partial payment' if partial else 'Payment'} return not reversed: "
+                f"pi={pi_id} {amount_cents} of {payment.amount_cents} cents ({return_code}); "
+                "reconcile by hand",
                 level="warning",
             )
             return
@@ -2512,17 +2524,8 @@ class HandleWebhookEvent:
                     )
                 )
         for allocation in allocations:
-            allocation_key = str(_alloc_field(allocation, "idempotency_key") or "")
-            if not allocation_key:
-                log.error(
-                    "payment_return: legacy allocation without a key, not reversed pi=%s "
-                    "invoice=%s",
-                    pi_id,
-                    _alloc_field(allocation, "invoice_id"),
-                )
-                continue
             await ledger.reverse_payment_allocation(
-                allocation_idempotency_key=allocation_key,
+                allocation_idempotency_key=str(_alloc_field(allocation, "idempotency_key")),
                 reversal_idempotency_key=(
                     f"payment-return:{pi_id}:{_alloc_field(allocation, 'allocation_id')}"
                 ),

@@ -2052,6 +2052,70 @@ async def test_autopay_ach_return_replay_after_a_mid_reversal_failure_converges(
 
 
 @pytest.mark.asyncio
+async def test_return_on_a_legacy_unkeyed_allocation_is_not_marked_refunded() -> None:
+    """Security review: nothing reversible means the payment must not read
+    "refunded" while the invoice still reads paid, and the parent is not told
+    an invoice reopened. Ops reconciles by hand."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-legacy-return"))
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=FakeDedup(), billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_legacy_return_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_legacy_return",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-legacy-return",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned = json.dumps(
+        {
+            "id": "evt_legacy_return_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_legacy_return",
+                    "payment_intent": "pi_legacy_return",
+                    "amount_refunded": 10000,
+                    "failure_code": "R01",
+                }
+            },
+        }
+    ).encode()
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    for allocation in ledger.allocations:
+        allocation.pop("idempotency_key", None)  # written before allocations had keys
+
+    await uc.execute(returned, "test_signature")
+
+    payment = ledger.payments["ledger-pay-autopay:pi_legacy_return"]
+    assert payment.status == "succeeded"
+    assert ledger.invoices["inv-legacy-return"].status == "paid"
+    names = {event.name for event in outbox.events}
+    assert "Billing.PaymentRefunded" not in names
+    assert not any(
+        event.event_id.startswith("dunning-notice:payment-returned:") for event in outbox.events
+    )
+    assert [a["failure_code"] for a in ledger.payment_attempts.values()][-1] == (
+        "unreconciled_payment_return"
+    )
+
+
+@pytest.mark.asyncio
 async def test_partial_ach_return_is_recorded_as_unsupported_without_reversing_allocation() -> None:
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-partial-return"))
