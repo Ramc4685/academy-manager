@@ -150,12 +150,6 @@ class MarkAttendance:
                 session_id=cmd.session_id,
                 occurrence_id=cmd.occurrence_id,
             )
-        ensure_occurrence_started(
-            occurrence.starts_at,
-            self._now(),
-            session_id=cmd.session_id,
-            occurrence_id=cmd.occurrence_id,
-        )
         # Assistant coaches listed on the occurrence mark attendance like an
         # assigned coach (they are never paid for it; payroll ignores the list).
         if not supervisor and coach_id not in {
@@ -170,6 +164,12 @@ class MarkAttendance:
                 occurrence_id=cmd.occurrence_id,
                 coach_id=coach_id,
             )
+        ensure_occurrence_started(
+            occurrence.starts_at,
+            self._now(),
+            session_id=cmd.session_id,
+            occurrence_id=cmd.occurrence_id,
+        )
 
         # 2. Student eligibility: an active enrollment in the session (or its
         # recurring template) OR an approved one-time make-up / trial roster

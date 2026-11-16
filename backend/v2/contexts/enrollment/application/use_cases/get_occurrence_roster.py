@@ -44,7 +44,8 @@ class OccurrenceRosterItem(BaseModel):
     model_config = {"frozen": True}
 
     # None for one-time (makeup/trial) entries — they have no standing
-    # enrollment. Enrollment-backed rows always set this.
+    # enrollment — and for a marked child who has since left the class (kept
+    # so the past register stays whole). Other enrollment rows set this.
     enrollment_id: str | None
     student_id: str
     full_name: str

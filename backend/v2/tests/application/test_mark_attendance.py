@@ -419,6 +419,19 @@ async def test_future_class_cannot_be_marked() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unassigned_coach_on_a_future_class_is_told_not_assigned() -> None:
+    """Assignment is checked first, as in bulk: the lead-time error must not
+    tell an unassigned coach about another coach's schedule."""
+    uc = _build(
+        occurrence_lookup=FakeOccurrenceLookup(
+            assigned=False, starts_at=FIXED_NOW + timedelta(days=1)
+        )
+    )
+    with pytest.raises(SessionNotAssigned):
+        await uc.execute(_cmd(), coach_id="coach-1")
+
+
+@pytest.mark.asyncio
 async def test_class_starting_within_the_lead_time_can_be_marked() -> None:
     uc = _build(occurrence_lookup=FakeOccurrenceLookup(starts_at=FIXED_NOW + timedelta(minutes=45)))
     result = await uc.execute(_cmd(), coach_id="coach-1")

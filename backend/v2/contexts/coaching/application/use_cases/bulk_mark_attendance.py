@@ -198,7 +198,11 @@ class BulkMarkAttendance:
         already_written: set[int] = set()
         for i, entry in enumerate(cmd.entries):
             existing = await self._attendance.find_existing(cmd.occurrence_id, entry.student_id)
-            if existing is not None and existing.attendance_id == f"{cmd.mutation_id}:{i}":
+            if (
+                existing is not None
+                and existing.attendance_id == f"{cmd.mutation_id}:{i}"
+                and existing.status != "voided"
+            ):
                 already_written.add(i)
             elif existing is not None:
                 raise ConflictAttendanceExists(

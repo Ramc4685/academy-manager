@@ -340,6 +340,21 @@ async def test_row_from_another_mutation_still_conflicts_the_batch() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_replay_onto_its_own_voided_row_conflicts() -> None:
+    """An admin voided the batch's row: a replay must not report it as saved."""
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(active={("sess-1", "st1")})
+    await _build(attendance_repo=repo, enrollment_lookup=lookup).execute(
+        _cmd("st1"), coach_id="coach-1"
+    )
+    repo.saved = [a.model_copy(update={"status": "voided"}) for a in repo.saved]
+    with pytest.raises(ConflictAttendanceExists):
+        await _build(attendance_repo=repo, enrollment_lookup=lookup).execute(
+            _cmd("st1"), coach_id="coach-1"
+        )
+
+
 def test_batch_size_is_capped() -> None:
     import pydantic
 
