@@ -298,3 +298,24 @@ async def test_no_last_charge_sentence_when_there_is_no_recent_charge() -> None:
         )
 
     assert "last charge" not in sender.calls[0]["body"].lower()
+
+
+async def test_family_naming_names_each_child_once() -> None:
+    names = {"a": "Arjun", "b": "Maya", "c": "Arjun", "d": "Dev"}
+
+    async def describe(invoice_id: str) -> InvoiceNaming | None:
+        return InvoiceNaming(student_name=names[invoice_id], invoice_number=f"N-{invoice_id}")
+
+    adapter = InvoiceEmailAdapter(
+        memberships=_FakeMemberships(),
+        users=_FakeUsers(),
+        academies=_FakeAcademies(),
+        sender=_FakeSender(),
+        naming=describe,
+    )
+
+    family = await adapter._family_naming(["a", "b", "c", "d"])
+    assert family.student_name == "Arjun, Maya and Dev"
+    assert family.invoice_number == "N-a, N-b, N-c, N-d"
+    assert (await adapter._family_naming(["a", "c"])).student_name == "Arjun"
+    assert (await adapter._family_naming(["a", "b"])).student_name == "Arjun and Maya"

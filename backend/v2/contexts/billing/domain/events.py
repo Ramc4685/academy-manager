@@ -164,6 +164,9 @@ class DunningNoticeRequestedPayload(BaseModel):
     failure_code: str | None = None
     next_attempt_at: datetime | None = None
     bank_debit: bool = False
+    #: Additive (L8): every invoice a family charge covered, when it covered
+    #: more than one. ``balance_due_cents`` is then their sum.
+    invoice_ids: tuple[str, ...] = ()
 
 
 #: Event-id prefix of the notice sent when money is taken back after it settled
@@ -204,6 +207,9 @@ class PaymentReceiptRequestedPayload(BaseModel):
     period: str | None = None
     autopay: bool = False
     bank_debit: bool = False
+    #: Additive (L8): every invoice one family autopay charge paid, when it paid
+    #: more than one; the receipt names all the children.
+    invoice_ids: tuple[str, ...] = ()
 
 
 class PaymentReceiptRequested(DomainEvent):
