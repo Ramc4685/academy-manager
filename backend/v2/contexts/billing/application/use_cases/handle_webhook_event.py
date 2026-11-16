@@ -1861,6 +1861,7 @@ class HandleWebhookEvent:
                 payment=existing_payment,
                 amount_cents=amount_cents,
                 return_code=return_code,
+                source_key=f"pi-return:{pi_id}",
             )
             return
 
@@ -2328,6 +2329,7 @@ class HandleWebhookEvent:
                 payment=payment,
                 amount_cents=total_refunded,
                 return_code=return_code,
+                source_key=None,  # amount_refunded is cumulative
             )
             return
         # Invoice-level sync runs FIRST: if it fails, the payment row is still
@@ -2442,6 +2444,7 @@ class HandleWebhookEvent:
         payment: LedgerPayment,
         amount_cents: int,
         return_code: str,
+        source_key: str | None,
     ) -> None:
         """Money taken back after it settled: a late bank return, a bank dispute or a
         lost dispute (A4-5). Every invoice this payment settled reopens, whatever
@@ -2523,33 +2526,32 @@ class HandleWebhookEvent:
             elif partial:
                 # Never applied to an invoice, so no attempt row can carry it. The
                 # returned part must stop being spendable unapplied money; the
-                # audit entry is the owner's trail (L8). ``amount_cents`` is Stripe's
-                # cumulative ``charge.amount_refunded``, so take the max, never add:
-                # a replay or an older event cannot lower or double the total.
-                refunded = min(payment.amount_cents, max(payment.refunded_cents, amount_cents))
-                if refunded == payment.refunded_cents:
-                    return
-                if self._billing_audit is not None:
+                # audit entry is the owner's trail (L8). The repo never lowers or
+                # doubles the total: cumulative charge refunds merge, keyed sources add once.
+                updated, total_moved = await ledger.apply_payment_return(
+                    payment.payment_id,
+                    amount_cents=amount_cents,
+                    source_key=source_key,
+                    updated_at=self._now(),
+                )
+                if total_moved and self._billing_audit is not None:
                     await self._billing_audit.append(
                         BillingAuditEntry(
-                            audit_id=f"baud-payment-return:{pi_id}:{return_code}:{amount_cents}",
+                            audit_id=(
+                                f"baud-payment-return:{pi_id}:{source_key or return_code}:"
+                                f"{updated.refunded_cents}"
+                            ),
                             academy_id=payment.academy_id,
                             action="payment_return_unreconciled",
                             actor_id="system",
                             at=self._now(),
                             payment_id=payment.payment_id,
                             parent_id=payment.parent_id or None,
-                            reason=f"{label} {return_code}",
+                            reason=f"{label} {return_code}: {amount_cents} cents",
                             before={"refunded_cents": payment.refunded_cents},
-                            after={"refunded_cents": refunded},
+                            after={"refunded_cents": updated.refunded_cents},
                         )
                     )
-                await ledger.mark_payment_refunded(
-                    payment.payment_id,
-                    refunded_cents=refunded,
-                    status="partially_refunded",
-                    updated_at=self._now(),
-                )
             capture_message(
                 f"{'Partial payment' if partial else 'Payment'} return not reversed: "
                 f"pi={pi_id} {amount_cents} of {payment.amount_cents} cents ({return_code}); "
@@ -2694,6 +2696,8 @@ class HandleWebhookEvent:
             payment=payment,
             amount_cents=int(dispute.get("amount") or payment.amount_cents),
             return_code=f"dispute:{dispute.get('reason') or 'unknown'}",
+            # One dispute can arrive as created then closed: key it, not the event.
+            source_key=f"dispute:{dispute.get('id') or event.get('id') or pi_id}",
         )
 
     async def _request_receipt(

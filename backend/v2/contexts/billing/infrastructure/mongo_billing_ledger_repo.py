@@ -480,6 +480,74 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if current is None:
             raise ValueError("ledger payment not found for refund")
+        updated = await self._set_refunded(
+            academy_id, current, refunded_cents=refunded_cents, status=status, updated_at=updated_at
+        )
+        if updated is None:
+            raise ValueError("ledger payment not found for refund")
+        return updated
+
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: datetime,
+    ) -> tuple[LedgerPayment, bool]:
+        """Take returned money off a payment without ever lowering or doubling it.
+
+        ``source_key=None`` means ``amount_cents`` is Stripe's cumulative
+        ``charge.amount_refunded``: it replaces the charge's share of the total.
+        A keyed source (a dispute, a payment-intent return) is NOT cumulative: it
+        adds once per key, remembered in ``return_sources`` in the same write.
+        Returns the payment and whether the total moved."""
+        academy_id = current_academy_id()
+        current = await self.ledger_payments.find_one(
+            {"academy_id": academy_id, "payment_id": payment_id}
+        )
+        if current is None:
+            raise ValueError("ledger payment not found for return")
+        total = int(current.get("amount_cents") or 0)
+        before = int(current.get("refunded_cents") or 0)
+        sources: dict[str, int] = dict(current.get("return_sources") or {})
+        if source_key is not None and source_key in sources:
+            return self._payment_from_doc(current), False
+        keyed = sum(sources.values())
+        if source_key is None:
+            refunded = min(total, max(before - keyed, amount_cents) + keyed)
+        else:
+            refunded = min(total, before + amount_cents)
+        if refunded == before and source_key is None:
+            return self._payment_from_doc(current), False
+        # Compare-and-set on the total (and the key) so two returns racing on
+        # one payment cannot drop either; the loser raises and the webhook retries.
+        updated = await self._set_refunded(
+            academy_id,
+            current,
+            refunded_cents=refunded,
+            status="refunded" if refunded >= total else "partially_refunded",
+            updated_at=updated_at,
+            match={"refunded_cents": current.get("refunded_cents")}
+            | ({f"return_sources.{source_key}": {"$exists": False}} if source_key else {}),
+            extra_set={f"return_sources.{source_key}": amount_cents} if source_key else {},
+        )
+        if updated is None:
+            raise ValueError("ledger payment changed during a return; retry")
+        return updated, refunded != before
+
+    async def _set_refunded(
+        self,
+        academy_id: str,
+        current: dict[str, Any],
+        *,
+        refunded_cents: int,
+        status: str,
+        updated_at: datetime,
+        match: dict[str, Any] | None = None,
+        extra_set: dict[str, Any] | None = None,
+    ) -> LedgerPayment | None:
+        payment_id = str(current["payment_id"])
         # Refunded money is no longer spendable. Clear it in the same write as the
         # refunded status: a replay skips refunded payments, so a crash between two
         # writes would leave returned money spendable for good.
@@ -490,7 +558,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             refunded_cents=refunded_cents,
         )
         updated = await self.ledger_payments.find_one_and_update(
-            {"academy_id": academy_id, "payment_id": payment_id},
+            {"academy_id": academy_id, "payment_id": payment_id, **(match or {})},
             {
                 "$set": {
                     "refunded_cents": refunded_cents,
@@ -498,12 +566,13 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                     "unapplied_amount_cents": unapplied,
                     "over_allocated_cents": over_allocated,
                     "updated_at": updated_at,
+                    **(extra_set or {}),
                 }
             },
             return_document=ReturnDocument.AFTER,
         )
         if updated is None:
-            raise ValueError("ledger payment not found for refund")
+            return None
         # Recompute once more in case an allocation landed between the read and the write.
         await self._repair_payment_after_allocation_change(
             academy_id=academy_id, payment_id=payment_id, now=updated_at

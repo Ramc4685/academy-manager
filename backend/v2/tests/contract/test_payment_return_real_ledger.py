@@ -105,7 +105,12 @@ async def _return(uc: HandleWebhookEvent, repo: MongoBillingLedgerRepository, pi
     payment = await repo.get_payment_by_stripe_payment_intent_id(pi)
     assert payment is not None
     await uc._reverse_returned_payment(
-        event_id="evt", pi_id=pi, payment=payment, amount_cents=10_000, return_code="R01"
+        event_id="evt",
+        pi_id=pi,
+        payment=payment,
+        amount_cents=10_000,
+        return_code="R01",
+        source_key=None,
     )
 
 
@@ -293,7 +298,12 @@ async def test_partial_return_of_unallocated_money_stops_it_being_spendable(real
         payment = await repo.get_payment_by_stripe_payment_intent_id("pi_part")
         assert payment is not None
         await uc._reverse_returned_payment(
-            event_id="evt", pi_id="pi_part", payment=payment, amount_cents=4_000, return_code="R01"
+            event_id="evt",
+            pi_id="pi_part",
+            payment=payment,
+            amount_cents=4_000,
+            return_code="R01",
+            source_key=None,
         )
 
     after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_part"})
@@ -338,6 +348,7 @@ async def test_second_partial_return_raises_the_total_and_stale_events_never_low
             payment=payment,
             amount_cents=cumulative,
             return_code="R01",
+            source_key=None,
         )
 
     after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_two"})
@@ -409,3 +420,43 @@ async def test_reopened_invoice_moves_both_dates_and_no_ladder_opens_before_then
     ladder = MongoDunningStateRepository(real_db)
     assert await ladder.prepare_due_states(now=datetime(2026, 11, 19, 12, tzinfo=UTC), limit=5) == 0
     assert await ladder.prepare_due_states(now=datetime(2026, 11, 20, 12, tzinfo=UTC), limit=5) == 1
+
+
+@pytest.mark.asyncio
+async def test_refund_then_dispute_sum_and_neither_replay_double_counts(real_db, acad) -> None:
+    """A dispute amount is not cumulative: a 4,000 refund then a 3,000 dispute on
+    the same payment is 7,000 taken back. Replaying either, in any order, keeps it."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_mix"), idempotency_key="p:mix")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+    refund = {"amount_cents": 4_000, "return_code": "R01", "source_key": None}
+    dispute = {
+        "amount_cents": 3_000,
+        "return_code": "dispute:fraudulent",
+        "source_key": "dispute:dp_1",
+    }
+
+    for step in (refund, dispute, dispute, refund, dispute):
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_mix")
+        assert payment is not None
+        await uc._reverse_returned_payment(event_id="evt", pi_id="pi_mix", payment=payment, **step)
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_mix"})
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "partially_refunded",
+        7_000,
+        3_000,
+    )
+    audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_mix"}).to_list(10)
+    assert sorted(a["after"]["refunded_cents"] for a in audits) == [4_000, 7_000]

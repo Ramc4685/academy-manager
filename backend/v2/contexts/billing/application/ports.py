@@ -1117,6 +1117,15 @@ class LedgerRepository(Protocol):
         updated_at: datetime,
     ) -> LedgerPayment: ...
 
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: datetime,
+    ) -> tuple[LedgerPayment, bool]: ...
+
     async def record_payment_attempt(
         self,
         *,
