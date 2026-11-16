@@ -2,9 +2,10 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-## Repo root (`README.md`): 2 items, from `drift/_root.md`
+## Repo root (`README.md`): 3 items, from `drift/_root.md`
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] Validate step undersells the job: it also runs real-Mongo contract tests, lint, the OpenAPI drift check, the Worker runtime smoke, real-auth E2E and scripts validation.
+- [wording] README:173 lists importers under `scripts/`; none exist there.
 
 ## `backend/v2/README.md`: 19 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
