@@ -2,12 +2,13 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-## Repo root (`README.md`): 11 items, from `drift/_root.md`
+## Repo root (`README.md`): 12 items, from `drift/_root.md`
 - [undocumented] README:83-84 says `academy-next` owns `academy.courtmastr.com/*`; `frontend/wrangler.jsonc:18-25` also routes `*.courtmastr.com/*`.
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] README:98 shows `flyctl deploy --remote-only`; production.yml deploys a prebuilt `--image` with `--ha=false`.
 - [wording] Validate step undersells the job: it also runs real-Mongo contract tests, lint, the OpenAPI drift check, the Worker runtime smoke, real-auth E2E and scripts validation.
 - [wording] README:173 lists importers under `scripts/`; none exist there.
+- [wording] README:121-123 says email sends only with APP_ENV=production; `resend_send_port.py:14` also allows staging.
 - [wording] README:51 says multi-region; the API runs one machine in one region (`backend/fly.toml:2`).
 - [wording] Auth methods: README:31,142 name only Google and email/password; code also has Apple and magic links, and self-registration is email/password only.
 - [wording] README:101-102 says the release record publishes only when every changed component deployed; `publish-release` gates only on smoke succeeding on `main` (`production.yml:1126-1129`).

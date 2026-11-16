@@ -1,7 +1,7 @@
 """Settings -> Billing rules -> Family offers: one read and one audited write (L9 C1).
 
-Two blocks on ``billing_settings``: the referral programme (stored only until
-C2 builds its logic) and the automatic sibling discount (applied by the
+Two blocks on ``billing_settings``: the referral programme (values stored;
+switching it on is refused until C2 builds its logic) and the automatic sibling discount (applied by the
 monthly resolver). The owner chooses whether to use each and sets every
 value; there are no business values in code. The UI component holds the
 form's starting values.
@@ -13,8 +13,7 @@ and never touches an existing invoice.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from collections.abc import Mapping
 from typing import Any, Final, Protocol
 
 from pydantic import BaseModel, ValidationError
@@ -27,13 +26,14 @@ from backend.v2.contexts.billing.application.use_cases.money_setting_audit impor
     RecordMoneySettingChange,
 )
 from backend.v2.contexts.billing.domain.billing_settings import (
+    SIBLING_REQUIRED_ON_ENABLE,
     ReferralProgram,
     SiblingDiscount,
 )
 
 #: Inclusive bounds, checked before anything is written. A field may be left
-#: unset while its block is off; switching a block on requires every field in
-#: ``_REQUIRED_ON_ENABLE``.
+#: unset while its block is off; switching the sibling discount on requires
+#: every field in ``SIBLING_REQUIRED_ON_ENABLE``.
 REFERRAL_BOUNDS: Final[Mapping[str, tuple[int, int]]] = {
     "referrer_credit_cents": (1, 50_000),
     "referred_credit_cents": (1, 50_000),
@@ -42,18 +42,6 @@ REFERRAL_BOUNDS: Final[Mapping[str, tuple[int, int]]] = {
     "credit_expiry_days": (30, 1095),
 }
 SIBLING_BOUNDS: Final[Mapping[str, tuple[int, int]]] = {"percent_bps": (1, 10_000)}
-
-#: ``credit_expiry_days`` is absent on purpose: unset means "never expires".
-_REQUIRED_ON_ENABLE: Final[Mapping[str, tuple[str, ...]]] = {
-    "referral_program": (
-        "referrer_credit_cents",
-        "referred_credit_cents",
-        "hold_days",
-        "max_rewards_per_referrer_per_year",
-        "trigger",
-    ),
-    "sibling_discount": ("percent_bps", "full_price_child", "applies_to"),
-}
 
 
 class FamilyOffersStore(Protocol):
@@ -106,11 +94,9 @@ class UpdateFamilyOffers:
         *,
         store: FamilyOffersStore,
         audit: RecordMoneySettingChange,
-        now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
         self._audit = audit
-        self._now = now or (lambda: datetime.now(UTC))
 
     async def execute(self, academy_id: str, cmd: UpdateFamilyOffersCommand) -> FamilyOffersView:
         current = await self._store.get()
@@ -123,10 +109,12 @@ class UpdateFamilyOffers:
                 ReferralProgram, "referral_program", before_referral, cmd.referral_program
             )
             _check_bounds("referral_program", referral, REFERRAL_BOUNDS)
-            if referral.enabled and not before_referral.enabled:
-                # Switch-on date, like late_fee_effective_from: C2 counts only
-                # referrals after it.
-                referral = referral.model_copy(update={"effective_from": self._now()})
+            if referral.enabled:
+                # The values are stored now; the programme itself is C2. C2 adds
+                # the switch-on rules and the effective_from stamp.
+                raise BillingRulesValidationError(
+                    "referral_program.enabled", "the referral programme is not available yet"
+                )
         if cmd.sibling_discount is not None:
             sibling = _merge(
                 SiblingDiscount, "sibling_discount", before_sibling, cmd.sibling_discount
@@ -168,19 +156,21 @@ def _merge[M: BaseModel](model: type[M], block: str, current: M, patch: dict[str
     if unknown:
         field = sorted(unknown)[0]
         raise BillingRulesValidationError(f"{block}.{field}", f"{field} cannot be set")
+    values = {**current.model_dump(), **patch}
+    if block == "sibling_discount" and values.get("enabled"):
+        # Checked here too so the 422 names the field; the model validator
+        # backstops stored data but cannot say which field is missing.
+        for field in SIBLING_REQUIRED_ON_ENABLE:
+            if values.get(field) is None:
+                raise BillingRulesValidationError(
+                    f"{block}.{field}", f"{field} is required to switch this offer on"
+                )
     try:
-        merged = model.model_validate({**current.model_dump(), **patch})
+        return model.model_validate(values)
     except ValidationError as exc:
         error = exc.errors()[0]
         field = ".".join(str(part) for part in error["loc"]) or "value"
         raise BillingRulesValidationError(f"{block}.{field}", error["msg"]) from exc
-    if getattr(merged, "enabled", False):
-        for field in _REQUIRED_ON_ENABLE[block]:
-            if getattr(merged, field) is None:
-                raise BillingRulesValidationError(
-                    f"{block}.{field}", f"{field} is required to switch this offer on"
-                )
-    return merged
 
 
 def _check_bounds(block: str, value: BaseModel, bounds: Mapping[str, tuple[int, int]]) -> None:

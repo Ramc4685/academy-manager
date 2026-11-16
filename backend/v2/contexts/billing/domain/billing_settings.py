@@ -133,6 +133,19 @@ class SiblingDiscount(BaseModel):
     full_price_child: SiblingFullPriceChild | None = None
     applies_to: SiblingAppliesTo | None = None
 
+    @model_validator(mode="after")
+    def _complete_when_enabled(self) -> SiblingDiscount:
+        # A bad stored block must fail validation (the resolver then applies no
+        # discount and pages), never reach the resolver half-configured.
+        for name in SIBLING_REQUIRED_ON_ENABLE:
+            if self.enabled and getattr(self, name) is None:
+                raise ValueError(f"{name} is required to switch this offer on")
+        return self
+
+
+#: Fields the sibling discount needs before it can be switched on.
+SIBLING_REQUIRED_ON_ENABLE: tuple[str, ...] = ("percent_bps", "full_price_child", "applies_to")
+
 
 class BillingSettings(BaseModel):
     """Academy-scoped billing configuration (cash/ACH discount + invoice numbering)."""
