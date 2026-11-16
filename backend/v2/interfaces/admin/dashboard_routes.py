@@ -134,7 +134,13 @@ async def dashboard_attention(
                 f"{stuck} famil{'ies' if stuck != 1 else 'y'} could not be charged because "
                 "of a problem on our side, not the card."
             )
-        sentences.append("Nothing was charged. Open Billing health for details.")
+        # Billing health shows Stripe setup only; a fault on our side retries
+        # on its own every run, so say that instead of pointing at a screen.
+        sentences.append(
+            "Nothing was charged. Open Billing health to finish setup."
+            if needs_setup
+            else "Nothing was charged; autopay tries again on its next run."
+        )
         items.append(
             AdminAttentionItemView(
                 attention_id="autopay-stuck",
@@ -142,8 +148,26 @@ async def dashboard_attention(
                 title="Autopay stuck",
                 detail=" ".join(sentences),
                 severity="high",
-                href="/admin/billing-health",
+                href="/admin/billing-health" if needs_setup else "/admin/payments",
                 count=stuck + needs_setup,
+            )
+        )
+
+    returns_to_review = int(dunning_alerts.get("bank_returns_to_review") or 0)
+    if returns_to_review:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="bank-return-review",
+                kind="bank_return_review",
+                title="Bank returns to check",
+                detail=(
+                    f"{returns_to_review} bank return{'s' if returns_to_review != 1 else ''} "
+                    "need a manual look: the money came back, but the invoice was not "
+                    "reopened automatically."
+                ),
+                severity="high",
+                href="/admin/payments",
+                count=returns_to_review,
             )
         )
 

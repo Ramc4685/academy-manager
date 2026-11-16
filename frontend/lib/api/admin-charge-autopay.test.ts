@@ -44,4 +44,32 @@ describe("chargeAdminInvoiceAutopay retry safety (L1 should-fix 10)", () => {
 
     expect(sentRequestId(spy, 0)).not.toBe(sentRequestId(spy, 1));
   });
+
+  it("keeps the id while the first charge is still in progress", async () => {
+    const busy = Object.assign(new Error("charge_in_progress: this charge is already being submitted"), {
+      status: 409,
+    });
+    const spy = vi
+      .spyOn(client, "apiFetch")
+      .mockRejectedValueOnce(busy)
+      .mockResolvedValueOnce({ success: true } as never);
+
+    await expect(chargeAdminInvoiceAutopay("inv-busy")).rejects.toThrow();
+    await chargeAdminInvoiceAutopay("inv-busy");
+
+    expect(sentRequestId(spy, 0)).toBe(sentRequestId(spy, 1));
+  });
+
+  it("mints a fresh id after any other 409", async () => {
+    const conflict = Object.assign(new Error("invoice amount changed"), { status: 409 });
+    const spy = vi
+      .spyOn(client, "apiFetch")
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ success: true } as never);
+
+    await expect(chargeAdminInvoiceAutopay("inv-conflict")).rejects.toThrow();
+    await chargeAdminInvoiceAutopay("inv-conflict");
+
+    expect(sentRequestId(spy, 0)).not.toBe(sentRequestId(spy, 1));
+  });
 });

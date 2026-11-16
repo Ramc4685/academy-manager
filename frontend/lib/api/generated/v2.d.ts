@@ -7696,7 +7696,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
+            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
             /**
              * Severity
              * @enum {string}
@@ -12523,10 +12523,6 @@ export interface components {
              * @default false
              */
             direct_charges_supported: boolean;
-            /** Fees Collector */
-            fees_collector?: string | null;
-            /** Losses Collector */
-            losses_collector?: string | null;
             /**
              * Payouts Enabled
              * @default false

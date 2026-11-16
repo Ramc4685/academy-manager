@@ -1373,6 +1373,7 @@ export type AdminAttentionKind =
   | "autopay_failure"
   | "dunning_exhaustion"
   | "autopay_stuck"
+  | "bank_return_review"
   | "pause_requests"
   | "scheduled_resume_blocked"
   | "scheduled_action_failed"
@@ -2864,7 +2865,7 @@ export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse
 }
 
 // A "Charge now" whose outcome we never learned (timeout, network drop, 5xx,
-// or 409 charge_in_progress) keeps its request id for this window, so a retry
+// or a 409 whose detail starts with charge_in_progress) keeps its request id for this window, so a retry
 // replays the first charge on the server instead of making a second one.
 const CHARGE_RETRY_WINDOW_MS = 10 * 60 * 1000;
 const unconfirmedCharges = new Map<string, { requestId: string; at: number }>();
@@ -2892,8 +2893,9 @@ export async function chargeAdminInvoiceAutopay(
     unconfirmedCharges.delete(invoiceId);
     return result;
   } catch (error) {
-    const status = (error as { status?: unknown } | null)?.status;
-    if (typeof status === "number" && status >= 400 && status < 500 && status !== 409) {
+    const { status, message } = (error ?? {}) as { status?: unknown; message?: unknown };
+    const stillRunning = status === 409 && String(message ?? "").startsWith("charge_in_progress");
+    if (typeof status === "number" && status >= 400 && status < 500 && !stillRunning) {
       unconfirmedCharges.delete(invoiceId);
     }
     throw error;

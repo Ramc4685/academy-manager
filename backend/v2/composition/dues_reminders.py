@@ -27,6 +27,7 @@ from typing import Any
 
 from backend.v2.composition.email_adapters import DuesReminderEmailAdapter, due_phrase
 from backend.v2.composition.invoice_naming import build_invoice_naming_resolver
+from backend.v2.contexts.billing.application.autopay_eligibility import AUTOPAY_ACTIVE_STATUS
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     SendDuesReminders,
 )
@@ -37,6 +38,7 @@ from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders i
 from backend.v2.contexts.billing.domain.dunning import (
     PARK_REASONS_NEEDING_ATTENTION,
     PARK_REASONS_NEEDING_STRIPE_SETUP,
+    RETURN_CODES_NEEDING_MANUAL_REVIEW,
 )
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
@@ -251,7 +253,7 @@ def compose_dues_reminders(
                         {
                             "academy_id": current_academy_id(),
                             "enrollment_id": {"$in": sorted(enrollment_ids)},
-                            "autopay_enrollment_status": "active",
+                            "autopay_enrollment_status": AUTOPAY_ACTIVE_STATUS,
                         },
                     )
                 )
@@ -370,11 +372,22 @@ def compose_dues_reminders(
             "parent_id",
             {**parked, "suppression_reason": {"$in": sorted(PARK_REASONS_NEEDING_STRIPE_SETUP)}},
         )
+        # Returns the ledger could not reverse on its own (owner rule: failures
+        # show in admin), by family, over the last 30 days.
+        returns_to_review = await db["payment_attempts"].distinct(
+            "parent_id",
+            {
+                "academy_id": request_academy_id,
+                "failure_code": {"$in": list(RETURN_CODES_NEEDING_MANUAL_REVIEW)},
+                "created_at": {"$gte": datetime.now(UTC) - timedelta(days=30)},
+            },
+        )
         return {
             "failed_autopay": len(failed),
             "dunning_exhausted": len(exhausted),
             "autopay_stuck": len(stuck),
             "autopay_needs_stripe_setup": len(needs_setup),
+            "bank_returns_to_review": len(returns_to_review),
         }
 
     return DuesReminderBundle(
