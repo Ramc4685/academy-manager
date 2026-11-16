@@ -37,7 +37,7 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             last_updated_at=doc["last_updated_at"],
             last_updated_by=str(doc["last_updated_by"]),
             coach_note=doc.get("coach_note") or None,
-            tries=int(doc.get("tries") or 0),
+            tries=doc.get("tries") or 0,
             silent=bool(doc.get("silent", False)),
         )
 
