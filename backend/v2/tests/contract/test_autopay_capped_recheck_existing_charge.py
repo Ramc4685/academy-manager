@@ -108,7 +108,12 @@ async def test_a_processing_debit_found_on_recheck_parks_without_charging(real_d
             "status": "processing",
             "amount": 10_000,
             "currency": "usd",
-            "metadata": {"academy_id": ACAD, "parent_id": PARENT, "invoice_id": "inv-a"},
+            "metadata": {
+                "academy_id": ACAD,
+                "parent_id": PARENT,
+                "invoice_id": "inv-a",
+                "source": "autopay",
+            },
         }
     )
 
@@ -135,4 +140,117 @@ async def test_recheck_does_not_charge_when_stripe_cannot_be_searched(real_db, a
     result = await _charge(real_db, stripe).execute("inv-a", check_existing=True)
 
     assert result.decline_code == "stripe_unavailable"
+    assert stripe.off_session_payment_intents == []
+
+
+async def _set_balance(real_db: Any, invoice_id: str, cents: int) -> None:
+    await real_db["invoices"].update_one(
+        {"academy_id": ACAD, "invoice_id": invoice_id},
+        {"$set": {"balance_due_cents": cents, "total_cents": cents, "subtotal_cents": cents}},
+    )
+
+
+async def test_a_family_retry_with_a_changed_total_parks_instead_of_charging_again(
+    real_db, acad
+) -> None:
+    """The family key carries no amount: a retry whose total moved reuses the key,
+    Stripe refuses it (different params), and the group parks with no new charge."""
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b", cents=8_000)
+    stripe = _CrashOnceStripe()
+    scopes = {"inv-a": "r1", "inv-b": "r1"}
+    charge = _charge(real_db, stripe)
+
+    with pytest.raises(RuntimeError):
+        await charge.execute_family(["inv-a", "inv-b"], charge_group_id="g1", retry_scopes=scopes)
+    await _set_balance(real_db, "inv-b", 7_000)  # a credit landed between tries
+    result = await charge.execute_family(
+        ["inv-a", "inv-b"], charge_group_id="g1", retry_scopes=scopes
+    )
+
+    assert result.result is not None and result.result.decline_code == "stripe_unavailable"
+    assert len(stripe.off_session_payment_intents) == 1
+    (pi,) = stripe.off_session_payment_intents
+    assert pi["idempotency_key"].startswith("autopay-family:")
+    assert not pi["idempotency_key"].endswith(":18000")
+    assert await _payments(real_db) == []
+
+
+def _seed_pi(stripe: FakeStripeGateway, **overrides: Any) -> None:
+    pi: dict[str, Any] = {
+        "id": "pi_found",
+        "status": "succeeded",
+        "amount": 10_000,
+        "currency": "usd",
+        "metadata": {
+            "academy_id": ACAD,
+            "parent_id": PARENT,
+            "invoice_id": "inv-a",
+            "source": "autopay",
+        },
+    }
+    pi.update(overrides)
+    stripe.payment_intents.append(pi)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param(
+            {"latest_charge": {"id": "ch_1", "refunded": True, "amount_refunded": 10_000}},
+            id="refunded",
+        ),
+        pytest.param({"latest_charge": {"id": "ch_1", "disputed": True}}, id="disputed"),
+        pytest.param({"amount": 4_000}, id="amount-differs"),
+        pytest.param(
+            {
+                "metadata": {
+                    "academy_id": ACAD,
+                    "parent_id": PARENT,
+                    "invoice_id": "inv-a",
+                    "source": "invoice_pay_link",
+                }
+            },
+            id="checkout-payment",
+        ),
+    ],
+)
+async def test_a_found_charge_that_is_not_cleanly_this_one_parks_unpaid(
+    real_db, acad, overrides: dict[str, Any]
+) -> None:
+    await _seed(real_db, "inv-a")
+    stripe = _CrashOnceStripe()
+    stripe.crash_once = False
+    _seed_pi(stripe, **overrides)
+
+    result = await _charge(real_db, stripe).execute("inv-a", check_existing=True)
+
+    assert not result.success and not result.processing
+    assert stripe.off_session_payment_intents == []
+    assert await _payments(real_db) == []
+    assert (await _invoice(real_db, "inv-a"))["status"] == "open"
+
+
+async def test_a_found_charge_that_leaves_a_balance_is_not_reported_paid(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    stripe = _CrashOnceStripe()
+    stripe.crash_once = False
+    _seed_pi(stripe)
+    charge = _charge(real_db, stripe)
+    real_get = charge._ledger.get_invoice
+    reads = 0
+
+    async def _get_invoice(invoice_id: str) -> Any:
+        # The post-settle read sees a balance the allocation did not clear.
+        nonlocal reads
+        reads += 1
+        invoice = await real_get(invoice_id)
+        if reads > 2 and invoice is not None:
+            return invoice.model_copy(update={"balance_due_cents": 2_500})
+        return invoice
+
+    charge._ledger.get_invoice = _get_invoice  # type: ignore[method-assign]
+    result = await charge.execute("inv-a", check_existing=True)
+
+    assert not result.success
     assert stripe.off_session_payment_intents == []

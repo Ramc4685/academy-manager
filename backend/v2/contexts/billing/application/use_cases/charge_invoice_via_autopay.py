@@ -209,6 +209,21 @@ def _attempt_status(pi_status: str, decline_code: str | None) -> str:
     return "requires_action"
 
 
+def _why_not_settleable(pi: dict[str, Any], total_cents: int) -> str | None:
+    """Why a PaymentIntent naming exactly these invoices must not settle them, or None."""
+    metadata = pi.get("metadata") or {}
+    if metadata.get("source") != "autopay":
+        return f"it is a {metadata.get('source') or 'non-autopay'} payment"
+    if int(pi.get("amount") or 0) != total_cents:
+        return f"its amount {pi.get('amount')} is not the {total_cents} due"
+    charge = pi.get("latest_charge")
+    if isinstance(charge, dict) and (
+        charge.get("refunded") or charge.get("amount_refunded") or charge.get("disputed")
+    ):
+        return "its charge was refunded or disputed"
+    return None
+
+
 def _refused(invoice: LedgerInvoice, decline_code: str | None) -> ChargeResult:
     """Not charged: no Stripe call or no answer, nothing recorded."""
     return ChargeResult(
@@ -475,11 +490,11 @@ class ChargeInvoiceViaAutopay:
             sorted(f"{m.invoice_id}:{retry_scopes.get(m.invoice_id) or ''}" for m in members)
         )
         digest = hashlib.sha256(rungs.encode()).hexdigest()[:32]
-        idempotency_key = f"autopay-family:{digest}:{total}"
+        # No amount (or amount-derived fee) in the key: a total that changed between
+        # retries must hit Stripe's reused-key error and park, not mint a new key
+        # that charges again after the first charge went through.
+        idempotency_key = route.idempotency_key(f"autopay-family:{digest}")
         fee_cents = route.application_fee_cents(total)
-        idempotency_key = route.idempotency_key(
-            idempotency_key_with_fee(idempotency_key, fee_cents)
-        )
         joined_ids = ",".join(charged)
         pi_metadata = {
             "invoice_ids": joined_ids,
@@ -647,15 +662,22 @@ class ChargeInvoiceViaAutopay:
                     sorted(wanted),
                 )
                 return _refused(lead, None)
+            total = sum(i.balance_due_cents for i in invoices)
+            unsafe = _why_not_settleable(pi, total)
+            if unsafe is not None:
+                # Real money touched these invoices but not as this charge: never
+                # record it as one and never charge on top of it; a person decides.
+                log.warning(
+                    "charge_autopay: pi=%s covers %s but %s; parking", pi_id, sorted(wanted), unsafe
+                )
+                return _refused(lead, None)
             log.warning(
                 "charge_autopay: invoices=%s already charged by pi=%s status=%s; not charging",
                 sorted(wanted),
                 pi_id,
                 status,
             )
-            target = lead.model_copy(
-                update={"balance_due_cents": sum(i.balance_due_cents for i in invoices)}
-            )
+            target = lead.model_copy(update={"balance_due_cents": total})
             if status == "processing":
                 for invoice in invoices:
                     await self._ledger.record_payment_attempt(
@@ -683,6 +705,15 @@ class ChargeInvoiceViaAutopay:
                 metadata=pi_metadata,
                 now=now,
             )
+            for invoice in invoices:
+                after = await self._ledger.get_invoice(invoice.invoice_id)
+                if after is None or after.balance_due_cents > 0:
+                    log.warning(
+                        "charge_autopay: pi=%s recorded but invoice=%s still owes; parking",
+                        pi_id,
+                        invoice.invoice_id,
+                    )
+                    return _refused(lead, None)
             return _attempt_result(target, "succeeded", None)
         return None
 

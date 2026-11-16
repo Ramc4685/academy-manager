@@ -24,6 +24,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeGateway,
     StripeResourceNotFound,
 )
+from backend.v2.contexts.billing.domain.errors import StripeUnavailable
 from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 from backend.v2.shared.ids import new_ulid
 
@@ -758,6 +759,13 @@ class FakeStripeGateway(StripeGateway):
         # Stripe replays the first answer for a key it still remembers (24h).
         replay = self._off_session_by_key.get((stripe_account, idempotency_key))
         if replay is not None:
+            first = self._payment_intents_by_id.get(replay[0]) or {}
+            if first.get("amount") != amount_cents:
+                # Stripe: IdempotencyError, which RealStripeGateway raises as StripeUnavailable.
+                raise StripeUnavailable(
+                    "Stripe PaymentIntent creation failed: idempotency key reused with "
+                    "different parameters"
+                )
             return replay
         check_application_fee_cents(
             fee_cents=application_fee_cents,
@@ -807,6 +815,12 @@ class FakeStripeGateway(StripeGateway):
             "on_behalf_of": connected_account_id,
             "transfer_data": record["transfer_data"],
             "application_fee_amount": record["application_fee_amount"],
+            "latest_charge": {
+                "id": f"ch_fake_{pi_id}",
+                "refunded": False,
+                "amount_refunded": 0,
+                "disputed": False,
+            },
         }
         self._off_session_by_key[(stripe_account, idempotency_key)] = (pi_id, "succeeded", None)
         return pi_id, "succeeded", None

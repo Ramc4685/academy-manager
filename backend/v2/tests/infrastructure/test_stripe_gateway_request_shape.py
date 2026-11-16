@@ -287,10 +287,12 @@ async def test_payment_intent_reconciliation_search_is_scoped_to_academy() -> No
         {
             "query": 'metadata["academy_id"]:"academy_1" AND status:"succeeded"',
             "limit": 25,
+            "expand": ["data.latest_charge"],
         },
         {
             "query": 'metadata["academy_id"]:"academy_1" AND status:"processing"',
             "limit": 25,
+            "expand": ["data.latest_charge"],
         },
     ]
 

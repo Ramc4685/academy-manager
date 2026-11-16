@@ -615,7 +615,12 @@ class RealStripeGateway(StripeGateway):
         def _search() -> list[dict[str, Any]]:
             by_id: dict[str, dict[str, Any]] = {}
             for query in queries:
-                kwargs: dict[str, Any] = {"query": query, "limit": safe_limit}
+                kwargs: dict[str, Any] = {
+                    "query": query,
+                    "limit": safe_limit,
+                    # Refund and dispute flags live on the charge.
+                    "expand": ["data.latest_charge"],
+                }
                 kwargs.update(_on_account(stripe_account))
                 payment_intents = self._stripe.PaymentIntent.search(**kwargs)
                 data = getattr(payment_intents, "data", None) or []
