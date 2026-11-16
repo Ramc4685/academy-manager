@@ -223,14 +223,34 @@ async def test_replay_after_a_crash_between_delete_and_invoice_repair_reopens_th
 
 
 @pytest.mark.asyncio
-async def test_return_with_no_allocation_and_no_reversal_is_not_marked_refunded(
-    real_db, acad
-) -> None:
-    """No allocation and no proof a reversal ran: park for a manual look."""
+async def test_full_return_of_unallocated_money_leaves_nothing_spendable(real_db, acad) -> None:
+    """Final risk check on #1178: no allocation and no invoice means the money was
+    never applied, so a full return just refunds it instead of leaving it spendable."""
     repo = MongoBillingLedgerRepository(real_db)
     await repo.record_payment(_payment(acad, "pi_none"), idempotency_key="p:none")
 
     await _return(_handler(repo, acad), repo, "pi_none")
 
-    payment = await repo.get_payment_by_stripe_payment_intent_id("pi_none")
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_none"})
+    assert (after["status"], after["unapplied_amount_cents"]) == ("refunded", 0)
+
+
+@pytest.mark.asyncio
+async def test_return_naming_an_invoice_without_an_allocation_is_left_for_a_manual_look(
+    real_db, acad
+) -> None:
+    """The invoice may read paid with no allocation to reverse: park it and count it
+    on the "Bank returns to check" card."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.create_invoice(_invoice(acad, "inv-pi_meta"), lines=[], idempotency_key="i:meta")
+    await repo.record_payment(
+        _payment(acad, "pi_meta", {"funding_type": "us_bank_account", "invoice_id": "inv-pi_meta"}),
+        idempotency_key="p:meta",
+    )
+
+    await _return(_handler(repo, acad), repo, "pi_meta")
+
+    payment = await repo.get_payment_by_stripe_payment_intent_id("pi_meta")
     assert payment is not None and payment.status == "succeeded"
+    attempt = await real_db["payment_attempts"].find_one({"invoice_id": "inv-pi_meta"})
+    assert attempt is not None and attempt["failure_code"] == "unreconciled_payment_return"

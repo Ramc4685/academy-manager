@@ -183,9 +183,10 @@ async def dashboard_attention(
                 kind="bank_return_review",
                 title="Bank returns to check",
                 detail=(
-                    f"{returns_to_review} bank return{'s' if returns_to_review != 1 else ''} "
-                    "need a manual look: the money came back, but the invoice was not "
-                    "reopened automatically."
+                    f"{returns_to_review} "
+                    f"{'family has' if returns_to_review == 1 else 'families have'} a bank "
+                    "return that needs a manual look: the money came back, but the invoice "
+                    "was not reopened automatically."
                 ),
                 severity="high",
                 href="/admin/payments",
