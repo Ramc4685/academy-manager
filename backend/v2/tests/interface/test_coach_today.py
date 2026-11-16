@@ -52,8 +52,11 @@ def test_coach_today_hydrates_existing_attendance(coach_client):
     first = r.json()["sessions"][0]
     by_id = {entry["student_id"]: entry for entry in first["roster"]}
     assert by_id["st1"]["attendance_status"] == "present"
+    # When it was recorded, so the app can close the 48h correction window.
+    assert by_id["st1"]["attendance_marked_at"].startswith("2026-05-16T19:00")
     unmarked = [e for sid, e in by_id.items() if sid != "st1"]
     assert all(e["attendance_status"] is None for e in unmarked)
+    assert all(e["attendance_marked_at"] is None for e in unmarked)
 
 
 def test_coach_today_hydrates_late_attendance_without_response_validation_error(coach_client):
