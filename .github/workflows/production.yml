@@ -713,8 +713,8 @@ jobs:
       # add `python3 -m pytest scripts/dev/tests -q` to this job.
 
   # Guards the pre-push hook's tier classifier (#481). Always runs (no path
-  # filter): scripts/** is not covered by any changes filter, and the test
-  # takes seconds.
+  # filter): the test takes seconds, so gating it on the `scripts` filter
+  # would save nothing.
   hook-tests:
     name: Hook Classifier Tests
     runs-on: ubuntu-latest

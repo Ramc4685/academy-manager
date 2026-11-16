@@ -12,11 +12,14 @@
 #   FRONTEND_CHANGED any file under frontend/
 #   HIGH_RISK        any file matching CLASSIFY_HIGH_RISK_RE below
 #   RUN_E2E          any file under frontend/e2e/, or --full
-#   BROAD            --full, high-risk, or mixed backend+frontend
+#   BROAD            --full or high-risk
 
-# Paths where a mistake is expensive enough to always warrant the broad tier:
-# auth/tenancy/billing/payments, migrations, CI, deployment, shared infra.
-CLASSIFY_HIGH_RISK_RE='^\.github/workflows/|^scripts/|^docker|compose.*\.ya?ml$|^fly\.toml|requirements.*\.txt$|pnpm-lock\.yaml$|package\.json$|auth|tenan|billing|stripe|payment|invoice|checkout|webhook|migrat|middleware|composition'
+# Paths where a mistake is expensive enough to warrant the broad tier: billing,
+# tenancy, auth, migrations, composition, webhooks and money routes, the BFF proxy and
+# middleware, CI, deployment and dependency manifests. Anchored to real path
+# prefixes (case-sensitive): a bare substring like `auth` used to catch
+# `authoring.py`, and `billing` caught every billing UI page and e2e spec.
+CLASSIFY_HIGH_RISK_RE='^\.github/workflows/|^scripts/|^docker-compose[^/]*\.ya?ml$|(^|/)Dockerfile[^/]*$|(^|/)fly\.toml$|(^|/)requirements[^/]*\.txt$|(^|/)pnpm-lock\.yaml$|(^|/)package\.json$|^backend/v2/(contexts/billing|shared/tenancy|shared/auth|migrations|composition)/|^backend/v2/main\.py$|^backend/v2/contexts/identity/application/use_cases/load_auth_claims\.py$|^backend/v2/interfaces/([^/]+/)?[^/]*webhook[^/]*\.py$|^backend/v2/interfaces/.*(billing|payment|invoice|tenant)[^/]*\.py$|^frontend/middleware\.ts$|^frontend/lib/auth/|^frontend/lib/api/auth-|^frontend/app/api/'
 
 classify_changes() {
   local changed="${1-}" full="${2:-}"
@@ -41,7 +44,7 @@ classify_changes() {
     case "$f" in
       frontend/e2e/*) RUN_E2E=true ;;
     esac
-    if printf '%s' "$f" | grep -qiE "$CLASSIFY_HIGH_RISK_RE"; then
+    if printf '%s' "$f" | grep -qE "$CLASSIFY_HIGH_RISK_RE"; then
       HIGH_RISK=true
     fi
   done <<< "${changed}"
@@ -49,7 +52,9 @@ classify_changes() {
   if [ "$full" = "--full" ]; then
     RUN_E2E=true
   fi
-  if [ "$full" = "--full" ] || [ "$HIGH_RISK" = true ] || { [ "$BACKEND_CHANGED" = true ] && [ "$FRONTEND_CHANGED" = true ]; }; then
+  # Mixed backend+frontend is no longer broad on its own: the focused tier
+  # already checks each side that changed.
+  if [ "$full" = "--full" ] || [ "$HIGH_RISK" = true ]; then
     BROAD=true
   fi
 }

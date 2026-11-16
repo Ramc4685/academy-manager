@@ -83,8 +83,8 @@ async def other_acad():
 # mongomock does not enforce what the money paths lean on under concurrency:
 # partial unique indexes, conditional updates racing each other, and the
 # launch validators (0132). ``real_db`` is a throwaway database on a real
-# ``mongod`` (the CI backend job's ``mongo:8`` service; locally whatever
-# listens on 27017) with every migration replayed ONCE per session, so the
+# ``mongod`` (the native mongod 8.0 the CI backend jobs install; locally
+# ``V2_MONGO_URL``, else 27017) with every migration replayed ONCE per session, so the
 # production indexes and validators exist. Each test starts from empty
 # collections (indexes and validators kept). Skipped, not failed, when no
 # ``mongod`` is reachable, exactly like test_partial_index_planner_usability.

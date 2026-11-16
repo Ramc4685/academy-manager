@@ -26,6 +26,8 @@ NOTES_DIR = REPO_ROOT / "docs" / "release-notes"
 REQUIRED_SECTIONS = ["## What changed", "## Deploy notes", "## Risk / rollback"]
 CODE_PREFIXES = ("backend/", "frontend/")
 BODY_HEADING_CANDIDATES = ["## What", "## Summary", "## What changed"]
+# A `PR:` line whose value is a real number, e.g. `PR: #1180`.
+NUMBERED_PR_LINE = re.compile(r"^PR:\s*#\d+\s*$", re.MULTILINE)
 PLACEHOLDER_MARKERS = (
     "auto-generated stub",
     "author: fill in",
@@ -33,14 +35,15 @@ PLACEHOLDER_MARKERS = (
 )
 
 
-def changed_files(base_ref: str) -> list[str]:
+def changed_files(base_ref: str, diff_filter: str | None = None) -> list[str]:
     # No --depth here: forcing a shallow fetch on top of an already-full
     # clone (as produced by `actions/checkout` with fetch-depth: 0) breaks
     # merge-base resolution for the `...` diff below.
     subprocess.run(["git", "fetch", "origin", "main"], cwd=REPO_ROOT, check=False)
     diff_spec = f"{base_ref}...HEAD"
+    filter_args = [f"--diff-filter={diff_filter}"] if diff_filter else []
     result = subprocess.run(
-        ["git", "diff", "--name-only", diff_spec],
+        ["git", "diff", "--name-only", *filter_args, diff_spec],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -49,7 +52,7 @@ def changed_files(base_ref: str) -> list[str]:
         # Fall back to a direct tip-to-tip diff (no merge-base needed) if the
         # clone doesn't have enough history to resolve a common ancestor.
         result = subprocess.run(
-            ["git", "diff", "--name-only", base_ref, "HEAD"],
+            ["git", "diff", "--name-only", *filter_args, base_ref, "HEAD"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -68,6 +71,40 @@ def find_existing_note(pr_number: str) -> Path | None:
     marker = f"PR: #{pr_number}"
     for path in sorted(NOTES_DIR.glob("*.md")):
         if marker in path.read_text(encoding="utf-8"):
+            return path
+    return None
+
+
+def exists_on_base(base_ref: str, name: str) -> bool:
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{base_ref}:{name}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def find_unnumbered_note(added_files: list[str], base_ref: str) -> Path | None:
+    """A note this PR adds whose `PR:` line is a placeholder (`PR: TBD`) or missing.
+
+    Lets an author write the note before the PR exists, so stamping the
+    number never costs an extra push. A note that names a different PR number
+    does not count, nor does one already on the base branch: a branch stacked
+    on a squash-merged lane would otherwise see that lane's `PR: TBD` note as
+    "added" (the diff is against the merge-base) and borrow it.
+    """
+    for name in sorted(added_files):
+        path = REPO_ROOT / name
+        # Flat folder only: publish_release.changed_note_paths rejects nested
+        # notes, which would fail the post-deploy release step.
+        if not (
+            Path(name).parent == Path("docs/release-notes")
+            and name.endswith(".md")
+            and path.is_file()
+            and not exists_on_base(base_ref, name)
+        ):
+            continue
+        if not NUMBERED_PR_LINE.search(path.read_text(encoding="utf-8")):
             return path
     return None
 
@@ -197,7 +234,9 @@ def main() -> int:
     body = os.environ.get("PR_BODY", "")
 
     files = changed_files(args.base_ref)
-    existing = find_existing_note(args.pr_number)
+    existing = find_existing_note(args.pr_number) or find_unnumbered_note(
+        changed_files(args.base_ref, diff_filter="A"), args.base_ref
+    )
 
     if existing is not None:
         problems = validate_note(existing)
@@ -232,7 +271,8 @@ def main() -> int:
 
     print(
         "ERROR: this PR changes backend/ or frontend/ but has no complete "
-        f"release note containing `PR: #{args.pr_number}`.\n"
+        f"release note containing `PR: #{args.pr_number}` (or a note added in "
+        "this PR with `PR: TBD`).\n"
         "Generate a starting point locally with:\n"
         f"  python3 scripts/dev/release_notes_check.py --generate "
         f"--pr-number {args.pr_number}\n"

@@ -29,6 +29,7 @@ PRODUCTION_TAG = re.compile(
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 PR_MARKER = re.compile(r"^PR:\s+#(\d+)\s*$", re.MULTILINE)
+SQUASH_SUBJECT_PR = re.compile(r"\(#(\d+)\)$")
 MAX_NOTE_BYTES = 128 * 1024
 MAX_RELEASE_BODY_BYTES = 120 * 1024
 
@@ -168,6 +169,28 @@ def changed_note_paths(previous_tag: str | None, sha: str) -> list[Path]:
     return sorted(set(paths))
 
 
+def pr_from_commit_subject(path: Path) -> str | None:
+    """PR number from the squash-merge subject (`... (#1180)`) that added the note.
+
+    The Release Notes Gate accepts `PR: TBD`, so a merged note may carry no
+    number of its own.
+    """
+    result = run(
+        [
+            "git",
+            "log",
+            "--diff-filter=A",
+            "--format=%s",
+            "-1",
+            "--",
+            str(path.relative_to(REPO_ROOT)),
+        ],
+        check=False,
+    )
+    match = SQUASH_SUBJECT_PR.search((result.stdout or "").strip())
+    return match.group(1) if match else None
+
+
 def parse_release_note(path: Path) -> ReleaseNote:
     problems = validate_note(path)
     if problems:
@@ -191,7 +214,7 @@ def parse_release_note(path: Path) -> ReleaseNote:
     return ReleaseNote(
         path=path,
         title=title_line,
-        pr_number=pr_match.group(1) if pr_match else None,
+        pr_number=pr_match.group(1) if pr_match else pr_from_commit_subject(path),
         sections={
             heading: section_body(text, heading) for heading in REQUIRED_SECTIONS
         },
