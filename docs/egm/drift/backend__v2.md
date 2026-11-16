@@ -1,7 +1,7 @@
 ## backend/v2/README.md
 
 - [stale-not-built] README:3 links `../../../.claude/plans/write-a-detailed-plan-curried-trinket.md`; the file does not exist at that path (nor under `~/.claude/plans`).
-- [contract] README:27 says `contract/` runs "mongo + stripe via testcontainers". `backend/v2/tests/contract/conftest.py:4-6,36` uses a real mongod from `V2_MONGO_URL` (CI native mongod 8.0), with a `mongomock-motor` fallback. No testcontainers usage anywhere in `backend/v2/tests`.
+- [contract] README:27 says `contract/` runs "mongo + stripe via testcontainers". `backend/v2/tests/contract/conftest.py:3-8` uses a real mongod from `CONTRACT_TESTS_MONGO_URL` (CI native mongod 8.0), with a `mongomock-motor` fallback. No testcontainers usage anywhere in `backend/v2/tests`.
 - [contract] README:103 (and :101) say CI runs `pytest v2/tests` with >=70% coverage on `v2/shared`. `.github/workflows/production.yml:165` uses `--cov=v2 --cov-fail-under=86`, over all of v2.
 - [contract] README:101 calls mypy "advisory in the backend lint job" with `--config-file backend/pyproject.toml v2`. `production.yml:266-274` runs `mypy -p backend.v2` as blocking, filtered against `backend/mypy-baseline.txt`.
 - [contract] README:102 says import-linter enforces "layer rules + tenancy". `backend/pyproject.toml:169-171,190-193` says the tenancy `academy_id` literal rule and the cross-context rule are not import-linter contracts. They are pytest structural checks.
