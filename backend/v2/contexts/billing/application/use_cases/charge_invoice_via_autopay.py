@@ -152,6 +152,17 @@ class AutopayStripeGateway(Protocol):
         """Return (pi_id, pi_status, decline_code_or_None)."""
         ...
 
+    async def search_app_owned_payment_intents(
+        self,
+        *,
+        academy_id: str,
+        limit: int = 100,
+        stripe_account: str | None = None,
+        parent_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recent succeeded or processing app-owned PaymentIntents."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Result DTO
@@ -198,7 +209,7 @@ def _attempt_status(pi_status: str, decline_code: str | None) -> str:
     return "requires_action"
 
 
-def _refused(invoice: LedgerInvoice, decline_code: str) -> ChargeResult:
+def _refused(invoice: LedgerInvoice, decline_code: str | None) -> ChargeResult:
     """Not charged: no Stripe call or no answer, nothing recorded."""
     return ChargeResult(
         success=False,
@@ -264,7 +275,11 @@ class ChargeInvoiceViaAutopay:
         retry_scope: str | None = None,
         source: str = "autopay",
         actor_id: str | None = None,
+        check_existing: bool = False,
     ) -> ChargeResult:
+        """``check_existing``: a retry whose idempotency key Stripe may have
+        forgotten (a capped ladder's daily recheck) first looks for a
+        PaymentIntent that already charged this invoice and settles that instead."""
         now = self._now()
 
         # 1. Load invoice
@@ -296,7 +311,10 @@ class ChargeInvoiceViaAutopay:
             return resolved
         route, customer_id, pm_id = resolved
         on_account = route.on_account_kwargs()
-        connected_account_id = route.connected_account_id
+        if check_existing:
+            found = await self._settle_existing_payment_intent([invoice], route, now=now)
+            if found is not None:
+                return found
         settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
         invoice, discount_metadata = await self._apply_ach_discount_if_needed(
             invoice=invoice,
@@ -362,40 +380,15 @@ class ChargeInvoiceViaAutopay:
             return _attempt_result(invoice, attempt_status, decline_code)
 
         # 6. PI succeeded — record LedgerPayment + allocate
-        payment_id = f"ledger-pay-autopay:{pi_id}"
-        payment = await self._ledger.record_payment(
-            LedgerPayment(
-                payment_id=payment_id,
-                academy_id=invoice.academy_id,
-                parent_id=invoice.parent_id,
-                amount_cents=invoice.balance_due_cents,
-                unapplied_amount_cents=invoice.balance_due_cents,
-                currency=invoice.currency,
-                status="succeeded",
-                payment_method="stripe_autopay",
-                stripe_payment_intent_id=pi_id,
-                # A direct charge lives on the academy's connected account;
-                # a refund of it must be issued there. None = platform.
-                stripe_account_id=connected_account_id,
-                # The fee the PaymentIntent was created with; the webhook's
-                # replay of the same idempotency key must not have to fill it.
-                application_fee_cents=fee_cents,
-                paid_at=now,
-                metadata=discount_metadata or None,
-                created_at=now,
-                updated_at=now,
-            ),
-            idempotency_key=f"autopay-pi:{pi_id}",
-        )
-
-        allocation_result = await self._ledger.allocate_payment(
-            payment_id=payment.payment_id,
-            invoice_id=invoice.invoice_id,
+        updated_invoice = await self._record_settled_payment(
+            [invoice],
+            pi_id=pi_id,
             amount_cents=invoice.balance_due_cents,
-            idempotency_key=f"autopay-alloc:{pi_id}",
+            stripe_account_id=route.connected_account_id,
+            application_fee_cents=fee_cents,
+            metadata=discount_metadata,
+            now=now,
         )
-
-        updated_invoice = allocation_result.invoice
         log.info(
             "charge_autopay: succeeded invoice=%s pi=%s new_status=%s balance=%d",
             invoice_id,
@@ -417,6 +410,7 @@ class ChargeInvoiceViaAutopay:
         *,
         charge_group_id: str,
         retry_scopes: Mapping[str, str | None],
+        check_existing: bool = False,
     ) -> FamilyChargeResult:
         """One PaymentIntent for one family's invoices due now (L8).
 
@@ -460,6 +454,10 @@ class ChargeInvoiceViaAutopay:
             )
         route, customer_id, pm_id = resolved
         on_account = route.on_account_kwargs()
+        if check_existing:
+            found = await self._settle_existing_payment_intent(members, route, now=now)
+            if found is not None:
+                return FamilyChargeResult(charged_invoice_ids=charged, result=found)
         settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
         discounted: list[LedgerInvoice] = []
         member_metadata: list[dict[str, str]] = []
@@ -531,38 +529,162 @@ class ChargeInvoiceViaAutopay:
             decline_code,
         )
         if attempt_status == "succeeded":
-            payment = await self._ledger.record_payment(
-                LedgerPayment(
-                    payment_id=f"ledger-pay-autopay:{pi_id}",
-                    academy_id=lead.academy_id,
-                    parent_id=lead.parent_id,
-                    amount_cents=total,
-                    unapplied_amount_cents=total,
-                    currency=lead.currency,
-                    status="succeeded",
-                    payment_method="stripe_autopay",
-                    stripe_payment_intent_id=pi_id,
-                    stripe_account_id=route.connected_account_id,
-                    application_fee_cents=fee_cents,
-                    paid_at=now,
-                    metadata={**discount_metadata, "invoice_ids": joined_ids},
-                    created_at=now,
-                    updated_at=now,
-                ),
-                idempotency_key=f"autopay-pi:{pi_id}",
-            )
-            await allocate_checkout_payment_across_invoices(
-                ledger=self._ledger,
-                payment=payment,
-                invoices=members,
+            await self._record_settled_payment(
+                members,
+                pi_id=pi_id,
                 amount_cents=total,
-                allocation_key_prefix=f"autopay-alloc:{pi_id}",
+                stripe_account_id=route.connected_account_id,
+                application_fee_cents=fee_cents,
+                metadata={**discount_metadata, "invoice_ids": joined_ids},
+                now=now,
             )
         return FamilyChargeResult(
             charged_invoice_ids=charged,
             dropped_invoice_ids=tuple(dropped),
             result=_attempt_result(family, attempt_status, decline_code),
         )
+
+    async def _record_settled_payment(
+        self,
+        invoices: Sequence[LedgerInvoice],
+        *,
+        pi_id: str,
+        amount_cents: int,
+        stripe_account_id: str | None,
+        application_fee_cents: int | None,
+        metadata: dict[str, str],
+        now: datetime,
+    ) -> LedgerInvoice:
+        """Record a succeeded PaymentIntent and allocate it, under the keys the
+        webhook uses, so whichever arrives second is a replay. Returns the first
+        invoice as allocated."""
+        lead = invoices[0]
+        payment = await self._ledger.record_payment(
+            LedgerPayment(
+                payment_id=f"ledger-pay-autopay:{pi_id}",
+                academy_id=lead.academy_id,
+                parent_id=lead.parent_id,
+                amount_cents=amount_cents,
+                unapplied_amount_cents=amount_cents,
+                currency=lead.currency,
+                status="succeeded",
+                payment_method="stripe_autopay",
+                stripe_payment_intent_id=pi_id,
+                # A direct charge lives on the academy's connected account;
+                # a refund of it must be issued there. None = platform.
+                stripe_account_id=stripe_account_id,
+                # The fee the PaymentIntent was created with; the webhook's
+                # replay of the same idempotency key must not have to fill it.
+                application_fee_cents=application_fee_cents,
+                paid_at=now,
+                metadata=metadata or None,
+                created_at=now,
+                updated_at=now,
+            ),
+            idempotency_key=f"autopay-pi:{pi_id}",
+        )
+        if len(invoices) > 1:
+            await allocate_checkout_payment_across_invoices(
+                ledger=self._ledger,
+                payment=payment,
+                invoices=invoices,
+                amount_cents=amount_cents,
+                allocation_key_prefix=f"autopay-alloc:{pi_id}",
+            )
+            return lead
+        allocation = await self._ledger.allocate_payment(
+            payment_id=payment.payment_id,
+            invoice_id=lead.invoice_id,
+            amount_cents=amount_cents,
+            idempotency_key=f"autopay-alloc:{pi_id}",
+        )
+        return allocation.invoice
+
+    async def _settle_existing_payment_intent(
+        self, invoices: Sequence[LedgerInvoice], route: ChargeRoute, *, now: datetime
+    ) -> ChargeResult | None:
+        """Settle a PaymentIntent that already charged these invoices, or None.
+
+        A capped ladder retries the same rung a day or more later, after Stripe
+        has forgotten the idempotency key; a charge the first try made but never
+        heard back from would be made again. Stripe is asked first: a succeeded
+        PaymentIntent is recorded the way the webhook records it, a processing
+        one parks until it settles, and nothing is charged. Fails closed: if
+        Stripe cannot be searched, the charge is parked, not made.
+        """
+        lead = invoices[0]
+        wanted = {invoice.invoice_id for invoice in invoices}
+        try:
+            found = await self._stripe.search_app_owned_payment_intents(  # type: ignore[union-attr]
+                academy_id=lead.academy_id,
+                parent_id=lead.parent_id,
+                **route.on_account_kwargs(),
+            )
+        except (StripeUnavailable, ValueError) as exc:
+            log.warning(
+                "charge_autopay: existing-charge search failed invoices=%s err=%s",
+                sorted(wanted),
+                exc,
+            )
+            return _refused(lead, STRIPE_UNAVAILABLE)
+        for pi in found:
+            metadata = pi.get("metadata") or {}
+            covered = {
+                *str(metadata.get("invoice_ids") or "").split(","),
+                str(metadata.get("invoice_id") or ""),
+            } - {""}
+            if not covered & wanted:
+                continue
+            pi_id = str(pi["id"])
+            status = str(pi.get("status") or "")
+            if covered != wanted:
+                # Another charge covered a different set: record nothing here and
+                # park; the webhook or reconcile settles it and the next check sees it.
+                log.warning(
+                    "charge_autopay: pi=%s covers %s, not %s; parking",
+                    pi_id,
+                    sorted(covered),
+                    sorted(wanted),
+                )
+                return _refused(lead, None)
+            log.warning(
+                "charge_autopay: invoices=%s already charged by pi=%s status=%s; not charging",
+                sorted(wanted),
+                pi_id,
+                status,
+            )
+            target = lead.model_copy(
+                update={"balance_due_cents": sum(i.balance_due_cents for i in invoices)}
+            )
+            if status == "processing":
+                for invoice in invoices:
+                    await self._ledger.record_payment_attempt(
+                        invoice_id=invoice.invoice_id,
+                        parent_id=invoice.parent_id,
+                        amount_cents=invoice.balance_due_cents,
+                        currency=invoice.currency,
+                        status="processing",
+                        stripe_payment_intent_id=pi_id,
+                        stripe_checkout_session_id=None,
+                        failure_code=None,
+                        failure_message=_ATTEMPT_MESSAGES["processing"],
+                        # The webhook's key, so its event is a replay of this row.
+                        idempotency_key=f"autopay-processing:{invoice.invoice_id}:{pi_id}",
+                        created_by_event_id=None,
+                    )
+                return _attempt_result(target, "processing", None)
+            pi_metadata = {k: str(v) for k, v in metadata.items()}
+            await self._record_settled_payment(
+                invoices,
+                pi_id=pi_id,
+                amount_cents=int(pi.get("amount") or 0),
+                stripe_account_id=route.connected_account_id,
+                application_fee_cents=pi.get("application_fee_amount"),
+                metadata=pi_metadata,
+                now=now,
+            )
+            return _attempt_result(target, "succeeded", None)
+        return None
 
     async def _member_refusal(
         self, invoice: LedgerInvoice, *, now: datetime

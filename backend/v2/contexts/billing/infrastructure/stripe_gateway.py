@@ -595,18 +595,22 @@ class RealStripeGateway(StripeGateway):
             ) from exc
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+        self,
+        *,
+        academy_id: str,
+        limit: int = 100,
+        stripe_account: str | None = None,
+        parent_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        safe_academy_id = academy_id.replace('"', '\\"')
+        scope = f'metadata["academy_id"]:"{_search_value(academy_id)}"'
+        if parent_id is not None:
+            scope += f' AND metadata["parent_id"]:"{_search_value(parent_id)}"'
         safe_limit = max(1, min(int(limit), 100))
         # `succeeded` covers card/instant settlement; `processing` is the ACH
         # in-flight state (§7.2) — both must be visible to reconciliation, or
         # ACH payments are invisible until they happen to also show up via a
         # later run after settlement.
-        queries = [
-            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"succeeded"',
-            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"processing"',
-        ]
+        queries = [f'{scope} AND status:"succeeded"', f'{scope} AND status:"processing"']
 
         def _search() -> list[dict[str, Any]]:
             by_id: dict[str, dict[str, Any]] = {}
@@ -1060,3 +1064,8 @@ def _stripe_object_to_dict(result: Any) -> dict[str, Any]:
     if callable(private_to_dict):
         return private_to_dict()
     return dict(result)
+
+
+def _search_value(value: str) -> str:
+    """Escape a value for a Stripe search query string literal."""
+    return value.replace('"', '\\"')

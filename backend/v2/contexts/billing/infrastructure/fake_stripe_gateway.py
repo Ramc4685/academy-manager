@@ -39,6 +39,8 @@ class FakeStripeGateway(StripeGateway):
         self.saved_cards: dict[tuple[str | None, str, str], tuple[str, str]] = {}
         # PaymentIntents the fake knows in full, by id.
         self._payment_intents_by_id: dict[str, dict[str, Any]] = {}
+        # (stripe_account, idempotency_key) -> the off-session answer Stripe replays.
+        self._off_session_by_key: dict[tuple[str | None, str], tuple[str, str, str | None]] = {}
         self.invoice_checkouts: list[dict[str, Any]] = []
         self.checkouts: list[dict[str, Any]] = []
         self.subscription_checkouts: list[dict[str, Any]] = []
@@ -515,7 +517,12 @@ class FakeStripeGateway(StripeGateway):
             )
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+        self,
+        *,
+        academy_id: str,
+        limit: int = 100,
+        stripe_account: str | None = None,
+        parent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         source = (
             self.connected_payment_intents.get(stripe_account, [])
@@ -526,10 +533,21 @@ class FakeStripeGateway(StripeGateway):
             # PaymentIntents seeded per account live on that account.
             if pi.get("id") and str(pi["id"]) not in self._owners:
                 self.register_object(str(pi["id"]), stripe_account=stripe_account or None)
+        # Like Stripe, the search also finds the off-session PaymentIntents this
+        # fake created on that account.
+        created = [
+            pi
+            for pi_id, pi in self._payment_intents_by_id.items()
+            if self._owners.get(pi_id, None) == (stripe_account or None)
+        ]
         matched = [
             pi
-            for pi in source
+            for pi in [*source, *created]
             if str((pi.get("metadata") or {}).get("academy_id") or "") == academy_id
+            and (
+                parent_id is None
+                or str((pi.get("metadata") or {}).get("parent_id") or "") == parent_id
+            )
             and str(pi.get("status") or "").lower() in {"succeeded", "processing"}
         ]
         return matched[: max(1, min(int(limit), 100))]
@@ -737,6 +755,10 @@ class FakeStripeGateway(StripeGateway):
         stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         _check_single_route(connected_account_id, stripe_account)
+        # Stripe replays the first answer for a key it still remembers (24h).
+        replay = self._off_session_by_key.get((stripe_account, idempotency_key))
+        if replay is not None:
+            return replay
         check_application_fee_cents(
             fee_cents=application_fee_cents,
             amount_cents=amount_cents,
@@ -786,7 +808,12 @@ class FakeStripeGateway(StripeGateway):
             "transfer_data": record["transfer_data"],
             "application_fee_amount": record["application_fee_amount"],
         }
+        self._off_session_by_key[(stripe_account, idempotency_key)] = (pi_id, "succeeded", None)
         return pi_id, "succeeded", None
+
+    def expire_idempotency_keys(self) -> None:
+        """Stripe forgets an idempotency key after 24h; a later call charges again."""
+        self._off_session_by_key.clear()
 
     async def get_default_payment_method(
         self, *, academy_id: str, parent_id: str, stripe_account: str | None = None

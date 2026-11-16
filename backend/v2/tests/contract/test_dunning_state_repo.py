@@ -430,7 +430,9 @@ async def test_fresh_processing_claim_is_not_reclaimed_but_stale_processing_is(d
 
 
 class _AlwaysFailsCharge:
-    async def execute(self, invoice_id: str, retry_scope: str | None = None):
+    async def execute(
+        self, invoice_id: str, retry_scope: str | None = None, check_existing: bool = False
+    ):
         return {
             "success": False,
             "invoice_id": invoice_id,
@@ -823,7 +825,9 @@ class _StripeDownCharge:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def execute(self, invoice_id: str, *, retry_scope: str | None = None):
+    async def execute(
+        self, invoice_id: str, *, retry_scope: str | None = None, check_existing: bool = False
+    ):
         self.calls += 1
         raise RuntimeError("stripe api unreachable")
 

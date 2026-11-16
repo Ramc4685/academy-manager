@@ -1,5 +1,7 @@
 ## frontend/README.md
 
+Verified 2026-11-16 against the current working tree; the uncommitted nurture-sequence-card change adds no drift.
+
 - [contract] README:3,10 (and ADR title) say Next.js 15; code is Next 16.4.6 (frontend/package.json:37). `build` uses `next build --webpack` (package.json:7), also undocumented.
 - [contract] README:28 says no OpenAPI snapshot is committed under generated/; frontend/lib/api/generated/v2.d.ts and frontend/lib/api/openapi.snapshot.json are committed, and CI checks drift (.github/workflows/production.yml:312). README:88 correctly says "committed", so the two lines contradict each other. The snapshot lives at lib/api/openapi.snapshot.json (package.json:16), not stated.
 - [stale-not-built] README:40 lists icon size 180; frontend/public/icons has only icon-192/256/512/maskable (180 absent).

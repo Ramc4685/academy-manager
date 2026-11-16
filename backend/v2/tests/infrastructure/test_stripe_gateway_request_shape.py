@@ -310,6 +310,19 @@ async def test_payment_intent_reconciliation_search_scopes_to_connected_account(
 
 
 @pytest.mark.asyncio
+async def test_payment_intent_search_narrows_to_one_parent() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.search_app_owned_payment_intents(academy_id="academy_1", parent_id='par"ent')
+
+    assert [call["query"] for call in _FakePaymentIntent.calls] == [
+        'metadata["academy_id"]:"academy_1" AND metadata["parent_id"]:"par\\"ent"'
+        f' AND status:"{status}"'
+        for status in ("succeeded", "processing")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_payment_intent_reconciliation_search_omits_stripe_account_when_platform_scoped() -> (
     None
 ):

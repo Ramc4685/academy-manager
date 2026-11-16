@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.domain.dunning import (
     PARK_REASONS_NEEDING_ATTENTION,
     STRIPE_UNAVAILABLE,
     TECHNICAL_FAILURE_CAPPED,
+    TECHNICAL_PARK_CAP,
     DunningState,
 )
 from backend.v2.contexts.billing.domain.events import (
@@ -129,7 +130,9 @@ class DunningStateRepository(Protocol):
 
 
 class ChargeInvoicePort(Protocol):
-    async def execute(self, invoice_id: str, *, retry_scope: str | None = None) -> Any: ...
+    async def execute(
+        self, invoice_id: str, *, retry_scope: str | None = None, check_existing: bool = False
+    ) -> Any: ...
 
     async def execute_family(
         self,
@@ -137,6 +140,7 @@ class ChargeInvoicePort(Protocol):
         *,
         charge_group_id: str,
         retry_scopes: Mapping[str, str | None],
+        check_existing: bool = False,
     ) -> Any: ...
 
 
@@ -327,6 +331,7 @@ class ProcessDunningRetries:
             raw_result = await self._charge_invoice.execute(
                 invoice.invoice_id,
                 retry_scope=f"dunning-attempt:{state.processing_attempt_no}",
+                check_existing=_key_may_be_forgotten(state, now),
             )
         except Exception as exc:
             log.warning(
@@ -371,6 +376,7 @@ class ProcessDunningRetries:
                         invoice.invoice_id: f"dunning-attempt:{state.processing_attempt_no}"
                         for invoice, state in members
                     },
+                    check_existing=any(_key_may_be_forgotten(s, now) for _, s in members),
                 )
             )
         except Exception as exc:
@@ -716,3 +722,11 @@ def _failure_code(result: dict[str, Any]) -> str | None:
     if result.get("requires_action"):
         return "requires_action"
     return None
+
+
+def _key_may_be_forgotten(state: DunningState, now: datetime) -> bool:
+    """A rung technically parked for TECHNICAL_PARK_CAP or more is retried with
+    an idempotency key Stripe may have forgotten (it keeps them 24h), so an
+    earlier attempt that did charge would be charged again."""
+    since = state.technical_parked_since
+    return since is not None and now - since >= TECHNICAL_PARK_CAP
