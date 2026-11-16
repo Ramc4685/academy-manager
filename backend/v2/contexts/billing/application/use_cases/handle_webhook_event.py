@@ -2436,10 +2436,15 @@ class HandleWebhookEvent:
         ]
         dispute = return_code.startswith("dispute:")
         partial = amount_cents < payment.amount_cents
-        # Nothing to reverse (no allocation, or a legacy one without a key): the
-        # payment must not read "refunded" while its invoices still read paid.
-        unreversible = not allocations or any(
+        # Nothing to reverse while an invoice still reads paid (a legacy allocation
+        # without a key, or no allocation at all): the payment must not read
+        # "refunded". No allocations left on an already reopened invoice is a replay
+        # after the reversals ran (they delete the allocation): finish it.
+        unreversible = any(
             not _alloc_field(allocation, "idempotency_key") for allocation in allocations
+        ) or (
+            not allocations
+            and any(invoice.status in {"paid", "partially_paid"} for invoice in invoices)
         )
         await self._pause_family_after_return(payment=payment, pi_id=pi_id, code=return_code)
         if partial or unreversible:

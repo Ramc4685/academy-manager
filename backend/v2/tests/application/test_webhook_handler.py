@@ -2052,6 +2052,78 @@ async def test_autopay_ach_return_replay_after_a_mid_reversal_failure_converges(
 
 
 @pytest.mark.asyncio
+async def test_return_replay_after_the_refund_mark_failed_converges_to_refunded() -> None:
+    """Reversals delete the allocations, so a replay after every reversal ran but
+    before the refunded mark sees none: it must still finish, not park."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-mark-fails"))
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=FakeDedup(), billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_mark_fails_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_mark_fails",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-mark-fails",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned = json.dumps(
+        {
+            "id": "evt_mark_fails_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_mark_fails",
+                    "payment_intent": "pi_mark_fails",
+                    "amount_refunded": 10000,
+                    "failure_code": "R01",
+                }
+            },
+        }
+    ).encode()
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+
+    real_mark = ledger.mark_payment_refunded
+    calls = {"n": 0}
+
+    async def flaky_mark(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("mongo blip")
+        return await real_mark(*args, **kwargs)
+
+    ledger.mark_payment_refunded = flaky_mark  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await uc.execute(returned, "test_signature")
+    assert ledger.allocations == []  # the reversal ran and deleted it
+
+    await uc.execute(
+        returned.replace(b"evt_mark_fails_refund", b"evt_mark_fails_refund_retry"),
+        "test_signature",
+    )
+
+    assert ledger.payments["ledger-pay-autopay:pi_mark_fails"].status == "refunded"
+    assert ledger.invoices["inv-mark-fails"].status == "open"
+    assert not any(
+        a["failure_code"] == "unreconciled_payment_return" for a in ledger.payment_attempts.values()
+    )
+
+
+@pytest.mark.asyncio
 async def test_return_on_a_legacy_unkeyed_allocation_is_not_marked_refunded() -> None:
     """Security review: nothing reversible means the payment must not read
     "refunded" while the invoice still reads paid, and the parent is not told
