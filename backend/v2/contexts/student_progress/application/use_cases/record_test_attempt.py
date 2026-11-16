@@ -115,7 +115,11 @@ class RecordTestAttempt:
         return await self._execute(cmd)
 
     @idempotent(
-        key_from=lambda self, cmd: f"record_test_attempt:{cmd.mutation_id}",
+        # mutation_id is client-sent, so the key carries the tenant and the
+        # (server-derived) coach: two coaches or academies never share a result.
+        key_from=lambda self, cmd: (
+            f"record_test_attempt:{_resolve_academy_id()}:{cmd.coach_id}:{cmd.mutation_id}"
+        ),
         result_type=RecordTestAttemptResult,
     )
     async def _execute_idempotent(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:

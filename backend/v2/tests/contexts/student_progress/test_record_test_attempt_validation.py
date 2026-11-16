@@ -27,9 +27,10 @@ from backend.v2.tests.contexts.student_progress.test_use_case_events import (
     _SkillProgressRepo,
     _TestAttemptRepo,
 )
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 
-class _MemoryIdempotencyStore:
+class _MemoryIdempotencyStore(ClaimableStore):
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
 
@@ -116,6 +117,31 @@ async def test_distinct_mutation_ids_record_distinct_attempts() -> None:
 
     assert first.attempt_id != second.attempt_id
     assert len(attempts.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_same_mutation_id_from_another_coach_or_academy_is_not_a_replay() -> None:
+    """The mutation_id is client-sent: the key carries the academy and the coach,
+    so one coach's (or academy's) id never replays another's result."""
+    store = _MemoryIdempotencyStore()
+    with tenant_scope("academy-1"):
+        mine = await _use_case(
+            attempts=_TestAttemptRepo(), outbox=_FakeOutbox(), store=store
+        ).execute(_command(mutation_id="mut-1"))
+        other_coach = await _use_case(
+            attempts=_TestAttemptRepo(), outbox=_FakeOutbox(), store=store
+        ).execute(_command(mutation_id="mut-1", coach_id="coach-2"))
+    with tenant_scope("academy-2"):
+        other_academy = await _use_case(
+            attempts=_TestAttemptRepo(), outbox=_FakeOutbox(), store=store
+        ).execute(_command(mutation_id="mut-1"))
+
+    assert len({mine.attempt_id, other_coach.attempt_id, other_academy.attempt_id}) == 3
+    assert sorted(k for k in store.rows) == [
+        "record_test_attempt:academy-1:coach-1:mut-1",
+        "record_test_attempt:academy-1:coach-2:mut-1",
+        "record_test_attempt:academy-2:coach-1:mut-1",
+    ]
 
 
 @pytest.mark.asyncio
