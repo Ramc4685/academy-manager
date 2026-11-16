@@ -2055,10 +2055,10 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
 def _mongo_doc(model: Any) -> dict[str, Any]:
     doc = model.model_dump(mode="python")
-    if "due_date" in doc and doc["due_date"] is not None:
-        due_date = doc["due_date"]
-        if isinstance(due_date, date) and not isinstance(due_date, datetime):
-            doc["due_date"] = datetime.combine(due_date, time.min, tzinfo=UTC)
+    for field in ("due_date", "autopay_charge_date"):
+        value = doc.get(field)
+        if isinstance(value, date) and not isinstance(value, datetime):
+            doc[field] = datetime.combine(value, time.min, tzinfo=UTC)
     return doc
 
 

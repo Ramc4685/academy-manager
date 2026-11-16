@@ -28,6 +28,9 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
+#: Lower bound that makes the stamped-invoice query match 0230's partial filter.
+_EPOCH = datetime(1970, 1, 1)
+
 
 class MongoDunningStateRepository(TenantScopedRepository):
     collection_name = "dunning_states"
@@ -122,44 +125,55 @@ class MongoDunningStateRepository(TenantScopedRepository):
             # Too early on the academy's clock: leave today's due invoices
             # for a later tick. Existing ladders still retry on schedule.
             return 0
-        # due_date is stored as a naive midnight; anything due on or before
-        # the academy's local calendar day is ready.
+        # Dates are stored as naive midnights; anything charged (or due) on or
+        # before the academy's local calendar day is ready.
         due_cutoff = datetime.combine(local_now.date(), time.max)
-        cursor = (
-            self._db["invoices"]
-            .find(
-                {
-                    "academy_id": academy_id,
-                    "status": {"$in": ["open", "partially_paid"]},
-                    "balance_due_cents": {"$gt": 0},
-                    "due_date": {"$lte": due_cutoff},
-                    "enrollment_id": {"$exists": True, "$ne": None},
-                },
-                {
-                    "invoice_id": 1,
-                    "parent_id": 1,
-                    "enrollment_id": 1,
-                    "due_date": 1,
-                    "status": 1,
-                    "balance_due_cents": 1,
-                },
-            )
-            .sort([("due_date", ASCENDING), ("invoice_id", ASCENDING)])
+        base = {
+            "academy_id": academy_id,
+            "status": {"$in": ["open", "partially_paid"]},
+            "balance_due_cents": {"$gt": 0},
+            "enrollment_id": {"$exists": True, "$ne": None},
+        }
+        projection = {
+            "invoice_id": 1,
+            "parent_id": 1,
+            "enrollment_id": 1,
+            "due_date": 1,
+            "autopay_charge_date": 1,
+            "status": 1,
+            "balance_due_cents": 1,
+        }
+        # Two indexed queries, never one $or: both indexes are partial (0156,
+        # 0230) and the planner will not use partial indexes under an $or.
+        # Stamped invoices go by their charge day (the $gt matches 0230's
+        # partial filter); unstamped ones by their due date, as before (L8).
+        queries = (
+            (
+                {**base, "autopay_charge_date": {"$gt": _EPOCH, "$lte": due_cutoff}},
+                [("autopay_charge_date", ASCENDING), ("invoice_id", ASCENDING)],
+            ),
+            (
+                {**base, "due_date": {"$lte": due_cutoff}, "autopay_charge_date": None},
+                [("due_date", ASCENDING), ("invoice_id", ASCENDING)],
+            ),
         )
-        batch: list[dict[str, Any]] = []
-        async for invoice_doc in cursor:
-            batch.append(invoice_doc)
-            if len(batch) >= self.prepare_batch_size:
+        for query, sort in queries:
+            batch: list[dict[str, Any]] = []
+            async for invoice_doc in self._db["invoices"].find(query, projection).sort(sort):
+                batch.append(invoice_doc)
+                if len(batch) >= self.prepare_batch_size:
+                    created += await self._prepare_batch(
+                        batch, academy_id=academy_id, now=now, remaining=limit - created
+                    )
+                    batch = []
+                    if created >= limit:
+                        return created
+            if batch:
                 created += await self._prepare_batch(
                     batch, academy_id=academy_id, now=now, remaining=limit - created
                 )
-                batch = []
                 if created >= limit:
                     return created
-        if batch:
-            created += await self._prepare_batch(
-                batch, academy_id=academy_id, now=now, remaining=limit - created
-            )
         return created
 
     async def _prepare_batch(
@@ -229,7 +243,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
             if not eligibility.eligible:
                 continue
             invoice_id = str(invoice_doc["invoice_id"])
-            due_at = _as_datetime(invoice_doc.get("due_date"), now=now)
+            due_at = _as_datetime(
+                invoice_doc.get("autopay_charge_date") or invoice_doc.get("due_date"), now=now
+            )
             state = open_initial_dunning_state(
                 academy_id=academy_id,
                 invoice_id=invoice_id,

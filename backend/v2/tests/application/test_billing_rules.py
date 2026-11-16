@@ -327,6 +327,37 @@ async def test_charge_hour_row_follows_the_domain_constant(
 
 
 @pytest.mark.asyncio
+async def test_charge_row_and_scheduled_change_follow_the_l8_calendar() -> None:
+    """L8: an academy charging on the invoice date says so, and a pending dated
+    change is stated read-only until it applies."""
+    from datetime import date
+
+    from backend.v2.contexts.billing.domain.billing_settings import BillingScheduleChange
+
+    schedule = _FakeSchedule()
+    view = await _build(schedule, _FakeFees(), _FakePolicy()).execute("acad-1")
+    with pytest.raises(KeyError):
+        view.row("scheduled_schedule_change")
+
+    schedule.current.autopay_charge_offset_days = 0  # type: ignore[attr-defined]
+    schedule.current.schedule_change = BillingScheduleChange(  # type: ignore[attr-defined]
+        effective_from=date(2027, 1, 1),
+        invoice_due_days=4,
+        autopay_charge_offset_days=0,
+        reminder_days=(0, 3, 7),
+    )
+    view = await _build(schedule, _FakeFees(), _FakePolicy()).execute("acad-1")
+
+    assert view.row("autopay_charge_time").display == "09:00 academy time on the invoice date"
+    change = view.row("scheduled_schedule_change")
+    assert change.editable is False
+    assert change.display == (
+        "From 2027-01-01: due 4 days after the invoice date, autopay charged on the "
+        "invoice date, reminders on days 0, 3, 7"
+    )
+
+
+@pytest.mark.asyncio
 async def test_retry_row_follows_the_ladder_constant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

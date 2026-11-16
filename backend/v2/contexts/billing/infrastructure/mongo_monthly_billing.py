@@ -158,6 +158,7 @@ class MongoMonthlyBillingGenerator:
         # every invoice in a run shares one grace window even if the run
         # straddles midnight or an admin edits the setting mid-run.
         self._invoice_due_days = BillingSettings.default("").invoice_due_days
+        self._autopay_charge_offset_days: int | None = None
 
     async def _load_academy_timezone(self) -> str | None:
         """The academy's wall clock, resolved once per generation run.
@@ -178,22 +179,24 @@ class MongoMonthlyBillingGenerator:
             return None
         return str((doc or {}).get("timezone") or "") or None
 
-    async def _load_invoice_due_days(self) -> int:
-        """Read this academy's grace window, falling back to the model default.
+    async def _load_schedule(self, on: date) -> tuple[int, int | None]:
+        """This academy's ``(invoice_due_days, autopay_charge_offset_days)`` as of
+        ``on`` (a dated schedule change applies from its day), falling back to
+        the model defaults.
 
         Settings are advisory for generation: a missing or unreadable
         billing_settings doc must never block the monthly run, so any failure
         degrades to the default rather than raising.
         """
         try:
-            settings = await MongoBillingSettingsRepository(self._db).get()
+            settings = await MongoBillingSettingsRepository(self._db).get(on=on)
         except Exception:
             logging.getLogger(__name__).warning(
                 "monthly_generation_billing_settings_unreadable; using default due days",
                 exc_info=True,
             )
-            return BillingSettings.default("").invoice_due_days
-        return settings.invoice_due_days
+            settings = BillingSettings.default("")
+        return settings.invoice_due_days, settings.autopay_charge_offset_days
 
     @staticmethod
     def _monthly_invoice_id(enrollment_id: str, period: str) -> str:
@@ -427,6 +430,10 @@ class MongoMonthlyBillingGenerator:
         # dunning ladder's first autopay attempt fires on the due date, even
         # when a period is generated late or backfilled by an admin.
         due_date = now.date() + timedelta(days=self._invoice_due_days)
+        # Stamped only when the academy charges ahead of the due date (L8);
+        # unstamped invoices charge on the due date.
+        offset = self._autopay_charge_offset_days
+        autopay_charge_date = None if offset is None else now.date() + timedelta(days=offset)
         invoice_number = await self._mint_invoice_number(
             ledger_repo=ledger_repo, invoice_id=invoice_id, academy_id=academy_id, period=period
         )
@@ -450,6 +457,7 @@ class MongoMonthlyBillingGenerator:
             else max(gross_cents - discount_cents, 0),
             currency="usd",
             due_date=due_date,
+            autopay_charge_date=autopay_charge_date,
             created_at=now,
             updated_at=now,
         )
@@ -1057,7 +1065,10 @@ class MongoMonthlyBillingGenerator:
 
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
-        self._invoice_due_days = await self._load_invoice_due_days()
+        (
+            self._invoice_due_days,
+            self._autopay_charge_offset_days,
+        ) = await self._load_schedule(self._clock().date())
         academy_timezone = await self._load_academy_timezone() or "UTC"
         cursor = self._db["enrollments"].find(
             {

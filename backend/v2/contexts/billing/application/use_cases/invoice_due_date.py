@@ -1,7 +1,7 @@
 """Where an invoice's due date comes from when the caller did not pick one.
 
 The monthly generator dates every invoice it raises ``invoice_due_days`` out
-(``MongoMonthlyBilling._load_invoice_due_days``), which is also when the dunning
+(``MongoMonthlyBillingGenerator._load_schedule``), which is also when the dunning
 ladder makes its first autopay attempt. Anything created by hand — the family
 page's "Create invoice" and "Bill this month", the enrollment-move top-up — has
 to read the same Billing rule, or one month carries two due dates for one family

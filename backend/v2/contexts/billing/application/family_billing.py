@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.family_money import (
     open_balance,
     registration_state,
 )
+from backend.v2.contexts.billing.domain.ledger import charge_date
 from backend.v2.shared.comms.email_theme import format_money
 
 TIMELINE_CAP = 200
@@ -185,6 +186,8 @@ class InvoiceFacts:
     #: refund route and by the Stripe ``charge.refunded`` webhook, so a refund
     #: made in the Stripe dashboard (no audit row) is counted here too.
     refunded_cents: int = 0
+    #: Autopay charge stamp (L8); None charges on the due date.
+    autopay_charge_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -993,7 +996,7 @@ def build_family_billing_view(
         )
         invoice_rows.append(_invoice_payload(inv, eligibility=elig))
         if elig.eligible and inv.due_date is not None:
-            candidate = (inv.due_date, inv.invoice_id)
+            candidate = (charge_date(inv.due_date, inv.autopay_charge_date), inv.invoice_id)
             if next_charge is None or candidate < next_charge:
                 next_charge = candidate
 
