@@ -320,7 +320,7 @@ class FirebaseAdminAdapter:
         _ensure_firebase_app()
         if uid is not None:
             try:
-                existing = await asyncio.to_thread(firebase_admin_auth.get_user_by_email, email)
+                await asyncio.to_thread(firebase_admin_auth.get_user_by_email, email)
             except firebase_admin_auth.UserNotFoundError:
                 await asyncio.to_thread(
                     firebase_admin_auth.create_user,
@@ -330,32 +330,8 @@ class FirebaseAdminAdapter:
                     email_verified=False,
                     disabled=False,
                 )
-            else:
-                await self._evict_unverified_squatter(existing)
         link = await self._generate_reset_link(email, portal_url=portal_url)
         return tenant_auth_action_link(firebase_link=link, portal_url=portal_url)
-
-    async def _evict_unverified_squatter(self, user: Any) -> None:
-        """Lock out whoever pre-created an unverified Firebase account for this
-        address before the real owner activates (account pre-hijacking).
-
-        The reset link proves mailbox ownership and replaces the password, but
-        a squatter's linked Google/Apple identity and live refresh tokens would
-        survive it. A verified account has already proven the mailbox, so it is
-        left alone.
-        """
-        if getattr(user, "email_verified", True):
-            return
-        others = [
-            p.provider_id
-            for p in getattr(user, "provider_data", None) or []
-            if p.provider_id != "password"
-        ]
-        if others:
-            await asyncio.to_thread(
-                firebase_admin_auth.update_user, user.uid, providers_to_delete=others
-            )
-        await asyncio.to_thread(firebase_admin_auth.revoke_refresh_tokens, user.uid)
 
     async def _generate_reset_link(self, email: str, *, portal_url: str | None) -> str:
         return await self._generate_action_link(

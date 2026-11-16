@@ -132,7 +132,7 @@ class SendRegistrationVerificationEmail:
             # An address we already hold (a roster parent who never activated)
             # gets the set-password mail, never "verify": whoever created this
             # Firebase account may not own the mailbox, and verifying it would
-            # hand them the parent's account. The reset link evicts them.
+            # hand them the parent's account.
             existing = await self._users.get_by_email(email)
             if existing is not None:
                 link = await self._password_links.generate_password_reset_link(

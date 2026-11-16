@@ -63,6 +63,14 @@ class _StopAll:
         return StopAllClassesResult(student_id=cmd.student_id, results=results)
 
 
+class _Enrollments:
+    def __init__(self, remaining: list[str]) -> None:
+        self.remaining = remaining
+
+    async def departable_for_student(self, student_id: str) -> list[Any]:
+        return [SimpleNamespace(enrollment_id=e) for e in self.remaining]
+
+
 class _Pause:
     def __init__(self) -> None:
         self.parents: list[str] = []
@@ -88,7 +96,7 @@ class _Academies:
 
 
 def _step(
-    *, fail: bool = False, tz: str | None = None
+    *, fail: bool = False, tz: str | None = None, remaining: list[str] | None = None
 ) -> tuple[StopServicesOnDeletionRequest, _StopAll, _Pause, _Sender]:
     stop, pause, sender = _StopAll(fail=fail), _Pause(), _Sender()
 
@@ -97,6 +105,7 @@ def _step(
 
     step = StopServicesOnDeletionRequest(
         stop_all_classes=stop,  # type: ignore[arg-type]
+        enrollments=_Enrollments(["e1"] if remaining is None else remaining),
         students=_Students(),  # type: ignore[arg-type]
         pause_autopay=pause,  # type: ignore[arg-type]
         sender=sender,
@@ -140,6 +149,16 @@ async def test_a_failed_drop_sends_no_confirmation_and_raises_for_the_alert() ->
 
     assert pause.parents == ["u1", "fb1"]  # autopay still paused
     assert sender.sent == []
+
+
+async def test_a_double_submit_whose_rival_already_dropped_the_classes_still_confirms() -> None:
+    # Regression: the rival call had withdrawn e1, so this fresh call's withdraw
+    # failed as not withdrawable and it raised instead of sending the email.
+    step, _, _, sender = _step(fail=True, remaining=[])
+
+    await step.on_requested(_request(), fresh=True)
+
+    assert len(sender.sent) == 1
 
 
 async def test_erase_date_is_in_the_academy_timezone_and_restore_goes_to_support() -> None:

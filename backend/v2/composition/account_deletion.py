@@ -38,6 +38,10 @@ from backend.v2.contexts.crm.infrastructure.mongo_family_erasure import MongoFam
 from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes import (
     StopAllClasses,
     StopAllClassesCommand,
+    StopAllClassesQuery,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
+    MongoEnrollmentRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
@@ -106,6 +110,8 @@ class FamilyErasureStep:
                             outcome="adjustment",
                             reason="Parent deleted their account",
                             actor_id=SYSTEM_ACTOR,
+                            # The family already had the request-time confirmation.
+                            notify_family=False,
                         )
                     )
                     if result.failed_count:
@@ -164,6 +170,7 @@ class StopServicesOnDeletionRequest:
     """
 
     stop_all_classes: StopAllClasses
+    enrollments: StopAllClassesQuery
     students: MongoStudentRepository
     pause_autopay: PauseFamilyAutopay
     sender: InviteEmailPort
@@ -191,7 +198,12 @@ class StopServicesOnDeletionRequest:
                             notify_family=False,
                         )
                     )
-                    if result.failed_count:
+                    # A competing call (double submit) wins some withdrawals and
+                    # this one sees them fail; that is only a failure if a class
+                    # is still on the roster afterwards.
+                    if result.failed_count and await self.enrollments.departable_for_student(
+                        student_id
+                    ):
                         failures.append(student_id)
                 for parent_id in request.aliases:
                     try:
@@ -293,6 +305,7 @@ def compose_deletion_request_follow_up(
 ) -> StopServicesOnDeletionRequest:
     return StopServicesOnDeletionRequest(
         stop_all_classes=stop_all_classes,
+        enrollments=MongoEnrollmentRepository(db),
         students=MongoStudentRepository(db),
         pause_autopay=PauseFamilyAutopay(
             enrollments=MongoStudentBillingEnrollmentRepository(db),
