@@ -55,6 +55,11 @@ class MongoMagicLinkRepository:
         doc = await self._links.find_one({"token_hash": token_hash})
         return self._to_record(doc) if doc else None
 
+    async def revoke_unused_for_user(self, *, user_id: str, academy_id: str) -> None:
+        await self._links.delete_many(
+            {"user_id": user_id, "academy_id": academy_id, "used_at": None}
+        )
+
     async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
         """Atomically stamp ``used_at`` iff the token is still unused.
 

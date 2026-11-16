@@ -153,6 +153,10 @@ class MagicLinkRepository(Protocol):
 
     async def get_by_hash(self, token_hash: str) -> MagicLinkRecord | None: ...
 
+    async def revoke_unused_for_user(self, *, user_id: str, academy_id: str) -> None:
+        """Delete this user's still-unused links in ``academy_id``."""
+        ...
+
     async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
         """Atomically stamp ``used_at`` iff still unused.
 

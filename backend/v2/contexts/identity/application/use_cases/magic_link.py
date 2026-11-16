@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from backend.v2.contexts.identity.application.ports import (
     CustomTokenPort,
     MagicLinkRepository,
+    UserRepository,
 )
 from backend.v2.contexts.identity.domain.errors import (
     MagicLinkExpired,
@@ -96,6 +97,8 @@ class IssueMagicLink:
             purge_at=now + _TTL + _PURGE_GRACE,
             used_at=None,
         )
+        # One live link per parent: a new digest supersedes yesterday's.
+        await self._links.revoke_unused_for_user(user_id=user_id, academy_id=academy_id)
         await self._links.insert(record)
         return token
 
@@ -110,9 +113,12 @@ class ConsumeMagicLink:
     "sign in and reset password" path.
     """
 
-    def __init__(self, *, links: MagicLinkRepository, tokens: CustomTokenPort) -> None:
+    def __init__(
+        self, *, links: MagicLinkRepository, tokens: CustomTokenPort, users: UserRepository
+    ) -> None:
         self._links = links
         self._tokens = tokens
+        self._users = users
 
     async def execute(self, token: str, *, academy_id: str) -> ConsumedMagicLink:
         token_hash = _hash_token(token)
@@ -126,9 +132,21 @@ class ConsumeMagicLink:
         now = datetime.now(UTC)
         if record.is_expired(now=now):
             raise MagicLinkExpired()
+        # The link records the roster id; the session must be the parent's real
+        # Firebase account, which provisioning may have keyed differently. A
+        # custom token for an unknown uid would make Firebase create an empty,
+        # email-less account that the API then rejects.
+        if record.used_at is not None:
+            raise MagicLinkInvalid()
+        user = await self._users.get_by_id(record.user_id)
+        uid = (user.firebase_uid or user.auth_uid) if user is not None else None
+        if user is None or not uid or user.global_status != "active":
+            raise MagicLinkInvalid()
+        # Mint before claiming: minting has no side effects, so a Firebase
+        # failure here leaves the link redeemable on retry.
+        custom_token = await self._tokens.create_custom_token(uid)
         # Atomic single-use claim: only the first caller flips used_at.
         claimed = await self._links.mark_used(token_hash, used_at=now)
         if not claimed:
             raise MagicLinkInvalid()
-        custom_token = await self._tokens.create_custom_token(record.user_id)
         return ConsumedMagicLink(custom_token=custom_token, next_path=_safe_next(record.next_path))
