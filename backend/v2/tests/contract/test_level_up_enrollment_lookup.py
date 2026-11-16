@@ -86,6 +86,32 @@ async def test_lookup_never_sees_another_tenants_enrollment(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_student_exists_only_for_this_academys_students(db, acad) -> None:
+    """Placement's existence check (F3): another academy's id is not a student here."""
+    await db["students"].insert_many(
+        [
+            {
+                "academy_id": "test-academy",
+                "student_id": "st-here",
+                "full_name": "Here",
+                "parent_id": "p1",
+            },
+            {
+                "academy_id": "other-academy",
+                "student_id": "st-there",
+                "full_name": "There",
+                "parent_id": "p2",
+            },
+        ]
+    )
+    lookup = enrollment_status_lookup(db)
+
+    assert await lookup.student_exists("st-here") is True
+    assert await lookup.student_exists("st-there") is False
+    assert await lookup.student_exists("st-nobody") is False
+
+
+@pytest.mark.asyncio
 async def test_pending_for_student_is_scoped_and_ordered(db, acad) -> None:
     repo = MongoLevelUpRecommendationRepository(db)
     await repo.save(_pending("rec-later", "st-1", datetime(2026, 8, 21, tzinfo=UTC)))
