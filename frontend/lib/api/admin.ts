@@ -1359,6 +1359,8 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "autopay_failure"
   | "dunning_exhaustion"
+  | "autopay_stuck"
+  | "bank_return_review"
   | "pause_requests"
   | "scheduled_resume_blocked"
   | "scheduled_action_failed"
@@ -2386,6 +2388,8 @@ export interface ConnectedAccountReadiness {
   payouts_enabled: boolean;
   ready_for_charges: boolean;
   account_id_masked: string | null;
+  /** Direct charges need Stripe to collect fees and carry losses (#980). */
+  direct_charges_supported?: boolean;
 }
 
 export interface ConnectReadiness {
@@ -2398,6 +2402,8 @@ export interface ConnectReadiness {
    * platform account through the fallback, not the academy's own.
    */
   funds_route_to_academy: boolean;
+  /** Why parents cannot pay right now (null when they can). */
+  payments_blocked_reason?: string | null;
   webhook_events: { quarantined: number; failed: number };
   /**
    * The one health verdict, composed on the backend (billing-health trim spec
@@ -2407,6 +2413,43 @@ export interface ConnectReadiness {
    */
   health: BillingHealthVerdict;
   autopay_disable_failures: AutopayDisableFailures;
+  disputes?: OpenDisputes;
+  /** Refunds Stripe could not deliver: the parent has not been paid back. */
+  refund_failures?: RefundFailures;
+}
+
+export interface RefundFailure {
+  refund_id: string;
+  payment_id: string;
+  parent_id: string;
+  amount_cents: number;
+  currency: string;
+  reason: string;
+  failed_at: string | null;
+}
+
+export interface RefundFailures {
+  count: number;
+  rows: RefundFailure[];
+  truncated: boolean;
+}
+
+export interface OpenDispute {
+  dispute_id: string;
+  payment_id: string | null;
+  amount_cents: number;
+  currency: string;
+  reason: string;
+  status: string;
+  evidence_due_by: string | null;
+  opened_at: string | null;
+}
+
+/** Open Stripe disputes (chargebacks); answered in the academy's Stripe dashboard. */
+export interface OpenDisputes {
+  count: number;
+  rows: OpenDispute[];
+  truncated: boolean;
 }
 
 export type BillingHealthState = "blocked" | "attention" | "ok";
@@ -2808,21 +2851,42 @@ export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse
   );
 }
 
-export function chargeAdminInvoiceAutopay(
+// A "Charge now" whose outcome we never learned (timeout, network drop, 5xx,
+// or a 409 whose detail starts with charge_in_progress) keeps its request id for this window, so a retry
+// replays the first charge on the server instead of making a second one.
+const CHARGE_RETRY_WINDOW_MS = 10 * 60 * 1000;
+const unconfirmedCharges = new Map<string, { requestId: string; at: number }>();
+
+export async function chargeAdminInvoiceAutopay(
   invoiceId: string,
   reason?: string,
 ): Promise<ChargeAutopayResponse> {
-  // request_id makes a retried submit the same charge rather than a second one.
-  return apiFetch<ChargeAutopayResponse>(
-    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        ...(reason ? { reason } : {}),
-        request_id: crypto.randomUUID(),
-      }),
-    },
-  );
+  const now = Date.now();
+  const prior = unconfirmedCharges.get(invoiceId);
+  const requestId =
+    prior && now - prior.at < CHARGE_RETRY_WINDOW_MS ? prior.requestId : crypto.randomUUID();
+  unconfirmedCharges.set(invoiceId, { requestId, at: prior?.requestId === requestId ? prior.at : now });
+  try {
+    const result = await apiFetch<ChargeAutopayResponse>(
+      `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...(reason ? { reason } : {}),
+          request_id: requestId,
+        }),
+      },
+    );
+    unconfirmedCharges.delete(invoiceId);
+    return result;
+  } catch (error) {
+    const { status, message } = (error ?? {}) as { status?: unknown; message?: unknown };
+    const stillRunning = status === 409 && String(message ?? "").startsWith("charge_in_progress");
+    if (typeof status === "number" && status >= 400 && status < 500 && !stillRunning) {
+      unconfirmedCharges.delete(invoiceId);
+    }
+    throw error;
+  }
 }
 
 // Issue #511: one key per payment INTENT, minted when the admin starts filling

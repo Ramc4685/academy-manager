@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeResourceNotFound,
     StripeTransientFailure,
 )
+from backend.v2.contexts.billing.domain.errors import StripeUnavailable
 from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,17 @@ def _on_account(stripe_account: str | None) -> dict[str, Any]:
     exactly the kwargs it always did.
     """
     return {"stripe_account": stripe_account} if stripe_account else {}
+
+
+# A saved bank account must carry the Financial Connections permission that
+# lets later off-session debits read it; options for a method Checkout does not
+# show are ignored, so cards are unaffected (A4-10).
+_BANK_SAVE_OPTIONS: dict[str, Any] = {
+    "us_bank_account": {
+        "financial_connections": {"permissions": ["payment_method"]},
+        "verification_method": "automatic",
+    }
+}
 
 
 def _check_single_route(connected_account_id: str | None, stripe_account: str | None) -> None:
@@ -296,6 +308,7 @@ class RealStripeGateway(StripeGateway):
                 customer_creation="always",
                 metadata=setup_metadata,
                 setup_intent_data=setup_intent_data,
+                payment_method_options=_BANK_SAVE_OPTIONS,
                 **_on_account(stripe_account),
             )
 
@@ -383,6 +396,7 @@ class RealStripeGateway(StripeGateway):
             if save_payment_method_for_autopay:
                 # The saved payment method must attach to a customer.
                 request["customer_creation"] = "always"
+                request["payment_method_options"] = _BANK_SAVE_OPTIONS
             if idempotency_key:
                 request["idempotency_key"] = idempotency_key
             request.update(_on_account(stripe_account))
@@ -919,7 +933,7 @@ class RealStripeGateway(StripeGateway):
         try:
             return await asyncio.to_thread(_find)
         except self._stripe.StripeError as exc:
-            raise ValueError(f"Stripe customer lookup failed: {exc}") from exc
+            raise StripeUnavailable(f"Stripe customer lookup failed: {exc}") from exc
 
     async def detach_customer_payment_methods(
         self, stripe_customer_id: str, *, stripe_account: str | None = None
@@ -998,10 +1012,24 @@ class RealStripeGateway(StripeGateway):
             pi = await asyncio.to_thread(_create)
             return str(pi["id"]), str(pi["status"]), None
         except self._stripe.CardError as exc:
-            err = exc.error
-            return "", "failed", str(getattr(err, "decline_code", None) or str(exc))
+            err = getattr(exc, "error", None)
+            # A blocked bank account is a 402 with only ``code`` (bank_account_unusable).
+            code = getattr(err, "decline_code", None) or getattr(err, "code", None)
+            return "", "failed", str(code or getattr(exc, "code", None) or "card_declined")
         except self._stripe.StripeError as exc:
-            raise ValueError(f"Stripe PaymentIntent creation failed: {exc}") from exc
+            if _is_resource_missing(self._stripe, exc):
+                # The saved card/bank was removed (e.g. in the portal): parent action needed.
+                return "", "failed", "no_saved_payment_method"
+            raise StripeUnavailable(f"Stripe PaymentIntent creation failed: {exc}") from exc
+
+
+def _is_resource_missing(stripe_module: Any, exc: Exception) -> bool:
+    invalid_request = getattr(stripe_module, "InvalidRequestError", None)
+    return bool(
+        invalid_request is not None
+        and isinstance(exc, invalid_request)
+        and getattr(exc, "code", None) == "resource_missing"
+    )
 
 
 def destination_refund_params(payment_intent: dict[str, Any]) -> dict[str, bool]:

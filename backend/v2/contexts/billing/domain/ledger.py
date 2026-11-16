@@ -173,6 +173,8 @@ class PaymentAllocation(BaseModel):
     invoice_id: str
     amount_cents: int = Field(ge=0)
     created_at: datetime
+    #: The handle ``reverse_payment_allocation`` reverses by; None on pre-0130 rows.
+    idempotency_key: str | None = None
 
 
 class LedgerAllocationResult(BaseModel):

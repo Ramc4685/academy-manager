@@ -141,6 +141,8 @@ async def _seed_card(db, *, academy_id: str, parent_id: str, last4: str = "4242"
             "stripe_customer_id": f"cus_{parent_id}",
             "payment_method_label": "Visa",
             "payment_method_last4": last4,
+            # On the academy's own account (_seed_connect_ready), where autopay charges.
+            "stripe_account_id": f"acct_{academy_id}",
         }
     )
 

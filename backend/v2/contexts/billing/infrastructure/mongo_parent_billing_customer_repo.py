@@ -31,6 +31,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.v2.contexts.billing.domain.charge_route import ChargeRoute
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,57 @@ _PAYMENT_METHOD_FIELDS: tuple[str, ...] = (
         )
     ),
 )
+
+
+#: Read only to decide whether the card counts; never handed to display code.
+_CARD_CHECK_ONLY = (
+    "blocked_payment_method_id",
+    "default_payment_method_id",
+    "primary_payment_method_id",
+)
+
+
+def _without_card(doc: dict[str, Any]) -> dict[str, Any]:
+    """``doc`` with its display card fields dropped: no card on file."""
+    return {k: v for k, v in doc.items() if k not in _PAYMENT_METHOD_FIELDS}
+
+
+def _current_payment_method_id(doc: dict[str, Any]) -> str | None:
+    payment_method_id = doc.get("default_payment_method_id")
+    if not payment_method_id and doc.get("primary_setup_status") == "active":
+        payment_method_id = doc.get("primary_payment_method_id")
+    return str(payment_method_id) if payment_method_id else None
+
+
+def _is_blocked(doc: dict[str, Any]) -> bool:
+    blocked = doc.get("blocked_payment_method_id")
+    return bool(blocked) and blocked == _current_payment_method_id(doc)
+
+
+async def academy_card_route(db: Any) -> ChargeRoute | None:
+    """The current academy's charge route, for "card on file" reads (#981).
+
+    A card counts only when it lives on the account autopay would charge. None
+    when the route cannot be read: callers then show every card, as before.
+    """
+    # Local imports: both repos live beside this one and import nothing back.
+    from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
+    from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+        MongoBillingSettingsRepository,
+    )
+    from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
+        MongoConnectedAccountRepository,
+    )
+
+    try:
+        return await resolve_charge_route(
+            connected_accounts=MongoConnectedAccountRepository(db),
+            settings=MongoBillingSettingsRepository(db),
+            context="card_on_file",
+        )
+    except Exception:
+        log.warning("card route lookup failed; showing every saved card", exc_info=True)
+        return None
 
 
 def stored_stripe_account(doc: dict[str, Any] | None) -> str | None:
@@ -153,12 +205,40 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         customer_id = doc.get("stripe_customer_id")
         if not customer_id:
             return None
-        payment_method_id = doc.get("default_payment_method_id")
-        if not payment_method_id and doc.get("primary_setup_status") == "active":
-            payment_method_id = doc.get("primary_payment_method_id")
-        if not payment_method_id:
+        payment_method_id = _current_payment_method_id(doc)
+        if not payment_method_id or _is_blocked(doc):
             return None
         return str(customer_id), str(payment_method_id)
+
+    async def flag_payment_method_blocked(
+        self, *, payment_method_id: str, reason: str, at: datetime
+    ) -> int:
+        """Stripe says this saved method can no longer be charged (closed bank,
+        revoked mandate). Remember the method id rather than deleting it, so a
+        newly saved method (a different id) is chargeable again at once (A4-8)."""
+        result = await self.collection.update_many(
+            self._scoped(
+                {
+                    "$or": [
+                        {"default_payment_method_id": payment_method_id},
+                        {"primary_payment_method_id": payment_method_id},
+                    ]
+                }
+            ),
+            {
+                "$set": {
+                    "blocked_payment_method_id": payment_method_id,
+                    "blocked_payment_method_reason": reason,
+                    "blocked_payment_method_at": at,
+                    "updated_at": at,
+                }
+            },
+        )
+        return int(getattr(result, "modified_count", 0))
+
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        doc = await self._find_one({"parent_id": parent_id})
+        return doc is not None and doc.get("blocked_payment_method_id") == payment_method_id
 
     async def set_stripe_customer_id(
         self,
@@ -384,21 +464,47 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
             "primary_setup_status": 1,
             "autopay_payment_methods": 1,
             "billing_setup_last_invited_at": 1,
+            "stripe_account_id": 1,
+            "blocked_payment_method_id": 1,
+            "default_payment_method_id": 1,
+            "primary_payment_method_id": 1,
         }
         cursor = self.collection.find(self._scoped({}), projection)
-        return [doc async for doc in cursor]
+        route = await academy_card_route(self._db)
+        rows = []
+        async for doc in cursor:
+            row = doc if self.card_counts(doc, route) else _without_card(doc)
+            rows.append({k: v for k, v in row.items() if k not in _CARD_CHECK_ONLY})
+        return rows
 
     async def get_academy_customer(self, *, parent_id: str) -> dict[str, Any] | None:
         return await self._find_one({"parent_id": parent_id})
+
+    async def get_display_customer(self, *, parent_id: str) -> dict[str, Any] | None:
+        """``get_academy_customer`` for card-on-file display: a card autopay
+        could not charge (blocked, or on another Stripe account) is dropped."""
+        doc = await self._find_one({"parent_id": parent_id})
+        if doc and not self.card_counts(doc, await academy_card_route(self._db)):
+            return _without_card(doc)
+        return doc
 
     async def has_saved_card(self, *, parent_id: str) -> bool:
         """Whether this parent has a chargeable primary payment method —
         the same "card on file" signal ``list_academy_customers`` projects,
         for single-parent guard checks (charge / enable-autopay endpoints)."""
         doc = await self._find_one({"parent_id": parent_id})
-        if not doc:
+        if not doc or not self.card_counts(doc, await academy_card_route(self._db)):
             return False
         return self.display_payment_method(doc) != (None, None)
+
+    @staticmethod
+    def card_counts(doc: dict[str, Any], route: ChargeRoute | None) -> bool:
+        """False when the saved card is blocked by Stripe or lives on another
+        Stripe account than ``route`` charges (#981); ``route=None`` skips the
+        account check."""
+        if _is_blocked(doc):
+            return False
+        return route is None or route.holds_card(stored_stripe_account(doc))
 
     @staticmethod
     def display_payment_method(doc: dict[str, Any]) -> tuple[str | None, str | None]:

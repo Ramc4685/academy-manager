@@ -248,6 +248,10 @@ async def test_autopay_setup_checkout_uses_setup_mode_without_subscription_data(
     assert request["client_reference_id"] == "parent_1"
     assert "subscription_data" not in request
     assert "line_items" not in request
+    assert request["payment_method_options"]["us_bank_account"] == {
+        "financial_connections": {"permissions": ["payment_method"]},
+        "verification_method": "automatic",
+    }
     assert request["metadata"] == {
         "academy_id": "academy_1",
         "parent_id": "parent_1",
@@ -378,6 +382,8 @@ async def test_invoice_checkout_session_uses_invoice_metadata_and_reference() ->
     assert request["mode"] == "payment"
     assert request["client_reference_id"] == "parent_1"
     assert request["idempotency_key"] == "invoice-checkout:inv_123:4100"
+    # A one-time payment saves nothing, so it asks for no bank permission.
+    assert "payment_method_options" not in request
     assert request["metadata"] == {
         "invoice_id": "inv_123",
         "academy_id": "academy_1",

@@ -102,6 +102,34 @@ async def test_prepare_due_states_only_selects_due_open_autopay_active_invoices(
 
 
 @pytest.mark.asyncio
+async def test_resolved_ladder_on_a_reopened_invoice_is_re_armed(real_db, acad) -> None:
+    """Should-fix 6: a reversal reopens a paid invoice; its old resolved ladder
+    must not block autopay from trying again."""
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-reopened", enrollment_id="enr-r")
+    await real_db["dunning_states"].insert_one(
+        {
+            "academy_id": acad,
+            "invoice_id": "inv-reopened",
+            "parent_id": "parent-inv-reopened",
+            "enrollment_id": "enr-r",
+            "status": "resolved",
+            "attempt_count": 1,
+            "resolved_at": NOW,
+            "created_at": NOW,
+            "updated_at": NOW,
+        }
+    )
+
+    assert await repo.prepare_due_states(now=NOW, limit=100) == 1
+    claimed = await repo.claim_next_due(now=NOW, worker_id="worker-1")
+
+    assert claimed is not None
+    assert claimed[1].attempt_count == 0
+    assert await real_db["dunning_states"].count_documents({"academy_id": acad}) == 1
+
+
+@pytest.mark.asyncio
 async def test_claim_and_finish_are_idempotent_across_worker_runs(db, acad) -> None:
     repo = MongoDunningStateRepository(db)
     await _seed_invoice(db, academy_id=acad, invoice_id="inv-due", enrollment_id="enr-due")
@@ -276,6 +304,22 @@ async def test_processing_and_succeeded_payment_attempts_block_new_dunning_charg
     assert succeeded_state["status"] == "resolved"
 
 
+def _failed_attempt(acad: str, attempt_id: str, key: str, code: str, *, minutes: int) -> dict:
+    return {
+        "academy_id": acad,
+        "attempt_id": attempt_id,
+        "invoice_id": "inv-processing",
+        "parent_id": "parent-inv-processing",
+        "amount_cents": 10_000,
+        "currency": "usd",
+        "status": "failed",
+        "failure_code": code,
+        "idempotency_key": key,
+        "created_at": NOW + timedelta(minutes=minutes),
+        "updated_at": NOW + timedelta(minutes=minutes),
+    }
+
+
 @pytest.mark.asyncio
 async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, acad) -> None:
     repo = MongoDunningStateRepository(db)
@@ -290,7 +334,8 @@ async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, ac
             "amount_cents": 10_000,
             "currency": "usd",
             "status": "processing",
-            "idempotency_key": "attempt-processing",
+            "stripe_payment_intent_id": "pi_ach",
+            "idempotency_key": "autopay-processing:inv-processing:pi_ach",
             "created_at": NOW,
             "updated_at": NOW,
         }
@@ -302,9 +347,21 @@ async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, ac
     assert parked_state["next_attempt_at"] is None
     assert parked_state["suppression_reason"] == "payment_processing"
 
-    await db["payment_attempts"].update_one(
-        {"attempt_id": "attempt-processing"},
-        {"$set": {"status": "failed", "updated_at": NOW + timedelta(minutes=5)}},
+    # A pay-link failure after the debit was submitted does not answer the debit.
+    await db["payment_attempts"].insert_one(
+        _failed_attempt(acad, "attempt-paylink", "checkout-failed:cs_1", "card_declined", minutes=2)
+    )
+    assert await repo.claim_next_due(now=NOW + timedelta(minutes=2), worker_id="w") is None
+
+    # The real webhook writes a NEW autopay-failed row for the parked PaymentIntent.
+    await db["payment_attempts"].insert_one(
+        _failed_attempt(
+            acad,
+            "attempt-ach-failed",
+            "autopay-failed:inv-processing:pi_ach",
+            "insufficient_funds",
+            minutes=5,
+        )
     )
 
     claimed = await repo.claim_next_due(now=NOW + timedelta(minutes=5), worker_id="retry-worker")
@@ -316,6 +373,8 @@ async def test_parked_processing_state_resumes_after_latest_attempt_fails(db, ac
     assert state.status == "processing"
     assert state.processing_attempt_no == 1
     assert state.processing_worker_id == "retry-worker"
+    # L1 A4-2: the worker records the bank's answer instead of debiting again.
+    assert state.settling_failure_code == "insufficient_funds"
 
 
 @pytest.mark.asyncio
@@ -726,3 +785,35 @@ async def test_claim_next_due_skips_excluded_parked_state_for_due_one(db, acad) 
     )
     assert nxt is not None
     assert nxt[0].invoice_id == "inv-due"
+
+
+@pytest.mark.asyncio
+async def test_reparking_keeps_the_original_parked_since(real_db, acad) -> None:
+    """L1 A7-1: "parked for a day" is measured from the first park, so the ops
+    digest and the dashboard can tell a stuck ladder from a fresh one."""
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-fault", enrollment_id="enr-f")
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-ach", enrollment_id="enr-a")
+    await repo.prepare_due_states(now=NOW, limit=10)
+
+    first = await repo.claim_next_due(now=NOW, worker_id="w")
+    assert first is not None
+    await repo.park_attempt(state=first[1], reason="charge_technical_failure", now=NOW)
+    second = await repo.claim_next_due(
+        now=NOW, worker_id="w", exclude_invoice_ids={first[0].invoice_id}
+    )
+    assert second is not None
+    await repo.park_attempt(state=second[1], reason="payment_processing", now=NOW)
+    fault_id = first[0].invoice_id
+
+    # Re-parking on later ticks keeps the original parked_since.
+    later = NOW + timedelta(hours=3)
+    again = await repo.claim_next_due(
+        now=later, worker_id="w", exclude_invoice_ids={second[0].invoice_id}
+    )
+    assert again is not None and again[0].invoice_id == fault_id
+    await repo.park_attempt(state=again[1], reason="charge_technical_failure", now=later)
+
+    doc = await real_db["dunning_states"].find_one({"invoice_id": fault_id})
+    assert doc["suppression_reason"] == "charge_technical_failure"
+    assert doc["parked_since"].replace(tzinfo=UTC) == NOW

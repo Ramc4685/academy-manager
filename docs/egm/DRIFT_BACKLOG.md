@@ -55,10 +55,12 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] `pnpm typecheck` runs `next typegen && tsc --noEmit`.
 - [wording] README:84-86 omit that `build` runs `--webpack` and `dev` honors `$PORT`.
 
-## `frontend/lib/api/README.md`: 7 items, from `drift/frontend__lib__api.md`
+## `frontend/lib/api/README.md`: 9 items, from `drift/frontend__lib__api.md`
+- [undocumented] README calls `admin.ts` a thin wrapper; `chargeAdminInvoiceAutopay` keeps per-invoice retry state (reused `request_id` for 10 min; kept on 409 only for `charge_in_progress`).
 - [stale-not-built] README says `generated/` holds only `.gitkeep`; `v2.d.ts` and `openapi.snapshot.json` are committed.
 - [stale-not-built] CI "Skipping drift check" path no longer exists; drift check is unconditional.
 - [contract] `pnpm generate:api` reads the committed snapshot, not the running app; the pytest `UPDATE_OPENAPI_SNAPSHOT=1` step is omitted.
 - [undocumented] `apiFetchBlob`, Sentry failure capture, BFF/X-Academy-Id headers, 20s timeout in `client.ts`.
 - [undocumented] Eight `admin-*` modules, twelve top-level modules, six `v2/` modules not listed.
 - [wording] "When generated types are reintroduced": they already are.
+- [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.

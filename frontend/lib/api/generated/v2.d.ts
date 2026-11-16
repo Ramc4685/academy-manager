@@ -7719,7 +7719,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
+            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
             /**
              * Severity
              * @enum {string}
@@ -12558,11 +12558,14 @@ export interface components {
              */
             funds_route_to_academy: boolean;
             health: components["schemas"]["BillingHealthDto"];
+            /** Payments Blocked Reason */
+            payments_blocked_reason?: string | null;
             /**
              * Payments Possible
              * @default false
              */
             payments_possible: boolean;
+            refund_failures?: components["schemas"]["RefundFailuresDto"];
             webhook_events: components["schemas"]["WebhookBacklogDto"];
         };
         /** ConnectedAccountReadinessDto */
@@ -12579,6 +12582,11 @@ export interface components {
              * @default false
              */
             configured: boolean;
+            /**
+             * Direct Charges Supported
+             * @default false
+             */
+            direct_charges_supported: boolean;
             /**
              * Payouts Enabled
              * @default false
@@ -17442,6 +17450,50 @@ export interface components {
              * @default 0
              */
             success_count: number;
+        };
+        /** RefundFailureDto */
+        RefundFailureDto: {
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /** Failed At */
+            failed_at?: string | null;
+            /**
+             * Parent Id
+             * @default
+             */
+            parent_id: string;
+            /** Payment Id */
+            payment_id: string;
+            /**
+             * Reason
+             * @default unknown
+             */
+            reason: string;
+            /** Refund Id */
+            refund_id: string;
+        };
+        /** RefundFailuresDto */
+        RefundFailuresDto: {
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+            /** Rows */
+            rows?: components["schemas"]["RefundFailureDto"][];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** RegisterDeviceRequest */
         RegisterDeviceRequest: {

@@ -142,6 +142,58 @@ async def dashboard_attention(
             )
         )
 
+    stuck = int(dunning_alerts.get("autopay_stuck") or 0)
+    needs_setup = int(dunning_alerts.get("autopay_needs_stripe_setup") or 0)
+    if stuck or needs_setup:
+        sentences = []
+        if needs_setup:
+            sentences.append(
+                f"{needs_setup} famil{'ies' if needs_setup != 1 else 'y'} can't be charged "
+                "until you finish Stripe setup."
+            )
+        if stuck:
+            sentences.append(
+                f"{stuck} famil{'ies' if stuck != 1 else 'y'} could not be charged because "
+                "of a problem on our side, not the card."
+            )
+        # Billing health shows Stripe setup only; a fault on our side retries
+        # on its own every run, so say that instead of pointing at a screen.
+        sentences.append(
+            "Nothing was charged. Open Billing health to finish setup."
+            if needs_setup
+            else "Nothing was charged; autopay tries again on its next run."
+        )
+        items.append(
+            AdminAttentionItemView(
+                attention_id="autopay-stuck",
+                kind="autopay_stuck",
+                title="Autopay stuck",
+                detail=" ".join(sentences),
+                severity="high",
+                href="/admin/billing-health" if needs_setup else "/admin/payments",
+                count=stuck + needs_setup,
+            )
+        )
+
+    returns_to_review = int(dunning_alerts.get("bank_returns_to_review") or 0)
+    if returns_to_review:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="bank-return-review",
+                kind="bank_return_review",
+                title="Bank returns to check",
+                detail=(
+                    f"{returns_to_review} "
+                    f"{'family has' if returns_to_review == 1 else 'families have'} a bank "
+                    "return that needs a manual look: the money came back, but the invoice "
+                    "was not reopened automatically."
+                ),
+                severity="high",
+                href="/admin/payments",
+                count=returns_to_review,
+            )
+        )
+
     stuck_actions_reader = getattr(use_cases, "list_stuck_scheduled_actions", None)
 
     # Fan out all independent data fetches concurrently.
