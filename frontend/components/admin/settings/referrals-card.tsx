@@ -27,6 +27,16 @@ function day(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleDateString() : "";
 }
 
+/** Where the code came from and when, plus any other code seen for the
+ * family, so the owner can spot someone else's code on a family's inquiry. */
+export function referralOrigin(row: ReferralRow): string {
+  const where = row.source === "application" ? "Registration" : "Website inquiry";
+  const others = row.competing_codes?.length
+    ? `; also seen: ${row.competing_codes.join(", ")}`
+    : "";
+  return `${where} ${day(row.attributed_at)}${others}`;
+}
+
 /** The state column: what happened, or what the row is waiting for. */
 export function referralState(row: ReferralRow): string {
   if (row.status === "granted") return `Credited ${day(row.granted_at)}`;
@@ -85,6 +95,7 @@ export function ReferralsCard() {
               <tr>
                 <th className="py-1 pr-3 font-medium">Referred by</th>
                 <th className="py-1 pr-3 font-medium">New family</th>
+                <th className="py-1 pr-3 font-medium">Came from</th>
                 <th className="py-1 pr-3 font-medium">Credit</th>
                 <th className="py-1 font-medium">State</th>
               </tr>
@@ -101,6 +112,9 @@ export function ReferralsCard() {
                   </td>
                   <td className="py-1.5 pr-3 text-rally-ink">
                     {row.referred_name || "Unknown"}
+                  </td>
+                  <td className="py-1.5 pr-3 text-rally-muted">
+                    {referralOrigin(row)}
                   </td>
                   <td className="py-1.5 pr-3 text-rally-muted">
                     {row.referrer_credit_cents != null

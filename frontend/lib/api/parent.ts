@@ -10,6 +10,8 @@ export interface ParentProfile {
   last_name: string;
   email?: string | null;
   phone: string;
+  /** A referral code carried from the academy page (L9 C2). */
+  referral_code?: string;
 }
 
 export interface ChildProfile {

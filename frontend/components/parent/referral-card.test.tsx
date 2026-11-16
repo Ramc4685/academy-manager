@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ParentReferral } from "@/lib/api/parent";
 import { queryKeys } from "@/lib/query/keys";
-import { ReferralCard, referralLink } from "./referral-card";
+import { ReferralCard } from "./referral-card";
 
 function html(data: ParentReferral) {
   const client = new QueryClient();
@@ -27,6 +27,7 @@ describe("ReferralCard", () => {
     const out = html({
       enabled: true,
       referral_code: "QZ7KX4MP",
+      share_url: "https://blno.courtmastr.com/?ref=QZ7KX4MP",
       rewards_earned: 2,
       referrer_credit_cents: 2_500,
       referred_credit_cents: 1_000,
@@ -35,11 +36,12 @@ describe("ReferralCard", () => {
     expect(out).toContain("$25");
     expect(out).toContain("$10");
     expect(out).toContain("Rewards earned: 2");
+    expect(out).toContain("Copy link");
   });
 
-  it("builds the share link on the academy page", () => {
-    expect(referralLink("https://blno.courtmastr.com", "QZ7KX4MP")).toBe(
-      "https://blno.courtmastr.com/?ref=QZ7KX4MP",
-    );
+  it("offers no copy button without a server-built link", () => {
+    const out = html({ enabled: true, referral_code: "QZ7KX4MP", rewards_earned: 0 });
+    expect(out).toContain("QZ7KX4MP");
+    expect(out).not.toContain("Copy link");
   });
 });

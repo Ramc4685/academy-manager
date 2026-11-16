@@ -35,6 +35,7 @@ import {
   formatSessionOccurrence,
 } from "@/lib/format/session-display";
 import { queryKeys } from "@/lib/query/keys";
+import { storedReferralCode } from "@/lib/referral-capture";
 import {
   childProfileFromExistingChild,
   initialChildSelection,
@@ -257,7 +258,9 @@ export default function OnboardingStepperPage() {
             app={app}
             saving={saving}
             onSave={async (profile) => {
-              if (await save({ parent_profile: profile })) advance();
+              // Carry the ?ref= code captured on the academy page (L9 C2).
+              const referral_code = profile.referral_code || storedReferralCode();
+              if (await save({ parent_profile: { ...profile, referral_code } })) advance();
             }}
           />
         )}

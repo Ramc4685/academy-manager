@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { captureReferralCode } from "@/lib/referral-capture";
+
 import {
   registerPublicParent,
   sendParentVerificationEmail,
@@ -53,6 +55,7 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
 
   useEffect(() => {
     setHydrated(true);
+    captureReferralCode(window.location.search);
     let cancelled = false;
 
     completeGoogleRedirectSignIn()

@@ -8,11 +8,6 @@ import { getParentReferral } from "@/lib/api/parent";
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
-/** The link a parent shares: the academy's public page with their code. */
-export function referralLink(origin: string, code: string): string {
-  return `${origin}/?ref=${encodeURIComponent(code)}`;
-}
-
 /**
  * Parent profile -> Refer a family (L9 C2). Hidden while the academy has the
  * referral programme off; the backend mints no code until it is on.
@@ -25,10 +20,13 @@ export function ReferralCard() {
   const [copied, setCopied] = useState(false);
   if (!data?.enabled || !data.referral_code) return null;
   const code = data.referral_code;
+  // Built by the server on the academy's own host, never this page's address.
+  const shareUrl = data.share_url;
 
   async function copy() {
+    if (!shareUrl) return;
     try {
-      await navigator.clipboard.writeText(referralLink(window.location.origin, code));
+      await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
     } catch {
       setCopied(false);
@@ -58,9 +56,11 @@ export function ReferralCard() {
         >
           {code}
         </code>
-        <Button type="button" variant="secondary" size="sm" onClick={copy}>
-          {copied ? "Link copied" : "Copy link"}
-        </Button>
+        {shareUrl && (
+          <Button type="button" variant="secondary" size="sm" onClick={copy}>
+            {copied ? "Link copied" : "Copy link"}
+          </Button>
+        )}
       </div>
       <p className="mt-2 text-sm text-rally-muted" data-testid="parent-referral-rewards">
         Rewards earned: {data.rewards_earned}

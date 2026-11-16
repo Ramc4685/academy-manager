@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { ReferralRow } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { OwnerProvider } from "@/components/admin/owner-context";
-import { ReferralsCard, referralState } from "./referrals-card";
+import { ReferralsCard, referralOrigin, referralState } from "./referrals-card";
 
 const BASE: ReferralRow = {
   referral_id: "r1",
@@ -14,6 +14,8 @@ const BASE: ReferralRow = {
   referred_name: "Nova New",
   referrer_credit_cents: 2_500,
   status: "pending",
+  source: "application",
+  attributed_at: "2026-12-01T12:00:00Z",
   created_at: "2026-12-01T00:00:00Z",
 };
 
@@ -52,6 +54,14 @@ describe("ReferralsCard", () => {
     expect(html([])).toContain("No referrals yet");
     // An empty or stubbed response renders the empty state, not a crash.
     expect(html(undefined)).toContain("No referrals yet");
+  });
+
+  it("shows where each code came from and any competing code", () => {
+    expect(referralOrigin(BASE)).toMatch(/^Registration /);
+    expect(
+      referralOrigin({ ...BASE, source: "contact", competing_codes: ["AB23CD45"] }),
+    ).toMatch(/^Website inquiry .*; also seen: AB23CD45$/);
+    expect(html([BASE])).toContain("Registration");
   });
 
   it("offers Approve on an inquiry-only referral to the owner only", () => {

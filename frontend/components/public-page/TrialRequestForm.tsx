@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
 import { safeHttpsUrl } from "@/lib/public-page/format";
+import { captureReferralCode } from "@/lib/referral-capture";
 import {
   EMPTY_TRIAL_FORM,
   HEARD_FROM_OPTIONS,
@@ -88,6 +89,7 @@ export function TrialRequestForm({
   useEffect(() => {
     const known = new Set(classOptions.map((option) => option.value));
     const fromUrl = new URLSearchParams(window.location.search).get("class") ?? "";
+    captureReferralCode(window.location.search);
     setValues((current) => ({
       ...current,
       utm: utmFromSearch(window.location.search),
