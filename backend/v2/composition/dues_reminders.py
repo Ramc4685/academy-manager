@@ -245,6 +245,24 @@ def compose_dues_reminders(
                 },
             )
             docs = [doc async for doc in cursor]
+            # An invoice autopay is still collecting (an ACH debit settling, a
+            # retry scheduled) is not "past due" to the family: no reminder
+            # while its ladder is live (L8; Jan 1 debits settle after +3).
+            laddered = (
+                set(
+                    await db["dunning_states"].distinct(
+                        "invoice_id",
+                        {
+                            "academy_id": current_academy_id(),
+                            "invoice_id": {"$in": [str(d["invoice_id"]) for d in docs]},
+                            "status": {"$in": ["active", "processing"]},
+                        },
+                    )
+                )
+                if docs
+                else set()
+            )
+            docs = [d for d in docs if str(d["invoice_id"]) not in laddered]
             enrollment_ids = {str(d["enrollment_id"]) for d in docs if d.get("enrollment_id")}
             autopay_enrollments = (
                 set(

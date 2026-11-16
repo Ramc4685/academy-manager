@@ -254,3 +254,115 @@ async def test_return_naming_an_invoice_without_an_allocation_is_left_for_a_manu
     assert payment is not None and payment.status == "succeeded"
     attempt = await real_db["payment_attempts"].find_one({"invoice_id": "inv-pi_meta"})
     assert attempt is not None and attempt["failure_code"] == "unreconciled_payment_return"
+
+
+class _Audit:
+    def __init__(self, db) -> None:
+        from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
+            MongoBillingAuditLogRepository,
+        )
+
+        self._repo = MongoBillingAuditLogRepository(db)
+
+    async def append(self, entry) -> None:
+        await self._repo.append(entry)
+
+
+@pytest.mark.asyncio
+async def test_partial_return_of_unallocated_money_stops_it_being_spendable(real_db, acad) -> None:
+    """L8: with no allocation there is no invoice for an attempt row, and the old
+    branch returned before marking the payment, so the returned part stayed
+    spendable. It is now marked partially refunded, with an audit entry, and a
+    replay converges."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_part"), idempotency_key="p:part")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+
+    for _ in range(2):
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_part")
+        assert payment is not None
+        await uc._reverse_returned_payment(
+            event_id="evt", pi_id="pi_part", payment=payment, amount_cents=4_000, return_code="R01"
+        )
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_part"})
+    # The 6,000 the bank did not take back is still the family's money.
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "partially_refunded",
+        4_000,
+        6_000,
+    )
+    audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_part"}).to_list(10)
+    assert [a["action"] for a in audits] == ["payment_return_unreconciled"]
+
+
+@pytest.mark.asyncio
+async def test_reopened_invoice_moves_both_dates_and_no_ladder_opens_before_then(
+    real_db, acad
+) -> None:
+    """L8: reopen day + 5 for the due date AND the autopay charge stamp, or the old
+    Jan 1 stamp re-arms the ladder the moment autopay resumes."""
+    from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+        MongoDunningStateRepository,
+    )
+
+    repo = MongoBillingLedgerRepository(real_db)
+    invoice = _invoice(acad, "inv-pi_reopen").model_copy(
+        update={
+            "enrollment_id": "enr-reopen",
+            "due_date": date(2026, 11, 5),
+            "autopay_charge_date": date(2026, 11, 1),
+        }
+    )
+    await repo.create_invoice(invoice, lines=[], idempotency_key="i:reopen")
+    payment = await repo.record_payment(_payment(acad, "pi_reopen"), idempotency_key="p:reopen")
+    await repo.allocate_payment(
+        payment_id=payment.payment_id,
+        invoice_id="inv-pi_reopen",
+        amount_cents=10_000,
+        idempotency_key="autopay-alloc:pi_reopen",
+    )
+    await real_db["student_billing_enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-reopen",
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "session_type_id": "st-1",
+            "autopay_enrollment_status": "active",
+        }
+    )
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        clock=lambda: NOW,
+    )
+
+    await _return(uc, repo, "pi_reopen")
+
+    reopened = await repo.get_invoice("inv-pi_reopen")
+    assert reopened is not None and reopened.status == "open"
+    assert (reopened.due_date, reopened.autopay_charge_date) == (
+        date(2026, 11, 20),
+        date(2026, 11, 20),
+    )
+    ladder = MongoDunningStateRepository(real_db)
+    assert await ladder.prepare_due_states(now=datetime(2026, 11, 19, 12, tzinfo=UTC), limit=5) == 0
+    assert await ladder.prepare_due_states(now=datetime(2026, 11, 20, 12, tzinfo=UTC), limit=5) == 1

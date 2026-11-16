@@ -5579,9 +5579,13 @@ class _BlockingCustomers(FakeParentStripeCustomers):
     def __init__(self) -> None:
         super().__init__()
         self.blocked: list[tuple[str, str]] = []
+        self.customers: list[str | None] = []
 
-    async def flag_payment_method_blocked(self, *, payment_method_id: str, reason: str, at):
+    async def flag_payment_method_blocked(
+        self, *, payment_method_id: str, reason: str, at, stripe_customer_id=None
+    ):
         self.blocked.append((payment_method_id, reason))
+        self.customers.append(stripe_customer_id)
         return 1
 
 
@@ -5628,6 +5632,37 @@ async def test_unusable_bank_method_is_flagged(event_type: str, obj: dict, expec
     await uc.execute(body, "test_signature")
 
     assert customers.blocked == expected
+
+
+@pytest.mark.asyncio
+async def test_unusable_method_also_matches_its_stripe_customer() -> None:
+    """L8: platform charges use Stripe's live default, which a Portal change can
+    move off the stored id; the method's customer is matched as well."""
+    customers = _BlockingCustomers()
+    stripe = FakeStripeGateway()
+    stripe.payment_methods["pm_new"] = {"id": "pm_new", "customer": "cus_portal"}
+    uc = _build(FakePaymentRepo(), parent_customers=customers, stripe=stripe)
+    blocked_bank = {
+        "id": "pm_live",
+        "customer": "cus_live",
+        "type": "us_bank_account",
+        "us_bank_account": {"status_details": {"blocked": {"reason": "bank_account_closed"}}},
+    }
+    for event_type, obj in (
+        ("payment_method.automatically_updated", blocked_bank),
+        ("mandate.updated", {"id": "mandate_1", "status": "inactive", "payment_method": "pm_new"}),
+    ):
+        body = json.dumps(
+            {
+                "id": f"evt_{event_type}",
+                "type": event_type,
+                "livemode": True,
+                "data": {"object": obj},
+            }
+        ).encode()
+        await uc.execute(body, "test_signature")
+
+    assert customers.customers == ["cus_live", "cus_portal"]
 
 
 @pytest.mark.asyncio

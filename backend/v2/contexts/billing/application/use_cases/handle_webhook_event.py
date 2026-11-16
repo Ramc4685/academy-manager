@@ -52,6 +52,7 @@ from backend.v2.contexts.billing.application.use_cases.record_payment_dispute im
     RecordPaymentDispute,
 )
 from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
+from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_hold
 from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
@@ -243,6 +244,10 @@ PLATFORM_PLAN_EVENT_TYPES = frozenset(
 )
 
 
+class BillingAuditAppender(Protocol):
+    async def append(self, entry: BillingAuditEntry) -> None: ...
+
+
 class HandleWebhookEvent:
     def __init__(
         self,
@@ -270,9 +275,11 @@ class HandleWebhookEvent:
         expected_livemode: bool | None = None,
         tenancy_mode: str = "single_academy",
         academy_timezone: AcademyTimezoneReader | None = None,
+        billing_audit: BillingAuditAppender | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
+        self._billing_audit = billing_audit
         self._dedup = dedup
         self._payments = payments
         self._subscriptions = subscriptions
@@ -2196,10 +2203,14 @@ class HandleWebhookEvent:
         obj = event.get("data", {}).get("object", {})
         if not isinstance(obj, dict):
             return
+        customer_id = str(obj.get("customer") or "")
         if event.get("type") == "mandate.updated":
             if obj.get("status") != "inactive":
                 return
             payment_method_id, reason = str(obj.get("payment_method") or ""), "mandate_inactive"
+            customer_id = await self._payment_method_customer(
+                payment_method_id, stripe_account=event.get("account")
+            )
         else:
             bank = obj.get("us_bank_account") or {}
             blocked = (
@@ -2218,11 +2229,28 @@ class HandleWebhookEvent:
         if not payment_method_id:
             return
         flagged = await self._parent_customers.flag_payment_method_blocked(
-            payment_method_id=payment_method_id, reason=reason, at=self._now()
+            payment_method_id=payment_method_id,
+            reason=reason,
+            at=self._now(),
+            stripe_customer_id=customer_id or None,
         )
         log.warning(
             "payment_method_unusable pm=%s reason=%s flagged=%d", payment_method_id, reason, flagged
         )
+
+    async def _payment_method_customer(self, payment_method_id: str, *, stripe_account: Any) -> str:
+        """The Stripe customer a method belongs to ("" when unknown). A mandate
+        names only its method; the id match still runs if this lookup fails."""
+        if not payment_method_id:
+            return ""
+        try:
+            method = await self._stripe.retrieve_payment_method(
+                payment_method_id, stripe_account=str(stripe_account or "") or None
+            )
+        except Exception:
+            log.warning("payment_method_customer_lookup_failed pm=%s", payment_method_id)
+            return ""
+        return str((method or {}).get("customer") or "")
 
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
@@ -2492,6 +2520,31 @@ class HandleWebhookEvent:
                     ),
                     created_by_event_id=event_id or None,
                 )
+            elif partial:
+                # Never applied to an invoice, so no attempt row can carry it. The
+                # returned part must stop being spendable unapplied money; the
+                # audit entry is the owner's trail (L8).
+                if self._billing_audit is not None:
+                    await self._billing_audit.append(
+                        BillingAuditEntry(
+                            audit_id=f"baud-payment-return:{pi_id}:{return_code}:{amount_cents}",
+                            academy_id=payment.academy_id,
+                            action="payment_return_unreconciled",
+                            actor_id="system",
+                            at=self._now(),
+                            payment_id=payment.payment_id,
+                            parent_id=payment.parent_id or None,
+                            reason=f"{label} {return_code}",
+                            before={"refunded_cents": payment.refunded_cents},
+                            after={"refunded_cents": amount_cents},
+                        )
+                    )
+                await ledger.mark_payment_refunded(
+                    payment.payment_id,
+                    refunded_cents=amount_cents,
+                    status="partially_refunded",
+                    updated_at=self._now(),
+                )
             capture_message(
                 f"{'Partial payment' if partial else 'Payment'} return not reversed: "
                 f"pi={pi_id} {amount_cents} of {payment.amount_cents} cents ({return_code}); "
@@ -2504,11 +2557,21 @@ class HandleWebhookEvent:
             days=REOPENED_INVOICE_DUE_DAYS
         )
         for invoice in invoices:
-            if invoice.due_date < reopened_due:
-                # Lead decision 2026-11-15: a reopened invoice is due again in five
-                # days, so no late fee lands before the family can pay. Set before
-                # the reversal so a replay that finds the allocations gone is done.
-                await ledger.save_invoice(invoice.model_copy(update={"due_date": reopened_due}))
+            # Lead decision 2026-11-15: a reopened invoice is due again in five
+            # days, so no late fee lands before the family can pay. The autopay
+            # charge stamp moves too, or an old stamp re-arms the ladder at once
+            # (L8). Set before the reversal so a replay that finds the
+            # allocations gone is done.
+            moved = {
+                field: reopened_due
+                for field, day in (
+                    ("due_date", invoice.due_date),
+                    ("autopay_charge_date", invoice.autopay_charge_date),
+                )
+                if day is not None and day < reopened_due
+            }
+            if moved:
+                await ledger.save_invoice(invoice.model_copy(update=moved))
             await ledger.record_payment_attempt(
                 invoice_id=invoice.invoice_id,
                 parent_id=invoice.parent_id,

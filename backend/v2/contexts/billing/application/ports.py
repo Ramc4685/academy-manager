@@ -280,7 +280,12 @@ class ParentStripeCustomerRepository(Protocol):
     ) -> None: ...
 
     async def flag_payment_method_blocked(
-        self, *, payment_method_id: str, reason: str, at: datetime
+        self,
+        *,
+        payment_method_id: str,
+        reason: str,
+        at: datetime,
+        stripe_customer_id: str | None = None,
     ) -> int:
         """Mark a saved method Stripe can no longer charge; returns rows flagged."""
         ...

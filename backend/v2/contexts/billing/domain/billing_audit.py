@@ -87,6 +87,10 @@ BillingAuditAction = Literal[
     "plan_price_change_scheduled",
     "plan_price_change_cancelled",
     "plan_price_change_applied",
+    # Unattended: the bank took part of a payment back that was never applied
+    # to an invoice, so no attempt row can carry it (attempts need an invoice).
+    # The payment is marked partially refunded; this is the owner's trail.
+    "payment_return_unreconciled",
 ]
 
 

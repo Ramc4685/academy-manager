@@ -75,6 +75,65 @@ async def test_reader_flags_invoices_whose_enrollment_is_on_active_autopay(real_
 
 
 @pytest.mark.asyncio
+async def test_reader_skips_invoices_autopay_is_still_collecting(real_db, acad) -> None:
+    """L8: a Jan 1 debit is still settling at +3 (bank holiday); no "past due"
+    email while its ladder is live. A finished ladder reminds as before."""
+    due = datetime(2027, 1, 5, tzinfo=UTC)
+    for invoice_id, ladder in (
+        ("inv-settling", "processing"),
+        ("inv-retrying", "active"),
+        ("inv-dunned", "dunned"),
+        ("inv-no-ladder", None),
+    ):
+        await real_db["invoices"].insert_one(
+            {
+                "academy_id": acad,
+                "invoice_id": invoice_id,
+                "parent_id": "parent-1",
+                "period": "2027-01",
+                "status": "open",
+                "total_cents": 5000,
+                "balance_due_cents": 5000,
+                "currency": "usd",
+                "due_date": due,
+                "created_at": due,
+                "updated_at": due,
+            }
+        )
+        if ladder:
+            await real_db["dunning_states"].insert_one(
+                {
+                    "academy_id": acad,
+                    "invoice_id": invoice_id,
+                    "parent_id": "parent-1",
+                    "status": ladder,
+                    "attempt_count": 1,
+                    "created_at": due,
+                    "updated_at": due,
+                }
+            )
+    bundle = compose_dues_reminders(
+        real_db,
+        academies=None,
+        users=None,
+        email_sender=None,
+        email_sender_is_real=False,
+        ledger=None,
+        billing_counters=None,
+        billing_settings=None,
+        parent_payments_link=_unused,
+        list_dues_followup=_unused,
+        generate_invoice_artifact=_unused,
+    )
+
+    rows = await bundle.send_past_due_reminders._invoices.list_past_due(
+        due_from=date(2027, 1, 5), due_to=date(2027, 1, 5)
+    )
+
+    assert sorted(row.invoice_id for row in rows) == ["inv-dunned", "inv-no-ladder"]
+
+
+@pytest.mark.asyncio
 async def test_bank_returns_to_review_counts_recent_families(real_db, acad) -> None:
     """Fix round 2: partial and unreconciled returns in the last 30 days, by family."""
     now = datetime.now(UTC)
