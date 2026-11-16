@@ -198,7 +198,8 @@ async def dashboard_attention(
                 title="Overdue dues",
                 detail=(
                     f"{overdue_count} famil{'ies' if overdue_count != 1 else 'y'} "
-                    "past the due date without autopay."
+                    "past the due date without autopay, counting every month. "
+                    "Payments lists the current month."
                 ),
                 severity="high",
                 href="/admin/payments#bucket-past_due",

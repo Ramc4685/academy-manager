@@ -226,7 +226,7 @@ function SummaryCards({
         <Card p={20} accent="#ef4444">
           <Overline>Payment risk</Overline>
           <BigNum size={32}>{statText(overdueQuery, () => String(overdueQuery.data?.needs_action_count ?? 0))}</BigNum>
-          <p className="mt-1 text-[11px] text-rally-subtle">Families past due or failed autopay</p>
+          <p className="mt-1 text-[11px] text-rally-subtle">Past due or failed autopay, any month (Payments shows this month)</p>
         </Card>
       </Link>
     </div>
