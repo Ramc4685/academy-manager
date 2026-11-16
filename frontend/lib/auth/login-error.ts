@@ -23,8 +23,18 @@ export function loginPathForError(err: unknown): string {
  * `/register/parent` is safe to call for them: it requires a verified email
  * and only grants the parent role.
  */
-export function shouldSelfRegister(err: unknown, emailVerified: boolean): boolean {
-  return emailVerified && loginErrorCode(err) === "Identity.UserNotFound";
+export function shouldSelfRegister(
+  err: unknown,
+  user: { emailVerified: boolean; providerData: ReadonlyArray<{ providerId: string }> },
+): boolean {
+  // Email+password sign-ups only. A Google/Apple sign-in with an unknown email
+  // is usually a rostered parent on the wrong account; registering it would
+  // create a phantom family, so it keeps the "no account" error.
+  return (
+    user.emailVerified &&
+    user.providerData.some((p) => p.providerId === "password") &&
+    loginErrorCode(err) === "Identity.UserNotFound"
+  );
 }
 
 function loginErrorCode(err: unknown): string | null {

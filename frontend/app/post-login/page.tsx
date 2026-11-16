@@ -53,7 +53,7 @@ export default function PostLoginPage() {
             replaceLocation(router, returnTo ?? homeForRoles(currentUser.roles));
           })
           .catch(async (err: unknown) => {
-            if (shouldSelfRegister(err, user.emailVerified)) {
+            if (shouldSelfRegister(err, user)) {
               try {
                 await registerPublicParent();
                 replaceLocation(router, "/parent/onboarding");
