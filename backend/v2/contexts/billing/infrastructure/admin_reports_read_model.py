@@ -47,9 +47,6 @@ from backend.v2.contexts.billing.infrastructure.cash_received import cash_receiv
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoProjectedClassFees,
 )
-from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
-    current_lines_filter,
-)
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
@@ -1907,7 +1904,15 @@ def make_session_economics_report(
         ]
         if payout_periods:
             lines_cursor = db["payout_period_lines"].find(
-                {"academy_id": academy_id, **current_lines_filter(payout_periods)},
+                {
+                    "academy_id": academy_id,
+                    # Each period's current set only (finance's
+                    # ``current_lines_filter`` rule; contexts cannot import it).
+                    "$or": [
+                        {"period_id": p["period_id"], "lines_version": p.get("lines_version")}
+                        for p in payout_periods
+                    ],
+                },
                 {"occurrence_id": 1, "amount_minor": 1},
             )
             async for line in lines_cursor:

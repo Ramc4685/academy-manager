@@ -17,7 +17,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 25 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 26 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -32,6 +32,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Top-level test files (`test_pytest_timeout_backstop.py`, `_route_paths.py`, `conftest.py`) missing from tests layout.
 - [contract] `pyproject.toml` cites missing `tests/structural/test_tenancy_literals.py`; tenancy check is `tests/test_no_raw_tenant_mongo_access.py`.
 - [wording] Persona list, admin router prefix (`interfaces/admin/router.py:61`), identity context shape, `views.py` not in every persona; see report.
+- [undocumented] README CI list omits the `compileall` and real-Mongo contract steps.
 - [wording] README:69 says run from the repo root; CI runs from `backend/`.
 - [contract] README:42 says import-linter enforces six layer rules; `pyproject.toml` has five forbidden contracts plus `composition-is-outermost`, and the no-cross-context and tenancy rules are pytest checks.
 - [wording] README:49 places `ports.py` as a sibling of `use_cases/` under `application/`; minor.
