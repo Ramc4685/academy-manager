@@ -1,6 +1,6 @@
 # billing-autopay-safety
 
-PR: #TBD
+PR: #1178
 
 ## What changed
 Autopay no longer breaks or mis-charges when a family has no saved method, when Stripe is down, or when a bank debit fails or comes back later: each case now parks, retries or pauses the family's autopay, and tells the parent when they need to act. Every payment now sends a receipt, payment reminders catch up after a missed run, and the owner dashboard flags autopay stuck on Stripe setup or on our side, plus bank returns that need a manual look ("Bank returns to check"). Card on file now counts only cards on the Stripe account the academy actually charges (#981).
