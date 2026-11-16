@@ -1153,6 +1153,17 @@ class LedgerRepository(Protocol):
 
     async def list_allocations_for_payment(self, payment_id: str) -> list[PaymentAllocation]: ...
 
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        """Allocation reversal rows already written for this payment."""
+        ...
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        """Redo the invoice/payment repair of a reversal that already ran, for a
+        replay after a crash between the allocation delete and the repair."""
+        ...
+
     async def sum_allocations_for_invoice(self, invoice_id: str) -> int: ...
 
     async def apply_invoice_refund(

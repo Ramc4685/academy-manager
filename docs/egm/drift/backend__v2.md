@@ -1,6 +1,6 @@
 # Drift report: backend/v2/README.md
 
-The README does not mention billing, autopay, dunning, webhooks, receipts or reminders, so the uncommitted billing changes add no drift of their own.
+The README does not mention billing, autopay, dunning, webhooks, dashboards, readiness DTOs or timezones, so the uncommitted billing changes (ledger refund repair, late-return webhook handling, `bank_return_review` attention kind, `bank_returns_to_review` alert count, `fees_collector`/`losses_collector` removal, `academy_timezone` on `HandleWebhookEvent`) add no drift of their own. Items 1-12 were re-verified on 2026-11-15 and still hold.
 
 1. [stale-not-built] README:3 links `../../../.claude/plans/write-a-detailed-plan-curried-trinket.md`. That path resolves outside the repo and does not exist in the worktree (`.claude/plans` is absent). The plan lives only in the user's home directory.
 2. [contract] README:27 says `contract/` is "mongo + stripe via testcontainers". No `testcontainers` reference exists under `backend/` or in the requirements files. CI runs the contract tier against a native mongod (`.github/workflows/production.yml:167`, job `backend-contract-real-mongo`). Stripe fixtures are static (`backend/v2/tests/contract/stripe_fixtures`).

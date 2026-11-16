@@ -47,6 +47,12 @@ PARK_REASONS_NEEDING_STRIPE_SETUP = frozenset(
     {"connected_account_not_ready", "stripe_not_configured"}
 )
 
+#: Attempt failure codes for a bank return or dispute the ledger did not reverse
+#: (partial, or nothing reversible): the owner reconciles these by hand.
+UNSUPPORTED_PARTIAL_RETURN = "unsupported_partial_ach_return"
+UNRECONCILED_RETURN = "unreconciled_payment_return"
+RETURN_CODES_NEEDING_MANUAL_REVIEW = frozenset({UNSUPPORTED_PARTIAL_RETURN, UNRECONCILED_RETURN})
+
 #: No saved card or bank: the parent has to act, not us. Emailed to the parent
 #: once and shown in the Payments buckets, never an ops-digest fault (owner 2026-11-15).
 NO_SAVED_PAYMENT_METHOD = "no_saved_payment_method"

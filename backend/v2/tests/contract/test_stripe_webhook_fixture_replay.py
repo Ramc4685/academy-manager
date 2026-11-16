@@ -489,11 +489,33 @@ class FakeBillingLedger:
             update={
                 "refunded_cents": refunded_cents,
                 "status": status,
+                "unapplied_amount_cents": self._unapplied(payment_id, refunded_cents),
                 "updated_at": updated_at,
             }
         )
         self.payments[payment_id] = updated
         return updated
+
+    def _unapplied(self, payment_id: str, refunded_cents: int) -> int:
+        """Mongo's rule: amount less refunded less still-allocated, never negative."""
+        allocated = sum(
+            a["amount_cents"] for a in self.allocations if a["payment_id"] == payment_id
+        )
+        return max(0, self.payments[payment_id].amount_cents - refunded_cents - allocated)
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        return [r for r in self.reversals.values() if r["payment_id"] == payment_id]
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        reversal = self.reversals.get(reversal_idempotency_key)
+        if reversal is None:
+            return
+        invoice = self.invoices[reversal["invoice_id"]]
+        self.invoices[invoice.invoice_id] = invoice.model_copy(
+            update={"status": "open", "balance_due_cents": invoice.total_cents}
+        )
 
     async def record_payment_attempt(
         self,
@@ -556,7 +578,12 @@ class FakeBillingLedger:
                 }
             )
             self.payments[payment.payment_id] = payment.model_copy(
-                update={"unapplied_amount_cents": 0, "updated_at": reversed_at}
+                update={
+                    "unapplied_amount_cents": self._unapplied(
+                        payment.payment_id, payment.refunded_cents
+                    ),
+                    "updated_at": reversed_at,
+                }
             )
             reversal = {
                 "payment_id": payment.payment_id,

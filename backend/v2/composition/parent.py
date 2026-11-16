@@ -709,6 +709,7 @@ def compose_parent_webhook_handler(
         if settings.env == "test"
         else None,
         tenancy_mode=settings.tenancy_mode,
+        academy_timezone=academy_timezone_lookup(db),
     )
 
 
@@ -879,6 +880,7 @@ def compose_parent(
         if settings.env == "test"
         else None,
         tenancy_mode=settings.tenancy_mode,
+        academy_timezone=academy_timezone_lookup(db),
     )
     quote_enrollment_uc = QuoteEnrollment(
         sessions=payments_repo,

@@ -488,7 +488,16 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if updated is None:
             raise ValueError("ledger payment not found for refund")
-        return self._payment_from_doc(updated)
+        # Refunded money is no longer spendable: recompute unapplied from the new
+        # refunded_cents (a return reverses first, so the reversal's own recompute
+        # still counted the refunded amount as unapplied).
+        await self._repair_payment_after_allocation_change(
+            academy_id=academy_id, payment_id=payment_id, now=updated_at
+        )
+        repaired = await self.ledger_payments.find_one(
+            {"academy_id": academy_id, "payment_id": payment_id}
+        )
+        return self._payment_from_doc(repaired or updated)
 
     async def record_payment_attempt(
         self,
@@ -898,21 +907,8 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if allocation_doc is None:
             if existing is not None:
-                await self._void_overpayment_credit_for_allocation(
-                    academy_id=academy_id,
-                    allocation_id=str(existing["allocation_id"]),
-                    reason=reason,
-                    now=reversed_at,
-                )
-                await self._repair_invoice_after_allocation_change(
-                    academy_id=academy_id,
-                    invoice_id=str(existing["invoice_id"]),
-                    now=reversed_at,
-                )
-                await self._repair_payment_after_allocation_change(
-                    academy_id=academy_id,
-                    payment_id=str(existing["payment_id"]),
-                    now=reversed_at,
+                await self._repair_reversed(
+                    academy_id=academy_id, reversal=existing, reason=reason, now=reversed_at
                 )
                 return {k: v for k, v in existing.items() if k != "_id"}
             return None
@@ -1055,6 +1051,41 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
     async def sum_allocations_for_invoice(self, invoice_id: str) -> int:
         return await self._sum_allocations(academy_id=current_academy_id(), invoice_id=invoice_id)
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        academy_id = current_academy_id()
+        cursor = self._db["payment_allocation_reversals"].find(
+            {"academy_id": academy_id, "payment_id": payment_id}, {"_id": 0}
+        )
+        return [doc async for doc in cursor]
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        academy_id = current_academy_id()
+        reversal = await self._db["payment_allocation_reversals"].find_one(
+            {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
+        )
+        if reversal is not None:
+            await self._repair_reversed(
+                academy_id=academy_id, reversal=reversal, reason=reason, now=reversed_at
+            )
+
+    async def _repair_reversed(
+        self, *, academy_id: str, reversal: dict[str, Any], reason: str, now: datetime
+    ) -> None:
+        await self._void_overpayment_credit_for_allocation(
+            academy_id=academy_id,
+            allocation_id=str(reversal["allocation_id"]),
+            reason=reason,
+            now=now,
+        )
+        await self._repair_invoice_after_allocation_change(
+            academy_id=academy_id, invoice_id=str(reversal["invoice_id"]), now=now
+        )
+        await self._repair_payment_after_allocation_change(
+            academy_id=academy_id, payment_id=str(reversal["payment_id"]), now=now
+        )
 
     async def list_allocations_for_payment(self, payment_id: str) -> list[PaymentAllocation]:
         academy_id = current_academy_id()

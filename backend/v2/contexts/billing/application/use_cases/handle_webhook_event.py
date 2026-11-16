@@ -17,6 +17,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from pymongo.errors import DuplicateKeyError
 
@@ -55,6 +56,10 @@ from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_ho
 from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
     liability_from_stripe_account,
+)
+from backend.v2.contexts.billing.domain.dunning import (
+    UNRECONCILED_RETURN,
+    UNSUPPORTED_PARTIAL_RETURN,
 )
 from backend.v2.contexts.billing.domain.errors import (
     InvalidWebhookSignature,
@@ -95,6 +100,10 @@ from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.shared.time.academy_timezone import (
+    AcademyTimezoneReader,
+    resolve_reporting_timezone,
+)
 
 # Every off-session PaymentIntent ChargeInvoiceViaAutopay creates: the scheduled
 # autopay run and the two admin "charge now" buttons. A settling bank debit from
@@ -260,6 +269,7 @@ class HandleWebhookEvent:
         family_autopay: FamilyAutopayPauser | None = None,
         expected_livemode: bool | None = None,
         tenancy_mode: str = "single_academy",
+        academy_timezone: AcademyTimezoneReader | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
@@ -281,6 +291,7 @@ class HandleWebhookEvent:
         self._family_autopay = family_autopay
         self._expected_livemode = expected_livemode
         self._tenancy_mode = tenancy_mode
+        self._academy_timezone = academy_timezone
         self._outbox = outbox
         self._academy_id = academy_id
         self._now = clock
@@ -2418,8 +2429,16 @@ class HandleWebhookEvent:
             return
         ledger = self._billing_ledger
         allocations = await ledger.list_allocations_for_payment(payment.payment_id)
+        # Reversals this return already wrote: proof it ran, and the invoices it
+        # touched, since a reversal deletes its allocation.
+        reversal_prefix = f"payment-return:{pi_id}:"
+        prior_reversals = [
+            reversal
+            for reversal in await ledger.list_reversals_for_payment(payment.payment_id)
+            if str(reversal.get("idempotency_key") or "").startswith(reversal_prefix)
+        ]
         allocated: dict[str, int] = {}
-        for allocation in allocations:
+        for allocation in [*allocations, *prior_reversals]:
             invoice_id = str(_alloc_field(allocation, "invoice_id") or "")
             if invoice_id:
                 allocated[invoice_id] = allocated.get(invoice_id, 0) + int(
@@ -2436,26 +2455,21 @@ class HandleWebhookEvent:
         ]
         dispute = return_code.startswith("dispute:")
         partial = amount_cents < payment.amount_cents
-        # Nothing to reverse while an invoice still reads paid (a legacy allocation
+        # Nothing reversible and no proof a reversal ran (a legacy allocation
         # without a key, or no allocation at all): the payment must not read
-        # "refunded". No allocations left on an already reopened invoice is a replay
-        # after the reversals ran (they delete the allocation): finish it.
+        # "refunded" while its invoices may still read paid.
         unreversible = any(
             not _alloc_field(allocation, "idempotency_key") for allocation in allocations
-        ) or (
-            not allocations
-            and any(invoice.status in {"paid", "partially_paid"} for invoice in invoices)
-        )
+        ) or (not allocations and not prior_reversals)
         await self._pause_family_after_return(payment=payment, pi_id=pi_id, code=return_code)
         if partial or unreversible:
             # shortcut: allocations reverse whole, so a partial return is not taken
             # off the invoices: autopay pauses, a failed attempt is recorded and ops
             # is alerted to reconcile by hand. Upgrade when partial reversal exists.
-            failure_code = (
-                "unsupported_partial_ach_return" if partial else "unreconciled_payment_return"
-            )
+            failure_code = UNSUPPORTED_PARTIAL_RETURN if partial else UNRECONCILED_RETURN
             label = "Unsupported partial ACH return" if partial else "Unreconciled payment return"
-            for invoice in invoices[:1]:
+            if invoices:
+                invoice = invoices[0]
                 await ledger.record_payment_attempt(
                     invoice_id=invoice.invoice_id,
                     parent_id=invoice.parent_id,
@@ -2485,7 +2499,9 @@ class HandleWebhookEvent:
             )
             return
 
-        reopened_due = self._now().date() + timedelta(days=REOPENED_INVOICE_DUE_DAYS)
+        reopened_due = await self._academy_today(payment.academy_id) + timedelta(
+            days=REOPENED_INVOICE_DUE_DAYS
+        )
         for invoice in invoices:
             if invoice.due_date < reopened_due:
                 # Lead decision 2026-11-15: a reopened invoice is due again in five
@@ -2536,6 +2552,13 @@ class HandleWebhookEvent:
                 ),
                 reason="dispute" if dispute else "ach_return",
                 return_code=return_code,
+                reversed_at=self._now(),
+            )
+        for reversal in prior_reversals:
+            # A replay after a crash between the allocation delete and the repair.
+            await ledger.repair_after_reversal(
+                reversal_idempotency_key=str(reversal["idempotency_key"]),
+                reason="dispute" if dispute else "ach_return",
                 reversed_at=self._now(),
             )
         await self._append_outbox_once(
@@ -2888,6 +2911,14 @@ class HandleWebhookEvent:
             except (TypeError, ValueError, OSError):
                 pass
         return now.strftime("%Y-%m")
+
+    async def _academy_today(self, academy_id: str) -> date:
+        """Today on the academy's wall clock (UTC when no zone is known)."""
+        now = self._now()
+        if self._academy_timezone is None:
+            return now.date()
+        zone = await resolve_reporting_timezone(self._academy_timezone, academy_id)
+        return now.astimezone(ZoneInfo(zone)).date()
 
     @staticmethod
     def _invoice_due_date(invoice: dict[str, Any], now: datetime) -> date:

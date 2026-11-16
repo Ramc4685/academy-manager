@@ -8,7 +8,7 @@ which use real Stripe fixture JSON).
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -414,6 +414,7 @@ class FakeBillingLedger:
         self.payment_keys: dict[str, str] = {}
         self.allocations: list[dict[str, Any]] = []
         self.allocation_keys: set[str] = set()
+        self.reversals: dict[str, dict[str, Any]] = {}
         self.payment_attempts: dict[str, dict[str, Any]] = {}
         self.fail_allocate = False
         self.fail_next_invoice_refund = False
@@ -615,14 +616,43 @@ class FakeBillingLedger:
             update={
                 "refunded_cents": refunded_cents,
                 "status": status,
+                "unapplied_amount_cents": self._unapplied(payment_id, refunded_cents),
                 "updated_at": updated_at,
             }
         )
         self.payments[payment_id] = updated
         return updated
 
+    def _unapplied(self, payment_id: str, refunded_cents: int) -> int:
+        """Mongo's rule: amount less refunded less still-allocated, never negative."""
+        allocated = sum(
+            a["amount_cents"] for a in self.allocations if a["payment_id"] == payment_id
+        )
+        return max(0, self.payments[payment_id].amount_cents - refunded_cents - allocated)
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        return [r for r in self.reversals.values() if r["payment_id"] == payment_id]
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        reversal = self.reversals.get(reversal_idempotency_key)
+        if reversal is None:
+            return
+        invoice = self.invoices[reversal["invoice_id"]]
+        self.invoices[invoice.invoice_id] = invoice.model_copy(
+            update={"status": "open", "balance_due_cents": invoice.total_cents}
+        )
+
     async def list_allocations_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
-        return [a for a in self.allocations if a["payment_id"] == payment_id]
+        # Real rows carry an allocation_id; the reversal key is built from it.
+        return [
+            {"allocation_id": f"alloc:{a.get('idempotency_key')}", **a}
+            if a.get("idempotency_key")
+            else a
+            for a in self.allocations
+            if a["payment_id"] == payment_id
+        ]
 
     async def apply_invoice_refund(self, *, invoice_id: str, amount_cents: int) -> LedgerInvoice:
         if self.fail_next_invoice_refund:
@@ -651,6 +681,9 @@ class FakeBillingLedger:
         return_code: str | None,
         reversed_at: datetime,
     ) -> dict[str, Any] | None:
+        # Same idempotency as the Mongo repo: one reversal row per reversal key.
+        if reversal_idempotency_key in self.reversals:
+            return self.reversals[reversal_idempotency_key]
         for allocation in list(self.allocations):
             if allocation["idempotency_key"] != allocation_idempotency_key:
                 continue
@@ -666,9 +699,14 @@ class FakeBillingLedger:
                 }
             )
             self.payments[payment.payment_id] = payment.model_copy(
-                update={"unapplied_amount_cents": 0, "updated_at": reversed_at}
+                update={
+                    "unapplied_amount_cents": self._unapplied(
+                        payment.payment_id, payment.refunded_cents
+                    ),
+                    "updated_at": reversed_at,
+                }
             )
-            return {
+            reversal = {
                 "payment_id": payment.payment_id,
                 "invoice_id": invoice.invoice_id,
                 "amount_cents": allocation["amount_cents"],
@@ -676,6 +714,8 @@ class FakeBillingLedger:
                 "return_code": return_code,
                 "idempotency_key": reversal_idempotency_key,
             }
+            self.reversals[reversal_idempotency_key] = reversal
+            return reversal
         return None
 
 
@@ -5588,3 +5628,18 @@ async def test_unusable_bank_method_is_flagged(event_type: str, obj: dict, expec
     await uc.execute(body, "test_signature")
 
     assert customers.blocked == expected
+
+
+@pytest.mark.asyncio
+async def test_reopened_due_date_counts_from_the_academy_local_date() -> None:
+    """Fix round 2: 9pm in Chicago is already tomorrow in UTC; the due date is local."""
+
+    async def chicago(_academy_id: str) -> str:
+        return "America/Chicago"
+
+    late_evening = datetime(2026, 11, 16, 3, 0, tzinfo=UTC)
+    uc = SimpleNamespace(_now=lambda: late_evening, _academy_timezone=chicago)
+
+    assert await HandleWebhookEvent._academy_today(uc, "acad") == date(2026, 11, 15)  # type: ignore[arg-type]
+    uc._academy_timezone = None
+    assert await HandleWebhookEvent._academy_today(uc, "acad") == date(2026, 11, 16)  # type: ignore[arg-type]

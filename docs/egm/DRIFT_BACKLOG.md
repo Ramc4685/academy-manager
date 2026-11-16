@@ -44,7 +44,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] `pnpm typecheck` runs `next typegen && tsc --noEmit`.
 
 ## `frontend/lib/api/README.md`: 8 items, from `drift/frontend__lib__api.md`
-- [undocumented] README calls `admin.ts` a thin wrapper; `chargeAdminInvoiceAutopay` keeps per-invoice retry state (reused `request_id` for 10 min).
+- [undocumented] README calls `admin.ts` a thin wrapper; `chargeAdminInvoiceAutopay` keeps per-invoice retry state (reused `request_id` for 10 min; kept on 409 only for `charge_in_progress`).
 - [stale-not-built] README says `generated/` holds only `.gitkeep`; `v2.d.ts` and `openapi.snapshot.json` are committed.
 - [stale-not-built] CI "Skipping drift check" path no longer exists; drift check is unconditional.
 - [contract] `pnpm generate:api` reads the committed snapshot, not the running app; the pytest `UPDATE_OPENAPI_SNAPSHOT=1` step is omitted.
