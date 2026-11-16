@@ -49,8 +49,19 @@ export interface Skill {
   is_required: boolean;
   scoring_type: string;
   pass_threshold_pct: number;
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
   is_active: boolean;
 }
+
+/** How a coach's tap passes a skill (absent on older payloads means ONE_TAP). */
+export type SkillPassRule = "ONE_TAP" | "N_TRIES" | "LEAD_COACH";
+
+export const SKILL_PASS_RULES: ReadonlyArray<{ value: SkillPassRule; label: string }> = [
+  { value: "ONE_TAP", label: "One tap" },
+  { value: "N_TRIES", label: "Several tries" },
+  { value: "LEAD_COACH", label: "Lead coach signs off" },
+];
 
 export interface SkillCriterion {
   criterion_id: string;
@@ -299,6 +310,8 @@ export interface CreateSkillBody {
   is_required: boolean;
   scoring_type: SkillScoringType;
   pass_threshold_pct?: number;
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
 }
 
 // The new skill goes after the level's existing skills.
@@ -310,6 +323,8 @@ export function buildCreateSkillBody(
     description: string;
     is_required: boolean;
     scoring_type: SkillScoringType;
+    pass_rule?: SkillPassRule;
+    pass_tries?: number | null;
   },
 ): CreateSkillBody {
   const lastSequence = existingSkills.reduce(
@@ -323,7 +338,20 @@ export function buildCreateSkillBody(
     description: form.description.trim(),
     is_required: form.is_required,
     scoring_type: form.scoring_type,
+    ...(form.pass_rule ? { pass_rule: form.pass_rule } : {}),
+    ...(form.pass_rule === "N_TRIES" ? { pass_tries: form.pass_tries ?? 3 } : {}),
   };
+}
+
+// Mirrors PUT /admin/skills/{skill_id} (UpdateSkillBody); omitted fields stay as they are.
+export function updateSkillPassRule(
+  skillId: string,
+  body: { pass_rule: SkillPassRule; pass_tries?: number },
+): Promise<Skill> {
+  return apiFetch<Skill>(`/admin/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }
 
 export function createSkill(
@@ -781,6 +809,8 @@ export interface SkillBoardCell {
   status: SkillStatus;
   last_updated_at: string | null;
   coach_note?: string | null;
+  /** Taps counted so far on an N_TRIES skill. */
+  tries?: number;
 }
 
 export interface SkillBoardSkill {
@@ -791,6 +821,8 @@ export interface SkillBoardSkill {
   /** Observable criterion descriptions, in display order: the coach's quick-tags.
    *  Absent on boards cached before the field shipped (persisted for 24h). */
   criteria?: string[];
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
 }
 
 export interface SkillBoardStudentRow {

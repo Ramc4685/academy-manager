@@ -112,6 +112,9 @@ class UnmarkSkillMastered:
                 )
             withdrawn.append(pending.rec_id)
 
+        # One undo takes back one tap (N_TRIES); a no-op when none are counted.
+        await self._skill_progress.increment_tries(cmd.student_id, cmd.skill_id, -1)
+
         if existing.status != "PASSED":
             return UnmarkSkillMasteredResult(
                 student_id=cmd.student_id,

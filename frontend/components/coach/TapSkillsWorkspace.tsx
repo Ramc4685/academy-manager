@@ -19,7 +19,9 @@ import { AI_STATUS_KEY, masteredOn } from "@/lib/coach/progress-narrative";
 import { parseAcademyInstant } from "@/lib/format/academy-time";
 import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
+import { needsLead, passRuleChip, passRuleLine } from "@/lib/coach/pass-rule";
 import { ProgressNarrativeNote } from "@/components/coach/ProgressNarrativeNote";
+import { useCoachSurface } from "@/components/coach/coach-surface-context";
 
 // Matches the backend's MASTERY_NOTE_WINDOW: notes go on the day's wins.
 const NOTE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -78,6 +80,7 @@ export function TapSkillsWorkspace({
   onUpdated?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { assistant } = useCoachSurface();
   const boardKey = queryKeys.coach.skillBoard(sessionId, requestedProgramId);
   const { data: board, isLoading, isError } = useQuery({
     queryKey: boardKey,
@@ -187,6 +190,7 @@ export function TapSkillsWorkspace({
 
   const missing = group.students.filter((s) => s.statuses[skill.skill_id]?.status !== "PASSED");
   const busy = mark.isPending || unmark.isPending;
+  const leadOnly = needsLead(skill, assistant);
 
   return (
     <div data-testid="coach-tap-skills" className="space-y-4">
@@ -255,14 +259,27 @@ export function TapSkillsWorkspace({
           <h2 className="font-display text-base font-bold text-rally-ink">
             2. Who got &ldquo;{skill.name}&rdquo;?
           </h2>
-          <button
-            type="button"
-            disabled={busy || missing.length === 0}
-            onClick={() => mark.mutate(missing.map((s) => s.student_id))}
-            className="min-h-touch px-1 text-sm font-bold text-rally-cobalt-700 disabled:opacity-40"
-          >
-            Everyone
-          </button>
+          {!leadOnly && (
+            <button
+              type="button"
+              disabled={busy || missing.length === 0}
+              onClick={() => mark.mutate(missing.map((s) => s.student_id))}
+              className="min-h-touch px-1 text-sm font-bold text-rally-cobalt-700 disabled:opacity-40"
+            >
+              Everyone
+            </button>
+          )}
+        </div>
+        <div data-testid="coach-tap-skill-rule" className="space-y-1 text-sm text-status-slate-600">
+          <p className="font-semibold text-rally-ink">{passRuleLine(skill)}</p>
+          {(skill.criteria ?? []).length > 0 && (
+            <ul className="list-disc space-y-0.5 pl-5">
+              {(skill.criteria ?? []).map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+          )}
+          {leadOnly && <p>Ask a lead coach to tap the students who got it.</p>}
         </div>
         <ul className="space-y-2">
           {group.students.map((student) => {
@@ -281,7 +298,7 @@ export function TapSkillsWorkspace({
                 <button
                   type="button"
                   aria-pressed={has}
-                  disabled={busy}
+                  disabled={busy || (leadOnly && !has)}
                   onClick={() =>
                     has
                       ? unmark.mutate({ studentId: student.student_id, skillId: skill.skill_id })
@@ -318,7 +335,7 @@ export function TapSkillsWorkspace({
                     </span>
                   ) : (
                     <span className="rounded-full border-2 border-dashed border-rally-subtle px-3 py-1 text-sm font-semibold text-status-slate-600">
-                      Tap
+                      {passRuleChip(skill, cell)}
                     </span>
                   )}
                 </button>

@@ -9,9 +9,20 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.curriculum.application.ports import LevelRepository, SkillRepository
 from backend.v2.contexts.curriculum.domain.errors import LevelNotFound, SkillNotFound
 from backend.v2.contexts.curriculum.domain.models import (
+    MAX_PASS_TRIES as MAX_PASS_TRIES,  # re-exported for interfaces
+)
+from backend.v2.contexts.curriculum.domain.models import (
+    MIN_PASS_TRIES as MIN_PASS_TRIES,
+)
+from backend.v2.contexts.curriculum.domain.models import (
+    PassRule as PassRule,
+)
+from backend.v2.contexts.curriculum.domain.models import (
     ScoringType as ScoringType,  # re-exported for interfaces
 )
-from backend.v2.contexts.curriculum.domain.models import Skill
+from backend.v2.contexts.curriculum.domain.models import (
+    Skill,
+)
 from backend.v2.shared.ids import new_ulid
 
 
@@ -26,6 +37,8 @@ class CreateSkillCommand(BaseModel):
     scoring_type: ScoringType = "ATTEMPT_BASED"
     pass_threshold_pct: float = Field(default=70.0, ge=0.0, le=100.0)
     coach_override_allowed: bool = False
+    pass_rule: PassRule = "ONE_TAP"
+    pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
     created_by: str
 
 
@@ -38,6 +51,8 @@ class UpdateSkillCommand(BaseModel):
     scoring_type: ScoringType | None = None
     pass_threshold_pct: float | None = None
     coach_override_allowed: bool | None = None
+    pass_rule: PassRule | None = None
+    pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
     updated_by: str
 
 
@@ -63,6 +78,8 @@ class CreateSkill:
             scoring_type=cmd.scoring_type,
             pass_threshold_pct=cmd.pass_threshold_pct,
             coach_override_allowed=cmd.coach_override_allowed,
+            pass_rule=cmd.pass_rule,
+            pass_tries=cmd.pass_tries,
             is_active=True,
             created_at=now,
             updated_at=now,
@@ -89,11 +106,15 @@ class UpdateSkill:
                 "scoring_type": cmd.scoring_type,
                 "pass_threshold_pct": cmd.pass_threshold_pct,
                 "coach_override_allowed": cmd.coach_override_allowed,
+                "pass_rule": cmd.pass_rule,
+                "pass_tries": cmd.pass_tries,
                 "updated_at": datetime.now(UTC),
             }.items()
             if v is not None
         }
-        updated = existing.model_copy(update=updates)
+        # Re-validate, not model_copy: field bounds and the rule/tries pairing
+        # must hold on the merged skill.
+        updated = Skill.model_validate({**existing.model_dump(), **updates})
         await self._skills.update(updated)
         return updated
 

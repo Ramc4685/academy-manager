@@ -84,6 +84,8 @@ class GetSkillBoard:
                         sequence=int(getattr(skill, "sequence", 0)),
                         is_required=bool(getattr(skill, "is_required", True)),
                         criteria=[str(c.description) for c in crits],  # type: ignore[attr-defined]
+                        pass_rule=str(getattr(skill, "pass_rule", "ONE_TAP")),
+                        pass_tries=getattr(skill, "pass_tries", None),
                     )
                     for skill, crits in zip(skills, criteria_per_skill, strict=True)
                 ),
@@ -99,6 +101,7 @@ class GetSkillBoard:
                     status=row.status,
                     last_updated_at=row.last_updated_at,
                     coach_note=row.coach_note,
+                    tries=row.tries,
                 )
 
             required = [col for col in skill_cols if col.is_required]

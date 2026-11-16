@@ -516,6 +516,7 @@ async def mark_skill_mastered(
             student_ids=student_ids,
             coach_id=claims.user_id,
             session_id=resolved_session_id,
+            can_sign_off=not is_assistant_only(claims),
         )
     )
     return {"results": [o.model_dump() for o in outcomes]}

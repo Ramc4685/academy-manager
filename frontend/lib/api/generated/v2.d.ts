@@ -11805,13 +11805,16 @@ export interface components {
         /** BulkStatusBody */
         BulkStatusBody: {
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /** Skill Id */
             skill_id: string;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "INTRODUCED" | "LEARNING" | "PRACTICING" | "TEST_READY" | "NEEDS_REVIEW";
             /** Student Ids */
             student_ids: string[];
         };
@@ -12920,10 +12923,18 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Pass Rule
+             * @default ONE_TAP
+             * @enum {string}
+             */
+            pass_rule: "ONE_TAP" | "N_TRIES" | "LEAD_COACH";
+            /**
              * Pass Threshold Pct
              * @default 70
              */
             pass_threshold_pct: number;
+            /** Pass Tries */
+            pass_tries?: number | null;
             /** Program Id */
             program_id: string;
             /**
@@ -17453,7 +17464,7 @@ export interface components {
              */
             coach_override: boolean;
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Mutation Id */
             mutation_id?: string | null;
             /**
@@ -19394,15 +19405,19 @@ export interface components {
             is_required?: boolean | null;
             /** Name */
             name?: string | null;
+            /** Pass Rule */
+            pass_rule?: ("ONE_TAP" | "N_TRIES" | "LEAD_COACH") | null;
             /** Pass Threshold Pct */
             pass_threshold_pct?: number | null;
+            /** Pass Tries */
+            pass_tries?: number | null;
             /** Scoring Type */
-            scoring_type?: string | null;
+            scoring_type?: ("ATTEMPT_BASED" | "CHECKLIST_BASED" | "COACH_APPROVAL" | "RALLY_COUNT" | "TIME_BASED" | "POINTS_BASED") | null;
         };
         /** UpdateSkillStatusBody */
         UpdateSkillStatusBody: {
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /**
@@ -19424,7 +19439,7 @@ export interface components {
             /** Introduced At */
             introduced_at?: string | null;
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /**

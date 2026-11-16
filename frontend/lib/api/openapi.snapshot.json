@@ -12096,8 +12096,15 @@
       "BulkStatusBody": {
         "properties": {
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -12108,6 +12115,13 @@
             "type": "string"
           },
           "status": {
+            "enum": [
+              "INTRODUCED",
+              "LEARNING",
+              "PRACTICING",
+              "TEST_READY",
+              "NEEDS_REVIEW"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -12122,7 +12136,6 @@
         "required": [
           "skill_id",
           "program_id",
-          "level_id",
           "student_ids",
           "status"
         ],
@@ -15212,12 +15225,35 @@
             "title": "Name",
             "type": "string"
           },
+          "pass_rule": {
+            "default": "ONE_TAP",
+            "enum": [
+              "ONE_TAP",
+              "N_TRIES",
+              "LEAD_COACH"
+            ],
+            "title": "Pass Rule",
+            "type": "string"
+          },
           "pass_threshold_pct": {
             "default": 70.0,
             "maximum": 100.0,
             "minimum": 0.0,
             "title": "Pass Threshold Pct",
             "type": "number"
+          },
+          "pass_tries": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 2.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Tries"
           },
           "program_id": {
             "title": "Program Id",
@@ -28061,6 +28097,7 @@
         "properties": {
           "attempts_count": {
             "default": 1,
+            "minimum": 1.0,
             "title": "Attempts Count",
             "type": "integer"
           },
@@ -28070,8 +28107,15 @@
             "type": "boolean"
           },
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "mutation_id": {
             "anyOf": [
@@ -28122,8 +28166,7 @@
           }
         },
         "required": [
-          "program_id",
-          "level_id"
+          "program_id"
         ],
         "title": "RecordTestBody",
         "type": "object"
@@ -34051,9 +34094,27 @@
             ],
             "title": "Name"
           },
+          "pass_rule": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ONE_TAP",
+                  "N_TRIES",
+                  "LEAD_COACH"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rule"
+          },
           "pass_threshold_pct": {
             "anyOf": [
               {
+                "maximum": 100.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -34062,9 +34123,30 @@
             ],
             "title": "Pass Threshold Pct"
           },
+          "pass_tries": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 2.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Tries"
+          },
           "scoring_type": {
             "anyOf": [
               {
+                "enum": [
+                  "ATTEMPT_BASED",
+                  "CHECKLIST_BASED",
+                  "COACH_APPROVAL",
+                  "RALLY_COUNT",
+                  "TIME_BASED",
+                  "POINTS_BASED"
+                ],
                 "type": "string"
               },
               {
@@ -34080,8 +34162,15 @@
       "UpdateSkillStatusBody": {
         "properties": {
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -34100,7 +34189,6 @@
           }
         },
         "required": [
-          "level_id",
           "program_id",
           "status"
         ],
@@ -34122,8 +34210,15 @@
             "title": "Introduced At"
           },
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -34142,7 +34237,6 @@
           }
         },
         "required": [
-          "level_id",
           "program_id",
           "status"
         ],

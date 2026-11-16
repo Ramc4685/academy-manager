@@ -23,6 +23,9 @@ class MongoSkillRepository(TenantScopedRepository):
             scoring_type=doc.get("scoring_type", "ATTEMPT_BASED"),
             pass_threshold_pct=float(doc.get("pass_threshold_pct", 70.0)),
             coach_override_allowed=bool(doc.get("coach_override_allowed", False)),
+            # Skills stored before the pass rule existed read as one tap.
+            pass_rule=doc.get("pass_rule") or "ONE_TAP",
+            pass_tries=doc.get("pass_tries"),
             is_active=bool(doc.get("is_active", True)),
             created_at=doc["created_at"],
             updated_at=doc["updated_at"],
@@ -42,6 +45,8 @@ class MongoSkillRepository(TenantScopedRepository):
                 "scoring_type": skill.scoring_type,
                 "pass_threshold_pct": skill.pass_threshold_pct,
                 "coach_override_allowed": skill.coach_override_allowed,
+                "pass_rule": skill.pass_rule,
+                "pass_tries": skill.pass_tries,
                 "is_active": skill.is_active,
                 "created_at": skill.created_at,
                 "updated_at": skill.updated_at,
@@ -60,6 +65,8 @@ class MongoSkillRepository(TenantScopedRepository):
                     "scoring_type": skill.scoring_type,
                     "pass_threshold_pct": skill.pass_threshold_pct,
                     "coach_override_allowed": skill.coach_override_allowed,
+                    "pass_rule": skill.pass_rule,
+                    "pass_tries": skill.pass_tries,
                     "is_active": skill.is_active,
                     "updated_at": skill.updated_at,
                 }

@@ -312,12 +312,20 @@ export async function bulkUpdateCoachSessionSkillStatus(
   });
 }
 
-export type SkillMasteredOutcome = "mastered" | "already_mastered" | "not_on_level" | "not_placed";
+export type SkillMasteredOutcome =
+  | "mastered"
+  | "already_mastered"
+  | "not_on_level"
+  | "not_placed"
+  | "try_recorded"
+  | "needs_lead";
 
 export interface SkillMasteredResult {
   student_id: string;
   outcome: SkillMasteredOutcome;
   level_up_queued: boolean;
+  /** Taps counted so far on an N_TRIES skill. */
+  tries?: number;
 }
 
 /** Tap = got it: passes the skill for each student; the last skill of a level queues the level-up. */

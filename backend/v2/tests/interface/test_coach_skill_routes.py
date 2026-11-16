@@ -1993,6 +1993,23 @@ def test_real_skill_router_mark_mastered_passes_roster_students_to_use_case() ->
     assert command.student_ids == [STUDENT_ID]
     assert command.skill_id == SKILL_ID
     assert command.session_id == SESSION_ID
+    assert command.can_sign_off is True
+
+
+def test_real_skill_router_mark_mastered_tells_the_use_case_an_assistant_cannot_sign_off() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    app.dependency_overrides[get_auth_claims] = lambda: _real_router_claims().model_copy(
+        update={"roles": ("assistant_coach",)}
+    )
+    response = TestClient(app).post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills/{SKILL_ID}/mastered",
+        json={"program_id": PROGRAM_ID, "student_ids": [STUDENT_ID]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert spies.mark_skill_mastered.args[0].can_sign_off is False
 
 
 @pytest.mark.parametrize(

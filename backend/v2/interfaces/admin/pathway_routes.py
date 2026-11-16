@@ -24,7 +24,10 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_refs import (
     AddExternalReferenceCommand,
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
+    MAX_PASS_TRIES,
+    MIN_PASS_TRIES,
     CreateSkillCommand,
+    PassRule,
     ScoringType,
     UpdateSkillCommand,
 )
@@ -84,15 +87,19 @@ class CreateSkillBody(BaseModel):
     scoring_type: ScoringType = "ATTEMPT_BASED"
     pass_threshold_pct: float = Field(default=70.0, ge=0.0, le=100.0)
     coach_override_allowed: bool = False
+    pass_rule: PassRule = "ONE_TAP"
+    pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
 
 
 class UpdateSkillBody(BaseModel):
     name: str | None = None
     description: str | None = None
     is_required: bool | None = None
-    scoring_type: str | None = None
-    pass_threshold_pct: float | None = None
+    scoring_type: ScoringType | None = None
+    pass_threshold_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     coach_override_allowed: bool | None = None
+    pass_rule: PassRule | None = None
+    pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
 
 
 class AddCriterionBody(BaseModel):
@@ -237,6 +244,8 @@ async def create_skill(
                 scoring_type=body.scoring_type,
                 pass_threshold_pct=body.pass_threshold_pct,
                 coach_override_allowed=body.coach_override_allowed,
+                pass_rule=body.pass_rule,
+                pass_tries=body.pass_tries,
                 created_by=claims.user_id,
             )
         )
@@ -264,6 +273,8 @@ async def update_skill(
                 scoring_type=body.scoring_type,
                 pass_threshold_pct=body.pass_threshold_pct,
                 coach_override_allowed=body.coach_override_allowed,
+                pass_rule=body.pass_rule,
+                pass_tries=body.pass_tries,
                 updated_by=claims.user_id,
             )
         )

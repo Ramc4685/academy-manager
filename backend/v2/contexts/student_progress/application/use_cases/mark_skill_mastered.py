@@ -5,11 +5,16 @@ trail, events and level-completion check as the detailed test flow) and,
 when it was the last required skill of the level, queues the level-up as a
 recommendation. ``AutoApproveLevelUps`` lands it that evening; until then
 ``UnmarkSkillMastered`` takes it back.
+
+The skill's pass rule decides what a tap means: ONE_TAP passes, N_TRIES
+counts taps (any days) and passes on the Nth, LEAD_COACH passes only when
+the caller can sign off (not assistant-only).
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -31,10 +36,22 @@ from backend.v2.contexts.student_progress.domain.errors import (
     EnrollmentEnded,
 )
 from backend.v2.contexts.student_progress.domain.logic import check_level_completion
+from backend.v2.contexts.student_progress.domain.models import StudentSkillProgress
+from backend.v2.shared.ids import new_ulid
 
 MASTERED_NOTE = "Marked as mastered in class"
 
-MasteredOutcomeKind = Literal["mastered", "already_mastered", "not_on_level", "not_placed"]
+#: Taps an N_TRIES skill needs when none is stored (matches the domain default).
+DEFAULT_PASS_TRIES = 3
+
+MasteredOutcomeKind = Literal[
+    "mastered",
+    "already_mastered",
+    "not_on_level",
+    "not_placed",
+    "try_recorded",  # N_TRIES: counted, not yet N
+    "needs_lead",  # LEAD_COACH: an assistant tapped; nothing written
+]
 
 
 class MarkSkillMasteredCommand(BaseModel):
@@ -44,6 +61,8 @@ class MarkSkillMasteredCommand(BaseModel):
     student_ids: list[str]
     coach_id: str
     session_id: str | None = None
+    #: False for an assistant-only coach: LEAD_COACH skills then need a lead.
+    can_sign_off: bool = True
 
 
 class MasteredOutcome(BaseModel):
@@ -51,6 +70,8 @@ class MasteredOutcome(BaseModel):
     student_id: str
     outcome: MasteredOutcomeKind
     level_up_queued: bool = False
+    #: Taps counted so far on an N_TRIES skill.
+    tries: int = 0
 
 
 class MarkSkillMastered:
@@ -71,15 +92,15 @@ class MarkSkillMastered:
 
     async def execute(self, cmd: MarkSkillMasteredCommand) -> list[MasteredOutcome]:
         skill = await self._skill_lookup.get_skill(cmd.skill_id)
-        skill_level_id = getattr(skill, "level_id", None)
         outcomes: list[MasteredOutcome] = []
         for student_id in dict.fromkeys(cmd.student_ids):
-            outcomes.append(await self._mark_one(cmd, student_id, skill_level_id))
+            outcomes.append(await self._mark_one(cmd, student_id, skill))
         return outcomes
 
     async def _mark_one(
-        self, cmd: MarkSkillMasteredCommand, student_id: str, skill_level_id: str | None
+        self, cmd: MarkSkillMasteredCommand, student_id: str, skill: Any
     ) -> MasteredOutcome:
+        skill_level_id = getattr(skill, "level_id", None)
         active = await self._level_progress.get_active(student_id, cmd.program_id)
         if active is None:
             return MasteredOutcome(student_id=student_id, outcome="not_placed")
@@ -99,6 +120,18 @@ class MarkSkillMastered:
                 level_up_queued=complete and await self._queue_level_up(cmd, student_id),
             )
 
+        rule = getattr(skill, "pass_rule", "ONE_TAP")
+        if rule == "LEAD_COACH" and not cmd.can_sign_off:
+            return MasteredOutcome(student_id=student_id, outcome="needs_lead")
+        attempts = 1
+        tries = 0
+        if rule == "N_TRIES":
+            needed = getattr(skill, "pass_tries", None) or DEFAULT_PASS_TRIES
+            tries = await self._count_try(cmd, student_id, active.level_id, existing)
+            if tries < needed:
+                return MasteredOutcome(student_id=student_id, outcome="try_recorded", tries=tries)
+            attempts = needed
+
         result = await self._record.execute(
             RecordTestAttemptCommand(
                 student_id=student_id,
@@ -108,13 +141,52 @@ class MarkSkillMastered:
                 coach_id=cmd.coach_id,
                 session_id=cmd.session_id,
                 scoring_type="COACH_APPROVAL",
-                attempts_count=1,
-                success_count=1,
+                attempts_count=attempts,
+                success_count=attempts,
                 notes=MASTERED_NOTE,
             )
         )
         queued = result.level_completed and await self._queue_level_up(cmd, student_id)
-        return MasteredOutcome(student_id=student_id, outcome="mastered", level_up_queued=queued)
+        return MasteredOutcome(
+            student_id=student_id, outcome="mastered", level_up_queued=queued, tries=tries
+        )
+
+    async def _count_try(
+        self,
+        cmd: MarkSkillMasteredCommand,
+        student_id: str,
+        level_id: str,
+        existing: StudentSkillProgress | None,
+    ) -> int:
+        """Atomically add one tap; the skill shows PRACTICING until it passes."""
+        now = datetime.now(UTC)
+        row = existing or StudentSkillProgress(
+            skill_progress_id=str(new_ulid()),
+            academy_id="",  # injected by repo
+            student_id=student_id,
+            skill_id=cmd.skill_id,
+            level_id=level_id,
+            program_id=cmd.program_id,
+            status="NOT_STARTED",
+            last_updated_at=now,
+            last_updated_by=cmd.coach_id,
+        )
+        if existing is None:
+            await self._skill_progress.insert_if_missing(row)
+            row = await self._skill_progress.get(student_id, cmd.skill_id) or row
+        tries = await self._skill_progress.increment_tries(student_id, cmd.skill_id, 1) or 0
+        if row.status != "PRACTICING":
+            # upsert never writes ``tries``, so it cannot undo the $inc above.
+            await self._skill_progress.upsert(
+                row.model_copy(
+                    update={
+                        "status": "PRACTICING",
+                        "last_updated_at": now,
+                        "last_updated_by": cmd.coach_id,
+                    }
+                )
+            )
+        return tries
 
     async def _level_complete(self, student_id: str, level_id: str) -> bool:
         skills = await self._skill_lookup.list_skills_for_level(level_id)
