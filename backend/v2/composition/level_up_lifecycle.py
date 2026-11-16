@@ -46,7 +46,7 @@ class EnrollmentStatusAdapter:
         return bool(await self._enrollments.active_or_paused_for_student(student_id))
 
     async def student_exists(self, student_id: str) -> bool:
-        return await self._students.get_by_id(student_id) is not None
+        return await self._students.exists(student_id)
 
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         return await self._enrollments.student_ids_with_active_or_paused_enrollment(student_ids)

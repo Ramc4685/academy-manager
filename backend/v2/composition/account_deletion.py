@@ -133,12 +133,9 @@ class FamilyErasureStep:
                     )
                     continue
                 for student_id in children:
-                    await self.students.anonymise(student_id, now=now)
-                    # Certificates copy the name at issue; they take the anonymised one.
-                    kid = await self.students.get_by_id(student_id)
-                    await self.certificates.anonymise_student(
-                        student_id, student_name=kid.full_name if kid else ""
-                    )
+                    label = await self.students.anonymise(student_id, now=now)
+                    # Certificates copy the name at issue; they take the placeholder.
+                    await self.certificates.anonymise_student(student_id, student_name=label)
                 await self.family.erase_family(academy_id=academy_id, parent_ids=parent_ids)
                 await self.applications.delete_for_parent(
                     academy_id=academy_id, parent_user_ids=parent_ids
