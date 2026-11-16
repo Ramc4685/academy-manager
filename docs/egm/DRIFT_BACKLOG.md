@@ -14,6 +14,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:116-117 says email verification is checked on every authenticated request; only the per-provider rule in `token_claims.py:19-36` was confirmed.
 - [wording] README:139 gives a `SECURITY DISCLOSURE` subject line; `SECURITY.md` has no matching contact.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
+- [undocumented] Layout (README:161-174) omits `docs/egm/`, `GAPS.md`, `PROJECT.md`, `SECURITY.md`, `Makefile` and the `docker-compose*.yml` files.
 
 ## `backend/v2/README.md`: 25 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
@@ -41,6 +42,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [missing] Identity (the canonical example) and several other contexts have no `domain/events.py`.
 - [contract] README:46,49 describe `application/use_cases/`; identity (the canonical example, README:55) keeps most use cases directly in `application/`.
 - [wording] Platform, student and owner routers mount behind settings flags, not always under `/api/v2`.
+- [stale-not-built] README:48 prescribes `domain/errors.py` per context; `contexts/finance` has none.
 
 ## `frontend/README.md`: 18 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
@@ -72,3 +74,4 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] "When generated types are reintroduced": they already are.
 - [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.
 - [undocumented] `password-reset.ts` (from #1180) is not in the README's wrapper list.
+- [wording] README:9-10 "thin typed wrappers": several modules also hold cookie, token, header and origin helpers.

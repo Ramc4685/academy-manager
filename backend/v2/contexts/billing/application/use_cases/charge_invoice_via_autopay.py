@@ -22,6 +22,7 @@ Where the charge runs follows the academy's ChargeRoute:
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -32,7 +33,10 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     CHARGEABLE_INVOICE_STATUSES,
     invoice_is_chargeable,
 )
-from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
+from backend.v2.contexts.billing.application.charge_route import (
+    ChargeRoute,
+    resolve_charge_route,
+)
 from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     ConnectedAccountRepository,
@@ -42,6 +46,9 @@ from backend.v2.contexts.billing.application.ports import (
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
     idempotency_key_with_fee,
+)
+from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
+    allocate_checkout_payment_across_invoices,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.checkout_hold import (
@@ -163,6 +170,60 @@ class ChargeResult(BaseModel):
     decline_code: str | None = None
 
 
+class FamilyChargeResult(BaseModel):
+    """One family charge (L8): the invoices it covered and the one result that
+    applies to every one of them. ``dropped_invoice_ids`` go the single path."""
+
+    model_config = {"frozen": True}
+
+    charged_invoice_ids: tuple[str, ...] = ()
+    dropped_invoice_ids: tuple[str, ...] = ()
+    result: ChargeResult | None = None
+
+
+_ATTEMPT_MESSAGES: dict[str, str | None] = {
+    "processing": "ACH debit submitted; awaiting settlement.",
+    "requires_action": None,
+    "succeeded": None,
+}
+
+
+def _attempt_status(pi_status: str, decline_code: str | None) -> str:
+    """The attempt row status for a PaymentIntent answer."""
+    if decline_code is not None:
+        return "failed"
+    if pi_status in ("processing", "succeeded"):
+        return pi_status
+    return "requires_action"
+
+
+def _refused(invoice: LedgerInvoice, decline_code: str) -> ChargeResult:
+    """Not charged: no Stripe call or no answer, nothing recorded."""
+    return ChargeResult(
+        success=False,
+        invoice_id=invoice.invoice_id,
+        status=invoice.status,
+        balance_due_cents=invoice.balance_due_cents,
+        decline_code=decline_code,
+    )
+
+
+def _attempt_result(
+    invoice: LedgerInvoice, attempt_status: str, decline_code: str | None
+) -> ChargeResult:
+    """The unsettled outcome of a PaymentIntent Stripe answered."""
+    return ChargeResult(
+        success=attempt_status == "succeeded",
+        invoice_id=invoice.invoice_id,
+        status="paid" if attempt_status == "succeeded" else invoice.status,
+        balance_due_cents=0 if attempt_status == "succeeded" else invoice.balance_due_cents,
+        attempted_amount_cents=invoice.balance_due_cents,
+        processing=attempt_status == "processing",
+        requires_action=attempt_status == "requires_action",
+        decline_code=decline_code,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Use case
 # ---------------------------------------------------------------------------
@@ -226,157 +287,15 @@ class ChargeInvoiceViaAutopay:
             raise ValueError(f"invoice {invoice_id!r} no longer chargeable")
         invoice = fresh
 
-        # 2a. Checkout hold (issue #434): a Stripe Checkout Session is open for this
-        # invoice, so a parent may be paying it manually right now. Invoice status is
-        # not proof of the contrary — it only moves when the success webhook drains,
-        # and that drain can lag by up to an hour. Charging here bills the parent twice
-        # (the dunning ladder's per-rung retry_scope defeats Stripe's idempotency).
-        # Park instead: no Stripe call, and deliberately no payment_attempt row — this
-        # is our lock, not a decline the parent caused, so it must not read as one on
-        # the attempt history or consume a rung of their retry budget.
-        held_session_id = active_checkout_hold(invoice, now=now)
-        if held_session_id is not None:
-            log.info(
-                "charge_autopay: parking invoice=%s — checkout session %s still open",
-                invoice_id,
-                held_session_id or "<unknown>",
-            )
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                decline_code=CHECKOUT_HOLD_DECLINE_CODE,
-            )
-
-        # 2b. Charge-eligibility gate (Security P2): the invoice's enrollment
-        # must be actively autopaying. Refuse to auto-charge a paused / disabled
-        # / not-yet-set-up enrollment — the per-enrollment autopay status is the
-        # single charge-eligibility signal. FAIL CLOSED: if the invoice carries
-        # no enrollment_id we cannot resolve an autopay status to authorize the
-        # charge, so we decline rather than bypass the check. No Stripe call, no
-        # attempt recorded in either case.
-        if self._enrollment_autopay is not None:
-            if not invoice.enrollment_id:
-                log.warning(
-                    "charge_autopay: refusing to charge invoice=%s — no enrollment_id to "
-                    "resolve autopay eligibility (fail-closed)",
-                    invoice_id,
-                )
-                return ChargeResult(
-                    success=False,
-                    invoice_id=invoice_id,
-                    status=invoice.status,
-                    balance_due_cents=invoice.balance_due_cents,
-                    decline_code="autopay_not_active",
-                )
-            autopay_status = await self._enrollment_autopay.get_autopay_enrollment_status(
-                enrollment_id=invoice.enrollment_id
-            )
-            if autopay_status != AUTOPAY_ACTIVE_STATUS:
-                log.warning(
-                    "charge_autopay: refusing to charge invoice=%s enrollment=%s — "
-                    "autopay_enrollment_status=%s (must be %s)",
-                    invoice_id,
-                    invoice.enrollment_id,
-                    autopay_status,
-                    AUTOPAY_ACTIVE_STATUS,
-                )
-                return ChargeResult(
-                    success=False,
-                    invoice_id=invoice_id,
-                    status=invoice.status,
-                    balance_due_cents=invoice.balance_due_cents,
-                    decline_code="autopay_not_active",
-                )
-
-        # 3. Look up parent's saved Stripe card
-        if self._stripe is None:
-            log.info(
-                "charge_autopay: stripe gateway not configured — skipping PI creation invoice=%s",
-                invoice_id,
-            )
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                decline_code="stripe_not_configured",
-            )
-
-        route = await resolve_charge_route(
-            connected_accounts=self._connected_accounts,
-            settings=self._settings,
-            context=f"charge_autopay invoice={invoice_id}",
-        )
-        if route.refused:
-            log.warning(
-                "charge_autopay: refusing to charge invoice=%s — connected account not ready",
-                invoice_id,
-            )
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                decline_code="connected_account_not_ready",
-            )
-        # House academy (and an unwired connected-accounts store) -> platform;
-        # otherwise a direct charge on the ready connected account.
+        refusal = await self._member_refusal(invoice, now=now)
+        if refusal is not None:
+            return refusal
+        resolved = await self._resolve_saved_method(invoice)
+        if isinstance(resolved, ChargeResult):
+            return resolved
+        route, customer_id, pm_id = resolved
         on_account = route.on_account_kwargs()
         connected_account_id = route.connected_account_id
-
-        if connected_account_id is None:
-            # Platform: the Stripe customer's CURRENT default method (a parent can
-            # change it in the Billing Portal, which nothing syncs back), so never
-            # a stored id. Only a method Stripe has blocked is skipped (A4-8).
-            try:
-                saved = await self._stripe.get_default_payment_method(
-                    academy_id=invoice.academy_id,
-                    parent_id=invoice.parent_id,
-                )
-            except StripeUnavailable as exc:
-                log.warning("charge_autopay: stripe unavailable invoice=%s err=%s", invoice_id, exc)
-                return ChargeResult(
-                    success=False,
-                    invoice_id=invoice_id,
-                    status=invoice.status,
-                    balance_due_cents=invoice.balance_due_cents,
-                    decline_code=STRIPE_UNAVAILABLE,
-                )
-            if (
-                saved is not None
-                and self._parent_customers is not None
-                and await self._parent_customers.payment_method_blocked(
-                    parent_id=invoice.parent_id, payment_method_id=saved[1]
-                )
-            ):
-                saved = None
-        elif self._parent_customers is None:
-            # Fail closed: a platform-wide search cannot see the connected
-            # account's customers, so there is nothing safe to charge.
-            log.error(
-                "charge_autopay: no stored-card reader wired for a direct charge invoice=%s",
-                invoice_id,
-            )
-            saved = None
-        else:
-            saved = await self._parent_customers.get_saved_payment_method(
-                parent_id=invoice.parent_id,
-                stripe_account_id=connected_account_id,
-            )
-        if saved is None:
-            # The parent's to fix, not a fault on our side: a normal failed result so the
-            # worker can ask them to add a card or bank (L1 A4-1). No attempt row.
-            log.info("charge_autopay: no saved payment method invoice=%s", invoice_id)
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                decline_code=NO_SAVED_PAYMENT_METHOD,
-            )
-        customer_id, pm_id = saved
         settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
         invoice, discount_metadata = await self._apply_ach_discount_if_needed(
             invoice=invoice,
@@ -404,7 +323,7 @@ class ChargeInvoiceViaAutopay:
             pi_metadata["actor_id"] = actor_id
         pi_metadata.update(discount_metadata)
         try:
-            pi_id, pi_status, decline_code = await self._stripe.create_off_session_payment_intent(
+            pi_id, pi_status, decline_code = await self._stripe.create_off_session_payment_intent(  # type: ignore[union-attr]
                 amount_cents=invoice.balance_due_cents,
                 currency=invoice.currency,
                 customer_id=customer_id,
@@ -419,102 +338,29 @@ class ChargeInvoiceViaAutopay:
             # outcome projection; the worker parks and retries (L1 A4-3). Any other
             # exception is a bug and propagates to the worker's technical-failure park.
             log.warning("charge_autopay: stripe unavailable invoice=%s err=%s", invoice_id, exc)
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                decline_code=STRIPE_UNAVAILABLE,
-            )
+            return _refused(invoice, STRIPE_UNAVAILABLE)
 
-        # 5a. PI declined (gateway returned a decline_code without raising)
-        if decline_code is not None:
-            await self._record_attempt(
-                invoice=invoice,
-                amount_cents=invoice.balance_due_cents,
-                status="failed",
-                stripe_payment_intent_id=pi_id,
-                failure_code=decline_code,
-                failure_message=decline_code,
-                retry_scope=retry_scope,
-            )
-            log.warning(
-                "charge_autopay: PI declined invoice=%s pi=%s code=%s",
-                invoice_id,
-                pi_id,
-                decline_code,
-            )
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                attempted_amount_cents=invoice.balance_due_cents,
-                decline_code=decline_code,
-            )
-
-        # 5b. ACH debit submitted but not yet settled. Do not allocate or mark paid.
-        if pi_status == "processing":
-            await self._record_attempt(
-                invoice=invoice,
-                amount_cents=invoice.balance_due_cents,
-                status="processing",
-                stripe_payment_intent_id=pi_id,
-                failure_code=None,
-                failure_message="ACH debit submitted; awaiting settlement.",
-                retry_scope=retry_scope,
-            )
-            log.info(
-                "charge_autopay: PI processing invoice=%s pi=%s",
-                invoice_id,
-                pi_id,
-            )
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                attempted_amount_cents=invoice.balance_due_cents,
-                processing=True,
-                requires_action=False,
-            )
-
-        # 5c. PI requires further action (3DS, etc.)
-        if pi_status != "succeeded":
-            await self._record_attempt(
-                invoice=invoice,
-                amount_cents=invoice.balance_due_cents,
-                status="requires_action",
-                stripe_payment_intent_id=pi_id,
-                failure_code=None,
-                failure_message=None,
-                retry_scope=retry_scope,
-            )
-            log.info(
-                "charge_autopay: PI requires_action invoice=%s pi=%s status=%s",
-                invoice_id,
-                pi_id,
-                pi_status,
-            )
-            return ChargeResult(
-                success=False,
-                invoice_id=invoice_id,
-                status=invoice.status,
-                balance_due_cents=invoice.balance_due_cents,
-                attempted_amount_cents=invoice.balance_due_cents,
-                requires_action=True,
-            )
-
-        # 6. PI succeeded — record LedgerPayment + allocate
+        attempt_status = _attempt_status(pi_status, decline_code)
         await self._record_attempt(
             invoice=invoice,
             amount_cents=invoice.balance_due_cents,
-            status="succeeded",
+            status=attempt_status,
             stripe_payment_intent_id=pi_id,
-            failure_code=None,
-            failure_message=None,
+            failure_code=decline_code,
+            failure_message=_ATTEMPT_MESSAGES.get(attempt_status, decline_code),
             retry_scope=retry_scope,
         )
+        log.info(
+            "charge_autopay: invoice=%s pi=%s status=%s code=%s",
+            invoice_id,
+            pi_id,
+            attempt_status,
+            decline_code,
+        )
+        if attempt_status != "succeeded":
+            return _attempt_result(invoice, attempt_status, decline_code)
+
+        # 6. PI succeeded — record LedgerPayment + allocate
         payment_id = f"ledger-pay-autopay:{pi_id}"
         payment = await self._ledger.record_payment(
             LedgerPayment(
@@ -563,6 +409,275 @@ class ChargeInvoiceViaAutopay:
             balance_due_cents=updated_invoice.balance_due_cents,
             attempted_amount_cents=invoice.balance_due_cents,
         )
+
+    async def execute_family(
+        self,
+        invoice_ids: Sequence[str],
+        *,
+        charge_group_id: str,
+        retry_scopes: Mapping[str, str | None],
+        source: str = "autopay",
+    ) -> FamilyChargeResult:
+        """One PaymentIntent for one family's invoices due now (L8).
+
+        A member that is paid, voided, held by an open checkout or not autopaying
+        is dropped before the charge and handed back for the single path. Fewer
+        than two left means no family charge at all: every id comes back dropped.
+        The key names the persisted ``charge_group_id``, so a stale-lease re-claim
+        of the same group replays the same PaymentIntent instead of charging again.
+        """
+        now = self._now()
+        members: list[LedgerInvoice] = []
+        dropped: list[str] = []
+        for invoice_id in sorted(invoice_ids):
+            invoice = await self._ledger.get_invoice(invoice_id)
+            if (
+                invoice is None
+                or not invoice_is_chargeable(invoice.status, invoice.balance_due_cents)
+                or await self._member_refusal(invoice, now=now) is not None
+            ):
+                dropped.append(invoice_id)
+                continue
+            members.append(invoice)
+        if (
+            len(members) < 2
+            or len({m.parent_id for m in members}) != 1
+            or len({m.currency.lower() for m in members}) != 1
+        ):
+            return FamilyChargeResult(dropped_invoice_ids=tuple(sorted(invoice_ids)))
+        charged = tuple(m.invoice_id for m in members)
+        lead = members[0]
+        resolved = await self._resolve_saved_method(lead)
+        if isinstance(resolved, ChargeResult):
+            return FamilyChargeResult(
+                charged_invoice_ids=charged, dropped_invoice_ids=tuple(dropped), result=resolved
+            )
+        route, customer_id, pm_id = resolved
+        on_account = route.on_account_kwargs()
+        settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
+        discounted: list[LedgerInvoice] = []
+        member_metadata: list[dict[str, str]] = []
+        for invoice in members:
+            updated, metadata = await self._apply_ach_discount_if_needed(
+                invoice=invoice, settings=settings, funding_type=funding_type
+            )
+            discounted.append(updated)
+            member_metadata.append(metadata)
+        members = discounted
+        total = sum(m.balance_due_cents for m in members)
+        discount_metadata = _family_discount_metadata(member_metadata)
+
+        lead_scope = retry_scopes.get(lead.invoice_id)
+        idempotency_key = f"autopay-family:{charge_group_id}:{total}"
+        if lead_scope:
+            idempotency_key = f"{idempotency_key}:{lead_scope}"
+        fee_cents = route.application_fee_cents(total)
+        idempotency_key = route.idempotency_key(
+            idempotency_key_with_fee(idempotency_key, fee_cents)
+        )
+        joined_ids = ",".join(charged)
+        pi_metadata = {
+            "invoice_ids": joined_ids,
+            "academy_id": lead.academy_id,
+            "parent_id": lead.parent_id,
+            "source": source,
+            "charge_group_id": charge_group_id,
+            **discount_metadata,
+        }
+        family = lead.model_copy(update={"balance_due_cents": total})
+        try:
+            pi_id, pi_status, decline_code = await self._stripe.create_off_session_payment_intent(  # type: ignore[union-attr]
+                amount_cents=total,
+                currency=lead.currency,
+                customer_id=customer_id,
+                payment_method_id=pm_id,
+                idempotency_key=idempotency_key,
+                metadata=pi_metadata,
+                **on_account,
+                **application_fee_kwargs(fee_cents),
+            )
+        except StripeUnavailable as exc:
+            log.warning("charge_autopay: stripe unavailable group=%s err=%s", charge_group_id, exc)
+            return FamilyChargeResult(
+                charged_invoice_ids=charged,
+                dropped_invoice_ids=tuple(dropped),
+                result=_refused(family, STRIPE_UNAVAILABLE),
+            )
+
+        attempt_status = _attempt_status(pi_status, decline_code)
+        for invoice in members:
+            await self._record_attempt(
+                invoice=invoice,
+                amount_cents=invoice.balance_due_cents,
+                status=attempt_status,
+                stripe_payment_intent_id=pi_id,
+                failure_code=decline_code,
+                failure_message=_ATTEMPT_MESSAGES.get(attempt_status, decline_code),
+                retry_scope=retry_scopes.get(invoice.invoice_id),
+            )
+        log.info(
+            "charge_autopay: family group=%s invoices=%s pi=%s status=%s code=%s",
+            charge_group_id,
+            joined_ids,
+            pi_id,
+            attempt_status,
+            decline_code,
+        )
+        if attempt_status == "succeeded":
+            payment = await self._ledger.record_payment(
+                LedgerPayment(
+                    payment_id=f"ledger-pay-autopay:{pi_id}",
+                    academy_id=lead.academy_id,
+                    parent_id=lead.parent_id,
+                    amount_cents=total,
+                    unapplied_amount_cents=total,
+                    currency=lead.currency,
+                    status="succeeded",
+                    payment_method="stripe_autopay",
+                    stripe_payment_intent_id=pi_id,
+                    stripe_account_id=route.connected_account_id,
+                    application_fee_cents=fee_cents,
+                    paid_at=now,
+                    metadata={**discount_metadata, "invoice_ids": joined_ids},
+                    created_at=now,
+                    updated_at=now,
+                ),
+                idempotency_key=f"autopay-pi:{pi_id}",
+            )
+            await allocate_checkout_payment_across_invoices(
+                ledger=self._ledger,
+                payment=payment,
+                invoices=members,
+                amount_cents=total,
+                allocation_key_prefix=f"autopay-alloc:{pi_id}",
+            )
+        return FamilyChargeResult(
+            charged_invoice_ids=charged,
+            dropped_invoice_ids=tuple(dropped),
+            result=_attempt_result(family, attempt_status, decline_code),
+        )
+
+    async def _member_refusal(
+        self, invoice: LedgerInvoice, *, now: datetime
+    ) -> ChargeResult | None:
+        """Why this chargeable invoice must not be charged now, or None."""
+        # 2a. Checkout hold (issue #434): a Stripe Checkout Session is open for this
+        # invoice, so a parent may be paying it manually right now. Invoice status is
+        # not proof of the contrary — it only moves when the success webhook drains,
+        # and that drain can lag by up to an hour. Charging here bills the parent twice
+        # (the dunning ladder's per-rung retry_scope defeats Stripe's idempotency).
+        # Park instead: no Stripe call, and deliberately no payment_attempt row — this
+        # is our lock, not a decline the parent caused, so it must not read as one on
+        # the attempt history or consume a rung of their retry budget.
+        held_session_id = active_checkout_hold(invoice, now=now)
+        if held_session_id is not None:
+            log.info(
+                "charge_autopay: parking invoice=%s — checkout session %s still open",
+                invoice.invoice_id,
+                held_session_id or "<unknown>",
+            )
+            return _refused(invoice, CHECKOUT_HOLD_DECLINE_CODE)
+
+        # 2b. Charge-eligibility gate (Security P2): the invoice's enrollment
+        # must be actively autopaying. Refuse to auto-charge a paused / disabled
+        # / not-yet-set-up enrollment — the per-enrollment autopay status is the
+        # single charge-eligibility signal. FAIL CLOSED: if the invoice carries
+        # no enrollment_id we cannot resolve an autopay status to authorize the
+        # charge, so we decline rather than bypass the check. No Stripe call, no
+        # attempt recorded in either case.
+        if self._enrollment_autopay is not None:
+            if not invoice.enrollment_id:
+                log.warning(
+                    "charge_autopay: refusing to charge invoice=%s — no enrollment_id to "
+                    "resolve autopay eligibility (fail-closed)",
+                    invoice.invoice_id,
+                )
+                return _refused(invoice, "autopay_not_active")
+            autopay_status = await self._enrollment_autopay.get_autopay_enrollment_status(
+                enrollment_id=invoice.enrollment_id
+            )
+            if autopay_status != AUTOPAY_ACTIVE_STATUS:
+                log.warning(
+                    "charge_autopay: refusing to charge invoice=%s enrollment=%s — "
+                    "autopay_enrollment_status=%s (must be %s)",
+                    invoice.invoice_id,
+                    invoice.enrollment_id,
+                    autopay_status,
+                    AUTOPAY_ACTIVE_STATUS,
+                )
+                return _refused(invoice, "autopay_not_active")
+        return None
+
+    async def _resolve_saved_method(
+        self, invoice: LedgerInvoice
+    ) -> tuple[ChargeRoute, str, str] | ChargeResult:
+        """The route and the saved (customer, payment method) to charge, or the
+        refusal to return instead."""
+        # 3. Look up parent's saved Stripe card
+        if self._stripe is None:
+            log.info(
+                "charge_autopay: stripe gateway not configured — skipping PI creation invoice=%s",
+                invoice.invoice_id,
+            )
+            return _refused(invoice, "stripe_not_configured")
+
+        route = await resolve_charge_route(
+            connected_accounts=self._connected_accounts,
+            settings=self._settings,
+            context=f"charge_autopay invoice={invoice.invoice_id}",
+        )
+        if route.refused:
+            log.warning(
+                "charge_autopay: refusing to charge invoice=%s — connected account not ready",
+                invoice.invoice_id,
+            )
+            return _refused(invoice, "connected_account_not_ready")
+        # House academy (and an unwired connected-accounts store) -> platform;
+        # otherwise a direct charge on the ready connected account.
+        connected_account_id = route.connected_account_id
+
+        if connected_account_id is None:
+            # Platform: the Stripe customer's CURRENT default method (a parent can
+            # change it in the Billing Portal, which nothing syncs back), so never
+            # a stored id. Only a method Stripe has blocked is skipped (A4-8).
+            try:
+                saved = await self._stripe.get_default_payment_method(
+                    academy_id=invoice.academy_id,
+                    parent_id=invoice.parent_id,
+                )
+            except StripeUnavailable as exc:
+                log.warning(
+                    "charge_autopay: stripe unavailable invoice=%s err=%s", invoice.invoice_id, exc
+                )
+                return _refused(invoice, STRIPE_UNAVAILABLE)
+            if (
+                saved is not None
+                and self._parent_customers is not None
+                and await self._parent_customers.payment_method_blocked(
+                    parent_id=invoice.parent_id, payment_method_id=saved[1]
+                )
+            ):
+                saved = None
+        elif self._parent_customers is None:
+            # Fail closed: a platform-wide search cannot see the connected
+            # account's customers, so there is nothing safe to charge.
+            log.error(
+                "charge_autopay: no stored-card reader wired for a direct charge invoice=%s",
+                invoice.invoice_id,
+            )
+            saved = None
+        else:
+            saved = await self._parent_customers.get_saved_payment_method(
+                parent_id=invoice.parent_id,
+                stripe_account_id=connected_account_id,
+            )
+        if saved is None:
+            # The parent's to fix, not a fault on our side: a normal failed result so the
+            # worker can ask them to add a card or bank (L1 A4-1). No attempt row.
+            log.info("charge_autopay: no saved payment method invoice=%s", invoice.invoice_id)
+            return _refused(invoice, NO_SAVED_PAYMENT_METHOD)
+        customer_id, pm_id = saved
+        return route, customer_id, pm_id
 
     async def _record_attempt(
         self,
@@ -896,6 +1011,19 @@ def _discount_metadata(
     if disclosure_version:
         metadata["disclosure_version"] = disclosure_version
     return metadata
+
+
+def _family_discount_metadata(member_metadata: list[dict[str, str]]) -> dict[str, str]:
+    """One family charge's discount metadata: the members' shared fields with the
+    cents summed. No single ``ach_discount_line_id``: each invoice keeps its own line."""
+    merged: dict[str, str] = {}
+    for metadata in member_metadata:
+        merged.update({k: v for k, v in metadata.items() if k != "ach_discount_line_id"})
+    if any("ach_discount_cents" in metadata for metadata in member_metadata):
+        merged["ach_discount_cents"] = str(
+            sum(int(metadata.get("ach_discount_cents") or 0) for metadata in member_metadata)
+        )
+    return merged
 
 
 def _server_payment_method_metadata(funding_type: str | None) -> dict[str, str]:

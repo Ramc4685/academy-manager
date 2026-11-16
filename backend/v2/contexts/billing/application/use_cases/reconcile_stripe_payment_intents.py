@@ -329,7 +329,10 @@ class ReconcileStripePaymentIntents:
                 unapplied_amount_cents=amount_cents,
                 currency=currency,
                 status="succeeded",
-                payment_method="stripe_checkout",
+                # A family autopay charge (L8) names its invoices the same way.
+                payment_method=(
+                    "stripe_autopay" if metadata.get("charge_group_id") else "stripe_checkout"
+                ),
                 stripe_payment_intent_id=pi_id,
                 stripe_account_id=_payment_intent_account(payment_intent),
                 stripe_invoice_id=str(metadata.get("stripe_invoice_id") or "") or None,
