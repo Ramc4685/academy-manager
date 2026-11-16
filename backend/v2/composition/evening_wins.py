@@ -83,20 +83,37 @@ class _ParentWinsProvider:
         open_levels: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         notes: dict[tuple[str, str], str] = {}
         level_notes: dict[tuple[str, str], list[str]] = defaultdict(list)
+        # Today's rows in a level finished today: what a level-finish note is drafted from.
+        finished_rows: dict[tuple[str, str], list[Any]] = defaultdict(list)
         for row in sorted(passed, key=lambda r: r.skill_id):
             if row.level_id not in level_ups[row.student_id]:
                 open_levels[row.student_id][row.level_id].append(row.skill_id)
                 if row.coach_note:
                     notes[(row.student_id, row.skill_id)] = row.coach_note
-            elif row.coach_note:
-                level_notes[(row.student_id, row.level_id)].append(row.coach_note)
+            else:
+                finished_rows[(row.student_id, row.level_id)].append(row)
+                if row.coach_note:
+                    level_notes[(row.student_id, row.level_id)].append(row.coach_note)
         skills_by_level: dict[str, dict[str, Any]] = {}
         level_names: dict[str, str] = {}
+
+        async def level_skills(level_id: str) -> dict[str, Any]:
+            if level_id not in skills_by_level:
+                skills_by_level[level_id] = {
+                    s.skill_id: s for s in await self._skills.list_for_level(level_id)
+                }
+                level = await self._levels.get(level_id)
+                level_names[level_id] = level.name if level else "this level"
+            return skills_by_level[level_id]
+
         families: dict[str, list[ChildWins]] = defaultdict(list)
         # B4: coach-approved AI paragraphs; pending or rejected rows are absent.
         narratives: dict[str, Any] = (
             await self._narratives.approved_for(
-                sorted(students), start.date().isoformat(), "evening_wins"
+                # Keyed on the send date: the window ends at 19:00 on it.
+                sorted(students),
+                end.date().isoformat(),
+                "evening_wins",
             )
             if self._narratives is not None
             else {}
@@ -108,13 +125,7 @@ class _ParentWinsProvider:
             # What the draft was built from (first level, like _StudentNarrativeFacts).
             fingerprint: str | None = None
             for level_id, skill_ids in open_levels[student_id].items():
-                if level_id not in skills_by_level:
-                    skills_by_level[level_id] = {
-                        s.skill_id: s for s in await self._skills.list_for_level(level_id)
-                    }
-                    level = await self._levels.get(level_id)
-                    level_names[level_id] = level.name if level else "this level"
-                skills = skills_by_level[level_id]
+                skills = await level_skills(level_id)
                 today = tuple(skills[sid].name for sid in sorted(skill_ids) if sid in skills)
                 if not today:  # only retired skills: nothing worth telling
                     continue
@@ -155,8 +166,23 @@ class _ParentWinsProvider:
             )
             if not ups and not skill_wins:
                 continue
+            if not skill_wins and len(ups) == 1:
+                # A level-finish day: the note is drafted from the finished level's rows.
+                (level_id,) = level_ups[student_id]
+                skills = await level_skills(level_id)
+                required = {sid for sid, s in skills.items() if s.is_required}
+                done = await self._progress.list_passed_for_student_level(student_id, level_id)
+                fingerprint = source_fingerprint(
+                    (
+                        (skills[r.skill_id].name, r.coach_note)
+                        for r in finished_rows[(student_id, level_id)]
+                        if r.skill_id in skills
+                    ),
+                    len({p.skill_id for p in done} & required),
+                    len(required),
+                )
             narrative = narratives.get(student_id)
-            if narrative and skill_wins and narrative.source_fingerprint != fingerprint:
+            if narrative and narrative.source_fingerprint != fingerprint:
                 # An undone tap or edited note since approval: the templated line is right.
                 logger.info(
                     "evening_wins.narrative_stale student_id=%s narrative_id=%s",

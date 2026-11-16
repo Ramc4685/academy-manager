@@ -145,7 +145,8 @@ class FakeProvider:
 
 @pytest.mark.asyncio
 async def test_provider_error_and_missing_email_branches() -> None:
-    local_now = datetime(2026, 10, 30, 19, 0, tzinfo=ZoneInfo("America/Chicago"))
+    chicago = ZoneInfo("America/Chicago")
+    local_now = datetime(2026, 10, 30, 19, 10, tzinfo=chicago)
     families = [
         FamilyWins(p, (_child(skill_wins=(_skills(("Grip",), 1),)),)) for p in ("p1", "p2", "p3")
     ]
@@ -159,7 +160,11 @@ async def test_provider_error_and_missing_email_branches() -> None:
     )
     result = await use_case.execute(SendParentEveningWinsCommand("acad", local_now))
 
-    assert provider.window == (local_now.replace(hour=0), local_now)
+    # Yesterday 19:00 to today 19:00: a class running past 19:00 lands in the next email.
+    assert provider.window == (
+        datetime(2026, 10, 29, 19, 0, tzinfo=chicago),
+        datetime(2026, 10, 30, 19, 0, tzinfo=chicago),
+    )
     assert (result.families, result.sent, result.failed, result.retryable_failed) == (3, 0, 3, 1)
     # A provider outage stays retryable; a missing address does not.
     assert ("p1", "503", True) in claims.failed

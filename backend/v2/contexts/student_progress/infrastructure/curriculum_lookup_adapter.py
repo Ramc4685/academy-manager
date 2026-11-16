@@ -29,8 +29,11 @@ class CurriculumSkillLookupAdapter:
         return list(await self._levels.list_for_program(program_id))
 
     async def get_next_level(self, program_id: str, current_sequence: int) -> Any | None:
-        all_levels = await self._levels.list_for_program(program_id)
-        next_levels = [
-            lvl for lvl in all_levels if getattr(lvl, "sequence", 0) == current_sequence + 1
+        # The lowest active level above this one: a retired level or a gap in
+        # the numbering must not make the next level look like the last.
+        later = [
+            lvl
+            for lvl in await self._levels.list_for_program(program_id)
+            if getattr(lvl, "sequence", 0) > current_sequence
         ]
-        return next_levels[0] if next_levels else None
+        return min(later, key=lambda lvl: lvl.sequence) if later else None

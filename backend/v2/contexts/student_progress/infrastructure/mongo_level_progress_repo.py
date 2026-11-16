@@ -55,6 +55,17 @@ class MongoStudentLevelProgressRepository(TenantScopedRepository):
             {"$set": {"status": "completed", "completed_at": completed_at}},
         )
 
+    async def withdraw(self, progress_id: str, ended_at: datetime) -> None:
+        """Close a level the student left without finishing it (re-placement)."""
+        await self._update_one(
+            {"progress_id": progress_id},
+            {"$set": {"status": "withdrawn", "completed_at": ended_at}},
+        )
+
+    async def list_active_for_level(self, level_id: str) -> list[StudentLevelProgress]:
+        cursor = self._find_many({"level_id": level_id, "status": "active"})
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_student(self, student_id: str) -> list[StudentLevelProgress]:
         cursor = self._find_many(
             {"student_id": student_id},

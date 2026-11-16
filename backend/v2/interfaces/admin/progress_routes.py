@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from backend.v2.contexts.student_progress.application.errors import (
     ProgressNextAction,
@@ -43,7 +43,8 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_persona
+from backend.v2.shared.http import is_assistant_only, require_persona
+from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.time.academy_timezone import (
     LEGACY_FALLBACK_TIMEZONE,
@@ -72,6 +73,17 @@ class PlaceStudentBody(BaseModel):
     reason: str | None = None
 
 
+class BulkPlacementBody(BaseModel):
+    program_id: str | None = None
+    level_id: str
+    student_ids: list[str] = Field(min_length=1, max_length=50)
+    #: Skills on ``level_id`` the students already have (catch-up placement).
+    credited_skill_ids: list[str] = Field(default_factory=list, max_length=100)
+    #: Off by default: credits are old wins, not news for tonight's email.
+    notify_parents: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class RejectLevelUpBody(BaseModel):
     rejection_reason: str | None = None
 
@@ -86,15 +98,17 @@ AdminSettableSkillStatus = Literal[
 
 
 class UpdateSkillStatusBody(BaseModel):
-    level_id: str
+    #: Ignored: the use case writes the student's active level.
+    level_id: str | None = None
     program_id: str
     status: AdminSettableSkillStatus
 
 
 class RecordTestBody(BaseModel):
     program_id: str
-    level_id: str
-    attempts_count: int = 1
+    #: Ignored: the use case records on the student's active level.
+    level_id: str | None = None
+    attempts_count: int = Field(default=1, ge=1)
     success_count: int = 0
     session_id: str | None = None
     notes: str = ""
@@ -217,6 +231,55 @@ async def _place_student_in_pathway(
     return progress.model_dump()
 
 
+@router.post("/pathway/placements")
+async def place_students_in_bulk(
+    body: BulkPlacementBody,
+    request: Request,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    """Place up to 50 students on one level, crediting skills they already have.
+
+    Each student is placed (and audited) on its own: one refusal, such as a
+    level-up already being approved, does not stop the rest.
+    """
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    program_id = await _resolve_program_id(use_cases, body.program_id)
+    reason = body.reason or "admin_bulk_placement"
+    results: list[dict[str, object]] = []
+    for student_id in dict.fromkeys(body.student_ids):
+        try:
+            progress = await use_cases.student_progress.place_student.execute(
+                PlaceStudentInLevelCommand(
+                    student_id=student_id,
+                    program_id=program_id,
+                    level_id=body.level_id,
+                    placed_by=claims.user_id,
+                    reason=reason,
+                    credited_skill_ids=body.credited_skill_ids,
+                    notify_parents=body.notify_parents,
+                )
+            )
+        except DomainError as exc:
+            results.append({"student_id": student_id, "outcome": "refused", "code": exc.code})
+            continue
+        await _write_pathway_placement_audit(
+            request,
+            claims=claims,
+            student_id=student_id,
+            program_id=program_id,
+            level_id=body.level_id,
+            progress_id=progress.progress_id,
+            reason=reason,
+            credited_skill_ids=body.credited_skill_ids,
+        )
+        results.append(
+            {"student_id": student_id, "outcome": "placed", "progress_id": progress.progress_id}
+        )
+    return {"results": results}
+
+
 async def _write_pathway_placement_audit(
     request: Request,
     *,
@@ -226,6 +289,7 @@ async def _write_pathway_placement_audit(
     level_id: str,
     progress_id: str,
     reason: str,
+    credited_skill_ids: list[str] | None = None,
 ) -> None:
     db = getattr(request.app.state, "db", None)
     if db is None:
@@ -239,11 +303,13 @@ async def _write_pathway_placement_audit(
             "entity_type": "student",
             "entity_id": student_id,
             "reason": reason,
-            "changed_keys": ["program_id", "level_id", "progress_id"],
+            "changed_keys": ["program_id", "level_id", "progress_id"]
+            + (["credited_skill_ids"] if credited_skill_ids else []),
             "after": {
                 "program_id": program_id,
                 "level_id": level_id,
                 "progress_id": progress_id,
+                **({"credited_skill_ids": credited_skill_ids} if credited_skill_ids else {}),
             },
             "created_at": datetime.now(UTC),
         }
@@ -304,7 +370,6 @@ async def update_admin_skill_status(
             UpdateSkillStatusCommand(
                 student_id=student_id,
                 skill_id=skill_id,
-                level_id=body.level_id,
                 program_id=body.program_id,
                 new_status=body.status,
                 updated_by=claims.user_id,
@@ -331,8 +396,8 @@ async def record_admin_skill_test(
                 student_id=student_id,
                 skill_id=skill_id,
                 program_id=body.program_id,
-                level_id=body.level_id,
                 coach_id=claims.user_id,
+                can_sign_off=not is_assistant_only(claims),
                 session_id=body.session_id,
                 attempts_count=body.attempts_count,
                 success_count=body.success_count,

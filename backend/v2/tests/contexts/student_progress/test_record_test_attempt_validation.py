@@ -51,7 +51,7 @@ def _command(**overrides: Any) -> RecordTestAttemptCommand:
         "success_count": 8,
     }
     base.update(overrides)
-    return RecordTestAttemptCommand(**base)
+    return RecordTestAttemptCommand(can_sign_off=True, **base)
 
 
 def _use_case(

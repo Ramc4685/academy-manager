@@ -25,6 +25,7 @@ from backend.v2.contexts.student_progress.application.use_cases.review_level_up 
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     EnrollmentEnded,
+    LevelNotConfigured,
     RecommendationAlreadyReviewed,
 )
 from backend.v2.contexts.student_progress.domain.logic import check_level_completion
@@ -81,7 +82,7 @@ class AutoApproveLevelUps:
                 continue
             display = await display_for(rec.rec_id)
             try:
-                await self._review.execute(
+                result = await self._review.execute(
                     ReviewLevelUpCommand(
                         rec_id=rec.rec_id,
                         action="approve",
@@ -92,9 +93,18 @@ class AutoApproveLevelUps:
                         level_sequence=int(display.get("level_sequence") or 1),  # type: ignore[call-overload]
                     )
                 )
-                approved += 1
+                if result.status == "COMPLETED":
+                    approved += 1
+                else:  # superseded by a placement: closed, nothing approved
+                    skipped += 1
+            except LevelNotConfigured as exc:
+                # The next level was retired: only the owner can place or reject.
+                log.info(
+                    "auto_level_up_needs_owner", extra={"rec_id": rec.rec_id, "reason": exc.code}
+                )
+                needs_owner += 1
             except (EnrollmentEnded, RecommendationAlreadyReviewed) as exc:
-                # Withdrawn student, or the owner/coach acted first: leave it.
+                # Withdrawn student, or the owner/coach acted first.
                 log.info("auto_level_up_skipped", extra={"rec_id": rec.rec_id, "reason": exc.code})
                 skipped += 1
         return AutoApproveLevelUpsResult(

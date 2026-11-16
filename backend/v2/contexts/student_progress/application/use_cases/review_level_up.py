@@ -16,8 +16,13 @@ from backend.v2.contexts.student_progress.application.ports import (
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
 )
+from backend.v2.contexts.student_progress.application.use_cases.place_student import (
+    SUPERSEDED_BY_PLACEMENT_REASON,
+    seed_level_skills,
+)
 from backend.v2.contexts.student_progress.domain.errors import (
     EnrollmentEnded,
+    LevelNotConfigured,
     RecommendationAlreadyReviewed,
     RecommendationNotFound,
 )
@@ -33,7 +38,6 @@ from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     SkillCertificate,
     StudentLevelProgress,
-    StudentSkillProgress,
 )
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.ids import new_ulid
@@ -131,6 +135,17 @@ class ReviewLevelUpRecommendation:
                     student_id=rec.student_id,
                 )
 
+            if rec.to_level_id != rec.from_level_id:
+                target = await self._skill_lookup.get_level(rec.to_level_id)
+                if target is None or not getattr(target, "is_active", True):
+                    # Retired after the level-up was queued: never place a
+                    # student on it. The row stays RECOMMENDED for the owner.
+                    raise LevelNotConfigured(
+                        "the next level was retired; place the student by hand or reject",
+                        rec_id=cmd.rec_id,
+                        level_id=rec.to_level_id,
+                    )
+
         # Issue #548: claim the row before any side effect. The approval's
         # writes (certificate, level advance, skill seeding) cannot be undone,
         # so a reject arriving mid-approval must be refused here rather than
@@ -146,6 +161,26 @@ class ReviewLevelUpRecommendation:
                 rec_id=cmd.rec_id,
                 status=current.status if current is not None else "UNKNOWN",
             )
+
+        if approving and await self._superseded(rec):
+            # The owner placed the student somewhere else after this was
+            # queued: approving now would move them back and certify a level
+            # they no longer sit in. Close it instead, with no certificate.
+            if not await self._recs.update_status(
+                cmd.rec_id,
+                "REJECTED",
+                cmd.reviewed_by,
+                now,
+                SUPERSEDED_BY_PLACEMENT_REASON,
+                expected_status=claim_status,
+            ):
+                current = await self._recs.get(cmd.rec_id)
+                raise RecommendationAlreadyReviewed(
+                    "recommendation has already been reviewed",
+                    rec_id=cmd.rec_id,
+                    status=current.status if current is not None else "UNKNOWN",
+                )
+            return ReviewLevelUpResult(rec_id=cmd.rec_id, status="REJECTED", cert_id=None)
 
         if approving:
             # Every approval side effect is idempotent, and the status stamp
@@ -230,6 +265,10 @@ class ReviewLevelUpRecommendation:
             cert_id=approval[0] if approval is not None else None,
         )
 
+    async def _superseded(self, rec: LevelUpRecommendation) -> bool:
+        active = await self._level_progress.get_active(rec.student_id, rec.program_id)
+        return active is not None and active.level_id not in (rec.from_level_id, rec.to_level_id)
+
     async def _release_claim(self, rec_id: str, claim_status: str) -> None:
         """Hand the claim back so a retry does not have to wait out the lease.
 
@@ -276,27 +315,17 @@ class ReviewLevelUpRecommendation:
                 progress_id = new_progress.progress_id
                 await self._level_progress.save(new_progress)
 
-            # Seed NOT_STARTED skill records for the new level. Skills that
-            # already have a row are left untouched: a retried approval must
-            # never reset progress the student earned in the meantime.
-            new_skills = await self._skill_lookup.list_skills_for_level(rec.to_level_id)
-            for skill in new_skills:
-                skill_id: str = skill.skill_id  # type: ignore[attr-defined]
-                if await self._skill_progress.get(rec.student_id, skill_id) is not None:
-                    continue
-                sp = StudentSkillProgress(
-                    skill_progress_id=str(new_ulid()),
-                    academy_id=rec.academy_id,
-                    student_id=rec.student_id,
-                    skill_id=skill_id,
-                    level_id=rec.to_level_id,
-                    program_id=rec.program_id,
-                    status="NOT_STARTED",
-                    introduced_at=None,
-                    last_updated_at=now,
-                    last_updated_by=cmd.reviewed_by,
-                )
-                await self._skill_progress.upsert(sp)
+            # Skills that already have a row are left untouched: a retried
+            # approval must never reset progress the student earned meanwhile.
+            await seed_level_skills(
+                skill_progress=self._skill_progress,
+                skill_lookup=self._skill_lookup,
+                student_id=rec.student_id,
+                program_id=rec.program_id,
+                level_id=rec.to_level_id,
+                actor=cmd.reviewed_by,
+                now=now,
+            )
 
         # One certificate per completed level: reuse the one a partial approval
         # already issued rather than minting a second.
