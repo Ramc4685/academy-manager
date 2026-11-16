@@ -1,19 +1,14 @@
 ## frontend/README.md
 
-- [wording] README:3,10 say Next.js 15; code is `next` 16.4.6 (frontend/package.json:37).
-- [wording] README:12 says Tailwind + Radix + shadcn-style primitives; Tailwind is v4 and Radix is only react-dialog and react-slot (package.json:27-28,68).
-- [contract] README:14 says Firebase "modular `firebase/auth` only"; code also imports `firebase/app` (frontend/lib/auth/firebase.ts) and uses Capacitor Firebase plugins (package.json:24-25, lib/auth/native-sign-in.ts, native-push.ts).
-- [undocumented] README:21-25 lists four route groups (marketing, coach, parent, admin). Code also has `(owner)`, `(platform)`, `(shared)`, `(student)` (frontend/app/(owner), (platform), (shared), (student)). Admin has many more areas too (payouts, coach-payslip, pricing, waitlist and others).
-- [stale-not-built] README:25 says `(admin)` is RSC and README:52 says each group has a `layout.tsx` that gives the admin shell a dynamic-imported calendar. frontend/app/(admin)/layout.tsx has no `next/dynamic`. Only page-level dynamic imports exist (e.g. frontend/app/(coach)/coach/calendar/page.tsx:17).
-- [stale-not-built] README:23 lists "teaching-plan flows" under `(coach)`. Only `app/(coach)/coach/today/plan/page.tsx` is related, and there is no dedicated teaching-plan route.
-- [stale-not-built] README:33-37 list `components/ui/`, which does not exist. The primitives live in `frontend/components/ds/`.
-- [undocumented] README:33-37 omit many component dirs: ds, calendar, messages, pathway, progress, skills, teaching, waivers, persona, public-page, marketing, observability, shared, announcements (frontend/components/).
-- [stale-not-built] README:35 says `components/coach` is dynamically imported. Only specific calendar views are dynamic (frontend/app/(coach)/coach/calendar/page.tsx:17, frontend/app/(admin)/admin/sessions/page.tsx).
-- [stale-not-built] README:41 says `public/splash/` holds iOS splash screens. The directory does not exist (frontend/public has only icons/, manifest.webmanifest, favicon.ico).
-- [contract] README:28 says "currently no snapshot is committed" for `lib/api/generated/`. frontend/lib/api/generated/v2.d.ts (about 1 MB) and frontend/lib/api/openapi.snapshot.json are both committed. This also contradicts README:88.
-- [undocumented] README:26-32 omit many `lib/` modules and dirs: admin, coach, design, format, navigation, observability, parent, public-page, tenant, time, ui, waivers, plus `lib/api/v2`.
-- [stale-not-built] README:56-58 say the CI workflow reports the size gate with `continue-on-error: true`. No workflow runs `pnpm size` or `size-limit` (.github/workflows/*). The budgets themselves exist (package.json:73-89, 360 KB each).
-- [undocumented] README:90 documents `pnpm lhci`. The config is the hidden file frontend/.lighthouserc.json, which the README does not mention. README also omits the `e2e`, `e2e:local-auth` and `e2e:ui` scripts and the OpenNext/Cloudflare deploy (package.json:19-21, wrangler.jsonc).
-- [contract] README:62-63 say the audit runs in the "Frontend Static job" before typecheck, lint and build. In .github/workflows/production.yml:310 the audit goes through `scripts/ci/dependency_audit.sh`, which downgrades a registry outage to a warning, and it also runs in nightly-e2e.yml:84.
-- [wording] README:84 says `pnpm dev` is "next dev (Turbopack) on :3001". Code is `next dev --turbopack -p ${PORT:-3001}` (package.json:6), so the port is overridable. README:85 says `pnpm build` is a production build; it is `next build --webpack` (package.json:7). `pnpm typecheck` also runs `next typegen` first (package.json:13).
-- [wording] README:71-78 list only GHSA-jmr9-qjv8-65gv as the unpinned exception. frontend/pnpm-workspace.yaml:102-103 also ignores GHSA-7pqw-9j4j-h8q3, a re-issued extract-zip advisory with no pin.
+- [contract] README:3,10 (and ADR title) say Next.js 15; code is Next 16.4.6 (frontend/package.json:37). `build` uses `next build --webpack` (package.json:7), also undocumented.
+- [contract] README:28 says no OpenAPI snapshot is committed under generated/; frontend/lib/api/generated/v2.d.ts and frontend/lib/api/openapi.snapshot.json are committed, and CI checks drift (.github/workflows/production.yml:312). README:88 correctly says "committed", so the two lines contradict each other. The snapshot lives at lib/api/openapi.snapshot.json (package.json:16), not stated.
+- [stale-not-built] README:40 lists icon size 180; frontend/public/icons has only icon-192/256/512/maskable (180 absent).
+- [stale-not-built] README:41 `public/splash/` (iOS splash screens); frontend/public/splash does not exist.
+- [stale-not-built] README:34 `components/ui/` (touch-sized primitives); does not exist. The primitives live in frontend/components/ds/ (e.g. components/ds/avatar.tsx).
+- [stale-not-built] README:56-58 says CI reports the size-limit gate with `continue-on-error: true`; no workflow runs `pnpm size` or `lhci` (grep of .github finds none; Frontend Static job at production.yml:277-354). Budgets exist at package.json:73-89 (360 KB each).
+- [wording] README:12 says "Tailwind + Radix + shadcn-style primitives"; only @radix-ui/react-dialog and react-slot are installed (package.json:27-28), and Tailwind is v4 via @tailwindcss/postcss.
+- [undocumented] README:21-25 lists four route groups; app/ also has (owner), (platform), (shared), (student) (frontend/app/). Marketing also has register, privacy, terms, security, unsubscribe, account-deletion, auth.
+- [undocumented] app/sw.ts (service worker source), middleware.ts, open-next.config.ts and wrangler.jsonc (Cloudflare Worker deploy via OpenNext), vitest and playwright configs. README:15 mentions Serwist only.
+- [undocumented] lib/ has many more areas than README:26-32: lib/api/v2 (own README), lib/admin, lib/coach, lib/parent, lib/format, lib/navigation, lib/observability, lib/design.
+- [undocumented] components/ has announcements, calendar, ds, marketing, messages, observability, pathway, persona, progress, public-page, shared, skills, teaching, waivers beyond the README:33-37 listing (ui/coach/parent/admin).
+- [undocumented] README:14 omits firebase/app (frontend/lib/auth/firebase.ts:9), though README says "firebase/auth only".

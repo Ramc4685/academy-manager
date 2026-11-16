@@ -93,7 +93,10 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
         """
         payload = settings.model_dump(
             mode="python",
-            exclude=_PLATFORM_ONLY_FIELDS | _DERIVED_FIELDS | _FAMILY_OFFER_FIELDS | _PAYROLL_FIELDS,
+            exclude=_PLATFORM_ONLY_FIELDS
+            | _DERIVED_FIELDS
+            | _FAMILY_OFFER_FIELDS
+            | _PAYROLL_FIELDS,
         )
         payload.pop("academy_id", None)
         change = payload.get("schedule_change")

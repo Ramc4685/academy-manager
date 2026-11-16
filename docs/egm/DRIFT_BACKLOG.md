@@ -18,7 +18,8 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 28 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 29 items, from `drift/backend__v2.md`
+- [missing] README:64 requires a wrong-persona 404 test for every route; only per-area gate tests exist (e.g. `tests/structural/test_owner_gate_policy.py`).
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
