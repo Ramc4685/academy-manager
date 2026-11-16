@@ -1,4 +1,5 @@
-## README.md
+## README.md (repo root)
 
-- [wording] README.md:51 says the service "runs as a managed, multi-region cloud service". `backend/fly.toml:2` sets a single `primary_region = "ord"`, and README.md:63 and :76 also say region `ord`. The Fly app is single-region.
-- [undocumented] README.md:161-174 (Layout) omits `docs/egm/` and other top-level files that exist, such as `GAPS.md`, `PROJECT.md`, `SECURITY.md`, `Makefile` and the `docker-compose*.yml` files. `docs/egm/drift/` is new and the docs/ line (README.md:172) does not mention it. Minor.
+- [contract] README.md:139-140 says security disclosures go by email with subject `SECURITY DISCLOSURE`; SECURITY.md:1-6 directs reporters to GitHub "Security -> Report a vulnerability" (private advisory) and has no email or subject-line convention. The two documents give different disclosure channels.
+- [undocumented] README.md:89-102 lists the deploy pipeline as seven steps; `.github/workflows/production.yml:1053` defines a `sentry-release` job that is not mentioned. The pipeline also has `backend-advisory` (line 229), `scripts-validate` (line 673), `hook-tests` (line 718) and `ci-gate` (line 733) jobs; the README's "Validate" step does not cover them.
+- [wording] README.md:164 says `backend/` is the "FastAPI service" and README.md:165 says `backend/v2/` is the "Production FastAPI app". `backend/` holds only packaging and config (`Dockerfile`, `fly.toml`, `pyproject.toml`, `v2/`, `scripts/`), so the app code lives entirely in `backend/v2/`.

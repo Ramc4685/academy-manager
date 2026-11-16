@@ -34,6 +34,7 @@ from backend.v2.contexts.billing.application.use_cases.reconcile_stripe_payment_
     ReconcileStripePaymentIntents,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.errors import StripeUnavailable
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice, LedgerPayment
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
@@ -90,6 +91,21 @@ class _Stripe:
             self.crash_once = False
             raise RuntimeError("connection reset after Stripe accepted the request")
         return self.by_key[idempotency_key]
+
+
+class _TimeoutStripe(_Stripe):
+    """Stripe accepted the PaymentIntent, but the answer timed out once."""
+
+    def __init__(self, exc: type[Exception]) -> None:
+        super().__init__()
+        self.exc: type[Exception] | None = exc
+
+    async def create_off_session_payment_intent(self, **kwargs: Any) -> tuple[str, str, str | None]:
+        result = await super().create_off_session_payment_intent(**kwargs)
+        if self.exc is not None:
+            exc, self.exc = self.exc, None
+            raise exc("read timeout after Stripe accepted the request")
+        return result
 
 
 class _HouseSettings:
@@ -359,7 +375,7 @@ async def test_family_bank_debit_settles_both_invoices_once_with_replay(real_db,
     assert _notices(outbox) == []
 
 
-async def test_family_bank_debit_failure_sends_one_notice_with_replay(real_db, acad) -> None:
+async def test_family_bank_debit_failure_sends_each_final_notice_once(real_db, acad) -> None:
     stripe, outbox, pi_id, metadata = await _ach_family(real_db)
 
     failed = _pi_event(
@@ -378,9 +394,12 @@ async def test_family_bank_debit_failure_sends_one_notice_with_replay(real_db, a
 
     assert first.failed == 2
     assert len(stripe.calls) == 1  # never debited again while settling
-    (notice,) = _notices(outbox)
-    assert notice.payload.invoice_ids == ("inv-a", "inv-b")
-    assert notice.payload.bank_debit is True
+    # A hard decline turns autopay off: each invoice gets its own final notice,
+    # so one member's notice never swallows the other's (replays add none).
+    notices = _notices(outbox)
+    assert sorted(n.payload.invoice_id for n in notices) == ["inv-a", "inv-b"]
+    assert all(n.payload.terminal and n.payload.invoice_ids == () for n in notices)
+    assert all(n.payload.bank_debit for n in notices)
     states = await real_db["dunning_states"].find({"academy_id": ACAD}).to_list(None)
     assert {s["attempt_count"] for s in states} == {1}
 
@@ -394,7 +413,9 @@ async def test_stale_lease_replay_with_a_new_sibling_makes_no_second_charge(real
     assert lead is not None
     members = [
         lead,
-        *await repo.claim_group_siblings(lead=lead[1], now=NOW, worker_id="w1", rejoin=False),
+        *await repo.claim_group_siblings(
+            lead=lead[1], now=NOW, worker_id="w1", rejoin=False, period="2026-06"
+        ),
     ]
     assert sorted(invoice.invoice_id for invoice, _ in members) == ["inv-a", "inv-b"]
     stripe = _Stripe(("succeeded", None), crash_once=True)
@@ -605,3 +626,127 @@ async def test_a_large_family_splits_to_fit_stripes_metadata_cap(real_db, acad) 
     assert sorted(i for ids in charged for i in ids) == invoice_ids
     assert charged[0] == invoice_ids[: len(charged[0])]  # the first group is the lowest ids
     assert len(charged) == 2
+
+
+@pytest.mark.parametrize("exc", [StripeUnavailable, RuntimeError])
+async def test_family_retry_after_a_timeout_replays_the_first_charge(real_db, acad, exc) -> None:
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b")
+    stripe = _TimeoutStripe(exc)
+
+    await _tick(real_db, stripe, FakeOutbox())
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(minutes=61))
+
+    assert len(stripe.intents) == 1  # the retry replays the first key
+    assert len({c["key"] for c in stripe.calls}) == 1
+    for invoice_id in ("inv-a", "inv-b"):
+        assert (await _invoice(real_db, invoice_id))["status"] == "paid"
+
+
+@pytest.mark.parametrize("exc", [StripeUnavailable, RuntimeError])
+async def test_single_retry_after_a_timeout_replays_the_first_charge(real_db, acad, exc) -> None:
+    await _seed(real_db, "inv-a")
+    stripe = _TimeoutStripe(exc)
+
+    await _tick(real_db, stripe, FakeOutbox())
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(minutes=61))
+
+    assert len(stripe.intents) == 1
+
+
+async def test_a_partial_retry_of_a_family_charge_never_charges_the_rest(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b")
+    repo = MongoDunningStateRepository(real_db)
+    await repo.prepare_due_states(now=NOW, limit=100)
+    lead = await repo.claim_next_due(now=NOW, worker_id="w1", charge_group_id="grp-x")
+    assert lead is not None
+    members = [
+        lead,
+        *await repo.claim_group_siblings(
+            lead=lead[1], now=NOW, worker_id="w1", rejoin=False, period="2026-06"
+        ),
+    ]
+    stripe = _Stripe(crash_once=True)
+    with pytest.raises(RuntimeError):
+        await _charge(real_db, stripe).execute_family(
+            [invoice.invoice_id for invoice, _ in members],
+            charge_group_id="grp-x",
+            retry_scopes={
+                invoice.invoice_id: f"dunning-attempt:{state.processing_attempt_no}"
+                for invoice, state in members
+            },
+        )
+    # The worker died; B is then paid at the front desk.
+    ledger = MongoBillingLedgerRepository(real_db)
+    desk = await ledger.record_payment(
+        LedgerPayment(
+            payment_id="desk-b",
+            academy_id=ACAD,
+            parent_id=PARENT,
+            amount_cents=10_000,
+            unapplied_amount_cents=10_000,
+            currency="usd",
+            status="succeeded",
+            payment_method="cash",
+            paid_at=NOW,
+            created_at=NOW,
+            updated_at=NOW,
+        ),
+        idempotency_key="desk:b",
+    )
+    await ledger.allocate_payment(
+        payment_id=desk.payment_id,
+        invoice_id="inv-b",
+        amount_cents=10_000,
+        idempotency_key="desk-alloc:b",
+    )
+
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(minutes=31))
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(minutes=91))
+
+    assert len(stripe.intents) == 1  # A is never charged alone while the family PI is open
+    state_a = await real_db["dunning_states"].find_one({"academy_id": ACAD, "invoice_id": "inv-a"})
+    assert state_a is not None
+    assert state_a["suppression_reason"] == "attempt_indeterminate"
+    assert state_a["charge_group_id"] == "grp-x"
+
+
+async def test_a_lone_charge_parked_after_a_timeout_never_joins_a_family(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    stripe = _TimeoutStripe(StripeUnavailable)
+    await _tick(real_db, stripe, FakeOutbox())
+    await _seed(real_db, "inv-b")
+
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(minutes=61))
+
+    # A replays its own key; B is charged on its own, never with A under a new key.
+    assert sorted(i["amount_cents"] for i in stripe.intents.values()) == [10_000, 10_000]
+    assert all("invoice_ids" not in i["metadata"] for i in stripe.intents.values())
+
+
+async def test_an_unallocated_family_refund_is_shared_across_its_invoices(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b")
+    payment = LedgerPayment(
+        payment_id="ledger-pay-autopay:pi_ref",
+        academy_id=ACAD,
+        parent_id=PARENT,
+        amount_cents=20_000,
+        unapplied_amount_cents=20_000,
+        currency="usd",
+        status="succeeded",
+        payment_method="stripe_autopay",
+        stripe_payment_intent_id="pi_ref",
+        metadata=_family_metadata("inv-a", "inv-b"),
+        paid_at=NOW,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    await _webhook(real_db, FakeOutbox())._sync_invoice_refunds_for_ledger_payment(
+        pi_id="pi_ref", payment=payment, total_refunded_cents=20_000
+    )
+
+    for invoice_id in ("inv-a", "inv-b"):
+        assert (await _invoice(real_db, invoice_id))["refunded_cents"] == 10_000

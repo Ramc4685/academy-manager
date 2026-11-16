@@ -21,6 +21,7 @@ Where the charge runs follows the academy's ChargeRoute:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -416,15 +417,21 @@ class ChargeInvoiceViaAutopay:
         *,
         charge_group_id: str,
         retry_scopes: Mapping[str, str | None],
-        source: str = "autopay",
+        all_or_nothing: bool = False,
     ) -> FamilyChargeResult:
         """One PaymentIntent for one family's invoices due now (L8).
 
         A member that is paid, voided, held by an open checkout or not autopaying
         is dropped before the charge and handed back for the single path. Fewer
         than two left means no family charge at all: every id comes back dropped.
-        The key names the persisted ``charge_group_id``, so a stale-lease re-claim
-        of the same group replays the same PaymentIntent instead of charging again.
+        ``all_or_nothing`` (a retry of a group that may already have charged)
+        drops everyone if any member would drop, so only the exact first set is
+        ever charged.
+
+        The key is derived from the members and their retry rungs, never from the
+        per-tick ``charge_group_id``: a retry after a timeout, a crash or a
+        technical park re-sends the same members, rungs and total under the same
+        key, and Stripe replays the first PaymentIntent.
         """
         now = self._now()
         members: list[LedgerInvoice] = []
@@ -441,6 +448,7 @@ class ChargeInvoiceViaAutopay:
             members.append(invoice)
         if (
             len(members) < 2
+            or (all_or_nothing and dropped)
             or len({m.parent_id for m in members}) != 1
             or len({m.currency.lower() for m in members}) != 1
         ):
@@ -467,10 +475,11 @@ class ChargeInvoiceViaAutopay:
         total = sum(m.balance_due_cents for m in members)
         discount_metadata = _family_discount_metadata(member_metadata)
 
-        lead_scope = retry_scopes.get(lead.invoice_id)
-        idempotency_key = f"autopay-family:{charge_group_id}:{total}"
-        if lead_scope:
-            idempotency_key = f"{idempotency_key}:{lead_scope}"
+        rungs = "|".join(
+            sorted(f"{m.invoice_id}:{retry_scopes.get(m.invoice_id) or ''}" for m in members)
+        )
+        digest = hashlib.sha256(rungs.encode()).hexdigest()[:32]
+        idempotency_key = f"autopay-family:{digest}:{total}"
         fee_cents = route.application_fee_cents(total)
         idempotency_key = route.idempotency_key(
             idempotency_key_with_fee(idempotency_key, fee_cents)
@@ -480,7 +489,7 @@ class ChargeInvoiceViaAutopay:
             "invoice_ids": joined_ids,
             "academy_id": lead.academy_id,
             "parent_id": lead.parent_id,
-            "source": source,
+            "source": "autopay",
             "charge_group_id": charge_group_id,
             **discount_metadata,
         }

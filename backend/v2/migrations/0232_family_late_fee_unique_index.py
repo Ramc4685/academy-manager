@@ -11,11 +11,11 @@ Lines the policy wrote before this release carry ``source_id == invoice_id``,
 which is already unique per invoice (0181), so the build cannot meet a
 duplicate. The partial filter uses ``$gt: ""``, never ``$type``: the planner
 ignores ``$type`` partial indexes for equality lookups. A ``DuplicateKeyError``
-is still caught rather than crashing boot, mirroring 0181.
+is logged with its remediation and re-raised, so the migration fails loudly
+instead of shipping code that relies on an index that is not there.
 
-Production does NOT run migrations on boot (``V2_RUN_MIGRATIONS_ON_BOOT`` is
-false there, #629): apply with ``run_pending_migrations`` by hand, BEFORE the
-code that writes the new source_id serves traffic.
+Production applies this through the deploy pipeline's Migrate Production step,
+before the code that writes the new source_id serves traffic.
 """
 
 from __future__ import annotations
@@ -62,3 +62,4 @@ async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
                 ),
             },
         )
+        raise

@@ -410,13 +410,15 @@ class InvoiceEmailAdapter:
             return InvoiceNaming()
 
     async def _family_naming(self, invoice_ids: Sequence[str]) -> InvoiceNaming:
-        """One name for a family charge (L8): ``"Arjun and Maya"`` and every
-        invoice number. A sibling whose name cannot be resolved is left out."""
+        """One name for a family charge (L8): ``"Arjun, Maya and Dev"`` (each child
+        once) and every invoice number. A sibling whose name cannot be resolved
+        is left out."""
         namings = [await self._naming_for(invoice_id) for invoice_id in invoice_ids]
-        names = [n.student_name for n in namings if n.student_name]
+        names = list(dict.fromkeys(n.student_name for n in namings if n.student_name))
         numbers = [n.invoice_number for n in namings if n.invoice_number]
+        joined = " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
         return InvoiceNaming(
-            student_name=" and ".join(names) if names else None,
+            student_name=joined or None,
             invoice_number=", ".join(numbers) if numbers else None,
         )
 

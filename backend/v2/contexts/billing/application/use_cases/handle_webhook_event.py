@@ -2419,10 +2419,13 @@ class HandleWebhookEvent:
             if invoice_id and amount > 0:
                 per_invoice[invoice_id] = per_invoice.get(invoice_id, 0) + amount
         if not per_invoice:
-            # Each is capped by what is left to attribute, so the total never
-            # exceeds the refund.
-            for fallback in await self._invoices_for_autopay_payment(pi_id=pi_id, payment=payment):
-                per_invoice[fallback.invoice_id] = payment.amount_cents
+            # No allocations: a family charge's invoices each take at most their
+            # own total, so the refund is never all put on the first invoice.
+            fallbacks = await self._invoices_for_autopay_payment(pi_id=pi_id, payment=payment)
+            for fallback in fallbacks:
+                per_invoice[fallback.invoice_id] = (
+                    payment.amount_cents if len(fallbacks) == 1 else fallback.total_cents
+                )
         remaining = total_refunded_cents
         for invoice_id, allocated in per_invoice.items():
             if remaining <= 0:

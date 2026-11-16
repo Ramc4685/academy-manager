@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.contexts.billing.application.autopay_eligibility import invoice_is_chargeable
 from backend.v2.contexts.billing.application.ports import FamilyAutopayPauser
 from backend.v2.contexts.billing.domain.checkout_hold import CHECKOUT_HOLD_DECLINE_CODE
 from backend.v2.contexts.billing.domain.dunning import (
@@ -78,6 +79,7 @@ class DunningStateRepository(Protocol):
         now: datetime,
         worker_id: str,
         rejoin: bool,
+        period: str,
         exclude_invoice_ids: Collection[str] = (),
     ) -> list[tuple[LedgerInvoice, DunningState]]: ...
 
@@ -135,6 +137,7 @@ class ChargeInvoicePort(Protocol):
         *,
         charge_group_id: str,
         retry_scopes: Mapping[str, str | None],
+        all_or_nothing: bool = False,
     ) -> Any: ...
 
 
@@ -248,15 +251,18 @@ class ProcessDunningRetries:
                 continue
 
             members = [(invoice, state)]
+            rejoin = False
             if state.charge_group_id is not None:
-                # L8: the family's other rungs due now join one charge. A stale
-                # lease re-claims exactly the members still processing under it.
+                # L8: the family's other rungs for this month due now join one
+                # charge. A retry of a group that may already have charged (stale
+                # lease or technical park) takes back exactly its old members.
                 rejoin = state.charge_group_id != group_id
                 siblings = await self._dunning.claim_group_siblings(
                     lead=state,
                     now=now,
                     worker_id=worker_id,
                     rejoin=rejoin,
+                    period=invoice.period,
                     exclude_invoice_ids=parked_this_tick.keys(),
                 )
                 counts["processed"] += len(siblings)
@@ -265,33 +271,25 @@ class ProcessDunningRetries:
                         await self._settle_failed_debit(
                             sibling_invoice, sibling, counts=counts, now=now
                         )
-                    elif sibling.charge_group_id != state.charge_group_id:
-                        # A capped ladder's daily recheck keeps its own path (L3).
-                        await self._charge_one(
-                            sibling_invoice,
-                            sibling,
-                            counts=counts,
-                            parked_this_tick=parked_this_tick,
-                            now=now,
-                        )
                     else:
                         members.append((sibling_invoice, sibling))
                 if rejoin and len(members) < await self._dunning.count_group_members(
                     state.charge_group_id
                 ):
                     # Part of that charge already moved on, so it may have gone
-                    # through. Charging the rest now would be a smaller charge under
-                    # a new key: park them for the next tick instead.
-                    for _invoice, member in members:
-                        await self._park(state=member, reason="attempt_indeterminate", now=now)
-                        parked_this_tick[member.invoice_id] = "attempt_indeterminate"
-                    counts["parked"] += len(members)
-                    counts["transient"] += len(members)
+                    # through. Charging the rest would be a different charge:
+                    # park them until the webhook, reconcile or the L3 cap decides.
+                    await self._park_unresolved_group(members, counts, parked_this_tick, now)
                     continue
 
+            # A group of one was charged alone, so it retries alone too.
             if len(members) > 1:
                 await self._charge_family(
-                    members, counts=counts, parked_this_tick=parked_this_tick, now=now
+                    members,
+                    rejoin=rejoin,
+                    counts=counts,
+                    parked_this_tick=parked_this_tick,
+                    now=now,
                 )
             else:
                 await self._charge_one(
@@ -352,11 +350,17 @@ class ProcessDunningRetries:
         self,
         members: list[tuple[LedgerInvoice, DunningState]],
         *,
+        rejoin: bool,
         counts: dict[str, int],
         parked_this_tick: dict[str, str],
         now: datetime,
     ) -> None:
-        """One charge for one family's rungs due now; one result for all of them."""
+        """One charge for one family's rungs due now; one result for all of them.
+
+        A ``rejoin`` re-sends the earlier charge whole or not at all: dropping a
+        member would change the charge, and charging the dropped one alone could
+        double-charge it if the first charge went through.
+        """
         group_id = members[0][1].charge_group_id
         assert group_id is not None
         try:
@@ -368,6 +372,7 @@ class ProcessDunningRetries:
                         invoice.invoice_id: f"dunning-attempt:{state.processing_attempt_no}"
                         for invoice, state in members
                     },
+                    all_or_nothing=rejoin,
                 )
             )
         except Exception as exc:
@@ -375,6 +380,9 @@ class ProcessDunningRetries:
             await self._park_technical_failure(members, counts, parked_this_tick, now)
             return
         by_id = {invoice.invoice_id: (invoice, state) for invoice, state in members}
+        if rejoin and family.get("dropped_invoice_ids"):
+            await self._park_unresolved_group(members, counts, parked_this_tick, now)
+            return
         for invoice_id in family.get("dropped_invoice_ids") or ():
             # Paid, voided, held or no longer autopaying: the single path decides.
             await self._charge_one(
@@ -389,6 +397,19 @@ class ProcessDunningRetries:
                 parked_this_tick=parked_this_tick,
                 now=now,
             )
+
+    async def _park_unresolved_group(
+        self,
+        members: list[tuple[LedgerInvoice, DunningState]],
+        counts: dict[str, int],
+        parked_this_tick: dict[str, str],
+        now: datetime,
+    ) -> None:
+        for _invoice, member in members:
+            await self._park(state=member, reason="attempt_indeterminate", now=now)
+            parked_this_tick[member.invoice_id] = "attempt_indeterminate"
+            counts["parked"] += 1
+            counts["transient"] += 1
 
     async def _park_technical_failure(
         self,
@@ -547,12 +568,37 @@ class ProcessDunningRetries:
         ]
         if self._notifier is None or not owed:
             return False
+        # A terminal notice says autopay is off for that invoice, so each gets its
+        # own (per-invoice event id); the rest share one family notice.
+        terminal = [row for row in owed if row[1].status == "dunned"]
+        retrying = [row for row in owed if row[1].status != "dunned"]
+        sent = True
+        for row in terminal:
+            sent = await self._send_notice([row], [row[0]], failure_code, group=False) and sent
+        if retrying:
+            named = [row[0] for row in retrying]
+            if cover:
+                named = [
+                    row
+                    for row in cover
+                    if invoice_is_chargeable(row.status, row.balance_due_cents)
+                    and row.invoice_id not in {t[0].invoice_id for t in terminal}
+                ] or named
+            sent = await self._send_notice(retrying, named, failure_code, group=True) and sent
+        return sent
+
+    async def _send_notice(
+        self,
+        owed: list[tuple[LedgerInvoice, DunningState, int]],
+        named: list[LedgerInvoice],
+        failure_code: str | None,
+        *,
+        group: bool,
+    ) -> bool:
+        assert self._notifier is not None
         invoice, state, attempt_no = owed[0]
-        named = cover if cover and len(cover) > 1 else [row[0] for row in owed]
         family = len(named) > 1
-        terminal = any(row[1].status == "dunned" for row in owed)
-        next_attempt_at = None if terminal else state.next_attempt_at
-        bank_debit = state.last_failure_was_bank_debit
+        terminal = state.status == "dunned"
         payload = DunningNoticeRequestedPayload(
             invoice_id=invoice.invoice_id,
             parent_id=invoice.parent_id,
@@ -562,8 +608,8 @@ class ProcessDunningRetries:
             attempt_no=attempt_no,
             terminal=terminal,
             failure_code=failure_code,
-            next_attempt_at=next_attempt_at,
-            bank_debit=bank_debit,
+            next_attempt_at=None if terminal else state.next_attempt_at,
+            bank_debit=state.last_failure_was_bank_debit,
             invoice_ids=tuple(row.invoice_id for row in named) if family else (),
         )
         try:
@@ -573,7 +619,7 @@ class ProcessDunningRetries:
                     academy_id=invoice.academy_id,
                     payload=payload,
                 )
-                if family and state.charge_group_id:
+                if group and family and state.charge_group_id:
                     event = event.model_copy(
                         update={"event_id": f"dunning-notice:group:{state.charge_group_id}"}
                     )
@@ -582,10 +628,7 @@ class ProcessDunningRetries:
                 except DuplicateKeyError:
                     pass  # another member of this family charge already queued it
             else:
-                await self._notifier.send_dunning_notice(
-                    **payload.model_dump(exclude={"invoice_ids"}),
-                    invoice_ids=payload.invoice_ids,
-                )
+                await self._notifier.send_dunning_notice(**payload.model_dump())
             for row_invoice, _state, row_attempt in owed:
                 await self._dunning.mark_notification_sent(
                     invoice_id=row_invoice.invoice_id,

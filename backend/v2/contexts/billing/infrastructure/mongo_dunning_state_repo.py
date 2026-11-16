@@ -20,6 +20,7 @@ from backend.v2.contexts.billing.domain.dunning import (
     STRIPE_UNAVAILABLE,
     TECHNICAL_FAILURE_CAPPED,
     TECHNICAL_PARK_CAP,
+    TECHNICAL_PARK_REASONS,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -352,17 +353,18 @@ class MongoDunningStateRepository(TenantScopedRepository):
         now: datetime,
         worker_id: str,
         rejoin: bool,
+        period: str,
         exclude_invoice_ids: Collection[str] = (),
-        max_invoice_ids_chars: int = MAX_GROUP_INVOICE_IDS_CHARS,
     ) -> list[tuple[LedgerInvoice, DunningState]]:
         """Claim the lead's family members due now into the lead's charge group (L8).
 
-        A fresh group takes the same parent's other rungs that will charge now
-        (never a settling debit or a capped ladder, which keep their own path),
-        in invoice-id order, while the comma-joined ids still fit Stripe's
-        metadata value cap. A ``rejoin`` (stale-lease re-claim) takes only the
-        members still processing under the lead's group, so the re-charge is the
-        same charge, never a bigger one.
+        A fresh group takes the same parent's other rungs for the same billing
+        ``period`` and the lead's rung that will charge now (never a settling debit, a capped ladder
+        or a rung still parked in another group), in invoice-id order, while the
+        comma-joined ids still fit Stripe's metadata value cap. A ``rejoin`` (a
+        retry of a group that may already have charged) takes only the members
+        still processing or technically parked under the lead's group, so the
+        retry is the same charge, never a bigger one.
         """
         group = lead.charge_group_id
         if group is None:
@@ -373,22 +375,45 @@ class MongoDunningStateRepository(TenantScopedRepository):
             "parent_id": lead.parent_id,
             "invoice_id": {"$nin": sorted({*exclude_invoice_ids, lead.invoice_id})},
         }
+        technical = sorted(TECHNICAL_PARK_REASONS)
         if rejoin:
             query = {
                 **base,
-                "status": "processing",
-                "lease_expires_at": {"$lte": now},
                 "charge_group_id": group,
-            }
-        else:
-            query = {
-                **base,
                 "$or": [
-                    {"status": "active", "next_attempt_at": {"$lte": now}},
+                    {"status": "processing", "lease_expires_at": {"$lte": now}},
                     {
                         "status": "active",
                         "next_attempt_at": None,
-                        "suppression_reason": {"$in": sorted(self.groupable_parked_reasons)},
+                        "suppression_reason": {"$in": technical},
+                    },
+                ],
+            }
+        else:
+            same_period = [
+                str(doc["invoice_id"])
+                async for doc in self._db["invoices"].find(
+                    {"academy_id": academy_id, "parent_id": lead.parent_id, "period": period},
+                    {"invoice_id": 1},
+                )
+            ]
+            query = {
+                **base,
+                # Same month and same rung, so one notice speaks for all of them.
+                "attempt_count": lead.attempt_count,
+                "invoice_id": {
+                    "$in": sorted(set(same_period) - {*exclude_invoice_ids, lead.invoice_id})
+                },
+                "$or": [
+                    {"status": "active", "next_attempt_at": {"$lte": now}},
+                    # A technical park may already have charged: it retries only
+                    # the way it was charged (alone, or with its old group).
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": {
+                            "$in": sorted(self.groupable_parked_reasons - TECHNICAL_PARK_REASONS)
+                        },
                     },
                 ],
             }
@@ -396,7 +421,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
         siblings: list[tuple[LedgerInvoice, DunningState]] = []
         async for state_doc in self.collection.find(query).sort([("invoice_id", ASCENDING)]):
             invoice_id = str(state_doc["invoice_id"])
-            if not rejoin and used + 1 + len(invoice_id) > max_invoice_ids_chars:
+            if not rejoin and used + 1 + len(invoice_id) > MAX_GROUP_INVOICE_IDS_CHARS:
                 break
             claimed = await self._claim_candidate(
                 state_doc, now=now, worker_id=worker_id, new_group=group
@@ -513,10 +538,15 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 # A later failure of something else (a pay link) does not
                 # answer the debit this rung is waiting on.
                 return None
-        # A stale lease and a settling debit stay in the group they were charged
-        # in; a capped recheck is charged alone, as L3 built it; anything else
-        # that will charge joins the group the worker opened (L8).
-        if state.status == "processing" or settling_failure_code is not None:
+        # A stale lease, a settling debit and a technical park (the charge may
+        # have gone through) stay in the group they were charged in, so a retry
+        # re-sends the same charge; a capped recheck is charged alone, as L3
+        # built it; anything else that will charge joins the worker's new group.
+        if (
+            state.status == "processing"
+            or settling_failure_code is not None
+            or state.suppression_reason in TECHNICAL_PARK_REASONS
+        ):
             charge_group_id = state.charge_group_id
         elif capped_recheck:
             charge_group_id = None
