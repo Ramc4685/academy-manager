@@ -559,6 +559,10 @@ export function TrialsTab() {
 }
 
 function trialChildName(t: TrialRequestAdminRow): string {
+  if (t.guest_name) {
+    // L9 website guest: the parent's name and the player's age, no child name.
+    return `Guest of ${t.guest_name}${t.guest_age ? `, age ${t.guest_age}` : ""}`;
+  }
   return t.prospective_child_name || t.student_full_name || "Existing child";
 }
 
@@ -602,7 +606,7 @@ function TrialsList({
     return (
       <PhoneList aria-label="Trial requests" data-testid="admin-trials-phone-list">
         {trials.map((t) => {
-          const name = t.prospective_child_name || t.student_full_name || "Existing child";
+          const name = trialChildName(t);
           return (
             <PhoneListRow
               key={t.request_id}
@@ -678,7 +682,7 @@ function TrialsList({
                     className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
                   >
                     <td className="px-2 py-3 font-medium text-rally-base">
-                      {t.prospective_child_name || t.student_full_name || "Existing child"}
+                      {trialChildName(t)}
                     </td>
                     <td className="px-2 py-3 text-rally-subtle">
                       {t.requested_session_title || t.requested_session_id}
@@ -781,7 +785,7 @@ function ApproveTrialDialog({
   return (
     <DialogShell title="Approve trial request" onCancel={onCancel}>
       <p className="text-sm text-rally-subtle">
-        {request.prospective_child_name || request.student_full_name || "Existing child"} ·{" "}
+        {trialChildName(request)} ·{" "}
         {request.requested_session_title || request.requested_session_id} · preferred{" "}
         {formatPlainDateRange(request.preferred_start, request.preferred_end)}
       </p>

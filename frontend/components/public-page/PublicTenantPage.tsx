@@ -237,6 +237,7 @@ export function PublicTenantPage({
           trialsOpen={view.trialsOpen}
           hasClasses={view.hasClasses}
           allFull={view.allFull}
+          canBook={classes.some((cls) => (cls.trial_dates?.length ?? 0) > 0)}
           form={
             trialForm ?? (
               <TrialRequestForm

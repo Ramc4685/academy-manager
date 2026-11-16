@@ -21,7 +21,18 @@ describe("toPublicPageForm", () => {
       trials_open: true,
       theme: "floodlit",
       seats_left_threshold: 3,
+      self_book_trials: false,
+      trial_guest_cap: 2,
     });
+  });
+
+  it("sends the self-booking switch and guest cap only when changed", () => {
+    const original = toPublicPageForm(null);
+    expect(publicPagePayload(original, { ...original, self_book_trials: true, trial_guest_cap: 3 })).toEqual({
+      self_book_trials: true,
+      trial_guest_cap: 3,
+    });
+    expect(publicPagePayload(original, original)).toEqual({});
   });
 
   it("reads the saved theme and threshold, and repairs an unknown theme", () => {

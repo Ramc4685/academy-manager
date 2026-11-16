@@ -39,12 +39,16 @@ export interface PublicPageForm {
   trials_open: boolean;
   theme: PublicPageTheme;
   seats_left_threshold: number;
+  self_book_trials: boolean;
+  trial_guest_cap: number;
   // The privacy notice link is NOT part of this form any more: it moved to
   // Academy profile > Legal links (Settings overhaul Phase 4 PR 13). It is
   // still stored at `public_page.privacy_notice_url`; a Save here never sends it.
 }
 
 export const SEATS_THRESHOLD_MAX = 20;
+export const TRIAL_GUEST_CAP_MAX = 5;
+export const DEFAULT_TRIAL_GUEST_CAP = 2;
 
 /** A whole number 0 to 20 from what was typed; junk reads as 0; the field keeps its last number while blank. */
 export function parseSeatsThreshold(raw: string): number {
@@ -65,6 +69,8 @@ export function toPublicPageForm(
     trials_open: view?.trials_open ?? true,
     theme: parseTheme(view?.theme),
     seats_left_threshold: view?.seats_left_threshold ?? DEFAULT_SEATS_LEFT_THRESHOLD,
+    self_book_trials: view?.self_book_trials ?? false,
+    trial_guest_cap: view?.trial_guest_cap ?? DEFAULT_TRIAL_GUEST_CAP,
   };
 }
 
@@ -86,6 +92,12 @@ export function publicPagePayload(
   if (form.theme !== original.theme) payload.theme = form.theme;
   if (form.seats_left_threshold !== original.seats_left_threshold) {
     payload.seats_left_threshold = form.seats_left_threshold;
+  }
+  if (form.self_book_trials !== original.self_book_trials) {
+    payload.self_book_trials = form.self_book_trials;
+  }
+  if (form.trial_guest_cap !== original.trial_guest_cap) {
+    payload.trial_guest_cap = form.trial_guest_cap;
   }
   return payload;
 }

@@ -3635,6 +3635,9 @@ export interface TrialRequestAdminRow {
   outcome?: "came" | "no_show" | null;
   outcome_by?: string | null;
   outcome_at?: string | null;
+  /** L9: a website guest's trial (no account): parent name and player age. */
+  guest_name?: string | null;
+  guest_age?: string | null;
 }
 
 export interface TrialRequestsAdminResponse {
@@ -4359,6 +4362,10 @@ export interface AdminPublicPageSettingsView {
   theme: "floodlit" | "daylight" | "showcase";
   /** "Only N seats left" shows at or below this many seats (0 hides it, max 20). */
   seats_left_threshold: number;
+  /** L9: families may book a trial date themselves. Optional for older fixtures. */
+  self_book_trials?: boolean;
+  /** L9: website guests per class date (1 to 5). */
+  trial_guest_cap?: number;
   /** `https://<host>/` of the academy's own domain; null when none is on record. Read-only. */
   public_url: string | null;
 }

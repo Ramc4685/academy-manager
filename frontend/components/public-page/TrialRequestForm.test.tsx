@@ -27,6 +27,28 @@ function attr(tag: string, attribute: string): string | null {
   return new RegExp(`\\s${attribute}="([^"]*)"`).exec(tag)?.[1] ?? null;
 }
 
+describe("TrialRequestForm self-booking (L9)", () => {
+  const withDates = [
+    {
+      value: "c_open",
+      label: "Starters Saturday, Sat 9:00",
+      dates: [{ value: "t_1", label: "Saturday, November 21 at 9:00 AM" }],
+    },
+  ];
+
+  it("asks how the family heard about the academy, optionally", () => {
+    const html = render();
+    const id = attr(control(html, "heard_from"), "id");
+    expect(html).toMatch(new RegExp(`<label for="${id}">How did you hear about us\?`));
+  });
+
+  it("offers no date picker until a class with dates is chosen, and no widget", () => {
+    const html = render({ classOptions: withDates, turnstileSiteKey: "site" });
+    expect(html).not.toContain('name="slot_key"');
+    expect(html).not.toContain("trial-turnstile");
+  });
+});
+
 describe("TrialRequestForm markup", () => {
   it("labels every visible control and marks required ones", () => {
     const html = render();

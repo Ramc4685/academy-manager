@@ -344,6 +344,8 @@ jobs:
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
+          # Public Turnstile site key (trial self-booking); empty renders no widget.
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '' }}
           NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
           NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
         # OpenNext runs `pnpm build` itself, then bundles the Worker we deploy.
@@ -1014,6 +1016,8 @@ jobs:
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
           NEXT_PUBLIC_FIREBASE_AUTH_PROXY: ${{ env.NEXT_PUBLIC_FIREBASE_AUTH_PROXY }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN || '' }}
+          # Public Turnstile site key (trial self-booking); empty renders no widget.
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '' }}
           NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
           NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
         run: |
