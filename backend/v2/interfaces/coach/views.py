@@ -92,6 +92,16 @@ class CoachRosterEntry(BaseModel):
     payment_due_cents: int | None = None
 
 
+class CoachTrialGuest(BaseModel):
+    """L9: a family with no account who booked a free trial on the public page.
+    The coach sees the parent's name and the player's age only."""
+
+    trial_request_id: str
+    name: str
+    age: str | None = None
+    trial_outcome: Literal["came", "no_show"] | None = None
+
+
 class CoachSession(BaseModel):
     session_id: str
     occurrence_id: str
@@ -111,6 +121,7 @@ class CoachSession(BaseModel):
     # screen they'd otherwise show up for.
     status: Literal["scheduled", "cancelled", "completed"] = "scheduled"
     cancellation_reason: str | None = None
+    trial_guests: list[CoachTrialGuest] = []
 
 
 class CoachTodayResponse(BaseModel):

@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
@@ -121,6 +121,18 @@ class TrialRequestAdminRow(BaseModel):
     outcome: str | None = None
     outcome_by: str | None = None
     outcome_at: datetime | None = None
+    # L9: a website guest's trial (no account): the CRM contact, parent name
+    # and player age the family typed. None for an account parent's trial.
+    contact_id: str | None = None
+    guest_name: str | None = None
+    guest_age: str | None = None
+
+
+def _email_decision(http: Request, background_tasks: BackgroundTasks, trial: Any) -> None:
+    """A6-2: tell the family (dark until ``self_book_trials``; see trial_emails)."""
+    emails = getattr(http.app.state, "trial_emails", None)
+    if emails is not None:
+        background_tasks.add_task(emails.trial_decided, trial)
 
 
 class TrialRequestsAdminResponse(BaseModel):
@@ -268,6 +280,8 @@ async def list_trials_for_admin(
 async def approve_trial_request(
     request_id: str,
     body: ApproveTrialRequestBody,
+    http: Request,
+    background_tasks: BackgroundTasks,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> TrialRequestAdminRow:
@@ -278,6 +292,7 @@ async def approve_trial_request(
             occurrence_id=body.occurrence_id,
         )
     )
+    _email_decision(http, background_tasks, request)
     return TrialRequestAdminRow(**request.model_dump(exclude={"academy_id", "parent_user_id"}))
 
 
@@ -288,6 +303,8 @@ async def approve_trial_request(
 async def deny_trial_request(
     request_id: str,
     body: DenyTrialRequestBody,
+    http: Request,
+    background_tasks: BackgroundTasks,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> TrialRequestAdminRow:
@@ -298,6 +315,7 @@ async def deny_trial_request(
             reason=body.reason,
         )
     )
+    _email_decision(http, background_tasks, request)
     return TrialRequestAdminRow(**request.model_dump(exclude={"academy_id", "parent_user_id"}))
 
 

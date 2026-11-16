@@ -12378,6 +12378,11 @@ export interface components {
             timezone?: string | null;
             /** Title */
             title: string;
+            /**
+             * Trial Guests
+             * @default []
+             */
+            trial_guests: components["schemas"]["CoachTrialGuest"][];
         };
         /** CoachSessionAnnouncementList */
         CoachSessionAnnouncementList: {
@@ -12452,6 +12457,21 @@ export interface components {
             date: string;
             /** Sessions */
             sessions: components["schemas"]["CoachSession"][];
+        };
+        /**
+         * CoachTrialGuest
+         * @description L9: a family with no account who booked a free trial on the public page.
+         *     The coach sees the parent's name and the player's age only.
+         */
+        CoachTrialGuest: {
+            /** Age */
+            age?: string | null;
+            /** Name */
+            name: string;
+            /** Trial Outcome */
+            trial_outcome?: ("came" | "no_show") | null;
+            /** Trial Request Id */
+            trial_request_id: string;
         };
         /** CoachTrialOutcomeBody */
         CoachTrialOutcomeBody: {
@@ -15975,6 +15995,11 @@ export interface components {
              */
             first_name: string;
             /**
+             * Heard From
+             * @default
+             */
+            heard_from: string;
+            /**
              * Last Name
              * @default
              */
@@ -17096,6 +17121,11 @@ export interface components {
             timezone?: string | null;
             /** Title */
             title: string;
+            /**
+             * Trial Dates
+             * @default []
+             */
+            trial_dates: components["schemas"]["PublicTrialDateDto"][];
             /** Venue Address */
             venue_address?: string | null;
         };
@@ -17206,6 +17236,11 @@ export interface components {
             published: boolean;
             /** Seats Left Threshold */
             seats_left_threshold: number;
+            /**
+             * Self Book Trials
+             * @default false
+             */
+            self_book_trials: boolean;
             /** Show Availability */
             show_availability: boolean;
             /** Show Price */
@@ -17215,6 +17250,11 @@ export interface components {
              * @enum {string}
              */
             theme: "floodlit" | "daylight" | "showcase";
+            /**
+             * Trial Guest Cap
+             * @default 2
+             */
+            trial_guest_cap: number;
             /** Trials Open */
             trials_open: boolean;
         };
@@ -17245,6 +17285,21 @@ export interface components {
             band: string;
             /** Seats Left */
             seats_left?: number | null;
+        };
+        /**
+         * PublicTrialDateDto
+         * @description One date a family can book a free trial on (L9; only while the academy
+         *     has self-booked trials on). ``slot_key`` is an opaque digest, never the
+         *     occurrence id; send it back with the trial form to book that date.
+         */
+        PublicTrialDateDto: {
+            /** Slot Key */
+            slot_key: string;
+            /**
+             * Starts At
+             * Format: date-time
+             */
+            starts_at: string;
         };
         /**
          * PublicTrialRequestAckDto
@@ -18897,6 +18952,8 @@ export interface components {
             assigned_occurrence_id: string | null;
             /** Assigned Occurrence Start At */
             assigned_occurrence_start_at?: string | null;
+            /** Contact Id */
+            contact_id?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -18908,6 +18965,10 @@ export interface components {
             decided_by: string | null;
             /** Denial Reason */
             denial_reason: string | null;
+            /** Guest Age */
+            guest_age?: string | null;
+            /** Guest Name */
+            guest_name?: string | null;
             /** Linked Application Id */
             linked_application_id: string | null;
             /** Outcome */
@@ -19348,12 +19409,16 @@ export interface components {
             published?: boolean | null;
             /** Seats Left Threshold */
             seats_left_threshold?: number | null;
+            /** Self Book Trials */
+            self_book_trials?: boolean | null;
             /** Show Availability */
             show_availability?: boolean | null;
             /** Show Price */
             show_price?: boolean | null;
             /** Theme */
             theme?: ("floodlit" | "daylight" | "showcase") | null;
+            /** Trial Guest Cap */
+            trial_guest_cap?: number | null;
             /** Trials Open */
             trials_open?: boolean | null;
         };
@@ -33838,7 +33903,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Trials are switched off (Public.TrialsClosed). */
+            /** @description Trials are switched off (Public.TrialsClosed), or the chosen trial date is no longer open (Public.SlotUnavailable). */
             409: {
                 headers: {
                     [name: string]: unknown;

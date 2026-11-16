@@ -8,6 +8,7 @@ student attends exactly one occurrence without a standing enrollment. Task
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
@@ -46,6 +47,20 @@ class MongoOccurrenceRosterRepository(TenantScopedRepository):
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]:
         cursor = self._find_many({"occurrence_id": occurrence_id}, sort=[("created_at", 1)])
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]:
+        """One-time (make-up / trial) seats per class date, one aggregation on
+        ``(academy_id, occurrence_id)`` (L9: the public page's bookable dates)."""
+        ids = [oid for oid in dict.fromkeys(occurrence_ids) if oid]
+        if not ids:
+            return {}
+        pipeline: list[dict[str, Any]] = [
+            {"$match": self._scoped({"occurrence_id": {"$in": ids}})},
+            {"$group": {"_id": "$occurrence_id", "count": {"$sum": 1}}},
+        ]
+        return {
+            str(doc["_id"]): int(doc["count"]) async for doc in self.collection.aggregate(pipeline)
+        }
 
     async def list_for_student(
         self, student_id: str, *, limit: int = 200

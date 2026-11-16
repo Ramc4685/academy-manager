@@ -351,6 +351,8 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "send_checkout_recovery_notices": LocalDailyTime(10, 10),
     # Lead nurture (AI strategy Phase 3 C1): the day 2/7/21 steps mid-morning.
     "send_nurture_steps": LocalDailyTime(10, 25),
+    # L9 A6-11: website-lead owner alerts whose background send never landed.
+    "resend_due_owner_alerts": LocalDailyTime(9, 40),
     "send_trial_reminders": LocalDailyTime(16, 0),
     # Monthly report card: the job runs daily but only sends on the 1st.
     "send_parent_report_cards": LocalDailyTime(9, 0),
@@ -555,6 +557,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # step) (nurture_sends claim, migration 0225), so an extra run sends nothing.
     "send_nurture_steps": {
         "schedule": {"type": "crontab", "value": "25 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # L9 A6-11: re-sends website-lead owner alerts still due; marked sent on
+    # the contact row, so an extra run sends nothing.
+    "resend_due_owner_alerts": {
+        "schedule": {"type": "crontab", "value": "40 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -995,6 +1004,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.trial_nudges import compose_trial_nudges
 
     app.state.trial_nudges = compose_trial_nudges(db, settings)
+    # L9: self-booked trial and trial decision emails (dark until self_book_trials).
+    from backend.v2.composition.trial_emails import compose_trial_emails
+
+    app.state.trial_emails = compose_trial_emails(db, settings)
     # Lead nurture (AI strategy Phase 3 C1): the daily job and the admin editor.
     from backend.v2.composition.nurture import compose_nurture
 
@@ -1502,6 +1515,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async def _send_nurture_steps_body() -> None:
         await _send_trial_nudges("send_nurture_steps", app.state.nurture.send_steps.execute)
+
+    async def _resend_due_owner_alerts() -> None:
+        await _run_leased_job(
+            "resend_due_owner_alerts", timedelta(minutes=5), _resend_due_owner_alerts_body
+        )
+
+    async def _resend_due_owner_alerts_body() -> None:
+        notifier = app.state.public_trial_requests.notifier
+        await _send_trial_nudges(
+            "resend_due_owner_alerts",
+            lambda *, academy_id, local_now: notifier.send_due_alerts(academy_id=academy_id),
+        )
 
     async def _auto_approve_level_ups() -> None:
         await _run_leased_job(
@@ -2234,6 +2259,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=LOCAL_DAILY_JOBS["send_nurture_steps"].minute,
         timezone=UTC,
         id="send_nurture_steps",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _resend_due_owner_alerts,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["resend_due_owner_alerts"].minute,
+        timezone=UTC,
+        id="resend_due_owner_alerts",
         replace_existing=True,
         max_instances=1,
     )

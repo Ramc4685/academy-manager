@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime
+from collections.abc import Mapping
+from datetime import datetime, timedelta
 from typing import Literal, get_args
 
 from pydantic import BaseModel
@@ -83,6 +84,39 @@ class PipelineOverride(BaseModel):
     set_at: datetime
 
 
+#: Attribution values (UTM tags from the landing URL, the "how did you hear
+#: about us" choice, a referral code): at most this long, from this charset.
+#: Anything else is dropped, never stored, never an error for the family.
+MAX_ATTRIBUTION_LEN = 80
+_ATTRIBUTION_VALUE = re.compile(rf"^[A-Za-z0-9_.-]{{1,{MAX_ATTRIBUTION_LEN}}}$")
+ATTRIBUTION_FIELDS = ("heard_from", "utm_source", "utm_medium", "utm_campaign", "referral_code")
+
+
+class ContactAttribution(BaseModel):
+    """Where a website lead came from (L9 A6-10). First touch: a repeat
+    inquiry keeps the attribution already on file. No cookies, no referrer."""
+
+    model_config = {"frozen": True}
+
+    heard_from: str | None = None
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    referral_code: str | None = None
+
+
+def clean_attribution(raw: Mapping[str, object] | None) -> ContactAttribution | None:
+    """Keep only well-formed values; None when nothing usable was sent."""
+    if not raw:
+        return None
+    kept: dict[str, str] = {}
+    for field in ATTRIBUTION_FIELDS:
+        value = raw.get(field)
+        if isinstance(value, str) and _ATTRIBUTION_VALUE.match(value.strip()):
+            kept[field] = value.strip()
+    return ContactAttribution(**kept) if kept else None
+
+
 class CrmContact(BaseModel):
     contact_id: str
     academy_id: str
@@ -113,6 +147,19 @@ class CrmContact(BaseModel):
     dedupe_key: str | None = None
     created_at: datetime
     updated_at: datetime
+    attribution: ContactAttribution | None = None
+    #: A website lead the owners must hear about (new, or asked again after
+    #: ``REPEAT_INQUIRY_AFTER``). Cleared, and ``owner_alert_sent_at`` set,
+    #: once the alert went out; the daily sweep re-sends what is still due
+    #: (L9 A6-11). Rows from before the field never become due.
+    owner_alert_due_at: datetime | None = None
+    owner_alert_sent_at: datetime | None = None
+
+
+#: A website inquiry repeated after this long is a family asking again: the
+#: row is bumped, the new message appended and the owners alerted again (A6-4).
+#: Inside it, a repeat is a double tap and changes nothing.
+REPEAT_INQUIRY_AFTER = timedelta(hours=24)
 
 
 # --- normalisation (shared by validation and the dedupe key) ---

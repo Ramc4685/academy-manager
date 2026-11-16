@@ -21,8 +21,10 @@ Dedupe stays in ``CreateContact`` and its unique index. The result's
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Literal, Protocol
 
 from backend.v2.contexts.crm.application.use_cases.create_contact import (
     CreateContact,
@@ -37,8 +39,11 @@ from backend.v2.contexts.crm.domain.models import (
     MAX_NAME_LEN,
     MAX_PHONE_DIGITS,
     MIN_PHONE_DIGITS,
+    REPEAT_INQUIRY_AFTER,
     ContactConsent,
     CrmContact,
+    PipelineStatus,
+    clean_attribution,
 )
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -109,11 +114,34 @@ class WebsiteInquiryResult:
     #: Server-side only: never tell the anonymous caller.
     created: bool
     field_errors: dict[str, str]
+    #: The owners should hear about it: a new contact, or the same family
+    #: asking again after ``REPEAT_INQUIRY_AFTER`` (A6-4). Server-side only.
+    alert_owner: bool = False
+
+
+class RepeatInquiryWriter(Protocol):
+    async def bump_repeat(
+        self,
+        contact_id: str,
+        *,
+        seen_before: datetime,
+        message: str | None,
+        pipeline_status: PipelineStatus,
+        at: datetime,
+    ) -> CrmContact | None: ...
 
 
 class SubmitWebsiteInquiry:
-    def __init__(self, create_contact: CreateContact) -> None:
+    def __init__(
+        self,
+        create_contact: CreateContact,
+        contacts: RepeatInquiryWriter | None = None,
+        *,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         self._create_contact = create_contact
+        self._contacts = contacts
+        self._now = clock
 
     async def execute(
         self,
@@ -122,8 +150,12 @@ class SubmitWebsiteInquiry:
         requested_session_id: str | None,
         pipeline_status: Literal["lead", "trial"],
         privacy_notice_url: str | None,
+        attribution: Mapping[str, object] | None = None,
     ) -> WebsiteInquiryResult:
-        """Validate and write; the tenant is the caller's tenant scope (the host)."""
+        """Validate and write; the tenant is the caller's tenant scope (the host).
+
+        ``attribution``: the raw heard-from / utm values from the form; only
+        short plain tokens are kept (``clean_attribution``)."""
         errors = form.errors()
         if errors:
             return WebsiteInquiryResult(contact=None, created=False, field_errors=errors)
@@ -143,6 +175,7 @@ class SubmitWebsiteInquiry:
                         marketing=form.marketing_opt_in is True,
                         privacy_notice_url=privacy_notice_url,
                     ),
+                    attribution=clean_attribution(attribution),
                 )
             )
         except InvalidContact as exc:
@@ -152,7 +185,41 @@ class SubmitWebsiteInquiry:
                 created=False,
                 field_errors={_FORM_FIELD.get(field, field): exc.message},
             )
-        return WebsiteInquiryResult(contact=result.contact, created=result.created, field_errors={})
+        if result.created:
+            return WebsiteInquiryResult(
+                contact=result.contact, created=True, field_errors={}, alert_owner=True
+            )
+        bumped = await self._bump_repeat(result.contact, form.message, pipeline_status)
+        return WebsiteInquiryResult(
+            contact=bumped or result.contact,
+            created=False,
+            field_errors={},
+            alert_owner=bumped is not None,
+        )
+
+    async def _bump_repeat(
+        self, existing: CrmContact, message: str | None, wanted: Literal["lead", "trial"]
+    ) -> CrmContact | None:
+        """The same family asking again after a day: keep both messages, move a
+        lead up to trial when a seat is there now (never down), alert again."""
+        if self._contacts is None:
+            return None
+        now = self._now()
+        added = (message or "").strip()
+        merged = existing.message
+        if added and added != (existing.message or ""):
+            joined = f"{existing.message}\n\n{added}" if existing.message else added
+            merged = joined[-MAX_MESSAGE_LEN:]
+        stage: PipelineStatus = existing.pipeline_status
+        if stage == "lead" and wanted == "trial":
+            stage = "trial"
+        return await self._contacts.bump_repeat(
+            existing.contact_id,
+            seen_before=now - REPEAT_INQUIRY_AFTER,
+            message=merged,
+            pipeline_status=stage,
+            at=now,
+        )
 
 
 def _text(value: object) -> str | None:

@@ -49,6 +49,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     PayoutPeriodLock,
     SessionOccurrenceRepository,
     SessionQuery,
+    TrialGuestCancellationNotifier,
     TrialReopener,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
@@ -61,6 +62,7 @@ from backend.v2.contexts.enrollment.domain.models import ACTIVE_OR_PAUSED, Sessi
 from backend.v2.contexts.enrollment.domain.occurrence_cancellation import (
     assert_occurrence_cancellable,
 )
+from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
@@ -121,6 +123,7 @@ class CancelSessionOccurrence:
         makeup_policies: MakeupPolicyLookup | None = None,
         billing_sync: OccurrenceBillingSync | None = None,
         notifier: OccurrenceCancellationNotifier | None = None,
+        guest_notifier: TrialGuestCancellationNotifier | None = None,
         payout_lock: PayoutPeriodLock | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
@@ -134,6 +137,7 @@ class CancelSessionOccurrence:
         self._makeup_policies = makeup_policies
         self._billing = billing_sync
         self._notifier = notifier
+        self._guest_notifier = guest_notifier
         self._payout_lock = payout_lock
         self._now = clock
 
@@ -172,7 +176,9 @@ class CancelSessionOccurrence:
         # --- past the commit point: everything below is best-effort -------
         removed_entries = await self._purge_roster(cmd.occurrence_id)
         makeups_reopened = await self._reopen_makeups(cmd.occurrence_id, now=now)
-        trial_student_ids = await self._reopen_trials(cmd.occurrence_id)
+        reopened_trials = await self._reopen_trials(cmd.occurrence_id)
+        trial_student_ids = [t.student_id for t in reopened_trials if t.student_id]
+        guests = [t for t in reopened_trials if t.contact_id]
         # Make-up and trial students hold a one-time seat and no enrollment on
         # this session, so the roster audience never reaches them. Their seat
         # has just been deleted; telling them is the whole point (#671).
@@ -216,12 +222,23 @@ class CancelSessionOccurrence:
                 billing_warning=_billing_warning(billing_result),
             )
 
+        if cmd.notify and guests and self._guest_notifier is not None:
+            try:
+                await self._guest_notifier.trial_date_cancelled(
+                    trials=guests, start_at=cancelled.start_at, reason=cmd.reason
+                )
+            except Exception:
+                log.exception(
+                    "enrollment.trial_guest_cancel_notify_failed",
+                    extra={"occurrence_id": cmd.occurrence_id},
+                )
+
         return CancelSessionOccurrenceResult(
             occurrence=cancelled,
             affected_enrollment_ids=tuple(row.enrollment_id for row in rows),
             roster_entries_removed=len(removed_entries),
             makeups_reopened=makeups_reopened,
-            trials_reopened=len(trial_student_ids),
+            trials_reopened=len(reopened_trials),
             credits_issued=sum(1 for value in credits.values() if value),
             billing_result=billing_result,
             notified=notified,
@@ -291,7 +308,7 @@ class CancelSessionOccurrence:
                 log.exception("enrollment.makeup_policy_read_failed")
         return now + timedelta(days=max(days, 1))
 
-    async def _reopen_trials(self, occurrence_id: str) -> list[str]:
+    async def _reopen_trials(self, occurrence_id: str) -> list[TrialRequest]:
         """Trials assigned to the cancelled date, back to pending (#671).
 
         Without this a trial stays ``approved`` against a class that will not

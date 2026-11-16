@@ -204,6 +204,29 @@ class _FakeTrials:
                 return updated
         return None
 
+    def _seat_taken(self, occurrence_id: object, slot: int) -> bool:
+        # Mirrors the unique partial index trial_requests_guest_slot_unique.
+        return any(
+            r.assigned_occurrence_id == occurrence_id and r.guest_slot == slot for r in self.added
+        )
+
+    async def approve_guest(
+        self, request_id: str, updates: dict[str, object], *, max_slot: int
+    ) -> TrialRequest | None:
+        for slot in range(1, max_slot + 1):
+            if not self._seat_taken(updates["assigned_occurrence_id"], slot):
+                return await self.transition_from_pending(
+                    request_id, {**updates, "guest_slot": slot}
+                )
+        return None
+
+    async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for r in self.added:
+            if r.assigned_occurrence_id in occurrence_ids and (r.guest_slot or 0) >= 1:
+                counts[r.assigned_occurrence_id] = counts.get(r.assigned_occurrence_id, 0) + 1
+        return counts
+
 
 class _FakeOccurrenceRoster:
     def __init__(self) -> None:
@@ -673,6 +696,72 @@ async def test_approve_trial_request_capacity_full_raises() -> None:
                 request_id="req-1", actor_id="admin-1", occurrence_id="occ-1"
             )
         )
+
+
+def _seated_guest(request_id: str, slot: int) -> TrialRequest:
+    return TrialRequest(
+        request_id=request_id,
+        academy_id="acad",
+        contact_id=f"contact-{request_id}",
+        student_ref="prospective",
+        requested_session_id="session-1",
+        preferred_start="2026-07-15",
+        preferred_end="2026-07-15",
+        status="approved",
+        assigned_occurrence_id="occ-1",
+        guest_slot=slot,
+        created_at=datetime(2026, 7, 5, tzinfo=UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_counts_website_guests_against_capacity() -> None:
+    trials = _FakeTrials()
+    one_enrolled = [
+        Enrollment(enrollment_id="e1", academy_id="acad", session_id="session-1", student_id="s1")
+    ]
+    trials.added = [_pending_trial(), _seated_guest("guest-1", 1)]
+    use_case = ApproveTrialRequest(
+        trials=trials,
+        occurrences=_FakeOccurrences(),
+        enrollments=_FakeEnrollments(one_enrolled),
+        sessions=_FakeSessions([_session(capacity=2)]),
+        occurrence_roster=_FakeOccurrenceRoster(),
+        clock=_now,
+    )
+
+    with pytest.raises(OccurrenceFull):
+        await use_case.execute(
+            ApproveTrialRequestCommand(
+                request_id="req-1", actor_id="admin-1", occurrence_id="occ-1"
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_reapproving_a_guest_takes_the_next_free_seat_number() -> None:
+    trials = _FakeTrials()
+    pending_guest = _seated_guest("guest-2", 1).model_copy(
+        update={"status": "pending", "assigned_occurrence_id": None, "guest_slot": None}
+    )
+    trials.added = [_seated_guest("guest-1", 1), pending_guest]
+    roster = _FakeOccurrenceRoster()
+    use_case = ApproveTrialRequest(
+        trials=trials,
+        occurrences=_FakeOccurrences(),
+        enrollments=_FakeEnrollments(),
+        sessions=_FakeSessions([_session(capacity=5)]),
+        occurrence_roster=roster,
+        clock=_now,
+    )
+
+    result = await use_case.execute(
+        ApproveTrialRequestCommand(request_id="guest-2", actor_id="admin-1", occurrence_id="occ-1")
+    )
+
+    assert result.status == "approved"
+    assert result.guest_slot == 2
+    assert roster.added == []  # a guest has no Student row to roster
 
 
 @pytest.mark.asyncio

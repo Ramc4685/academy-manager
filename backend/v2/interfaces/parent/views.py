@@ -26,6 +26,7 @@ class ParentProfileView(BaseModel):
     last_name: str = ""
     email: str | None = None
     phone: str = ""
+    heard_from: str = Field(default="", max_length=80, pattern=r"^[A-Za-z0-9_.-]*$")
 
 
 class ChildProfileView(BaseModel):

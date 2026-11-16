@@ -35,6 +35,7 @@ from backend.v2.contexts.crm.domain.models import (
     MAX_PHONE_DIGITS,
     MAX_URL_LEN,
     MIN_PHONE_DIGITS,
+    ContactAttribution,
     ContactConsent,
     ContactSource,
     CrmContact,
@@ -68,6 +69,8 @@ class CreateContactCommand:
     referrer_parent_id: str | None = None
     consent: ContactConsent | None = None
     created_by: str | None = None
+    #: Already cleaned (``clean_attribution``); website rows only.
+    attribution: ContactAttribution | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +160,9 @@ class CreateContact:
             ),
             created_at=now,
             updated_at=now,
+            attribution=cmd.attribution,
+            # A website lead must reach a human: due until the alert lands.
+            owner_alert_due_at=now if cmd.source in DEDUPED_SOURCES else None,
         )
         stored, created = await self._repo.add_if_absent(contact)
         return CreateContactResult(contact=stored, created=created)

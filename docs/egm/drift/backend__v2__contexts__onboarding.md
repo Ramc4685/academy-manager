@@ -1,0 +1,4 @@
+## backend/v2/contexts/onboarding/README.md
+
+- [undocumented] README lines 3-4 name applications (registration), waiver templates and waiver signatures as scope, but the README documents only AI/video consent. The code has these with no README coverage: `domain/models.py:83` (Application), `:194` (WaiverTemplate), `:216` (WaiverSignature); `application/use_cases/manage_application.py`, `admin_waiver_templates.py`, `waiver_signatures.py`, `checkout_recovery.py`, `parent_student_waivers.py`, `student_waiver_status.py`; `domain/waiver_assignment.py`, `domain/waiver_sections.py`.
+- [undocumented] The working tree has an uncommitted field on the registration parent profile that the README does not mention: `domain/models.py:44-46` (`ParentProfile.heard_from`, optional, max 80 chars, pattern `[A-Za-z0-9_.-]*`).

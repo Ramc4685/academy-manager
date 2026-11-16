@@ -108,6 +108,9 @@ class CoachUseCases:
     # it; real composition always sets it. today_routes.py falls back to
     # `get_roster` (plain, session-scoped) when this is None.
     get_occurrence_roster: GetOccurrenceRoster | None = None
+    # L9: website guests booked on a date (ListTrialGuests). Optional for
+    # fixtures that predate it.
+    list_trial_guests: object | None = None
     # Messages inbox (UIM13). Optional for backward compat with fixtures that
     # predate it; real coach composition always sets both.
     list_messages: Callable[[str], Awaitable[list[Message]]] | None = None

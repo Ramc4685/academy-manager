@@ -85,6 +85,8 @@ def test_public_page_defaults_when_nothing_is_stored() -> None:
         "show_availability": True,
         "price_period_default": "month",
         "trials_open": True,
+        "self_book_trials": False,
+        "trial_guest_cap": 2,
         "privacy_notice_url": None,
         "hero_photo_url": None,
         "about_text": "",

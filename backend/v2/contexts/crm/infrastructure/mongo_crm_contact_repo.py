@@ -8,6 +8,7 @@ from typing import Any, cast
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.crm.domain.models import (
+    ContactAttribution,
     ContactConsent,
     CrmContact,
     PipelineOverride,
@@ -69,6 +70,11 @@ class MongoCrmContactRepository(TenantScopedRepository):
             dedupe_key=doc.get("dedupe_key") or None,
             created_at=_utc(doc["created_at"]),
             updated_at=_utc(doc.get("updated_at") or doc["created_at"]),
+            attribution=(
+                ContactAttribution(**doc["attribution"]) if doc.get("attribution") else None
+            ),
+            owner_alert_due_at=_optional_utc(doc.get("owner_alert_due_at")),
+            owner_alert_sent_at=_optional_utc(doc.get("owner_alert_sent_at")),
         )
 
     async def add_if_absent(self, contact: CrmContact) -> tuple[CrmContact, bool]:
@@ -105,6 +111,57 @@ class MongoCrmContactRepository(TenantScopedRepository):
     async def release_acknowledgement(self, contact_id: str) -> None:
         """Give a claim back after the email provably did not go out."""
         await self._update_one({"contact_id": contact_id}, {"$unset": {"acknowledged_at": ""}})
+
+    async def bump_repeat(
+        self,
+        contact_id: str,
+        *,
+        seen_before: datetime,
+        message: str | None,
+        pipeline_status: PipelineStatus,
+        at: datetime,
+    ) -> CrmContact | None:
+        """A website family asking again (A6-4): bump ``updated_at``, store the
+        merged message and stage, and make the owner alert due again.
+
+        Compare-and-swap on ``updated_at < seen_before``: of two concurrent
+        repeats only one lands, and a repeat within the window changes nothing.
+        None when nothing was changed.
+        """
+        fields: dict[str, Any] = {
+            "updated_at": at,
+            "owner_alert_due_at": at,
+            "pipeline_status": pipeline_status,
+        }
+        if message is not None:
+            fields["message"] = message
+        doc = await self._find_one_and_update(
+            {"contact_id": contact_id, "updated_at": {"$lt": seen_before}}, {"$set": fields}
+        )
+        return self._to_domain(doc) if doc else None
+
+    async def mark_owner_alerted(self, contact_id: str, *, at: datetime) -> None:
+        """The owner alert went out: clear the due marker the sweep reads."""
+        await self._update_one(
+            {"contact_id": contact_id},
+            {"$set": {"owner_alert_sent_at": at}, "$unset": {"owner_alert_due_at": ""}},
+        )
+
+    async def list_owner_alerts_due(
+        self, *, due_from: datetime, due_before: datetime
+    ) -> list[CrmContact]:
+        """Website leads whose owner alert is still due, oldest first (A6-11).
+
+        shortcut: no index on ``owner_alert_due_at``; the read rides the
+        academy prefix of the contact indexes and one academy holds a few
+        hundred contacts. Add a partial index if that grows.
+        """
+        cursor = self._find_many(
+            {"owner_alert_due_at": {"$gte": due_from, "$lt": due_before}},
+            sort=[("owner_alert_due_at", 1)],
+            limit=100,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
 
     async def set_pipeline_override(
         self,
@@ -252,3 +309,7 @@ def _is_dedupe_collision(exc: DuplicateKeyError) -> bool:
 def _utc(value: object) -> datetime:
     """A BSON datetime read back naive, as the aware UTC instant it always was (#706)."""
     return ensure_utc(cast(datetime, value))
+
+
+def _optional_utc(value: object) -> datetime | None:
+    return None if value is None else _utc(value)

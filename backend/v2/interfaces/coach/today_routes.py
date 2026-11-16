@@ -27,6 +27,7 @@ from backend.v2.interfaces.coach.views import (
     CoachRosterEntry,
     CoachSession,
     CoachTodayResponse,
+    CoachTrialGuest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
@@ -142,6 +143,14 @@ async def get_today(
         for s, marks in zip(sessions, attendance_lists, strict=False):
             marks_by_occurrence[s.occurrence_id] = {m.student_id: m for m in marks}
 
+    # L9: website guests (no account, no student row) booked on each date.
+    list_trial_guests = getattr(use_cases, "list_trial_guests", None)
+    guests: list[list[Any]] = (
+        list(await asyncio.gather(*[list_trial_guests.execute(s.occurrence_id) for s in sessions]))
+        if list_trial_guests is not None
+        else [[] for _ in sessions]
+    )
+
     # Issue #774: one money fact per roster row. Resolved in a single query
     # across every student on the day's rosters, so the chip costs one read
     # regardless of how many sessions the coach is teaching.
@@ -188,7 +197,16 @@ async def get_today(
                 )
                 for r in roster
             ],
+            trial_guests=[
+                CoachTrialGuest(
+                    trial_request_id=g.request_id,
+                    name=g.guest_name or "Trial guest",
+                    age=g.guest_age,
+                    trial_outcome=g.outcome,
+                )
+                for g in session_guests
+            ],
         )
-        for s, roster in zip(sessions, rosters, strict=False)
+        for s, roster, session_guests in zip(sessions, rosters, guests, strict=False)
     ]
     return CoachTodayResponse(date=target_date.isoformat(), sessions=out)

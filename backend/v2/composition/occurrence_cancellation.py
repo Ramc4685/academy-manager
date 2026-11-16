@@ -120,6 +120,9 @@ def compose_cancel_session_occurrence(
     db: Any, *, notifier: Any | None = None
 ) -> CancelSessionOccurrence:
     """The admin "cancel this date" use case, fully wired."""
+    from backend.v2.composition.trial_emails import compose_trial_emails
+    from backend.v2.shared.config import get_settings
+
     return CancelSessionOccurrence(
         occurrences=MongoSessionOccurrenceRepository(db),
         sessions=MongoSessionRepository(db),
@@ -131,6 +134,9 @@ def compose_cancel_session_occurrence(
         makeup_policies=MongoSelfServicePolicyRepository(db),
         billing_sync=compose_occurrence_billing_sync(db),
         notifier=notifier,
+        # L9: a website guest booked on the date hears it is off (dark until
+        # the academy turns self-booking on).
+        guest_notifier=compose_trial_emails(db, get_settings()),
         # #787: refuse to call off a date whose payout is already frozen.
         payout_lock=compose_payout_input_lock(db),
     )

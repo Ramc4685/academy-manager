@@ -123,6 +123,8 @@ def test_walk_actually_reaches_nested_class_fields() -> None:
     assert "PublicAcademyPageDto.academy.venue.address" in paths
     assert "PublicAcademyPageDto.gallery.url" in paths
     assert "PublicAcademyPageDto.coaches.photo_url" in paths
+    # L9: the bookable trial dates are walked too (slot_key is an opaque digest).
+    assert "PublicAcademyPageDto.programs.classes.trial_dates.slot_key" in paths
 
 
 def test_gallery_dto_is_url_and_caption_only() -> None:
@@ -342,6 +344,13 @@ ALLOWED_TRIAL_FORM_FIELDS = {
     "contact_about_request",
     "marketing_opt_in",
     "website",  # honeypot
+    # L9: book one opaque date, the bot check, and short plain attribution.
+    "slot_key",
+    "turnstile_token",
+    "heard_from",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
 }
 
 

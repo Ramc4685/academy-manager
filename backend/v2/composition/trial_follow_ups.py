@@ -68,8 +68,11 @@ class TrialRequestPassedTrials:
     ) -> list[_PassedTrial]:
         out: list[_PassedTrial] = []
         for trial in await self._trials.list_by_status("completed"):
+            # shortcut: website guests (no parent account) get no staff
+            # follow-up here yet; L9 PR B adds the guest path.
             if (
-                trial.outcome != "came"
+                trial.parent_user_id is None
+                or trial.outcome != "came"
                 or trial.linked_application_id
                 or not trial.assigned_occurrence_id
             ):
