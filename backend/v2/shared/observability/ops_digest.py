@@ -150,6 +150,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "send_nurture_steps": timedelta(hours=3),
     # L9 A6-11: website-lead owner alerts re-sent (hourly ticks, once per local day).
     "resend_due_owner_alerts": timedelta(hours=3),
+    # L9 C2: the referral sweep (hourly ticks, once per local day).
+    "process_referrals": timedelta(hours=3),
     # Tap-to-master: evening auto-approval of queued level-ups.
     "auto_approve_level_ups": timedelta(hours=3),
     # Issue #776: the owner's daily brief (hourly ticks, once per local day).

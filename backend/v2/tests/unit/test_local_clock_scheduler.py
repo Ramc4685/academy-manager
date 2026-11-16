@@ -84,6 +84,8 @@ OLD_CRON_TIMES = {
     "send_nurture_steps": (10, 25),
     # L9 A6-11, academy-local from the start.
     "resend_due_owner_alerts": (9, 40),
+    # L9 C2, academy-local from the start.
+    "process_referrals": (6, 15),
 }
 
 #: The zone the OLD code used for each academy. Every fixed-hour cron ran in

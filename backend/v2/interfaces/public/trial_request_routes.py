@@ -250,6 +250,7 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
                 "utm_source": body.utm_source,
                 "utm_medium": body.utm_medium,
                 "utm_campaign": body.utm_campaign,
+                "referral_code": body.referral_code,
             },
         )
         if result.field_errors or result.contact is None:

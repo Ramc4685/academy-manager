@@ -96,11 +96,12 @@ SiblingAppliesTo = Literal["all_classes", "one_class_per_child"]
 
 
 class ReferralProgram(BaseModel):
-    """Family offers: the referral programme (L9 C1 stores it; C2 builds the logic).
+    """Family offers: the referral programme (L9 C1 stores it; C2 runs it).
 
     Off unless the owner switches it on. Every value is the owner's: there are
-    no numeric defaults here, only ``None`` = "not set". Bounds live in
-    ``UpdateFamilyOffers``, which refuses switching it on until C2.
+    no numeric defaults here, only ``None`` = "not set". Bounds and the
+    switch-on rules live in ``UpdateFamilyOffers``; the daily sweep is
+    ``ProcessReferrals``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -113,6 +114,19 @@ class ReferralProgram(BaseModel):
     #: ``None`` = credits never expire.
     credit_expiry_days: int | None = None
     trigger: ReferralTrigger | None = None
+    #: Server-stamped each time the programme is switched on; only families
+    #: referred at or after it count, so a change applies going forward only.
+    effective_from: datetime | None = None
+
+
+#: Fields the referral programme needs before it can be switched on. The new
+#: family's credit is optional (``None`` = only the referring family earns).
+REFERRAL_REQUIRED_ON_ENABLE: tuple[str, ...] = (
+    "referrer_credit_cents",
+    "hold_days",
+    "max_rewards_per_referrer_per_year",
+    "trigger",
+)
 
 
 class SiblingDiscount(BaseModel):

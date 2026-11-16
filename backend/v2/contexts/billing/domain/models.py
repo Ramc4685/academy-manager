@@ -31,6 +31,8 @@ CreditEntryType = Literal[
     "CREDIT_VOIDED",
     # Issue #671: one dated class was cancelled after the month was priced.
     "CLASS_CANCELLATION_CREDIT",
+    # L9 C2: a referral reward (either family); see domain.referral.
+    "REFERRAL_CREDIT",
 ]
 CreditStatus = Literal["PENDING", "APPROVED", "APPLIED", "EXPIRED", "VOIDED"]
 AutopayConsentSource = Literal[

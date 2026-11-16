@@ -72,6 +72,7 @@ from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
 from backend.v2.composition.push import _build_push_sender
+from backend.v2.composition.referrals import compose_referrals
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
@@ -354,6 +355,8 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "send_nurture_steps": LocalDailyTime(10, 25),
     # L9 A6-11: website-lead owner alerts whose background send never landed.
     "resend_due_owner_alerts": LocalDailyTime(9, 40),
+    # L9 C2: the referral sweep (records, qualifies and grants referrals).
+    "process_referrals": LocalDailyTime(6, 15),
     "send_trial_reminders": LocalDailyTime(16, 0),
     # Monthly report card: the job runs daily but only sends on the 1st.
     "send_parent_report_cards": LocalDailyTime(9, 0),
@@ -565,6 +568,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # the contact row, so an extra run sends nothing.
     "resend_due_owner_alerts": {
         "schedule": {"type": "crontab", "value": "40 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # L9 C2: the referral sweep; a no-op while the programme is off, and every
+    # write is exactly-once, so an extra run grants nothing twice.
+    "process_referrals": {
+        "schedule": {"type": "crontab", "value": "15 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -1116,6 +1126,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_overdue_families = compose_overdue_families(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
     app.state.admin_family_offers = compose_admin_family_offers(db)
+    app.state.referrals = compose_referrals(db)
     app.state.admin_payment_methods = compose_admin_payment_methods(db)
     # Pricing page under Money (Settings overhaul PR 11b).
     app.state.admin_pricing = compose_admin_pricing(db)
@@ -1541,6 +1552,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "resend_due_owner_alerts",
             lambda *, academy_id, local_now: notifier.send_due_alerts(academy_id=academy_id),
         )
+
+    async def _process_referrals() -> None:
+        await _run_leased_job("process_referrals", timedelta(minutes=5), _process_referrals_body)
+
+    async def _process_referrals_body() -> None:
+        totals = {"academy_count": 0, "recorded": 0, "qualified": 0, "granted": 0}
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            run = await app.state.referrals.process.execute()
+            totals["academy_count"] += 1
+            totals["recorded"] += run.recorded
+            totals["qualified"] += run.qualified
+            totals["granted"] += run.granted
+
+        await _run_local_daily("process_referrals", _for_academy)
+        if totals["recorded"] or totals["qualified"] or totals["granted"]:
+            log.info("referrals_processed", extra=totals)
 
     async def _auto_approve_level_ups() -> None:
         await _run_leased_job(
@@ -2282,6 +2310,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         minute=LOCAL_DAILY_JOBS["resend_due_owner_alerts"].minute,
         timezone=UTC,
         id="resend_due_owner_alerts",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _process_referrals,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["process_referrals"].minute,
+        timezone=UTC,
+        id="process_referrals",
         replace_existing=True,
         max_instances=1,
     )

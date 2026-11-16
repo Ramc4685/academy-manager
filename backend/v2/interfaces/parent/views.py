@@ -27,6 +27,8 @@ class ParentProfileView(BaseModel):
     email: str | None = None
     phone: str = ""
     heard_from: str = Field(default="", max_length=80, pattern=r"^[A-Za-z0-9_.-]*$")
+    #: L9 C2: the referral code the family arrived with (same token rule).
+    referral_code: str = Field(default="", max_length=80, pattern=r"^[A-Za-z0-9_.-]*$")
 
 
 class ChildProfileView(BaseModel):

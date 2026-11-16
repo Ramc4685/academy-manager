@@ -219,6 +219,8 @@ class PublicTrialFormRequest(BaseModel):
     utm_source: str | None = None
     utm_medium: str | None = None
     utm_campaign: str | None = None
+    #: L9 C2: the ``?ref=`` code from a family's shared link (same rule).
+    referral_code: str | None = None
 
 
 #: Every model the public persona can serialise, for the no-leak test.

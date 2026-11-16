@@ -18,6 +18,7 @@ from .pause_routes import router as pause_router
 from .payment_routes import router as payment_router
 from .profile_routes import router as profile_router
 from .progress_skill_routes import router as progress_skill_router
+from .referral_routes import router as referral_router
 from .schedule_routes import router as schedule_router
 from .self_cancel_routes import router as self_cancel_router
 from .session_routes import router as session_router
@@ -40,6 +41,7 @@ router.include_router(onboarding_router)
 router.include_router(pause_router)
 router.include_router(payment_router)
 router.include_router(profile_router)
+router.include_router(referral_router)
 router.include_router(schedule_router)
 router.include_router(self_cancel_router)
 router.include_router(session_router)

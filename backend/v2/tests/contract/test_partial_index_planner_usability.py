@@ -228,6 +228,17 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
         {"academy_id": "acad_0", "enrollment_id": "enr-1", "period": "2026-09"},
         {"sibling_decision_enrollment_period_unique"},
     ),
+    # L9 C2 referrals (migration 0238): code -> referrer, and the parent's code.
+    (
+        "referral_codes",
+        {"academy_id": "acad_0", "referral_code": "QZ7KX4MP"},
+        {"referral_code_unique"},
+    ),
+    (
+        "referral_codes",
+        {"academy_id": "acad_0", "parent_id": "p-1"},
+        {"referral_code_parent_unique"},
+    ),
     # ...and its sibling lookup: one $in of parent aliases per student field.
     (
         "students",

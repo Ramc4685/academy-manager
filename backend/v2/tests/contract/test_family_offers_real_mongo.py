@@ -4,7 +4,8 @@ The real route, use case, settings repository and audit log, driven through
 httpx's ASGI transport in the test's own event loop (so Motor and the tenant
 ContextVar both work). Proves: every field is stored and read back as sent,
 each bound returns a 422 naming the field, enabling the sibling discount needs
-every field, referrals cannot be switched on until C2, each change leaves one
+every field, switching referrals on needs its fields and stamps
+``effective_from`` server side (never from the request), each change leaves one
 audit row with the whole block before and after, other settings writes cannot
 clobber the blocks, and a non-owner admin gets 404.
 """
@@ -165,25 +166,49 @@ async def test_switching_the_sibling_discount_on_needs_every_field(owner, missin
     assert response.json()["detail"]["field"] == f"sibling_discount.{missing}"
 
 
-async def test_referrals_cannot_be_switched_on_until_c2(owner, real_db) -> None:
-    refused = await owner.put(ROUTE, json={"referral_program": {**REFERRAL_FULL, "enabled": True}})
-    assert refused.status_code == 422
-    assert refused.json()["detail"]["field"] == "referral_program.enabled"
+@pytest.mark.parametrize(
+    "missing",
+    ["referrer_credit_cents", "hold_days", "max_rewards_per_referrer_per_year", "trigger"],
+)
+async def test_switching_referrals_on_needs_every_required_field(
+    owner, real_db, missing: str
+) -> None:
+    patch = {**REFERRAL_FULL, "enabled": True}
+    patch.pop(missing)
+    response = await owner.put(ROUTE, json={"referral_program": patch})
+    assert response.status_code == 422
+    assert response.json()["detail"]["field"] == f"referral_program.{missing}"
     assert await real_db["billing_settings"].count_documents({}) == 0
-    assert await real_db["billing_audit_log"].count_documents({}) == 0
 
+
+async def test_switching_referrals_on_stamps_effective_from_once(owner, real_db) -> None:
     stamp = await owner.put(
         ROUTE, json={"referral_program": {"effective_from": "2020-01-01T00:00:00Z"}}
     )
     assert stamp.status_code == 422
 
-    # The values themselves are stored, switched off and never stamped.
+    # Stored switched off: never stamped.
     saved = await owner.put(ROUTE, json={"referral_program": REFERRAL_FULL})
     assert saved.status_code == 200, saved.text
     stored = (await _stored(real_db))["referral_program"]
     assert stored["enabled"] is False
-    assert "effective_from" not in stored
-    assert stored["hold_days"] == REFERRAL_FULL["hold_days"]
+    assert stored.get("effective_from") is None
+
+    # The new family's credit is optional.
+    on = await owner.put(
+        ROUTE,
+        json={"referral_program": {"enabled": True, "referred_credit_cents": None}},
+    )
+    assert on.status_code == 200, on.text
+    first = (await _stored(real_db))["referral_program"]["effective_from"]
+    assert first is not None
+
+    # A later edit while on keeps the stamp; off and on again restamps.
+    await owner.put(ROUTE, json={"referral_program": {"hold_days": 3}})
+    assert (await _stored(real_db))["referral_program"]["effective_from"] == first
+    await owner.put(ROUTE, json={"referral_program": {"enabled": False}})
+    await owner.put(ROUTE, json={"referral_program": {"enabled": True}})
+    assert (await _stored(real_db))["referral_program"]["effective_from"] >= first
 
 
 async def test_each_change_leaves_one_audit_row_with_the_whole_block(owner, real_db) -> None:
@@ -213,7 +238,7 @@ async def test_each_change_leaves_one_audit_row_with_the_whole_block(owner, real
     assert sibling_row["after"] == SIBLING_ON
     assert referral_row["before"]["hold_days"] is None
     assert referral_row["after"]["hold_days"] == 14
-    assert set(referral_row["after"]) == set(REFERRAL_FULL) | {"enabled"}
+    assert set(referral_row["after"]) == set(REFERRAL_FULL) | {"enabled", "effective_from"}
 
 
 async def test_another_settings_save_cannot_put_back_a_stale_block(owner, real_db) -> None:
