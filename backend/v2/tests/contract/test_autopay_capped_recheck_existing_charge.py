@@ -108,6 +108,7 @@ async def test_a_processing_debit_found_on_recheck_parks_without_charging(real_d
             "status": "processing",
             "amount": 10_000,
             "currency": "usd",
+            "latest_charge": {"id": "ch_ach", "refunded": False, "amount_refunded": 0},
             "metadata": {
                 "academy_id": ACAD,
                 "parent_id": PARENT,
@@ -182,6 +183,7 @@ def _seed_pi(stripe: FakeStripeGateway, **overrides: Any) -> None:
         "status": "succeeded",
         "amount": 10_000,
         "currency": "usd",
+        "latest_charge": {"id": "ch_found", "refunded": False, "amount_refunded": 0},
         "metadata": {
             "academy_id": ACAD,
             "parent_id": PARENT,
@@ -202,6 +204,7 @@ def _seed_pi(stripe: FakeStripeGateway, **overrides: Any) -> None:
         ),
         pytest.param({"latest_charge": {"id": "ch_1", "disputed": True}}, id="disputed"),
         pytest.param({"amount": 4_000}, id="amount-differs"),
+        pytest.param({"latest_charge": "ch_unexpanded"}, id="charge-not-expanded"),
         pytest.param(
             {
                 "metadata": {
@@ -254,3 +257,30 @@ async def test_a_found_charge_that_leaves_a_balance_is_not_reported_paid(real_db
 
     assert not result.success
     assert stripe.off_session_payment_intents == []
+
+
+async def test_a_lost_charge_is_not_recharged_after_a_non_technical_park(real_db, acad) -> None:
+    """A lost answer, then a no-card park (which clears the technical clock),
+    then a new card a day later: the retry must still look for the first charge."""
+    await _seed(real_db, "inv-a")
+    stripe = _CrashOnceStripe()
+
+    first = await _tick(real_db, stripe, FakeOutbox())
+    assert first.technical_failures == 1
+    assert len(stripe.off_session_payment_intents) == 1  # Stripe took the money
+
+    stripe.saved_cards.clear()  # card removed in the Billing Portal
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(hours=1))
+    state = await real_db["dunning_states"].find_one({"invoice_id": "inv-a"})
+    assert state["suppression_reason"] == "no_saved_payment_method"
+    assert state.get("technical_parked_since") is None
+    assert state["parked_since"] is not None  # survives the second park and re-claim
+
+    stripe.seed_saved_card(
+        academy_id=ACAD, parent_id=PARENT, customer_id="cus_fam", payment_method_id="pm_new"
+    )
+    stripe.expire_idempotency_keys()
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(hours=25))
+
+    assert len(stripe.off_session_payment_intents) == 1
+    assert (await _invoice(real_db, "inv-a"))["status"] == "paid"

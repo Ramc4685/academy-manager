@@ -217,9 +217,9 @@ def _why_not_settleable(pi: dict[str, Any], total_cents: int) -> str | None:
     if int(pi.get("amount") or 0) != total_cents:
         return f"its amount {pi.get('amount')} is not the {total_cents} due"
     charge = pi.get("latest_charge")
-    if isinstance(charge, dict) and (
-        charge.get("refunded") or charge.get("amount_refunded") or charge.get("disputed")
-    ):
+    if not isinstance(charge, dict):
+        return "its charge was not expanded, so refunds cannot be ruled out"
+    if charge.get("refunded") or charge.get("amount_refunded") or charge.get("disputed"):
         return "its charge was refunded or disputed"
     return None
 

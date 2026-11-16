@@ -725,8 +725,10 @@ def _failure_code(result: dict[str, Any]) -> str | None:
 
 
 def _key_may_be_forgotten(state: DunningState, now: datetime) -> bool:
-    """A rung technically parked for TECHNICAL_PARK_CAP or more is retried with
-    an idempotency key Stripe may have forgotten (it keeps them 24h), so an
-    earlier attempt that did charge would be charged again."""
-    since = state.technical_parked_since
+    """A rung parked for TECHNICAL_PARK_CAP or more is retried with an idempotency
+    key Stripe may have forgotten (it keeps them 24h), so an earlier attempt that
+    did charge would be charged again. ``parked_since``, not the technical clock:
+    a later non-technical park (say, no saved card) clears that one, while
+    ``parked_since`` survives every park and re-claim until the rung finishes."""
+    since = state.parked_since
     return since is not None and now - since >= TECHNICAL_PARK_CAP

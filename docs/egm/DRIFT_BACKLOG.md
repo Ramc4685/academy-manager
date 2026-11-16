@@ -50,7 +50,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [contract] README:46,49 describe `application/use_cases/`; identity (the canonical example, README:55) keeps most use cases directly in `application/`.
 - [wording] Platform, student and owner routers mount behind settings flags, not always under `/api/v2`.
 - [stale-not-built] README:29 promises event-rules checks in `tests/structural`; no such test exists.
-- [undocumented] README:18 does not mention the `shared/idempotency` claim/release protocol or `IdempotentRequestInFlight` (409 `request_in_flight`), or the 5-minute stale-claim takeover in `mongo_store.py`.
+- [undocumented] README:18 does not mention the `shared/idempotency` claim/release protocol or `IdempotentRequestInFlight` (409 `request_in_flight`), the 5-minute stale-claim takeover, or the owner token `release(key, token)` and replay-on-duplicate-put in `mongo_store.py` / `decorator.py`.
 - [undocumented] README:14 does not mention the dispatcher's throttled failure warning plus gated `capture_exception` (`dispatcher.py:134-152`).
 - [undocumented] README:22,52 does not mention migration `0240_audit_logs_audit_id_unique` (unique partial index on `audit_logs (academy_id, audit_id)`).
 
