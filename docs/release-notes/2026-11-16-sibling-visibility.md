@@ -1,6 +1,6 @@
 # sibling-visibility
 
-PR: TBD
+PR: #1197
 
 ## What changed
 Sibling families are marked whatever the billing says: a "Siblings · N" chip on the Families list and the family header (two or more children with an active, held or paused class), and "Sibling of <name>" links on the student page. With the sibling discount on and two or more children on active or paused classes, the badge no longer goes blank: a month already invoiced without the discount previews next month ("From December: …"), and a class the monthly run does not invoice says why (marked No charge, tuition waived, paused, deferred, no class fee …). The family Billing tab always shows a sibling line for such a family.
