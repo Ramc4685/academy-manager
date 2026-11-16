@@ -77,6 +77,10 @@ async function stubAdminAcademy(page: Page) {
   await page.route("**/api/v2/admin/inbox/counts", (route) =>
     fulfillJson(route, { counts: {}, total: 0 }),
   );
+  // The Payment risk tile reads academy-wide overdue counts (L2 B2).
+  await page.route("**/api/v2/admin/payments/overdue-families", (route) =>
+    fulfillJson(route, { past_due_count: 0, needs_action_count: 0 }),
+  );
 }
 
 

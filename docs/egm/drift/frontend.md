@@ -1,15 +1,11 @@
 ## frontend/README.md
 
-- [stale-not-built] README.md:58 says CI reports the size-limit gate with `continue-on-error: true`; no workflow in `.github/workflows/*.yml` runs `pnpm size` (or `lhci`). Only the `size-limit` config exists at `frontend/package.json:73-90`.
-- [stale-not-built] README.md:28 says no generated snapshot is committed under `lib/api/generated/`, but `frontend/lib/api/generated/v2.d.ts` and `frontend/lib/api/openapi.snapshot.json` are both committed. `frontend/lib/api/README.md:13-14` repeats the old claim.
-- [contract] README.md:3, :10 say Next.js 15, but `frontend/package.json:37` pins `next` 16.4.6. The build uses `next build --webpack` (`package.json:7`) and the dev script uses `--turbopack` (`package.json:6`).
-- [stale-not-built] README.md:40-41 lists `public/icons/` as 180/192/256/512/maskable and `public/splash/` for iOS splash screens. `frontend/public/icons/` has only 192, 256, 512 and maskable, with no 180 icon. `frontend/public/splash/` does not exist.
-- [missing] README.md:34 lists `components/ui/` (touch-sized primitives), but `frontend/components/ui` does not exist. `components/ds/` is the nearest match.
-- [undocumented] README.md:21-25 documents four route groups. `frontend/app/` also has `(owner)`, `(platform)`, `(student)` and `(shared)`, each with its own `layout.tsx`.
-- [undocumented] README.md:20-42 omits several top-level code areas: `frontend/middleware.ts`, `frontend/e2e/`, `frontend/app/sw.ts` (the Serwist worker), `frontend/open-next.config.ts` and `wrangler.jsonc` (Cloudflare/OpenNext deploy), and the `lib/admin`, `lib/coach`, `lib/parent` and `lib/design` folders. It also omits `components/` subfolders such as `calendar`, `ds`, `teaching`, `pathway` and others.
-- [wording] README.md:52 says the admin shell has the calendar dynamic-imported. The dynamic import is in `frontend/app/(admin)/admin/sessions/page.tsx:45`, not in `frontend/app/(admin)/layout.tsx`.
-- [wording] README.md:14 says Firebase `firebase/auth` only. `frontend/lib/auth/firebase.ts` also imports `firebase/app`.
-- [wording] README.md:12 lists Tailwind + Radix. `frontend/package.json:27-28` has only `@radix-ui/react-dialog` and `react-slot`. Tailwind is v4 (`package.json:68`).
-- [wording] README.md:86 says `pnpm typecheck` is `tsc --noEmit`. It is actually `next typegen && tsc --noEmit` (`frontend/package.json:13`).
-- [wording] README.md:88 says `pnpm generate:api` regenerates `lib/api/generated/v2.d.ts` from the committed snapshot. This matches `package.json:16`, but contradicts README.md:28.
-- [wording] README.md:22 lists the public landing page under `(marketing)/`. The landing page is `frontend/app/page.tsx` (root, outside any group); `(marketing)` holds login, register, legal and auth pages.
+- [wording] README:3,10 say "Next.js 15"; `frontend/package.json:37` pins `next` 16.4.6.
+- [wording] README:14 says "modular `firebase/auth` only"; `frontend/lib/auth/firebase.ts` also imports `firebase/app`.
+- [stale-not-built] README:28 says no OpenAPI snapshot is committed under `lib/api/generated`; `frontend/lib/api/generated/v2.d.ts` and `frontend/lib/api/openapi.snapshot.json` are committed, and `.github/workflows/production.yml:312` (OpenAPI drift check) enforces them. README:88 correctly describes the snapshot, so the two lines contradict each other.
+- [stale-not-built] README:34 lists `components/ui/` (touch-sized primitives); the directory does not exist. Primitives live in `frontend/components/ds/` (`ds/index.ts`).
+- [stale-not-built] README:41 lists `public/splash/` (iOS splash screens); `frontend/public/splash` does not exist (`frontend/public` has only `favicon.ico`, `icons/`, `manifest.webmanifest`).
+- [stale-not-built] README:54-58 says CI reports the size-limit gate with `continue-on-error: true`; no workflow under `.github/` runs `pnpm size` or `lhci` (see `.github/workflows/production.yml` frontend job). The `size-limit` config exists at `frontend/package.json:73-92`, with a 360 KB limit on each of the three chunks.
+- [undocumented] README:21-25 lists four route groups; `frontend/app/` also has `(owner)`, `(platform)`, `(student)` and `(shared)`, each with its own `layout.tsx`.
+- [undocumented] README:33-37 lists `components/ui|coach|parent|admin`; `frontend/components/` also has `ds`, `calendar`, `public-page`, `marketing`, `messages`, `pathway`, `persona`, `progress`, `skills`, `teaching`, `waivers`, `announcements`, `observability` and `shared`.
+- [undocumented] README:26-32 lists five `lib/` subfolders; `frontend/lib/` also has `admin`, `coach`, `parent`, `design`, `format`, `navigation`, `observability`, `public-page`, `tenant`, `time`, `ui` and `waivers`, plus many top-level modules.
