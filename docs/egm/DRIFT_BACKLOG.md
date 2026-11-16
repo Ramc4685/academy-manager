@@ -41,6 +41,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [missing] Identity (the canonical example) and several other contexts have no `domain/events.py`.
 - [contract] README:46,49 describe `application/use_cases/`; identity (the canonical example, README:55) keeps most use cases directly in `application/`.
 - [wording] Platform, student and owner routers mount behind settings flags, not always under `/api/v2`.
+- [stale-not-built] README:29 promises event-rules checks in `tests/structural`; no such test exists.
 
 ## `frontend/README.md`: 18 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.

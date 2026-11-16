@@ -20,7 +20,11 @@ from backend.v2.contexts.student_progress.application.errors import (
     LevelNotConfigured,
     LevelUpInProgress,
     PassNeedsLeadCoach,
+    SkillAlreadyPassed,
     SkillNotOnCurrentLevel,
+)
+from backend.v2.contexts.student_progress.application.use_cases.auto_approve_level_ups import (
+    AutoApproveLevelUps,
 )
 from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
     MarkSkillMastered,
@@ -44,6 +48,10 @@ from backend.v2.contexts.student_progress.application.use_cases.review_level_up 
 from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
     UnmarkSkillMastered,
     UnmarkSkillMasteredCommand,
+)
+from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
+    UpdateSkillStatus,
+    UpdateSkillStatusCommand,
 )
 from backend.v2.contexts.student_progress.domain.models import LevelUpRecommendation
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
@@ -755,3 +763,64 @@ async def test_an_assistant_cannot_undo_or_fail_a_lead_coach_pass(real_db: Any) 
     assert kept is not None and kept.status == "PASSED"
     assert attempts == 1  # the refused failing test wrote nothing
     assert undone is not None and undone.status == "PRACTICING"
+
+
+async def test_a_status_write_never_lands_on_a_pass_made_after_its_read(real_db: Any) -> None:
+    """A tap passes the skill between UpdateSkillStatus's read and its write."""
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        repo = w["skill_progress"]
+        read = repo.get
+
+        async def read_then_tap(student_id: str, skill_id: str) -> Any:
+            row = await read(student_id, skill_id)
+            repo.get = read  # the tap below reads normally
+            await _pass(w, skill_id)
+            return row
+
+        repo.get = read_then_tap
+        status = UpdateSkillStatus(
+            level_progress=w["level_progress"], skill_progress=repo, skill_lookup=w["lookup"]
+        )
+        with pytest.raises(SkillAlreadyPassed):
+            await status.execute(
+                UpdateSkillStatusCommand(
+                    student_id="kid",
+                    skill_id="s1",
+                    program_id="prog",
+                    new_status="PRACTICING",
+                    updated_by="coach",
+                )
+            )
+        row = await repo.get("kid", "s1")
+
+    assert row is not None and row.status == "PASSED"
+
+
+async def test_auto_approve_hands_a_level_up_into_a_retired_level_to_the_owner(
+    real_db: Any,
+) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await _pass(w, "s1")
+        await _pass(w, "s2")
+        await _rec(w)
+        await real_db["skill_levels"].update_one({"level_id": "L3"}, {"$set": {"is_active": False}})
+
+        async def display(_: str) -> dict[str, object]:
+            return {}
+
+        result = await AutoApproveLevelUps(
+            recommendations=w["recs"],
+            skill_progress=w["skill_progress"],
+            skill_lookup=w["lookup"],
+            review_level_up=w["review"],
+        ).execute(display)
+        rec = await w["recs"].get("rec-1")
+
+    assert (result.approved, result.needs_owner, result.skipped) == (0, 1, 0)
+    assert rec is not None and rec.status == "RECOMMENDED"

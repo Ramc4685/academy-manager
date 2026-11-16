@@ -100,13 +100,27 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         return int(doc.get("tries") or 0) if doc else None
 
     async def set_status_unless_passed(
-        self, student_id: str, skill_id: str, status: str, *, at: datetime, by: str
+        self,
+        student_id: str,
+        skill_id: str,
+        status: str,
+        *,
+        at: datetime,
+        by: str,
+        introduced_at: datetime | None = None,
     ) -> bool:
         """Write a non-pass status, but never over a PASSED row: a stale try
         that read before a concurrent pass must not take the pass away."""
         result = await self._update_one(
             {"student_id": student_id, "skill_id": skill_id, "status": {"$ne": "PASSED"}},
-            {"$set": {"status": status, "last_updated_at": at, "last_updated_by": by}},
+            {
+                "$set": {
+                    "status": status,
+                    "last_updated_at": at,
+                    "last_updated_by": by,
+                    **({"introduced_at": introduced_at} if introduced_at else {}),
+                }
+            },
         )
         return bool(result.matched_count == 1)
 

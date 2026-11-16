@@ -231,6 +231,19 @@ class _FakeSkillProgressRepo:
         self.rows[(sp.student_id, sp.skill_id)] = sp
         return True
 
+    async def set_status_unless_passed(
+        self, student_id, skill_id, status, *, at, by, introduced_at=None
+    ):
+        # Mirrors the Mongo filter: never over a PASSED row.
+        row = self.rows.get((student_id, skill_id))
+        if row is None or row.status == "PASSED":
+            return False
+        update = {"status": status, "last_updated_at": at, "last_updated_by": by}
+        if introduced_at:
+            update["introduced_at"] = introduced_at
+        self.rows[(student_id, skill_id)] = row.model_copy(update=update)
+        return True
+
     async def get(self, student_id: str, skill_id: str):
         return self.rows.get((student_id, skill_id))
 

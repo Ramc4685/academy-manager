@@ -229,33 +229,30 @@ class RecordTestAttempt:
                 written = True
         else:
             new_status = "PASSED" if passed else "NEEDS_REVIEW"
-        updated_prog: StudentSkillProgress | None = None
-        if written:
-            pass
-        elif existing_prog is None:
-            updated_prog = StudentSkillProgress(
-                skill_progress_id=str(new_ulid()),
-                academy_id=_resolve_academy_id(),
-                student_id=cmd.student_id,
-                skill_id=cmd.skill_id,
-                level_id=level_id,
-                program_id=cmd.program_id,
-                status=new_status,
-                introduced_at=now,
-                last_updated_at=now,
-                last_updated_by=cmd.coach_id,
-            )
-        else:
-            updated_prog = existing_prog.model_copy(
-                update={
-                    "status": new_status,
-                    "last_updated_at": now,
-                    "last_updated_by": cmd.coach_id,
-                    # A real pass is always announced, even over a silent credit.
-                    "silent": False,
-                }
-            )
-        if updated_prog is not None:
+        if not written:
+            if existing_prog is None:
+                updated_prog = StudentSkillProgress(
+                    skill_progress_id=str(new_ulid()),
+                    academy_id=_resolve_academy_id(),
+                    student_id=cmd.student_id,
+                    skill_id=cmd.skill_id,
+                    level_id=level_id,
+                    program_id=cmd.program_id,
+                    status=new_status,
+                    introduced_at=now,
+                    last_updated_at=now,
+                    last_updated_by=cmd.coach_id,
+                )
+            else:
+                updated_prog = existing_prog.model_copy(
+                    update={
+                        "status": new_status,
+                        "last_updated_at": now,
+                        "last_updated_by": cmd.coach_id,
+                        # A real pass is always announced, even over a silent credit.
+                        "silent": False,
+                    }
+                )
             await self._skill_progress.upsert(updated_prog)
 
         # Check level completion if skill just passed

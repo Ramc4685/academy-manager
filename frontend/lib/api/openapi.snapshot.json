@@ -14833,17 +14833,6 @@
             "default": true,
             "title": "Requires Coach Recommendation",
             "type": "boolean"
-          },
-          "sequence": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sequence"
           }
         },
         "required": [
@@ -15397,17 +15386,6 @@
             ],
             "title": "Scoring Type",
             "type": "string"
-          },
-          "sequence": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sequence"
           }
         },
         "required": [

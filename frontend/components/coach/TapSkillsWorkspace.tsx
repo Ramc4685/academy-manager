@@ -344,6 +344,7 @@ export function TapSkillsWorkspace({
                   <button
                     type="button"
                     disabled={busy}
+                    aria-label={`Undo ${student.student_name}'s last try`}
                     onClick={() =>
                       unmark.mutate({ studentId: student.student_id, skillId: skill.skill_id })
                     }

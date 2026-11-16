@@ -97,9 +97,14 @@ class AutoApproveLevelUps:
                     approved += 1
                 else:  # superseded by a placement: closed, nothing approved
                     skipped += 1
-            except (EnrollmentEnded, LevelNotConfigured, RecommendationAlreadyReviewed) as exc:
-                # Withdrawn student, a retired next level, or the owner/coach
-                # acted first: leave it for the owner.
+            except LevelNotConfigured as exc:
+                # The next level was retired: only the owner can place or reject.
+                log.info(
+                    "auto_level_up_needs_owner", extra={"rec_id": rec.rec_id, "reason": exc.code}
+                )
+                needs_owner += 1
+            except (EnrollmentEnded, RecommendationAlreadyReviewed) as exc:
+                # Withdrawn student, or the owner/coach acted first.
                 log.info("auto_level_up_skipped", extra={"rec_id": rec.rec_id, "reason": exc.code})
                 skipped += 1
         return AutoApproveLevelUpsResult(

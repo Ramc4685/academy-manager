@@ -109,7 +109,21 @@ class UpdateSkillStatus:
                     "last_updated_by": cmd.updated_by,
                 }
             )
-        persisted = await self._skill_progress.upsert(updated)
+            # Conditional write: a tap that passed the skill after our read wins.
+            if not await self._skill_progress.set_status_unless_passed(
+                cmd.student_id,
+                cmd.skill_id,
+                cmd.new_status,
+                at=now,
+                by=cmd.updated_by,
+                introduced_at=None if existing.introduced_at else updated.introduced_at,
+            ):
+                raise SkillAlreadyPassed(
+                    "skill was passed meanwhile; use needs_review to flag regression",
+                    student_id=cmd.student_id,
+                    skill_id=cmd.skill_id,
+                )
+        persisted = await self._skill_progress.upsert(updated) if existing is None else updated
 
         if self._outbox is not None:
             await self._outbox.append(

@@ -39,18 +39,17 @@ class SequencedRepository(TenantScopedRepository):
         shortcut: not atomic; a crash between passes leaves sequences high
         (still ordered) until the next reorder.
         """
-        cursor = self._find_many(
-            {self.id_field: {"$in": ordered_ids}}, sort=[("sequence", -1)], limit=1
-        )
-        top = [int(doc["sequence"]) async for doc in cursor]
-        lift = (top[0] if top else 0) + 1
+        lift = await self._next_sequence({self.id_field: {"$in": ordered_ids}})
         now = datetime.now(UTC)
-        for i, item_id in enumerate(ordered_ids):
-            await self._update_one({self.id_field: item_id}, {"$set": {"sequence": lift + i}})
-        for i, item_id in enumerate(ordered_ids, start=1):
-            await self._update_one(
-                {self.id_field: item_id}, {"$set": {"sequence": i, "updated_at": now}}
-            )
+        try:
+            for i, item_id in enumerate(ordered_ids):
+                await self._update_one({self.id_field: item_id}, {"$set": {"sequence": lift + i}})
+            for i, item_id in enumerate(ordered_ids, start=1):
+                await self._update_one(
+                    {self.id_field: item_id}, {"$set": {"sequence": i, "updated_at": now}}
+                )
+        except DuplicateKeyError as exc:  # a concurrent reorder or create
+            raise DuplicateSequence("the order changed meanwhile; reload and try again") from exc
 
 
 class MongoLevelRepository(SequencedRepository):

@@ -12871,8 +12871,6 @@ export interface components {
              * @default true
              */
             requires_coach_recommendation: boolean;
-            /** Sequence */
-            sequence?: number | null;
         };
         /** CreateMakeupRequestRequest */
         CreateMakeupRequestRequest: {
@@ -13057,8 +13055,6 @@ export interface components {
              * @enum {string}
              */
             scoring_type: "ATTEMPT_BASED" | "CHECKLIST_BASED" | "COACH_APPROVAL" | "RALLY_COUNT" | "TIME_BASED" | "POINTS_BASED";
-            /** Sequence */
-            sequence?: number | null;
         };
         /** CreateSkillNoteBody */
         CreateSkillNoteBody: {

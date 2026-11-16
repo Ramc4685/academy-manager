@@ -63,8 +63,6 @@ class CreateProgramBody(BaseModel):
 
 
 class CreateLevelBody(BaseModel):
-    #: Ignored: the server numbers new levels. Kept so older clients validate.
-    sequence: int | None = None
     name: str
     description: str = ""
     completion_rule: str = "ALL_REQUIRED_SKILLS"
@@ -86,8 +84,6 @@ class UpdateLevelBody(BaseModel):
 
 class CreateSkillBody(BaseModel):
     program_id: str
-    #: Ignored: the server numbers new skills. Kept so older clients validate.
-    sequence: int | None = None
     name: str
     description: str = ""
     is_required: bool = True

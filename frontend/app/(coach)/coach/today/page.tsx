@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
 import { getCoachAiStatus, getCoachToday, listCoachPendingNarratives, type CoachSession } from "@/lib/api/coach";
-import { AI_STATUS_KEY } from "@/lib/coach/progress-narrative";
+import { AI_STATUS_KEY, narrativeDate } from "@/lib/coach/progress-narrative";
 import {
   coachSessionHref,
   isCancelled,
@@ -69,8 +69,9 @@ export default function CoachTodayPage() {
     staleTime: 5 * 60 * 1000,
   });
   const pendingNotes = useQuery({
-    queryKey: queryKeys.coach.pendingNarratives(date),
-    queryFn: () => listCoachPendingNarratives(date),
+    // Same key as the tap workspace's note, so its invalidation reaches this count.
+    queryKey: queryKeys.coach.pendingNarratives(narrativeDate(date)),
+    queryFn: () => listCoachPendingNarratives(narrativeDate(date)),
     enabled: aiStatus.data?.enabled === true,
   });
   const pendingCount = pendingNotes.data?.narratives.length ?? 0;

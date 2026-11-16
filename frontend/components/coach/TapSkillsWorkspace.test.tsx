@@ -94,6 +94,7 @@ describe("TapSkillsWorkspace", () => {
     b.groups[0].students[0].statuses = { grip: passed, rally: { ...practicing, tries: 1 } };
     const out = html(b);
     expect(out.match(/Undo last try/g)).toHaveLength(1);
+    expect(out).toContain('aria-label="Undo Avery Test&#x27;s last try"');
     expect(out).toContain("1 of 3");
   });
 

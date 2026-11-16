@@ -37,6 +37,7 @@ from backend.v2.contexts.student_progress.application.use_cases.recommend_level_
 from backend.v2.shared.tenancy.context import tenant_scope
 from backend.v2.tests.contract.test_curriculum_placement_real_mongo import (
     ACADEMY,
+    AT,
     _Live,
     _pass,
     _place,
@@ -183,3 +184,23 @@ async def test_a_level_a_pending_level_up_targets_counts_as_in_use(real_db: Any)
         into_l1 = await checks.pending_level_ups_into("L1")
 
     assert (into_l3, into_l1) == (1, 0)
+
+
+async def test_a_reorder_racing_a_create_is_a_409_not_a_500(real_db: Any) -> None:
+    """A create lands on the number pass one is about to lift a level to."""
+    await _seed_curriculum(real_db)
+    await real_db["skill_levels"].insert_one(
+        {
+            "academy_id": ACADEMY,
+            "program_id": "prog",
+            "level_id": "L9",
+            "sequence": 4,
+            "name": "Racer",
+            "is_active": True,
+            "created_at": AT,
+            "updated_at": AT,
+        }
+    )
+    with tenant_scope(ACADEMY), pytest.raises(DuplicateSequence):
+        # Lift is max(L1, L3) + 1 = 4, which L9 already holds.
+        await MongoLevelRepository(real_db).resequence(["L3", "L1"])

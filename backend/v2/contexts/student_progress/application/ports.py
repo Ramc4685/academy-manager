@@ -34,7 +34,14 @@ class StudentSkillProgressRepository(Protocol):
     async def insert_if_missing(self, skill_progress: StudentSkillProgress) -> bool: ...
     async def increment_tries(self, student_id: str, skill_id: str, delta: int) -> int | None: ...
     async def set_status_unless_passed(
-        self, student_id: str, skill_id: str, status: str, *, at: datetime, by: str
+        self,
+        student_id: str,
+        skill_id: str,
+        status: str,
+        *,
+        at: datetime,
+        by: str,
+        introduced_at: datetime | None = None,
     ) -> bool: ...
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None: ...
     async def set_coach_note(
