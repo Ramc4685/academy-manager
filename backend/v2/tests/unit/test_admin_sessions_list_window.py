@@ -75,7 +75,7 @@ async def test_all_window_lists_far_future_and_ended_classes_with_a_phase(mongo_
     await mongo_db["academies"].insert_one({"academy_id": ACADEMY, "timezone": "America/Chicago"})
 
     def weekly(hour: int) -> dict[str, Any]:
-        # Distinct times: identical schedules are deduped as one series.
+        # Distinct times keep the rows easy to tell apart in the assertions.
         return {
             "days_of_week": ["Mon", "Wed"],
             "start_time": f"{hour}:00",

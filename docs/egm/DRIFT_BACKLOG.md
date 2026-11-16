@@ -7,7 +7,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] Validate step undersells the job: it also runs real-Mongo contract tests, lint, the OpenAPI drift check, the Worker runtime smoke, real-auth E2E and scripts validation.
 
-## `backend/v2/README.md`: 21 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 22 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -27,6 +27,8 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:49 places `ports.py` as a sibling of `use_cases/` under `application/`; minor.
 - [wording] README mypy command differs from CI's baseline-filter invocation.
 - [wording] README:12 and :46 omit the ai, communications, crm, curriculum, finance, onboarding, platform and student_progress contexts.
+
+- [wording] README cites W1A-02 (nowhere in code); migrations dir has two `0070_*` files despite "one file per index set".
 
 ## `frontend/README.md`: 16 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.

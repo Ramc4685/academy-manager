@@ -15,7 +15,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.v2.interfaces.admin.collections_routes import get_admin_collections
+from backend.v2.interfaces.admin.collections_routes import (
+    get_admin_collections,
+    get_overdue_families,
+)
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
@@ -92,6 +95,11 @@ class FakeCollectionsReader:
         return view
 
 
+class _FakeOverdueFamilies:
+    async def counts(self) -> dict[str, int]:
+        return {"past_due": 2, "needs_action": 3}
+
+
 def _claims(role: str) -> AuthClaims:
     return AuthClaims(
         user_id=f"u-{role}",
@@ -107,6 +115,7 @@ def _make_app(role: str, reader: FakeCollectionsReader) -> FastAPI:
     app.include_router(admin_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: _claims(role)
     app.dependency_overrides[get_admin_collections] = lambda: reader
+    app.dependency_overrides[get_overdue_families] = lambda: _FakeOverdueFamilies()
     return app
 
 
@@ -214,3 +223,14 @@ def test_family_with_no_parent_name_still_renders(
     assert family["parent_id"] == "p-orphan"
     assert family["parent_name"] is None
     assert family["parent_email"] is None
+
+
+def test_admin_gets_overdue_family_counts(admin: TestClient) -> None:
+    resp = admin.get("/api/v2/admin/payments/overdue-families")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"past_due_count": 2, "needs_action_count": 3}
+
+
+def test_overdue_families_is_404_for_a_coach(coach: TestClient) -> None:
+    assert coach.get("/api/v2/admin/payments/overdue-families").status_code == 404
