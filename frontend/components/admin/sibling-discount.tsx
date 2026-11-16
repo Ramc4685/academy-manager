@@ -33,11 +33,11 @@ export function isSiblingFamily(view: FamilySiblingDiscount): boolean {
 function exclusionText(row: SiblingDiscountEnrollment): string {
   switch (row.exclusion) {
     case "billing_type": {
-      const type = (row.billing_type ?? "").toLowerCase();
-      if (type.includes("subscription") || type.includes("autopay")) {
-        return "billed by autopay subscription";
-      }
-      return type ? `billed as ${type.replace(/_/g, " ")}` : "billed outside the monthly run";
+      // The only non-monthly types on record are the importer's NoCharge and Waived.
+      const type = (row.billing_type ?? "").toLowerCase().replace(/[_\s-]/g, "");
+      if (type === "nocharge") return "marked No charge";
+      if (type === "waived") return "tuition waived";
+      return row.billing_type ? `billing type ${row.billing_type}` : "billed outside the monthly run";
     }
     case "paused":
       return "paused this month";
@@ -52,7 +52,7 @@ function exclusionText(row: SiblingDiscountEnrollment): string {
     case "no_class_fee":
       return "the class has no monthly fee";
     default:
-      return "not billed this month";
+      return "left off this month's run";
   }
 }
 
@@ -91,7 +91,7 @@ export function siblingBadgeLabel(
       if (next && label) {
         return `From ${periodMonthName(next.period)}: ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
       }
-      return `${periodMonthName(view.period)} invoiced before the sibling discount`;
+      return `${periodMonthName(view.period)} already invoiced without the sibling discount`;
     }
     case "only_one_child":
       return "No sibling discount: the only child on monthly invoices";
@@ -176,7 +176,7 @@ export function siblingFamilySummary(
 
   if (sentences.length === 0) {
     if (view.enrollments.some((r) => r.reason === "already_invoiced")) {
-      sentences.push(`${periodMonthName(view.period)} was invoiced before the sibling discount.`);
+      sentences.push(`${periodMonthName(view.period)} was already invoiced without the sibling discount.`);
     }
     const next = view.next_period;
     if (next) {
@@ -190,9 +190,12 @@ export function siblingFamilySummary(
       if (parts.length) sentences.push(`From ${periodMonthName(next.period)}: ${parts.join(" · ")}.`);
     }
   }
+  // A child already named above (one class discounted, another excluded) is not
+  // repeated: "Ben: no sibling discount" would contradict "Ben gets 10% off".
+  const named = new Set([...full, ...discounted]);
   const excluded = new Set(
     view.enrollments
-      .filter((r) => r.reason === "not_billed_this_month")
+      .filter((r) => r.reason === "not_billed_this_month" && !named.has(nameOf(r.student_id)))
       .map((r) => `${nameOf(r.student_id)}: not on monthly invoices (${exclusionText(r)}), so no sibling discount.`),
   );
   sentences.push(...excluded);

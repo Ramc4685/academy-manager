@@ -131,7 +131,8 @@ class FamilySiblingDiscountView(BaseModel):
     enabled: bool
     percent_bps: int | None = None
     enrollments: list[SiblingDiscountEnrollmentView]
-    #: The month after ``period``, decided the same way; null while off.
+    #: The month after ``period``, decided the same way, when a row is
+    #: ``already_invoiced``; null otherwise.
     next_period: SiblingDiscountPeriodView | None = None
 
 

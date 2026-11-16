@@ -258,14 +258,14 @@ async def test_a_month_billed_before_the_setting_previews_next_month_without_wri
 async def test_an_enrollment_off_the_monthly_run_names_why(
     admin: httpx.AsyncClient, real_db: Any, acad: str
 ) -> None:
-    """Billed outside the monthly invoices (a non-monthly billing_type) or
+    """Marked No charge (a non-monthly billing_type) or
     paused: the row says which, and the run indeed leaves it uninvoiced."""
     await _family(real_db, acad)
     await _session(real_db, acad, "sess-mid", 9_000)
     await _child(real_db, acad, "stu-c")
     await _enroll(real_db, acad, "enr-c", "stu-c", "sess-mid", status="paused")
     await real_db["enrollments"].update_one(
-        {"enrollment_id": "enr-b"}, {"$set": {"billing_type": "subscription"}}
+        {"enrollment_id": "enr-b"}, {"$set": {"billing_type": "NoCharge"}}
     )
     await _offer(real_db)
 
@@ -275,13 +275,12 @@ async def test_an_enrollment_off_the_monthly_run_names_why(
         "not_billed_this_month",
         "billing_type",
     )
-    assert rows["enr-b"]["billing_type"] == "subscription"
+    assert rows["enr-b"]["billing_type"] == "NoCharge"
     assert (rows["enr-c"]["exclusion"], rows["enr-c"]["billing_type"]) == ("paused", None)
     # Ava is the only child the run invoices, so she gets no sibling discount.
     assert (rows["enr-a"]["reason"], rows["enr-a"]["exclusion"]) == ("only_one_child", None)
-    assert {row["enrollment_id"]: row["exclusion"] for row in body["next_period"]["enrollments"]}[
-        "enr-b"
-    ] == "billing_type"
+    # Nothing this month was already invoiced, so there is no next month to explain.
+    assert body["next_period"] is None
     assert await real_db[SIBLING_DECISIONS_COLLECTION].count_documents({}) == 0
 
     await _repo(real_db).generate_monthly_payments(PERIOD)

@@ -2033,8 +2033,9 @@ async def preview_family_sibling_discount(
     sibling ``percent_bps`` when one was decided. A ``not_billed_this_month``
     row names its ``exclusion`` (``_family_exclusion``) and, for
     ``billing_type``, the enrollment's ``billing_type``. ``next_period``
-    previews the month after (``None`` while the setting is off), so a month
-    invoiced before the setting went on still says what happens next.
+    previews the month after when a row is ``already_invoiced`` (else
+    ``None``), so a month invoiced before the setting went on still says what
+    happens next.
     """
     academy_id = current_academy_id()
     academy_timezone = await _academy_timezone(db) or "UTC"
@@ -2074,14 +2075,17 @@ async def preview_family_sibling_discount(
             for enrollment in enrollments
         ]
 
+    current = await rows_for(period)
+    # Only a month already invoiced needs next month to say what happens.
+    ahead = offer is not None and any(row["reason"] == "already_invoiced" for row in current)
     following = next_period(period)
     return {
         "period": period,
         "enabled": offer is not None,
         "percent_bps": offer[0] if offer else None,
-        "enrollments": await rows_for(period),
+        "enrollments": current,
         "next_period": (
-            {"period": following, "enrollments": await rows_for(following)} if offer else None
+            {"period": following, "enrollments": await rows_for(following)} if ahead else None
         ),
     }
 
@@ -2368,9 +2372,10 @@ SiblingExclusion = Literal[
     "no_class_fee",
 ]
 
+#: ``monthly_skip_reason``'s answers for an active row (its ``paused`` needs a
+#: paused row, which the status check already answered).
 _SKIP_EXCLUSIONS: dict[str, SiblingExclusion] = {
     "deferral": "deferral",
-    "paused": "paused",
     "pending_cancellation": "pending_cancellation",
     "skip_period": "skip_period",
 }
@@ -2379,10 +2384,12 @@ _SKIP_EXCLUSIONS: dict[str, SiblingExclusion] = {
 async def _family_exclusion(
     db: Any, row: Mapping[str, Any], *, period: str, today: date, academy_timezone: str
 ) -> tuple[SiblingExclusion | None, int]:
-    """``(None, class fee)`` when the monthly run invoices this enrollment for
-    ``period``, else ``(why not, 0)``. The run's filters in the run's order:
-    active, a monthly-invoiced ``billing_type``, no ``monthly_skip_reason``, a
-    class fee. The one predicate the sibling family and the badge share."""
+    """``(None, class fee)`` when the enrollment is in ``period``'s sibling
+    family, else ``(why not, 0)``: active, a monthly-invoiced
+    ``billing_type``, no ``monthly_skip_reason``, a class fee, in the order
+    ``_sibling_family`` always checked them (the run checks the skip first;
+    membership is the same, only the reported reason differs when both
+    apply). The one predicate the sibling family and the badge share."""
     status = str(row.get("status") or "")
     if status != MONTHLY_INVOICED_ENROLLMENT_STATUS:
         return ("paused" if status == "paused" else "not_active"), 0

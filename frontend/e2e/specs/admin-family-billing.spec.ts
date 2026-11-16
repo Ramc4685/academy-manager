@@ -469,7 +469,7 @@ test.describe("Family billing", () => {
           row("enr-hannah", "stu-hannah", {
             reason: "not_billed_this_month",
             exclusion: "billing_type",
-            billing_type: "subscription",
+            billing_type: "NoCharge",
           }),
         ],
         next_period: { period: "2026-10", enrollments: [] },
@@ -477,7 +477,7 @@ test.describe("Family billing", () => {
     });
     await expect(page.getByTestId("family-siblings-parent-1")).toHaveText("Siblings · 2");
     await expect(page.getByTestId("admin-family-sibling-summary")).toHaveText(
-      "September was invoiced before the sibling discount. Hannah: not on monthly invoices (billed by autopay subscription), so no sibling discount.",
+      "September was already invoiced without the sibling discount. Hannah: not on monthly invoices (marked No charge), so no sibling discount.",
     );
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });

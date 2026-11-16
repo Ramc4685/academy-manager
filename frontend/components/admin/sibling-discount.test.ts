@@ -152,7 +152,7 @@ function invoicedBeforeSetting(): FamilySiblingDiscount {
   };
 }
 
-/** Ava on monthly invoices, Ben billed by an autopay subscription. */
+/** Ava on monthly invoices, Ben marked No charge. */
 function oneChildOffTheRun(): FamilySiblingDiscount {
   return {
     period: "2026-11",
@@ -160,13 +160,13 @@ function oneChildOffTheRun(): FamilySiblingDiscount {
     percent_bps: 1000,
     enrollments: [
       row({ enrollment_id: "enr-a", student_id: "stu-a", status: "not_eligible", reason: "already_invoiced", percent_bps: null }),
-      row({ status: "not_eligible", reason: "not_billed_this_month", percent_bps: null, exclusion: "billing_type", billing_type: "subscription" }),
+      row({ status: "not_eligible", reason: "not_billed_this_month", percent_bps: null, exclusion: "billing_type", billing_type: "NoCharge" }),
     ],
     next_period: {
       period: "2026-12",
       enrollments: [
         row({ enrollment_id: "enr-a", student_id: "stu-a", status: "not_eligible", reason: "only_one_child", percent_bps: null }),
-        row({ status: "not_eligible", reason: "not_billed_this_month", percent_bps: null, exclusion: "billing_type", billing_type: "subscription" }),
+        row({ status: "not_eligible", reason: "not_billed_this_month", percent_bps: null, exclusion: "billing_type", billing_type: "NoCharge" }),
       ],
     },
   };
@@ -191,21 +191,21 @@ describe("a switched-on sibling family never goes silent", () => {
       "From December: sibling discount 10% (automatic)",
     );
     expect(siblingFamilySummary(view, nameOf)).toBe(
-      "November was invoiced before the sibling discount. From December: Ava pays full price · Ben 10% off.",
+      "November was already invoiced without the sibling discount. From December: Ava pays full price · Ben 10% off.",
     );
   });
 
   it("says plainly why a class is off the monthly invoices", () => {
     const view = oneChildOffTheRun();
     expect(siblingBadgeLabel(view.enrollments[1], view)).toBe(
-      "Not on monthly invoices: billed by autopay subscription, so no sibling discount",
+      "Not on monthly invoices: marked No charge, so no sibling discount",
     );
     // Next month has nothing to promise Ava, so her badge says November was billed.
     expect(siblingBadgeLabel(view.enrollments[0], view)).toBe(
-      "November invoiced before the sibling discount",
+      "November already invoiced without the sibling discount",
     );
     expect(siblingFamilySummary(view, nameOf)).toBe(
-      "November was invoiced before the sibling discount. Ben: not on monthly invoices (billed by autopay subscription), so no sibling discount.",
+      "November was already invoiced without the sibling discount. Ben: not on monthly invoices (marked No charge), so no sibling discount.",
     );
   });
 
@@ -214,9 +214,10 @@ describe("a switched-on sibling family never goes silent", () => {
     const label = (over: Partial<SiblingDiscountEnrollment>) =>
       siblingBadgeLabel(row({ status: "not_eligible", reason: "not_billed_this_month", percent_bps: null, ...over }), view);
     expect(label({ exclusion: "paused" })).toBe("Not on monthly invoices: paused this month, so no sibling discount");
-    expect(label({ exclusion: "billing_type", billing_type: "prepaid_term" })).toBe(
-      "Not on monthly invoices: billed as prepaid term, so no sibling discount",
+    expect(label({ exclusion: "billing_type", billing_type: "Waived" })).toBe(
+      "Not on monthly invoices: tuition waived, so no sibling discount",
     );
+    expect(label({ exclusion: "billing_type", billing_type: "Prepaid" })).toContain("billing type Prepaid");
     expect(label({ exclusion: "deferral" })).toContain("billing deferred this month");
     expect(label({ exclusion: "pending_cancellation" })).toContain("cancels before this month");
     expect(label({ exclusion: "skip_period" })).toContain("skipped this month");
@@ -227,6 +228,26 @@ describe("a switched-on sibling family never goes silent", () => {
     );
     expect(siblingBadgeLabel(row({ status: "not_eligible", reason: "one_class_per_child" }), view)).toBe(
       "No sibling discount on this class (one class per child)",
+    );
+  });
+
+  it("does not contradict a child already discounted on another class", () => {
+    const view: FamilySiblingDiscount = {
+      period: "2026-11",
+      enabled: true,
+      percent_bps: 1000,
+      next_period: null,
+      enrollments: [
+        row({ enrollment_id: "enr-a", student_id: "stu-a", status: "full_price", reason: "full_price_child", percent_bps: null }),
+        row(),
+        row({ enrollment_id: "enr-b2", status: "not_eligible", reason: "not_billed_this_month", percent_bps: null, exclusion: "paused" }),
+      ],
+    };
+    expect(siblingFamilySummary(view, nameOf)).toBe(
+      "Sibling discount this month: Ava pays full price; Ben gets 10% off.",
+    );
+    expect(siblingBadgeLabel(row({ status: "not_eligible", reason: "not_billed_this_month", exclusion: null }), view)).toBe(
+      "Not on monthly invoices: left off this month's run, so no sibling discount",
     );
   });
 
@@ -243,7 +264,7 @@ describe("a switched-on sibling family never goes silent", () => {
     const parsed = parseFamilySiblingDiscount(oneChildOffTheRun());
     expect(parsed?.next_period?.period).toBe("2026-12");
     expect(parsed?.enrollments[1].exclusion).toBe("billing_type");
-    expect(parsed?.enrollments[1].billing_type).toBe("subscription");
+    expect(parsed?.enrollments[1].billing_type).toBe("NoCharge");
     expect(parseFamilySiblingDiscount({ enabled: true, enrollments: [], next_period: { period: 7 } })?.next_period).toBeNull();
   });
 });

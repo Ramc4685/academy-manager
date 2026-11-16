@@ -302,7 +302,7 @@ export interface SiblingDiscountPeriod {
 export interface FamilySiblingDiscount extends SiblingDiscountPeriod {
   enabled: boolean;
   percent_bps: number | null;
-  /** The month after `period`, decided the same way; null while the setting is off. */
+  /** The month after `period`, decided the same way, when a row is `already_invoiced`; else null. */
   next_period: SiblingDiscountPeriod | null;
 }
 
