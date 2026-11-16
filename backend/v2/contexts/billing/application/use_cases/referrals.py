@@ -4,9 +4,13 @@
 and does nothing at all while the programme is off. When on, it:
 
 1. records a referral for every family that arrived with a referral code at
-   or after ``effective_from`` (a converted website inquiry, or an approved
-   registration), keyed by the referred family so it happens once; the
-   owner's credit, hold and expiry are frozen on the row;
+   or after ``effective_from``, keyed by the referred family so it happens
+   once; the owner's credit, hold and expiry are frozen on the row. Only the
+   code on the parent's own approved registration (an authenticated source)
+   is ``pending``. A code seen only on a website inquiry (unauthenticated:
+   anyone can submit it with a family's email) is ``needs_review`` and never
+   auto-grants; the owner approves it (``ApproveReferral``) into ``pending``.
+   A registration code replaces a not-yet-reviewed inquiry referral;
 2. marks a pending referral qualified once the new family's first invoice
    (of the owner's trigger kind) is paid, due after the hold;
 3. grants due referrals: claims one of the referrer's yearly reward slots
@@ -81,6 +85,14 @@ class ReferralStore(Protocol):
     async def referred_parent_ids(self) -> set[str]: ...
 
     async def insert_if_absent(self, referral: Referral) -> bool: ...
+
+    async def replace_unreviewed(self, referral: Referral) -> bool:
+        """Overwrite the family's row only while it is ``needs_review``."""
+        ...
+
+    async def approve(self, referral_id: str, *, actor_id: str, now: datetime) -> bool:
+        """``needs_review`` -> ``pending``; ``False`` if it was not awaiting review."""
+        ...
 
     async def get(self, referral_id: str) -> Referral | None: ...
 
@@ -201,12 +213,27 @@ class ProcessReferrals:
             await self._advance(referral, program, now, result)
         return result
 
+    async def advance_one(self, referral_id: str) -> ReferralRunResult:
+        """Qualify and grant one pending referral now, by the same path the
+        daily run takes (so still exactly-once and within the cap)."""
+        result = ReferralRunResult()
+        program = (await self._settings.get()).referral_program
+        referral = await self._referrals.get(referral_id)
+        if program.enabled and referral is not None and referral.status == "pending":
+            await self._advance(referral, program, self._now(), result)
+        return result
+
     async def _record(
         self, program: Any, since: datetime, now: datetime, result: ReferralRunResult
     ) -> None:
         known = await self._referrals.referred_parent_ids()
-        for candidate in await self._sources.candidates(since=since):
-            if candidate.referred_parent_id in known:
+        # Registrations first, so the authenticated code wins over an inquiry's.
+        candidates = sorted(
+            await self._sources.candidates(since=since), key=lambda c: c.source != "application"
+        )
+        for candidate in candidates:
+            replacing = candidate.referred_parent_id in known
+            if replacing and candidate.source != "application":
                 continue
             known.add(candidate.referred_parent_id)
             code = normalize_code(candidate.code) or ""
@@ -239,7 +266,13 @@ class ProcessReferrals:
                 source=candidate.source,
                 source_id=candidate.source_id,
                 attributed_at=_utc(candidate.attributed_at),
-                status="ineligible" if reason else "pending",
+                status=(
+                    "ineligible"
+                    if reason
+                    else "pending"
+                    if candidate.source == "application"
+                    else "needs_review"
+                ),
                 reason=reason,
                 referrer_credit_cents=program.referrer_credit_cents,
                 referred_credit_cents=program.referred_credit_cents,
@@ -248,6 +281,13 @@ class ProcessReferrals:
                 created_at=now,
                 updated_at=now,
             )
+            if replacing:
+                # No-op unless the family's row is still an unreviewed inquiry.
+                if await self._referrals.replace_unreviewed(referral):
+                    result.recorded += 1
+                    if reason:
+                        result.ineligible += 1
+                continue
             if await self._referrals.insert_if_absent(referral):
                 result.recorded += 1
                 if reason:
@@ -371,6 +411,40 @@ class ProcessReferrals:
             source_type=REFERRAL_CREDIT_SOURCE_TYPE, source_id=source_id
         )
         return existing.credit_id if existing else None
+
+
+class ReferralNotReviewable(Exception):
+    """The referral is not awaiting review, or the programme is off."""
+
+
+class ApproveReferral:
+    """Owner approves an inquiry-only referral: ``needs_review`` -> ``pending``
+    (recording who and when on the row), then advances it at once, so a family
+    that has already paid past the hold is credited now through the normal
+    exactly-once, capped path; otherwise the daily run grants it later."""
+
+    def __init__(
+        self,
+        *,
+        settings: ReferralSettingsReader,
+        referrals: ReferralStore,
+        process: ProcessReferrals,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._settings = settings
+        self._referrals = referrals
+        self._process = process
+        self._now = clock
+
+    async def execute(self, referral_id: str, *, actor_id: str) -> Referral:
+        if not (await self._settings.get()).referral_program.enabled:
+            raise ReferralNotReviewable("The referral programme is off.")
+        if not await self._referrals.approve(referral_id, actor_id=actor_id, now=self._now()):
+            raise ReferralNotReviewable("This referral is not awaiting review.")
+        await self._process.advance_one(referral_id)
+        referral = await self._referrals.get(referral_id)
+        assert referral is not None
+        return referral
 
 
 @dataclass(frozen=True)

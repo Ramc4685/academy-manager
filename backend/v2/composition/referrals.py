@@ -11,6 +11,7 @@ from typing import Any
 
 from backend.v2.composition import referral_emails
 from backend.v2.contexts.billing.application.use_cases.referrals import (
+    ApproveReferral,
     GetParentReferral,
     ListReferrals,
     ProcessReferrals,
@@ -37,6 +38,7 @@ class ReferralProgram:
     process: ProcessReferrals
     parent_view: GetParentReferral
     admin_list: ListReferrals
+    approve: ApproveReferral
     db: Any
 
     async def email_preview(self) -> list[referral_emails.ReferralEmail]:
@@ -57,15 +59,17 @@ def compose_referrals(db: Any) -> ReferralProgram:
     referrals = MongoReferralRepository(db)
     codes = MongoReferralCodeRepository(db)
     sources = MongoReferralSources(db)
+    process = ProcessReferrals(
+        settings=settings,
+        referrals=referrals,
+        codes=codes,
+        sources=sources,
+        credits=MongoCreditLedgerRepository(db),
+        academy_id=current_academy_id,
+    )
     return ReferralProgram(
-        process=ProcessReferrals(
-            settings=settings,
-            referrals=referrals,
-            codes=codes,
-            sources=sources,
-            credits=MongoCreditLedgerRepository(db),
-            academy_id=current_academy_id,
-        ),
+        process=process,
+        approve=ApproveReferral(settings=settings, referrals=referrals, process=process),
         parent_view=GetParentReferral(settings=settings, referrals=referrals, codes=codes),
         admin_list=ListReferrals(referrals=referrals, sources=sources),
         db=db,

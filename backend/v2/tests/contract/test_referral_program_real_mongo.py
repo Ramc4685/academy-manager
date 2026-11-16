@@ -6,7 +6,9 @@ under concurrent replay (and after a crash between the slot and the credit);
 the yearly cap under concurrency; self-referral by parent, email or household
 phone; an existing family; an unknown code; a family referred before the
 switch-on; a second academy isolated; the parent's stable code and count; and
-the migration refusing to build over colliding data.
+the migration refusing to build over colliding data; an inquiry-only code
+held for review and never auto-granted; the registration code beating an
+inquiry's; owner approval granting exactly once.
 """
 
 from __future__ import annotations
@@ -18,8 +20,10 @@ from typing import Any
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.referrals import (
+    ApproveReferral,
     GetParentReferral,
     ProcessReferrals,
+    ReferralNotReviewable,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
@@ -110,27 +114,47 @@ async def _referred_family(
     contact_at: datetime = T0 + timedelta(days=1),
     invoice_at: datetime = T0 + timedelta(days=2),
     paid_at: datetime | None = T0 + timedelta(days=3),
+    via: str = "application",
+    contact_code: str | None = None,
 ) -> None:
-    """A website inquiry with the code, converted to ``parent_id``, whose
-    first invoice was paid at ``paid_at`` (``None`` = still open)."""
+    """A family that arrived with the code on its approved registration
+    (``via="application"``, the authenticated source) or only on a converted
+    website inquiry (``via="contact"``), whose first invoice was paid at
+    ``paid_at`` (``None`` = still open). ``contact_code`` adds an inquiry
+    carrying that code as well."""
     academy = current_academy_id()
     email = email or f"{parent_id}@example.test"
     await _user(db, parent_id, email=email, phone=phone)
-    await db["crm_contacts"].insert_one(
-        {
-            "academy_id": academy,
-            "contact_id": f"c-{parent_id}",
-            "name": parent_id,
-            "email": email,
-            "phone_digits": phone,
-            "source": "website",
-            "pipeline_status": "enrolled",
-            "converted_parent_id": parent_id,
-            "attribution": {"referral_code": code},
-            "created_at": contact_at,
-            "updated_at": contact_at,
-        }
-    )
+    if via == "application":
+        await db["onboarding_applications"].insert_one(
+            {
+                "academy_id": academy,
+                "application_id": f"app-{parent_id}",
+                "parent_user_id": parent_id,
+                "parent_email": email,
+                "parent_profile": {"email": email, "phone": phone, "referral_code": code},
+                "status": "APPROVED",
+                "created_at": contact_at,
+                "updated_at": contact_at,
+            }
+        )
+    inquiry_code = code if via == "contact" else contact_code
+    if inquiry_code is not None:
+        await db["crm_contacts"].insert_one(
+            {
+                "academy_id": academy,
+                "contact_id": f"c-{parent_id}",
+                "name": parent_id,
+                "email": email,
+                "phone_digits": phone,
+                "source": "website",
+                "pipeline_status": "enrolled",
+                "converted_parent_id": parent_id,
+                "attribution": {"referral_code": inquiry_code},
+                "created_at": contact_at,
+                "updated_at": contact_at,
+            }
+        )
     invoice_id = f"inv-{parent_id}"
     await db["invoices"].insert_one(
         {
@@ -328,13 +352,14 @@ async def test_a_self_referral_never_earns(real_db, acad, how: str) -> None:
     await _settings(real_db)
     code = await _referrer(real_db, email="ref@example.test", phone="(555) 010-0100")
     if how == "same_parent":
-        await real_db["crm_contacts"].insert_one(
+        await real_db["onboarding_applications"].insert_one(
             {
                 "academy_id": acad,
-                "contact_id": "c-self",
-                "email": "other@example.test",
-                "converted_parent_id": "u-ref",
-                "attribution": {"referral_code": code},
+                "application_id": "app-self",
+                "parent_user_id": "u-ref",
+                "parent_email": "other@example.test",
+                "parent_profile": {"referral_code": code},
+                "status": "APPROVED",
                 "created_at": T0 + timedelta(days=1),
             }
         )
@@ -417,3 +442,105 @@ async def test_the_migration_names_colliding_data_instead_of_building(real_db) -
     finally:
         await collection.delete_many({})
         await migration.up(real_db)
+
+
+def _approve(db: Any, now: datetime, *, shift: int = 0) -> ApproveReferral:
+    return ApproveReferral(
+        settings=MongoBillingSettingsRepository(db),
+        referrals=MongoReferralRepository(db),
+        process=_process(db, now, shift=shift),
+        clock=lambda: now,
+    )
+
+
+async def test_an_inquiry_only_code_waits_for_review_and_never_auto_grants(real_db, acad) -> None:
+    """The public inquiry form is unauthenticated: anyone knowing a family's
+    email could put their own code on it. It never grants by itself."""
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code, via="contact")
+    for day in range(3):
+        await _process(real_db, DUE + timedelta(days=day)).execute()
+    [row] = await _referrals(real_db)
+    assert (row["status"], row["source"], row["qualified_at"]) == ("needs_review", "contact", None)
+    assert await _credits(real_db) == []
+    assert (await _parent_view(real_db).execute("u-ref")).rewards_earned == 0
+
+
+async def test_the_registration_code_beats_a_different_inquiry_code(real_db, acad) -> None:
+    await _settings(real_db)
+    real = await _referrer(real_db, "u-real", email="real@example.test")
+    attacker = await _referrer(real_db, "u-attacker", email="attacker@example.test")
+    # Same run: both sources present.
+    await _referred_family(real_db, "u-new", real, contact_code=attacker)
+    # Across runs: the inquiry was recorded first, the registration came later.
+    await _referred_family(real_db, "u-late", real, via="contact", contact_code=None)
+    await real_db["crm_contacts"].update_one(
+        {"contact_id": "c-u-late"}, {"$set": {"attribution.referral_code": attacker}}
+    )
+    await _process(real_db, T0 + timedelta(days=2)).execute()
+    late = await real_db["referrals"].find_one({"referred_parent_id": "u-late"})
+    assert (late["status"], late["referrer_parent_id"]) == ("needs_review", "u-attacker")
+    await real_db["onboarding_applications"].insert_one(
+        {
+            "academy_id": acad,
+            "application_id": "app-u-late",
+            "parent_user_id": "u-late",
+            "parent_email": "u-late@example.test",
+            "parent_profile": {"referral_code": real},
+            "status": "APPROVED",
+            "created_at": T0 + timedelta(days=1),
+        }
+    )
+
+    await _process(real_db, DUE).execute()
+    rows = {r["referred_parent_id"]: r for r in await _referrals(real_db)}
+    for parent in ("u-new", "u-late"):
+        assert (rows[parent]["source"], rows[parent]["status"]) == ("application", "granted")
+        assert rows[parent]["referrer_parent_id"] == "u-real"
+    owners = sorted(
+        c["parent_id"] for c in await _credits(real_db) if c["source_id"].endswith(":referrer")
+    )
+    assert owners == ["u-real", "u-real"]
+
+
+async def test_owner_approval_grants_an_inquiry_referral_exactly_once(real_db, acad) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code, via="contact")
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+
+    outcomes = await asyncio.gather(
+        *(
+            _approve(real_db, DUE, shift=n).execute(row["referral_id"], actor_id="u-owner")
+            for n in range(6)
+        ),
+        *(_process(real_db, DUE, shift=n).execute() for n in range(4)),
+        return_exceptions=True,
+    )
+    approvals = outcomes[:6]
+    assert sum(not isinstance(o, BaseException) for o in approvals) == 1
+    assert all(
+        isinstance(o, ReferralNotReviewable) for o in approvals if isinstance(o, BaseException)
+    )
+    await _process(real_db, DUE + timedelta(days=1)).execute()
+
+    [row] = await _referrals(real_db)
+    assert (row["status"], row["reviewed_by"]) == ("granted", "u-owner")
+    credits = await _credits(real_db)
+    assert sorted(c["source_id"].rsplit(":", 1)[1] for c in credits) == ["referred", "referrer"]
+    with pytest.raises(ReferralNotReviewable):
+        await _approve(real_db, DUE).execute(row["referral_id"], actor_id="u-owner")
+
+
+async def test_approval_is_refused_while_the_programme_is_off(real_db, acad) -> None:
+    await _settings(real_db)
+    code = await _referrer(real_db)
+    await _referred_family(real_db, "u-new", code, via="contact")
+    await _process(real_db, DUE).execute()
+    [row] = await _referrals(real_db)
+    await _settings(real_db, enabled=False)
+    with pytest.raises(ReferralNotReviewable):
+        await _approve(real_db, DUE).execute(row["referral_id"], actor_id="u-owner")
+    assert (await _referrals(real_db))[0]["status"] == "needs_review"

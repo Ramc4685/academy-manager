@@ -1,16 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  approveReferral,
   getReferralEmailPreview,
   getReferrals,
   type ReferralRow,
 } from "@/lib/api/admin";
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
+import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
+import { useIsOwner } from "@/components/admin/owner-context";
 import { Overline } from "@/components/ds/typography";
 
 const REASONS: Record<NonNullable<ReferralRow["reason"]>, string> = {
@@ -27,6 +30,9 @@ function day(iso: string | null | undefined): string {
 /** The state column: what happened, or what the row is waiting for. */
 export function referralState(row: ReferralRow): string {
   if (row.status === "granted") return `Credited ${day(row.granted_at)}`;
+  if (row.status === "needs_review") {
+    return "Needs your review: the code came only from the website form";
+  }
   if (row.status === "ineligible") {
     return `Not eligible: ${row.reason ? REASONS[row.reason] : "unknown"}`;
   }
@@ -35,11 +41,19 @@ export function referralState(row: ReferralRow): string {
 }
 
 /**
- * Settings -> Billing rules -> Referrals (L9 C2). Read only: the referrals
- * the daily sweep has recorded, and the two emails the programme would send
- * (nothing sends until the owner signs off on the copy).
+ * Settings -> Billing rules -> Referrals (L9 C2): the referrals the daily
+ * sweep has recorded, and the two emails the programme would send (nothing
+ * sends until the owner signs off on the copy). A code that came only from
+ * the public inquiry form waits for the owner's Approve before it can earn.
  */
 export function ReferralsCard() {
+  const isOwner = useIsOwner();
+  const queryClient = useQueryClient();
+  const approve = useMutation({
+    mutationFn: approveReferral,
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.referrals() }),
+  });
   const query = useQuery({
     queryKey: queryKeys.admin.referrals(),
     queryFn: getReferrals,
@@ -95,12 +109,30 @@ export function ReferralsCard() {
                   </td>
                   <td className="py-1.5 text-rally-muted">
                     {referralState(row)}
+                    {row.status === "needs_review" && isOwner && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="ml-2"
+                        disabled={approve.isPending}
+                        onClick={() => approve.mutate(row.referral_id)}
+                        data-testid="referral-approve"
+                      >
+                        Approve
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+      {approve.isError && (
+        <p className="mt-2 text-sm text-red-700" role="alert">
+          Could not approve that referral.
+        </p>
       )}
       <details
         className="mt-4"

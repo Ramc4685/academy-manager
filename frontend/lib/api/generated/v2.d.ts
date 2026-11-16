@@ -908,6 +908,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/billing/referrals/{referral_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a referral that came only from the website inquiry (owner only) */
+        post: operations["approve_referral_api_v2_admin_billing_referrals__referral_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/billing/rules": {
         parameters: {
             query?: never;
@@ -17871,11 +17888,13 @@ export interface components {
             referrer_credit_cents?: number | null;
             /** Referrer Name */
             referrer_name?: string | null;
+            /** Reviewed At */
+            reviewed_at?: string | null;
             /**
              * Status
              * @enum {string}
              */
-            status: "pending" | "granted" | "ineligible";
+            status: "needs_review" | "pending" | "granted" | "ineligible";
         };
         /** RefundFailureDto */
         RefundFailureDto: {
@@ -21664,6 +21683,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReferralEmailPreviewResponse"];
+                };
+            };
+        };
+    };
+    approve_referral_api_v2_admin_billing_referrals__referral_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                referral_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferralRowView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

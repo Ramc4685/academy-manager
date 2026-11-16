@@ -24,7 +24,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-ReferralStatus = Literal["pending", "granted", "ineligible"]
+#: ``needs_review``: the code came only from the public inquiry form, which
+#: anyone can fill in with a family's email, so it never auto-grants; the
+#: owner's approval moves it to ``pending`` (the normal hold-then-grant path).
+ReferralStatus = Literal["needs_review", "pending", "granted", "ineligible"]
 IneligibleReason = Literal[
     "unknown_code",
     "self_referral",
@@ -122,5 +125,7 @@ class Referral(BaseModel):
     referrer_credit_id: str | None = None
     referred_credit_id: str | None = None
     granted_at: datetime | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

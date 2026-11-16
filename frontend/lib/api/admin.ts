@@ -2341,6 +2341,14 @@ export function getReferrals(): Promise<ReferralListView> {
   return apiFetch<ReferralListView>("/admin/billing/referrals", { method: "GET" });
 }
 
+/** Owner only: approve a referral whose code came only from the website inquiry. */
+export function approveReferral(referralId: string): Promise<ReferralRow> {
+  return apiFetch<ReferralRow>(
+    `/admin/billing/referrals/${encodeURIComponent(referralId)}/approve`,
+    { method: "POST" },
+  );
+}
+
 export function getReferralEmailPreview(): Promise<ReferralEmailPreview> {
   return apiFetch<ReferralEmailPreview>("/admin/billing/referrals/email-preview", {
     method: "GET",

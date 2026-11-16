@@ -87,6 +87,8 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # family_offers_routes.py — sibling discount + referral programme
         # (GET /billing/family-offers stays admin).
         ("PUT", f"{_ADMIN}/billing/family-offers"),
+        # referral_routes.py: approving an inquiry-only referral leads to a credit.
+        ("POST", f"{_ADMIN}/billing/referrals/{{referral_id}}/approve"),
         # (POST /enrollments/{id}/withdraw stays admin; its `credit` outcome is
         # owner-gated per action by `ensure_owner_for_withdrawal_credit`.
         # The old owner-only .../withdrawal-credit/approve route was removed.)

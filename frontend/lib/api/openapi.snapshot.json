@@ -28753,8 +28753,21 @@
             ],
             "title": "Referrer Name"
           },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
           "status": {
             "enum": [
+              "needs_review",
               "pending",
               "granted",
               "ineligible"
@@ -37673,6 +37686,48 @@
           }
         },
         "summary": "Preview the referral emails (never sent)",
+        "tags": [
+          "admin.referrals"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/referrals/{referral_id}/approve": {
+      "post": {
+        "operationId": "approve_referral_api_v2_admin_billing_referrals__referral_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "referral_id",
+            "required": true,
+            "schema": {
+              "title": "Referral Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralRowView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve a referral that came only from the website inquiry (owner only)",
         "tags": [
           "admin.referrals"
         ]

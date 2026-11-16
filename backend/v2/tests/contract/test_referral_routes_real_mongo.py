@@ -123,3 +123,32 @@ async def test_admin_email_preview_renders_and_sends_nothing(admin, real_db) -> 
 async def test_wrong_persona_is_a_404(parent, admin) -> None:
     assert (await parent.get("/api/v2/admin/billing/referrals")).status_code == 404
     assert (await admin.get("/api/v2/parent/referral")).status_code == 404
+
+
+async def test_only_the_owner_approves_an_inquiry_referral(admin, real_db) -> None:
+    await _switch(real_db)
+    now = datetime(2026, 12, 1, tzinfo=UTC)
+    await real_db["referrals"].insert_one(
+        {
+            "academy_id": "test-academy",
+            "referral_id": "r-review",
+            "referral_code": "QZ7KX4MP",
+            "referrer_parent_id": "u-ref",
+            "referred_parent_id": "u-new",
+            "source": "contact",
+            "source_id": "c1",
+            "attributed_at": now,
+            "status": "needs_review",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    url = "/api/v2/admin/billing/referrals/r-review/approve"
+    assert (await admin.post(url)).status_code == 404  # admin, not owner
+    async with _client(real_db, user_id="u-owner", roles=("admin", "owner")) as owner:
+        approved = await owner.post(url)
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "pending"  # no paid invoice yet
+        assert (await owner.post(url)).status_code == 409  # no longer awaiting review
+    row = await real_db["referrals"].find_one({"referral_id": "r-review"})
+    assert row["reviewed_by"] == "u-owner"

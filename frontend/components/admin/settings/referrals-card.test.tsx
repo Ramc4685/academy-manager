@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ReferralRow } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { OwnerProvider } from "@/components/admin/owner-context";
 import { ReferralsCard, referralState } from "./referrals-card";
 
 const BASE: ReferralRow = {
@@ -16,12 +17,14 @@ const BASE: ReferralRow = {
   created_at: "2026-12-01T00:00:00Z",
 };
 
-function html(rows: ReferralRow[] | undefined) {
+function html(rows: ReferralRow[] | undefined, isOwner = true) {
   const client = new QueryClient();
   if (rows) client.setQueryData(queryKeys.admin.referrals(), { referrals: rows });
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
-      <ReferralsCard />
+      <OwnerProvider isOwner={isOwner}>
+        <ReferralsCard />
+      </OwnerProvider>
     </QueryClientProvider>,
   );
 }
@@ -49,5 +52,13 @@ describe("ReferralsCard", () => {
     expect(html([])).toContain("No referrals yet");
     // An empty or stubbed response renders the empty state, not a crash.
     expect(html(undefined)).toContain("No referrals yet");
+  });
+
+  it("offers Approve on an inquiry-only referral to the owner only", () => {
+    const review = { ...BASE, status: "needs_review" as const };
+    expect(referralState(review)).toMatch(/^Needs your review/);
+    expect(html([review])).toContain('data-testid="referral-approve"');
+    expect(html([review], false)).not.toContain('data-testid="referral-approve"');
+    expect(html([BASE])).not.toContain('data-testid="referral-approve"');
   });
 });

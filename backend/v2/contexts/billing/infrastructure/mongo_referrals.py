@@ -37,6 +37,7 @@ _DATETIME_FIELDS = (
     "qualified_at",
     "grant_due_at",
     "granted_at",
+    "reviewed_at",
     "created_at",
     "updated_at",
 )
@@ -65,6 +66,30 @@ class MongoReferralRepository(TenantScopedRepository):
         except DuplicateKeyError:
             return False  # already recorded (another run, or the other source)
         return True
+
+    async def replace_unreviewed(self, referral: Referral) -> bool:
+        doc = referral.model_dump(
+            mode="python", exclude={"academy_id", "referral_id", "created_at"}
+        )
+        result = await self._update_one(
+            {"referred_parent_id": referral.referred_parent_id, "status": "needs_review"},
+            {"$set": doc},
+        )
+        return result.modified_count == 1
+
+    async def approve(self, referral_id: str, *, actor_id: str, now: datetime) -> bool:
+        result = await self._update_one(
+            {"referral_id": referral_id, "status": "needs_review"},
+            {
+                "$set": {
+                    "status": "pending",
+                    "reviewed_by": actor_id,
+                    "reviewed_at": now,
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.modified_count == 1
 
     async def get(self, referral_id: str) -> Referral | None:
         doc = await self._find_one({"referral_id": referral_id})
