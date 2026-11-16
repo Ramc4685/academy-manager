@@ -21,7 +21,7 @@ const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW 
 export default function AdminPathwayDashboardPage() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.admin.pathwayDashboard(),
-    queryFn: getAdminPathwayDashboard,
+    queryFn: () => getAdminPathwayDashboard(),
     staleTime: 2 * 60 * 1000,
   });
 
