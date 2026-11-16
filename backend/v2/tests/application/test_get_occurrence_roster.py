@@ -94,13 +94,16 @@ def _student(sid: str, name: str) -> Student:
     return Student(student_id=sid, academy_id="acad", parent_id="p", full_name=name)
 
 
-def _enroll(eid: str, sid: str, st: str = "active") -> Enrollment:
+def _enroll(
+    eid: str, sid: str, st: str = "active", enrolled_at: datetime | None = None
+) -> Enrollment:
     return Enrollment(
         enrollment_id=eid,
         academy_id="acad",
         session_id="sess",
         student_id=sid,
         status=st,  # type: ignore[arg-type]
+        enrolled_at=enrolled_at,
     )
 
 
@@ -365,3 +368,56 @@ async def test_one_time_entry_for_missing_occurrence_excluded() -> None:
     result = await uc.execute(session_id="sess", occurrence_id="occ-gone")
 
     assert result == []
+
+
+class FakeMarks:
+    def __init__(self, student_ids: list[str]) -> None:
+        self._ids = student_ids
+
+    async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]:
+        return [
+            _one_time_entry(
+                entry_id=sid, occurrence_id=occurrence_id, student_id=sid, source="trial"
+            )
+            for sid in self._ids
+        ]
+
+
+def _roster_uc(enrollments: list[Enrollment], *, marks: list[str]) -> GetOccurrenceRoster:
+    students = FakeStudents(
+        [_student("s-old", "Old Timer"), _student("s-new", "New Kid"), _student("s-gone", "Gone")]
+    )
+    return GetOccurrenceRoster(
+        get_roster=GetSessionRoster(enrollments=FakeEnrollments(enrollments), students=students),
+        absence_notices=FakeAbsenceNotices(),
+        occurrence_roster=FakeOccurrenceRoster(),
+        students=students,
+        occurrences=FakeOccurrences([_occurrence("occ-1")]),
+        marks=FakeMarks(marks),
+    )
+
+
+@pytest.mark.asyncio
+async def test_past_occurrence_leaves_out_children_who_joined_after_it() -> None:
+    uc = _roster_uc(
+        [
+            _enroll("e-old", "s-old", enrolled_at=datetime(2026, 6, 1, tzinfo=UTC)),
+            _enroll("e-new", "s-new", enrolled_at=datetime(2026, 7, 5, tzinfo=UTC)),
+        ],
+        marks=[],
+    )
+    rows = await uc.execute(session_id="sess", occurrence_id="occ-1")
+    assert [r.student_id for r in rows] == ["s-old"]
+
+
+@pytest.mark.asyncio
+async def test_marked_child_who_has_since_left_keeps_their_row() -> None:
+    uc = _roster_uc(
+        [_enroll("e-old", "s-old", enrolled_at=datetime(2026, 6, 1, tzinfo=UTC))],
+        marks=["s-old", "s-gone"],
+    )
+    rows = await uc.execute(session_id="sess", occurrence_id="occ-1")
+    assert [r.student_id for r in rows] == ["s-old", "s-gone"]
+    gone = rows[1]
+    assert gone.full_name == "Gone"
+    assert gone.enrollment_id is None and gone.status is None
