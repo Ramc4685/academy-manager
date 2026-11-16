@@ -10,15 +10,13 @@ For now: simple CRUD aggregations.
 # FINANCE
 from __future__ import annotations
 
-from calendar import monthrange
 from collections.abc import Callable
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from backend.v2.contexts.billing.application.admin_money import month_label, report_zone
+from backend.v2.contexts.billing.application.admin_money import month_label
 from backend.v2.contexts.billing.application.ports import PaymentRepository
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
@@ -26,7 +24,6 @@ from backend.v2.shared.tenancy import TenantScopedRepository
 from backend.v2.shared.tenancy.context import TenantContextUnset, current_academy_id
 from backend.v2.shared.time import (
     AcademyTimezoneReader,
-    academy_timezone_lookup,
     ensure_utc,
     resolve_reporting_timezone,
 )
@@ -56,22 +53,6 @@ class Expense(BaseModel):
 class ExpenseNotFound(DomainError):
     code = "Finance.ExpenseNotFound"
     status_code = 404
-
-
-# FINANCE
-class Payout(BaseModel):
-    model_config = {"frozen": True}
-    payout_id: str
-    academy_id: str
-    coach_id: str
-    amount_cents: int = Field(ge=0)
-    period_start: datetime
-    period_end: datetime
-    paid_at: datetime | None = None
-    expected_revenue_cents: int | None = None
-    students_count: int | None = None
-    sessions_count: int | None = None
-    rule_label: str | None = None
 
 
 class TuitionDiscountCategorySummary(BaseModel):
@@ -188,266 +169,6 @@ class MongoExpenseRepository(TenantScopedRepository):
     async def list_recent(self, limit: int = 200) -> list[Expense]:
         cursor = self._find_many({"deleted_at": None}, sort=[("incurred_on", -1)], limit=limit)
         return [self._to_domain(d) async for d in cursor]
-
-
-# FINANCE
-class MongoPayoutRepository(TenantScopedRepository):
-    collection_name = "payouts"
-
-    def __init__(
-        self, db: object, *, academy_timezone: AcademyTimezoneReader | None = None
-    ) -> None:
-        super().__init__(db)
-        # #608: payroll periods bucket on the academy's clock, like every
-        # other financial report, so a late class on the last of the month
-        # cannot land in a different month here than in the reports.
-        self._academy_timezone = academy_timezone or academy_timezone_lookup(db)
-
-    @staticmethod
-    def _to_domain(doc: dict[str, object]) -> Payout:
-        return Payout(
-            payout_id=str(doc["payout_id"]),
-            academy_id=str(doc["academy_id"]),
-            coach_id=str(doc["coach_id"]),
-            amount_cents=int(doc["amount_cents"]),
-            period_start=doc["period_start"],
-            period_end=doc["period_end"],
-            paid_at=doc.get("paid_at"),
-            expected_revenue_cents=doc.get("expected_revenue_cents"),
-            students_count=doc.get("students_count"),
-            sessions_count=doc.get("sessions_count"),
-            rule_label=doc.get("rule_label"),
-        )
-
-    async def list_all(self) -> list[Payout]:
-        cursor = self._find_many({}, sort=[("period_start", -1)], limit=500)
-        persisted = [self._to_domain(d) async for d in cursor]
-        if persisted:
-            return persisted
-        return await self._derive_from_completed_occurrences()
-
-    async def list_for_coach(self, coach_id: str) -> list[Payout]:
-        cursor = self._find_many({"coach_id": coach_id}, sort=[("period_start", -1)], limit=500)
-        return [self._to_domain(d) async for d in cursor]
-
-    async def _derive_from_completed_occurrences(self) -> list[Payout]:
-        academy_id = current_academy_id()
-        # An occurrence counts as completed once its end time has passed,
-        # unless it was cancelled — nothing in the app flips the status
-        # field to "completed", so deriving completion keeps payouts real.
-        timezone_name = await resolve_reporting_timezone(self._academy_timezone, academy_id)
-        now = datetime.now(UTC)
-        occurrence_rows = [
-            doc
-            async for doc in self._find_many_in_collection(
-                "session_occurrences",
-                {
-                    "is_payable": {"$ne": False},
-                    "$or": [
-                        {"status": "completed"},
-                        {
-                            "status": {"$nin": ["cancelled", "completed"]},
-                            "end_at": {"$lt": now},
-                        },
-                    ],
-                },
-                sort=[("start_at", 1)],
-            )
-        ]
-        if not occurrence_rows:
-            return []
-
-        occurrence_ids = sorted({str(row["occurrence_id"]) for row in occurrence_rows})
-
-        students_by_occurrence: dict[str, set[str]] = {
-            occurrence_id: set() for occurrence_id in occurrence_ids
-        }
-        student_cursor = self._find_many_in_collection(
-            "attendance",
-            {
-                "occurrence_id": {"$in": occurrence_ids},
-                "status": {"$in": list(ATTENDED_STATUSES)},
-            },
-            {"occurrence_id": 1, "student_id": 1},
-        )
-        async for row in student_cursor:
-            if row.get("student_id"):
-                students_by_occurrence.setdefault(str(row["occurrence_id"]), set()).add(
-                    str(row["student_id"])
-                )
-
-        # Coach payroll attendance: absent coaches are not paid; a row may
-        # carry a per-occurrence rate override. Same policy as
-        # coaching.ComputeCoachPayout.
-        absent_keys: set[tuple[str, str]] = set()
-        override_by_key: dict[tuple[str, str], int] = {}
-        coach_attendance_cursor = self._find_many_in_collection(
-            "coach_attendance",
-            {"occurrence_id": {"$in": occurrence_ids}},
-            {"occurrence_id": 1, "coach_id": 1, "status": 1, "rate_override_minor": 1},
-        )
-        async for row in coach_attendance_cursor:
-            key = (str(row["occurrence_id"]), str(row["coach_id"]))
-            if row.get("status") == "absent":
-                absent_keys.add(key)
-            elif row.get("rate_override_minor") is not None:
-                override_by_key[key] = int(row["rate_override_minor"])
-
-        revenue_by_session = await self._expected_revenue_by_session(occurrence_rows)
-
-        grouped: dict[tuple[str, str], dict[str, object]] = {}
-        for occurrence in occurrence_rows:
-            occurrence_id = str(occurrence["occurrence_id"])
-            coach_id = str(occurrence.get("actual_coach_id") or occurrence["scheduled_coach_id"])
-            if (occurrence_id, coach_id) in absent_keys:
-                continue
-            start_at = occurrence["start_at"]
-            expected_revenue = revenue_by_session.get(_occurrence_session_id(occurrence))
-            amount = override_by_key.get((occurrence_id, coach_id))
-            if amount is None:
-                amount = await self._occurrence_amount_minor(
-                    coach_id, start_at, occurrence, expected_revenue
-                )
-            if amount is None:
-                continue
-            period = month_label(ensure_utc(start_at), timezone_name)
-            bucket = grouped.setdefault(
-                (period, coach_id),
-                {"amount": 0, "students": set(), "occurrences": set(), "expected": 0},
-            )
-            bucket["amount"] = int(bucket["amount"]) + amount
-            bucket["expected"] = int(bucket["expected"]) + (expected_revenue or 0)
-            bucket["occurrences"].add(occurrence_id)  # type: ignore[attr-defined]
-            bucket["students"].update(students_by_occurrence.get(occurrence_id, set()))  # type: ignore[attr-defined]
-
-        payouts: list[Payout] = []
-        for (period, coach_id), bucket in grouped.items():
-            amount_cents = int(bucket["amount"])
-            if amount_cents <= 0:
-                continue
-            period_start, period_end = _period_window(period, timezone_name)
-            expected_cents = int(bucket["expected"])
-            payouts.append(
-                Payout(
-                    payout_id=f"occurrence:{period}:{coach_id}",
-                    academy_id=academy_id,
-                    coach_id=coach_id,
-                    amount_cents=amount_cents,
-                    period_start=period_start,
-                    period_end=period_end,
-                    expected_revenue_cents=expected_cents if expected_cents > 0 else None,
-                    students_count=len(bucket["students"]),  # type: ignore[arg-type]
-                    sessions_count=len(bucket["occurrences"]),  # type: ignore[arg-type]
-                    rule_label="Occurrence attribution",
-                )
-            )
-        return sorted(payouts, key=lambda payout: payout.period_start, reverse=True)
-
-    async def _expected_revenue_by_session(
-        self, occurrence_rows: list[dict[str, object]]
-    ) -> dict[str, int]:
-        """Expected revenue per session = session price x active enrollments."""
-        session_ids = sorted(
-            {_occurrence_session_id(row) for row in occurrence_rows if _occurrence_session_id(row)}
-        )
-        if not session_ids:
-            return {}
-
-        price_by_session: dict[str, int] = {}
-        session_cursor = self._find_many_in_collection(
-            "sessions",
-            {"session_id": {"$in": session_ids}},
-            {"session_id": 1, "amount_cents": 1},
-        )
-        async for row in session_cursor:
-            if row.get("amount_cents") is not None:
-                price_by_session[str(row["session_id"])] = int(row["amount_cents"])
-
-        if not price_by_session:
-            return {}
-
-        enrolled_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
-        enrollment_cursor = self._find_many_in_collection(
-            "enrollments",
-            {
-                "session_id": {"$in": list(price_by_session)},
-                "status": "active",
-                "is_deleted": {"$ne": True},
-            },
-            {"session_id": 1},
-        )
-        async for row in enrollment_cursor:
-            session_id = str(row["session_id"])
-            enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
-
-        return {
-            session_id: price_by_session[session_id] * enrolled_by_session.get(session_id, 0)
-            for session_id in price_by_session
-        }
-
-    async def _occurrence_amount_minor(
-        self,
-        coach_id: str,
-        start_at: datetime,
-        occurrence: dict[str, object],
-        expected_revenue_minor: int | None = None,
-    ) -> int | None:
-        rate = await self._find_one_in_collection(
-            "coach_rates",
-            {
-                "coach_id": coach_id,
-                "effective_from": {"$lte": start_at},
-                "$or": [
-                    {"effective_until": {"$exists": False}},
-                    {"effective_until": None},
-                    {"effective_until": {"$gt": start_at}},
-                ],
-            },
-            sort=[("effective_from", -1)],
-        )
-        if rate is None:
-            return None
-
-        billing_unit = rate.get("billing_unit", "per_session")
-        if billing_unit == "percent_of_revenue":
-            percent_bps = rate.get("percent_bps")
-            if percent_bps is None or expected_revenue_minor is None:
-                return None
-            return int(
-                (
-                    Decimal(expected_revenue_minor) * Decimal(int(percent_bps)) / Decimal(10000)
-                ).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN)
-            )
-
-        amount_minor = int(rate.get("amount_minor", rate.get("amount_cents", 0)))
-        if billing_unit == "per_session":
-            return amount_minor
-
-        end_at = occurrence["end_at"]
-        minutes = Decimal((end_at - start_at).total_seconds()) / Decimal(60)  # type: ignore[operator]
-        return int(
-            (Decimal(amount_minor) * minutes / Decimal(60)).quantize(
-                Decimal("1"), rounding=ROUND_HALF_EVEN
-            )
-        )
-
-
-def _occurrence_session_id(row: dict[str, object]) -> str:
-    """Enrollments reference the template session, so prefer it."""
-    return str(row.get("template_session_id") or row.get("session_id") or "")
-
-
-def _period_window(period: str, timezone_name: str | None = None) -> tuple[datetime, datetime]:
-    """UTC instants spanning ``period`` on the academy's clock (#608)."""
-    year, month = (int(part) for part in period.split("-", 1))
-    zone = report_zone(timezone_name)
-    period_start = datetime(year, month, 1, tzinfo=zone)
-    if month == 12:
-        period_end = datetime(year + 1, 1, 1, tzinfo=zone)
-    else:
-        last_day = monthrange(year, month)[1]
-        period_end = datetime(year, month, last_day, 23, 59, 59, 999000, tzinfo=zone)
-    return period_start.astimezone(UTC), period_end.astimezone(UTC)
 
 
 # FINANCE

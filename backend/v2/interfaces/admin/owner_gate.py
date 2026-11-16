@@ -98,7 +98,6 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # Voiding a payment changes every money report it was counted in
         # (issue #619), so it sits at the same tier as refund/discount/undo.
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/void"),
-        ("GET", f"{_ADMIN}/finance/payouts"),
         ("GET", f"{_ADMIN}/finance/revenue"),
         ("GET", f"{_ADMIN}/finance/tuition-discounts"),
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/adjustments"),
@@ -145,6 +144,8 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/payroll/{{month}}/generate"),
         ("POST", f"{_ADMIN}/payroll/{{month}}/recompute"),
         ("GET", f"{_ADMIN}/payroll/{{month}}/export"),
+        ("GET", f"{_ADMIN}/payroll-settings"),
+        ("PUT", f"{_ADMIN}/payroll-settings"),
         # coach_pay_rate_routes.py — every route
         ("GET", f"{_ADMIN}/coaches/{{coach_id}}/pay-rates"),
         ("POST", f"{_ADMIN}/coaches/{{coach_id}}/pay-rates"),

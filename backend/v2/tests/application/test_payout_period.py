@@ -31,7 +31,9 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
     OverlappingPayoutPeriodError,
 )
 from backend.v2.contexts.finance.domain.payout_period import (
+    PAYOUT_TRANSITION_FIELDS,
     PayoutPeriod,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     PayoutWarning,
     PersistedPayoutLine,
@@ -179,11 +181,19 @@ class FakeRepo:
         return period
 
     async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
-        if period.period_id not in self._by_id:
+        current = self._by_id.get(period.period_id)
+        if current is None:
             raise LookupError(period.period_id)
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
+        stored = current.model_copy(
+            update={f: getattr(period, f) for f in PAYOUT_TRANSITION_FIELDS}
+            | {"version": current.version + 1}
+        )
         self.replace_calls += 1
-        self._by_id[period.period_id] = period
-        return period
+        self._by_id[period.period_id] = stored
+        return stored
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +276,7 @@ def _draft_period(**overrides) -> PayoutPeriod:
         unpaid_occurrence_ids=[],
         payout_warnings=[],
         generated_at=_dt("2026-06-01T00:00:00"),
+        revenue_basis="invoiced",
         paid_method=None,
         paid_amount_minor=None,
         paid_reference=None,
@@ -301,6 +312,18 @@ def test_approve_rejects_unresolved_payout_warnings() -> None:
     period = _draft_period(payout_warnings=[_warning()])
     with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
         approve(period, at=_dt("2026-06-02T12:00:00"))
+
+
+def test_a_non_blocking_warning_does_not_stop_approval_or_payment() -> None:
+    note = _warning(
+        occurrence_id="unattributed-invoices",
+        reason="unattributed_manual_invoices",
+        severity="warning",
+        repair_action="attach_invoice_to_enrollment_and_recompute",
+    )
+    approved = approve(_draft_period(payout_warnings=[note]), at=_dt("2026-06-02T12:00:00"))
+    paid = mark_paid(approved, at=_dt("2026-06-03T12:00:00"), method="cash", amount_minor=0)
+    assert paid.status == "paid"
 
 
 def test_approve_is_idempotent_on_approved() -> None:
@@ -646,7 +669,7 @@ async def test_mark_paid_use_case_blocks_unresolved_payout_warnings() -> None:
         repository=repo, audit=CollectingAudit(), clock=lambda: _dt("2026-06-03T12:00:00")
     )
     approved = await approver.execute(period_id="pp-1")
-    await repo.replace(approved.model_copy(update={"payout_warnings": [_warning()]}))
+    repo._by_id["pp-1"] = approved.model_copy(update={"payout_warnings": [_warning()]})
 
     with pytest.raises(PayoutPeriodStateError, match="unresolved payout warnings"):
         await payer.execute(
@@ -763,3 +786,33 @@ async def test_replaced_occurrence_does_not_block_approval() -> None:
 
     assert approved.status == "approved"
     assert approved.unpaid_occurrences[0].reason == "replaced_by_actual_coach"
+
+
+# ---------------------------------------------------------------------------
+# L7: approval needs a post-month snapshot on the invoiced basis
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("overrides", "at"),
+    [
+        ({}, "2026-05-31T23:59:59"),  # the month is not over yet
+        ({"generated_at": _dt("2026-05-20T00:00:00")}, "2026-06-02T00:00:00"),  # stale preview
+        ({"revenue_basis": "expected"}, "2026-06-02T00:00:00"),  # legacy draft
+    ],
+)
+def test_approve_refuses_until_recomputed_after_the_month(overrides, at) -> None:
+    with pytest.raises(PayoutPeriodStateError, match="recompute first"):
+        approve(_draft_period(**overrides), at=_dt(at))
+
+
+def test_approve_accepts_a_post_month_invoiced_snapshot() -> None:
+    approved = approve(_draft_period(), at=_dt("2026-06-01T00:00:00"))
+    assert approved.status == "approved"
+
+
+def test_a_period_without_revenue_basis_is_a_legacy_draft() -> None:
+    legacy = _draft_period()
+    data = legacy.model_dump()
+    data.pop("revenue_basis")
+    assert PayoutPeriod(**data).revenue_basis == "expected"

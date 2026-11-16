@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  approvalBlock,
   approvalWarningMessage,
+  percentBasisLabel,
   payrollRowNeedsWarning,
   payoutWarningLabel,
   payoutWarningRepairAction,
@@ -94,5 +96,51 @@ describe("replaced-by-substitute reason (#228)", () => {
 
   it("guides the admin to check the attribution rather than a rate repair", () => {
     expect(unpaidReasonGuidance("replaced_by_actual_coach")).toContain("replacement coach");
+  });
+});
+
+describe("approval gate (L7)", () => {
+  const draft = {
+    status: "draft",
+    period_end: "2026-11-01T05:00:00Z",
+    generated_at: "2026-11-02T00:00:00Z",
+    revenue_basis: "invoiced",
+  };
+  const afterMonth = new Date("2026-11-03T00:00:00Z");
+
+  it("shows a preview banner while the month is still running", () => {
+    expect(approvalBlock(draft, new Date("2026-10-20T00:00:00Z"), "Oct 31")).toEqual({
+      kind: "preview",
+      message: "Preview. Approve unlocks after Oct 31.",
+    });
+  });
+
+  it("asks for a recompute on a legacy or stale draft", () => {
+    expect(approvalBlock({ ...draft, revenue_basis: "expected" }, afterMonth, "Oct 31")?.kind).toBe(
+      "recompute",
+    );
+    expect(
+      approvalBlock({ ...draft, generated_at: "2026-10-25T00:00:00Z" }, afterMonth, "Oct 31")?.kind,
+    ).toBe("recompute");
+  });
+
+  it("allows a post-month invoiced draft and never blocks a locked period", () => {
+    expect(approvalBlock(draft, afterMonth, "Oct 31")).toBeNull();
+    expect(approvalBlock({ ...draft, status: "approved" }, new Date(0), "Oct 31")).toBeNull();
+  });
+
+  it("labels the percent basis", () => {
+    expect(percentBasisLabel("invoiced")).toBe("% of invoiced tuition");
+    expect(percentBasisLabel("expected")).toBe("(legacy: expected revenue)");
+  });
+
+  it("names the new blocking warnings", () => {
+    expect(
+      payoutWarningLabel({ reason: "missing_invoiced_tuition_for_percent_revenue", message: "" }),
+    ).toBe("No invoiced tuition for this class and month");
+    expect(payoutWarningRepairAction({ repair_action: "invoice_class_month_and_recompute" })).toBe(
+      "Invoice the class for the month, then recompute payout.",
+    );
+    expect(unpaidReasonLabel("percent_rate_on_assistant")).toBe("Percent rate on assistant");
   });
 });

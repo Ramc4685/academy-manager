@@ -16,6 +16,10 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     RecomputePayoutPeriod,
 )
+from backend.v2.contexts.finance.domain.payout_period import (
+    PayoutPeriodConflictError,
+    PayoutPeriodStateError,
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,12 @@ class BulkRecomputePayroll:
             if p.status != "draft":
                 skipped += 1
                 continue
-            await self._recompute.execute(period_id=p.period_id, actor_id=actor_id)
+            try:
+                await self._recompute.execute(period_id=p.period_id, actor_id=actor_id)
+            except (PayoutPeriodConflictError, PayoutPeriodStateError):
+                # Someone approved or recomputed it since the list was read:
+                # skip it rather than 500 with half the month recomputed.
+                skipped += 1
+                continue
             recomputed += 1
         return BulkRecomputeResult(recomputed=recomputed, skipped=skipped)

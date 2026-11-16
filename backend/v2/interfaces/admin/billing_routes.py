@@ -53,8 +53,6 @@ from backend.v2.interfaces.admin.views import (
     AdminPaymentFeedResponse,
     AdminPaymentList,
     AdminPaymentView,
-    AdminPayoutList,
-    AdminPayoutView,
     AdminRevenueResponse,
     AdminTuitionDiscountSummaryResponse,
     ApplyPaymentDiscountRequest,
@@ -605,34 +603,6 @@ async def reconcile_stripe_billing(
 
 
 # --- # FINANCE ---
-
-
-# DEPRECATED — retire after feat/coach-payroll-month-first ships.
-# Replaced by: GET /admin/payroll/{month} in payroll_routes.py
-# No UI surface should call this route once Phase 2 is merged.
-@router.get("/finance/payouts", response_model=AdminPayoutList)  # FINANCE
-async def list_payouts(
-    _claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> AdminPayoutList:
-    payouts = await use_cases.payouts.list_all()
-    return AdminPayoutList(
-        payouts=[
-            AdminPayoutView(
-                payout_id=p.payout_id,
-                coach_id=p.coach_id,
-                amount_cents=p.amount_cents,
-                period_start=p.period_start,
-                period_end=p.period_end,
-                paid_at=p.paid_at,
-                expected_revenue_cents=p.expected_revenue_cents,
-                students_count=p.students_count,
-                sessions_count=p.sessions_count,
-                rule_label=p.rule_label,
-            )
-            for p in payouts
-        ]
-    )
 
 
 @router.get("/finance/expenses", response_model=AdminExpenseList)  # FINANCE

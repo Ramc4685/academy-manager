@@ -1925,23 +1925,6 @@ export interface paths {
         patch: operations["edit_expense_api_v2_admin_finance_expenses__expense_id__patch"];
         trace?: never;
     };
-    "/api/v2/admin/finance/payouts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Payouts */
-        get: operations["list_payouts_api_v2_admin_finance_payouts_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/admin/finance/revenue": {
         parameters: {
             query?: never;
@@ -2735,6 +2718,24 @@ export interface paths {
         put?: never;
         /** Reopen Payout Period */
         post: operations["reopen_payout_period_api_v2_admin_payout_periods__period_id__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/payroll-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Payroll Settings */
+        get: operations["get_payroll_settings_api_v2_admin_payroll_settings_get"];
+        /** Update Payroll Settings */
+        put: operations["update_payroll_settings_api_v2_admin_payroll_settings_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -9272,11 +9273,6 @@ export interface components {
             /** Voided By */
             voided_by?: string | null;
         };
-        /** AdminPayoutList */
-        AdminPayoutList: {
-            /** Payouts */
-            payouts: components["schemas"]["AdminPayoutView"][];
-        };
         /** AdminPayoutPayslipView */
         AdminPayoutPayslipView: {
             /** Lines */
@@ -9298,7 +9294,7 @@ export interface components {
              * Basis
              * @enum {string}
              */
-            basis: "scheduled" | "substitute" | "actual";
+            basis: "scheduled" | "substitute" | "actual" | "assistant";
             /** Coach Id */
             coach_id: string;
             /** Currency */
@@ -9337,6 +9333,11 @@ export interface components {
             lines: components["schemas"]["AdminPayoutPeriodLineView"][];
             /** Paid Amount Cents */
             paid_amount_cents?: number | null;
+            /**
+             * Paid Amount Differs
+             * @default false
+             */
+            paid_amount_differs: boolean;
             /** Paid At */
             paid_at?: string | null;
             /** Paid Method */
@@ -9358,6 +9359,12 @@ export interface components {
              */
             period_start: string;
             /**
+             * Revenue Basis
+             * @default expected
+             * @enum {string}
+             */
+            revenue_basis: "expected" | "invoiced";
+            /**
              * Status
              * @enum {string}
              */
@@ -9368,35 +9375,6 @@ export interface components {
             unpaid_occurrence_ids: string[];
             /** Unpaid Occurrences */
             unpaid_occurrences?: components["schemas"]["AdminUnpaidOccurrenceView"][];
-        };
-        /** AdminPayoutView */
-        AdminPayoutView: {
-            /** Amount Cents */
-            amount_cents: number;
-            /** Coach Id */
-            coach_id: string;
-            /** Expected Revenue Cents */
-            expected_revenue_cents?: number | null;
-            /** Paid At */
-            paid_at: string | null;
-            /** Payout Id */
-            payout_id: string;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /** Rule Label */
-            rule_label?: string | null;
-            /** Sessions Count */
-            sessions_count?: number | null;
-            /** Students Count */
-            students_count?: number | null;
         };
         /** AdminPayoutWarningView */
         AdminPayoutWarningView: {
@@ -9412,7 +9390,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "missing_session_price_for_percent_revenue" | "missing_rate" | "missing_percent";
+            reason: "missing_session_price_for_percent_revenue" | "missing_invoiced_tuition_for_percent_revenue" | "percent_rate_on_assistant" | "missing_rate" | "missing_percent";
             /** Repair Action */
             repair_action: string;
             /** Session Id */
@@ -10665,7 +10643,7 @@ export interface components {
              * @default unknown_unpaid_reason
              * @enum {string}
              */
-            reason: "no_rate_configured" | "rate_gap" | "missing_session_price_for_percent_revenue" | "attendance_override" | "replaced_by_actual_coach" | "unknown_unpaid_reason" | "missing_rate" | "missing_percent";
+            reason: "no_rate_configured" | "rate_gap" | "missing_session_price_for_percent_revenue" | "missing_invoiced_tuition_for_percent_revenue" | "percent_rate_on_assistant" | "attendance_override" | "replaced_by_actual_coach" | "unknown_unpaid_reason" | "missing_rate" | "missing_percent";
             /** Repair Action */
             repair_action?: string | null;
             /** Session Id */
@@ -16662,6 +16640,30 @@ export interface components {
             /** Entries */
             entries: components["schemas"]["PayoutAuditEntryView"][];
         };
+        /**
+         * PayrollSettingsView
+         * @description How a percent coach's invoiced-tuition base is counted (L7).
+         *
+         *     Applies to periods generated or recomputed after a change.
+         */
+        PayrollSettingsView: {
+            /** Payroll Ach Discount Reduces Base */
+            payroll_ach_discount_reduces_base: boolean;
+            /** Payroll Assistant Pay From */
+            payroll_assistant_pay_from: string | null;
+            /**
+             * Payroll Cancelled Class Share
+             * @enum {string}
+             */
+            payroll_cancelled_class_share: "ran_only" | "all_scheduled";
+            /** Payroll Count Checkout First Month */
+            payroll_count_checkout_first_month: boolean;
+            /**
+             * Payroll Missing Invoices
+             * @enum {string}
+             */
+            payroll_missing_invoices: "block" | "pay_zero";
+        };
         /** PipelineBoardCardView */
         PipelineBoardCardView: {
             /** Card Id */
@@ -17893,11 +17895,8 @@ export interface components {
         };
         /** RepairCoachPayRateWindowRequest */
         RepairCoachPayRateWindowRequest: {
-            /**
-             * Amount Cents
-             * @default 0
-             */
-            amount_cents: number;
+            /** Amount Cents */
+            amount_cents?: number | null;
             /**
              * Billing Unit
              * @enum {string}
@@ -18366,11 +18365,8 @@ export interface components {
         };
         /** SetCoachPayRateRequest */
         SetCoachPayRateRequest: {
-            /**
-             * Amount Cents
-             * @default 0
-             */
-            amount_cents: number;
+            /** Amount Cents */
+            amount_cents?: number | null;
             /**
              * Billing Unit
              * @enum {string}
@@ -23766,26 +23762,6 @@ export interface operations {
             };
         };
     };
-    list_payouts_api_v2_admin_finance_payouts_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdminPayoutList"];
-                };
-            };
-        };
-    };
     revenue_api_v2_admin_finance_revenue_get: {
         parameters: {
             query?: never;
@@ -25124,6 +25100,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminPayoutPeriodView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_payroll_settings_api_v2_admin_payroll_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollSettingsView"];
+                };
+            };
+        };
+    };
+    update_payroll_settings_api_v2_admin_payroll_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayrollSettingsView"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollSettingsView"];
                 };
             };
             /** @description Validation Error */

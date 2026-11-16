@@ -119,7 +119,6 @@ export const queryKeys = {
     overdueFamilies: () => ["admin", "payments", "collections", "overdue-families"] as const,
     invoiceDetail: (invoiceId: string) =>
       ["admin", "billing", "invoice", invoiceId] as const,
-    payouts: () => ["admin", "finance", "payouts"] as const,
     expenses: () => ["admin", "finance", "expenses"] as const,
     revenue: () => ["admin", "finance", "revenue"] as const,
     enrollmentFunnel: (period?: string) =>
@@ -147,6 +146,7 @@ export const queryKeys = {
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
     familyOffers: () => ["admin", "billing", "family-offers"] as const,
+    payrollSettings: () => ["admin", "payroll-settings"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     // Shared with slice B1's AI status card: both read the same key.
     aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,

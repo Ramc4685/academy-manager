@@ -96,6 +96,10 @@ BillingAuditAction = Literal[
     # to an invoice, so no attempt row can carry it (attempts need an invoice).
     # The payment is marked partially refunded; this is the owner's trail.
     "payment_return_unreconciled",
+    # Settings -> Billing rules -> Coach payroll (L7): the owner changed how a
+    # percent coach's invoiced-tuition base is counted. Applies to periods
+    # generated or recomputed afterwards; approved and paid ones never move.
+    "payroll_settings_changed",
 ]
 
 

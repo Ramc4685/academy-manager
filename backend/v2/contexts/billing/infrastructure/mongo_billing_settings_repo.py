@@ -41,6 +41,15 @@ _DERIVED_FIELDS = {"allow_platform_charge_fallback"}
 #: Keeping them out of ``upsert`` stops another settings save (a whole-document
 #: read-modify-write) from putting back a block read moments earlier.
 _FAMILY_OFFER_FIELDS = {"referral_program", "sibling_discount"}
+#: Coach payroll rules (L7), written only by ``set_payroll_settings`` so a
+#: stale billing-rules or ACH save cannot revert them.
+_PAYROLL_FIELDS = {
+    "payroll_ach_discount_reduces_base",
+    "payroll_count_checkout_first_month",
+    "payroll_cancelled_class_share",
+    "payroll_missing_invoices",
+    "payroll_assistant_pay_from",
+}
 
 
 class MongoBillingSettingsRepository(TenantScopedRepository):
@@ -83,7 +92,8 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
         model) overwrite the platform's values.
         """
         payload = settings.model_dump(
-            mode="python", exclude=_PLATFORM_ONLY_FIELDS | _DERIVED_FIELDS | _FAMILY_OFFER_FIELDS
+            mode="python",
+            exclude=_PLATFORM_ONLY_FIELDS | _DERIVED_FIELDS | _FAMILY_OFFER_FIELDS | _PAYROLL_FIELDS,
         )
         payload.pop("academy_id", None)
         change = payload.get("schedule_change")
@@ -112,6 +122,13 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
             payload["sibling_discount"] = sibling_discount.model_dump(mode="python")
         if payload:
             await self._update_one({}, {"$set": payload}, upsert=True)
+
+    async def set_payroll_settings(self, values: dict[str, Any]) -> None:
+        """Owner write of the coach payroll rules: a targeted ``$set`` of those fields only."""
+        unknown = set(values) - _PAYROLL_FIELDS
+        if unknown:
+            raise ValueError(f"not payroll settings: {sorted(unknown)}")
+        await self._update_one({}, {"$set": dict(values)}, upsert=True)
 
     async def set_application_fee_bps(
         self, fee_bps: int, *, agreement: ApplicationFeeAgreementAcceptance | None = None

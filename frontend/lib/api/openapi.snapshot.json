@@ -4630,22 +4630,6 @@
         "title": "AdminPaymentView",
         "type": "object"
       },
-      "AdminPayoutList": {
-        "properties": {
-          "payouts": {
-            "items": {
-              "$ref": "#/components/schemas/AdminPayoutView"
-            },
-            "title": "Payouts",
-            "type": "array"
-          }
-        },
-        "required": [
-          "payouts"
-        ],
-        "title": "AdminPayoutList",
-        "type": "object"
-      },
       "AdminPayoutPayslipView": {
         "properties": {
           "lines": {
@@ -4692,7 +4676,8 @@
             "enum": [
               "scheduled",
               "substitute",
-              "actual"
+              "actual",
+              "assistant"
             ],
             "title": "Basis",
             "type": "string"
@@ -4831,6 +4816,11 @@
             ],
             "title": "Paid Amount Cents"
           },
+          "paid_amount_differs": {
+            "default": false,
+            "title": "Paid Amount Differs",
+            "type": "boolean"
+          },
           "paid_at": {
             "anyOf": [
               {
@@ -4886,6 +4876,15 @@
             "title": "Period Start",
             "type": "string"
           },
+          "revenue_basis": {
+            "default": "expected",
+            "enum": [
+              "expected",
+              "invoiced"
+            ],
+            "title": "Revenue Basis",
+            "type": "string"
+          },
           "status": {
             "enum": [
               "draft",
@@ -4929,98 +4928,6 @@
         "title": "AdminPayoutPeriodView",
         "type": "object"
       },
-      "AdminPayoutView": {
-        "properties": {
-          "amount_cents": {
-            "title": "Amount Cents",
-            "type": "integer"
-          },
-          "coach_id": {
-            "title": "Coach Id",
-            "type": "string"
-          },
-          "expected_revenue_cents": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Revenue Cents"
-          },
-          "paid_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paid At"
-          },
-          "payout_id": {
-            "title": "Payout Id",
-            "type": "string"
-          },
-          "period_end": {
-            "format": "date-time",
-            "title": "Period End",
-            "type": "string"
-          },
-          "period_start": {
-            "format": "date-time",
-            "title": "Period Start",
-            "type": "string"
-          },
-          "rule_label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rule Label"
-          },
-          "sessions_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sessions Count"
-          },
-          "students_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Students Count"
-          }
-        },
-        "required": [
-          "payout_id",
-          "coach_id",
-          "amount_cents",
-          "period_start",
-          "period_end",
-          "paid_at"
-        ],
-        "title": "AdminPayoutView",
-        "type": "object"
-      },
       "AdminPayoutWarningView": {
         "properties": {
           "coach_id": {
@@ -5050,6 +4957,8 @@
           "reason": {
             "enum": [
               "missing_session_price_for_percent_revenue",
+              "missing_invoiced_tuition_for_percent_revenue",
+              "percent_rate_on_assistant",
               "missing_rate",
               "missing_percent"
             ],
@@ -8480,6 +8389,8 @@
               "no_rate_configured",
               "rate_gap",
               "missing_session_price_for_percent_revenue",
+              "missing_invoiced_tuition_for_percent_revenue",
+              "percent_rate_on_assistant",
               "attendance_override",
               "replaced_by_actual_coach",
               "unknown_unpaid_reason",
@@ -25455,6 +25366,57 @@
         "title": "PayoutAuditTrailView",
         "type": "object"
       },
+      "PayrollSettingsView": {
+        "additionalProperties": false,
+        "description": "How a percent coach's invoiced-tuition base is counted (L7).\n\nApplies to periods generated or recomputed after a change.",
+        "properties": {
+          "payroll_ach_discount_reduces_base": {
+            "title": "Payroll Ach Discount Reduces Base",
+            "type": "boolean"
+          },
+          "payroll_assistant_pay_from": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Assistant Pay From"
+          },
+          "payroll_cancelled_class_share": {
+            "enum": [
+              "ran_only",
+              "all_scheduled"
+            ],
+            "title": "Payroll Cancelled Class Share",
+            "type": "string"
+          },
+          "payroll_count_checkout_first_month": {
+            "title": "Payroll Count Checkout First Month",
+            "type": "boolean"
+          },
+          "payroll_missing_invoices": {
+            "enum": [
+              "block",
+              "pay_zero"
+            ],
+            "title": "Payroll Missing Invoices",
+            "type": "string"
+          }
+        },
+        "required": [
+          "payroll_ach_discount_reduces_base",
+          "payroll_count_checkout_first_month",
+          "payroll_cancelled_class_share",
+          "payroll_missing_invoices",
+          "payroll_assistant_pay_from"
+        ],
+        "title": "PayrollSettingsView",
+        "type": "object"
+      },
       "PipelineBoardCardView": {
         "properties": {
           "card_id": {
@@ -28895,10 +28857,16 @@
       "RepairCoachPayRateWindowRequest": {
         "properties": {
           "amount_cents": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Amount Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Cents"
           },
           "billing_unit": {
             "enum": [
@@ -30168,10 +30136,16 @@
       "SetCoachPayRateRequest": {
         "properties": {
           "amount_cents": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Amount Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Cents"
           },
           "billing_unit": {
             "enum": [
@@ -40745,27 +40719,6 @@
         ]
       }
     },
-    "/api/v2/admin/finance/payouts": {
-      "get": {
-        "operationId": "list_payouts_api_v2_admin_finance_payouts_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdminPayoutList"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Payouts",
-        "tags": [
-          "admin.billing"
-        ]
-      }
-    },
     "/api/v2/admin/finance/revenue": {
       "get": {
         "operationId": "revenue_api_v2_admin_finance_revenue_get",
@@ -42784,6 +42737,66 @@
         "summary": "Reopen Payout Period",
         "tags": [
           "admin.payout-periods"
+        ]
+      }
+    },
+    "/api/v2/admin/payroll-settings": {
+      "get": {
+        "operationId": "get_payroll_settings_api_v2_admin_payroll_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Payroll Settings",
+        "tags": [
+          "admin.payroll"
+        ]
+      },
+      "put": {
+        "operationId": "update_payroll_settings_api_v2_admin_payroll_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollSettingsView"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Payroll Settings",
+        "tags": [
+          "admin.payroll"
         ]
       }
     },

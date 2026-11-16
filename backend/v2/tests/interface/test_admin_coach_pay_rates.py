@@ -6,9 +6,11 @@ from datetime import UTC, datetime
 
 from backend.v2.contexts.coaching.application.use_cases.manage_coach_rates import (
     RepairCoachRateWindowCommand,
+    SetCoachPayRate,
     SetCoachPayRateCommand,
 )
 from backend.v2.contexts.coaching.domain.payout import CoachRate
+from backend.v2.shared.tenancy.context import tenant_scope
 
 
 def _dt(value: str) -> datetime:
@@ -214,3 +216,53 @@ def test_coach_pay_rates_unconfigured_returns_503(admin_client):
         ).status_code
         == 503
     )
+
+
+class _RateSheet:
+    def __init__(self, rates: list[CoachRate]) -> None:
+        self.rates = list(rates)
+
+    async def list_for_coach(self, coach_id: str) -> list[CoachRate]:
+        return [r for r in self.rates if r.coach_id == coach_id]
+
+    async def find_active(self, coach_id: str) -> CoachRate | None:
+        return next((r for r in self.rates if r.status == "active"), None)
+
+    async def supersede(self, rate_id: str, *, effective_until: datetime) -> None:
+        self.rates = [
+            r.model_copy(update={"status": "superseded", "effective_until": effective_until})
+            if r.rate_id == rate_id
+            else r
+            for r in self.rates
+        ]
+
+    async def insert(self, rate: CoachRate) -> None:
+        self.rates.append(rate)
+
+
+def test_omitted_flat_amount_is_400_and_explicit_zero_saves_a_volunteer_rate(admin_client):
+    real = _rate(billing_unit="per_session", amount_minor=5000, percent_bps=None)
+    sheet = _RateSheet([real])
+    real_use_case = SetCoachPayRate(rates=sheet, clock=lambda: _dt("2026-07-01T00:00:00"))
+
+    class _InTenant:  # the stub admin_client sets no tenant; production auth middleware does
+        async def execute(self, command: SetCoachPayRateCommand) -> CoachRate:
+            with tenant_scope("acad"):
+                return await real_use_case.execute(command)
+
+    admin_client.use_cases.set_coach_pay_rate = _InTenant()
+
+    omitted = admin_client.post(
+        "/api/v2/admin/coaches/coach-1/pay-rates", json={"billing_unit": "per_session"}
+    )
+    assert omitted.status_code == 400
+    assert "amount is required" in omitted.json()["detail"]
+    assert sheet.rates == [real]
+
+    volunteer = admin_client.post(
+        "/api/v2/admin/coaches/coach-1/pay-rates",
+        json={"billing_unit": "per_session", "amount_cents": 0},
+    )
+    assert volunteer.status_code == 200, volunteer.text
+    assert volunteer.json()["amount_cents"] == 0
+    assert [r.status for r in sheet.rates] == ["superseded", "active"]

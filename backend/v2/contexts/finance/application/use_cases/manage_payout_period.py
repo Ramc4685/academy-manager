@@ -37,6 +37,9 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PersistedPayoutLine,
     reopen,
 )
+from backend.v2.contexts.finance.domain.payout_period import (
+    PayoutPeriodConflictError as PayoutPeriodConflictError,  # re-exported for interfaces (ADR-0006)
+)
 from backend.v2.shared.ids import new_ulid
 
 
@@ -147,6 +150,7 @@ class RecomputePayoutPeriod(_Audited):
                     )
                     for warning in getattr(calc, "payout_warnings", [])
                 ],
+                "revenue_basis": "invoiced",
                 "generated_at": self._clock(),
             }
         )

@@ -159,7 +159,6 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
-    MongoPayoutRepository,
     MongoTuitionDiscountSummaryQuery,
     RecordExpense,
 )
@@ -218,6 +217,9 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_revenue_by_category_report,
     make_session_economics_report,
 )
+from backend.v2.contexts.billing.infrastructure.invoiced_tuition_read_model import (
+    MongoInvoicedTuitionReadModel,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
     MongoAcademyBillingRegionReader,
 )
@@ -253,7 +255,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoClassFeeResolver,
-    MongoProjectedClassFees,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
     MongoProductRepository,
@@ -592,6 +593,7 @@ from backend.v2.shared.tenancy import (
     TenantContextUnset,
     current_academy_id,
     current_tenant_origins,
+    tenant_scope,
 )
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.time import (
@@ -1103,13 +1105,23 @@ def compose_admin(
 
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
-    payouts_repo = MongoPayoutRepository(db, academy_timezone=academy_timezone_lookup(db))
     payout_periods_repo = MongoPayoutPeriodRepository(db)
+    payable_occurrences = MongoPayableOccurrenceQuery(db, tuition=MongoInvoicedTuitionReadModel(db))
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
-            occurrences=MongoPayableOccurrenceQuery(db, class_fees=MongoProjectedClassFees(db)),
+            occurrences=payable_occurrences,
             rates=MongoCoachRateLookup(db),
+            invoice_gaps=payable_occurrences,
         )
+    )
+
+    async def _assistant_pay_from(academy_id: str) -> str | None:
+        # The academy the payroll query names, not the ambient request tenant.
+        with tenant_scope(academy_id):
+            return (await billing_settings_repo.get()).payroll_assistant_pay_from
+
+    monthly_coach_reader = MonthlyCoachOccurrenceReaderAdapter(
+        db["session_occurrences"], assistant_pay_from=_assistant_pay_from
     )
     payout_audit_log = MongoPayoutAuditLogRepository(db)
     # #787: generation, approval and payment are money-moving transitions and
@@ -4264,16 +4276,15 @@ def compose_admin(
         edit_expense=edit_expense,
         delete_expense=delete_expense,
         expenses=expenses_repo,
-        payouts=payouts_repo,
         revenue_query=revenue_query,
         payout_periods=payout_periods_repo,
         list_monthly_payroll=ListMonthlyPayroll(
-            reader=MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            reader=monthly_coach_reader,
             periods=payout_periods_repo,
             calculator=coach_payout_calculator,
         ),
         bulk_generate_payroll=BulkGeneratePayroll(
-            reader=MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            reader=monthly_coach_reader,
             periods=payout_periods_repo,
             generate=generate_payout_period,
         ),

@@ -1033,7 +1033,6 @@ from backend.v2.contexts.billing.application.use_cases.finance import (
     DeleteExpense,
     EditExpense,
     Expense,
-    Payout,
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
@@ -1913,17 +1912,6 @@ class FakeExpenseRepo:
 
 
 @dataclass
-class FakePayoutRepo:
-    rows: dict[str, Payout] = field(default_factory=dict)
-
-    async def list_all(self):
-        return sorted(self.rows.values(), key=lambda p: p.period_start, reverse=True)
-
-    async def list_for_coach(self, coach_id):
-        return [p for p in self.rows.values() if p.coach_id == coach_id]
-
-
-@dataclass
 class FakeMessageRepo:
     rows: dict[str, Message] = field(default_factory=dict)
 
@@ -2108,7 +2096,6 @@ def admin_seed():
         "payments": FakePaymentRepo(),
         "tuition_discounts": FakeTuitionDiscountRepo(),
         "expenses": FakeExpenseRepo(),
-        "payouts": FakePayoutRepo(),
         "messages": FakeMessageRepo(),
         "waivers": FakeAdminWaivers(),
         # Issue #774: owner-facing autopay counts for the home attention list.
@@ -2160,7 +2147,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     idem = seed["idempotency"]
     stripe = seed["stripe"]
     expenses = seed["expenses"]
-    payouts = seed["payouts"]
     messages = seed["messages"]
     waivers = seed["waivers"]
     comms = CommsService(messages=messages, academy_id="acad")  # type: ignore[arg-type]
@@ -2831,7 +2817,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         edit_expense=edit_expense,
         delete_expense=delete_expense,
         expenses=expenses,  # type: ignore[arg-type]
-        payouts=payouts,  # type: ignore[arg-type]
         revenue_query=revenue_query,
         list_admin_sessions=list_admin_sessions,
         list_session_occurrences=list_session_occurrences,

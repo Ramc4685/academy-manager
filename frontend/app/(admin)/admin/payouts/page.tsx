@@ -117,7 +117,7 @@ function PayoutsContent() {
     <div className="space-y-4 p-6" data-testid="admin-payouts">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Coach Payroll</h1>
-        {tab === "payroll" && <MonthPicker value={month} onChange={setMonth} />}
+        <MonthPicker value={month} onChange={setMonth} />
       </div>
 
       <div
@@ -159,7 +159,7 @@ function PayoutsContent() {
         tabIndex={0}
       >
         {tab === "payslips" ? (
-          <PayslipsPanel />
+          <PayslipsPanel month={month} />
         ) : (
           <>
             {warningRows.length > 0 && (
@@ -426,6 +426,6 @@ function PayrollRows({
 }
 
 function PayrollStatusChip({ status }: { status: MonthlyPayrollStatus }) {
-  const chip = payslipChipFor(status, null);
+  const chip = payslipChipFor(status);
   return <Chip variant={chip.variant} label={chip.label} />;
 }

@@ -8,13 +8,12 @@ mongomock does not enforce. Skipped (not failed) when no mongod listens.
 Pinned on the BLNO-shaped academy of ``test_plan_price_change_real_mongo``
 (Chicago clock, "now" is 2026-09-29, so September is the current month):
 
-* with no change on record, projected income, session economics and the
-  percent-of-revenue payroll basis read exactly today's numbers for every
-  month (the legacy ``monthly_price_cents``-only class is still left out of
-  the two reports, as today);
+* with no change on record, projected income and session economics read
+  exactly today's numbers for every month (the legacy
+  ``monthly_price_cents``-only class is still left out of the two reports,
+  as today);
 * with a change scheduled for November, a projection for November or later
-  uses the new fee, October and the current month the old one, and payroll
-  for an already-closed month is unchanged;
+  uses the new fee, October and the current month the old one;
 * once the daily job has flipped the class at November (the change is
   "applied"), a later report for a month before November still reads the old
   fee it was billed at, the current month the stored (new) fee; two chained
@@ -28,7 +27,6 @@ Pinned on the BLNO-shaped academy of ``test_plan_price_change_real_mongo``
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -43,11 +41,7 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoProjectedClassFees,
 )
-from backend.v2.contexts.coaching.infrastructure.mongo_payout_read_models import (
-    MongoPayableOccurrenceQuery,
-)
 from backend.v2.shared.config import get_settings
-from backend.v2.shared.money import round_money_minor
 from backend.v2.shared.tenancy.context import _current as _tenant
 from backend.v2.tests.contract.test_plan_price_change_real_mongo import (
     NEW,
@@ -101,25 +95,6 @@ def _reports(db: Any, *, clock: Any = _clock) -> tuple[Any, Any]:
     )
 
 
-async def _payroll_basis(
-    db: Any, acad: str, *, month_aware: bool = True, clock: Any = _clock
-) -> dict[str, Any]:
-    query = MongoPayableOccurrenceQuery(
-        db, class_fees=MongoProjectedClassFees(db, clock=clock) if month_aware else None
-    )
-    rows = await query.list_in_period(
-        academy_id=acad,
-        period_start=datetime(2026, 8, 1, tzinfo=UTC),
-        period_end=datetime(2027, 1, 1, tzinfo=UTC),
-    )
-    return {row.occurrence_id: row.expected_revenue_minor for row in rows}
-
-
-def _per_occurrence(fee: int) -> int:
-    """Two active juniors enrollments (e5 is paused), two classes a month."""
-    return round_money_minor(Decimal(fee) * Decimal(2) / Decimal(2))
-
-
 async def _economics(report: Any, period: str) -> dict[str, int]:
     result = await report(period)
     return {row["session_id"]: row["monthly_fee_cents"] for row in result["sessions"]}
@@ -146,9 +121,6 @@ async def test_without_a_change_every_projection_reads_todays_numbers(real_db, a
         }
         assert await _economics(economics, period) == {"juniors": OLD}
 
-    month_aware = await _payroll_basis(real_db, acad)
-    assert month_aware == await _payroll_basis(real_db, acad, month_aware=False)
-    assert set(month_aware.values()) == {_per_occurrence(OLD)}
     assert await real_db["plan_price_changes"].count_documents({}) == 0
 
 
@@ -160,7 +132,6 @@ async def test_a_scheduled_change_moves_projections_from_its_month_only(real_db,
     await _seed_academy(real_db, acad)
     await _seed_occurrences(real_db, acad)
     kit = _Kit(real_db)
-    before = await _payroll_basis(real_db, acad)
 
     await kit.schedule.execute(kit.cmd(acad, "2026-11"))
     projected, economics = _reports(real_db)
@@ -179,14 +150,6 @@ async def test_a_scheduled_change_moves_projections_from_its_month_only(real_db,
         assert rows["squad"]["expected_cents"] == OLD
         assert await _economics(economics, period) == {"juniors": NEW}
 
-    basis = await _payroll_basis(real_db, acad)
-    for occurrence_id, value in basis.items():
-        period = occurrence_id.split("_")[1]
-        assert value == _per_occurrence(NEW if period >= "2026-11" else OLD), occurrence_id
-        if period < "2026-11":
-            # Closed, current and next month: exactly what they read before.
-            assert value == before[occurrence_id], occurrence_id
-
 
 @pytest.mark.asyncio
 async def test_another_academys_change_on_the_same_class_ids_moves_nothing(real_db, acad) -> None:
@@ -204,7 +167,6 @@ async def test_another_academys_change_on_the_same_class_ids_moves_nothing(real_
     projected, economics = _reports(real_db)
     assert (await projected("2026-12"))["total_cents"] == 3 * OLD
     assert await _economics(economics, "2026-12") == {"juniors": OLD}
-    assert set((await _payroll_basis(real_db, acad)).values()) == {_per_occurrence(OLD)}
 
 
 def _clock_on(year: int, month: int, day: int) -> Any:
@@ -216,7 +178,6 @@ async def test_after_the_flip_past_months_keep_the_fee_they_were_billed_at(real_
     await _seed_academy(real_db, acad)
     await _seed_occurrences(real_db, acad)
     kit = _Kit(real_db)
-    before = await _payroll_basis(real_db, acad)
 
     await kit.schedule.execute(kit.cmd(acad, "2026-11"))
     assert (await kit.apply_due.execute(academy_id=acad, period="2026-11")).applied == 1
@@ -243,14 +204,6 @@ async def test_after_the_flip_past_months_keep_the_fee_they_were_billed_at(real_
         # Session economics lists classes with occurrences (seeded to Dec).
         if period in _MONTHS:
             assert await _economics(economics, period) == {"juniors": NEW}, period
-
-    basis = await _payroll_basis(real_db, acad, clock=december)
-    for occurrence_id, value in basis.items():
-        period = occurrence_id.split("_")[1]
-        assert value == _per_occurrence(NEW if period >= "2026-11" else OLD), occurrence_id
-        if period < "2026-11":
-            # Payroll for months closed before the change: unchanged by the flip.
-            assert value == before[occurrence_id], occurrence_id
 
 
 @pytest.mark.asyncio
@@ -285,11 +238,6 @@ async def test_two_chained_changes_each_apply_from_their_own_month(real_db, acad
         assert (await projected(period))["total_cents"] == 3 * fee + OLD, period
         if period in _MONTHS:
             assert await _economics(economics, period) == {"juniors": fee}, period
-
-    basis = await _payroll_basis(real_db, acad, clock=december)
-    for occurrence_id, value in basis.items():
-        period = occurrence_id.split("_")[1]
-        assert value == _per_occurrence(NEW if period >= "2026-11" else OLD), occurrence_id
 
 
 # ------------------------------------------------------------ start autopay

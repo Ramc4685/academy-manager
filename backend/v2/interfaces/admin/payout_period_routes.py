@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,11 +21,13 @@ from backend.v2.contexts.finance.application.use_cases.generate_payout_period im
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     ListPayoutAuditEntries,
     OverridePayoutLine,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     RecomputePayoutPeriod,
     ReopenPayoutPeriod,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.payroll_routes import PAYROLL_ROLE_LABELS
 from backend.v2.interfaces.admin.views import (
     AdminPayoutPayslipView,
     AdminPayoutPeriodLineView,
@@ -56,6 +60,28 @@ class PayoutPeriodInvalidTransition(DomainError):
 class PayoutPeriodOverlap(DomainError):
     code = "Finance.PayoutPeriodOverlap"
     status_code = 409
+
+
+class PayoutPeriodConflict(DomainError):
+    """Someone else changed the period between load and write; nothing was saved."""
+
+    code = "Finance.PayoutPeriodConflict"
+    status_code = 409
+
+
+@contextmanager
+def _period_write_errors(
+    not_found: str | None = None, *, invalid: type[Exception] = ValueError
+) -> Iterator[None]:
+    """One mapping of a payout period write's domain errors to HTTP errors."""
+    try:
+        yield
+    except PayoutPeriodConflictError as exc:
+        raise PayoutPeriodConflict(str(exc)) from exc
+    except LookupError as exc:
+        raise PayoutPeriodNotFound(not_found or str(exc)) from exc
+    except invalid as exc:
+        raise PayoutPeriodInvalidTransition(str(exc)) from exc
 
 
 def _line_view(line: Any) -> AdminPayoutPeriodLineView:
@@ -112,7 +138,7 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
         ]
     unpaid_occurrence_ids = {row.occurrence_id for row in structured_unpaid}
     for warning in payout_warnings:
-        if warning.occurrence_id in unpaid_occurrence_ids:
+        if warning.severity != "blocking" or warning.occurrence_id in unpaid_occurrence_ids:
             continue
         structured_unpaid.append(
             AdminUnpaidOccurrenceView(
@@ -141,12 +167,16 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
         unpaid_occurrence_ids=list(period.unpaid_occurrence_ids),
         unpaid_occurrences=structured_unpaid,
         payout_warnings=payout_warnings,
+        revenue_basis=period.revenue_basis,
         generated_at=period.generated_at,
         approved_at=period.approved_at,
         paid_at=period.paid_at,
         paid_method=period.paid_method,
         paid_amount_cents=period.paid_amount_minor,
         paid_reference=period.paid_reference,
+        paid_amount_differs=(
+            period.paid_amount_minor is not None and period.paid_amount_minor != period.total_minor
+        ),
     )
 
 
@@ -327,14 +357,10 @@ async def approve_payout_period(
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
-    try:
+    with _period_write_errors(f"Payout period {period_id!r} not found"):
         period = await _approve_payout_period(use_cases).execute(
             period_id=period_id, actor_id=claims.user_id
         )
-    except LookupError as exc:
-        raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
-    except ValueError as exc:
-        raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 
@@ -345,7 +371,7 @@ async def mark_payout_period_paid(
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
-    try:
+    with _period_write_errors(f"Payout period {period_id!r} not found"):
         period = await _mark_payout_paid(use_cases).execute(
             MarkPayoutPaidCommand(
                 period_id=period_id,
@@ -356,10 +382,6 @@ async def mark_payout_period_paid(
             ),
             actor_id=claims.user_id,
         )
-    except LookupError as exc:
-        raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
-    except ValueError as exc:
-        raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 
@@ -369,14 +391,12 @@ async def recompute_payout_period(
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
-    try:
+    with _period_write_errors(
+        f"Payout period {period_id!r} not found", invalid=PayoutPeriodStateError
+    ):
         period = await _recompute_payout_period(use_cases).execute(
             period_id=period_id, actor_id=claims.user_id
         )
-    except LookupError as exc:
-        raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
-    except PayoutPeriodStateError as exc:
-        raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 
@@ -387,17 +407,13 @@ async def reopen_payout_period(
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
-    try:
+    with _period_write_errors(f"Payout period {period_id!r} not found"):
         period = await _reopen_payout_period(use_cases).execute(
             period_id=period_id,
             actor_id=claims.user_id,
             reason=body.reason,
             acknowledge_paid_clawback=body.acknowledge_paid_clawback,
         )
-    except LookupError as exc:
-        raise PayoutPeriodNotFound(f"Payout period {period_id!r} not found") from exc
-    except ValueError as exc:
-        raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 
@@ -412,7 +428,7 @@ async def override_payout_period_line(
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
-    try:
+    with _period_write_errors():
         period = await _override_payout_line(use_cases).execute(
             period_id=period_id,
             occurrence_id=occurrence_id,
@@ -420,10 +436,6 @@ async def override_payout_period_line(
             reason=body.reason,
             actor_id=claims.user_id,
         )
-    except LookupError as exc:
-        raise PayoutPeriodNotFound(str(exc)) from exc
-    except ValueError as exc:
-        raise PayoutPeriodInvalidTransition(str(exc)) from exc
     return await _enriched_period_view(use_cases, period)
 
 
@@ -490,7 +502,8 @@ async def export_payout_period_xlsx(
             "Role",
             "Status",
             "Percent",
-            "Expected revenue",
+            # Legacy periods were paid on expected revenue, not invoiced tuition.
+            "Tuition basis" if view.revenue_basis == "invoiced" else "Expected revenue (legacy)",
             "Pay",
             "Adjustment",
             "Warning reason",
@@ -502,7 +515,7 @@ async def export_payout_period_xlsx(
             [
                 f"{line.occurred_at:%Y-%m-%d}" if line.occurred_at else "",
                 line.session_title or line.occurrence_id,
-                "Replacement" if line.basis == "substitute" else "Scheduled",
+                PAYROLL_ROLE_LABELS.get(line.basis, "Scheduled"),
                 "Paid",
                 (line.percent_bps / 100) if line.percent_bps is not None else None,
                 (line.expected_revenue_cents / 100)
