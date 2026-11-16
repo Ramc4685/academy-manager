@@ -15,9 +15,12 @@ Wave 2 wires:
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol
 
+from backend.v2.composition.email_adapters import UndeliverableNotice
 from backend.v2.contexts.billing.application.ports import DisputeNoticePort
 from backend.v2.contexts.billing.application.use_cases.issue_refund import (
     IssueRefund,
@@ -27,6 +30,7 @@ from backend.v2.contexts.billing.application.use_cases.process_dunning_retries i
     DunningNotificationPort,
 )
 from backend.v2.contexts.billing.domain.events import (
+    PAYMENT_RETURNED_NOTICE_PREFIX,
     CheckoutExpired,
     DunningNoticeRequested,
     PaymentDisputeNoticeRequested,
@@ -60,6 +64,7 @@ from backend.v2.contexts.student_progress.application.use_cases.expire_level_up_
 )
 from backend.v2.contexts.student_progress.domain.events import StudentPlacedInLevel
 from backend.v2.shared.events import handler
+from backend.v2.shared.events.base import DomainEvent
 from backend.v2.shared.tenancy.context import tenant_scope
 
 log = logging.getLogger(__name__)
@@ -96,7 +101,7 @@ def install_handlers(deps: HandlerDeps) -> None:
 class _BillingNotifier(DunningNotificationPort, Protocol):
     """The billing e-mail adapter: dunning notices plus payment receipts (L1 A5-2)."""
 
-    async def send_autopay_receipt(
+    async def send_payment_receipt(
         self,
         *,
         parent_id: str,
@@ -314,6 +319,19 @@ async def on_welcome_email_requested(event: WelcomeEmailRequested) -> None:
 # The decorator is typed against the DomainEvent base while every handler here
 # narrows to its own event — same as the handlers above, which predate the
 # mypy baseline. Ignored locally rather than widening the baseline.
+@contextmanager
+def _skip_undeliverable(event: DomainEvent, *, enabled: bool) -> Iterator[None]:
+    try:
+        yield
+    except UndeliverableNotice as exc:
+        if not enabled:
+            raise
+        log.warning(
+            "billing_notice_undeliverable",
+            extra={"event_id": event.event_id, "academy_id": event.academy_id, "reason": str(exc)},
+        )
+
+
 @handler(event=DunningNoticeRequested, schema_version=1)  # type: ignore[arg-type]
 async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
     """Deliver the "autopay attempt failed" notice (issue #435).
@@ -324,13 +342,20 @@ async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
     exactly the bug this event was introduced to fix — a parent never told that
     their payment failed.
     """
+    # A late-return notice can be owed to a parent nobody can reach; that is not a
+    # delivery failure to retry and dead-letter (L1 B5). Failed-attempt notices
+    # keep raising, as above.
+    late_return = event.event_id.startswith(PAYMENT_RETURNED_NOTICE_PREFIX)
     if _dunning_notifier is None:
+        if late_return:
+            log.warning("payment_returned_notice_skipped: no notifier installed")
+            return
         raise RuntimeError(
             "dunning notifier not installed — composition root did not call "
             "install_dunning_notifier()"
         )
     payload = event.payload
-    with tenant_scope(event.academy_id):
+    with tenant_scope(event.academy_id), _skip_undeliverable(event, enabled=late_return):
         await _dunning_notifier.send_dunning_notice(
             parent_id=payload.parent_id,
             invoice_id=payload.invoice_id,
@@ -347,16 +372,15 @@ async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
 
 @handler(event=PaymentReceiptRequested, schema_version=1)  # type: ignore[arg-type]
 async def on_payment_receipt_requested(event: PaymentReceiptRequested) -> None:
-    """Deliver the parent's receipt (L1 A5-2). Raises so the dispatcher retries;
-    it dedupes per (event_id, handler), and the event id is per payment."""
+    """Deliver the parent's receipt (L1 A5-2). A transport failure raises so the
+    dispatcher retries (deduped per event id, one per payment); a parent nobody
+    can reach, or no e-mail wiring at all, is logged and skipped (L1 B5)."""
     if _dunning_notifier is None:
-        raise RuntimeError(
-            "dunning notifier not installed — composition root did not call "
-            "install_dunning_notifier()"
-        )
+        log.warning("payment_receipt_skipped: no notifier installed")
+        return
     payload = event.payload
-    with tenant_scope(event.academy_id):
-        await _dunning_notifier.send_autopay_receipt(
+    with tenant_scope(event.academy_id), _skip_undeliverable(event, enabled=True):
+        await _dunning_notifier.send_payment_receipt(
             parent_id=payload.parent_id,
             invoice_id=payload.invoice_id,
             period=payload.period,

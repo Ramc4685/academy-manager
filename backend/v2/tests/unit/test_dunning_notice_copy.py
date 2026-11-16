@@ -97,7 +97,7 @@ async def _receipt(**overrides) -> dict:
         **overrides,
     }
     with tenant_scope("acad"):
-        await adapter.send_autopay_receipt(**kwargs)
+        await adapter.send_payment_receipt(**kwargs)
     return sender.calls[0]
 
 

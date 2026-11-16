@@ -45,6 +45,26 @@ _STOP_CODES = frozenset(
     }
 )
 
+#: Card declines: a card PaymentIntent that sat in "processing" and then declined
+#: keeps the card ladder (L1 review). Every other settled failure is a bank one.
+_CARD_DECLINE_CODES = frozenset(
+    {
+        "card_declined",
+        "expired_card",
+        "incorrect_cvc",
+        "incorrect_number",
+        "lost_card",
+        "stolen_card",
+        "do_not_honor",
+        "generic_decline",
+        "fraudulent",
+        "authentication_required",
+        "requires_action",
+        "processing_error",
+        "card_velocity_exceeded",
+    }
+)
+
 #: ACH retry spacing, counted from when the failure is REPORTED (a return lands
 #: about four business days after the debit, so counting from the first attempt
 #: would re-debit at once). First debit + 2 retries.
@@ -66,3 +86,20 @@ def ach_failure_disposition(code: object) -> AchDisposition | None:
     if r_code is None:
         return None
     return "retry" if r_code in _RETRY_R_CODES else "stop"
+
+
+def is_bank_debit_failure(code: object, *, settled: bool) -> bool:
+    """Did a BANK debit fail? ``settled``: the failure came back on a debit the
+    ladder was holding as processing, so anything but a card decline is a bank
+    failure (an unknown code stops: fail safe). Otherwise only a bank-only code
+    counts; ``insufficient_funds`` alone is also a card decline."""
+    text = str(code or "").strip().lower()
+    if not text:
+        return False
+    if settled:
+        return text not in _CARD_DECLINE_CODES
+    return (
+        text in _STOP_CODES
+        or text == "bank_account_insufficient_funds"
+        or normalize_nacha_return_code(code) is not None
+    )

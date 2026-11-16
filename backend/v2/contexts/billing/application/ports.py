@@ -301,6 +301,23 @@ class SavedPaymentMethodReader(Protocol):
         """(stripe_customer_id, payment_method_id) on ``stripe_account_id``, or None."""
         ...
 
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        """Stripe has blocked this exact method (closed bank, revoked mandate)."""
+        ...
+
+
+class FamilyAutopayPauser(Protocol):
+    """Pauses every active-autopay enrollment of one parent, audited as the system.
+
+    Money taken back (late bank return, lost dispute) or a bank that cannot be
+    debited again stops autopay for the whole family, not one enrollment (L1 B4).
+    Idempotent per ``request_id``; returns how many enrollments were paused.
+    """
+
+    async def pause_family(
+        self, *, academy_id: str, parent_id: str, reason: str, request_id: str
+    ) -> int: ...
+
 
 class AutopayConsentRepository(Protocol):
     async def append(

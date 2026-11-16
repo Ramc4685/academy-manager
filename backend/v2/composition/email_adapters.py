@@ -116,6 +116,11 @@ def _branded_button(*, label: str, url: str) -> str:
     return button(label, url)
 
 
+class UndeliverableNotice(ValueError):
+    """Nobody to send to (no active parent, no email, a suppressed address).
+    Retrying cannot help, so handlers that may skip these log and return (L1 B5)."""
+
+
 class LoginInviteEmailAdapter:
     """Bridges identity's `InviteEmailPort` to communications' `EmailSendPort`.
 
@@ -493,12 +498,12 @@ class InvoiceEmailAdapter:
         academy_id = current_academy_id()
         membership = await self._memberships.get_membership(academy_id, parent_id)
         if membership is None or not membership.is_active() or "parent" not in membership.roles:
-            raise ValueError("dunning parent has no active membership in request academy")
+            raise UndeliverableNotice("dunning parent has no active membership in request academy")
 
         user = await self._users.get_by_id(parent_id)
         email = str(user.email if user else "").strip()
         if not email:
-            raise ValueError("dunning parent email not found")
+            raise UndeliverableNotice("dunning parent email not found")
 
         academy_name = await self._academies.get_academy_name(academy_id) or "Your academy"
         naming = await self._naming_for(invoice_id)
@@ -583,6 +588,8 @@ class InvoiceEmailAdapter:
             subject=subject,
             body=body,
         )
+        if outcome.suppressed:
+            raise UndeliverableNotice(outcome.failed_reason or "dunning email suppressed")
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "dunning email delivery failed")
 
@@ -590,11 +597,11 @@ class InvoiceEmailAdapter:
         academy_id = current_academy_id()
         membership = await self._memberships.get_membership(academy_id, parent_id)
         if membership is None or not membership.is_active() or "parent" not in membership.roles:
-            raise ValueError(f"{what} parent has no active membership in request academy")
+            raise UndeliverableNotice(f"{what} parent has no active membership in request academy")
         user = await self._users.get_by_id(parent_id)
         email = str(user.email if user else "").strip()
         if not email:
-            raise ValueError(f"{what} parent email not found")
+            raise UndeliverableNotice(f"{what} parent email not found")
         return ResolvedRecipient(
             user_id=parent_id,
             email=email,
@@ -658,7 +665,7 @@ class InvoiceEmailAdapter:
             raise ValueError(outcome.failed_reason or "autopay notice delivery failed")
         return outcome.provider_message_id
 
-    async def send_autopay_receipt(
+    async def send_payment_receipt(
         self,
         *,
         parent_id: str,
@@ -701,6 +708,8 @@ class InvoiceEmailAdapter:
                 brand=await _academy_brand(self._academies, academy_name),
             ),
         )
+        if outcome.suppressed:
+            raise UndeliverableNotice(outcome.failed_reason or "payment receipt suppressed")
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "payment receipt delivery failed")
 

@@ -16,6 +16,7 @@ from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.ai_video_consent import compose_parent_ai_video_consent
+from backend.v2.composition.families import compose_system_family_autopay_pause
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
@@ -699,6 +700,7 @@ def compose_parent_webhook_handler(
         ),
         payment_disputes=MongoPaymentDisputeRepository(db),
         platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
+        family_autopay=compose_system_family_autopay_pause(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -868,6 +870,7 @@ def compose_parent(
         ),
         payment_disputes=MongoPaymentDisputeRepository(db),
         platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
+        family_autopay=compose_system_family_autopay_pause(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True

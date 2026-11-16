@@ -11,6 +11,7 @@ from backend.v2.contexts.billing.domain.ach_returns import (
     ACH_MAX_ATTEMPTS,
     ACH_RETRY_DELAY_DAYS,
     ach_failure_disposition,
+    is_bank_debit_failure,
 )
 
 DUNNING_SCHEDULE_DAYS = (0, 3, 5, 7)
@@ -23,6 +24,9 @@ MAX_DUNNING_ATTEMPTS = len(DUNNING_SCHEDULE_DAYS)
 #: rule without importing the Mongo repository that obeys it.
 FIRST_ATTEMPT_LOCAL_HOUR = 9
 
+#: Stripe API or network error: we never reached the card or bank (A4-3).
+STRIPE_UNAVAILABLE = "stripe_unavailable"
+
 #: Park reasons that mean "we could not ask the bank" because of something on our
 #: side. A ladder parked for one of these is listed for the admin and counted by
 #: the ops digest; settling ACH debits, open checkouts and paused enrollments are
@@ -33,14 +37,19 @@ PARK_REASONS_NEEDING_ATTENTION = frozenset(
         "attempt_indeterminate",
         "connected_account_not_ready",
         "stripe_not_configured",
-        "stripe_unavailable",
+        STRIPE_UNAVAILABLE,
     }
 )
 
-#: No saved card or bank: the parent has to act, not us. Listed for the admin,
-#: emailed to the parent once, but never an ops-digest fault (owner 2026-11-15).
+#: The subset the academy fixes itself by finishing Stripe setup, so the owner
+#: dashboard words them as "finish Stripe setup", not a fault on our side.
+PARK_REASONS_NEEDING_STRIPE_SETUP = frozenset(
+    {"connected_account_not_ready", "stripe_not_configured"}
+)
+
+#: No saved card or bank: the parent has to act, not us. Emailed to the parent
+#: once and shown in the Payments buckets, never an ops-digest fault (owner 2026-11-15).
 NO_SAVED_PAYMENT_METHOD = "no_saved_payment_method"
-PARK_REASONS_ADMIN_LISTED = PARK_REASONS_NEEDING_ATTENTION | {NO_SAVED_PAYMENT_METHOD}
 
 DunningStatus = Literal["active", "processing", "resolved", "dunned", "suppressed"]
 AutopayDisableStatus = Literal["pending", "succeeded", "failed", "not_required"]
@@ -230,10 +239,13 @@ def record_dunning_attempt_result(
 
     attempt_no = state.processing_attempt_no
     first_attempt_at = state.first_attempt_at or now
-    # A settled-then-failed bank debit runs the bank ladder: only insufficient
-    # funds retries (counted from when the failure is reported), anything else
-    # stops at once. A card decline keeps the card schedule.
-    bank_debit = state.settling_failure_code is not None
+    # A failed bank debit (settled-then-failed, or refused at creation) runs the
+    # bank ladder: only insufficient funds retries (counted from when the failure
+    # is reported), anything else stops at once. A card decline keeps the card
+    # schedule, even on a card that sat in "processing".
+    bank_debit = not succeeded and is_bank_debit_failure(
+        failure_code, settled=state.settling_failure_code is not None
+    )
     bank_disposition = (ach_failure_disposition(failure_code) or "stop") if bank_debit else None
     if succeeded:
         return state.model_copy(
@@ -298,6 +310,7 @@ def record_dunning_attempt_result(
             "first_attempt_at": first_attempt_at,
             "last_attempt_at": now,
             "next_attempt_at": next_due,
+            "parked_since": None,
             "last_failure_code": failure_code,
             "last_failure_was_bank_debit": bank_debit,
             "updated_at": now,

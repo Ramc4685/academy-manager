@@ -564,6 +564,9 @@ class _StoredCard:
         self.calls.append(stripe_account_id)
         return ("cus_on_acct", "pm_on_acct") if stripe_account_id == ACCT else None
 
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        return False
+
 
 async def _autopay(*, house: bool, fee_bps: int = 0) -> _StoredCard:
     from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
@@ -585,9 +588,9 @@ async def _autopay(*, house: bool, fee_bps: int = 0) -> _StoredCard:
 
 async def test_house_autopay_use_case_sends_the_historical_calls(calls: _Calls) -> None:
     stored = await _autopay(house=True, fee_bps=250)
-    # The stored platform method is read first (L1 A4-1); with nothing stored the
-    # historical platform Customer search runs, byte-identical.
-    assert stored.calls == [None]
+    # The house path never reads a stored method: the historical platform Customer
+    # search runs, byte-identical (L1 B2).
+    assert stored.calls == []
     _, search = calls.last("Customer.search")
     assert search == {
         "query": 'metadata["academy_id"]:"acad-1" AND metadata["parent_id"]:"parent-1"',

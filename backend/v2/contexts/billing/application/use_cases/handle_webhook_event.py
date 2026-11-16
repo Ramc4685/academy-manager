@@ -25,6 +25,7 @@ from backend.v2.contexts.billing.application.ports import (
     EnrollmentAutopayStateRepository,
     EnrollmentBillingIdentity,
     EnrollmentBillingIdentityRepository,
+    FamilyAutopayPauser,
     LedgerRepository,
     ParentStripeCustomerRepository,
     PaymentDisputeRepository,
@@ -62,6 +63,7 @@ from backend.v2.contexts.billing.domain.errors import (
     WebhookAccountLookupUnavailable,
 )
 from backend.v2.contexts.billing.domain.events import (
+    PAYMENT_RETURNED_NOTICE_PREFIX,
     CheckoutExpired,
     CheckoutExpiredPayload,
     DunningNoticeRequested,
@@ -255,6 +257,7 @@ class HandleWebhookEvent:
         connected_accounts: AccountAcademyResolver | None = None,
         payment_disputes: PaymentDisputeRepository | None = None,
         platform_plan_sync: PlatformPlanSync | None = None,
+        family_autopay: FamilyAutopayPauser | None = None,
         expected_livemode: bool | None = None,
         tenancy_mode: str = "single_academy",
         clock=lambda: datetime.now(UTC),
@@ -275,6 +278,7 @@ class HandleWebhookEvent:
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
         self._platform_plan_sync = platform_plan_sync
+        self._family_autopay = family_autopay
         self._expected_livemode = expected_livemode
         self._tenancy_mode = tenancy_mode
         self._outbox = outbox
@@ -1833,10 +1837,9 @@ class HandleWebhookEvent:
             and (_ledger_payment_is_ach(existing_payment) or _payment_intent_is_ach(pi))
         ):
             amount_cents = int(pi.get("amount") or existing_payment.amount_cents)
-            await self._record_autopay_ach_return(
+            await self._reverse_returned_payment(
                 event_id=event_id,
                 pi_id=pi_id,
-                invoice=invoice,
                 payment=existing_payment,
                 amount_cents=amount_cents,
                 return_code=return_code,
@@ -2280,17 +2283,14 @@ class HandleWebhookEvent:
             return
         return_code = _ach_return_code_from_stripe_charge(ch)
         if return_code is not None and (_ledger_payment_is_ach(payment) or _charge_is_ach(ch)):
-            invoice = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
-            if invoice is not None:
-                await self._record_autopay_ach_return(
-                    event_id=str(ch.get("_event_id") or ""),
-                    pi_id=pi_id,
-                    invoice=invoice,
-                    payment=payment,
-                    amount_cents=total_refunded,
-                    return_code=return_code,
-                )
-                return
+            await self._reverse_returned_payment(
+                event_id=str(ch.get("_event_id") or ""),
+                pi_id=pi_id,
+                payment=payment,
+                amount_cents=total_refunded,
+                return_code=return_code,
+            )
+            return
         # Invoice-level sync runs FIRST: if it fails, the payment row is still
         # unmarked (delta > 0), so Stripe's redelivery retries the whole thing.
         # It is idempotent (cumulative targets, shortfall-only writes), so a
@@ -2395,140 +2395,178 @@ class HandleWebhookEvent:
             return None
         return await self._billing_ledger.get_invoice(invoice_id)
 
-    async def _record_autopay_ach_return(
+    async def _reverse_returned_payment(
         self,
         *,
         event_id: str,
         pi_id: str,
-        invoice: LedgerInvoice,
         payment: LedgerPayment,
         amount_cents: int,
         return_code: str,
     ) -> None:
-        if amount_cents < payment.amount_cents:
-            await self._billing_ledger.record_payment_attempt(
+        """Money taken back after it settled: a late bank return, a bank dispute or a
+        lost dispute (A4-5). Every invoice this payment settled reopens, whatever
+        paid it (autopay, pay link, balance checkout), and the family's autopay
+        pauses (owner 2026-11-15).
+
+        Every step is idempotent and the payment is marked refunded LAST, so a
+        replay after any failure redoes the remaining steps; a refunded payment
+        means all of them ran (L1 B1). Notices go out before the reversal so a
+        replay that finds the allocations gone has nothing left to tell.
+        """
+        if self._billing_ledger is None or payment.status == "refunded":
+            return
+        ledger = self._billing_ledger
+        allocations = await ledger.list_allocations_for_payment(payment.payment_id)
+        allocated: dict[str, int] = {}
+        for allocation in allocations:
+            invoice_id = str(_alloc_field(allocation, "invoice_id") or "")
+            if invoice_id:
+                allocated[invoice_id] = allocated.get(invoice_id, 0) + int(
+                    _alloc_field(allocation, "amount_cents") or 0
+                )
+        if not allocated:
+            fallback = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
+            if fallback is not None:
+                allocated[fallback.invoice_id] = 0
+        invoices = [
+            invoice
+            for invoice in [await ledger.get_invoice(invoice_id) for invoice_id in allocated]
+            if invoice is not None
+        ]
+        dispute = return_code.startswith("dispute:")
+        partial = amount_cents < payment.amount_cents
+        await self._pause_family_after_return(payment=payment, pi_id=pi_id, code=return_code)
+        if partial:
+            # shortcut: allocations reverse whole, so a partial return is not taken
+            # off the invoices: autopay pauses, a failed attempt is recorded and ops
+            # is alerted to reconcile by hand. Upgrade when partial reversal exists.
+            for invoice in invoices[:1]:
+                await ledger.record_payment_attempt(
+                    invoice_id=invoice.invoice_id,
+                    parent_id=invoice.parent_id,
+                    amount_cents=amount_cents,
+                    currency=invoice.currency,
+                    status="failed",
+                    stripe_payment_intent_id=pi_id or None,
+                    stripe_checkout_session_id=None,
+                    failure_code="unsupported_partial_ach_return",
+                    failure_message=(
+                        f"Unsupported partial ACH return {return_code} for "
+                        f"{amount_cents} of {payment.amount_cents} cents"
+                    ),
+                    idempotency_key=(
+                        f"autopay-ach-return-unsupported-partial:"
+                        f"{invoice.invoice_id}:{pi_id}:{return_code}:{amount_cents}"
+                    ),
+                    created_by_event_id=event_id or None,
+                )
+            capture_message(
+                f"Partial payment return not reversed: pi={pi_id} {amount_cents} of "
+                f"{payment.amount_cents} cents ({return_code}); reconcile by hand",
+                level="warning",
+            )
+            return
+
+        reopened_due = self._now().date() + timedelta(days=REOPENED_INVOICE_DUE_DAYS)
+        for invoice in invoices:
+            if invoice.due_date < reopened_due:
+                # Lead decision 2026-11-15: a reopened invoice is due again in five
+                # days, so no late fee lands before the family can pay. Set before
+                # the reversal so a replay that finds the allocations gone is done.
+                await ledger.save_invoice(invoice.model_copy(update={"due_date": reopened_due}))
+            await ledger.record_payment_attempt(
                 invoice_id=invoice.invoice_id,
                 parent_id=invoice.parent_id,
-                amount_cents=amount_cents,
+                amount_cents=allocated.get(invoice.invoice_id) or amount_cents,
                 currency=invoice.currency,
-                status="failed",
+                status="returned",
                 stripe_payment_intent_id=pi_id or None,
                 stripe_checkout_session_id=None,
-                failure_code="unsupported_partial_ach_return",
-                failure_message=(
-                    f"Unsupported partial ACH return {return_code} for "
-                    f"{amount_cents} of {payment.amount_cents} cents"
-                ),
+                failure_code=return_code,
+                failure_message=f"ACH return {return_code}",
                 idempotency_key=(
-                    f"autopay-ach-return-unsupported-partial:"
-                    f"{invoice.invoice_id}:{pi_id}:{return_code}:{amount_cents}"
+                    f"autopay-ach-return:{invoice.invoice_id}:{pi_id}:{return_code}:{amount_cents}"
                 ),
                 created_by_event_id=event_id or None,
             )
-            log.warning(
-                "autopay_ach_return: unsupported partial return pi=%s invoice=%s "
-                "amount=%d original=%d code=%s",
-                pi_id,
-                invoice.invoice_id,
-                amount_cents,
-                payment.amount_cents,
-                return_code,
+            if _parent_is_told_of_return(return_code):
+                await self._append_outbox_once(
+                    DunningNoticeRequested(
+                        event_id=f"{PAYMENT_RETURNED_NOTICE_PREFIX}{pi_id}:{invoice.invoice_id}",
+                        aggregate_id=invoice.invoice_id,
+                        academy_id=invoice.academy_id,
+                        payload=DunningNoticeRequestedPayload(
+                            invoice_id=invoice.invoice_id,
+                            parent_id=invoice.parent_id,
+                            period=invoice.period,
+                            # The reversal below reopens this much.
+                            balance_due_cents=invoice.balance_due_cents
+                            + allocated.get(invoice.invoice_id, 0),
+                            currency=invoice.currency,
+                            attempt_no=0,
+                            terminal=True,
+                            failure_code=return_code,
+                            bank_debit=True,
+                        ),
+                    )
+                )
+        for allocation in allocations:
+            allocation_key = str(_alloc_field(allocation, "idempotency_key") or "")
+            if not allocation_key:
+                log.error(
+                    "payment_return: legacy allocation without a key, not reversed pi=%s "
+                    "invoice=%s",
+                    pi_id,
+                    _alloc_field(allocation, "invoice_id"),
+                )
+                continue
+            await ledger.reverse_payment_allocation(
+                allocation_idempotency_key=allocation_key,
+                reversal_idempotency_key=(
+                    f"payment-return:{pi_id}:{_alloc_field(allocation, 'allocation_id')}"
+                ),
+                reason="dispute" if dispute else "ach_return",
+                return_code=return_code,
+                reversed_at=self._now(),
             )
-            return
-
-        total_refunded = amount_cents
-        allocation_idempotency_key = f"autopay-alloc:{pi_id}"
-        allocation_before_reversal = (
-            await self._billing_ledger.get_payment_allocation_by_idempotency_key(
-                allocation_idempotency_key
+        await self._append_outbox_once(
+            PaymentRefunded(
+                event_id=f"billing-payment-refunded:ach-return:{pi_id}:{amount_cents}:{return_code}",
+                aggregate_id=payment.payment_id,
+                academy_id=payment.academy_id,
+                payload=PaymentRefundedPayload(
+                    payment_id=payment.payment_id,
+                    refunded_cents=amount_cents,
+                    total_refunded_cents=amount_cents,
+                    reason="other",
+                ),
             )
         )
-        updated = await self._billing_ledger.mark_payment_refunded(
+        await ledger.mark_payment_refunded(
             payment.payment_id,
-            refunded_cents=total_refunded,
+            refunded_cents=amount_cents,
             status="refunded",
             updated_at=self._now(),
         )
-        await self._billing_ledger.reverse_payment_allocation(
-            allocation_idempotency_key=allocation_idempotency_key,
-            reversal_idempotency_key=f"ach-return:{pi_id}:{total_refunded}:{return_code}",
-            reason="ach_return",
-            return_code=return_code,
-            reversed_at=self._now(),
-        )
-        await self._billing_ledger.record_payment_attempt(
-            invoice_id=invoice.invoice_id,
-            parent_id=invoice.parent_id,
-            amount_cents=total_refunded,
-            currency=invoice.currency,
-            status="returned",
-            stripe_payment_intent_id=pi_id or None,
-            stripe_checkout_session_id=None,
-            failure_code=return_code,
-            failure_message=f"ACH return {return_code}",
-            idempotency_key=(
-                f"autopay-ach-return:{invoice.invoice_id}:{pi_id}:{return_code}:{total_refunded}"
-            ),
-            created_by_event_id=event_id or None,
-        )
-        should_emit_refund_event = (
-            allocation_before_reversal is not None or payment.refunded_cents >= total_refunded
-        )
-        if should_emit_refund_event:
-            await self._append_outbox_once(
-                PaymentRefunded(
-                    event_id=f"billing-payment-refunded:ach-return:{pi_id}:{total_refunded}:{return_code}",
-                    aggregate_id=updated.payment_id,
-                    academy_id=updated.academy_id,
-                    payload=PaymentRefundedPayload(
-                        payment_id=updated.payment_id,
-                        refunded_cents=total_refunded,
-                        total_refunded_cents=total_refunded,
-                        reason="other",
-                    ),
-                )
-            )
-        await self._pause_autopay_after_reversal(invoice=invoice, pi_id=pi_id, code=return_code)
 
-    async def _pause_autopay_after_reversal(
-        self, *, invoice: LedgerInvoice, pi_id: str, code: str
+    async def _pause_family_after_return(
+        self, *, payment: LedgerPayment, pi_id: str, code: str
     ) -> None:
-        """Owner 2026-11-15: money taken back after success reopens the invoice
-        (above) and pauses autopay, so the next run does not debit the same
-        account again. A bank return is the bank's doing, so the parent is told;
-        a dispute is the parent's own claim, so it is not."""
-        if self._enrollment_autopay is not None and invoice.enrollment_id:
-            await self._enrollment_autopay.set_autopay_state(
-                enrollment_id=invoice.enrollment_id,
-                autopay_enrollment_status="paused",
-            )
-        if code.startswith("dispute:"):
+        """The next run must not debit the same account again (owner 2026-11-15)."""
+        if self._family_autopay is None or not payment.parent_id:
             return
-        ledger = self._billing_ledger
-        reopened = (await ledger.get_invoice(invoice.invoice_id) if ledger else None) or invoice
-        await self._append_outbox_once(
-            DunningNoticeRequested(
-                event_id=f"dunning-notice:payment-returned:{pi_id}",
-                aggregate_id=invoice.invoice_id,
-                academy_id=invoice.academy_id,
-                payload=DunningNoticeRequestedPayload(
-                    invoice_id=invoice.invoice_id,
-                    parent_id=invoice.parent_id,
-                    period=invoice.period,
-                    balance_due_cents=reopened.balance_due_cents,
-                    currency=invoice.currency,
-                    attempt_no=0,
-                    terminal=True,
-                    failure_code=code,
-                    bank_debit=True,
-                ),
-            )
+        await self._family_autopay.pause_family(
+            academy_id=payment.academy_id,
+            parent_id=payment.parent_id,
+            reason=f"payment_returned:{code}",
+            request_id=f"payment-return:{pi_id}",
         )
 
     async def _reverse_paid_invoice_on_dispute(self, event: dict[str, Any], dispute: Any) -> None:
         """A bank debit dispute is final when opened (no evidence round); any
         dispute that closes lost has taken the money back. Either reopens the
-        invoice exactly like a late bank return (A4-5)."""
+        invoices exactly like a late bank return (A4-5)."""
         if self._billing_ledger is None or not isinstance(dispute, dict):
             return
         pi_id = str(dispute.get("payment_intent") or "")
@@ -2550,13 +2588,9 @@ class HandleWebhookEvent:
         )
         if not (lost or opened_on_bank):
             return
-        invoice = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
-        if invoice is None:
-            return
-        await self._record_autopay_ach_return(
+        await self._reverse_returned_payment(
             event_id=str(event.get("id") or ""),
             pi_id=pi_id,
-            invoice=invoice,
             payment=payment,
             amount_cents=int(dispute.get("amount") or payment.amount_cents),
             return_code=f"dispute:{dispute.get('reason') or 'unknown'}",
@@ -3204,6 +3238,25 @@ def _alloc_field(allocation: Any, key: str) -> Any:
     if isinstance(allocation, dict):
         return allocation.get(key)
     return getattr(allocation, key, None)
+
+
+#: Days until a reopened invoice (money taken back after it settled) is due again.
+#: shortcut: counted from the UTC date, so it can land a day off the academy's clock.
+REOPENED_INVOICE_DUE_DAYS = 5
+
+#: Bank dispute reasons that mean the bank sent the money back on its own (a late
+#: return filed as a dispute), so the parent is told like any bank return.
+_BANK_RETURN_DISPUTE_REASONS = frozenset(
+    {"insufficient_funds", "incorrect_account_details", "bank_cannot_process"}
+)
+
+
+def _parent_is_told_of_return(code: str) -> bool:
+    """A bank return is the bank's doing, so the parent is told; a dispute the
+    parent raised is their own claim, so it is not (owner 2026-11-15)."""
+    if not code.startswith("dispute:"):
+        return True
+    return code.removeprefix("dispute:") in _BANK_RETURN_DISPUTE_REASONS
 
 
 def _ledger_payment_is_ach(payment: LedgerPayment) -> bool:

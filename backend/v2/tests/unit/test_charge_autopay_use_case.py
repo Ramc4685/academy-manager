@@ -275,9 +275,19 @@ class FakeStripeSucceeds:
 class FakeSavedCards:
     """The stored-card reader: one (customer, pm) per Stripe account."""
 
-    def __init__(self, cards: dict[str | None, tuple[str, str]] | None = None) -> None:
+    def __init__(
+        self,
+        cards: dict[str | None, tuple[str, str]] | None = None,
+        blocked: set[str] | None = None,
+    ) -> None:
         self._cards = cards or {}
+        self._blocked = blocked or set()
         self.calls: list[dict[str, str | None]] = []
+        self.blocked_checks: list[tuple[str, str]] = []
+
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        self.blocked_checks.append((parent_id, payment_method_id))
+        return payment_method_id in self._blocked
 
     async def get_saved_payment_method(
         self, *, parent_id: str, stripe_account_id: str | None
@@ -924,46 +934,46 @@ async def test_no_saved_card_returns_parent_action_needed() -> None:
     assert repo.payment_attempts == []
 
 
-async def test_platform_charge_uses_the_stored_card_before_customer_search() -> None:
-    """L1 A4-1: the search (limit=1) can return an older customer with a replaced
-    card; the stored (customer, pm) for the platform wins."""
+async def test_platform_charge_uses_the_stripe_default_not_a_stored_id() -> None:
+    """A parent can change cards in the Stripe Billing Portal and nothing syncs it
+    back, so the house path charges the customer's current default (L1 B2)."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
-    stripe = FakeStripeSucceeds(customer_id="cus_old", pm_id="pm_old")
-    saved = FakeSavedCards({None: ("cus_new", "pm_new")})
+    stripe = FakeStripeSucceeds(customer_id="cus_s", pm_id="pm_portal")
+    saved = FakeSavedCards({None: ("cus_s", "pm_stale")})
 
     await _uc(repo, stripe, parent_customers=saved).execute("inv-1")
 
-    assert stripe.lookup_calls == []
-    assert stripe.create_calls[0]["customer_id"] == "cus_new"
-    assert stripe.create_calls[0]["payment_method_id"] == "pm_new"
-    assert saved.calls == [{"parent_id": "parent-1", "stripe_account_id": None}]
-
-
-async def test_platform_charge_falls_back_to_search_when_nothing_is_stored() -> None:
-    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
-    stripe = FakeStripeSucceeds(customer_id="cus_s", pm_id="pm_s")
-
-    await _uc(repo, stripe, parent_customers=FakeSavedCards()).execute("inv-1")
-
     assert len(stripe.lookup_calls) == 1
-    assert stripe.create_calls[0]["payment_method_id"] == "pm_s"
+    assert stripe.create_calls[0]["payment_method_id"] == "pm_portal"
+    assert saved.calls == []
+    assert saved.blocked_checks == [("parent-1", "pm_portal")]
 
 
-async def test_platform_charge_does_not_search_past_a_blocked_stored_method() -> None:
-    """L1 A4-8: Stripe blocked the stored bank; search would hand it straight back."""
-
-    class _Blocked(FakeSavedCards):
-        async def payment_method_blocked(self, *, parent_id: str) -> bool:
-            return True
-
+async def test_platform_charge_skips_a_method_stripe_blocked() -> None:
+    """L1 A4-8: Stripe blocked this bank; the search still returns it as default."""
     repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
     stripe = FakeStripeSucceeds(customer_id="cus_s", pm_id="pm_s")
 
-    result = await _uc(repo, stripe, parent_customers=_Blocked()).execute("inv-1")
+    result = await _uc(repo, stripe, parent_customers=FakeSavedCards(blocked={"pm_s"})).execute(
+        "inv-1"
+    )
 
     assert result.decline_code == "no_saved_payment_method"
-    assert stripe.lookup_calls == []
     assert stripe.create_calls == []
+
+
+async def test_platform_charge_parks_when_the_customer_search_is_unavailable() -> None:
+    """The lookup itself can hit a Stripe outage: park, not a technical failure (B2)."""
+
+    class _Down(FakeStripeSucceeds):
+        async def get_default_payment_method(self, *, academy_id: str, parent_id: str):
+            raise StripeUnavailable("timeout")
+
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    result = await _uc(repo, _Down()).execute("inv-1")
+
+    assert result.decline_code == "stripe_unavailable"
+    assert repo.payment_attempts == []
 
 
 async def test_already_paid_invoice_raises_value_error() -> None:

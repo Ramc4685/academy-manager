@@ -193,3 +193,50 @@ def test_card_insufficient_funds_keeps_the_card_ladder() -> None:
     )
     assert card.status == "active"
     assert card.next_attempt_at == NOW + timedelta(days=DUNNING_SCHEDULE_DAYS[1])
+
+
+def _claimed(*, settling: str | None = None, parked: bool = False) -> DunningState:
+    state = open_initial_dunning_state(
+        academy_id="a",
+        invoice_id="inv-1",
+        parent_id="p",
+        enrollment_id="e",
+        due_at=NOW,
+        now=NOW,
+    )
+    if parked:
+        state = state.model_copy(update={"parked_since": NOW})
+    return state.claim(attempt_no=1, worker_id="w", now=NOW, settling_failure_code=settling)
+
+
+def test_bank_refused_at_creation_stops_on_the_bank_ladder() -> None:
+    """L1 review: a 402 bank_account_unusable at creation is a bank failure, not
+    the 4-attempt card ladder with card wording."""
+    after = record_dunning_attempt_result(
+        _claimed(), succeeded=False, failure_code="bank_account_unusable", now=NOW
+    )
+    assert after.status == "dunned"
+    assert after.last_failure_was_bank_debit is True
+
+
+def test_a_card_that_sat_in_processing_keeps_the_card_ladder() -> None:
+    after = record_dunning_attempt_result(
+        _claimed(settling="card_declined"), succeeded=False, failure_code="card_declined", now=NOW
+    )
+    assert after.status == "active"
+    assert after.last_failure_was_bank_debit is False
+
+
+def test_a_card_insufficient_funds_at_creation_is_not_a_bank_failure() -> None:
+    after = record_dunning_attempt_result(
+        _claimed(), succeeded=False, failure_code="insufficient_funds", now=NOW
+    )
+    assert after.last_failure_was_bank_debit is False
+
+
+def test_a_failed_rung_that_retries_clears_parked_since() -> None:
+    after = record_dunning_attempt_result(
+        _claimed(parked=True), succeeded=False, failure_code="card_declined", now=NOW
+    )
+    assert after.status == "active"
+    assert after.parked_since is None

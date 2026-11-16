@@ -1968,7 +1968,9 @@ async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_
 
 
 @pytest.mark.asyncio
-async def test_autopay_ach_return_replay_emits_missing_refund_event_after_ledger_mutation() -> None:
+async def test_autopay_ach_return_replay_after_a_mid_reversal_failure_converges() -> None:
+    """L1 B1: the payment is marked refunded LAST, so a replay after any failed
+    step finishes the reversal instead of seeing 'refunded' and stopping."""
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-return-replay"))
     dedup = FakeDedup()
@@ -2012,24 +2014,35 @@ async def test_autopay_ach_return_replay_emits_missing_refund_event_after_ledger
 
     await uc.accept(succeeded, "test_signature")
     assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
-    await ledger.mark_payment_refunded(
-        "ledger-pay-autopay:pi_ach_return_replay",
-        refunded_cents=10000,
-        status="refunded",
-        updated_at=datetime.now(UTC),
-    )
-    await ledger.reverse_payment_allocation(
-        allocation_idempotency_key="autopay-alloc:pi_ach_return_replay",
-        reversal_idempotency_key="ach-return:pi_ach_return_replay:10000:R01",
-        reason="ach_return",
-        return_code="R01",
-        reversed_at=datetime.now(UTC),
-    )
 
-    await uc.accept(returned_without_details, "test_signature")
-    res = await uc.process_next(processor_id="test-worker")
+    real_reverse = ledger.reverse_payment_allocation
+    calls = {"n": 0}
 
-    assert res["processed"] is True
+    async def flaky_reverse(**kwargs: Any) -> dict[str, Any] | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("mongo blip")
+        return await real_reverse(**kwargs)
+
+    ledger.reverse_payment_allocation = flaky_reverse  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await uc.execute(returned_without_details, "test_signature")
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_return_replay"]
+    assert payment.status == "succeeded"
+
+    # The drain retries a failed event; a fresh id stands in for that retry.
+    retry = returned_without_details.replace(
+        b"evt_ach_return_replay_refund", b"evt_ach_return_replay_refund_retry"
+    )
+    await uc.execute(retry, "test_signature")
+
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_return_replay"]
+    invoice = ledger.invoices["inv-ach-return-replay"]
+    assert payment.status == "refunded"
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10000
+    # Should-fix 6: the reopened invoice gets a fresh due date, so no late fee yet.
+    assert invoice.due_date == datetime.now(UTC).date() + timedelta(days=5)
     refund_events = [event for event in outbox.events if event.name == "Billing.PaymentRefunded"]
     assert len(refund_events) == 1
     assert refund_events[0].event_id == (
@@ -2517,6 +2530,67 @@ async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> 
             "amount_cents": 6_000,
             "idempotency_key": "invoice-checkout-alloc:cs_balance:inv-balance-2",
         },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_late_bank_return_on_a_balance_checkout_reopens_every_invoice_it_paid() -> None:
+    """L1 B3: one balance checkout settled two invoices; a late bank return takes
+    both back through the payment's own allocations, with a notice per invoice."""
+    repo = FakePaymentRepo()
+    first = _ledger_invoice(
+        invoice_id="inv-bal-r1", parent_id="parent-bal", balance_due_cents=4_000
+    )
+    second = _ledger_invoice(
+        invoice_id="inv-bal-r2", parent_id="parent-bal", balance_due_cents=6_000
+    )
+    ledger = FakeBillingLedger(first)
+    ledger.invoices[second.invoice_id] = second
+    outbox = FakeOutbox()
+    uc = _build(repo, billing_ledger=ledger, outbox=outbox)
+    checkout = {
+        "id": "evt_bal_r_checkout",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_bal_r",
+                "payment_status": "paid",
+                "payment_intent": "pi_bal_r",
+                "amount_total": 10_000,
+                "currency": "usd",
+                "metadata": {
+                    "academy_id": "acad",
+                    "parent_id": "parent-bal",
+                    "invoice_ids": "inv-bal-r1,inv-bal-r2",
+                    "type": "balance_payment",
+                },
+            }
+        },
+    }
+    returned = {
+        "id": "evt_bal_r_return",
+        "type": "charge.refunded",
+        "data": {
+            "object": {
+                "id": "ch_bal_r",
+                "payment_intent": "pi_bal_r",
+                "amount_refunded": 10_000,
+                "failure_code": "insufficient_funds",
+                "payment_method_details": {"type": "us_bank_account"},
+            }
+        },
+    }
+
+    await uc.execute(json.dumps(checkout).encode(), "test_signature")
+    await uc.execute(json.dumps(returned).encode(), "test_signature")
+
+    assert ledger.invoices["inv-bal-r1"].status == "open"
+    assert ledger.invoices["inv-bal-r2"].status == "open"
+    assert ledger.payments["ledger-pay-cs:cs_bal_r"].status == "refunded"
+    notices = [e for e in outbox.events if e.name == "Billing.DunningNoticeRequested"]
+    assert sorted((n.payload.invoice_id, n.payload.balance_due_cents) for n in notices) == [
+        ("inv-bal-r1", 4_000),
+        ("inv-bal-r2", 6_000),
     ]
 
 

@@ -17,7 +17,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
 from backend.v2.contexts.billing.domain.dunning import (
     FIRST_ATTEMPT_LOCAL_HOUR,
     NO_SAVED_PAYMENT_METHOD,
-    PARK_REASONS_ADMIN_LISTED,
+    STRIPE_UNAVAILABLE,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -45,7 +45,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
         "connected_account_not_ready",
         "checkout_session_open",
         "stripe_not_configured",
-        "stripe_unavailable",
+        STRIPE_UNAVAILABLE,
         # Retried every tick so autopay picks up a card the parent adds (A4-1).
         NO_SAVED_PAYMENT_METHOD,
     }
@@ -181,10 +181,16 @@ class MongoDunningStateRepository(TenantScopedRepository):
         if remaining <= 0:
             return 0
         invoice_ids = [str(doc["invoice_id"]) for doc in batch]
+        # A resolved ladder on an invoice that is owed again (money taken back
+        # after it settled) is re-armed, or it would block autopay for good.
         existing = {
             str(doc["invoice_id"])
             async for doc in self.collection.find(
-                {"academy_id": academy_id, "invoice_id": {"$in": invoice_ids}},
+                {
+                    "academy_id": academy_id,
+                    "invoice_id": {"$in": invoice_ids},
+                    "status": {"$ne": "resolved"},
+                },
                 {"invoice_id": 1},
             )
         }
@@ -232,6 +238,13 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 due_at=due_at,
                 now=now,
             )
+            rearmed = await self.collection.update_one(
+                {"academy_id": academy_id, "invoice_id": invoice_id, "status": "resolved"},
+                {"$set": _mongo_doc(state)},
+            )
+            if getattr(rearmed, "modified_count", 0):
+                created += 1
+                continue
             result = await self.collection.update_one(
                 {"academy_id": academy_id, "invoice_id": invoice_id},
                 {"$setOnInsert": _mongo_doc(state)},
@@ -328,7 +341,13 @@ class MongoDunningStateRepository(TenantScopedRepository):
             # keeps the code it was first claimed with.
             settling_failure_code = state.settling_failure_code
             if parked_for_payment_processing and latest_status == "failed" and latest:
-                settling_failure_code = str(latest.get("failure_code") or "unknown")
+                settling_failure_code = await self._parked_debit_failure_code(
+                    state.invoice_id, latest=latest
+                )
+                if settling_failure_code is None:
+                    # A later failure of something else (a pay link) does not
+                    # answer the debit this rung is waiting on.
+                    continue
             lease_expires_at = now + timedelta(minutes=30)
             claimed = state.claim(
                 attempt_no=attempt_no,
@@ -511,12 +530,6 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     {"status": "dunned"},
                     {"status": "active", "attempt_count": {"$gt": 0}},
                     {"status": "processing"},
-                    # A first-attempt ladder parked for a fault on our side (A7-1).
-                    {
-                        "status": "active",
-                        "next_attempt_at": None,
-                        "suppression_reason": {"$in": sorted(PARK_REASONS_ADMIN_LISTED)},
-                    },
                 ],
             },
             sort=[("updated_at", -1)],
@@ -532,11 +545,6 @@ class MongoDunningStateRepository(TenantScopedRepository):
             # billing-health even if the state row was never suppressed.
             if str(invoice.get("status") or "") in {"void", "paid"}:
                 continue
-            parked = (
-                state_doc.get("status") == "active"
-                and state_doc.get("next_attempt_at") is None
-                and state_doc.get("suppression_reason")
-            )
             rows.append(
                 {
                     "invoice_id": str(state_doc["invoice_id"]),
@@ -552,8 +560,6 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     "autopay_disable_status": state_doc.get("autopay_disable_status"),
                     "autopay_disable_error": state_doc.get("autopay_disable_error"),
                     "autopay_disabled_at": state_doc.get("autopay_disabled_at"),
-                    "parked_reason": state_doc.get("suppression_reason") if parked else None,
-                    "parked_since": state_doc.get("parked_since") if parked else None,
                     "balance_due_cents": int(invoice.get("balance_due_cents") or 0),
                     "currency": str(invoice.get("currency") or "usd"),
                 }
@@ -611,6 +617,25 @@ class MongoDunningStateRepository(TenantScopedRepository):
             {"$set": _mongo_doc(state)},
         )
         return state
+
+    async def _parked_debit_failure_code(
+        self, invoice_id: str, *, latest: dict[str, Any]
+    ) -> str | None:
+        """The failure code of the debit this rung parked on: the ``autopay-failed:``
+        row of the latest ``processing`` attempt's PaymentIntent (L1 review). None
+        while that debit has not failed."""
+        academy_id = current_academy_id()
+        processing = await self._db["payment_attempts"].find_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id, "status": "processing"},
+            sort=[("created_at", -1), ("attempt_id", -1)],
+        )
+        pi_id = str((processing or {}).get("stripe_payment_intent_id") or "")
+        if not pi_id:
+            return str(latest.get("failure_code") or "unknown")
+        failed = await self._db["payment_attempts"].find_one(
+            {"academy_id": academy_id, "idempotency_key": f"autopay-failed:{invoice_id}:{pi_id}"}
+        )
+        return str(failed.get("failure_code") or "unknown") if failed else None
 
     async def _latest_payment_attempt(self, invoice_id: str) -> dict[str, Any] | None:
         """Latest CHARGE attempt row for this invoice, or None.

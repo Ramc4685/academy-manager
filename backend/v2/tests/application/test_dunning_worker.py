@@ -805,3 +805,72 @@ async def test_closed_bank_account_pauses_autopay_instead_of_disabling_it() -> N
     assert enrollment_autopay.disabled == []
     assert notifier.calls[0]["terminal"] is True
     assert notifier.calls[0]["bank_debit"] is True
+
+
+class _SiblingEnrollments:
+    """Two siblings on one parent, both autopaying from the same bank."""
+
+    def __init__(self) -> None:
+        from types import SimpleNamespace
+
+        self.rows = {
+            "enr-a": SimpleNamespace(enrollment_id="enr-a", autopay_enrollment_status="active"),
+            "enr-b": SimpleNamespace(enrollment_id="enr-b", autopay_enrollment_status="active"),
+        }
+        self.parents: list[str] = []
+
+    async def list_for_parent(self, parent_id: str) -> list:
+        self.parents.append(parent_id)
+        return list(self.rows.values())
+
+    async def set_autopay_enrollment_status(self, *, enrollment_id: str, status) -> bool:
+        self.rows[enrollment_id].autopay_enrollment_status = status
+        return True
+
+
+class _MemoryStore:
+    def __init__(self) -> None:
+        self.data: dict = {}
+        self.audit: list = []
+
+    async def get(self, key: str):
+        return self.data.get(key)
+
+    async def put(self, key: str, value) -> None:
+        self.data[key] = value
+
+    async def append(self, entry) -> None:
+        self.audit.append(entry)
+
+
+@pytest.mark.asyncio
+async def test_dead_bank_pauses_every_sibling_on_the_family() -> None:
+    """L1 B4: a bank that cannot be debited pauses the whole family, audited as
+    the system, so the sibling on the same account is not debited next."""
+    from backend.v2.contexts.billing.application.use_cases.pause_family_autopay import (
+        SYSTEM_ACTOR_ID,
+        PauseFamilyAutopay,
+        SystemFamilyAutopayPause,
+    )
+
+    dunning = _SettledBankFailureRepo(_invoice(), code="bank_account_closed")
+    siblings = _SiblingEnrollments()
+    store = _MemoryStore()
+    family = SystemFamilyAutopayPause(
+        PauseFamilyAutopay(enrollments=siblings, audit=store, idempotency=store)
+    )
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=True),
+        notifier=_FakeNotifier(),
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        family_autopay=family,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.dunned == 1
+    assert result.autopay_disabled == 1
+    assert {r.autopay_enrollment_status for r in siblings.rows.values()} == {"paused"}
+    assert store.audit[0].actor_id == SYSTEM_ACTOR_ID
+    assert store.audit[0].reason == "bank_failure:bank_account_closed"

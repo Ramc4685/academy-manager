@@ -57,6 +57,7 @@ from backend.v2.composition.event_handlers import (
     install_dispute_notifier,
     install_dunning_notifier,
 )
+from backend.v2.composition.families import compose_system_family_autopay_pause
 from backend.v2.composition.invoice_contact_copies import build_invoice_contact_copies
 from backend.v2.composition.invoice_naming import (
     build_invoice_naming_resolver,
@@ -1497,6 +1498,7 @@ def compose_admin(
         parent_customers=parent_customers_repo,
         email_port=_invoice_email_port,
         outbox=outbox,
+        family_autopay=compose_system_family_autopay_pause(db),
     )
 
     # ---- Failed autopay reads (#235). The Billing Health plumbing wiring

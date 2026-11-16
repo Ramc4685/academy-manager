@@ -31,7 +31,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from backend.v2.contexts.billing.domain.charge_route import ChargeRoute, decide_charge_route
+from backend.v2.contexts.billing.domain.charge_route import ChargeRoute
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 log = logging.getLogger(__name__)
@@ -97,6 +97,7 @@ async def academy_card_route(db: Any) -> ChargeRoute | None:
     when the route cannot be read: callers then show every card, as before.
     """
     # Local imports: both repos live beside this one and import nothing back.
+    from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
     from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
         MongoBillingSettingsRepository,
     )
@@ -105,13 +106,14 @@ async def academy_card_route(db: Any) -> ChargeRoute | None:
     )
 
     try:
-        settings = await MongoBillingSettingsRepository(db).get()
-        is_house = bool(getattr(settings, "allow_platform_charge_fallback", False))
-        account = None if is_house else await MongoConnectedAccountRepository(db).get_for_academy()
+        return await resolve_charge_route(
+            connected_accounts=MongoConnectedAccountRepository(db),
+            settings=MongoBillingSettingsRepository(db),
+            context="card_on_file",
+        )
     except Exception:
         log.warning("card route lookup failed; showing every saved card", exc_info=True)
         return None
-    return decide_charge_route(is_house_academy=is_house, account=account)
 
 
 def stored_stripe_account(doc: dict[str, Any] | None) -> str | None:
@@ -234,9 +236,9 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         )
         return int(getattr(result, "modified_count", 0))
 
-    async def payment_method_blocked(self, *, parent_id: str) -> bool:
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
         doc = await self._find_one({"parent_id": parent_id})
-        return doc is not None and _is_blocked(doc)
+        return doc is not None and doc.get("blocked_payment_method_id") == payment_method_id
 
     async def set_stripe_customer_id(
         self,

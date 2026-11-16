@@ -41,7 +41,7 @@ async def test_blocked_method_is_not_chargeable_until_a_new_one_is_saved(db, aca
 
     assert flagged == 1
     assert await repo.get_saved_payment_method(parent_id="p1", stripe_account_id=None) is None
-    assert await repo.payment_method_blocked(parent_id="p1") is True
+    assert await repo.payment_method_blocked(parent_id="p1", payment_method_id="pm_bank") is True
     assert await repo.has_saved_card(parent_id="p1") is False
     assert await repo.get_saved_payment_method(parent_id="p2", stripe_account_id=None) == (
         "cus_p2",
@@ -56,7 +56,7 @@ async def test_blocked_method_is_not_chargeable_until_a_new_one_is_saved(db, aca
         "cus_p1",
         "pm_new",
     )
-    assert await repo.payment_method_blocked(parent_id="p1") is False
+    assert await repo.payment_method_blocked(parent_id="p1", payment_method_id="pm_new") is False
 
 
 @pytest.mark.asyncio

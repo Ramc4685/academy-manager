@@ -166,6 +166,12 @@ class DunningNoticeRequestedPayload(BaseModel):
     bank_debit: bool = False
 
 
+#: Event-id prefix of the notice sent when money is taken back after it settled
+#: (late bank return): its handler skips an unreachable parent instead of
+#: dead-lettering (L1 B5).
+PAYMENT_RETURNED_NOTICE_PREFIX = "dunning-notice:payment-returned:"
+
+
 class DunningNoticeRequested(DomainEvent):
     """Issue #435: the notice used to be one best-effort send inside the dunning
     worker — a failed send was logged and the parent was never told their

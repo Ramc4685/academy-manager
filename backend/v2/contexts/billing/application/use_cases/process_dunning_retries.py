@@ -9,8 +9,14 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.billing.application.ports import FamilyAutopayPauser
 from backend.v2.contexts.billing.domain.checkout_hold import CHECKOUT_HOLD_DECLINE_CODE
-from backend.v2.contexts.billing.domain.dunning import NO_SAVED_PAYMENT_METHOD, DunningState
+from backend.v2.contexts.billing.domain.dunning import (
+    NO_SAVED_PAYMENT_METHOD,
+    PARK_REASONS_NEEDING_ATTENTION,
+    STRIPE_UNAVAILABLE,
+    DunningState,
+)
 from backend.v2.contexts.billing.domain.events import (
     DunningNoticeRequested,
     DunningNoticeRequestedPayload,
@@ -38,21 +44,10 @@ _PARK_REASONS = frozenset(
         "stripe_not_configured",
         # Stripe API or network error: we never reached the card or bank, so no
         # rung is spent and the parent is not told their payment failed (A4-3).
-        "stripe_unavailable",
+        STRIPE_UNAVAILABLE,
         # No saved card or bank: the parent has to act. Parked so it is charged as
         # soon as a method appears, with one "add a payment method" notice (A4-1).
         NO_SAVED_PAYMENT_METHOD,
-    }
-)
-
-# The subset an operator has to fix: these surface on the admin billing-health panel via
-# the technical_failures counter. autopay_not_active and an open checkout session are
-# both ordinary states, not faults, so they park quietly.
-_PARK_REASONS_NEEDING_OPERATOR = frozenset(
-    {
-        "connected_account_not_ready",
-        "stripe_not_configured",
-        "stripe_unavailable",
     }
 )
 
@@ -160,6 +155,7 @@ class ProcessDunningRetries:
         notifier: DunningNotificationPort | None = None,
         enrollment_autopay: DunningEnrollmentAutopayPort | None = None,
         outbox: Outbox | None = None,
+        family_autopay: FamilyAutopayPauser | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._dunning = dunning
@@ -167,6 +163,7 @@ class ProcessDunningRetries:
         self._notifier = notifier
         self._enrollment_autopay = enrollment_autopay
         self._outbox = outbox
+        self._family_autopay = family_autopay
         self._now = clock
 
     async def execute(
@@ -269,7 +266,8 @@ class ProcessDunningRetries:
                     now=now,
                 )
                 parked_this_tick[invoice.invoice_id] = failure_code
-                if failure_code in _PARK_REASONS_NEEDING_OPERATOR:
+                # An operator has to fix these: billing-health counts them.
+                if failure_code in PARK_REASONS_NEEDING_ATTENTION:
                     counts["technical_failures"] += 1
                 counts["parked"] += 1
                 if failure_code == NO_SAVED_PAYMENT_METHOD:
@@ -425,12 +423,23 @@ class ProcessDunningRetries:
             )
             return
         try:
-            # Bank failures pause autopay so a re-linked bank turns it back on;
-            # a card that ran out of retries is disabled as before (owner 2026-11-15).
-            disabled = await self._enrollment_autopay.set_autopay_enrollment_status(
-                enrollment_id=state.enrollment_id,
-                status="paused" if state.last_failure_was_bank_debit else "disabled",
-            )
+            if state.last_failure_was_bank_debit and self._family_autopay is not None:
+                # A bank that cannot be debited pauses the whole family, so a
+                # sibling on the same account is not debited next (L1 B4).
+                await self._family_autopay.pause_family(
+                    academy_id=state.academy_id,
+                    parent_id=state.parent_id,
+                    reason=f"bank_failure:{state.last_failure_code or 'unknown'}",
+                    request_id=f"dunning-terminal:{state.invoice_id}:{state.attempt_count}",
+                )
+                disabled = True
+            else:
+                # Bank failures pause so a re-linked bank turns autopay back on; a
+                # card that ran out of retries is disabled (owner 2026-11-15).
+                disabled = await self._enrollment_autopay.set_autopay_enrollment_status(
+                    enrollment_id=state.enrollment_id,
+                    status="paused" if state.last_failure_was_bank_debit else "disabled",
+                )
         except Exception as exc:
             await self._dunning.mark_autopay_disable_result(
                 invoice_id=state.invoice_id,
