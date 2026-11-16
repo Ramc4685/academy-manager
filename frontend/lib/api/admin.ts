@@ -2402,8 +2402,6 @@ export interface ConnectedAccountReadiness {
   account_id_masked: string | null;
   /** Direct charges need Stripe to collect fees and carry losses (#980). */
   direct_charges_supported?: boolean;
-  fees_collector?: string | null;
-  losses_collector?: string | null;
 }
 
 export interface ConnectReadiness {
@@ -2550,9 +2548,6 @@ export interface DunningRow {
   autopay_disabled_at: string | null;
   balance_due_cents: number;
   currency: string;
-  /** Why the ladder is parked on our side, and since when (null when not parked). */
-  parked_reason?: string | null;
-  parked_since?: string | null;
 }
 
 export interface DunningResponse {
@@ -2868,21 +2863,41 @@ export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse
   );
 }
 
-export function chargeAdminInvoiceAutopay(
+// A "Charge now" whose outcome we never learned (timeout, network drop, 5xx,
+// or 409 charge_in_progress) keeps its request id for this window, so a retry
+// replays the first charge on the server instead of making a second one.
+const CHARGE_RETRY_WINDOW_MS = 10 * 60 * 1000;
+const unconfirmedCharges = new Map<string, { requestId: string; at: number }>();
+
+export async function chargeAdminInvoiceAutopay(
   invoiceId: string,
   reason?: string,
 ): Promise<ChargeAutopayResponse> {
-  // request_id makes a retried submit the same charge rather than a second one.
-  return apiFetch<ChargeAutopayResponse>(
-    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        ...(reason ? { reason } : {}),
-        request_id: crypto.randomUUID(),
-      }),
-    },
-  );
+  const now = Date.now();
+  const prior = unconfirmedCharges.get(invoiceId);
+  const requestId =
+    prior && now - prior.at < CHARGE_RETRY_WINDOW_MS ? prior.requestId : crypto.randomUUID();
+  unconfirmedCharges.set(invoiceId, { requestId, at: prior?.requestId === requestId ? prior.at : now });
+  try {
+    const result = await apiFetch<ChargeAutopayResponse>(
+      `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...(reason ? { reason } : {}),
+          request_id: requestId,
+        }),
+      },
+    );
+    unconfirmedCharges.delete(invoiceId);
+    return result;
+  } catch (error) {
+    const status = (error as { status?: unknown } | null)?.status;
+    if (typeof status === "number" && status >= 400 && status < 500 && status !== 409) {
+      unconfirmedCharges.delete(invoiceId);
+    }
+    throw error;
+  }
 }
 
 // Issue #511: one key per payment INTENT, minted when the admin starts filling

@@ -197,7 +197,6 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
                 "direct_charges_supported": bool(account and account.supports_direct_charges()),
                 "fees_collector": account.fees_collector if account else None,
                 "losses_collector": account.losses_collector if account else None,
-                "dashboard": account.dashboard if account else None,
                 # Same masking as GET /admin/academy/gateway — the account id
                 # is a Stripe identifier, not a secret, but there is no reason
                 # for two admin surfaces to disagree about showing it.

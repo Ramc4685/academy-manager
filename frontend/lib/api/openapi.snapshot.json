@@ -14161,17 +14161,6 @@
             "title": "Configured",
             "type": "boolean"
           },
-          "dashboard": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Dashboard"
-          },
           "direct_charges_supported": {
             "default": false,
             "title": "Direct Charges Supported",
@@ -15712,29 +15701,6 @@
               }
             ],
             "title": "Parent Name"
-          },
-          "parked_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parked Reason"
-          },
-          "parked_since": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parked Since"
           },
           "period": {
             "title": "Period",

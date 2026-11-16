@@ -89,7 +89,6 @@ class ConnectedAccountReadinessDto(BaseModel):
     direct_charges_supported: bool = False
     fees_collector: str | None = None
     losses_collector: str | None = None
-    dashboard: str | None = None
 
 
 class WebhookBacklogDto(BaseModel):

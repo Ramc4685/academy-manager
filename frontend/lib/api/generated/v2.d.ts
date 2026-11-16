@@ -12518,8 +12518,6 @@ export interface components {
              * @default false
              */
             configured: boolean;
-            /** Dashboard */
-            dashboard?: string | null;
             /**
              * Direct Charges Supported
              * @default false
@@ -13034,10 +13032,6 @@ export interface components {
             parent_id: string;
             /** Parent Name */
             parent_name?: string | null;
-            /** Parked Reason */
-            parked_reason?: string | null;
-            /** Parked Since */
-            parked_since?: string | null;
             /** Period */
             period: string;
             /** Status */

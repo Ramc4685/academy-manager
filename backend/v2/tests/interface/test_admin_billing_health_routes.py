@@ -258,7 +258,6 @@ def test_connect_readiness_carries_blocked_reason_disputes_and_liability(
             "direct_charges_supported": False,
             "fees_collector": "application",
             "losses_collector": "application",
-            "dashboard": "express",
         },
         "payments_blocked_reason": "Reconnect Stripe to accept payments.",
         "disputes": {
