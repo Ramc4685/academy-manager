@@ -145,6 +145,8 @@ def test_build_inventory_env_exports_all_seeded_dynamic_route_ids() -> None:
                     "cert_id": "cert_1",
                     "student_id": "student_cert",
                     "issued_at": "2026-10-30T00:00:00+00:00",
+                    "status": "issued",
+                    "share_token": "share_tok_1",
                 },
             ],
         }
@@ -165,6 +167,7 @@ def test_build_inventory_env_exports_all_seeded_dynamic_route_ids() -> None:
         "LOCAL_AUTH_CERT_STUDENT_ID": "student_cert",
         "LOCAL_AUTH_PARENT_CERT_ID": "cert_old",
         "LOCAL_AUTH_PARENT_CERT_STUDENT_ID": "student_old",
+        "LOCAL_AUTH_CERT_SHARE_TOKEN": "share_tok_1",
         "LOCAL_AUTH_COACH_OCCURRENCE_ID": "occ_1",
         "LOCAL_AUTH_COACH_SESSION_DATE": "2099-06-25",
         "LOCAL_AUTH_COACH_SESSION_ID": "ses_coach",
@@ -422,6 +425,11 @@ def _matches(row: dict[str, object], query: dict[str, object]) -> bool:
             if "$ne" in expected and actual == expected["$ne"]:
                 return False
             if "$gte" in expected and actual < expected["$gte"]:
+                return False
+            # Like Mongo: a missing or non-comparable field never matches $gt.
+            if "$gt" in expected and not (
+                isinstance(actual, type(expected["$gt"])) and actual > expected["$gt"]
+            ):
                 return False
             continue
         if actual != expected:
