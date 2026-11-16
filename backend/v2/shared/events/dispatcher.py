@@ -14,7 +14,6 @@ from pymongo import ReturnDocument
 
 from backend.v2.shared.observability.ops_alerts import (
     capture_exception,
-    capture_message,
     should_report_failure,
 )
 
@@ -418,6 +417,8 @@ class EventDispatcher:
             doc.get("name"),
             handler_name,
             reason,
+            # Sentry gets it (with the traceback) through the logging integration.
+            exc_info=exc,
             extra={
                 "event_id": doc["event_id"],
                 "event_name": doc.get("name"),
@@ -426,15 +427,6 @@ class EventDispatcher:
                 "academy_id": doc.get("academy_id"),
             },
         )
-        try:
-            if exc is not None:
-                capture_exception(exc)
-            else:
-                capture_message(f"Event dead-lettered: {doc.get('name')} ({reason})")
-        except Exception:
-            # The dead letter is already stored; reporting must never kill the
-            # dispatcher loop.
-            log.exception("Dispatcher dead-letter reporting failed")
 
     async def _audit(
         self,

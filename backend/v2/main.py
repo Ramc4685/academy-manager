@@ -2546,18 +2546,19 @@ _DUNNING_TOTAL_KEYS = (
 
 async def _run_isolated_per_academy(
     job: str, academy_ids: Sequence[str], run: Callable[[str], Awaitable[None]]
-) -> int:
-    """Run ``run(academy_id)`` for each academy; returns how many raised.
+) -> None:
+    """Run ``run(academy_id)`` for each academy, then raise if any of them raised.
 
-    One academy raising is logged, reported to Sentry and skipped, so a broken
-    Stripe connection or bad row in one academy never stops the money loops
-    for the academies after it (A7-5; mirrors ``run_local_daily_job``).
+    One academy raising is logged (Sentry gets it through the logging
+    integration) and skipped, so a broken Stripe connection or bad row in one
+    academy never stops the money loops for the academies after it (A7-5;
+    mirrors ``run_local_daily_job``).
     """
     failures = 0
     for academy_id in academy_ids:
         try:
             await run(academy_id)
-        except Exception as exc:
+        except Exception:
             failures += 1
             log.exception(
                 "scheduled_job_academy_failed job=%s academy=%s",
@@ -2565,8 +2566,10 @@ async def _run_isolated_per_academy(
                 academy_id,
                 extra={"job_id": job, "academy_id": academy_id},
             )
-            capture_exception(exc)
-    return failures
+    if failures:
+        # Every academy ran, but the job must still read as failed in Crons,
+        # the heartbeat and healthz.
+        raise RuntimeError(f"{job}: {failures} academy run(s) failed")
 
 
 async def _run_dunning_for_academies(
@@ -2585,9 +2588,8 @@ async def _run_dunning_for_academies(
             if late_fees is not None:
                 try:
                     fee_result = await late_fees.execute(academy_id=academy_id)
-                except Exception as exc:
+                except Exception:
                     log.exception("late_fee_pass_failed", extra={"academy_id": academy_id})
-                    capture_exception(exc)
                 else:
                     totals["late_fees_applied"] += int(fee_result.applied)
             if worker is None:
@@ -2597,11 +2599,10 @@ async def _run_dunning_for_academies(
                     limit=100,
                     worker_id=f"scheduler-dunning-worker:{academy_id}",
                 )
-            except Exception as exc:
+            except Exception:
                 # A CAS race in park/finish (or any other error) for one academy must
                 # not cost every later academy its autopay collection this tick.
                 log.exception("dunning_academy_failed", extra={"academy_id": academy_id})
-                capture_exception(exc)
                 totals["academy_failures"] += 1
                 continue
         totals["academy_count"] += 1

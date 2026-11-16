@@ -316,12 +316,10 @@ async def test_watchdog_leaves_a_healthy_process_alone() -> None:
     ],
 )
 async def test_watchdog_exits_non_zero_when_a_worker_dies(
-    scheduler: Any, dispatcher: Any, monkeypatch: pytest.MonkeyPatch
+    scheduler: Any, dispatcher: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
-    from backend.v2.shared.observability import health
+    import logging
 
-    messages: list[str] = []
-    monkeypatch.setattr(health, "capture_message", messages.append)
     from backend.v2.shared.observability.health import watch_for_dead_workers
 
     exits: list[int] = []
@@ -329,10 +327,13 @@ async def test_watchdog_exits_non_zero_when_a_worker_dies(
     async def _no_sleep(_seconds: float) -> None:
         return None
 
-    await watch_for_dead_workers(scheduler, dispatcher, sleep=_no_sleep, exit_process=exits.append)
+    with caplog.at_level(logging.ERROR):
+        await watch_for_dead_workers(
+            scheduler, dispatcher, sleep=_no_sleep, exit_process=exits.append
+        )
 
     assert exits == [1]
-    assert len(messages) == 1
+    assert any("worker_dead_exiting_for_restart" in r.getMessage() for r in caplog.records)
 
 
 def test_watchdog_is_cancelled_before_the_scheduler_shuts_down() -> None:

@@ -53,25 +53,27 @@ async def test_parked_and_technical_failures_are_carried_into_totals() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dunning_failure_is_reported_to_sentry(monkeypatch) -> None:
-    import backend.v2.main as main_module
+async def test_dunning_failure_is_logged_once_at_error(caplog) -> None:
+    """Sentry gets ERROR logs through LoggingIntegration; an extra
+    capture_exception would report every failure twice."""
+    import logging
 
-    reported: list[BaseException] = []
-    monkeypatch.setattr(main_module, "capture_exception", reported.append)
+    with caplog.at_level(logging.ERROR):
+        await _run_dunning_for_academies(
+            academy_ids=["academy-bad"], late_fees=None, worker=_Worker(fail_for={"academy-bad"})
+        )
 
-    await _run_dunning_for_academies(
-        academy_ids=["academy-bad"], late_fees=None, worker=_Worker(fail_for={"academy-bad"})
-    )
-
-    assert [type(exc) for exc in reported] == [ValueError]
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert [r.getMessage() for r in errors] == ["dunning_academy_failed"]
+    assert errors[0].exc_info is not None
 
 
 @pytest.mark.asyncio
-async def test_isolated_loop_reports_and_continues_past_a_failing_academy(monkeypatch) -> None:
+async def test_isolated_loop_runs_every_academy_then_fails_the_job(caplog) -> None:
+    import logging
+
     import backend.v2.main as main_module
 
-    reported: list[BaseException] = []
-    monkeypatch.setattr(main_module, "capture_exception", reported.append)
     ran: list[str] = []
 
     async def _run(academy_id: str) -> None:
@@ -79,13 +81,23 @@ async def test_isolated_loop_reports_and_continues_past_a_failing_academy(monkey
         if academy_id == "academy-bad":
             raise RuntimeError("stripe connection revoked")
 
-    failures = await main_module._run_isolated_per_academy(
-        "process_stripe_webhook_events", ["academy-bad", "academy-good"], _run
-    )
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="1 academy"):
+        await main_module._run_isolated_per_academy(
+            "process_stripe_webhook_events", ["academy-bad", "academy-good"], _run
+        )
 
-    assert failures == 1
     assert ran == ["academy-bad", "academy-good"]
-    assert [str(exc) for exc in reported] == ["stripe connection revoked"]
+    assert any("scheduled_job_academy_failed" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_isolated_loop_is_quiet_when_every_academy_succeeds() -> None:
+    import backend.v2.main as main_module
+
+    async def _run(academy_id: str) -> None:
+        return None
+
+    await main_module._run_isolated_per_academy("job", ["a", "b"], _run)
 
 
 @pytest.mark.parametrize(

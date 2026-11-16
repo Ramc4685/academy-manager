@@ -143,15 +143,13 @@ async def test_dispatcher_dead_letters_after_attempts_exhausted(db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dead_letter_logs_an_error_and_reports_to_sentry(db, monkeypatch, caplog) -> None:
+async def test_dead_letter_logs_an_error_with_its_traceback(db, caplog) -> None:
     """G:jobs_data_infra:5: a dead letter used to surface only in the next
-    morning's ops digest."""
+    morning's ops digest. The ERROR log reaches Sentry via LoggingIntegration."""
     import logging
 
     from backend.v2.shared.events import dispatcher as dispatcher_module
 
-    reported: list[BaseException] = []
-    monkeypatch.setattr(dispatcher_module, "capture_exception", reported.append)
     now = datetime.now(UTC)
     await db["outbox_events"].insert_one(
         _event_doc(
@@ -167,28 +165,30 @@ async def test_dead_letter_logs_an_error_and_reports_to_sentry(db, monkeypatch, 
     with caplog.at_level(logging.ERROR, logger=dispatcher_module.__name__):
         await dispatcher._process_event(await dispatcher._claim_next_event())
 
-    assert [str(exc) for exc in reported] == ["retry me"]
-    assert any(
-        record.levelno == logging.ERROR and record.getMessage().startswith("event_dead_lettered")
-        for record in caplog.records
-    )
+    dead = [r for r in caplog.records if r.getMessage().startswith("event_dead_lettered")]
+    assert len(dead) == 1 and dead[0].levelno == logging.ERROR
+    assert str(dead[0].exc_info[1]) == "retry me"
 
 
 @pytest.mark.asyncio
-async def test_unregistered_event_dead_letter_reports_a_message(db, monkeypatch) -> None:
+async def test_unregistered_event_dead_letter_logs_an_error(db, caplog) -> None:
+    import logging
+
     from backend.v2.shared.events import dispatcher as dispatcher_module
 
-    messages: list[str] = []
-    monkeypatch.setattr(dispatcher_module, "capture_message", messages.append)
     now = datetime.now(UTC)
     doc = _event_doc("unknown", status="pending", next_retry_at=now, created_at=now)
     doc["name"] = "Test.NobodyListens"
     await db["outbox_events"].insert_one(doc)
     dispatcher = EventDispatcher(db, worker_id="worker-unknown")
 
-    await dispatcher._process_event(await dispatcher._claim_next_event())
+    with caplog.at_level(logging.ERROR, logger=dispatcher_module.__name__):
+        await dispatcher._process_event(await dispatcher._claim_next_event())
 
-    assert messages == ["Event dead-lettered: Test.NobodyListens (unregistered_schema_version)"]
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR] == [
+        "event_dead_lettered name=Test.NobodyListens handler=None"
+        " reason=unregistered_schema_version"
+    ]
 
 
 def test_retries_ride_out_an_hour_long_outage() -> None:

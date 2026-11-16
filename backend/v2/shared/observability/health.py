@@ -38,7 +38,6 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.observability.ops_digest import JOB_RUNS_COLLECTION, stale_jobs
 
 log = logging.getLogger(__name__)
@@ -123,7 +122,6 @@ async def watch_for_dead_workers(
         if reason is None:
             continue
         log.error("worker_dead_exiting_for_restart reason=%s", reason)
-        capture_message(f"Exiting for a restart, {reason}")
         _flush_error_reports()
         # os._exit, not sys.exit: uvicorn would otherwise keep serving, and
         # only a non-zero exit triggers Fly's on-failure restart.
