@@ -22,6 +22,8 @@ import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { MonthPicker } from "./_components/MonthPicker";
 import { PayslipsPanel } from "./_components/PayslipsPanel";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyMonthKey } from "@/lib/format/academy-time";
 
 /** #838: the two batch payroll actions that used to run on a single click. */
 type BulkAction = "generate" | "recompute";
@@ -44,6 +46,7 @@ export default function PayoutsPage() {
 }
 
 function PayoutsContent() {
+  const timezone = useAcademyTimezone();
   const router = useRouter();
   const searchParams = useSearchParams();
   const qc = useQueryClient();
@@ -69,7 +72,7 @@ function PayoutsContent() {
     selectTab(next);
   }
 
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => academyMonthKey(timezone));
   const [bulkConfirm, setBulkConfirm] = useState<BulkAction | null>(null);
 
   const { data, isLoading, isError } = useQuery({

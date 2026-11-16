@@ -53,6 +53,8 @@ export interface AdminSessionView {
   arrival_minutes_before?: number | null;
   coach_contact_policy?: string | null;
   absence_policy?: string | null;
+  /** Set only by the all-classes list (`window=all`), on the academy's clock. */
+  phase?: "active" | "upcoming" | "ended" | null;
 }
 
 export interface AdminSessionList {
@@ -225,6 +227,9 @@ export interface AdminEnrollmentView {
   pathway_completion_percentage?: number;
   pathway_next_action?: string;
   dues_status?: "current" | "due" | "overdue";
+  /** Latest lifecycle event on the seat (L2 A0-12); null when none. */
+  latest_event_type?: string | null;
+  latest_event_date?: string | null;
 }
 
 export interface AdminEnrollmentList {
@@ -278,24 +283,6 @@ export interface WithdrawEnrollmentRequest {
 export interface RemoveEnrollmentRequest {
   effective_date: string;
   reason: string;
-}
-
-export interface EnrollmentEventView {
-  event_id: string;
-  event_type: string;
-  effective_date: string;
-  reason: string | null;
-  billing_policy: string | null;
-  billing_result: string | null;
-  credit_id: string | null;
-  refund_id: string | null;
-  metadata: Record<string, string>;
-}
-
-export interface EnrollmentEventsResponse {
-  enrollment_id: string;
-  events: EnrollmentEventView[];
-  next_cursor: string | null;
 }
 
 /**
@@ -1393,6 +1380,8 @@ export interface AdminAttentionItem {
 
 export interface AdminAttentionList {
   items: AdminAttentionItem[];
+  /** Sources that failed to load: unknown, not "nothing waiting" (L2 A0-5). */
+  unavailable?: { source: string; label: string }[];
 }
 
 export interface BroadcastRequest {
@@ -1850,7 +1839,7 @@ export function sendLoginInvite(userId: string): Promise<{ sent_at: string }> {
 
 export function listAdminSessions(
   date?: string,
-  opts?: { window?: "upcoming" },
+  opts?: { window?: "upcoming" | "all" },
 ): Promise<AdminSessionList> {
   const params = new URLSearchParams();
   if (date) params.set("date", date);
@@ -2165,20 +2154,6 @@ export function returnFromHold(
   });
 }
 
-export function listEnrollmentEvents(
-  enrollmentId: string,
-  params?: { limit?: number; cursor?: string }
-): Promise<EnrollmentEventsResponse> {
-  const query = new URLSearchParams();
-  if (params?.limit != null) query.set("limit", String(params.limit));
-  if (params?.cursor) query.set("cursor", params.cursor);
-  const qs = query.toString();
-  return apiFetch<EnrollmentEventsResponse>(
-    `/admin/enrollments/${enrollmentId}/events${qs ? `?${qs}` : ""}`,
-    { method: "GET" }
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Waitlist
 // ---------------------------------------------------------------------------
@@ -2237,6 +2212,18 @@ export function getAdminPaymentFeed(limit = 20): Promise<AdminPaymentFeedRespons
 export function getAdminCollections(period?: string): Promise<AdminCollectionsView> {
   const query = period ? `?period=${encodeURIComponent(period)}` : "";
   return apiFetch<AdminCollectionsView>(`/admin/payments/collections${query}`, {
+    method: "GET",
+  });
+}
+
+/** Academy-wide family counts past due in ANY billing month (L2 B2). */
+export interface AdminOverdueFamiliesView {
+  past_due_count: number;
+  needs_action_count: number;
+}
+
+export function getAdminOverdueFamilies(): Promise<AdminOverdueFamiliesView> {
+  return apiFetch<AdminOverdueFamiliesView>("/admin/payments/overdue-families", {
     method: "GET",
   });
 }
@@ -3164,9 +3151,9 @@ export function getInquiryConversion(range: {
 }
 
 /**
- * People reports (roadmap L5b): students whose lifecycle is at_risk (no
- * attendance in the last three class dates), by class and by the class's
- * coach. No money.
+ * People reports (roadmap L5b): students whose lifecycle is at_risk (their
+ * last two recorded marks on a live seat are both absences), by class and by
+ * the class's coach. No money.
  */
 export interface AdminClassRiskRow {
   session_id: string;
@@ -3448,8 +3435,11 @@ export function rejectAdminRegistration(
 
 /** Issue #776: pending counts for every admin inbox queue, keyed by queue id. */
 export interface AdminInboxCounts {
+  /** Decision queues only; absences and cancellations are never counted. */
   counts: Record<string, number>;
   total: number;
+  /** Queue ids whose count could not be read (L2 A0-5). */
+  unavailable?: string[];
 }
 
 export function getAdminInboxCounts(): Promise<AdminInboxCounts> {

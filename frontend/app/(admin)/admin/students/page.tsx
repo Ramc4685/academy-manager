@@ -3,10 +3,10 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { Route } from "next";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 
-import { listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
+import { getAdminOverdueFamilies, listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { statText } from "@/lib/ui/load-state";
 import { useIsPhone } from "@/lib/use-is-phone";
@@ -108,7 +108,7 @@ export default function AdminStudentsPage() {
 
   return (
     <section data-testid="admin-students" className="space-y-6">
-      <SummaryCards counts={counts} students={students} state={studentsQuery} />
+      <SummaryCards counts={counts} state={studentsQuery} />
 
       <Card p={0}>
         <StudentsToolbar
@@ -175,18 +175,19 @@ export default function AdminStudentsPage() {
 // dash — the count is unknown, not nil.
 function SummaryCards({
   counts,
-  students,
   state,
 }: {
   counts: Record<string, number>;
-  students: AdminStudentView[];
   state: { isPending: boolean; isError: boolean };
 }) {
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-  const paymentRisk = students.filter(
-    (student) => student.dues_status === "due" || student.dues_status === "overdue",
-  ).length;
   const stat = (value: () => number) => statText(state, () => String(value()));
+  // L2 A0-11/B2: payment risk is academy-wide across every billing month —
+  // never a count of the rows loaded here.
+  const overdueQuery = useQuery({
+    queryKey: queryKeys.admin.overdueFamilies(),
+    queryFn: getAdminOverdueFamilies,
+  });
 
   // #865: five full-width cards stacked vertically took the whole of a
   // 400x860 screen before the first student appeared. Below `md:` they become
@@ -210,18 +211,24 @@ function SummaryCards({
       <Card p={20} accent="#f59e0b">
         <Overline>At risk</Overline>
         <BigNum size={32}>{stat(() => counts.at_risk ?? 0)}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Missed last 3 classes</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">Absent 2 classes in a row</p>
       </Card>
       <Card p={20} accent="var(--rally-subtle-ink)">
         <Overline>Paused / hold</Overline>
         <BigNum size={32}>{stat(() => (counts.paused ?? 0) + (counts.on_hold ?? 0))}</BigNum>
         <p className="mt-1 text-[11px] text-rally-subtle">Coming back</p>
       </Card>
-      <Card p={20} accent="#ef4444">
-        <Overline>Payment risk</Overline>
-        <BigNum size={32}>{stat(() => paymentRisk)}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Due or overdue (loaded rows)</p>
-      </Card>
+      <Link
+        href="/admin/payments#bucket-past_due"
+        data-testid="admin-students-payment-risk"
+        className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
+      >
+        <Card p={20} accent="#ef4444">
+          <Overline>Payment risk</Overline>
+          <BigNum size={32}>{statText(overdueQuery, () => String(overdueQuery.data?.needs_action_count ?? 0))}</BigNum>
+          <p className="mt-1 text-[11px] text-rally-subtle">Past due or failed autopay, any month (Payments shows this month)</p>
+        </Card>
+      </Link>
     </div>
   );
 }

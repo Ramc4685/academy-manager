@@ -408,6 +408,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
     admin_session_projection_fields,
     dedupe_session_series_rows,
+    session_phase,
     session_series_signature,
     session_start_sort_key,
     synthesize_recurring_session_docs,
@@ -2692,97 +2693,81 @@ def compose_admin(
     async def list_admin_sessions(
         on_date: date | None, *, window: str | None = None, coach_id: str | None = None
     ):
-        # window="upcoming" returns all dated sessions from now through +30d.
-        # Used by the transfer-enrollment dropdown so the user can pick any
-        # upcoming session, not just today's.
-        # Legacy templates may carry no `timezone`; expand in the tenant's zone.
+        # window="upcoming": classes with a date in the next 30 days (default
+        # list, transfer dropdown). window="all": every class with its phase;
+        # window="open": the same minus ended classes (waitlist and its badge).
+        # A date is the ACADEMY-LOCAL day, never the UTC day (L2 A0-3).
         fallback_timezone = await session_tz(request_academy_id())
-        if window == "upcoming":
-            now = datetime.now(UTC)
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = start + timedelta(
-                days=30,
-                hours=23,
-                minutes=59,
-                seconds=59,
-                microseconds=999999,
-            )
-            v2_cursor = sessions_r._find_many(
-                _dated_session_range_filter(start, end),
-                sort=[("start_at", 1)],
-            )
-            upcoming_docs = [doc async for doc in v2_cursor]
-            template_cursor = sessions_r._find_many(
-                _recurring_template_filter(),
-            )
-            template_docs = [doc async for doc in template_cursor]
-            upcoming_docs.extend(
+        zone = ZoneInfo(resolve_session_timezone(None, fallback_timezone))
+        local_today = datetime.now(UTC).astimezone(zone).date()
+        phases: dict[str, str] = {}
+        by_phase = window in {"all", "open"}
+        if by_phase:
+            docs = [d async for d in sessions_r._find_many(_NOT_CANCELLED_SESSION)]
+            templates = [d for d in docs if d.get("days_of_week")]
+            # A dated class without both instants cannot be placed or listed.
+            all_docs = [
+                d
+                for d in docs
+                if not d.get("days_of_week") and d.get("start_at") and d.get("end_at")
+            ]
+            all_docs.extend(
                 synthesize_recurring_session_docs(
-                    template_docs,
-                    range_start=start,
-                    range_end=end,
+                    templates,
+                    range_start=datetime(2000, 1, 1, tzinfo=UTC),
+                    range_end=datetime.now(UTC) + timedelta(days=730),
                     first_per_template=True,
                     fallback_timezone=fallback_timezone,
                 )
             )
-            upcoming_docs.sort(key=session_start_sort_key)
-            rows = await _build_admin_session_rows(upcoming_docs)
-            rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
-            if coach_id:
-                rows = [
-                    r
-                    for r in rows
-                    if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None))
-                    == coach_id
+            phases = {
+                str(d.get("session_id") or d.get("_id")): session_phase(d, local_today, zone)
+                for d in all_docs
+            }
+            if window == "open":
+                # Skip ended classes before the per-row seat counts below.
+                all_docs = [
+                    d
+                    for d in all_docs
+                    if phases[str(d.get("session_id") or d.get("_id"))] != "ended"
                 ]
-            return rows
-
-        if on_date is None:
-            on_date = datetime.now(UTC).date()
-        start = datetime.combine(on_date, time.min, tzinfo=UTC)
-        end = datetime.combine(on_date, time.max, tzinfo=UTC)
-
-        # Query both v2 sessions (start_at field) and legacy recurring templates
-        # (days_of_week field). The two schemas coexist during migration.
-        all_docs: list[dict[str, Any]] = []
-
-        # v2 schema: individual session instances with start_at/end_at
-        v2_cursor = sessions_r._find_many(
-            _dated_session_range_filter(start, end),
-            sort=[("start_at", 1)],
-        )
-        async for doc in v2_cursor:
-            all_docs.append(doc)
-
-        legacy_cursor = sessions_r._find_many(
-            _recurring_template_filter(),
-        )
-        template_docs = [doc async for doc in legacy_cursor]
-        all_docs.extend(
-            synthesize_recurring_session_docs(
-                template_docs,
-                range_start=start,
-                range_end=end,
-                local_start_date=on_date,
-                local_end_date=on_date,
-                filter_by_utc_range=False,
-                fallback_timezone=fallback_timezone,
+        else:
+            on_date = local_today if window == "upcoming" or on_date is None else on_date
+            last_date = on_date + timedelta(days=30 if window == "upcoming" else 0)
+            start = datetime.combine(on_date, time.min, tzinfo=zone).astimezone(UTC)
+            end = datetime.combine(last_date, time.max, tzinfo=zone).astimezone(UTC)
+            v2_cursor = sessions_r._find_many(
+                _dated_session_range_filter(start, end), sort=[("start_at", 1)]
             )
-        )
+            all_docs = [doc async for doc in v2_cursor]
+            template_docs = [d async for d in sessions_r._find_many(_recurring_template_filter())]
+            all_docs.extend(
+                synthesize_recurring_session_docs(
+                    template_docs,
+                    range_start=start,
+                    range_end=end,
+                    first_per_template=window == "upcoming",
+                    local_start_date=on_date,
+                    local_end_date=last_date,
+                    filter_by_utc_range=False,
+                    fallback_timezone=fallback_timezone,
+                )
+            )
         all_docs.sort(key=session_start_sort_key)
-
         rows = await _build_admin_session_rows(all_docs)
-        rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
+        for row in rows:
+            row["phase"] = phases.get(row["session_id"])
+        if not by_phase:
+            # all/open list one row per class doc (one per template), so the
+            # termless, dateless series signature would only hide real classes.
+            rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
         if coach_id:
-            rows = [
-                r
-                for r in rows
-                if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None))
-                == coach_id
-            ]
+            rows = [r for r in rows if r.get("coach_id") == coach_id]
         return rows
 
     async def list_admin_enrollments_for_session(session_id: str):
+        # The request's tenant, not the compose-time primary academy (L2).
+        academy_id = current_academy_id()
         # Paused rows stay on the roster (PAUSED chip + Resume). Hiding them
         # left a student who blocked "Add to roster" invisible everywhere
         # (#641). held / reclaim_pending are the #697 successors of paused and
@@ -2823,6 +2808,28 @@ def compose_admin(
                 name = str(parent_doc.get("display_name") or "").strip()
                 if name:
                     parent_name_by_id[str(parent_doc.get("user_id"))] = name
+        # L2 A0-12: each row's latest lifecycle event in one read; the roster
+        # used to call the history endpoint once per student.
+        latest_event_by_id: dict[str, dict[str, Any]] = {}
+        async for ev in db.enrollment_events.aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": academy_id,
+                        "enrollment_id": {"$in": [e.enrollment_id for e in active]},
+                    }
+                },
+                {"$sort": {"occurred_at": -1, "event_id": -1}},
+                {
+                    "$group": {
+                        "_id": "$enrollment_id",
+                        "t": {"$first": "$event_type"},
+                        "d": {"$first": "$effective_at"},
+                    }
+                },
+            ]
+        ):
+            latest_event_by_id[str(ev["_id"])] = ev
         default_program_id: str | None = None
         try:
             default_program = await curriculum.resolve_default_program.execute()
@@ -2887,6 +2894,11 @@ def compose_admin(
                     "level": student_doc.get("level"),
                     **placement_fields,
                     "dues_status": dues_status_by_id.get(e.student_id, "current"),
+                    "latest_event_type": latest_event_by_id.get(e.enrollment_id, {}).get("t"),
+                    "latest_event_date": str(
+                        latest_event_by_id.get(e.enrollment_id, {}).get("d") or ""
+                    )[:10]
+                    or None,
                 }
             )
         return out

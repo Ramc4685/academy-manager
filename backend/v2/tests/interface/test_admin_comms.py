@@ -11,7 +11,7 @@ from backend.v2.contexts.communications.application.use_cases.send_coach_digest_
     CoachDigestTargetNotFound,
     SendCoachDigestTestResult,
 )
-from backend.v2.interfaces.admin import comms_routes
+from backend.v2.interfaces.admin import academy_clock
 from backend.v2.shared.comms import Message
 
 
@@ -269,13 +269,7 @@ def test_digest_test_send_to_named_coach(admin_client):
 
 
 def _fix_now(monkeypatch):
-    class _FixedDateTime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            value = datetime(2026, 6, 14, 4, 30, tzinfo=UTC)
-            return value if tz is None else value.astimezone(tz)
-
-    monkeypatch.setattr(comms_routes, "datetime", _FixedDateTime)
+    monkeypatch.setattr(academy_clock, "_now", lambda: datetime(2026, 6, 14, 4, 30, tzinfo=UTC))
 
 
 def test_digest_test_send_uses_the_academy_local_date(admin_client, monkeypatch):

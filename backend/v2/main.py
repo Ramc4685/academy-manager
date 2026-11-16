@@ -56,6 +56,7 @@ from backend.v2.composition.families_crm import compose_admin_family_index
 from backend.v2.composition.family_record import compose_admin_family_record
 from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
+from backend.v2.composition.overdue_families import compose_overdue_families
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
@@ -1052,6 +1053,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
+    app.state.admin_overdue_families = compose_overdue_families(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
     app.state.admin_payment_methods = compose_admin_payment_methods(db)
     # Pricing page under Money (Settings overhaul PR 11b).

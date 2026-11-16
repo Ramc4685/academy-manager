@@ -55,6 +55,8 @@ import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO } from "@/lib/format/academy-time";
 
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -897,7 +899,8 @@ function MarkPaidDialog({
   onCancel: () => void;
   onSubmit: (input: MarkPayoutPaidInput) => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const timezone = useAcademyTimezone();
+  const today = academyDateISO(timezone);
   const [method, setMethod] = useState<MarkPayoutPaidInput["method"]>("bank_transfer");
   const [paidAt, setPaidAt] = useState(today);
   const [amount, setAmount] = useState((defaultAmountCents / 100).toFixed(2));

@@ -1747,37 +1747,43 @@ async def test_update_student_profile_no_longer_writes_the_dead_status_field(db,
 
 
 @pytest.mark.asyncio
-async def test_active_student_who_stopped_showing_up_derives_at_risk(db, acad) -> None:
-    """at_risk = active, but no attendance across the last three scheduled dates."""
+async def test_two_recorded_absences_in_a_row_derive_at_risk(db, acad) -> None:
+    """Owner rule (2026-11-15): at risk = 2 consecutive recorded absences.
+
+    L2 A0-1: a class nobody marked, and a child who joined after the class's
+    last absences, must not count. Under the old "no attendance in the last
+    three dates" rule all three of these children were at risk.
+    """
     now = datetime.now(UTC)
+    students = {
+        "st-ghost": now - timedelta(days=90),  # two absences in a row
+        "st-regular": now - timedelta(days=90),  # absent, then present
+        "st-unmarked": now - timedelta(days=90),  # the coach never took attendance
+        "st-new": now - timedelta(days=3),  # absences predate their seat
+    }
     await db["students"].insert_many(
         [
             {
                 "academy_id": acad,
-                "student_id": "st-ghost",
-                "full_name": "Ghost Child",
+                "student_id": sid,
+                "full_name": sid,
                 "parent_id": "parent-1",
                 "status": "active",
-            },
-            {
-                "academy_id": acad,
-                "student_id": "st-regular",
-                "full_name": "Regular Child",
-                "parent_id": "parent-1",
-                "status": "active",
-            },
+            }
+            for sid in students
         ]
     )
     await db["enrollments"].insert_many(
         [
             {
                 "academy_id": acad,
-                "enrollment_id": f"enr-{student_id}",
-                "student_id": student_id,
+                "enrollment_id": f"enr-{sid}",
+                "student_id": sid,
                 "session_id": "sess-1",
                 "status": "active",
+                "created_at": created_at,
             }
-            for student_id in ("st-ghost", "st-regular")
+            for sid, created_at in students.items()
         ]
     )
     await db["session_occurrences"].insert_many(
@@ -1792,24 +1798,26 @@ async def test_active_student_who_stopped_showing_up_derives_at_risk(db, acad) -
             for n in (1, 2, 3, 4)
         ]
     )
-    # The regular child attended last week; the ghost's last mark (four
-    # occurrences ago) predates the three-occurrence window.
+
+    def mark(sid: str, n: int, status: str) -> dict[str, object]:
+        return {
+            "academy_id": acad,
+            "student_id": sid,
+            "occurrence_id": f"occ-{n}",
+            "status": status,
+            "marked_at": now - timedelta(days=n * 7),
+        }
+
     await db["attendance"].insert_many(
         [
-            {
-                "academy_id": acad,
-                "student_id": "st-regular",
-                "occurrence_id": "occ-1",
-                "status": "present",
-                "marked_at": now - timedelta(days=7),
-            },
-            {
-                "academy_id": acad,
-                "student_id": "st-ghost",
-                "occurrence_id": "occ-4",
-                "status": "present",
-                "marked_at": now - timedelta(days=28),
-            },
+            mark("st-ghost", 1, "absent"),
+            mark("st-ghost", 2, "absent"),
+            mark("st-ghost", 3, "present"),
+            mark("st-regular", 1, "present"),
+            mark("st-regular", 2, "absent"),
+            mark("st-regular", 3, "absent"),
+            mark("st-new", 1, "absent"),
+            mark("st-new", 2, "absent"),
         ]
     )
     repo = MongoStudentRepository(db)
@@ -1817,20 +1825,22 @@ async def test_active_student_who_stopped_showing_up_derives_at_risk(db, acad) -
     page = await repo.list_admin_students(search=None, limit=50, cursor=None)
 
     by_id = {s.student_id: s.lifecycle for s in page.students}
-    assert by_id["st-ghost"] == "at_risk"
-    assert by_id["st-regular"] == "active"
+    assert by_id == {
+        "st-ghost": "at_risk",
+        "st-regular": "active",
+        "st-unmarked": "active",
+        "st-new": "active",
+    }
 
 
 @pytest.mark.asyncio
-async def test_a_brand_new_class_never_calls_anyone_at_risk(db, acad) -> None:
-    """Two past occurrences cannot establish a three-date absence; guessing
-    would flag every student in a session that has just started."""
+async def test_a_voided_absence_does_not_count_toward_at_risk(db, acad) -> None:
     now = datetime.now(UTC)
     await db["students"].insert_one(
         {
             "academy_id": acad,
-            "student_id": "st-new",
-            "full_name": "New Child",
+            "student_id": "st-void",
+            "full_name": "Void Child",
             "parent_id": "parent-1",
             "status": "active",
         }
@@ -1838,9 +1848,9 @@ async def test_a_brand_new_class_never_calls_anyone_at_risk(db, acad) -> None:
     await db["enrollments"].insert_one(
         {
             "academy_id": acad,
-            "enrollment_id": "enr-new",
-            "student_id": "st-new",
-            "session_id": "sess-new",
+            "enrollment_id": "enr-void",
+            "student_id": "st-void",
+            "session_id": "sess-1",
             "status": "active",
         }
     )
@@ -1848,12 +1858,30 @@ async def test_a_brand_new_class_never_calls_anyone_at_risk(db, acad) -> None:
         [
             {
                 "academy_id": acad,
-                "occurrence_id": f"occ-new-{n}",
-                "session_id": "sess-new",
+                "occurrence_id": f"occ-v{n}",
+                "session_id": "sess-1",
                 "start_at": now - timedelta(days=n * 7),
                 "status": "scheduled",
             }
             for n in (1, 2)
+        ]
+    )
+    await db["attendance"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "student_id": "st-void",
+                "occurrence_id": "occ-v1",
+                "status": "voided",
+                "marked_at": now,
+            },
+            {
+                "academy_id": acad,
+                "student_id": "st-void",
+                "occurrence_id": "occ-v2",
+                "status": "absent",
+                "marked_at": now,
+            },
         ]
     )
     repo = MongoStudentRepository(db)
