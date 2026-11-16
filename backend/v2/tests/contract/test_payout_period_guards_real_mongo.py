@@ -9,6 +9,7 @@ conflict and leave the stored period alone.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -206,3 +207,53 @@ async def test_a_period_stored_before_versions_existed_reads_as_version_zero(rea
     assert loaded is not None and loaded.version == 0
     approved = await repo.replace(approve(loaded, at=JUNE_2))
     assert approved.status == "approved" and approved.version == 1
+
+
+async def test_a_read_between_the_line_and_header_writes_sees_one_consistent_set(
+    real_db, acad
+) -> None:
+    repo = MongoPayoutPeriodRepository(real_db)
+    await repo.save(_period())
+    loaded = await repo.find_by_id("pp-1")
+    assert loaded is not None
+    seen: list[tuple[int, list[int]]] = []
+    real_set = repo._guarded_set
+
+    async def observing_set(period, fields):
+        # New lines are already inserted here; the header still points at the old set.
+        before = await repo.find_by_id("pp-1")
+        await real_set(period, fields)
+        after = await repo.find_by_id("pp-1")  # old lines not yet cleaned up
+        for p in (before, after):
+            assert p is not None
+            seen.append((p.total_minor, [line.amount_minor for line in p.lines]))
+
+    repo._guarded_set = observing_set  # type: ignore[method-assign]
+    await repo.replace_with_lines(_recomputed(loaded, amount_minor=4_000))
+
+    assert seen == [(2_500, [2_500]), (4_000, [4_000])]
+    assert (await _stored(real_db))["lines"] == [4_000]
+
+
+async def test_an_interleaved_override_and_recompute_leave_one_whole_line_set(
+    real_db, acad
+) -> None:
+    repo = MongoPayoutPeriodRepository(real_db)
+    await repo.save(_period())
+    loaded = await repo.find_by_id("pp-1")
+    assert loaded is not None
+
+    results = await asyncio.gather(
+        repo.replace_with_lines(_recomputed(loaded, amount_minor=3_000)),
+        repo.replace_with_lines(_recomputed(loaded, amount_minor=9_000)),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(r, PayoutPeriodConflictError) for r in results) == 1
+    stored = await _stored(real_db)
+    assert stored["lines"] in ([3_000], [9_000])
+    assert stored["doc"]["total_minor"] == stored["lines"][0]
+    reloaded = await repo.find_by_id("pp-1")
+    assert (
+        reloaded is not None and [line.amount_minor for line in reloaded.lines] == stored["lines"]
+    )

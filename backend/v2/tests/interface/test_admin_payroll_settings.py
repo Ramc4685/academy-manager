@@ -91,3 +91,24 @@ def test_payroll_settings_are_owner_only(admin_only_client, coach_on_admin_clien
     for client in (admin_only_client, coach_on_admin_client):
         assert client.get(URL).status_code == 404
         assert client.put(URL, json=DEFAULTS).status_code == 404
+
+
+def test_assistant_pay_from_cannot_be_back_dated_but_an_old_value_still_saves(admin_client) -> None:
+    store, _audit = _wire(admin_client)
+
+    past = admin_client.put(URL, json={**DEFAULTS, "payroll_assistant_pay_from": "2020-01"})
+    assert past.status_code == 422
+    assert "payroll_assistant_pay_from" in past.json()["detail"]
+    assert store.settings.payroll_assistant_pay_from is None
+
+    future = admin_client.put(URL, json={**DEFAULTS, "payroll_assistant_pay_from": "2999-12"})
+    assert future.status_code == 200, future.text
+
+    # A value saved earlier that has since slipped into the past does not block other edits.
+    store.settings = store.settings.model_copy(update={"payroll_assistant_pay_from": "2020-01"})
+    kept = {
+        **DEFAULTS,
+        "payroll_assistant_pay_from": "2020-01",
+        "payroll_missing_invoices": "pay_zero",
+    }
+    assert admin_client.put(URL, json=kept).status_code == 200

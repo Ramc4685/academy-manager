@@ -32,6 +32,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PersistedPayoutLine,
     PersistedUnpaidOccurrence,
 )
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time.mongo import ensure_utc
 
@@ -125,7 +126,13 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
     async def _hydrate(self, doc: dict[str, Any]) -> PayoutPeriod:
         academy_id = current_academy_id()
         cursor = self._db[self.LINES_COLLECTION].find(
-            {"academy_id": academy_id, "period_id": doc["period_id"]}
+            {
+                "academy_id": academy_id,
+                "period_id": doc["period_id"],
+                # Only the line set the header points at; None matches lines
+                # written by ``save`` (or before line sets were stamped).
+                "lines_version": doc.get("lines_version"),
+            }
         )
         lines = [_line_from_doc(line_doc) async for line_doc in cursor]
         unpaid_occurrence_ids = list(doc.get("unpaid_occurrence_ids", []))
@@ -314,21 +321,41 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         """
         header = _period_to_doc(period)
         header.pop("version")
-        await self._guarded_set(period, header)
-
-        # shortcut: the header write and the line rewrite are two writes; a
-        # crash between them leaves stale lines. Made atomic in PR 2.
+        # The new line set goes in first under a fresh stamp, then the header's
+        # version compare-and-set points at it in the same write that changes
+        # the totals: a reader sees old header + old lines or new + new.
+        token = str(new_ulid())
         academy_id = current_academy_id()
-        await self._db[self.LINES_COLLECTION].delete_many(
-            {"academy_id": academy_id, "period_id": period.period_id}
-        )
+        lines = self._db[self.LINES_COLLECTION]
         if period.lines:
-            await self._db[self.LINES_COLLECTION].insert_many(
+            await lines.insert_many(
                 [
-                    {**_line_to_doc(line, period_id=period.period_id), "academy_id": academy_id}
+                    {
+                        **_line_to_doc(line, period_id=period.period_id),
+                        "academy_id": academy_id,
+                        "lines_version": token,
+                    }
                     for line in period.lines
                 ]
             )
+        try:
+            await self._guarded_set(period, {**header, "lines_version": token})
+        except (PayoutPeriodConflictError, LookupError):
+            await lines.delete_many(
+                {"academy_id": academy_id, "period_id": period.period_id, "lines_version": token}
+            )
+            raise
+        # shortcut: until this cleanup runs (or if the process dies first),
+        # raw line readers that skip the header (reports, replacement
+        # snapshots) can see the old set too; filter them by the header's
+        # lines_version if that ever matters.
+        await lines.delete_many(
+            {
+                "academy_id": academy_id,
+                "period_id": period.period_id,
+                "lines_version": {"$ne": token},
+            }
+        )
 
         stored = await self.find_by_id(period.period_id)
         if stored is None:  # pragma: no cover - defensive

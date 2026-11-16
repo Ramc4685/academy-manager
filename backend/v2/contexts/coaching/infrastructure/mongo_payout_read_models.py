@@ -306,7 +306,7 @@ class MonthlyCoachOccurrenceReaderAdapter:
         self,
         collection: Any,
         *,
-        assistant_pay_from: Callable[[], Awaitable[str | None]] | None = None,
+        assistant_pay_from: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self._col = collection
         #: The academy's first month assistants are paid in the app; no
@@ -368,7 +368,7 @@ class MonthlyCoachOccurrenceReaderAdapter:
         # need a payout period too; their assisted classes add to their count.
         # Only from the academy's assistant pay-from month on. The window's UTC
         # midpoint always falls inside the academy-local month it bounds.
-        pay_from = await self._assistant_pay_from() if self._assistant_pay_from else None
+        pay_from = await self._assistant_pay_from(academy_id) if self._assistant_pay_from else None
         month = f"{period_start + (period_end - period_start) / 2:%Y-%m}"
         if pay_from is None or month < pay_from:
             return rows

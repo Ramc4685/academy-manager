@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, tzinfo
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -59,8 +60,23 @@ async def update_payroll_settings(
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> PayrollSettingsView:
     uc = use_cases.update_payroll_settings
-    if uc is None:
+    current_uc = use_cases.get_payroll_settings
+    if uc is None or current_uc is None:
         raise HTTPException(status_code=503, detail="Payroll settings not configured")
+    pay_from = body.payroll_assistant_pay_from
+    # Back-dating would re-price closed months; an unchanged older value still saves.
+    if pay_from is not None and pay_from != (await current_uc.execute()).get(
+        "payroll_assistant_pay_from"
+    ):
+        zone = await resolve_academy_clock_timezone(
+            _academy_timezone_reader(use_cases), claims.academy_id
+        )
+        this_month = datetime.now(ZoneInfo(zone)).strftime("%Y-%m")
+        if pay_from < this_month:
+            raise HTTPException(
+                status_code=422,
+                detail=f"payroll_assistant_pay_from cannot be earlier than {this_month}",
+            )
     saved = await uc.execute(
         academy_id=claims.academy_id, actor_id=claims.user_id, values=body.model_dump()
     )
@@ -91,11 +107,17 @@ async def _academy_month_window(
 ) -> tuple[datetime, datetime]:
     """The academy-local month, on the same clock the pay base buckets invoices by."""
 
+    zone = await resolve_academy_clock_timezone(_academy_timezone_reader(use_cases), academy_id)
+    return _month_window(month, ZoneInfo(zone))
+
+
+def _academy_timezone_reader(
+    use_cases: AdminUseCases,
+) -> Callable[[str], Awaitable[str | None]]:
     async def academy_timezone(aid: str) -> str | None:
         return (await use_cases.get_academy_use_case.execute(aid)).timezone
 
-    zone = await resolve_academy_clock_timezone(academy_timezone, academy_id)
-    return _month_window(month, ZoneInfo(zone))
+    return academy_timezone
 
 
 @router.get("/payroll/{month}", response_model=AdminMonthlyPayrollView)

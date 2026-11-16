@@ -200,9 +200,9 @@ class PayoutPeriodConflictError(Exception):
     """
 
 
-def blocking_warnings(period: PayoutPeriod) -> list[PayoutWarning]:
+def blocking_warnings(warnings: list[PayoutWarning]) -> list[PayoutWarning]:
     """The warnings that stop approval and payment; ``warning`` severity only informs."""
-    return [w for w in period.payout_warnings if w.severity == "blocking"]
+    return [w for w in warnings if w.severity == "blocking"]
 
 
 def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
@@ -233,7 +233,7 @@ def approve(period: PayoutPeriod, *, at: datetime) -> PayoutPeriod:
             "or on the old expected-revenue basis; recompute first"
         )
     unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
-    blocking = blocking_warnings(period)
+    blocking = blocking_warnings(period.payout_warnings)
     if unresolved or period.unpaid_occurrence_ids or blocking:
         count = len(blocking) or len(unresolved) or len(period.unpaid_occurrence_ids)
         raise PayoutPeriodStateError(
@@ -304,7 +304,7 @@ def mark_paid(
             f"cannot mark payout period {period.period_id!r} paid from status 'draft'"
         )
     unresolved = [row for row in period.unpaid_occurrences if row.unresolved]
-    if unresolved or period.unpaid_occurrence_ids or blocking_warnings(period):
+    if unresolved or period.unpaid_occurrence_ids or blocking_warnings(period.payout_warnings):
         raise PayoutPeriodStateError(
             f"cannot mark payout period {period.period_id!r} paid with unresolved payout warnings "
             "or unresolved unpaid occurrences"

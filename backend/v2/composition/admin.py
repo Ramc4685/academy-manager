@@ -593,6 +593,7 @@ from backend.v2.shared.tenancy import (
     TenantContextUnset,
     current_academy_id,
     current_tenant_origins,
+    tenant_scope,
 )
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.time import (
@@ -1114,8 +1115,10 @@ def compose_admin(
         )
     )
 
-    async def _assistant_pay_from() -> str | None:
-        return (await billing_settings_repo.get()).payroll_assistant_pay_from
+    async def _assistant_pay_from(academy_id: str) -> str | None:
+        # The academy the payroll query names, not the ambient request tenant.
+        with tenant_scope(academy_id):
+            return (await billing_settings_repo.get()).payroll_assistant_pay_from
 
     monthly_coach_reader = MonthlyCoachOccurrenceReaderAdapter(
         db["session_occurrences"], assistant_pay_from=_assistant_pay_from

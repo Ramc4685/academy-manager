@@ -32,6 +32,11 @@ A registration checkout's first month has no ledger invoice: its paid
 when the payment's registration application became an enrollment that still
 exists. It never counts on top of an invoice for the same enrollment and
 class-month.
+
+shortcut: a mid-month class move bills the whole month to the class of the
+earliest CONSUMED snapshot, and the ``move_proration`` delta is in nobody's
+base; upgrade by storing the snapshot ids on invoices so each part maps to its
+own class.
 """
 
 from __future__ import annotations

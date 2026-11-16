@@ -108,7 +108,8 @@ async def test_assistant_coaches_get_a_period_and_their_assisted_classes(db, aca
     period_start, period_end = _dt("2026-05-01T00:00:00"), _dt("2026-06-01T00:00:00")
 
     async def counts(pay_from: str | None) -> dict[str, int]:
-        async def reader() -> str | None:
+        async def reader(academy_id: str) -> str | None:
+            assert academy_id == "test-academy"
             return pay_from
 
         grouped = await MonthlyCoachOccurrenceReaderAdapter(

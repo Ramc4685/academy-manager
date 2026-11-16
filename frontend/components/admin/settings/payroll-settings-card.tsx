@@ -135,6 +135,8 @@ export function PayrollSettingsCard() {
             <input
               type="month"
               value={form.payroll_assistant_pay_from ?? ""}
+              // Browser month as a hint; the server refuses back-dating on the academy clock.
+              min={new Date().toISOString().slice(0, 7)}
               onChange={(e) => set("payroll_assistant_pay_from", e.target.value || null)}
               className="w-44 rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
               aria-describedby="payroll-settings-assistant-hint"
