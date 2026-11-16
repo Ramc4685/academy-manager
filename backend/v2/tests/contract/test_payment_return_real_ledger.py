@@ -160,6 +160,32 @@ async def test_replay_after_the_refund_mark_failed_converges(real_db, acad) -> N
 
 
 @pytest.mark.asyncio
+async def test_crash_after_the_refunded_mark_leaves_no_spendable_money(real_db, acad) -> None:
+    """Codex P1 on #1178: a replay skips refunded payments, so the refunded
+    marker and the cleared unapplied balance must land in one write."""
+    repo = MongoBillingLedgerRepository(real_db)
+    payment = await _paid_invoice(repo, acad, "pi_crash")
+    uc = _handler(repo, acad)
+
+    real_mark = repo.mark_payment_refunded
+
+    async def crash(**_kwargs):
+        raise RuntimeError("mongo blip after the refunded write")
+
+    async def mark_then_crash(*args, **kwargs):
+        # Only the recompute inside the refund mark fails; the reversal before it runs normally.
+        repo._repair_payment_after_allocation_change = crash  # type: ignore[method-assign]
+        return await real_mark(*args, **kwargs)
+
+    repo.mark_payment_refunded = mark_then_crash  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await _return(uc, repo, "pi_crash")
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": payment.payment_id})
+    assert (after["status"], after["unapplied_amount_cents"]) == ("refunded", 0)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("with_invoice_metadata", [False, True])
 async def test_replay_after_a_crash_between_delete_and_invoice_repair_reopens_the_invoice(
     real_db, acad, with_invoice_metadata
