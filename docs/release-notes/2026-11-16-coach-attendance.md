@@ -1,6 +1,6 @@
 # coach-attendance
 
-PR: TBD
+PR: #1179
 
 ## What changed
 Coaches can now change a mark for 48 hours, as the screen already said. The class screen now has a Late button. Coaches cannot mark a class more than an hour before it starts, and cannot undo an admin void. Marks that fail to send stay queued and retry on their own. A replayed mark or batch never ends up in Needs review against its own saved rows, a different-status conflict offers "Keep" or "Change to", and signing out clears the device's queue and cached coach data.
