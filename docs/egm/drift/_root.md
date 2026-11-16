@@ -1,4 +1,4 @@
-## README.md
+## README.md (root)
 
-- [undocumented] README.md:83-84 says the `academy-next` Worker owns `academy.courtmastr.com/*`. `frontend/wrangler.jsonc:18-25` also routes `*.courtmastr.com/*` (zone `courtmastr.com`) to the Worker. The wildcard tenant route is not mentioned.
-- [undocumented] README.md:89-102 lists seven pipeline steps. `.github/workflows/production.yml:1049` has a `sentry-release` job (backend and frontend Sentry releases) that runs after smoke and is not listed.
+- [wording] README line 98 says backend deploy is `flyctl deploy --remote-only --app courtmastr-academy-api`. Code deploys a prebuilt image: `flyctl deploy --image <migrate-production image> --release-command-timeout 25m --ha=false --app courtmastr-academy-api --env SENTRY_RELEASE=...` (`.github/workflows/production.yml:961-964`). The image is built with `--build-only --push --remote-only` in the migrate-production job (`production.yml:820`).
+- [undocumented] README lines 89-102 list the pipeline as validate, approval, migration dry run, backend, frontend, smoke, release record. They omit the `sentry-release` job, which runs after smoke (`.github/workflows/production.yml:1049-1055`). They also omit the `ci-gate`, `scripts-validate` and `hook-tests` jobs (`production.yml:673, 718, 733`).
