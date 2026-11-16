@@ -49,9 +49,9 @@ function ParentCertificate() {
   const share = useMutation({
     mutationFn: (on: boolean) =>
       on ? shareParentCertificate(studentId, certId) : unshareParentCertificate(studentId, certId),
-    onSuccess: ({ share_token }) =>
+    onSuccess: ({ share_token, share_url }) =>
       queryClient.setQueryData<CertificateDetail>(detailKey, (prev) =>
-        prev ? { ...prev, certificate: { ...prev.certificate, share_token } } : prev,
+        prev ? { ...prev, share_url, certificate: { ...prev.certificate, share_token } } : prev,
       ),
   });
 
@@ -86,7 +86,7 @@ function ParentCertificate() {
       onShare={() => void shareCertificate(detail.data, brand?.display_name ?? "")}
     >
       <PublicCertificateLink
-        shareToken={detail.data.certificate.share_token}
+        shareUrl={detail.data.share_url}
         pending={share.isPending}
         error={share.isError ? "Could not update the public link. Try again." : null}
         onCreate={() => share.mutate(true)}

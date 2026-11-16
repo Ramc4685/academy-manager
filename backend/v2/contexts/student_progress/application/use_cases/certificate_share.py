@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -53,11 +52,9 @@ class SetCertificateShare:
         *,
         certificates: CertificateRepository,
         audit: ProgressAuditLog,
-        new_token: Callable[[], str] | None = None,
     ) -> None:
         self._certs = certificates
         self._audit = audit
-        self._new_token = new_token or (lambda: secrets.token_urlsafe(_TOKEN_BYTES))
 
     async def _issued(self, student_id: str, cert_id: str) -> SkillCertificate:
         cert = next(
@@ -73,7 +70,7 @@ class SetCertificateShare:
     async def execute(self, cmd: SetCertificateShareCommand) -> SkillCertificate:
         cert = await self._issued(cmd.student_id, cmd.cert_id)
         if cmd.shared and not cert.share_token:
-            token = self._new_token()
+            token = secrets.token_urlsafe(_TOKEN_BYTES)
             if await self._certs.set_share_token(cmd.student_id, cmd.cert_id, token):
                 await self._write_audit(cmd, "certificate.share_created", token)
         elif not cmd.shared and cert.share_token:

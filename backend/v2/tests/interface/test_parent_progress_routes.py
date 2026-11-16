@@ -470,6 +470,7 @@ def _build_real_parent_progress_app(
             get_certificate_detail=get_certificate_detail,
             record_milestones=record_milestones,
             set_certificate_share=set_certificate_share,
+            certificate_share_url=_fake_share_url,
         ),
     )
 
@@ -491,6 +492,10 @@ def _build_real_parent_progress_app(
         record_milestones=record_milestones,
         set_certificate_share=set_certificate_share,
     )
+
+
+async def _fake_share_url(academy_id: str, token: str) -> str:
+    return f"https://{academy_id}.courtmastr.test/c/{token}"
 
 
 def test_parent_progress_summary_returns_owned_children_rows() -> None:
@@ -822,6 +827,26 @@ def test_parent_certificate_detail_returns_own_childs_certificate() -> None:
     ]
 
 
+def test_parent_certificate_detail_carries_the_server_built_share_url() -> None:
+    app, _ = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        certificate_detail=_Dumpable(
+            certificate={"cert_id": "cert-1", "share_token": "tok-abcdefghijklmnop"}, skills=[]
+        ),
+    )
+    shared = TestClient(app).get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1")
+    assert shared.json()["share_url"] == (
+        f"https://{ACADEMY_ID}.courtmastr.test/c/tok-abcdefghijklmnop"
+    )
+
+    app, _ = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        certificate_detail=_Dumpable(certificate={"cert_id": "cert-1", "share_token": None}),
+    )
+    unshared = TestClient(app).get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1")
+    assert unshared.json()["share_url"] is None
+
+
 def test_parent_certificate_detail_other_child_returns_404_without_lookup() -> None:
     app, spies = _build_real_parent_progress_app(
         children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
@@ -867,7 +892,13 @@ def test_parent_share_and_unshare_call_the_use_case_for_their_own_child() -> Non
     off = client.delete(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1/share")
 
     assert on.status_code == 200, on.text
-    assert on.json() == {"share_token": "tok-abcdefghijklmnop"}
+    # The link is built on the server for the academy's own host, never the
+    # product host the parent may be signed in on (where /c/ is a 404).
+    academy = _parent_claims().academy_id
+    assert on.json() == {
+        "share_token": "tok-abcdefghijklmnop",
+        "share_url": f"https://{academy}.courtmastr.test/c/tok-abcdefghijklmnop",
+    }
     assert off.status_code == 200, off.text
     assert spies.set_certificate_share.calls == [
         (

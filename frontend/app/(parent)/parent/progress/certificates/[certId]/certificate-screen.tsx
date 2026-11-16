@@ -32,7 +32,8 @@ export async function shareCertificate(
     await nav.share({
       title: `${cert.student_name}: ${levelLabel(detail)}`,
       text: `${cert.student_name} finished ${levelLabel(detail)} at ${academyName}!`,
-      url: window.location.href,
+      // The public link when the parent shared one; this private page otherwise.
+      url: detail.share_url ?? window.location.href,
     });
   } catch {
     // The parent closed the share sheet: nothing to do.
@@ -178,31 +179,27 @@ export function CertificateScreen({
   );
 }
 
-/** The public page for a shared certificate, on this academy's own host. */
-export function publicCertificateUrl(token: string, origin: string = window.location.origin): string {
-  return `${origin}/c/${encodeURIComponent(token)}`;
-}
-
 /**
  * Parent opt-in public link (L5B). Off until the parent turns it on; the page
  * shows the first name (or initial, per the academy) and the level, never
  * contact details. Turning it off makes the old link a 404 straight away.
  */
 export function PublicCertificateLink({
-  shareToken,
+  shareUrl,
   pending,
   error,
   onCreate,
   onStop,
 }: {
-  shareToken: string | null | undefined;
+  /** Built by the server for the academy's own host. */
+  shareUrl: string | null | undefined;
   pending: boolean;
   error: string | null;
   onCreate: () => void;
   onStop: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const url = shareToken ? publicCertificateUrl(shareToken) : null;
+  const url = shareUrl || null;
   return (
     <div
       className="space-y-2 rounded-[14px] border border-rally-line bg-white p-3.5"

@@ -124,7 +124,7 @@
         "shared certificate shown",
         "revoked, unshared or unknown link not found (404)",
         "backend unavailable",
-        "noindex unless shared"
+        "always noindex"
       ],
       "risk_edges": [
         "Certificate shown on another academy's host",

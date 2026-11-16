@@ -33,8 +33,6 @@ from backend.v2.shared.tenancy.context import tenant_scope
 
 router = APIRouter()
 
-#: Prefix the rate limiter keys on (one bucket for every token).
-PUBLIC_CERTIFICATE_PREFIX = "/api/v2/public/certificates/"
 #: ``secrets.token_urlsafe(16)`` is 22 characters; allow some slack, nothing else.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 

@@ -284,14 +284,16 @@ def _recorder(db: Any) -> RecordReachedMilestones:
     return RecordReachedMilestones(
         settings=MongoProgressSettingsRepository(db),
         skill_progress=MongoStudentSkillProgressRepository(db),
-        level_progress=MongoStudentLevelProgressRepository(db),
+        certificates=MongoSkillCertificateRepository(db),
         milestones=MongoStudentMilestoneRepository(db),
     )
 
 
-async def _pass_skills(db: Any, student_id: str, times: list[datetime]) -> None:
+async def _pass_skills(
+    db: Any, student_id: str, times: list[datetime], *, silent: bool = False, first: int = 0
+) -> None:
     repo = MongoStudentSkillProgressRepository(db)
-    for n, at in enumerate(times):
+    for n, at in enumerate(times, start=first):
         await repo.save(
             StudentSkillProgress(
                 skill_progress_id=f"sp-{student_id}-{n}",
@@ -303,6 +305,7 @@ async def _pass_skills(db: Any, student_id: str, times: list[datetime]) -> None:
                 status="PASSED",
                 last_updated_at=at,
                 last_updated_by="coach",
+                silent=silent,
             )
         )
 
@@ -360,28 +363,113 @@ async def test_milestone_is_deterministic_idempotent_and_going_forward_only(real
     assert abs(rows[0]["reached_at"].replace(tzinfo=UTC) - third_pass) < timedelta(milliseconds=1)
 
 
-async def test_levels_completed_milestone_counts_completed_levels(real_db: Any) -> None:
+async def test_levels_completed_counts_issued_certificates_not_placements(
+    real_db: Any,
+) -> None:
     await _seed_academies(real_db)
     with tenant_scope(ACADEMY):
         await _update(real_db, enabled=True, milestones=[("levels_completed", 2)])
-        levels = MongoStudentLevelProgressRepository(real_db)
         done = datetime.now(UTC) + timedelta(minutes=1)
-        for n, status in enumerate(["completed", "completed", "active"]):
-            await levels.save(
-                StudentLevelProgress(
-                    progress_id=f"lp-{n}",
-                    academy_id=ACADEMY,
-                    student_id="kid",
-                    program_id="prog",
-                    level_id=f"L{n}",
-                    status=status,  # type: ignore[arg-type]
-                    started_at=done,
-                    completed_at=done + timedelta(minutes=n) if status == "completed" else None,
-                    created_at=done,
-                )
+        # A level a placement closed (completed row, no certificate) never counts.
+        await MongoStudentLevelProgressRepository(real_db).save(
+            StudentLevelProgress(
+                progress_id="lp-placed",
+                academy_id=ACADEMY,
+                student_id="kid",
+                program_id="prog",
+                level_id="L0",
+                status="completed",
+                started_at=done,
+                completed_at=done,
+                created_at=done,
             )
-        reached = await _recorder(real_db).execute("kid")
+        )
+        certs = MongoSkillCertificateRepository(real_db)
+        await certs.save(
+            _cert("c-1", "kid").model_copy(
+                update={"cert_number": "RIV-C-0101", "completed_at": done}
+            )
+        )
+        recorder = _recorder(real_db)
+        assert await recorder.execute("kid") == []  # one earned level so far
+        await certs.save(
+            _cert("c-2", "kid").model_copy(
+                update={
+                    "cert_number": "RIV-C-0102",
+                    "completed_at": done + timedelta(minutes=1),
+                    "level_id": "L2",
+                }
+            )
+        )
+        reached = await recorder.execute("kid")
         # Off again: the journey and email stay silent, the record stays on file.
         await _update(real_db, enabled=False, milestones=[("levels_completed", 2)])
         assert await _recorder(real_db).execute("kid") == []
     assert [(m.kind, m.count) for m in reached] == [("levels_completed", 2)]
+    assert await real_db["student_milestones"].count_documents({}) == 1
+
+
+async def test_silent_placement_credits_never_count_toward_skills(real_db: Any) -> None:
+    await _seed_academies(real_db)
+    with tenant_scope(ACADEMY):
+        settings = await _update(real_db, enabled=True, milestones=[("skills_passed", 2)])
+        after = settings.milestones[0].since + timedelta(minutes=1)
+        await _pass_skills(real_db, "kid", [after, after], silent=True)
+        await _pass_skills(real_db, "kid", [after], first=2)
+        assert await _recorder(real_db).execute("kid") == []
+        await _pass_skills(real_db, "kid", [after + timedelta(minutes=1)], first=3)
+        reached = await _recorder(real_db).execute("kid")
+    assert [m.milestone_key for m in reached] == ["skills_passed:2"]
+
+
+async def test_re_enabling_restarts_since_and_removed_thresholds_are_hidden(
+    real_db: Any,
+) -> None:
+    await _seed_academies(real_db)
+    with tenant_scope(ACADEMY):
+        first = await _update(real_db, enabled=True, milestones=[("skills_passed", 1)])
+        await _pass_skills(real_db, "kid", [first.milestones[0].since])
+        assert [m.count for m in await _recorder(real_db).execute("kid")] == [1]
+        await _update(real_db, enabled=False, milestones=[("skills_passed", 1)])
+        back_on = await _update(real_db, enabled=True, milestones=[("skills_passed", 1)])
+        # Turning milestones back on applies going forward: a fresh ``since``.
+        assert back_on.milestones[0].since > first.milestones[0].since
+        # The record already on file is still shown while its threshold is configured.
+        assert [m.count for m in await _recorder(real_db).execute("kid")] == [1]
+        await _update(real_db, enabled=True, milestones=[("skills_passed", 5)])
+        # Removed threshold: on file, never shown.
+        assert await _recorder(real_db).execute("kid") == []
+    assert await real_db["student_milestones"].count_documents({}) == 1
+
+
+async def test_unreadable_settings_read_as_off_instead_of_failing(real_db: Any) -> None:
+    await _seed_academies(real_db)
+    await real_db["academies"].update_one(
+        {"academy_id": ACADEMY},
+        {
+            "$set": {
+                "progress_settings": {"milestones_enabled": True, "milestones": [{"kind": "x"}]}
+            }
+        },
+    )
+    with tenant_scope(ACADEMY):
+        settings = await MongoProgressSettingsRepository(real_db).get()
+        assert settings.milestones_enabled is False and settings.milestones == []
+        assert await _recorder(real_db).execute("kid") == []
+
+
+async def test_share_url_points_at_the_academy_host_not_the_product_host(
+    real_db: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from backend.v2.composition import pathway
+
+    await _seed_academies(real_db)
+    monkeypatch.setattr(
+        pathway,
+        "get_settings",
+        lambda: SimpleNamespace(frontend_url="https://academy.courtmastr.com"),
+    )
+    url = await pathway._certificate_share_url(real_db)(ACADEMY, TOKEN)
+    assert url == f"https://riverside-academy.courtmastr.com/c/{TOKEN}"

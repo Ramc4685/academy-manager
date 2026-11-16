@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -168,9 +170,11 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
     MongoTestAttemptRepository,
 )
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 # ---------------------------------------------------------------------------
 # SeedBadmintonPathway callable wrapper
@@ -317,6 +321,9 @@ class StudentProgressComposition:
     get_progress_settings: GetProgressSettings
     update_progress_settings: UpdateProgressSettings
     record_milestones: RecordReachedMilestones
+    #: ``(academy_id, token) -> https://<slug>.<apex>/c/<token>``: the academy's
+    #: own host, never the product host (where ``/c/`` is a 404).
+    certificate_share_url: Callable[[str, str], Awaitable[str]]
 
 
 # ---------------------------------------------------------------------------
@@ -547,7 +554,23 @@ def compose_student_progress(
             settings=progress_settings, audit=progress_audit
         ),
         record_milestones=compose_record_milestones(db),
+        certificate_share_url=_certificate_share_url(db),
     )
+
+
+def _certificate_share_url(
+    db: AsyncIOMotorDatabase[Any],
+) -> Callable[[str, str], Awaitable[str]]:
+    frontend_url = get_settings().frontend_url
+
+    async def share_url(academy_id: str, token: str) -> str:
+        doc = await db["academies"].find_one({"academy_id": academy_id}, {"slug": 1})
+        base = academy_frontend_url(
+            frontend_url=frontend_url, academy_slug=str((doc or {}).get("slug") or "")
+        )
+        return f"{base}/c/{quote(token, safe='')}"
+
+    return share_url
 
 
 def compose_record_milestones(db: AsyncIOMotorDatabase[Any]) -> RecordReachedMilestones:
@@ -555,6 +578,6 @@ def compose_record_milestones(db: AsyncIOMotorDatabase[Any]) -> RecordReachedMil
     return RecordReachedMilestones(
         settings=MongoProgressSettingsRepository(db),
         skill_progress=MongoSkillProgressRepository(db),
-        level_progress=MongoLevelProgressRepository(db),
+        certificates=MongoCertificateRepository(db),
         milestones=MongoStudentMilestoneRepository(db),
     )

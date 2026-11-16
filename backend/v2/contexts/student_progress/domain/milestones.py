@@ -12,10 +12,12 @@ added (``since``), so switching one on never floods families with old news.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+from backend.v2.shared.time.mongo import ensure_utc
 
 MilestoneKind = Literal["skills_passed", "levels_completed"]
 #: How the public share page names the child: "Maya" or "M.".
@@ -66,11 +68,6 @@ class StudentMilestone(BaseModel):
     reached_at: datetime
 
 
-def _utc(value: datetime) -> datetime:
-    # Mongo returns naive UTC datetimes; compare everything aware.
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
-
-
 def milestone_key(kind: str, count: int) -> str:
     return f"{kind}:{count}"
 
@@ -86,8 +83,8 @@ def reached_milestones(
     if not settings.milestones_enabled:
         return []
     times = {
-        "skills_passed": sorted(map(_utc, passed_at)),
-        "levels_completed": sorted(map(_utc, completed_at)),
+        "skills_passed": sorted(map(ensure_utc, passed_at)),
+        "levels_completed": sorted(map(ensure_utc, completed_at)),
     }
     reached: list[StudentMilestone] = []
     for threshold in settings.milestones:
@@ -95,7 +92,7 @@ def reached_milestones(
         if len(series) < threshold.count:
             continue
         at = series[threshold.count - 1]
-        if at < _utc(threshold.since):
+        if at < ensure_utc(threshold.since):
             continue
         reached.append(
             StudentMilestone(

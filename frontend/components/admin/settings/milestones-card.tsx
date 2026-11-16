@@ -24,7 +24,7 @@ type Form = {
 };
 
 /** Form starting value for a new row only; the academy picks the real number. */
-const NEW_ROW: Row = { kind: "skills_passed", count: 10 };
+const NEW_ROW: Row = { kind: "skills_passed", count: 1 };
 const MAX_ROWS = 20;
 
 const KIND_LABEL: Record<MilestoneKind, string> = {

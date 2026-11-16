@@ -246,6 +246,8 @@ export interface CertificateDetail {
   next_level: { level_id: string; name: string; number: number } | null;
   /** The program's whole level ladder, in order, with each level's colour. */
   levels: { name: string; color: string | null }[];
+  /** Parent reads: the public link on the academy's own host, built by the server; null when not shared. */
+  share_url?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -872,11 +874,17 @@ export function getParentStudentCertificates(
   ).then((d) => d.certificates);
 }
 
+export interface CertificateShareState {
+  share_token: string | null;
+  /** `https://<academy host>/c/<token>`: never the product host, where `/c/` is a 404. */
+  share_url: string | null;
+}
+
 /** Create (idempotent) the public link for the parent's own child's certificate. */
 export function shareParentCertificate(
   studentId: string,
   certId: string,
-): Promise<{ share_token: string | null }> {
+): Promise<CertificateShareState> {
   return apiFetch(
     `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/share`,
     { method: "POST" },
@@ -887,7 +895,7 @@ export function shareParentCertificate(
 export function unshareParentCertificate(
   studentId: string,
   certId: string,
-): Promise<{ share_token: string | null }> {
+): Promise<CertificateShareState> {
   return apiFetch(
     `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/share`,
     { method: "DELETE" },

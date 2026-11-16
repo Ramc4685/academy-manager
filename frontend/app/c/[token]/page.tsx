@@ -14,8 +14,8 @@ import { contrastRatio, ensureContrast } from "@/lib/public-page/theme";
 /**
  * `/c/[token]`: a certificate a parent chose to share (L5B). The academy comes
  * from the request host (the backend resolves it); a revoked, unshared or
- * unknown link is the same plain 404. Only a live share may be indexed: it is
- * there because the parent opted in. Every other state is noindex.
+ * unknown link is the same plain 404. Never indexed, even a live share: it is
+ * a child's record, and the parent shared a link, not a search listing.
  */
 type Params = { params: Promise<{ token: string }> };
 
@@ -25,18 +25,22 @@ function label(cert: SharedCertificate): string {
     : cert.level_name;
 }
 
+const SHARED_CERTIFICATE_ROBOTS = {
+  index: false,
+  follow: false,
+} as const;
+
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { token } = await params;
   const result = await loadSharedCertificate(token);
-  if (result.kind !== "found")
-    return { robots: { index: false, follow: false } };
+  if (result.kind !== "found") return { robots: SHARED_CERTIFICATE_ROBOTS };
   const cert = result.certificate;
   const title = `${cert.recipient_name} finished ${label(cert)} · ${cert.academy.name}`;
   return {
     title,
     description: `A certificate of achievement from ${cert.academy.name}.`,
     openGraph: { title, type: "website" },
-    robots: { index: true, follow: false },
+    robots: SHARED_CERTIFICATE_ROBOTS,
   };
 }
 

@@ -256,7 +256,19 @@ async def get_certificate_detail(
     )
     if detail is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
-    return detail.model_dump(mode="json")
+    data = detail.model_dump(mode="json")
+    token = (data.get("certificate") or {}).get("share_token")
+    data["share_url"] = await _share_url(use_cases, claims, token)
+    return data
+
+
+async def _share_url(
+    use_cases: ParentUseCases, claims: AuthClaims, token: str | None
+) -> str | None:
+    """The public link on the academy's own host (``/c/`` 404s on the product host)."""
+    if not token or use_cases.student_progress is None:
+        return None
+    return await use_cases.student_progress.certificate_share_url(claims.academy_id, token)
 
 
 async def _set_share(
@@ -272,7 +284,10 @@ async def _set_share(
             student_id=student_id, cert_id=cert_id, actor_id=claims.user_id, shared=shared
         )
     )
-    return {"share_token": cert.share_token}
+    return {
+        "share_token": cert.share_token,
+        "share_url": await _share_url(use_cases, claims, cert.share_token),
+    }
 
 
 @router.post("/students/{student_id}/certificates/{cert_id}/share")
