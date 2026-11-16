@@ -11,6 +11,7 @@ import {
   Auth,
   EmailAuthProvider,
   GoogleAuthProvider,
+  applyActionCode,
   confirmPasswordReset,
   connectAuthEmulator,
   createUserWithEmailAndPassword,
@@ -19,7 +20,6 @@ import {
   onAuthStateChanged,
   reauthenticateWithCredential,
   reauthenticateWithPopup,
-  sendPasswordResetEmail,
   signInWithCredential,
   signInWithCustomToken,
   signInWithEmailAndPassword,
@@ -248,10 +248,6 @@ export async function completeGoogleRedirectSignIn(): Promise<User | null> {
   return null;
 }
 
-export async function sendPasswordReset(email: string): Promise<void> {
-  await sendPasswordResetEmail(auth(), email);
-}
-
 /**
  * Validate a password-reset `oobCode` and return the email it belongs to.
  *
@@ -261,6 +257,16 @@ export async function sendPasswordReset(email: string): Promise<void> {
 export async function verifyPasswordResetCodeValue(oobCode: string): Promise<string> {
   if (E2E_BYPASS) return "e2e-parent@example.com";
   return verifyPasswordResetCode(auth(), oobCode);
+}
+
+/**
+ * Redeem an email-verification `oobCode` (the link the backend re-hosts on the
+ * academy's `/auth/action` page). Works in any browser: it needs no signed-in
+ * user, only the code.
+ */
+export async function applyEmailVerificationCode(oobCode: string): Promise<void> {
+  if (E2E_BYPASS) return;
+  await applyActionCode(auth(), oobCode);
 }
 
 /**

@@ -68,3 +68,26 @@ async def test_flag_stays_inside_the_academy(real_db, acad) -> None:
     assert (
         await repo.flag_payment_method_blocked(payment_method_id="pm_bank", reason="x", at=NOW) == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_portal_default_blocked_by_stripe_is_flagged_through_its_customer(
+    real_db, acad
+) -> None:
+    """L8: the parent made a new bank the Stripe default in the Billing Portal, so the
+    stored ids are stale; platform autopay charges the live default. A block on
+    that method must still stop the next debit."""
+    repo = MongoParentBillingCustomerRepository(real_db)
+    await _seed(real_db, acad, parent_id="p1", pm="pm_stored")
+    await _seed(real_db, acad, parent_id="p2", pm="pm_other")
+
+    flagged = await repo.flag_payment_method_blocked(
+        payment_method_id="pm_portal",
+        reason="bank_blocked:bank_account_closed",
+        at=NOW,
+        stripe_customer_id="cus_p1",
+    )
+
+    assert flagged == 1
+    assert await repo.payment_method_blocked(parent_id="p1", payment_method_id="pm_portal") is True
+    assert await repo.payment_method_blocked(parent_id="p2", payment_method_id="pm_portal") is False

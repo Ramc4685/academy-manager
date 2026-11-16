@@ -280,7 +280,12 @@ class ParentStripeCustomerRepository(Protocol):
     ) -> None: ...
 
     async def flag_payment_method_blocked(
-        self, *, payment_method_id: str, reason: str, at: datetime
+        self,
+        *,
+        payment_method_id: str,
+        reason: str,
+        at: datetime,
+        stripe_customer_id: str | None = None,
     ) -> int:
         """Mark a saved method Stripe can no longer charge; returns rows flagged."""
         ...
@@ -1111,6 +1116,15 @@ class LedgerRepository(Protocol):
         status: str,
         updated_at: datetime,
     ) -> LedgerPayment: ...
+
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: datetime,
+    ) -> tuple[LedgerPayment, bool]: ...
 
     async def record_payment_attempt(
         self,

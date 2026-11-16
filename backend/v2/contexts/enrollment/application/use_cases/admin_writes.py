@@ -1890,6 +1890,9 @@ class WithdrawEnrollmentCommand(BaseModel):
     #: event next to the free-text ``reason``. Optional: the system paths
     #: (hold reclaim, hold expiry) have no admin to choose one.
     reason_code: DepartureReasonCode | None = None
+    #: False when the caller tells the family itself in one message (account
+    #: deletion), so a multi-class family does not also get one email per drop.
+    notify_family: bool = True
 
 
 async def _decide_withdrawal_billing(
@@ -2116,7 +2119,7 @@ class WithdrawEnrollment:
                 roster_notifier=self._roster_notifier,
             ),
         )
-        if self._notifier is not None:
+        if self._notifier is not None and cmd.notify_family:
             # Issue #743: the roster notice above is coach-facing. Without
             # this the family never learned an admin-initiated Drop (or Stop
             # all classes, which composes this use case) happened at all —

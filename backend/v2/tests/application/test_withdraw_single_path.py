@@ -298,6 +298,18 @@ async def test_withdraw_emails_the_family_when_dropped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_withdraw_can_skip_the_family_email_when_the_caller_sends_its_own() -> None:
+    # Account deletion sends one confirmation; N drop emails on top of it
+    # told the parent the same thing N more times.
+    h = _build()
+
+    await h.use_case.execute(_cmd("credit").model_copy(update={"notify_family": False}))
+
+    assert h.enrollments.rows["enr-1"].status == "dropped"
+    assert h.notifier.dropped_calls == []
+
+
+@pytest.mark.asyncio
 async def test_withdraw_family_notify_failure_never_fails_the_drop() -> None:
     """Same best-effort contract as the roster notice and #740's hold-start
     notice: the drop is already committed, so a mail failure must not

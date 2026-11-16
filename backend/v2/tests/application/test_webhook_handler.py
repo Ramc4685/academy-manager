@@ -623,6 +623,34 @@ class FakeBillingLedger:
         self.payments[payment_id] = updated
         return updated
 
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: Any,
+    ) -> tuple[LedgerPayment, bool]:
+        """Mirrors the Mongo repo: cumulative charge refunds merge, keyed sources add once."""
+        payment = self.payments[payment_id]
+        sources = self.__dict__.setdefault("return_sources", {}).setdefault(payment_id, {})
+        if source_key is not None and source_key in sources:
+            return payment, False
+        keyed = sum(sources.values())
+        before = payment.refunded_cents
+        if source_key is None:
+            refunded = min(payment.amount_cents, max(before - keyed, amount_cents) + keyed)
+        else:
+            refunded = min(payment.amount_cents, before + amount_cents)
+            sources[source_key] = amount_cents
+        if refunded == before:
+            return payment, False
+        status = "refunded" if refunded >= payment.amount_cents else "partially_refunded"
+        updated = await self.mark_payment_refunded(
+            payment_id, refunded_cents=refunded, status=status, updated_at=updated_at
+        )
+        return updated, True
+
     def _unapplied(self, payment_id: str, refunded_cents: int) -> int:
         """Mongo's rule: amount less refunded less still-allocated, never negative."""
         allocated = sum(
@@ -5579,9 +5607,13 @@ class _BlockingCustomers(FakeParentStripeCustomers):
     def __init__(self) -> None:
         super().__init__()
         self.blocked: list[tuple[str, str]] = []
+        self.customers: list[str | None] = []
 
-    async def flag_payment_method_blocked(self, *, payment_method_id: str, reason: str, at):
+    async def flag_payment_method_blocked(
+        self, *, payment_method_id: str, reason: str, at, stripe_customer_id=None
+    ):
         self.blocked.append((payment_method_id, reason))
+        self.customers.append(stripe_customer_id)
         return 1
 
 
@@ -5628,6 +5660,37 @@ async def test_unusable_bank_method_is_flagged(event_type: str, obj: dict, expec
     await uc.execute(body, "test_signature")
 
     assert customers.blocked == expected
+
+
+@pytest.mark.asyncio
+async def test_unusable_method_also_matches_its_stripe_customer() -> None:
+    """L8: platform charges use Stripe's live default, which a Portal change can
+    move off the stored id; the method's customer is matched as well."""
+    customers = _BlockingCustomers()
+    stripe = FakeStripeGateway()
+    stripe.payment_methods["pm_new"] = {"id": "pm_new", "customer": "cus_portal"}
+    uc = _build(FakePaymentRepo(), parent_customers=customers, stripe=stripe)
+    blocked_bank = {
+        "id": "pm_live",
+        "customer": "cus_live",
+        "type": "us_bank_account",
+        "us_bank_account": {"status_details": {"blocked": {"reason": "bank_account_closed"}}},
+    }
+    for event_type, obj in (
+        ("payment_method.automatically_updated", blocked_bank),
+        ("mandate.updated", {"id": "mandate_1", "status": "inactive", "payment_method": "pm_new"}),
+    ):
+        body = json.dumps(
+            {
+                "id": f"evt_{event_type}",
+                "type": event_type,
+                "livemode": True,
+                "data": {"object": obj},
+            }
+        ).encode()
+        await uc.execute(body, "test_signature")
+
+    assert customers.customers == ["cus_live", "cus_portal"]
 
 
 @pytest.mark.asyncio

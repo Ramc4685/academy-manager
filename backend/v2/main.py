@@ -28,7 +28,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
-from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.admin import AcademyPortalUrlAdapter, compose_admin
 from backend.v2.composition.admin_platform_fee import compose_admin_platform_fee
 from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.composition.billing_rules import compose_admin_billing_rules
@@ -169,6 +169,9 @@ from backend.v2.contexts.identity.application.use_cases.register_public_parent i
 from backend.v2.contexts.identity.application.use_cases.request_account_deletion import (
     RequestAccountDeletion,
 )
+from backend.v2.contexts.identity.application.use_cases.send_password_reset_email import (
+    SendPasswordResetEmail,
+)
 from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
     SendRegistrationVerificationEmail,
 )
@@ -241,6 +244,7 @@ from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
+from backend.v2.interfaces.password_reset_routes import router as password_reset_router
 from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.public.router import router as public_router
 from backend.v2.interfaces.registration_routes import router as registration_router
@@ -725,19 +729,41 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         default_academy_id=runtime_academy_id,
         saas_mode=settings.saas_mode,
     )
+
+    _portal_urls = AcademyPortalUrlAdapter(
+        MongoAcademyRepository(db), frontend_url=settings.frontend_url
+    )
+    # `build_user_facing_invite_sender`, not the plain adapter: a parent is
+    # watching these sends (verification, forgot password, deletion
+    # confirmation), so a stub port in a real environment must fail loudly
+    # rather than report the stub's `ok=True`.
+    _user_facing_sender = build_user_facing_invite_sender(
+        sender=_build_email_sender(settings, db),
+        env=str(getattr(settings, "env", "") or ""),
+        real_email_envs=REAL_EMAIL_ENVS,
+    )
+
     app.state.send_registration_verification_email = SendRegistrationVerificationEmail(
         verifier=verifier,
         links=get_firebase_admin_adapter(),
-        # `build_user_facing_invite_sender`, not the plain adapter: a parent is
-        # watching this send, so a stub port in a real environment must fail
-        # loudly rather than report the stub's `ok=True`.
-        sender=build_user_facing_invite_sender(
-            sender=_build_email_sender(settings, db),
-            env=str(getattr(settings, "env", "") or ""),
-            real_email_envs=REAL_EMAIL_ENVS,
-        ),
+        sender=_user_facing_sender,
         academies=MongoAcademyRepository(db),
         cooldown=MongoVerificationEmailCooldown(db),
+        users=users_repo,
+        password_links=get_firebase_admin_adapter(),
+        brands=AcademyEmailBrands(MongoAcademyRepository(db)),
+        portals=_portal_urls,
+    )
+
+    # Branded "forgot password" mail (replaces Firebase's client-side sender).
+    app.state.send_password_reset_email = SendPasswordResetEmail(
+        users=users_repo,
+        memberships=membership_repo,
+        links=get_firebase_admin_adapter(),
+        sender=_user_facing_sender,
+        academies=MongoAcademyRepository(db),
+        cooldown=MongoVerificationEmailCooldown(db, purpose="password_reset"),
+        portals=_portal_urls,
         brands=AcademyEmailBrands(MongoAcademyRepository(db)),
     )
     app.state.bootstrap_academy = BootstrapAcademy(
@@ -749,6 +775,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.consume_magic_link = ConsumeMagicLink(
         links=MongoMagicLinkRepository(db),
         tokens=get_firebase_admin_adapter(),
+        users=users_repo,
     )
 
     # Recipient email preferences (#555). Both the public token-authenticated
@@ -764,10 +791,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
     app.state.forget_push_devices = ForgetPushDevices(devices=_push_device_repo)
-    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
-    app.state.request_account_deletion = RequestAccountDeletion(
-        store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
-    )
     # D4: GET /api/v2/admin/account-deletions.
     app.state.list_account_deletions = ListAccountDeletions(store=MongoAccountDeletionStore(db))
     # Support-only restore: POST /api/v2/platform/account-deletions/{id}/cancel.
@@ -1040,10 +1063,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
-    from backend.v2.composition.account_deletion import compose_execute_account_deletions
+    from backend.v2.composition.account_deletion import (
+        compose_deletion_request_follow_up,
+        compose_execute_account_deletions,
+    )
 
     app.state.execute_account_deletions = compose_execute_account_deletions(
         db, stop_all_classes=_departures.stop_all_classes, stripe=stripe_gw
+    )
+    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
+    # The follow-up stops classes and autopay and sends the confirmation at
+    # request time, through the same stop-all-classes use case the executor uses.
+    app.state.request_account_deletion = RequestAccountDeletion(
+        store=MongoAccountDeletionStore(db),
+        firebase=get_firebase_admin_adapter(),
+        follow_up=compose_deletion_request_follow_up(
+            db, stop_all_classes=_departures.stop_all_classes, sender=_user_facing_sender
+        ),
     )
     # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back
     # (and re-offer it); a bare status write leaked the seat. Same promote
@@ -2513,7 +2549,7 @@ async def _resolve_billing_day(
 
     Settings are advisory for generation: the billing context's own rule is
     that a missing or unreadable billing_settings doc "must never block the
-    monthly run" (see MongoMonthlyBilling._load_invoice_due_days). Skipping the
+    monthly run" (see MongoMonthlyBillingGenerator._load_schedule). Skipping the
     academy on a read failure would make an unreadable settings doc a permanent
     silent skip — the exact failure mode issue #431 set out to remove.
     """
@@ -2973,6 +3009,7 @@ def create_app() -> FastAPI:
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
     app.include_router(magic_link_router, prefix="/api/v2")
+    app.include_router(password_reset_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
     app.include_router(email_webhook_router, prefix="/api/v2")
     # Anonymous, host-resolved, rate limited (interfaces/public/__init__.py).

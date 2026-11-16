@@ -211,20 +211,28 @@ class MongoParentBillingCustomerRepository(TenantScopedRepository):
         return str(customer_id), str(payment_method_id)
 
     async def flag_payment_method_blocked(
-        self, *, payment_method_id: str, reason: str, at: datetime
+        self,
+        *,
+        payment_method_id: str,
+        reason: str,
+        at: datetime,
+        stripe_customer_id: str | None = None,
     ) -> int:
         """Stripe says this saved method can no longer be charged (closed bank,
         revoked mandate). Remember the method id rather than deleting it, so a
-        newly saved method (a different id) is chargeable again at once (A4-8)."""
+        newly saved method (a different id) is chargeable again at once (A4-8).
+
+        Platform charges use the customer's live Stripe default, which a parent
+        can change in the Billing Portal without the stored ids following, so
+        the method's customer matches too."""
+        match: list[dict[str, Any]] = [
+            {"default_payment_method_id": payment_method_id},
+            {"primary_payment_method_id": payment_method_id},
+        ]
+        if stripe_customer_id:
+            match.append({"stripe_customer_id": stripe_customer_id})
         result = await self.collection.update_many(
-            self._scoped(
-                {
-                    "$or": [
-                        {"default_payment_method_id": payment_method_id},
-                        {"primary_payment_method_id": payment_method_id},
-                    ]
-                }
-            ),
+            self._scoped({"$or": match}),
             {
                 "$set": {
                     "blocked_payment_method_id": payment_method_id,

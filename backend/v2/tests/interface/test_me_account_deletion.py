@@ -23,6 +23,7 @@ from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo im
 )
 from backend.v2.contexts.identity.application.use_cases.request_account_deletion import (
     RequestAccountDeletion,
+    RequestAccountDeletionCommand,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
     MongoAccountDeletionStore,
@@ -81,18 +82,32 @@ async def db() -> Any:
     return database
 
 
+class RecordingFollowUp:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, bool]] = []
+        self._fail = fail
+
+    async def on_requested(self, request: Any, *, fresh: bool) -> None:
+        self.calls.append((request.request_id, fresh))
+        if self._fail:
+            raise RuntimeError("billing down")
+
+
 def _app(
     db: Any,
     *,
     firebase: FakeFirebase | None = None,
     signed_in_at: datetime | None = None,
     authenticated: bool = True,
+    follow_up: RecordingFollowUp | None = None,
 ) -> FastAPI:
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(me_router, prefix="/api/v2")
     app.state.request_account_deletion = RequestAccountDeletion(
-        store=MongoAccountDeletionStore(db), firebase=firebase or FakeFirebase()
+        store=MongoAccountDeletionStore(db),
+        firebase=firebase or FakeFirebase(),
+        follow_up=follow_up or RecordingFollowUp(),
     )
     app.state.forget_push_devices = ForgetPushDevices(devices=MongoPushDeviceRepository(db))
 
@@ -249,3 +264,68 @@ async def test_a_coach_with_upcoming_classes_is_refused_until_reassigned(db: Any
     await db["session_occurrences"].update_many({}, {"$set": {"status": "cancelled"}})
     with TestClient(_app(db)) as client:
         assert client.post(URL, json=CONFIRM).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_classes_autopay_and_confirmation_start_at_request_time(db: Any) -> None:
+    # identity_auth:4: nothing used to stop until the 14-day executor ran.
+    follow_up = RecordingFollowUp()
+    with TestClient(_app(db, follow_up=follow_up)) as client:
+        client.post(URL, json=CONFIRM)
+        client.post(URL, json=CONFIRM)
+    request_id = (await db["account_deletion_requests"].find_one({}))["request_id"]
+
+    # A repeat re-runs the idempotent stop but never re-sends the email.
+    assert follow_up.calls == [(request_id, True), (request_id, False)]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_crash_reruns_the_stop_without_a_second_email(db: Any) -> None:
+    with TestClient(_app(db)) as client:
+        client.post(URL, json=CONFIRM)
+    request_id = (await db["account_deletion_requests"].find_one({}))["request_id"]
+    await db["academy_memberships"].update_many(
+        {"user_id": {"$in": ["u-parent", "fb-1"]}}, {"$set": {"status": "active"}}
+    )
+    follow_up = RecordingFollowUp()
+    with TestClient(_app(db, follow_up=follow_up)) as client:
+        assert client.post(URL, json=CONFIRM).status_code == 200
+
+    assert follow_up.calls == [(request_id, False)]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_follow_up_still_locks_the_account(db: Any) -> None:
+    with TestClient(_app(db, follow_up=RecordingFollowUp(fail=True))) as client:
+        assert client.post(URL, json=CONFIRM).status_code == 200
+    assert (await _membership_statuses(db))[("acad-b", "fb-1")] == "removed"
+
+
+@pytest.mark.asyncio
+async def test_a_double_submit_race_sends_one_confirmation(db: Any) -> None:
+    # Regression: both racing calls passed fresh=True (two confirmations and a
+    # false alert) because create_request hands back the row already on file.
+    class _RacingStore(MongoAccountDeletionStore):
+        pre_checks = 0
+
+        async def find_request(self, aliases: tuple[str, ...]) -> Any:
+            # Both calls' pre-checks miss, as in a real race; create_request's
+            # own lookup after the duplicate-key error still sees the row.
+            self.pre_checks += 1
+            if self.pre_checks <= 2:
+                return None
+            return await super().find_request(aliases)
+
+    follow_up = RecordingFollowUp()
+    use_case = RequestAccountDeletion(
+        store=_RacingStore(db), firebase=FakeFirebase(), follow_up=follow_up
+    )
+    cmd = RequestAccountDeletionCommand(
+        user_id="u-parent", email="p@example.com", signed_in_at=datetime.now(UTC)
+    )
+
+    first = await use_case.execute(cmd)
+    second = await use_case.execute(cmd)
+
+    assert second.request_id == first.request_id
+    assert follow_up.calls == [(first.request_id, True), (first.request_id, False)]

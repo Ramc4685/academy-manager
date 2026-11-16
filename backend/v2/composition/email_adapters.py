@@ -293,6 +293,59 @@ def invoice_number_html(naming: InvoiceNaming) -> str:
     )
 
 
+def _ordinal(day: int) -> str:
+    suffix = "th" if 10 <= day % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{day}{suffix}"
+
+
+async def render_ach_schedule_notice(
+    *,
+    academies: Any,
+    parent_name: str | None,
+    effective_from: date | None,
+    charge_day: int,
+    on_invoice_day: bool,
+    manage_url: str | None,
+) -> tuple[str, str]:
+    """``(subject, html)`` of the notice that autopay moves to a new day of the
+    month (L8, Nacha advance notice). Render only: this takes no sender, and
+    nothing in the app sends it.
+
+    shortcut: the amount always reads "your usual monthly tuition", since no
+    per-family projection of the next charge exists; add one when it does."""
+    academy_name = await academies.get_academy_name(current_academy_id()) or "Your academy"
+    day = _ordinal(charge_day)
+    when = (
+        f"Starting {effective_from.strftime('%B')} {effective_from.day}, {effective_from.year}"
+        if effective_from
+        else "From your next invoice"
+    )
+    greeting = f"<p>Hi {html.escape(parent_name)},</p>" if parent_name else ""
+    action = (
+        _branded_button(label="Manage autopay", url=manage_url)
+        if manage_url
+        else f"<p style='color: {_BRAND_MUTED};'>Contact the academy to make a change.</p>"
+    )
+    inner = (
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        "Your autopay date is changing</h2>"
+        f"{greeting}"
+        f"<p>{when}, {html.escape(academy_name)} will charge your saved payment method "
+        f"for monthly tuition on the <strong>{day} of each month</strong>"
+        f"{', the day the invoice is issued' if on_invoice_day else ''}.</p>"
+        "<p>The amount is your usual monthly tuition, as shown on each invoice.</p>"
+        "<p>Nothing to do if that works for you. To change your payment method or turn "
+        "off autopay, use the parent app before then, or contact the academy.</p>"
+        f"{action}"
+    )
+    body = _branded_shell(
+        academy_name=academy_name,
+        inner_html=inner,
+        brand=await _academy_brand(academies, academy_name),
+    )
+    return f"Your autopay date is changing to the {day} of the month", body
+
+
 class InvoiceEmailAdapter:
     def __init__(
         self,

@@ -331,6 +331,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/billing/ach-notice/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Render the autopay date-change notice (never sent) */
+        get: operations["preview_ach_notice_api_v2_admin_billing_ach_notice_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/billing/connect-readiness": {
         parameters: {
             query?: never;
@@ -6614,6 +6631,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Password Reset */
+        post: operations["request_password_reset_api_v2_password_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/platform/academies/bootstrap": {
         parameters: {
             query?: never;
@@ -7493,6 +7527,28 @@ export interface components {
             enabled?: boolean | null;
             /** Percent */
             percent?: number | null;
+        };
+        /**
+         * AchNoticePreviewView
+         * @description ``GET /admin/billing/ach-notice/preview``: the autopay date-change notice,
+         *     rendered and never sent, with the autopay families it is meant for (L8).
+         */
+        AchNoticePreviewView: {
+            /** Html */
+            html: string;
+            /** Recipients */
+            recipients: components["schemas"]["AchNoticeRecipientView"][];
+            /** Subject */
+            subject: string;
+        };
+        /** AchNoticeRecipientView */
+        AchNoticeRecipientView: {
+            /** Name */
+            name?: string | null;
+            /** Parent Id */
+            parent_id: string;
+            /** Payment Method */
+            payment_method?: string | null;
         };
         /** ActivateSubscriptionRequest */
         ActivateSubscriptionRequest: {
@@ -16245,6 +16301,11 @@ export interface components {
             /** Waiver Version */
             waiver_version?: string | null;
         };
+        /** PasswordResetRequest */
+        PasswordResetRequest: {
+            /** Email */
+            email: string;
+        };
         /** PatchApplicationRequest */
         PatchApplicationRequest: {
             /**
@@ -20254,6 +20315,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StudentBillingEnrollmentView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_ach_notice_api_v2_admin_billing_ach_notice_preview_get: {
+        parameters: {
+            query?: {
+                parent_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AchNoticePreviewView"];
                 };
             };
             /** @description Validation Error */
@@ -32269,6 +32361,37 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_password_reset_api_v2_password_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

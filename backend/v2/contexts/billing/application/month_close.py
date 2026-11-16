@@ -31,6 +31,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     invoice_is_chargeable,
 )
 from backend.v2.contexts.billing.domain.fees import application_fee_cents
+from backend.v2.contexts.billing.domain.ledger import charge_date
 
 #: Odd-list checks are capped so one bad month cannot return thousands of rows.
 #: The count beside the list is always the true count (spec §4.3).
@@ -98,6 +99,8 @@ class InvoiceFacts:
     paid_cents: int = 0
     outstanding_cents: int = 0
     due_date: date | None = None
+    #: Autopay charge stamp (L8); None charges on the due date.
+    autopay_charge_date: date | None = None
     delivery_status: str = "not_sent"
     #: "invoice_email" | "autopay_notice", stamped at send time (#692). None on
     #: sends that pre-date the field and on anything the backfill could not
@@ -313,9 +316,9 @@ def build_money_section(
 def build_autopay_run_section(invoices: Iterable[InvoiceFacts], *, today: date) -> dict[str, Any]:
     """The autopay run's four tallies over every autopay-active invoice.
 
-    ``charge_on`` is the earliest due date in the period. The generator
-    normally stamps one due date per run, but a late-added enrollment gets a
-    later one, so ``charge_on_varies`` tells the page to append "and later".
+    ``charge_on`` is the earliest charge date in the period (the autopay
+    stamp, else the due date). The generator normally stamps one per run, but
+    a late-added enrollment gets a later one, so ``charge_on_varies`` tells the page to append "and later".
     The tallies span every autopay-active invoice regardless of its due date.
 
     The three tallies are a partition, evaluated in this order: a failed ladder
@@ -324,7 +327,9 @@ def build_autopay_run_section(invoices: Iterable[InvoiceFacts], *, today: date) 
     no attempt yet. ``scheduled`` is their sum — what the worker had to do.
     """
     live = _live(invoices)
-    due_dates = sorted({inv.due_date for inv in live if inv.due_date is not None})
+    charge_dates = sorted(
+        {charge_date(inv.due_date, inv.autopay_charge_date) for inv in live if inv.due_date}
+    )
     autopay = [inv for inv in live if inv.autopay_active]
 
     failed = [inv for inv in autopay if _has_failed_ladder(inv)]
@@ -345,13 +350,13 @@ def build_autopay_run_section(invoices: Iterable[InvoiceFacts], *, today: date) 
             "cents": sum(inv.paid_cents if paid else inv.outstanding_cents for inv in rows),
         }
 
-    charge_on = due_dates[0] if due_dates else None
+    charge_on = charge_dates[0] if charge_dates else None
     succeeded_tally = tally(succeeded, paid=True)
     failed_tally = tally(failed)
     pending_tally = tally(pending)
     return {
         "charge_on": _iso(charge_on),
-        "charge_on_varies": len(due_dates) > 1,
+        "charge_on_varies": len(charge_dates) > 1,
         "has_run": charge_on is not None and today >= charge_on,
         "scheduled": {
             "count": succeeded_tally["count"] + failed_tally["count"] + pending_tally["count"],
