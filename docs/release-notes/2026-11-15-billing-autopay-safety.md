@@ -3,7 +3,7 @@
 PR: #TBD
 
 ## What changed
-Autopay no longer breaks or mis-charges when a family has no saved method, when Stripe is down, or when a bank debit fails or comes back later: each case now parks, retries or pauses the family's autopay, and tells the parent when they need to act. Every payment now sends a receipt, payment reminders catch up after a missed run, and the owner dashboard flags autopay stuck on Stripe setup or on our side. Card on file now counts only cards on the Stripe account the academy actually charges (#981).
+Autopay no longer breaks or mis-charges when a family has no saved method, when Stripe is down, or when a bank debit fails or comes back later: each case now parks, retries or pauses the family's autopay, and tells the parent when they need to act. Every payment now sends a receipt, payment reminders catch up after a missed run, and the owner dashboard flags autopay stuck on Stripe setup or on our side, plus bank returns that need a manual look ("Bank returns to check"). Card on file now counts only cards on the Stripe account the academy actually charges (#981).
 
 ## Deploy notes
 - No migration and no new env var.
@@ -12,4 +12,4 @@ Autopay no longer breaks or mis-charges when a family has no saved method, when 
 - Payment reminder offsets keep their stored values; the wider -7..60 range only changes what the settings form accepts.
 
 ## Risk / rollback
-Medium: this touches the autopay charge path, the dunning ladder, webhook handling and parent emails. Each change has a real-Mongo contract or use-case test. A partial bank return is not reversed automatically: the family is paused and the return is flagged to ops for a manual fix. Bank checkout options are unverified against Stripe test mode. Roll back by reverting the PR. Rows written in the new shape (`settling_failure_code`, `last_failure_was_bank_debit`, `parked_since`, `blocked_payment_method_id`, `refund_failures`) are ignored by the old code.
+Medium: this touches the autopay charge path, the dunning ladder, webhook handling and parent emails. Each change has a real-Mongo contract or use-case test. A partial bank return is not reversed automatically: the family is paused, the return is flagged to ops, and it shows on the owner dashboard's "Bank returns to check" card for 30 days. Bank checkout options are unverified against Stripe test mode. Roll back by reverting the PR. Rows written in the new shape (`settling_failure_code`, `last_failure_was_bank_debit`, `parked_since`, `blocked_payment_method_id`, `refund_failures`) are ignored by the old code.
