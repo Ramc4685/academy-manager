@@ -183,7 +183,7 @@ export function TrialRequestForm({
         <h3>Thanks, your request is with {academyName}</h3>
         <p>
           {values.slot_key
-            ? "Check your email for the details of your free trial."
+            ? `If that date is confirmed you'll get an email with the details shortly; otherwise ${academyName} will reply within one working day.`
             : variant === "notify"
               ? "They will email you when the timetable is published."
               : "They will reply by email within one working day to arrange a date."}{" "}
