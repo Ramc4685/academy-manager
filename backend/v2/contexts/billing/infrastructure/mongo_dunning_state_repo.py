@@ -18,6 +18,8 @@ from backend.v2.contexts.billing.domain.dunning import (
     FIRST_ATTEMPT_LOCAL_HOUR,
     NO_SAVED_PAYMENT_METHOD,
     STRIPE_UNAVAILABLE,
+    TECHNICAL_FAILURE_CAPPED,
+    TECHNICAL_PARK_CAP,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -32,6 +34,9 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 #: reminders both read this, so "no late fee yet" and "no reminder yet" cannot
 #: drift apart. Waiting on the parent to add a card is not a retry in flight:
 #: the invoice stays due, earns its late fee and gets its reminders (A4-1, L8).
+#: A ladder capped after a day of technical failures still counts as a retry:
+#: the cap is our fault, so no late fee or reminder, and a late fee would change
+#: balance_due_cents and with it the autopay idempotency key (A7-6).
 ACTIVE_RETRY_FILTER: dict[str, Any] = {
     "status": {"$in": ["active", "processing"]},
     "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
@@ -106,6 +111,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
             "lease_expires_at",
             "suppressed_at",
             "parked_since",
+            "technical_parked_since",
             "autopay_disabled_at",
             "created_at",
             "updated_at",
@@ -301,6 +307,14 @@ class MongoDunningStateRepository(TenantScopedRepository):
                         "next_attempt_at": None,
                         "suppression_reason": {"$in": sorted(self.retryable_parked_reasons)},
                     },
+                    # A capped ladder is rechecked once a day (A7-6), so a paid or
+                    # voided invoice stands down and a recovered charge path collects.
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": TECHNICAL_FAILURE_CAPPED,
+                        "suppressed_at": {"$lte": now - TECHNICAL_PARK_CAP},
+                    },
                     {"status": "processing", "lease_expires_at": {"$lte": now}},
                 ],
             }
@@ -310,7 +324,14 @@ class MongoDunningStateRepository(TenantScopedRepository):
             parked_for_retry_recheck = (
                 state.status == "active"
                 and state.next_attempt_at is None
-                and state.suppression_reason in self.retryable_parked_reasons
+                and (
+                    state.suppression_reason in self.retryable_parked_reasons
+                    or (
+                        state.suppression_reason == TECHNICAL_FAILURE_CAPPED
+                        and state.suppressed_at is not None
+                        and state.suppressed_at <= now - TECHNICAL_PARK_CAP
+                    )
+                )
             )
             parked_for_payment_processing = (
                 parked_for_retry_recheck and state.suppression_reason == "payment_processing"

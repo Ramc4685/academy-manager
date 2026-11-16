@@ -46,6 +46,12 @@ The exact pre-flight and switch steps are in
       harmless for how academy two's data will arrive. A global unique index
       makes a second academy's legitimate row collide with the first
       academy's.
+- [ ] Every scheduler loop that walks academies isolates them: one
+      academy's exception is logged, sent to Sentry and skipped, never ends
+      the tick for the academies after it. The Stripe webhook drain,
+      PaymentIntent reconcile and dunning loops in `backend/v2/main.py` do
+      (`_run_isolated_per_academy`, `_run_dunning_for_academies`), as do the
+      daily jobs (`run_local_daily_job`); check any loop added since.
 - [ ] `docs/runbooks/index-drift-audit.md` reports `ok: true` on production.
 - [ ] Pending migrations are applied through the deploy pipeline
       (`docs/runbooks/migrations-rollout.md`), never by hand.

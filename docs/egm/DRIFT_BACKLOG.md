@@ -2,7 +2,7 @@
 
 README-vs-code divergences found by EGM drift reports. Details with file:line are in `docs/egm/drift/`. Fix the README or the code, then delete the line.
 
-## Repo root (`README.md`): 8 items, from `drift/_root.md`
+## Repo root (`README.md`): 11 items, from `drift/_root.md`
 - [undocumented] README:83-84 says `academy-next` owns `academy.courtmastr.com/*`; `frontend/wrangler.jsonc:18-25` also routes `*.courtmastr.com/*`.
 - [undocumented] Deploy steps omit the `sentry-release` job in `production.yml`.
 - [wording] README:98 shows `flyctl deploy --remote-only`; production.yml deploys a prebuilt `--image` with `--ha=false`.
@@ -10,9 +10,12 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:173 lists importers under `scripts/`; none exist there.
 - [wording] README:51 says multi-region; the API runs one machine in one region (`backend/fly.toml:2`).
 - [wording] Auth methods: README:31,142 name only Google and email/password; code also has Apple and magic links, and self-registration is email/password only.
+- [wording] README:101-102 says the release record publishes only when every changed component deployed; `publish-release` gates only on smoke succeeding on `main` (`production.yml:1126-1129`).
+- [wording] README:116-117 says email verification is checked on every authenticated request; only the per-provider rule in `token_claims.py:19-36` was confirmed.
+- [wording] README:139 gives a `SECURITY DISCLOSURE` subject line; `SECURITY.md` has no matching contact.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 24 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 25 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -36,6 +39,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README cites W1A-02 (nowhere in code); migrations dir has two `0070_*` files despite "one file per index set".
 
 - [missing] Identity (the canonical example) and several other contexts have no `domain/events.py`.
+- [contract] README:46,49 describe `application/use_cases/`; identity (the canonical example, README:55) keeps most use cases directly in `application/`.
 - [wording] Platform, student and owner routers mount behind settings flags, not always under `/api/v2`.
 
 ## `frontend/README.md`: 18 items, from `drift/frontend.md`

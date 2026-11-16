@@ -27,7 +27,10 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     autopay_eligibility,
     invoice_is_chargeable,
 )
-from backend.v2.contexts.billing.domain.dunning import MAX_DUNNING_ATTEMPTS
+from backend.v2.contexts.billing.domain.dunning import (
+    MAX_DUNNING_ATTEMPTS,
+    TECHNICAL_FAILURE_CAPPED,
+)
 from backend.v2.contexts.billing.domain.ledger import charge_date
 from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE
 from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
@@ -104,6 +107,7 @@ class InvoiceFacts:
     #: The monthly generator's autopay charge stamp (L8); None charges on the
     #: due date. Read through ``charge_date``.
     autopay_charge_date: date | None = None
+    dunning_suppression_reason: str | None = None  # dunning_states.suppression_reason
 
 
 @dataclass(frozen=True)
@@ -206,9 +210,14 @@ def _eligibility(family: FamilyFacts, invoice: InvoiceFacts) -> Eligibility:
     )
 
 
-def has_failed_attempt(dunning_status: str | None, attempt_count: int) -> bool:
+def has_failed_attempt(
+    dunning_status: str | None, attempt_count: int, suppression_reason: str | None = None
+) -> bool:
     """A ladder that has failed at least once, or gave up (the Failed autopay rule)."""
     if dunning_status == _DUNNED_STATUS:
+        return True
+    # Capped after a day of technical failures: no rung spent, but not scheduled (A7-6).
+    if suppression_reason == TECHNICAL_FAILURE_CAPPED:
         return True
     return dunning_status in _FAILED_LADDER_STATUSES and attempt_count >= 1
 
@@ -230,7 +239,7 @@ def _pick_bucket(
     """Spec §2 rules, top to bottom. Returns (bucket, triggering invoice)."""
     for inv in owing:
         if _is_chargeable_owing(inv) and has_failed_attempt(
-            inv.dunning_status, inv.dunning_attempt_count
+            inv.dunning_status, inv.dunning_attempt_count, inv.dunning_suppression_reason
         ):
             return "failed_autopay", inv
     for inv in owing:

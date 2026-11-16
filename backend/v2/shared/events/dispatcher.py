@@ -21,8 +21,10 @@ from .base import DomainEvent
 
 log = logging.getLogger(__name__)
 
-# Per docs/event-rules.md.
-RETRY_DELAYS_SECONDS = [0, 1, 4, 16, 64, 256]
+# Per docs/event-rules.md. The last two delays stretch the retries to ~57
+# minutes in all, so an email-provider or Stripe outage of up to an hour no
+# longer dead-letters the events in flight (G:jobs_data_infra:5).
+RETRY_DELAYS_SECONDS = [0, 1, 4, 16, 64, 256, 1024, 2048]
 MAX_ATTEMPTS = len(RETRY_DELAYS_SECONDS)
 
 HandlerFn = Callable[[DomainEvent], Awaitable[None]]
@@ -241,6 +243,7 @@ class EventDispatcher:
                 reason="invalid_event_payload",
                 error=str(exc),
                 handler_name=handler_name,
+                exc=exc,
             )
             await self._audit(
                 doc,
@@ -283,7 +286,7 @@ class EventDispatcher:
         if attempt_count >= MAX_ATTEMPTS:
             await self._mark_run_failed(doc, handler_name, exc)
             await self._dead_letter(
-                doc, reason="handler_failed", error=error, handler_name=handler_name
+                doc, reason="handler_failed", error=error, handler_name=handler_name, exc=exc
             )
             await self._mark_event_dead_lettered(doc, error=error, attempt_count=attempt_count)
             await self._audit(
@@ -395,6 +398,7 @@ class EventDispatcher:
         reason: str,
         error: str | None,
         handler_name: str | None = None,
+        exc: BaseException | None = None,
     ) -> None:
         await self._db[self.DEAD_LETTER].insert_one(
             {
@@ -405,6 +409,23 @@ class EventDispatcher:
                 "error": error,
                 "created_at": datetime.now(UTC),
             }
+        )
+        # A dead letter is dropped work (an email, a follow-up) that needs a
+        # manual replay: alert now, not in tomorrow's ops digest.
+        log.error(
+            "event_dead_lettered name=%s handler=%s reason=%s",
+            doc.get("name"),
+            handler_name,
+            reason,
+            # Sentry gets it (with the traceback) through the logging integration.
+            exc_info=exc,
+            extra={
+                "event_id": doc["event_id"],
+                "event_name": doc.get("name"),
+                "handler_name": handler_name,
+                "reason": reason,
+                "academy_id": doc.get("academy_id"),
+            },
         )
 
     async def _audit(

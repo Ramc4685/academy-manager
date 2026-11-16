@@ -967,10 +967,14 @@ jobs:
     name: Deploy Frontend
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [production-approval]
+    # Ships only after the API it calls is live: a frontend deployed beside a
+    # failed migration or backend deploy calls endpoints that do not exist yet.
+    needs: [production-approval, migrate-production, deploy-backend]
     if: >
       always() &&
       needs.production-approval.result == 'success' &&
+      needs.migrate-production.result == 'success' &&
+      needs.deploy-backend.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     defaults:

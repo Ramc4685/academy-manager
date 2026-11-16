@@ -122,7 +122,11 @@ class OverdueFamiliesReader:
             if not parent:
                 continue
             state = dunning.get(str(inv["invoice_id"])) or {}
-            if has_failed_attempt(state.get("status"), int(state.get("attempt_count") or 0)):
+            if has_failed_attempt(
+                state.get("status"),
+                int(state.get("attempt_count") or 0),
+                state.get("suppression_reason"),
+            ):
                 failed.add(parent)
             elif _naive_utc(inv.get("due_date")) < cutoff and (
                 str(inv.get("enrollment_id") or "") not in autopay_active

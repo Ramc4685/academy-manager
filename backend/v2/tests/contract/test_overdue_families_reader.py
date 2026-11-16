@@ -143,7 +143,12 @@ async def test_autopay_cover_and_failed_attempts(db, acad) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "reason", ["charge_technical_failure", "connected_account_not_ready", "stripe_not_configured"]
+    "reason",
+    [
+        "charge_technical_failure",
+        "connected_account_not_ready",
+        "stripe_not_configured",
+    ],
 )
 async def test_a_parked_charge_that_never_reached_the_card_is_not_covered(
     db, acad, reason: str
@@ -166,6 +171,21 @@ async def test_a_parked_charge_that_never_reached_the_card_is_not_covered(
     )
 
     assert await _counts(db) == {"past_due": 1, "needs_action": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_capped_ladder_is_failed_autopay_like_on_payments(db, acad) -> None:
+    """A7-6: the dashboard agrees with the Payments bucket, which reads a capped
+    ladder as failed autopay even though no rung was spent."""
+    await db["invoices"].insert_one(
+        _invoice("capped", "fam-capped", "2026-11", datetime(2026, 11, 5, tzinfo=UTC))
+    )
+    await _autopay(db, "enr-capped")
+    await db["dunning_states"].insert_one(
+        _dunning("capped", "active", 0, suppression_reason="technical_failure_capped")
+    )
+
+    assert await _counts(db) == {"past_due": 0, "needs_action": 1}
 
 
 @pytest.mark.asyncio

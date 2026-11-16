@@ -82,7 +82,8 @@ async def test_reader_skips_invoices_autopay_is_still_collecting(real_db, acad) 
     """L8: a Jan 1 debit is still settling at +3 (bank holiday); no "past due"
     email while its ladder retries. A finished ladder, and one parked waiting on
     the parent to add a card, remind as before: reminders skip exactly what the
-    late-fee pass treats as an active retry."""
+    late-fee pass treats as an active retry. A ladder capped after a day of
+    technical failures still counts as a retry: the cap is our fault (A7-6)."""
     due = datetime(2027, 1, 5, tzinfo=UTC)
     rows_in = (
         ("inv-settling", "processing", None),
@@ -90,6 +91,7 @@ async def test_reader_skips_invoices_autopay_is_still_collecting(real_db, acad) 
         ("inv-dunned", "dunned", None),
         ("inv-no-ladder", None, None),
         ("inv-no-card", "active", "no_saved_payment_method"),
+        ("inv-capped", "active", "technical_failure_capped"),
         ("inv-stripe-setup", "active", "connected_account_not_ready"),
     )
     for invoice_id, ladder, park in rows_in:

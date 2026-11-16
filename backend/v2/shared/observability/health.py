@@ -7,9 +7,12 @@ restarted.
 
 Two rules shape what is allowed to return 503:
 
-1. **Only restartable faults fail the check.** Fly's response to a failed
-   check is to restart the machine, so a fault a restart cannot fix must not
-   be reported as unhealthy — that produces a boot loop instead of a fix.
+1. **Only restartable faults fail the check.** A fault a restart cannot fix
+   must not be reported as unhealthy. Fly does NOT restart a machine whose
+   ``[http_service]`` check fails (it only stops routing to it, per
+   docs.fly.io/reference/health-checks), so a dead scheduler or dispatcher
+   is recovered by ``watch_for_dead_workers`` instead: it exits the process
+   non-zero and Fly's default ``on-failure`` restart policy boots it again.
    A stale job heartbeat is reported (``jobs.<id>.stale``, from the same
    ``JOB_STALE_AFTER`` table the ops digest alerts on) but never fails the
    check: restarting the process will not make a monthly job run.
@@ -29,7 +32,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -80,6 +85,57 @@ async def build_health_report(
             # Informational only — excluded from `healthy`, see rule 1.
             report["jobs"] = jobs
     return report, healthy
+
+
+#: How often the watchdog looks; matches Fly's check interval.
+WATCHDOG_INTERVAL_SECONDS = 30.0
+
+
+def dead_worker(scheduler: Any | None, dispatcher: Any | None) -> str | None:
+    """The in-process worker that has died, else ``None`` (Mongo excluded:
+    a restart does not fix a database outage and would only boot-loop)."""
+    for name, check in (
+        ("scheduler", _check_scheduler(scheduler)),
+        ("dispatcher", _check_dispatcher(dispatcher)),
+    ):
+        if not check.get("ok", True):
+            return f"{name}: {check.get('error')}"
+    return None
+
+
+async def watch_for_dead_workers(
+    scheduler: Any | None,
+    dispatcher: Any | None,
+    *,
+    interval: float = WATCHDOG_INTERVAL_SECONDS,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    exit_process: Callable[[int], None] = os._exit,
+) -> None:
+    """Exit the process (code 1) once the scheduler or dispatcher has died.
+
+    Run as a task for the app's lifetime and cancel it BEFORE shutting the
+    scheduler down, or a clean shutdown reads as a dead scheduler.
+    """
+    while True:
+        await sleep(interval)
+        reason = dead_worker(scheduler, dispatcher)
+        if reason is None:
+            continue
+        log.error("worker_dead_exiting_for_restart reason=%s", reason)
+        _flush_error_reports()
+        # os._exit, not sys.exit: uvicorn would otherwise keep serving, and
+        # only a non-zero exit triggers Fly's on-failure restart.
+        exit_process(1)
+        return
+
+
+def _flush_error_reports() -> None:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.flush(timeout=2)
+    except Exception:
+        log.warning("sentry_flush_failed", exc_info=True)
 
 
 async def _check_mongo(db: Any | None) -> dict[str, Any]:

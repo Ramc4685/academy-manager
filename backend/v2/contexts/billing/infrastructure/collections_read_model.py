@@ -377,6 +377,7 @@ class MongoCollectionsReadModel:
             dunning_status=_opt_str((dunning or {}).get("status")),
             dunning_attempt_count=_int((dunning or {}).get("attempt_count")),
             dunning_next_attempt_at=_to_datetime((dunning or {}).get("next_attempt_at")),
+            dunning_suppression_reason=_opt_str((dunning or {}).get("suppression_reason")),
             latest_attempt_status=_opt_str((attempt or {}).get("status")),
             latest_attempt_reason=_opt_str((attempt or {}).get("reason")),
             paid_cents=_int((paid or {}).get("paid_cents")),
@@ -470,7 +471,14 @@ class MongoCollectionsReadModel:
             return {}
         cursor = self._db["dunning_states"].find(
             {"academy_id": academy_id, "invoice_id": {"$in": invoice_ids}},
-            {"_id": 0, "invoice_id": 1, "status": 1, "attempt_count": 1, "next_attempt_at": 1},
+            {
+                "_id": 0,
+                "invoice_id": 1,
+                "status": 1,
+                "attempt_count": 1,
+                "next_attempt_at": 1,
+                "suppression_reason": 1,
+            },
         )
         return {str(doc["invoice_id"]): doc async for doc in cursor}
 
