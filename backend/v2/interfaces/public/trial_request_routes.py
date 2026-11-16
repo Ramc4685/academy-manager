@@ -23,7 +23,8 @@ The only public write. Order of decisions, each before the next can run:
 ``slot_key`` from the page's ``trial_dates`` books that date: the key is
 resolved against this academy's bookable dates (an unknown key is treated as
 absent, so the request is a plain inquiry), Cloudflare Turnstile must pass
-(``422`` on ``turnstile_token``, fail closed), and a date that is no longer
+(fail closed: a failed check books nothing and files a plain inquiry with the
+same acknowledgement), and a date that is no longer
 open answers ``409 Public.SlotUnavailable``, the one new answer. A booking
 refused by the per-mailbox or per-academy limits quietly stays an inquiry.
 
@@ -202,7 +203,9 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
         if date is not None and not await deps.turnstile.verify(
             body.turnstile_token, remote_ip=request_ip(request), hostname=request_host(request)
         ):
-            return _invalid({"turnstile_token": "Please confirm you are not a robot."})
+            # A failed check books nothing but never loses the inquiry: it is
+            # filed as a plain one (a bot could omit slot_key anyway).
+            date = None
         # A booked date names its class; it wins over any class_id sent with it.
         class_id = (
             date.class_public_id if date is not None else (body.class_id or "").strip() or None

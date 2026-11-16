@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from pymongo.errors import DuplicateKeyError
 
-from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
+from backend.v2.contexts.enrollment.domain.self_service import GuestBookingRefusal, TrialRequest
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time import ensure_utc
-
-#: Which booking limit refused a guest insert.
-GuestRefusal = Literal["full", "mailbox_limit", "academy_ceiling"]
 
 
 class MongoTrialRequestRepository(TenantScopedRepository):
@@ -164,7 +161,7 @@ class MongoTrialRequestRepository(TenantScopedRepository):
 
     async def add_guest(
         self, request: TrialRequest, *, max_slot: int, day_ceiling: int
-    ) -> TrialRequest | GuestRefusal:
+    ) -> TrialRequest | GuestBookingRefusal:
         """Insert a guest booking with the lowest free seat number in
         ``1..max_slot`` on its date and the lowest free daily number in
         ``1..day_ceiling`` for its UTC day, or say which limit refused it.
@@ -264,9 +261,13 @@ class MongoTrialRequestRepository(TenantScopedRepository):
         means two concurrent approve/deny calls for the SAME request can't
         both succeed. Returns ``None`` if not found or no longer pending.
         """
+        update: dict[str, Any] = {"$set": updates}
+        if updates.get("status") == "denied":
+            # A declined guest frees its inbox and day claims, so staff can
+            # release an inbox that was squatted or whose date was cancelled.
+            update["$unset"] = {"guest_mailbox": "", "guest_day_claim": ""}
         doc = await self._find_one_and_update(
-            {"request_id": request_id, "status": "pending"},
-            {"$set": updates},
+            {"request_id": request_id, "status": "pending"}, update
         )
         return self._to_domain(doc) if doc else None
 
@@ -310,9 +311,8 @@ _GUEST_CLAIM_FIELDS = ("guest_slot", "guest_day_claim", "guest_mailbox")
 
 def _collided_guest_field(exc: DuplicateKeyError) -> str | None:
     """Which guest claim index a duplicate hit, or None for any other index."""
-    details = exc.details or {}
-    where = " ".join(details["keyPattern"]) if details.get("keyPattern") else str(exc)
-    return next((f for f in _GUEST_CLAIM_FIELDS if f in where), None)
+    key_pattern = (exc.details or {}).get("keyPattern") or {}
+    return next((f for f in _GUEST_CLAIM_FIELDS if f in key_pattern), None)
 
 
 def _utc(value: object) -> datetime:

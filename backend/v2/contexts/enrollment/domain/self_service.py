@@ -301,6 +301,10 @@ TrialRequestStatus = Literal["pending", "approved", "denied", "completed", "conv
 TrialOutcome = Literal["came", "no_show"]
 
 
+#: Which limit refused a website guest booking (L9).
+GuestBookingRefusal = Literal["full", "mailbox_limit", "academy_ceiling"]
+
+
 class TrialRequest(BaseModel):
     """A parent-submitted request to try a session before enrolling (R3).
 

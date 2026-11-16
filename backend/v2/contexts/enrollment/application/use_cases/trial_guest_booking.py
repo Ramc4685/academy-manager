@@ -31,7 +31,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Protocol
+from typing import Protocol
 
 from backend.v2.contexts.enrollment.application.use_cases.public_catalog import (
     MAX_PUBLIC_CLASSES,
@@ -43,7 +43,7 @@ from backend.v2.contexts.enrollment.domain.public_catalog import (
     public_slot_key,
     seats_left,
 )
-from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
+from backend.v2.contexts.enrollment.domain.self_service import GuestBookingRefusal, TrialRequest
 from backend.v2.shared.comms.mailbox import canonical_mailbox
 from backend.v2.shared.ids import new_ulid
 
@@ -53,7 +53,7 @@ BOOKABLE_MIN_LEAD = timedelta(hours=3)
 BOOKABLE_HORIZON = timedelta(days=21)
 #: Dates offered per class.
 BOOKABLE_DATES_PER_CLASS = 3
-#: Guest bookings one academy takes in 24 hours before further requests are
+#: Guest bookings one academy takes per UTC day before further requests are
 #: filed as plain leads (a bot cycling addresses cannot fill every class).
 ACADEMY_DAILY_GUEST_CEILING = 10
 #: Active guest bookings per canonical inbox across the academy. (Per class it
@@ -61,8 +61,6 @@ ACADEMY_DAILY_GUEST_CEILING = 10
 MAILBOX_BOOKINGS_PER_ACADEMY = 2
 #: Who decided a self-booked trial (``decided_by``).
 SELF_BOOKED_BY = "public_self_book"
-
-BookingRefusal = Literal["full", "mailbox_limit", "academy_ceiling"]
 
 
 class BookableOccurrenceQuery(Protocol):
@@ -80,7 +78,7 @@ class GuestTrialRepository(Protocol):
 
     async def add_guest(
         self, request: TrialRequest, *, max_slot: int, day_ceiling: int
-    ) -> TrialRequest | BookingRefusal: ...
+    ) -> TrialRequest | GuestBookingRefusal: ...
 
     async def count_active_guests(self, mailbox: str, *, since: datetime) -> int: ...
 
@@ -192,7 +190,7 @@ class BookTrialGuestCommand:
     date: BookableTrialDate
     contact_id: str
     #: The booker's email as typed; the limits use its canonical inbox.
-    email: str | None
+    email: str
     guest_name: str
     guest_age: str | None
 
@@ -200,7 +198,7 @@ class BookTrialGuestCommand:
 @dataclass(frozen=True)
 class BookTrialGuestResult:
     booking: TrialRequest | None
-    refused: BookingRefusal | None = None
+    refused: GuestBookingRefusal | None = None
 
 
 class BookTrialGuest:
@@ -215,7 +213,7 @@ class BookTrialGuest:
 
     async def execute(self, cmd: BookTrialGuestCommand) -> BookTrialGuestResult:
         now = self._now()
-        mailbox = canonical_mailbox(cmd.email) or f"contact:{cmd.contact_id}"
+        mailbox = canonical_mailbox(cmd.email) or cmd.email
         # A booking is "active" until its date has passed; no date is more than
         # the horizon away, so anything booked before that is over.
         # shortcut: count-then-insert, so two concurrent bookings of different

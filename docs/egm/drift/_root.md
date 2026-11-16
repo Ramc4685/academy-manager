@@ -1,3 +1,5 @@
 ## README.md
 
-- [undocumented] README lines 89-102 (deployment pipeline) list 7 steps. `.github/workflows/production.yml:1057` defines a `sentry-release` job that the README does not mention. The README's "Validate" step (line 92) also omits the real-Mongo contract job (`production.yml:167`), the advisory lint/mypy job (`production.yml:229`), and the `scripts-validate` and `hook-tests` jobs (`production.yml:675`, `production.yml:720`).
+- [wording] README.md:121-123 says production email requires `APP_ENV=production`; `backend/v2/contexts/communications/infrastructure/resend_send_port.py:14` and `backend/v2/shared/config/settings.py:278-283` also enable the real sender when `APP_ENV=staging` (with `email_delivery_enabled=True`).
+- [undocumented] README.md:161-174 (Layout) omits top-level items that exist: `Makefile`, `lefthook.yml`, `docker-compose*.yml`, `graphify-out/`, `.github/workflows/` (referenced only in prose at README.md:89).
+- [wording] README.md:112 "secure cookies"/"HttpOnly cookies": the code also sets a deliberately non-HttpOnly persona hint cookie (`frontend/lib/auth/persona-hint-cookie.ts:9`). It is a UX hint only, not auth.

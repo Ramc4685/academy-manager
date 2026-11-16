@@ -182,7 +182,7 @@ def test_a_full_date_is_the_one_new_answer() -> None:
     assert [d["slot_key"] for d in _dates(app)] != [first["slot_key"]]
 
 
-def test_turnstile_fails_closed_on_the_booking_branch_only() -> None:
+def test_a_failed_turnstile_check_files_a_plain_inquiry() -> None:
     app, db = _app()
     [first, _] = _dates(app)
 
@@ -193,24 +193,25 @@ def test_turnstile_fails_closed_on_the_booking_branch_only() -> None:
         app.state.public_trial_requests,
         turnstile=TurnstileVerifier("test-secret", client_factory=_down),
     )
+    plain = _client(app).post(URL, json=_form(email="other.family@example.test"))
     refused = _client(app).post(URL, json=_form(slot_key=first["slot_key"]))
-    assert refused.status_code == 422
-    assert "turnstile_token" in refused.json()["error"]["details"]["fields"]
+    assert _comparable(refused) == _comparable(plain)
     assert _trials(db) == []
-    # No slot: the inquiry path never calls Turnstile.
-    assert _client(app).post(URL, json=_form()).status_code == 200
+    contact = asyncio.run(db["crm_contacts"].find_one({"email": "jamie.testparent@example.test"}))
+    assert contact is not None
 
 
-def test_production_without_a_secret_refuses_bookings_but_takes_inquiries() -> None:
+def test_production_without_a_secret_books_nothing_but_keeps_the_inquiry() -> None:
     app, db = _app()
     [first, _] = _dates(app)
     app.state.public_trial_requests = dataclasses.replace(
         app.state.public_trial_requests, turnstile=TurnstileVerifier(None, required=True)
     )
+    plain = _client(app).post(URL, json=_form(email="other.family@example.test"))
     refused = _client(app).post(URL, json=_form(slot_key=first["slot_key"], turnstile_token="t"))
-    assert refused.status_code == 422
+    assert _comparable(refused) == _comparable(plain)
     assert _trials(db) == []
-    assert _client(app).post(URL, json=_form()).status_code == 200
+    assert asyncio.run(db["crm_contacts"].count_documents({})) == 2
 
 
 def test_the_honeypot_books_nothing() -> None:

@@ -583,7 +583,7 @@ def compose_public_trial_requests(
     academies = MongoAcademyRepository(db)
     contacts = MongoCrmContactRepository(db)
     sender = _build_email_sender(settings, db)
-    secret = getattr(settings, "turnstile_secret_key", None)
+    secret = settings.turnstile_secret_key
     return PublicTrialRequests(
         get_academy_profile=GetPublicAcademyProfile(academies),
         resolve_class_choice=ResolvePublicClassChoice(MongoSessionRepository(db)),
@@ -594,7 +594,7 @@ def compose_public_trial_requests(
         # Production refuses every booking until the secret is set; dev and CI skip.
         turnstile=TurnstileVerifier(
             secret.get_secret_value() if secret else None,
-            required=getattr(settings, "env", "dev") == "prod",
+            required=settings.env == "prod",
         ),
         notifier=TrialRequestOwnerEmail(
             bookings=trial_emails,
