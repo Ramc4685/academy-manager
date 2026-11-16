@@ -47,6 +47,9 @@ from backend.v2.contexts.billing.infrastructure.cash_received import cash_receiv
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoProjectedClassFees,
 )
+from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
+    current_lines_filter,
+)
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
@@ -1891,24 +1894,20 @@ def make_session_economics_report(
                     unpaid_enrollments_by_session[doc_session_id].add(enrollment_id)
 
         coach_payroll_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
-        payout_period_ids: list[str] = []
-        payout_periods_cursor = db["payout_periods"].find(
-            {
-                "academy_id": academy_id,
-                "period_start": {"$gte": start, "$lt": end},
-            },
-            {"period_id": 1},
-        )
-        async for payout_period in payout_periods_cursor:
-            period_id = str(payout_period.get("period_id") or "")
-            if period_id:
-                payout_period_ids.append(period_id)
-        if payout_period_ids:
-            lines_cursor = db["payout_period_lines"].find(
+        payout_periods = [
+            doc
+            async for doc in db["payout_periods"].find(
                 {
                     "academy_id": academy_id,
-                    "period_id": {"$in": payout_period_ids},
+                    "period_start": {"$gte": start, "$lt": end},
                 },
+                {"period_id": 1, "lines_version": 1},
+            )
+            if doc.get("period_id")
+        ]
+        if payout_periods:
+            lines_cursor = db["payout_period_lines"].find(
+                {"academy_id": academy_id, **current_lines_filter(payout_periods)},
                 {"occurrence_id": 1, "amount_minor": 1},
             )
             async for line in lines_cursor:
@@ -1993,7 +1992,7 @@ def make_session_economics_report(
             empty_states.append("No payable session occurrences found for this month.")
         if rows and sum(active_enrollments_by_session.values()) == 0:
             empty_states.append("No active enrollments found for payable sessions.")
-        if rows and not payout_period_ids:
+        if rows and not payout_periods:
             empty_states.append("No payout periods generated for this month.")
         if rows and paid_total == 0 and unpaid_total == 0:
             empty_states.append("No attributable billing rows found for these sessions.")

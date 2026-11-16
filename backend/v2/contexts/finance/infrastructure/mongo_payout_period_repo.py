@@ -18,6 +18,7 @@ pre-filtered by the current ``academy_id`` from the request scope.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -39,6 +40,22 @@ from backend.v2.shared.time.mongo import ensure_utc
 
 def _utc_or_none(value: datetime | None) -> datetime | None:
     return None if value is None else ensure_utc(value)
+
+
+def current_lines_filter(period_docs: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Match only each period's current line set: lines whose ``lines_version``
+    equals the header's (None matches lines from ``save`` and legacy lines).
+
+    A recompute that dies between its header write and its cleanup leaves the
+    old set behind; every raw reader of ``payout_period_lines`` must use this.
+    Callers pass at least one period.
+    """
+    return {
+        "$or": [
+            {"period_id": doc["period_id"], "lines_version": doc.get("lines_version")}
+            for doc in period_docs
+        ]
+    }
 
 
 def _line_to_doc(line: PersistedPayoutLine, *, period_id: str) -> dict[str, Any]:
@@ -126,13 +143,7 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
     async def _hydrate(self, doc: dict[str, Any]) -> PayoutPeriod:
         academy_id = current_academy_id()
         cursor = self._db[self.LINES_COLLECTION].find(
-            {
-                "academy_id": academy_id,
-                "period_id": doc["period_id"],
-                # Only the line set the header points at; None matches lines
-                # written by ``save`` (or before line sets were stamped).
-                "lines_version": doc.get("lines_version"),
-            }
+            {"academy_id": academy_id, **current_lines_filter([doc])}
         )
         lines = [_line_from_doc(line_doc) async for line_doc in cursor]
         unpaid_occurrence_ids = list(doc.get("unpaid_occurrence_ids", []))
@@ -350,10 +361,6 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         # Delete only the set this write replaced (None: lines from ``save``).
         # Never "everything but mine": a late cleanup would wipe a newer
         # writer's current lines.
-        # shortcut: until this cleanup runs (or if the process dies first),
-        # raw line readers that skip the header (reports, replacement
-        # snapshots) can see the old set too; filter them by the header's
-        # lines_version if that ever matters.
         await lines.delete_many(
             {
                 "academy_id": academy_id,
