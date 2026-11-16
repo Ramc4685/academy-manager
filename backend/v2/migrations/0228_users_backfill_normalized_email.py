@@ -9,8 +9,10 @@ already set it; this stamps the older rows.
 
 Per row, never one bulk write: two legacy rows that differ only by letter case
 would collide on the unique index. The first keeps the value, the other is
-skipped and logged (its owner still signs in through the regex fallback), so
-the deploy never fails on dirty data. Rows marked ``status: "deleted"`` are
+skipped and logged so the deploy never fails on dirty data. The skipped row is
+then unreachable by email: the exact lookup finds the row that kept the value
+first, so the regex fallback never runs for that address. Merge such pairs by
+hand from the log. Rows marked ``status: "deleted"`` are
 skipped: account erasure unsets the field on purpose. Idempotent.
 """
 

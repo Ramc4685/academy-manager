@@ -139,7 +139,8 @@ class ConsumeMagicLink:
         if record.used_at is not None:
             raise MagicLinkInvalid()
         user = await self._users.get_by_id(record.user_id)
-        uid = (user.firebase_uid or user.auth_uid) if user is not None else None
+        # The repo already folds a legacy auth_uid into firebase_uid.
+        uid = user.firebase_uid if user is not None else None
         if user is None or not uid or user.global_status != "active":
             raise MagicLinkInvalid()
         # Mint before claiming: minting has no side effects, so a Firebase

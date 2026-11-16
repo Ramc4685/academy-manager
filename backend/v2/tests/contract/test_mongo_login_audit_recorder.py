@@ -16,13 +16,15 @@ def mongo_db(db):
     return db
 
 
-async def _record(recorder: MongoLoginAuditRecorder, *, dedupe_key: str) -> None:
+async def _record(
+    recorder: MongoLoginAuditRecorder, *, dedupe_key: str, provider: str = "password"
+) -> None:
     await recorder.record_login(
         user_id="u-coach",
         academy_id=ACADEMY,
         membership_id="m-coach",
         roles=("coach",),
-        provider="password",
+        provider=provider,
         persona="coach",
         dedupe_key=dedupe_key,
     )
@@ -77,3 +79,42 @@ async def test_a_new_session_stamps_last_login_at_on_the_users_row(mongo_db) -> 
 
     user = await mongo_db["users"].find_one({"user_id": "u-coach"})
     assert user["last_login_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_magic_link_session_is_audited_but_does_not_count_as_activated(mongo_db) -> None:
+    # One click on the digest's own auto-login link must not stop the digest
+    # from treating the parent as never-activated.
+    await mongo_db["users"].insert_one({"user_id": "u-coach", "email": "c@example.com"})
+
+    await _record(MongoLoginAuditRecorder(mongo_db), dedupe_key="u-coach:2", provider="custom")
+
+    assert await mongo_db["audit_logs"].count_documents({"actor_id": "u-coach"}) == 1
+    user = await mongo_db["users"].find_one({"user_id": "u-coach"})
+    assert "last_login_at" not in user
+
+
+@pytest.mark.asyncio
+async def test_the_audit_row_survives_a_failing_users_write(mongo_db) -> None:
+    # Regression: the users update ran first, so its failure lost the audit row.
+    class _BrokenUsers:
+        async def update_one(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("users write failed")
+
+    class _Db:
+        def __getitem__(self, name: str) -> object:
+            return _BrokenUsers() if name == "users" else mongo_db[name]
+
+    with pytest.raises(RuntimeError):
+        await _record(MongoLoginAuditRecorder(_Db()), dedupe_key="u-coach:3")
+
+    assert await mongo_db["audit_logs"].count_documents({"actor_id": "u-coach"}) == 1
+
+
+@pytest.mark.asyncio
+async def test_last_login_is_stamped_on_a_row_keyed_by_auth_uid(mongo_db) -> None:
+    await mongo_db["users"].insert_one({"user_id": "other", "auth_uid": "u-coach"})
+
+    await _record(MongoLoginAuditRecorder(mongo_db), dedupe_key="u-coach:4")
+
+    assert (await mongo_db["users"].find_one({"auth_uid": "u-coach"}))["last_login_at"]

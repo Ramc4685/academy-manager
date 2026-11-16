@@ -1010,13 +1010,12 @@ class _ParentDigestProvider:
 
     @staticmethod
     def _is_on_portal(user_doc: dict[str, Any] | None) -> bool:
-        # "On the portal" = the parent has an active login. The users collection
-        # has no explicit last-login field, so the most reliable available signal
-        # is a verified email — Firebase sets email_verified when the parent
-        # completes the set-password invite or signs in with Google — with a
-        # last-login/last-seen timestamp as a secondary signal if present.
-        # Admin-provisioned parents who never activated their account have
-        # neither, so they fall to Variant B (the activation CTA).
+        # "On the portal" = the parent has an active login: a verified email
+        # (Firebase sets it when the parent completes the set-password invite or
+        # signs in with Google) or `last_login_at`, which the login recorder
+        # stamps once per non-magic-link session (migration 0229 backfilled it).
+        # Admin-provisioned parents who never activated have neither, so they
+        # fall to Variant B (the activation CTA).
         if not user_doc:
             return False
         for key in ("email_verified", "emailVerified", "is_email_verified"):

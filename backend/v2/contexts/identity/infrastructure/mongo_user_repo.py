@@ -179,7 +179,8 @@ class MongoUserRepository:
         """Exact match on ``normalized_email`` (served by
         ``users_normalized_email_unique``); this runs on every authenticated
         request. A row still missing the field (migration 0228 backfills it)
-        falls back to the old case-insensitive scan.
+        falls back to the old case-insensitive scan. The read path never
+        writes: a sign-in must not race a backfill, so 0228 owns that.
         """
         normalized = normalize_email(email)
         doc = await self.collection.find_one({"normalized_email": normalized})
@@ -194,7 +195,6 @@ class MongoUserRepository:
             _log.warning(
                 "identity.users_email_regex_fallback", extra={"user_doc_id": str(doc["_id"])}
             )
-            await self._backfill_normalized_email(doc, normalized)
         return cast(dict[str, Any] | None, doc)
 
     async def _backfill_normalized_email(self, doc: dict[str, Any], normalized: str) -> None:

@@ -33,7 +33,7 @@ async def test_get_by_email_uses_the_normalized_email_index(real_db: Any) -> Non
     assert "IXSCAN" in str(plan["queryPlanner"]["winningPlan"])
 
 
-async def test_a_legacy_row_is_found_by_regex_and_backfilled(real_db: Any) -> None:
+async def test_a_legacy_row_is_found_by_regex_without_a_write(real_db: Any) -> None:
     await real_db["users"].insert_one(
         {"user_id": "u2", "email": "Old@Example.com", "display_name": "Old"}
     )
@@ -42,7 +42,7 @@ async def test_a_legacy_row_is_found_by_regex_and_backfilled(real_db: Any) -> No
 
     assert user is not None and user.user_id == "u2"
     row = await real_db["users"].find_one({"user_id": "u2"})
-    assert row["normalized_email"] == "old@example.com"
+    assert "normalized_email" not in row  # 0228 owns the backfill, not sign-in
 
 
 async def test_0228_backfills_and_skips_case_duplicates_and_deleted_rows(real_db: Any) -> None:
@@ -85,6 +85,7 @@ async def test_0229_copies_the_latest_sign_in_onto_users(real_db: Any) -> None:
                 "last_login_at": already,
             },
             {"user_id": "p4", "email": "p4@example.com", "display_name": "P4"},
+            {"user_id": "p5", "email": "p5@example.com", "display_name": "P5"},
         ]
     )
     await real_db["audit_logs"].insert_many(
@@ -94,6 +95,13 @@ async def test_0229_copies_the_latest_sign_in_onto_users(real_db: Any) -> None:
             {"action": "user_logged_in", "actor_id": "fb-2", "created_at": early},
             {"action": "user_logged_in", "actor_id": "p3", "created_at": early},
             {"action": "invoice_sent", "actor_id": "p4", "created_at": late},
+            # A magic-link click is the digest's own link, not activation.
+            {
+                "action": "user_logged_in",
+                "actor_id": "p5",
+                "created_at": late,
+                "metadata": {"provider": "custom"},
+            },
         ]
     )
 
@@ -108,3 +116,4 @@ async def test_0229_copies_the_latest_sign_in_onto_users(real_db: Any) -> None:
     assert rows["roster-2"]["last_login_at"] == _naive(early)
     assert rows["p3"]["last_login_at"] == _naive(already)
     assert "last_login_at" not in rows["p4"]
+    assert "last_login_at" not in rows["p5"]
