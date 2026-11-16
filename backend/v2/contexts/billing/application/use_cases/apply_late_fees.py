@@ -30,6 +30,11 @@ Rules, in the order they are checked:
   invoice as a ``fee`` or ``adjustment`` line whose description says so, so the
   guard matches those by keyword too (see :func:`_is_late_fee_line`). Migration
   0181 backs the guard with a partial unique index on the policy-written lines.
+* **One fee per family per billing month (L8).** Siblings billed for the same
+  month are one late payment, not two: a late fee on any of the parent's
+  invoices for that period suppresses the rest. The policy line's
+  ``source_id`` is ``"{parent_id}:{period}"`` and migration 0232 makes it
+  unique, so two overlapping passes write one fee between them.
 * **Autopay families still inside the retry ladder are skipped.** Their card
   is being retried on our schedule; the money is not late because the parent
   ignored us. Once the ladder finishes (``dunned``/``suppressed``/``resolved``)
@@ -48,6 +53,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.ports import LedgerRepository
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
@@ -59,7 +65,11 @@ from backend.v2.contexts.billing.application.use_cases.billing_settings_admin im
     BillingAuditAppender,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
-from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import (
+    InvoiceLine,
+    LedgerInvoice,
+    recompute_totals,
+)
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
@@ -215,16 +225,29 @@ class ApplyLateFees:
         counts["scanned"] += 1
         if invoice.status not in ("open", "partially_paid") or invoice.balance_due_cents <= 0:
             return
-        lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
-        if any(_is_late_fee_line(line) for line in lines):
+        if await self._family_already_charged(invoice):
             counts["skipped_existing"] += 1
             return
         if self._dunning is not None and await self._dunning.has_active_retry(invoice.invoice_id):
             counts["skipped_in_retry"] += 1
             return
-        await self._charge(invoice, fee_cents=fee_cents, grace_days=grace_days, now=now)
+        if not await self._charge(invoice, fee_cents=fee_cents, grace_days=grace_days, now=now):
+            counts["skipped_existing"] += 1
+            return
         counts["applied"] += 1
         counts["fee_cents_applied"] += fee_cents
+
+    async def _family_already_charged(self, invoice: LedgerInvoice) -> bool:
+        """A late fee on this invoice, or on a sibling's for the same month."""
+        family = await self._ledger.list_invoices_for_parent_aliases([invoice.parent_id])
+        invoice_ids = {invoice.invoice_id} | {
+            sibling.invoice_id for sibling in family if sibling.period == invoice.period
+        }
+        for invoice_id in sorted(invoice_ids):
+            lines = await self._ledger.get_lines_for_invoice(invoice_id)
+            if any(_is_late_fee_line(line) for line in lines):
+                return True
+        return False
 
     async def _local_date(self, academy_id: str, moment: datetime) -> date:
         """``moment``'s calendar date on the academy's clock (UTC when unset)."""
@@ -241,18 +264,36 @@ class ApplyLateFees:
 
     async def _charge(
         self, invoice: LedgerInvoice, *, fee_cents: int, grace_days: int, now: datetime
-    ) -> None:
-        result = await self._add_line.execute(
-            AddInvoiceLineCommand(
-                invoice_id=invoice.invoice_id,
-                description=f"Late fee — {invoice.period} invoice past due",
-                line_type=LATE_FEE_LINE_TYPE,
-                quantity=1,
-                unit_amount_cents=fee_cents,
-                source_type=LATE_FEE_SOURCE_TYPE,
-                source_id=invoice.invoice_id,
+    ) -> bool:
+        try:
+            result = await self._add_line.execute(
+                AddInvoiceLineCommand(
+                    invoice_id=invoice.invoice_id,
+                    description=f"Late fee — {invoice.period} invoice past due",
+                    line_type=LATE_FEE_LINE_TYPE,
+                    quantity=1,
+                    unit_amount_cents=fee_cents,
+                    source_type=LATE_FEE_SOURCE_TYPE,
+                    source_id=f"{invoice.parent_id}:{invoice.period}",
+                )
             )
-        )
+        except DuplicateKeyError:
+            # An overlapping pass wrote this family's fee first. The invoice was
+            # saved with the fee before the line was refused, so put its totals
+            # back to what its lines say.
+            current = await self._ledger.get_invoice(invoice.invoice_id)
+            if current is not None:
+                await self._ledger.save_invoice(
+                    recompute_totals(
+                        current,
+                        await self._ledger.get_lines_for_invoice(invoice.invoice_id),
+                        allocated_cents=await self._ledger.sum_allocations_for_invoice(
+                            invoice.invoice_id
+                        ),
+                    )
+                )
+            log.info("late_fee_already_written", extra={"invoice_id": invoice.invoice_id})
+            return False
         log.info(
             "late_fee_applied",
             extra={
@@ -261,19 +302,19 @@ class ApplyLateFees:
                 "fee_cents": fee_cents,
             },
         )
-        if self._audit is None:
-            return
-        await self._audit.append(
-            BillingAuditEntry(
-                audit_id=f"audit-{new_ulid()}",
-                academy_id=invoice.academy_id,
-                action="late_fee_applied",
-                actor_id=LATE_FEE_ACTOR_ID,
-                at=now,
-                invoice_id=invoice.invoice_id,
-                parent_id=invoice.parent_id,
-                reason=f"due {invoice.due_date.isoformat()} + {grace_days}d grace elapsed",
-                before={"balance_due_cents": invoice.balance_due_cents},
-                after={"balance_due_cents": result.invoice.balance_due_cents},
+        if self._audit is not None:
+            await self._audit.append(
+                BillingAuditEntry(
+                    audit_id=f"audit-{new_ulid()}",
+                    academy_id=invoice.academy_id,
+                    action="late_fee_applied",
+                    actor_id=LATE_FEE_ACTOR_ID,
+                    at=now,
+                    invoice_id=invoice.invoice_id,
+                    parent_id=invoice.parent_id,
+                    reason=f"due {invoice.due_date.isoformat()} + {grace_days}d grace elapsed",
+                    before={"balance_due_cents": invoice.balance_due_cents},
+                    after={"balance_due_cents": result.invoice.balance_due_cents},
+                )
             )
-        )
+        return True

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import html
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
@@ -409,6 +409,19 @@ class InvoiceEmailAdapter:
             )
             return InvoiceNaming()
 
+    async def _family_naming(self, invoice_ids: Sequence[str]) -> InvoiceNaming:
+        """One name for a family charge (L8): ``"Arjun, Maya and Dev"`` (each child
+        once) and every invoice number. A sibling whose name cannot be resolved
+        is left out."""
+        namings = [await self._naming_for(invoice_id) for invoice_id in invoice_ids]
+        names = list(dict.fromkeys(n.student_name for n in namings if n.student_name))
+        numbers = [n.invoice_number for n in namings if n.invoice_number]
+        joined = " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
+        return InvoiceNaming(
+            student_name=joined or None,
+            invoice_number=", ".join(numbers) if numbers else None,
+        )
+
     _tuition_for = staticmethod(tuition_for)
     _tuition_html = staticmethod(tuition_html)
 
@@ -547,6 +560,7 @@ class InvoiceEmailAdapter:
         failure_code: str | None = None,
         next_attempt_at: datetime | None = None,
         bank_debit: bool = False,
+        invoice_ids: Sequence[str] = (),
     ) -> None:
         academy_id = current_academy_id()
         membership = await self._memberships.get_membership(academy_id, parent_id)
@@ -559,7 +573,11 @@ class InvoiceEmailAdapter:
             raise UndeliverableNotice("dunning parent email not found")
 
         academy_name = await self._academies.get_academy_name(academy_id) or "Your academy"
-        naming = await self._naming_for(invoice_id)
+        naming = (
+            await self._family_naming(invoice_ids)
+            if len(invoice_ids) > 1
+            else await self._naming_for(invoice_id)
+        )
         amount = format_money(balance_due_cents, currency)
         safe_amount = html.escape(amount)
         tuition = self._tuition_for(period, naming)
@@ -671,14 +689,20 @@ class InvoiceEmailAdapter:
         currency: str,
         charge_on: date,
         portal_url: str | None,
+        invoice_ids: Sequence[str] = (),
     ) -> str | None:
         """Pre-charge notice for autopay parents (issue #651): what, when, how
-        to pay early or update the card. Sent once per generated invoice."""
+        to pay early or update the card. Sent once per generated invoice, or
+        once for siblings charged together (L8)."""
         recipient = await self._parent_recipient(parent_id, what="autopay notice")
         academy_name = await self._academies.get_academy_name(current_academy_id()) or (
             "Your academy"
         )
-        naming = await self._naming_for(invoice_id)
+        naming = (
+            await self._family_naming(invoice_ids)
+            if len(invoice_ids) > 1
+            else await self._naming_for(invoice_id)
+        )
         amount = format_money(amount_cents, currency)
         safe_amount = html.escape(amount)
         safe_date = html.escape(charge_on.strftime("%B %d, %Y"))
@@ -728,13 +752,17 @@ class InvoiceEmailAdapter:
         currency: str,
         autopay: bool = True,
         bank_debit: bool = False,
+        invoice_ids: Sequence[str] = (),
     ) -> None:
         """Receipt for one settled payment, any method (#651, L1 A5-2)."""
         recipient = await self._parent_recipient(parent_id, what="payment receipt")
         academy_name = await self._academies.get_academy_name(current_academy_id()) or (
             "Your academy"
         )
-        naming = await self._naming_for(invoice_id) if invoice_id else InvoiceNaming()
+        if len(invoice_ids) > 1:
+            naming = await self._family_naming(invoice_ids)
+        else:
+            naming = await self._naming_for(invoice_id) if invoice_id else InvoiceNaming()
         amount = html.escape(format_money(amount_cents, currency))
         what = self._tuition_html(period, naming) if period else "your account balance"
         if bank_debit:

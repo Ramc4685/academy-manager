@@ -15,7 +15,7 @@ Wave 2 wires:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Protocol
@@ -111,6 +111,7 @@ class _BillingNotifier(DunningNotificationPort, Protocol):
         currency: str,
         autopay: bool = True,
         bank_debit: bool = False,
+        invoice_ids: Sequence[str] = (),
     ) -> None: ...
 
 
@@ -367,6 +368,7 @@ async def on_dunning_notice_requested(event: DunningNoticeRequested) -> None:
             failure_code=payload.failure_code,
             next_attempt_at=payload.next_attempt_at,
             bank_debit=payload.bank_debit,
+            invoice_ids=payload.invoice_ids,
         )
 
 
@@ -388,6 +390,7 @@ async def on_payment_receipt_requested(event: PaymentReceiptRequested) -> None:
             currency=payload.currency,
             autopay=payload.autopay,
             bank_debit=payload.bank_debit,
+            invoice_ids=payload.invoice_ids,
         )
 
 

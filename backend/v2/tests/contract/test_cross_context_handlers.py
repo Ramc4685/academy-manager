@@ -718,6 +718,7 @@ async def test_dunning_notice_handler_sends_inside_the_event_tenant_scope() -> N
             "failure_code": None,
             "next_attempt_at": None,
             "bank_debit": False,
+            "invoice_ids": (),
         }
     ]
 

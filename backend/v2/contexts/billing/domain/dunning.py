@@ -104,6 +104,11 @@ class DunningState(BaseModel):
     #: The last failed rung was a bank debit, so a terminal ladder pauses autopay
     #: (re-link a bank) instead of disabling it.
     last_failure_was_bank_debit: bool = False
+    #: The family charge this rung belongs to (L8). Stamped at claim on every
+    #: member, so a stale-lease re-claim charges exactly the same group under the
+    #: same PaymentIntent key. Kept after the attempt as a marker: the members'
+    #: settle claims and their one notice find each other by it.
+    charge_group_id: str | None = None
     notification_attempts: tuple[int, ...] = ()
     last_notification_at: datetime | None = None
     terminal_at: datetime | None = None
@@ -122,6 +127,7 @@ class DunningState(BaseModel):
         now: datetime,
         lease_expires_at: datetime | None = None,
         settling_failure_code: str | None = None,
+        charge_group_id: str | None = None,
     ) -> DunningState:
         if self.status not in {"active", "processing"}:
             raise ValueError("only active or stale-processing dunning states can be claimed")
@@ -137,6 +143,7 @@ class DunningState(BaseModel):
                 "processing_started_at": now,
                 "lease_expires_at": lease_expires_at,
                 "settling_failure_code": settling_failure_code,
+                "charge_group_id": charge_group_id,
                 "suppression_reason": None,
                 "suppressed_at": None,
                 "updated_at": now,

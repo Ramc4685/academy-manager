@@ -57,7 +57,7 @@ class _FakeDunningRepo:
         self.prepared.append(now)
         return 1
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=()):
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
         if self.invoice.invoice_id in exclude_invoice_ids:
             return None
         if self._claimed or self.state.status != "active" or self.state.next_attempt_at > now:
@@ -550,7 +550,7 @@ class _RepeatClaimDunningRepo(_FakeDunningRepo):
     call within the same tick.
     """
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=()):
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
         if self.state.status != "active" or self.invoice.invoice_id in exclude_invoice_ids:
             return None
         attempt_no = self.state.attempt_count + 1
@@ -609,7 +609,7 @@ class _QueueDunningRepo:
     async def list_terminal_disable_pending(self, *, limit: int):
         return []
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=()):
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
         candidates = [
             s
             for s in self.states.values()
@@ -753,7 +753,7 @@ class _SettledBankFailureRepo(_FakeDunningRepo):
             update={"attempt_count": attempt_count, "first_attempt_at": NOW - timedelta(days=4)}
         )
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=()):
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
         claimed = await super().claim_next_due(
             now=now, worker_id=worker_id, exclude_invoice_ids=exclude_invoice_ids
         )

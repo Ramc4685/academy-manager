@@ -32,14 +32,17 @@ def _invoice(
     status: str = "open",
     due_date: date = TODAY - timedelta(days=10),
     balance_due_cents: int = 10_000,
+    parent_id: str | None = None,
+    period: str = "2026-08",
 ) -> LedgerInvoice:
     return LedgerInvoice(
         invoice_id=invoice_id,
         academy_id=ACADEMY_ID,
-        parent_id="parent-1",
+        # One family per invoice unless a test says otherwise: siblings share a fee.
+        parent_id=parent_id or f"parent-{invoice_id}",
         student_id="student-1",
         enrollment_id="enr-1",
-        period="2026-08",
+        period=period,
         status=status,  # type: ignore[arg-type]
         subtotal_cents=10_000,
         discount_cents=0,
@@ -106,6 +109,11 @@ class _FakeLedger:
 
     async def get_invoice(self, invoice_id: str) -> LedgerInvoice | None:
         return self.invoices.get(invoice_id)
+
+    async def list_invoices_for_parent_aliases(
+        self, parent_ids: list[str], *, limit: int = 100
+    ) -> list[LedgerInvoice]:
+        return [inv for inv in self.invoices.values() if inv.parent_id in parent_ids][:limit]
 
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
         return list(self.lines.get(invoice_id, []))

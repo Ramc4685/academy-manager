@@ -1,5 +1,6 @@
-## README.md
+## README.md (repo root)
 
-- [wording] README.md:121-123 says production email requires `APP_ENV=production`; `backend/v2/contexts/communications/infrastructure/resend_send_port.py:14` and `backend/v2/shared/config/settings.py:278-283` also enable the real sender when `APP_ENV=staging` (with `email_delivery_enabled=True`).
-- [undocumented] README.md:161-174 (Layout) omits top-level items that exist: `Makefile`, `lefthook.yml`, `docker-compose*.yml`, `graphify-out/`, `.github/workflows/` (referenced only in prose at README.md:89).
-- [wording] README.md:112 "secure cookies"/"HttpOnly cookies": the code also sets a deliberately non-HttpOnly persona hint cookie (`frontend/lib/auth/persona-hint-cookie.ts:9`). It is a UX hint only, not auth.
+- [contract] README.md:139-140 says security disclosures go by email with subject `SECURITY DISCLOSURE`; SECURITY.md:3-6 directs reporters to GitHub "Security -> Report a vulnerability" (private advisory) and has no email or subject-line convention. The two documents give different disclosure channels.
+- [undocumented] README.md:89-102 lists the deploy pipeline as seven steps; `.github/workflows/production.yml:1053` defines a `sentry-release` job that is not mentioned. The pipeline also has `backend-contract-real-mongo` (line 167), `backend-advisory` (line 229), `scripts-validate` (line 673), `hook-tests` (line 718) and `ci-gate` (line 733) jobs; the README's "Validate" step does not cover them.
+- [wording] README.md:164 says `backend/` is the "FastAPI service" and README.md:165 says `backend/v2/` is the "Production FastAPI app". `backend/` holds only packaging and config (`Dockerfile`, `fly.toml`, `pyproject.toml`, `scripts/`, `v2/`); the app entrypoint is `backend/v2/main.py`.
+- [stale-not-built] README.md:172 says `scripts/` holds "importers"; `scripts/` contains only `ci/`, `dev/`, `ops/`, `prod/`, `smoke/` and `local_test_stack.sh`, and no importer script exists there.

@@ -1636,11 +1636,50 @@ class HandleWebhookEvent:
             )
         )
 
+    async def _autopay_invoices(
+        self, metadata: dict[str, Any], *, pi_id: str, label: str
+    ) -> list[LedgerInvoice]:
+        """Every invoice an off-session PaymentIntent names, validated before any
+        write: one family charge (L8) names several under ``invoice_ids``. One
+        foreign invoice quarantines the whole event, so nothing is half-applied."""
+        invoice_ids = _checkout_invoice_ids(metadata)
+        if not invoice_ids:
+            log.warning("%s: no invoice_id in metadata pi=%s", label, pi_id)
+            return []
+        metadata_parent_id = str(metadata.get("parent_id") or "")
+        invoices: list[LedgerInvoice] = []
+        for invoice_id in invoice_ids:
+            invoice = await self._billing_ledger.get_invoice(invoice_id)
+            if invoice is None:
+                raise ValueError("autopay invoice not found")
+            if invoice.academy_id != self._academy_id:
+                raise _QuarantineStripeEvent(
+                    f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
+                )
+            if metadata_parent_id and metadata_parent_id != invoice.parent_id:
+                raise _QuarantineStripeEvent(
+                    f"parent mismatch: invoice={invoice.parent_id} "
+                    f"payment_intent={metadata_parent_id}"
+                )
+            if invoices and (
+                invoice.parent_id != invoices[0].parent_id
+                or invoice.currency.lower() != invoices[0].currency.lower()
+            ):
+                raise _QuarantineStripeEvent(
+                    f"family charge mixes parents or currencies: pi={pi_id}"
+                )
+            invoices.append(invoice)
+        return invoices
+
     async def _handle_autopay_pi_succeeded(self, event: dict[str, Any]) -> None:
         """Handle payment_intent.succeeded from an autopay charge.
 
         Idempotent by pi_id via idempotency_key ``autopay-pi:{pi_id}``.
-        Records a LedgerPayment and allocates it to the invoice.
+        Records ONE LedgerPayment and allocates it to every invoice the charge
+        covered: a family charge (L8) settles many invoices, so it allocates per
+        invoice and any surplus becomes an overpayment credit. A single-invoice
+        PaymentIntent keeps its bare ``autopay-alloc:{pi_id}`` key, so a charge
+        made before the family deploy settles exactly as it always did.
         """
         if self._billing_ledger is None:
             log.warning("autopay_pi_succeeded: billing_ledger not configured — skipping")
@@ -1649,24 +1688,11 @@ class HandleWebhookEvent:
         pi = event["data"]["object"]
         pi_id: str = str(pi.get("id") or "")
         metadata = pi.get("metadata") or {}
-        invoice_id = str(metadata.get("invoice_id") or "")
-
-        if not invoice_id:
-            log.warning("autopay_pi_succeeded: no invoice_id in metadata pi=%s", pi_id)
+        invoices = await self._autopay_invoices(metadata, pi_id=pi_id, label="autopay_pi_succeeded")
+        if not invoices:
             return
-
-        invoice = await self._billing_ledger.get_invoice(invoice_id)
-        if invoice is None:
-            raise ValueError("autopay invoice not found")
-        if invoice.academy_id != self._academy_id:
-            raise _QuarantineStripeEvent(
-                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
-            )
-        metadata_parent_id = str(metadata.get("parent_id") or "")
-        if metadata_parent_id and metadata_parent_id != invoice.parent_id:
-            raise _QuarantineStripeEvent(
-                f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
-            )
+        invoice = invoices[0]
+        family = len(invoices) > 1
 
         amount_cents = int(pi.get("amount") or 0)
         if amount_cents <= 0:
@@ -1677,10 +1703,14 @@ class HandleWebhookEvent:
         now = self._now()
         idempotency_key = f"autopay-pi:{pi_id}"
         ledger_payment_id = f"ledger-pay-autopay:{pi_id}"
-        payment_metadata = await self._autopay_discount_payment_metadata(
-            pi_metadata=metadata,
-            invoice_id=invoice_id,
-        )
+        if family:
+            payment_metadata = _autopay_discount_metadata_from_pi(metadata)
+            payment_metadata["invoice_ids"] = ",".join(i.invoice_id for i in invoices)
+        else:
+            payment_metadata = await self._autopay_discount_payment_metadata(
+                pi_metadata=metadata,
+                invoice_id=invoice.invoice_id,
+            )
 
         payment = await self._billing_ledger.record_payment(
             LedgerPayment(
@@ -1703,10 +1733,25 @@ class HandleWebhookEvent:
             idempotency_key=idempotency_key,
         )
 
-        if amount_cents > 0:
+        if family:
+            await allocate_checkout_payment_across_invoices(
+                ledger=self._billing_ledger,
+                payment=payment,
+                invoices=invoices,
+                amount_cents=amount_cents,
+                allocation_key_prefix=f"autopay-alloc:{pi_id}",
+            )
+            log.info(
+                "autopay_pi_succeeded: allocated payment=%s across invoices=%s pi=%s amount=%d",
+                payment.payment_id,
+                payment_metadata["invoice_ids"],
+                pi_id,
+                amount_cents,
+            )
+        else:
             allocation = await self._billing_ledger.allocate_payment(
                 payment_id=payment.payment_id,
-                invoice_id=invoice_id,
+                invoice_id=invoice.invoice_id,
                 amount_cents=amount_cents,
                 idempotency_key=f"autopay-alloc:{pi_id}",
             )
@@ -1718,7 +1763,7 @@ class HandleWebhookEvent:
                 log.warning(
                     "autopay_pi_succeeded: invoice=%s already (partially) paid — "
                     "minted overpayment credit=%s cents=%d pi=%s",
-                    invoice_id,
+                    invoice.invoice_id,
                     credit.credit_id,
                     credit.amount_cents,
                     pi_id,
@@ -1726,7 +1771,7 @@ class HandleWebhookEvent:
             log.info(
                 "autopay_pi_succeeded: allocated payment=%s to invoice=%s pi=%s amount=%d",
                 payment.payment_id,
-                invoice_id,
+                invoice.invoice_id,
                 pi_id,
                 amount_cents,
             )
@@ -1736,6 +1781,7 @@ class HandleWebhookEvent:
             autopay=True,
             bank_debit=_payment_intent_is_ach(pi)
             or (payment.metadata or {}).get("funding_type") == "us_bank_account",
+            invoice_ids=tuple(i.invoice_id for i in invoices) if family else (),
         )
 
     async def _autopay_discount_payment_metadata(
@@ -1775,44 +1821,34 @@ class HandleWebhookEvent:
         event_id = str(event.get("id") or "")
         pi_id = str(pi.get("id") or "")
         metadata = pi.get("metadata") or {}
-        invoice_id = str(metadata.get("invoice_id") or "")
-        if not invoice_id:
-            log.warning("autopay_pi_processing: no invoice_id in metadata pi=%s", pi_id)
-            return
-
-        invoice = await self._billing_ledger.get_invoice(invoice_id)
-        if invoice is None:
-            raise ValueError("autopay invoice not found")
-        if invoice.academy_id != self._academy_id:
-            raise _QuarantineStripeEvent(
-                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
-            )
-        metadata_parent_id = str(metadata.get("parent_id") or "")
-        if metadata_parent_id and metadata_parent_id != invoice.parent_id:
-            raise _QuarantineStripeEvent(
-                f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
-            )
-
-        amount_cents = int(pi.get("amount") or invoice.balance_due_cents or invoice.total_cents)
-        currency = str(pi.get("currency") or invoice.currency).lower()
-        await self._billing_ledger.record_payment_attempt(
-            invoice_id=invoice_id,
-            parent_id=invoice.parent_id,
-            amount_cents=amount_cents,
-            currency=currency,
-            status="processing",
-            stripe_payment_intent_id=pi_id or None,
-            stripe_checkout_session_id=None,
-            failure_code=None,
-            failure_message="ACH debit submitted; awaiting settlement.",
-            idempotency_key=f"autopay-processing:{invoice_id}:{pi_id or event_id}",
-            created_by_event_id=event_id or None,
+        invoices = await self._autopay_invoices(
+            metadata, pi_id=pi_id, label="autopay_pi_processing"
         )
-        log.info(
-            "autopay_pi_processing: recorded processing attempt pi=%s invoice=%s",
-            pi_id,
-            invoice_id,
-        )
+        for invoice in invoices:
+            # A family debit (L8) records one row per invoice, for its own balance.
+            amount_cents = (
+                invoice.balance_due_cents or invoice.total_cents
+                if len(invoices) > 1
+                else int(pi.get("amount") or invoice.balance_due_cents or invoice.total_cents)
+            )
+            await self._billing_ledger.record_payment_attempt(
+                invoice_id=invoice.invoice_id,
+                parent_id=invoice.parent_id,
+                amount_cents=amount_cents,
+                currency=str(pi.get("currency") or invoice.currency).lower(),
+                status="processing",
+                stripe_payment_intent_id=pi_id or None,
+                stripe_checkout_session_id=None,
+                failure_code=None,
+                failure_message="ACH debit submitted; awaiting settlement.",
+                idempotency_key=f"autopay-processing:{invoice.invoice_id}:{pi_id or event_id}",
+                created_by_event_id=event_id or None,
+            )
+            log.info(
+                "autopay_pi_processing: recorded processing attempt pi=%s invoice=%s",
+                pi_id,
+                invoice.invoice_id,
+            )
 
     async def _handle_autopay_pi_failed(self, event: dict[str, Any]) -> None:
         """Handle payment_intent.payment_failed from an autopay charge.
@@ -1827,23 +1863,9 @@ class HandleWebhookEvent:
         event_id = str(event.get("id") or "")
         pi_id: str = str(pi.get("id") or "")
         metadata = pi.get("metadata") or {}
-        invoice_id = str(metadata.get("invoice_id") or "")
-        if not invoice_id:
-            log.warning("autopay_pi_failed: no invoice_id in metadata pi=%s", pi_id)
+        invoices = await self._autopay_invoices(metadata, pi_id=pi_id, label="autopay_pi_failed")
+        if not invoices:
             return
-
-        invoice = await self._billing_ledger.get_invoice(invoice_id)
-        if invoice is None:
-            raise ValueError("autopay invoice not found")
-        if invoice.academy_id != self._academy_id:
-            raise _QuarantineStripeEvent(
-                f"academy mismatch: invoice={invoice.academy_id} expected={self._academy_id}"
-            )
-        metadata_parent_id = str(metadata.get("parent_id") or "")
-        if metadata_parent_id and metadata_parent_id != invoice.parent_id:
-            raise _QuarantineStripeEvent(
-                f"parent mismatch: invoice={invoice.parent_id} payment_intent={metadata_parent_id}"
-            )
 
         return_code = _ach_return_code_from_stripe_payment_intent(pi)
         existing_payment = await self._billing_ledger.get_payment_by_stripe_payment_intent_id(pi_id)
@@ -1869,27 +1891,33 @@ class HandleWebhookEvent:
             last_error = {}
         decline_code = str(last_error.get("decline_code") or last_error.get("code") or "unknown")
         failure_message = str(last_error.get("message") or "Payment failed")
-        amount_cents = int(pi.get("amount") or invoice.balance_due_cents or invoice.total_cents)
-        currency = str(pi.get("currency") or invoice.currency).lower()
-        await self._billing_ledger.record_payment_attempt(
-            invoice_id=invoice_id,
-            parent_id=invoice.parent_id,
-            amount_cents=amount_cents,
-            currency=currency,
-            status="failed",
-            stripe_payment_intent_id=pi_id or None,
-            stripe_checkout_session_id=None,
-            failure_code=decline_code,
-            failure_message=failure_message,
-            idempotency_key=f"autopay-failed:{invoice_id}:{pi_id or event_id}",
-            created_by_event_id=event_id or None,
-        )
-        log.warning(
-            "autopay_pi_failed: recorded attempt pi=%s invoice=%s decline_code=%s — invoice status unchanged",
-            pi_id,
-            invoice_id,
-            decline_code,
-        )
+        for invoice in invoices:
+            # A family charge (L8) records one row per invoice, for its own balance.
+            amount_cents = (
+                invoice.balance_due_cents or invoice.total_cents
+                if len(invoices) > 1
+                else int(pi.get("amount") or invoice.balance_due_cents or invoice.total_cents)
+            )
+            await self._billing_ledger.record_payment_attempt(
+                invoice_id=invoice.invoice_id,
+                parent_id=invoice.parent_id,
+                amount_cents=amount_cents,
+                currency=str(pi.get("currency") or invoice.currency).lower(),
+                status="failed",
+                stripe_payment_intent_id=pi_id or None,
+                stripe_checkout_session_id=None,
+                failure_code=decline_code,
+                failure_message=failure_message,
+                idempotency_key=f"autopay-failed:{invoice.invoice_id}:{pi_id or event_id}",
+                created_by_event_id=event_id or None,
+            )
+            log.warning(
+                "autopay_pi_failed: recorded attempt pi=%s invoice=%s decline_code=%s — "
+                "invoice status unchanged",
+                pi_id,
+                invoice.invoice_id,
+                decline_code,
+            )
 
     async def _handle_invoice_checkout_payment_failed(self, event: dict[str, Any]) -> bool:
         """Record a failed manual invoice Checkout attempt without closing the invoice."""
@@ -2391,9 +2419,13 @@ class HandleWebhookEvent:
             if invoice_id and amount > 0:
                 per_invoice[invoice_id] = per_invoice.get(invoice_id, 0) + amount
         if not per_invoice:
-            fallback = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
-            if fallback is not None:
-                per_invoice[fallback.invoice_id] = payment.amount_cents
+            # No allocations: a family charge's invoices each take at most their
+            # own total, so the refund is never all put on the first invoice.
+            fallbacks = await self._invoices_for_autopay_payment(pi_id=pi_id, payment=payment)
+            for fallback in fallbacks:
+                per_invoice[fallback.invoice_id] = (
+                    payment.amount_cents if len(fallbacks) == 1 else fallback.total_cents
+                )
         remaining = total_refunded_cents
         for invoice_id, allocated in per_invoice.items():
             if remaining <= 0:
@@ -2418,23 +2450,26 @@ class HandleWebhookEvent:
                 pi_id,
             )
 
-    async def _invoice_for_autopay_payment(
+    async def _invoices_for_autopay_payment(
         self,
         *,
         pi_id: str,
         payment: LedgerPayment,
-    ) -> LedgerInvoice | None:
-        metadata = payment.metadata or {}
-        invoice_id = str(metadata.get("invoice_id") or "")
-        if not invoice_id:
-            allocation = await self._billing_ledger.get_payment_allocation_by_idempotency_key(
+    ) -> list[LedgerInvoice]:
+        """Invoices a payment settled when no allocation says so any more. A family
+        charge (L8) names every one; one payment can settle many, never find_one."""
+        ledger = self._billing_ledger
+        if ledger is None:
+            return []
+        invoice_ids = _checkout_invoice_ids(payment.metadata or {})
+        if not invoice_ids:
+            allocation = await ledger.get_payment_allocation_by_idempotency_key(
                 f"autopay-alloc:{pi_id}"
             )
             if allocation is not None:
-                invoice_id = str(getattr(allocation, "invoice_id", "") or allocation["invoice_id"])
-        if not invoice_id:
-            return None
-        return await self._billing_ledger.get_invoice(invoice_id)
+                invoice_ids = [str(_alloc_field(allocation, "invoice_id") or "")]
+        invoices = [await ledger.get_invoice(i) for i in invoice_ids if i]
+        return [invoice for invoice in invoices if invoice is not None]
 
     async def _reverse_returned_payment(
         self,
@@ -2476,8 +2511,7 @@ class HandleWebhookEvent:
                     _alloc_field(allocation, "amount_cents") or 0
                 )
         if not allocated:
-            fallback = await self._invoice_for_autopay_payment(pi_id=pi_id, payment=payment)
-            if fallback is not None:
+            for fallback in await self._invoices_for_autopay_payment(pi_id=pi_id, payment=payment):
                 allocated[fallback.invoice_id] = 0
         invoices = [
             invoice
@@ -2601,27 +2635,37 @@ class HandleWebhookEvent:
                 ),
                 created_by_event_id=event_id or None,
             )
-            if _parent_is_told_of_return(return_code):
-                await self._append_outbox_once(
-                    DunningNoticeRequested(
-                        event_id=f"{PAYMENT_RETURNED_NOTICE_PREFIX}{pi_id}:{invoice.invoice_id}",
-                        aggregate_id=invoice.invoice_id,
-                        academy_id=invoice.academy_id,
-                        payload=DunningNoticeRequestedPayload(
-                            invoice_id=invoice.invoice_id,
-                            parent_id=invoice.parent_id,
-                            period=invoice.period,
-                            # The reversal below reopens this much.
-                            balance_due_cents=invoice.balance_due_cents
-                            + allocated.get(invoice.invoice_id, 0),
-                            currency=invoice.currency,
-                            attempt_no=0,
-                            terminal=True,
-                            failure_code=return_code,
-                            bank_debit=True,
+        if invoices and _parent_is_told_of_return(return_code):
+            # One notice per returned payment, naming every invoice it reopens
+            # (L8). Keyed by the first invoice, so a single-invoice return keeps
+            # the id it always had.
+            told = sorted(invoices, key=lambda item: item.invoice_id)
+            first = told[0]
+            await self._append_outbox_once(
+                DunningNoticeRequested(
+                    event_id=f"{PAYMENT_RETURNED_NOTICE_PREFIX}{pi_id}:{first.invoice_id}",
+                    aggregate_id=first.invoice_id,
+                    academy_id=first.academy_id,
+                    payload=DunningNoticeRequestedPayload(
+                        invoice_id=first.invoice_id,
+                        parent_id=first.parent_id,
+                        period=first.period,
+                        # The reversal below reopens this much.
+                        balance_due_cents=sum(
+                            invoice.balance_due_cents + allocated.get(invoice.invoice_id, 0)
+                            for invoice in told
                         ),
-                    )
+                        currency=first.currency,
+                        attempt_no=0,
+                        terminal=True,
+                        failure_code=return_code,
+                        bank_debit=True,
+                        invoice_ids=(
+                            tuple(invoice.invoice_id for invoice in told) if len(told) > 1 else ()
+                        ),
+                    ),
                 )
+            )
         for allocation in allocations:
             await ledger.reverse_payment_allocation(
                 allocation_idempotency_key=str(_alloc_field(allocation, "idempotency_key")),
@@ -2714,6 +2758,7 @@ class HandleWebhookEvent:
         invoice: LedgerInvoice | None,
         autopay: bool,
         bank_debit: bool,
+        invoice_ids: tuple[str, ...] = (),
     ) -> None:
         """One receipt per ledger payment, for every way of paying (A5-2)."""
         await self._append_outbox_once(
@@ -2730,6 +2775,7 @@ class HandleWebhookEvent:
                     period=invoice.period if invoice else None,
                     autopay=autopay,
                     bank_debit=bank_debit,
+                    invoice_ids=invoice_ids,
                 ),
             )
         )

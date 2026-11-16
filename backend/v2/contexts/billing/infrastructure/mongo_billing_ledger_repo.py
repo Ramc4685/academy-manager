@@ -63,9 +63,12 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
     @staticmethod
     def _invoice_from_doc(doc: dict[str, object]) -> LedgerInvoice:
-        return LedgerInvoice(
-            **{k: v for k, v in doc.items() if k not in ("_id", "idempotency_key")}
-        )
+        fields = {k: v for k, v in doc.items() if k not in ("_id", "idempotency_key")}
+        # Compared against an aware now by active_checkout_hold; naive raised TypeError.
+        hold = fields.get("checkout_hold_started_at")
+        if isinstance(hold, datetime):
+            fields["checkout_hold_started_at"] = _as_utc(hold)
+        return LedgerInvoice(**fields)
 
     @staticmethod
     def _line_from_doc(doc: dict[str, object]) -> InvoiceLine:

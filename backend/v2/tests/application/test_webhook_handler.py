@@ -1793,6 +1793,41 @@ async def test_autopay_ach_processing_cross_tenant_invoice_is_quarantined() -> N
 
 
 @pytest.mark.asyncio
+async def test_family_charge_naming_another_academys_invoice_is_quarantined_whole() -> None:
+    """L8: one foreign invoice in a family charge's metadata quarantines the
+    event before anything is written, so this academy's sibling is not paid by it."""
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-own"))
+    ledger.invoices["inv-other"] = _ledger_invoice(invoice_id="inv-other", academy_id="other-acad")
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_family_foreign",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_family_foreign",
+                    "amount": 20_000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_ids": "inv-other,inv-own",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "charge_group_id": "grp-1",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    res = await uc.execute(body, "test_signature")
+
+    assert res["status"] == "quarantined"
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
 async def test_autopay_payment_intent_parent_metadata_mismatch_is_quarantined() -> None:
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger(_ledger_invoice(parent_id="parent-from-invoice"))
@@ -2791,11 +2826,11 @@ async def test_late_bank_return_on_a_balance_checkout_reopens_every_invoice_it_p
     assert ledger.invoices["inv-bal-r1"].status == "open"
     assert ledger.invoices["inv-bal-r2"].status == "open"
     assert ledger.payments["ledger-pay-cs:cs_bal_r"].status == "refunded"
+    # One notice per returned payment, naming both invoices and their sum (L8).
     notices = [e for e in outbox.events if e.name == "Billing.DunningNoticeRequested"]
-    assert sorted((n.payload.invoice_id, n.payload.balance_due_cents) for n in notices) == [
-        ("inv-bal-r1", 4_000),
-        ("inv-bal-r2", 6_000),
-    ]
+    assert [
+        (n.payload.invoice_id, n.payload.balance_due_cents, n.payload.invoice_ids) for n in notices
+    ] == [("inv-bal-r1", 10_000, ("inv-bal-r1", "inv-bal-r2"))]
 
 
 @pytest.mark.asyncio
