@@ -46,7 +46,12 @@ _DUNNED_STATUS = "dunned"
 # (domain/dunning.py ``park``), so without this an autopay family whose charge
 # is parked would read as covered forever. Mirrors process_dunning_retries.
 _BLOCKED_PARK_REASONS = frozenset(
-    {"charge_technical_failure", "connected_account_not_ready", "stripe_not_configured"}
+    {
+        "charge_technical_failure",
+        "connected_account_not_ready",
+        "stripe_not_configured",
+        "technical_failure_capped",
+    }
 )
 
 
