@@ -8705,6 +8705,8 @@ export interface components {
             phone?: string | null;
             /** Registration */
             registration?: ("registered" | "invited" | "not_invited") | null;
+            /** Sibling Student Ids */
+            sibling_student_ids?: string[];
             /**
              * Stage
              * @enum {string}
@@ -14177,6 +14179,7 @@ export interface components {
             enabled: boolean;
             /** Enrollments */
             enrollments: components["schemas"]["SiblingDiscountEnrollmentView"][];
+            next_period?: components["schemas"]["SiblingDiscountPeriodView"] | null;
             /** Percent Bps */
             percent_bps?: number | null;
             /** Period */
@@ -18797,8 +18800,12 @@ export interface components {
         };
         /** SiblingDiscountEnrollmentView */
         SiblingDiscountEnrollmentView: {
+            /** Billing Type */
+            billing_type?: string | null;
             /** Enrollment Id */
             enrollment_id: string;
+            /** Exclusion */
+            exclusion?: ("paused" | "not_active" | "billing_type" | "deferral" | "pending_cancellation" | "skip_period" | "no_class_fee") | null;
             /** Percent Bps */
             percent_bps?: number | null;
             /**
@@ -18815,6 +18822,13 @@ export interface components {
             status: "discounted" | "full_price" | "not_eligible" | "off";
             /** Student Id */
             student_id: string;
+        };
+        /** SiblingDiscountPeriodView */
+        SiblingDiscountPeriodView: {
+            /** Enrollments */
+            enrollments: components["schemas"]["SiblingDiscountEnrollmentView"][];
+            /** Period */
+            period: string;
         };
         /** SiblingDiscountRequest */
         SiblingDiscountRequest: {

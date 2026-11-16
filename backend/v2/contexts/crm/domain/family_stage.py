@@ -52,6 +52,10 @@ SCOPE_STAGES: Final[Mapping[str, frozenset[str]]] = {
 }
 FAMILY_SCOPES: Final[frozenset[str]] = frozenset(get_args(FamilyScope))
 
+#: A child in one of these states still has an active, held or paused class:
+#: two or more of them make the family a sibling family.
+ENROLLED_STAGES: Final[frozenset[str]] = SCOPE_STAGES["active"] | SCOPE_STAGES["leaving"]
+
 
 def stage_rank(stage: str) -> int:
     """Position in :data:`FAMILY_STAGE_PRECEDENCE`; unknown states rank last."""

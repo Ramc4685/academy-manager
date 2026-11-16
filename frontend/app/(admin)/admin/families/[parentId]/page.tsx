@@ -11,6 +11,8 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+
+import { SiblingsChip } from "@/components/admin/siblings";
 import { ArrowLeft } from "lucide-react";
 
 import { Card, Chip, Skeleton } from "@/components/ds";
@@ -130,6 +132,7 @@ export default function FamilyRecordPage() {
               <Chip variant={lifecycleVariant(family.stage)} label={lifecycleLabel(family.stage)} />
             </span>
           )}
+          {family && <SiblingsChip family={family} />}
           {family && atRiskTitle(family) && (
             <span title={atRiskTitle(family) ?? undefined} data-testid="family-record-at-risk">
               <Chip variant="approval" label="AT RISK" />

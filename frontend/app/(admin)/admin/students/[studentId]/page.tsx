@@ -48,6 +48,8 @@ import {
 
 import { BillingEnrollmentsPanel } from "./BillingEnrollmentsPanel";
 import { DetailList } from "./DetailList";
+import { StudentSiblings } from "@/components/admin/siblings";
+
 import { FamilyBillingLink } from "./FamilyBillingLink";
 import { formatCurrencyCents, formatDate, formatDateTime, formatDateUtc } from "./format";
 import { SessionsPanel } from "./SessionsPanel";
@@ -703,6 +705,7 @@ function Header({
                   />
                 )}
               </div>
+              <StudentSiblings studentId={student.student_id} parentId={student.parent_id} />
             </div>
           </div>
           <div className="col-span-2 text-sm text-rally-muted sm:ml-auto">

@@ -388,7 +388,7 @@ function SessionsPanel({
                           href={billingHref}
                           enrollmentId={session.enrollment_id}
                         />
-                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} />
+                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} view={sibling} />
                       </div>
                     </>
                   }
@@ -474,7 +474,7 @@ function SessionsPanel({
                           href={billingHref}
                           enrollmentId={session.enrollment_id}
                         />
-                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} />
+                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} view={sibling} />
                       </div>
                     </td>
                     <td className="py-3 align-top">

@@ -213,3 +213,83 @@ async def test_a_parent_persona_gets_404(real_db: Any, acad: str) -> None:
     async with _client(real_db, ("parent",)) as parent:
         response = await parent.get(ROUTE)
     assert response.status_code == 404
+
+
+NEXT_PERIOD = "2026-10"
+
+
+async def test_a_month_billed_before_the_setting_previews_next_month_without_writing(
+    admin: httpx.AsyncClient, real_db: Any, acad: str
+) -> None:
+    """September was invoiced with the setting off; it is switched on after.
+    The badge reads September as billed and previews October, which the run
+    then prices exactly as previewed."""
+    await _family(real_db, acad)
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+    await _offer(real_db)
+
+    body = await _badges(admin)
+    assert _by_enrollment(body) == {
+        "enr-a": ("not_eligible", "already_invoiced"),
+        "enr-b": ("not_eligible", "already_invoiced"),
+    }
+    assert body["next_period"]["period"] == NEXT_PERIOD
+    following = _by_enrollment(body["next_period"])
+    assert following == {
+        "enr-a": ("full_price", "full_price_child"),
+        "enr-b": ("discounted", "sibling_discount"),
+    }
+    assert await real_db[SIBLING_DECISIONS_COLLECTION].count_documents({}) == 0, "the read wrote"
+    assert await real_db["invoices"].count_documents({"period": NEXT_PERIOD}) == 0
+
+    await _repo(real_db).generate_monthly_payments(NEXT_PERIOD)
+    for eid, (status, _reason) in following.items():
+        line = await real_db["invoice_lines"].find_one(
+            {
+                "academy_id": acad,
+                "invoice_id": f"inv-monthly-{eid}-{NEXT_PERIOD}",
+                "source_type": "tuition_discount",
+            }
+        )
+        source = line["source_id"] if line else None
+        assert (source == f"sibling-auto-{NEXT_PERIOD}") is (status == "discounted"), eid
+
+
+async def test_an_enrollment_off_the_monthly_run_names_why(
+    admin: httpx.AsyncClient, real_db: Any, acad: str
+) -> None:
+    """Marked No charge (a non-monthly billing_type) or
+    paused: the row says which, and the run indeed leaves it uninvoiced."""
+    await _family(real_db, acad)
+    await _session(real_db, acad, "sess-mid", 9_000)
+    await _child(real_db, acad, "stu-c")
+    await _enroll(real_db, acad, "enr-c", "stu-c", "sess-mid", status="paused")
+    await real_db["enrollments"].update_one(
+        {"enrollment_id": "enr-b"}, {"$set": {"billing_type": "NoCharge"}}
+    )
+    await _offer(real_db)
+
+    body = await _badges(admin)
+    rows = {row["enrollment_id"]: row for row in body["enrollments"]}
+    assert (rows["enr-b"]["reason"], rows["enr-b"]["exclusion"]) == (
+        "not_billed_this_month",
+        "billing_type",
+    )
+    assert rows["enr-b"]["billing_type"] == "NoCharge"
+    assert (rows["enr-c"]["exclusion"], rows["enr-c"]["billing_type"]) == ("paused", None)
+    # Ava is the only child the run invoices, so she gets no sibling discount.
+    assert (rows["enr-a"]["reason"], rows["enr-a"]["exclusion"]) == ("only_one_child", None)
+    # Nothing this month was already invoiced, so there is no next month to explain.
+    assert body["next_period"] is None
+    assert await real_db[SIBLING_DECISIONS_COLLECTION].count_documents({}) == 0
+
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+    invoiced = {doc["enrollment_id"] async for doc in real_db["invoices"].find({"period": PERIOD})}
+    assert invoiced == {"enr-a"}
+
+
+async def test_the_setting_off_has_no_next_month(
+    admin: httpx.AsyncClient, real_db: Any, acad: str
+) -> None:
+    await _family(real_db, acad)
+    assert (await _badges(admin))["next_period"] is None

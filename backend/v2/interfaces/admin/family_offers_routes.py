@@ -97,6 +97,18 @@ SiblingPreviewReason = Literal[
 ]
 
 
+#: Why a ``not_billed_this_month`` enrollment is off the monthly invoices.
+SiblingPreviewExclusion = Literal[
+    "paused",
+    "not_active",
+    "billing_type",
+    "deferral",
+    "pending_cancellation",
+    "skip_period",
+    "no_class_fee",
+]
+
+
 class SiblingDiscountEnrollmentView(BaseModel):
     enrollment_id: str
     student_id: str
@@ -104,6 +116,14 @@ class SiblingDiscountEnrollmentView(BaseModel):
     status: SiblingPreviewStatus
     reason: SiblingPreviewReason
     percent_bps: int | None = None
+    exclusion: SiblingPreviewExclusion | None = None
+    #: The enrollment's own ``billing_type``, only when that excluded it.
+    billing_type: str | None = None
+
+
+class SiblingDiscountPeriodView(BaseModel):
+    period: str
+    enrollments: list[SiblingDiscountEnrollmentView]
 
 
 class FamilySiblingDiscountView(BaseModel):
@@ -111,6 +131,9 @@ class FamilySiblingDiscountView(BaseModel):
     enabled: bool
     percent_bps: int | None = None
     enrollments: list[SiblingDiscountEnrollmentView]
+    #: The month after ``period``, decided the same way, when a row is
+    #: ``already_invoiced``; null otherwise.
+    next_period: SiblingDiscountPeriodView | None = None
 
 
 class _Reader(Protocol):

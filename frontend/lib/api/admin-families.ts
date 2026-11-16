@@ -269,6 +269,16 @@ export function fetchAdminFamilyBilling(parentId: string): Promise<AdminFamilyBi
 
 export type SiblingDiscountStatus = "discounted" | "full_price" | "not_eligible" | "off";
 
+/** Why a `not_billed_this_month` class is off the monthly invoices. */
+export type SiblingExclusion =
+  | "paused"
+  | "not_active"
+  | "billing_type"
+  | "deferral"
+  | "pending_cancellation"
+  | "skip_period"
+  | "no_class_fee";
+
 export interface SiblingDiscountEnrollment {
   enrollment_id: string;
   student_id: string;
@@ -277,14 +287,23 @@ export interface SiblingDiscountEnrollment {
   /** Why, e.g. `manual_discount_larger`, `only_one_child`, `already_invoiced`. */
   reason: string;
   percent_bps: number | null;
+  /** On `not_billed_this_month`: which monthly-run filter left it out. */
+  exclusion: SiblingExclusion | null;
+  /** The class's own billing type, only when that left it out. */
+  billing_type: string | null;
+}
+
+export interface SiblingDiscountPeriod {
+  period: string;
+  enrollments: SiblingDiscountEnrollment[];
 }
 
 /** `GET /admin/families/{parentId}/sibling-discount`: read-only, changes no money. */
-export interface FamilySiblingDiscount {
-  period: string;
+export interface FamilySiblingDiscount extends SiblingDiscountPeriod {
   enabled: boolean;
   percent_bps: number | null;
-  enrollments: SiblingDiscountEnrollment[];
+  /** The month after `period`, decided the same way, when a row is `already_invoiced`; else null. */
+  next_period: SiblingDiscountPeriod | null;
 }
 
 const SIBLING_STATUSES: ReadonlySet<string> = new Set([
@@ -294,15 +313,18 @@ const SIBLING_STATUSES: ReadonlySet<string> = new Set([
   "off",
 ]);
 
-/**
- * The response, or `null` when it is not one (an e2e catch-all `{}`, another
- * route's body). Rows missing their ids or status are dropped, never guessed.
- */
-export function parseFamilySiblingDiscount(raw: unknown): FamilySiblingDiscount | null {
-  if (!raw || typeof raw !== "object") return null;
-  const body = raw as Record<string, unknown>;
-  if (typeof body.enabled !== "boolean" || !Array.isArray(body.enrollments)) return null;
-  const enrollments = body.enrollments.flatMap((row): SiblingDiscountEnrollment[] => {
+const SIBLING_EXCLUSIONS: ReadonlySet<string> = new Set([
+  "paused",
+  "not_active",
+  "billing_type",
+  "deferral",
+  "pending_cancellation",
+  "skip_period",
+  "no_class_fee",
+]);
+
+function parseSiblingRows(raw: unknown[]): SiblingDiscountEnrollment[] {
+  return raw.flatMap((row): SiblingDiscountEnrollment[] => {
     if (!row || typeof row !== "object") return [];
     const r = row as Record<string, unknown>;
     if (typeof r.enrollment_id !== "string" || typeof r.status !== "string") return [];
@@ -315,14 +337,34 @@ export function parseFamilySiblingDiscount(raw: unknown): FamilySiblingDiscount 
         status: r.status as SiblingDiscountStatus,
         reason: typeof r.reason === "string" ? r.reason : "",
         percent_bps: typeof r.percent_bps === "number" ? r.percent_bps : null,
+        exclusion:
+          typeof r.exclusion === "string" && SIBLING_EXCLUSIONS.has(r.exclusion)
+            ? (r.exclusion as SiblingExclusion)
+            : null,
+        billing_type: typeof r.billing_type === "string" ? r.billing_type : null,
       },
     ];
   });
+}
+
+/**
+ * The response, or `null` when it is not one (an e2e catch-all `{}`, another
+ * route's body). Rows missing their ids or status are dropped, never guessed.
+ */
+export function parseFamilySiblingDiscount(raw: unknown): FamilySiblingDiscount | null {
+  if (!raw || typeof raw !== "object") return null;
+  const body = raw as Record<string, unknown>;
+  if (typeof body.enabled !== "boolean" || !Array.isArray(body.enrollments)) return null;
+  const next = body.next_period as Record<string, unknown> | null | undefined;
   return {
     period: typeof body.period === "string" ? body.period : "",
     enabled: body.enabled,
     percent_bps: typeof body.percent_bps === "number" ? body.percent_bps : null,
-    enrollments,
+    enrollments: parseSiblingRows(body.enrollments),
+    next_period:
+      next && typeof next === "object" && typeof next.period === "string" && Array.isArray(next.enrollments)
+        ? { period: next.period, enrollments: parseSiblingRows(next.enrollments) }
+        : null,
   };
 }
 
@@ -427,6 +469,12 @@ export interface FamilyIndexRow {
    */
   at_risk?: boolean;
   at_risk_reasons?: AtRiskReason[];
+  /**
+   * The children with an active, held or paused class when there are two or
+   * more ("Siblings"), else empty. Not a billing fact. Optional: older
+   * responses omit it.
+   */
+  sibling_student_ids?: string[];
 }
 
 export type AtRiskReason = "attendance" | "payment";
