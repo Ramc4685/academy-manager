@@ -219,3 +219,55 @@ test.describe("class-first onboarding order", () => {
     await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
   });
 });
+
+// L9 C2: the ?ref= code captured on the academy page rides the parent step.
+test.describe("referral code on the parent step", () => {
+  const KEY = "courtmastr.referral_code";
+
+  async function startWithStoredCode(page: Page): Promise<string[]> {
+    await stubOnboarding(page, false);
+    await page.addInitScript(
+      ([key, value]) => {
+        if (!sessionStorage.getItem("seeded")) {
+          localStorage.setItem(key, value);
+          sessionStorage.setItem("seeded", "1");
+        }
+      },
+      [KEY, JSON.stringify({ code: "QZ7KX4MP", at: Date.now() })],
+    );
+    const patches: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "PATCH" && req.url().includes(APPLICATION_ID)) {
+        patches.push(req.postData() ?? "");
+      }
+    });
+    await page.goto("/parent/onboarding");
+    await expect(page.getByRole("heading", { name: "Your details" })).toBeVisible();
+    return patches;
+  }
+
+  const next = (page: Page) =>
+    page.getByTestId("parent-onboarding").getByRole("button", { name: "Next" });
+
+  test("shows the attached code, saves it, then forgets it", async ({ page }) => {
+    const patches = await startWithStoredCode(page);
+    await expect(page.getByTestId("onboarding-referral-code")).toContainText("QZ7KX4MP");
+    await next(page).click();
+    await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
+    expect(JSON.parse(patches[0]).parent_profile.referral_code).toBe("QZ7KX4MP");
+    expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
+  });
+
+  test("Remove takes the code off the registration", async ({ page }) => {
+    const patches = await startWithStoredCode(page);
+    await page
+      .getByTestId("onboarding-referral-code")
+      .getByRole("button", { name: "Remove" })
+      .click();
+    await expect(page.getByTestId("onboarding-referral-code")).toHaveCount(0);
+    await next(page).click();
+    await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
+    expect(JSON.parse(patches[0]).parent_profile.referral_code).toBe("");
+    expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
+  });
+});

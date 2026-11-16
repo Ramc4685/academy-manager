@@ -35,7 +35,7 @@ import {
   formatSessionOccurrence,
 } from "@/lib/format/session-display";
 import { queryKeys } from "@/lib/query/keys";
-import { storedReferralCode } from "@/lib/referral-capture";
+import { clearReferralCode, storedReferralCode } from "@/lib/referral-capture";
 import {
   childProfileFromExistingChild,
   initialChildSelection,
@@ -258,9 +258,11 @@ export default function OnboardingStepperPage() {
             app={app}
             saving={saving}
             onSave={async (profile) => {
-              // Carry the ?ref= code captured on the academy page (L9 C2).
-              const referral_code = profile.referral_code || storedReferralCode();
-              if (await save({ parent_profile: { ...profile, referral_code } })) advance();
+              if (await save({ parent_profile: profile })) {
+                // Saved on the registration now (L9 C2); stop carrying it.
+                clearReferralCode();
+                advance();
+              }
             }}
           />
         )}
@@ -400,6 +402,12 @@ function ParentStep({
   saving: boolean;
 }) {
   const [v, setV] = useState(app.parent_profile);
+  // Attach the ?ref= code captured on the academy page (L9 C2) after mount,
+  // since localStorage is not readable during the server render.
+  useEffect(() => {
+    const code = storedReferralCode();
+    if (code) setV((cur) => (cur.referral_code ? cur : { ...cur, referral_code: code }));
+  }, []);
   return (
     <form
       onSubmit={(e) => {
@@ -409,6 +417,24 @@ function ParentStep({
       className="space-y-3"
     >
       <StepHeading>Your details</StepHeading>
+      {v.referral_code ? (
+        <p className="flex items-center justify-between gap-3 text-sm" data-testid="onboarding-referral-code">
+          <span>
+            Referral code <strong>{v.referral_code}</strong> will be added to your registration.
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              clearReferralCode();
+              setV({ ...v, referral_code: "" });
+            }}
+          >
+            Remove
+          </Button>
+        </p>
+      ) : null}
       <Field label="First name">
         <input value={v.first_name} onChange={(e) => setV({ ...v, first_name: e.target.value })} required />
       </Field>
