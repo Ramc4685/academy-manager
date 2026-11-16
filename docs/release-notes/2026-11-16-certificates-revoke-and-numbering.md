@@ -1,6 +1,6 @@
 # certificates-revoke-and-numbering
 
-PR: TBD
+PR: #1190
 
 ## What changed
 An academy admin can revoke a certificate issued in error: the certificate page has a Revoke button that asks for a reason and confirms first. A revoked certificate stays on file and the admin pages show it with a Revoked label and banner, but the family no longer sees it in the journey, the parent views or the evening wins email, and any share link stops working. The student stays on their level; if they earn the level again, a fresh certificate is issued. Each revoke writes a `certificate.revoked` audit row.
