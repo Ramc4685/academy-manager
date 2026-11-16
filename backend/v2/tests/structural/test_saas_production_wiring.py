@@ -143,6 +143,21 @@ def test_ci_installs_single_backend_requirements_file() -> None:
     assert "Legacy backend tests" not in workflow
 
 
+def test_frontend_deploys_only_after_the_backend_and_migrations_succeed() -> None:
+    """G:jobs_data_infra:4: a Worker shipped beside a failed backend deploy
+    calls endpoints that do not exist yet."""
+    import yaml
+
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/production.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["deploy-frontend"]
+
+    assert {"migrate-production", "deploy-backend"} <= set(job["needs"])
+    assert "needs.migrate-production.result == 'success'" in job["if"]
+    assert "needs.deploy-backend.result == 'success'" in job["if"]
+
+
 def test_v2_app_configures_cors_for_frontend_origin(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
