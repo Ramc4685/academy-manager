@@ -82,7 +82,13 @@ describe("lib/observability/sentry", () => {
       integrations: [sentryMock.browserTracingIntegration()],
       sampleRate: 1,
       tracesSampleRate: 0.2,
-      sendDefaultPii: false,
+      dataCollection: {
+        userInfo: false,
+        cookies: false,
+        httpHeaders: false,
+        httpBodies: [],
+        urlQueryParams: false,
+      },
       beforeSend: scrubEventUrls,
       beforeBreadcrumb: scrubBreadcrumbUrls,
     });

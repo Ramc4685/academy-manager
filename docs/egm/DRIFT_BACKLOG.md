@@ -25,7 +25,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [contract] README:42 says import-linter enforces six layer rules; `pyproject.toml` has five forbidden contracts plus `composition-is-outermost`, and the no-cross-context and tenancy rules are pytest checks.
 - [wording] README:12 and :46 omit the ai, communications, crm, curriculum, finance, onboarding, platform and student_progress contexts.
 
-## `frontend/README.md`: 16 items, from `drift/frontend.md`
+## `frontend/README.md`: 17 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
 - [stale-not-built] `public/splash/` (and the 180 icon) do not exist.
 - [stale-not-built] No workflow runs size-limit or lhci.
@@ -42,6 +42,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Audit runs via `scripts/ci/dependency_audit.sh` (soft-fails on unreachable registry).
 - [wording] Public landing is `app/page.tsx`, not under `(marketing)`.
 - [wording] `pnpm typecheck` runs `next typegen && tsc --noEmit`.
+- [wording] README:84-86 omit that `build` runs `--webpack` and `dev` honors `$PORT`.
 
 ## `frontend/lib/api/README.md`: 8 items, from `drift/frontend__lib__api.md`
 - [undocumented] README calls `admin.ts` a thin wrapper; `chargeAdminInvoiceAutopay` keeps per-invoice retry state (reused `request_id` for 10 min; kept on 409 only for `charge_in_progress`).
