@@ -1,6 +1,6 @@
 # billing-calendar
 
-PR: TBD
+PR: #1181
 
 ## What changed
 Billing can now charge autopay on a different day from the invoice due date. An academy setting, `autopay_charge_offset_days`, counts days from the invoice date. A dated `schedule_change` switches the due window, the charge day and the reminder days from a given date. BLNO is scheduled to switch on 2027-01-01: invoices and autopay on the 1st, manual payers due on the 5th, reminders on the due date and 3 and 7 days after. December runs on today's schedule.
