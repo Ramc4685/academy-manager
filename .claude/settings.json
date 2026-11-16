@@ -1,4 +1,7 @@
 {
+  "env": {
+    "EGM_DRIFT_GATE": "off"
+  },
   "hooks": {
     "PreToolUse": [
       {

@@ -75,9 +75,91 @@ _Auto-generated stub — author: fill in rollback details._
         self.assertEqual(result, 1)
         generate_note.assert_not_called()
 
+    COMPLETE_NOTE = """# change
+
+PR: {pr}
+
+## What changed
+Useful description.
+
+## Deploy notes
+None.
+
+## Risk / rollback
+Revert the merge commit.
+"""
+
+    def note_in_repo(self, pr_line: str) -> str:
+        notes_dir = release_notes_check.NOTES_DIR
+        temporary = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", dir=notes_dir, delete=False
+        )
+        path = Path(temporary.name)
+        self.addCleanup(path.unlink, missing_ok=True)
+        with temporary:
+            temporary.write(self.COMPLETE_NOTE.format(pr=pr_line))
+        return str(path.relative_to(release_notes_check.REPO_ROOT))
+
+    def run_main(self, files: list[str]) -> int:
+        with (
+            patch.object(release_notes_check, "changed_files", return_value=files),
+            patch.object(release_notes_check, "find_existing_note", return_value=None),
+            patch.object(sys, "argv", ["release_notes_check.py", "--pr-number", "123"]),
+        ):
+            return release_notes_check.main()
+
+    def test_added_note_with_placeholder_pr_passes(self) -> None:
+        note = self.note_in_repo("TBD")
+        self.assertEqual(self.run_main(["backend/v2/main.py", note]), 0)
+
+    def test_added_note_without_pr_line_passes(self) -> None:
+        note = self.note_in_repo("TBD")
+        path = release_notes_check.REPO_ROOT / note
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("PR: TBD\n", ""),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.run_main(["backend/v2/main.py", note]), 0)
+
+    def test_added_note_for_another_pr_does_not_count(self) -> None:
+        note = self.note_in_repo("#999")
+        self.assertEqual(self.run_main(["backend/v2/main.py", note]), 1)
+
+    def test_placeholder_note_in_subfolder_does_not_count(self) -> None:
+        nested = release_notes_check.NOTES_DIR / "nested-test-dir"
+        nested.mkdir(exist_ok=True)
+        self.addCleanup(nested.rmdir)
+        path = nested / "note.md"
+        path.write_text(self.COMPLETE_NOTE.format(pr="TBD"), encoding="utf-8")
+        self.addCleanup(path.unlink, missing_ok=True)
+        note = str(path.relative_to(release_notes_check.REPO_ROOT))
+        self.assertEqual(self.run_main(["backend/v2/main.py", note]), 1)
+
+    def test_placeholder_note_already_on_base_does_not_count(self) -> None:
+        note = self.note_in_repo("TBD")
+        with patch.object(release_notes_check, "exists_on_base", return_value=True):
+            self.assertEqual(self.run_main(["backend/v2/main.py", note]), 1)
+
+    def test_placeholder_note_still_needs_complete_sections(self) -> None:
+        note = self.note_in_repo("TBD")
+        path = release_notes_check.REPO_ROOT / note
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("None.", ""),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.run_main(["backend/v2/main.py", note]), 1)
+
 
 class PublishReleaseTests(unittest.TestCase):
     SHA = "a" * 40
+
+    @patch.object(publish_release, "run")
+    def test_pr_number_falls_back_to_squash_subject(self, run_mock) -> None:
+        path = publish_release.NOTES_DIR / "2026-11-15-x.md"
+        run_mock.return_value = completed([], stdout="chore: faster gate (#1180)\n")
+        self.assertEqual(publish_release.pr_from_commit_subject(path), "1180")
+        run_mock.return_value = completed([], stdout="")
+        self.assertIsNone(publish_release.pr_from_commit_subject(path))
 
     def test_production_tag_is_deterministic_and_sha_bearing(self) -> None:
         self.assertEqual(
