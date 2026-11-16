@@ -1,4 +1,3 @@
-## README.md (root)
+## README.md (repo root)
 
-- [wording] README line 98 says backend deploy is `flyctl deploy --remote-only --app courtmastr-academy-api`. Code deploys a prebuilt image: `flyctl deploy --image <migrate-production image> --release-command-timeout 25m --ha=false --app courtmastr-academy-api --env SENTRY_RELEASE=...` (`.github/workflows/production.yml:961-964`). The image is built with `--build-only --push --remote-only` in the migrate-production job (`production.yml:820`).
-- [undocumented] README lines 89-102 list the pipeline as validate, approval, migration dry run, backend, frontend, smoke, release record. They omit the `sentry-release` job, which runs after smoke (`.github/workflows/production.yml:1049-1055`). They also omit the `ci-gate`, `scripts-validate` and `hook-tests` jobs (`production.yml:673, 718, 733`).
+- [undocumented] README.md:89-102 lists the deploy pipeline as seven steps (Validate, approval, migration dry run, backend deploy, frontend deploy, smoke, release record). `.github/workflows/production.yml:1049` (`sentry-release`, `needs: [smoke]`) also runs after smoke, alongside `publish-release` (`production.yml:1119`). It creates the Sentry release and is not mentioned.

@@ -118,12 +118,20 @@ export function initSentry(): Promise<Sentry | null> {
         release: process.env.NEXT_PUBLIC_SENTRY_RELEASE || undefined,
         // Every error event, plus a sampled slice of navigation/fetch spans
         // via browserTracingIntegration (matches the backend's 0.2 sample
-        // rate). The SDK default for PII is already off; keep it explicit so
-        // a future default flip cannot start shipping IPs/cookies.
+        // rate).
         integrations: [mod.browserTracingIntegration()],
         sampleRate: 1,
         tracesSampleRate: 0.2,
-        sendDefaultPii: false,
+        // SDK v11 replaced sendDefaultPii with dataCollection, which defaults
+        // to collecting everything. Turn it all off: userInfo also gates the
+        // auto IP address, and no cookies, headers, bodies or query params.
+        dataCollection: {
+          userInfo: false,
+          cookies: false,
+          httpHeaders: false,
+          httpBodies: [],
+          urlQueryParams: false,
+        },
         // Query strings carry magic-link tokens, Firebase oobCodes and parent
         // emails; strip them before anything leaves the browser.
         beforeSend: scrubEventUrls,

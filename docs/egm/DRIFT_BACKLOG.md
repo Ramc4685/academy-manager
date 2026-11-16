@@ -34,7 +34,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [missing] Identity (the canonical example) and several other contexts have no `domain/events.py`.
 - [wording] Platform, student and owner routers mount behind settings flags, not always under `/api/v2`.
 
-## `frontend/README.md`: 16 items, from `drift/frontend.md`
+## `frontend/README.md`: 17 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
 - [stale-not-built] `public/splash/` (and the 180 icon) do not exist.
 - [stale-not-built] No workflow runs size-limit or lhci.
@@ -51,6 +51,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] Audit runs via `scripts/ci/dependency_audit.sh` (soft-fails on unreachable registry).
 - [wording] Public landing is `app/page.tsx`, not under `(marketing)`.
 - [wording] `pnpm typecheck` runs `next typegen && tsc --noEmit`.
+- [wording] README:84-86 omit that `build` runs `--webpack` and `dev` honors `$PORT`.
 
 ## `frontend/lib/api/README.md`: 7 items, from `drift/frontend__lib__api.md`
 - [stale-not-built] README says `generated/` holds only `.gitkeep`; `v2.d.ts` and `openapi.snapshot.json` are committed.
