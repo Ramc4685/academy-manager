@@ -84,6 +84,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # billing_rules_routes.py — the merged Settings panel write
         # (GET /billing/rules stays admin).
         ("PUT", f"{_ADMIN}/billing/rules"),
+        # family_offers_routes.py — sibling discount + referral programme
+        # (GET /billing/family-offers stays admin).
+        ("PUT", f"{_ADMIN}/billing/family-offers"),
         # (POST /enrollments/{id}/withdraw stays admin; its `credit` outcome is
         # owner-gated per action by `ensure_owner_for_withdrawal_credit`.
         # The old owner-only .../withdrawal-credit/approve route was removed.)

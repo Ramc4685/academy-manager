@@ -7,6 +7,7 @@ off unless an academy admin explicitly opts in.
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -89,6 +90,50 @@ class BillingScheduleChange(BaseModel):
         return self
 
 
+ReferralTrigger = Literal["first_paid_invoice", "first_paid_monthly_invoice"]
+SiblingFullPriceChild = Literal["highest_tuition", "lowest_tuition", "first_enrolled"]
+SiblingAppliesTo = Literal["all_classes", "one_class_per_child"]
+
+
+class ReferralProgram(BaseModel):
+    """Family offers: the referral programme (L9 C1 stores it; C2 builds the logic).
+
+    Off unless the owner switches it on. Every value is the owner's: there are
+    no numeric defaults here, only ``None`` = "not set". Bounds and the
+    all-fields-on-enable rule live in ``UpdateFamilyOffers``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    referrer_credit_cents: int | None = None
+    referred_credit_cents: int | None = None
+    hold_days: int | None = None
+    max_rewards_per_referrer_per_year: int | None = None
+    #: ``None`` = credits never expire.
+    credit_expiry_days: int | None = None
+    trigger: ReferralTrigger | None = None
+    #: Server-stamped when the programme is switched on (like
+    #: ``late_fee_effective_from``): only referrals after it count.
+    effective_from: datetime | None = None
+
+
+class SiblingDiscount(BaseModel):
+    """Family offers: the automatic sibling discount (L9 C1).
+
+    Off unless the owner switches it on; no numeric defaults. Applied by the
+    monthly resolver (``domain.sibling_discount``) to invoices generated after
+    the change only.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    percent_bps: int | None = None
+    full_price_child: SiblingFullPriceChild | None = None
+    applies_to: SiblingAppliesTo | None = None
+
+
 class BillingSettings(BaseModel):
     """Academy-scoped billing configuration (cash/ACH discount + invoice numbering)."""
 
@@ -161,6 +206,12 @@ class BillingSettings(BaseModel):
     application_fee_agreement_version: str | None = None
     application_fee_accepted_at: datetime | None = None
     application_fee_accepted_by: str | None = None
+
+    # Family offers (L9 C1). Written ONLY by ``set_family_offers`` on the
+    # repository, never by the read-modify-write ``upsert``, so another
+    # settings save cannot put back a stale block.
+    referral_program: ReferralProgram = Field(default_factory=ReferralProgram)
+    sibling_discount: SiblingDiscount = Field(default_factory=SiblingDiscount)
 
     @field_validator("reminder_days", mode="before")
     @classmethod

@@ -36,6 +36,8 @@ MoneySettingAction = Literal[
     "plan_price_change_scheduled",
     "plan_price_change_cancelled",
     "plan_price_change_applied",
+    "referral_program_changed",
+    "sibling_discount_changed",
 ]
 
 

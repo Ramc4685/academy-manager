@@ -16,7 +16,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 25 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 28 items, from `drift/backend__v2.md`
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -36,6 +36,9 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:49 places `ports.py` as a sibling of `use_cases/` under `application/`; minor.
 - [wording] README mypy command differs from CI's baseline-filter invocation.
 - [wording] README:12 and :46 omit the ai, communications, crm, curriculum, finance, onboarding, platform and student_progress contexts.
+- [wording] README:53 says wiring lives in `main.py`; new context wiring goes in `composition/` modules (e.g. `composition/family_offers.py`) that `main.py` only calls.
+- [undocumented] BFF route steps omit `owner_gate.py` owner-only gating (new `family_offers_routes.py` GET + owner-only PUT `/admin/billing/family-offers`).
+- [undocumented] `migrations/` described only as boot indexes/validators; `0237_sibling_discount_decisions` adds an insert-once decisions collection.
 
 - [wording] README cites W1A-02 (nowhere in code); migrations dir has two `0070_*` files despite "one file per index set".
 

@@ -10,6 +10,8 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.contexts.billing.domain.billing_settings import (
     ApplicationFeeAgreementAcceptance,
     BillingSettings,
+    ReferralProgram,
+    SiblingDiscount,
 )
 from backend.v2.contexts.billing.domain.errors import InvoicePrefixTaken
 from backend.v2.contexts.billing.infrastructure.house_academy import platform_charges_allowed
@@ -34,6 +36,11 @@ _PLATFORM_ONLY_FIELDS = {
 #: flag comes from the house-academy setting (see ``house_academy``); writing
 #: the derived value back would let a read-modify-write persist it.
 _DERIVED_FIELDS = {"allow_platform_charge_fallback"}
+
+#: Family offers (L9 C1) have their own audited write, ``set_family_offers``.
+#: Keeping them out of ``upsert`` stops another settings save (a whole-document
+#: read-modify-write) from putting back a block read moments earlier.
+_FAMILY_OFFER_FIELDS = {"referral_program", "sibling_discount"}
 
 
 class MongoBillingSettingsRepository(TenantScopedRepository):
@@ -76,7 +83,7 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
         model) overwrite the platform's values.
         """
         payload = settings.model_dump(
-            mode="python", exclude=_PLATFORM_ONLY_FIELDS | _DERIVED_FIELDS
+            mode="python", exclude=_PLATFORM_ONLY_FIELDS | _DERIVED_FIELDS | _FAMILY_OFFER_FIELDS
         )
         payload.pop("academy_id", None)
         change = payload.get("schedule_change")
@@ -90,6 +97,21 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
             {"$set": payload},
             upsert=True,
         )
+
+    async def set_family_offers(
+        self,
+        *,
+        referral_program: ReferralProgram | None = None,
+        sibling_discount: SiblingDiscount | None = None,
+    ) -> None:
+        """Owner write of the family-offer blocks given (L9 C1); touches nothing else."""
+        payload: dict[str, Any] = {}
+        if referral_program is not None:
+            payload["referral_program"] = referral_program.model_dump(mode="python")
+        if sibling_discount is not None:
+            payload["sibling_discount"] = sibling_discount.model_dump(mode="python")
+        if payload:
+            await self._update_one({}, {"$set": payload}, upsert=True)
 
     async def set_application_fee_bps(
         self, fee_bps: int, *, agreement: ApplicationFeeAgreementAcceptance | None = None
