@@ -85,6 +85,8 @@ export const queryKeys = {
     // AI status (B1): hides the paid AI buttons while AI is off.
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
+    familySiblingDiscount: (parentId: string) =>
+      ["admin", "families", parentId, "sibling-discount"] as const,
     familyRecord: (familyId: string) =>
       ["admin", "families", familyId, "record"] as const,
     // People CRM Phase 5: the unified family timeline (paged).

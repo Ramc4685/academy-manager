@@ -180,6 +180,21 @@ export async function stubFamilyOffers(page: Page): Promise<void> {
 }
 
 /**
+ * The student page and the family billing page read the sibling discount
+ * badge. Defaults to switched off, so neither page shows a badge; register it
+ * after any admin catch-all so this body wins.
+ */
+export async function stubFamilySiblingDiscount(page: Page, body?: unknown): Promise<void> {
+  await page.route("**/api/v2/admin/families/*/sibling-discount*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(
+      route,
+      body ?? { period: "2026-09", enabled: false, percent_bps: null, enrollments: [] },
+    );
+  });
+}
+
+/**
  * The parent waivers page and the admin waivers page both render an AI video
  * consent lane; unstubbed, their reads 502 and fail clean-console specs.
  */

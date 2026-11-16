@@ -13,6 +13,7 @@ import {
   PARENT_USER,
   fulfillJson,
   stubAcademy,
+  stubFamilySiblingDiscount,
   stubMe,
   stubMemberships,
   stubParentAcademy,
@@ -290,6 +291,7 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
   // this spec asserts an empty console, so the failure surfaces as two opaque
   // "Failed to load resource" lines rather than a missing mock.
   // `admin-students.spec.ts` already stubs the same pair for the same reason.
+  await stubFamilySiblingDiscount(page);
   await page.route("**/api/v2/admin/billing-enrollments*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { enrollments: [] });

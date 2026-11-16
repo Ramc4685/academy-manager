@@ -28,6 +28,10 @@ import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Overline } from "@/components/ds/typography";
 import { useIsOwner } from "@/components/admin/owner-context";
 import {
+  SiblingDiscountChip,
+  useFamilySiblingDiscount,
+} from "@/components/admin/sibling-discount";
+import {
   DepartureActions,
   type DepartureAction,
 } from "@/components/admin/enrollment/departure-actions";
@@ -91,6 +95,9 @@ function SessionsPanel({
   const timezone = useAcademyTimezone();
   const billingHref = familyBillingHref(parentId);
   const isOwner = useIsOwner();
+  const sibling = useFamilySiblingDiscount(parentId);
+  const siblingRow = (enrollmentId: string) =>
+    sibling?.enrollments.find((row) => row.enrollment_id === enrollmentId);
   // #865: one layout at a time, like every other admin list since #847.
   const isPhone = useIsPhone();
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
@@ -357,6 +364,7 @@ function SessionsPanel({
                           href={billingHref}
                           enrollmentId={session.enrollment_id}
                         />
+                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} />
                       </div>
                     </>
                   }
@@ -442,6 +450,7 @@ function SessionsPanel({
                           href={billingHref}
                           enrollmentId={session.enrollment_id}
                         />
+                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} />
                       </div>
                     </td>
                     <td className="py-3 align-top">

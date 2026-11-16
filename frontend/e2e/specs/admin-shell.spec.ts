@@ -11,6 +11,7 @@ import {
   stubCoachAcademy,
   stubCoachMessages,
   stubFamilyOffers,
+  stubFamilySiblingDiscount,
   stubNurtureSequence,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
@@ -400,6 +401,7 @@ async function stubAdminBff(
   });
   await stubNurtureSequence(page);
   await stubFamilyOffers(page);
+  await stubFamilySiblingDiscount(page);
   await page.route("**/api/v2/admin/sessions*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { sessions: [] });

@@ -267,6 +267,73 @@ export function fetchAdminFamilyBilling(parentId: string): Promise<AdminFamilyBi
   );
 }
 
+export type SiblingDiscountStatus = "discounted" | "full_price" | "not_eligible" | "off";
+
+export interface SiblingDiscountEnrollment {
+  enrollment_id: string;
+  student_id: string;
+  session_id: string;
+  status: SiblingDiscountStatus;
+  /** Why, e.g. `manual_discount_larger`, `only_one_child`, `already_invoiced`. */
+  reason: string;
+  percent_bps: number | null;
+}
+
+/** `GET /admin/families/{parentId}/sibling-discount`: read-only, changes no money. */
+export interface FamilySiblingDiscount {
+  period: string;
+  enabled: boolean;
+  percent_bps: number | null;
+  enrollments: SiblingDiscountEnrollment[];
+}
+
+const SIBLING_STATUSES: ReadonlySet<string> = new Set([
+  "discounted",
+  "full_price",
+  "not_eligible",
+  "off",
+]);
+
+/**
+ * The response, or `null` when it is not one (an e2e catch-all `{}`, another
+ * route's body). Rows missing their ids or status are dropped, never guessed.
+ */
+export function parseFamilySiblingDiscount(raw: unknown): FamilySiblingDiscount | null {
+  if (!raw || typeof raw !== "object") return null;
+  const body = raw as Record<string, unknown>;
+  if (typeof body.enabled !== "boolean" || !Array.isArray(body.enrollments)) return null;
+  const enrollments = body.enrollments.flatMap((row): SiblingDiscountEnrollment[] => {
+    if (!row || typeof row !== "object") return [];
+    const r = row as Record<string, unknown>;
+    if (typeof r.enrollment_id !== "string" || typeof r.status !== "string") return [];
+    if (!SIBLING_STATUSES.has(r.status)) return [];
+    return [
+      {
+        enrollment_id: r.enrollment_id,
+        student_id: typeof r.student_id === "string" ? r.student_id : "",
+        session_id: typeof r.session_id === "string" ? r.session_id : "",
+        status: r.status as SiblingDiscountStatus,
+        reason: typeof r.reason === "string" ? r.reason : "",
+        percent_bps: typeof r.percent_bps === "number" ? r.percent_bps : null,
+      },
+    ];
+  });
+  return {
+    period: typeof body.period === "string" ? body.period : "",
+    enabled: body.enabled,
+    percent_bps: typeof body.percent_bps === "number" ? body.percent_bps : null,
+    enrollments,
+  };
+}
+
+export async function fetchFamilySiblingDiscount(
+  parentId: string,
+): Promise<FamilySiblingDiscount | null> {
+  return parseFamilySiblingDiscount(
+    await apiFetch<unknown>(`/admin/families/${encodeURIComponent(parentId)}/sibling-discount`),
+  );
+}
+
 export interface PauseFamilyAutopayPayload {
   reason: string;
   request_id: string;

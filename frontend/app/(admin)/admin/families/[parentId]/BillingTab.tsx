@@ -4,6 +4,10 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useIsOwner } from "@/components/admin/owner-context";
+import {
+  siblingFamilySummary,
+  useFamilySiblingDiscount,
+} from "@/components/admin/sibling-discount";
 import { Button, Card, Skeleton } from "@/components/ds";
 import {
   addAdminInvoiceLine,
@@ -127,6 +131,7 @@ export function BillingTab({ parentId }: { parentId: string }) {
     queryFn: getInvoiceSchedule,
   });
   const dueDays = invoiceDueDays(schedule.data);
+  const sibling = useFamilySiblingDiscount(parentId);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.admin.familyBilling(parentId) });
@@ -140,6 +145,12 @@ export function BillingTab({ parentId }: { parentId: string }) {
   });
 
   const view = query.data;
+  const siblingSummary =
+    sibling &&
+    siblingFamilySummary(
+      sibling,
+      (id) => (view?.students ?? []).find((st) => st.student_id === id)?.name ?? "A child",
+    );
   const invoiceById = new Map((view?.invoices ?? []).map((inv) => [inv.invoice_id, inv]));
   const target = dialog?.invoiceId ? (invoiceById.get(dialog.invoiceId) ?? null) : null;
 
@@ -295,6 +306,11 @@ export function BillingTab({ parentId }: { parentId: string }) {
         }}
         onRecordPayment={() => openRecordPayment(null)}
       />
+      {siblingSummary && (
+        <p className="text-sm text-rally-muted" data-testid="admin-family-sibling-summary">
+          {siblingSummary}
+        </p>
+      )}
       <StudentsPanel
         students={view.students}
         isOwner={isOwner}

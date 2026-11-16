@@ -1,5 +1,8 @@
 """Admin BFF: ``/admin/billing/family-offers`` — Settings -> Billing rules -> Family offers.
 
+Also ``GET /admin/families/{parent_id}/sibling-discount``: the read-only badge
+showing who gets the sibling discount on the family's month.
+
 L9 C1. The read is admin persona; the write is **owner only** (listed in
 ``OWNER_ONLY_ROUTE_PATHS``) because the sibling discount changes what
 families are charged. The use cases are attached at
@@ -10,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.use_cases.billing_rules import (
@@ -81,6 +84,35 @@ class UpdateFamilyOffersRequest(BaseModel):
     reason: str | None = None
 
 
+SiblingPreviewStatus = Literal["discounted", "full_price", "not_eligible", "off"]
+SiblingPreviewReason = Literal[
+    "sibling_discount",
+    "full_price_child",
+    "manual_discount_larger",
+    "already_invoiced",
+    "not_billed_this_month",
+    "only_one_child",
+    "one_class_per_child",
+    "setting_off",
+]
+
+
+class SiblingDiscountEnrollmentView(BaseModel):
+    enrollment_id: str
+    student_id: str
+    session_id: str
+    status: SiblingPreviewStatus
+    reason: SiblingPreviewReason
+    percent_bps: int | None = None
+
+
+class FamilySiblingDiscountView(BaseModel):
+    period: str
+    enabled: bool
+    percent_bps: int | None = None
+    enrollments: list[SiblingDiscountEnrollmentView]
+
+
 class _Reader(Protocol):
     async def execute(self) -> Any: ...
 
@@ -89,9 +121,14 @@ class _Writer(Protocol):
     async def execute(self, academy_id: str, cmd: UpdateFamilyOffersCommand) -> Any: ...
 
 
+class _Previewer(Protocol):
+    async def execute(self, parent_id: str, period: str | None) -> dict[str, Any]: ...
+
+
 class AdminFamilyOffersLike(Protocol):
     read: _Reader
     write: _Writer
+    sibling_preview: _Previewer
 
 
 def get_admin_family_offers(request: Request) -> AdminFamilyOffersLike:
@@ -152,3 +189,20 @@ async def set_family_offers(
             detail={"field": exc.field, "message": exc.message},
         ) from exc
     return _response(view)
+
+
+@router.get(
+    "/families/{parent_id}/sibling-discount",
+    response_model=FamilySiblingDiscountView,
+    summary="Who gets the sibling discount on this family's month (read-only)",
+)
+async def get_family_sibling_discount(
+    parent_id: str,
+    period: str | None = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    claims: AuthClaims = Depends(require_persona("admin")),
+    offers: AdminFamilyOffersLike = Depends(get_admin_family_offers),
+) -> FamilySiblingDiscountView:
+    """The same decision the monthly invoice run makes, computed without writing."""
+    return FamilySiblingDiscountView.model_validate(
+        await offers.sibling_preview.execute(parent_id, period)
+    )
