@@ -60,6 +60,8 @@ MONEY_MOVING_ROUTES: tuple[tuple[str, str], ...] = (
     # Card charges (#928).
     ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/charge-autopay"),
     ("POST", f"{_ADMIN}/billing/setup/{{parent_id}}/charge"),
+    # Referral approval leads to an account credit (L9 C2).
+    ("POST", f"{_ADMIN}/billing/referrals/{{referral_id}}/approve"),
 )
 
 #: Billing-tier routes: billing staff record payments the family already

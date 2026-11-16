@@ -25,6 +25,7 @@ import type { PublicAcademyPage } from "@/lib/public-page/types";
 
 import { ClassRow } from "./ClassRow";
 import { PageFrame, SiteFooter, SiteHeader, type NavItem } from "./chrome";
+import { ReferralCapture } from "./ReferralCapture";
 import { ArrowIcon, CheckIcon, CourtDrawing, PinIcon, PlusIcon } from "./icons";
 import styles from "./public-page.module.css";
 import { TrialRequestForm } from "./TrialRequestForm";
@@ -105,6 +106,7 @@ export function PublicTenantPage({
         // JSON-LD is data, not script; serializeJsonLd escapes <, > and &.
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
+      <ReferralCapture />
       <SiteHeader brand={academy} nav={nav} action={view.primary} />
       <div className={`${styles.hero} ${styles.night}${theme.heroPhoto ? ` ${styles.heroPhoto}` : ""}`}>
         {theme.heroPhoto ? (

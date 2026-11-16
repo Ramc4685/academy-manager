@@ -54,6 +54,7 @@ function html(view: FamilyOffersView) {
 describe("FamilyOffersCard form", () => {
   it("starts unset values at the starting values, and the sibling percent blank", () => {
     expect(referralFormFrom(UNSET.referral_program)).toEqual({
+      enabled: false,
       referrerCreditDollars: "25",
       referredCreditDollars: "25",
       holdDays: "7",
@@ -71,6 +72,7 @@ describe("FamilyOffersCard form", () => {
 
   it("shows stored values over the starting values", () => {
     expect(referralFormFrom(STORED.referral_program)).toEqual({
+      enabled: false,
       referrerCreditDollars: "40",
       referredCreditDollars: "15.50",
       holdDays: "14",
@@ -111,6 +113,7 @@ describe("FamilyOffersCard form", () => {
       ),
     ).toEqual({
       referral_program: {
+        enabled: false,
         referrer_credit_cents: 2_500,
         referred_credit_cents: 2_500,
         hold_days: 0,
@@ -170,6 +173,20 @@ describe("FamilyOffersCard form", () => {
     ).toMatch(/at most 2 decimal places/);
     // Blank expiry means "never expires", so it may clear the stored value.
     expect(referralError({ ...referral, expiryDays: "" }, stored)).toBeNull();
+    // The new family's credit may be cleared (no credit for it).
+    expect(
+      referralError({ ...referral, referredCreditDollars: "" }, stored),
+    ).toBeNull();
+    // Switching on needs the referrer credit, the hold and the cap.
+    expect(
+      referralError(
+        { ...referral, enabled: true, referrerCreditDollars: "" },
+        UNSET.referral_program,
+      ),
+    ).toMatch(/to switch referrals on/);
+    expect(
+      referralError({ ...referral, enabled: true }, UNSET.referral_program),
+    ).toBeNull();
   });
 });
 
@@ -182,11 +199,11 @@ describe("FamilyOffersCard", () => {
     }
   });
 
-  it("renders both offers with the referral switch disabled and marked coming soon", () => {
+  it("renders both offers with the referral switch usable", () => {
     const out = html(STORED);
     expect(out).toContain("Sibling discount");
-    expect(out).toContain("Coming soon");
-    expect(out).toMatch(
+    expect(out).not.toContain("Coming soon");
+    expect(out).not.toMatch(
       /data-testid="family-offers-referral-enabled"[^>]*disabled|disabled[^>]*data-testid="family-offers-referral-enabled"/,
     );
     expect(out).toContain('value="12.5"');

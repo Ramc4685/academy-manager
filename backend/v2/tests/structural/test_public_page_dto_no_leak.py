@@ -69,6 +69,8 @@ BANNED_FIELD_FRAGMENTS = (
     "confirmed",
     "uploaded",
     "uploader",
+    # L9 C2: a family's referral code is theirs to share, never the page's.
+    "referral",
 )
 #: The deliberately allowed public identifiers (opaque digests) and the one
 #: intentionally public contact field: a support email only, never a phone
@@ -351,6 +353,8 @@ ALLOWED_TRIAL_FORM_FIELDS = {
     "utm_source",
     "utm_medium",
     "utm_campaign",
+    # L9 C2: the ``?ref=`` code from a shared link (attribution only).
+    "referral_code",
 }
 
 
@@ -409,6 +413,40 @@ def test_render_settings_reach_the_public_page_as_two_plain_fields() -> None:
     assert "PublicAcademyPageDto.page.seats_left_threshold" in paths
     # Contact on the page is the support email only (owner decision 10).
     assert not [p for p in paths if "phone" in p.lower()]
+
+
+def test_referral_codes_never_reach_a_public_response() -> None:
+    """L9 C2: a parent's code is accepted from the public form as attribution
+    but never echoed, and no stored code appears on the page."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-referral-leak"]
+    asyncio.run(seed(db))
+    stored_code = "QZ7KX4MP"
+    asyncio.run(
+        db["referral_codes"].insert_one(
+            {"academy_id": ACADEMY, "parent_id": "p-referrer", "referral_code": stored_code}
+        )
+    )
+    client = TestClient(build_app(db))
+    page = client.get("/api/v2/public/academy", headers={"host": RIVERSIDE_HOST})
+    assert page.status_code == 200
+    assert stored_code not in page.text and "p-referrer" not in page.text
+    submitted = client.post(
+        "/api/v2/public/trial-requests",
+        json={
+            "name": "Casey Example",
+            "email": "casey.referred@example.test",
+            "phone": "5550100200",
+            "player_age": "8",
+            "contact_about_request": True,
+            "referral_code": stored_code,
+        },
+        headers={"host": RIVERSIDE_HOST},
+    )
+    assert submitted.status_code == 200
+    assert stored_code not in submitted.text
+    contact = asyncio.run(db["crm_contacts"].find_one({"email": "casey.referred@example.test"}))
+    assert contact is not None and contact["attribution"]["referral_code"] == stored_code
 
 
 # --- L5B: the parent-shared certificate page ----------------------------------------

@@ -136,6 +136,9 @@ def _ids(academy: str) -> dict[str, str]:
         # Scheduled plan price changes (PR 26) are unseeded: cancelling B's
         # id from A must still find nothing.
         "change_id": f"{academy}-price-change-1",
+        # An inquiry-only referral awaiting the owner's review (L9 C2), with
+        # the programme on, so approving B's id from A reaches the CAS.
+        "referral_id": f"{academy}-referral-1",
     }
 
 
@@ -547,6 +550,34 @@ def _seed_docs(academy: str) -> dict[str, list[dict[str, Any]]]:
                 "outcome": None,
                 "outcome_by": None,
                 "outcome_at": None,
+            }
+        ],
+        "referrals": [
+            {
+                "referral_id": ids["referral_id"],
+                "academy_id": academy,
+                "referral_code": "QZ7KX4MP",
+                "referrer_parent_id": ids["parent_id"],
+                "referred_parent_id": f"{academy}-referred-parent",
+                "source": "contact",
+                "source_id": ids["contact_id"],
+                "attributed_at": NOW,
+                "status": "needs_review",
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+        ],
+        "billing_settings": [
+            {
+                "academy_id": academy,
+                "referral_program": {
+                    "enabled": True,
+                    "referrer_credit_cents": 2_500,
+                    "hold_days": 7,
+                    "max_rewards_per_referrer_per_year": 10,
+                    "trigger": "first_paid_invoice",
+                    "effective_from": NOW,
+                },
             }
         ],
         # Same shape as MongoCrmContactRepository._to_doc (no dedupe_key).

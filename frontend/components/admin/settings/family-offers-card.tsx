@@ -45,6 +45,7 @@ export interface SiblingForm {
 }
 
 export interface ReferralForm {
+  enabled: boolean;
   referrerCreditDollars: string;
   referredCreditDollars: string;
   holdDays: string;
@@ -69,6 +70,7 @@ export function siblingFormFrom(view: Sibling): SiblingForm {
 
 export function referralFormFrom(view: Referral): ReferralForm {
   return {
+    enabled: view.enabled,
     referrerCreditDollars: dollars(
       view.referrer_credit_cents,
       STARTING_VALUES.referrerCreditDollars,
@@ -120,6 +122,7 @@ export function familyOffersPayload(
     JSON.stringify(referralFormFrom(view.referral_program))
   ) {
     payload.referral_program = {
+      enabled: referral.enabled,
       referrer_credit_cents: toCents(referral.referrerCreditDollars),
       referred_credit_cents: toCents(referral.referredCreditDollars),
       hold_days: toNumber(referral.holdDays),
@@ -195,6 +198,14 @@ export function referralError(
   form: ReferralForm,
   stored: Referral,
 ): string | null {
+  if (form.enabled) {
+    const missing = [
+      [form.referrerCreditDollars, "the credit for the referring family"],
+      [form.holdDays, "the days to hold the credit"],
+      [form.maxRewards, "the most rewards per family per year"],
+    ].find(([text]) => text.trim() === "");
+    if (missing) return `Enter ${missing[1]} to switch referrals on.`;
+  }
   return (
     numberError(
       "the credit for the referring family",
@@ -206,7 +217,7 @@ export function referralError(
       "the credit for the new family",
       form.referredCreditDollars,
       stored.referred_credit_cents,
-      { min: 0.01, max: 500, maxDecimals: 2 },
+      { min: 0.01, max: 500, maxDecimals: 2, blankMeansNone: true },
     ) ??
     numberError("the days to hold the credit", form.holdDays, stored.hold_days, {
       min: 0,
@@ -250,8 +261,9 @@ const SELECT =
 /**
  * Settings -> Billing rules -> Family offers (L9 C1). Owner only, like the
  * panel it sits in; the save is audited server side and applies to invoices
- * generated afterwards only. The referral programme stores its values now and
- * can be switched on once its logic ships (C2).
+ * generated afterwards only. Referrals (L9 C2) count families referred after
+ * the programme is switched on; each keeps the credit and hold it was
+ * recorded with.
  */
 export function FamilyOffersCard() {
   const queryClient = useQueryClient();
@@ -420,21 +432,22 @@ export function FamilyOffersCard() {
             data-testid="family-offers-referral"
           >
             <legend className="text-sm font-semibold text-rally-ink">
-              Referral programme{" "}
-              <span className="ml-1 rounded bg-rally-paper px-1.5 py-0.5 text-xs font-medium text-rally-muted">
-                Coming soon
-              </span>
+              Referral programme
             </legend>
             <p className="text-xs text-rally-muted">
-              Both families get an account credit once the referred family pays.
-              You can set the values now; switching the programme on arrives in
-              a later update.
+              Each family gets a link to share. When a family they referred pays
+              its first invoice and the hold has passed, the referring family
+              (and the new family, if you set a credit for it) gets an account
+              credit. Only families referred after you switch this on count;
+              no email goes out about it yet.
             </p>
-            <label className="flex items-center gap-2 text-sm text-rally-muted">
+            <label className="flex items-center gap-2 text-sm text-rally-ink">
               <input
                 type="checkbox"
-                checked={view?.referral_program.enabled ?? false}
-                disabled
+                checked={referral.enabled}
+                onChange={(event) =>
+                  editReferral({ enabled: event.target.checked })
+                }
                 data-testid="family-offers-referral-enabled"
               />
               Use the referral programme
@@ -450,7 +463,7 @@ export function FamilyOffersCard() {
                 step="0.01"
               />
               <NumberField
-                label="Credit for the new family ($)"
+                label="Credit for the new family ($; blank = none)"
                 value={referral.referredCreditDollars}
                 onChange={(value) =>
                   editReferral({ referredCreditDollars: value })

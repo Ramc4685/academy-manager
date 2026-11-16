@@ -10,6 +10,8 @@ export interface ParentProfile {
   last_name: string;
   email?: string | null;
   phone: string;
+  /** A referral code carried from the academy page (L9 C2). */
+  referral_code?: string;
 }
 
 export interface ChildProfile {
@@ -979,4 +981,11 @@ export function updateParentChild(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+/** The parent's referral code and rewards (L9 C2); ``enabled: false`` while the academy has it off. */
+export type ParentReferral = components["schemas"]["ParentReferralResponse"];
+
+export function getParentReferral(): Promise<ParentReferral> {
+  return apiFetch<ParentReferral>("/parent/referral", { method: "GET" });
 }

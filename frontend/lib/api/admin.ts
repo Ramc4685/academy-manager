@@ -2332,6 +2332,29 @@ export function updateFamilyOffers(payload: UpdateFamilyOffersPayload): Promise<
   });
 }
 
+/** Settings -> Billing rules -> Referrals (L9 C2): the list and the unsent email copy. */
+export type ReferralListView = components["schemas"]["ReferralListResponse"];
+export type ReferralRow = components["schemas"]["ReferralRowView"];
+export type ReferralEmailPreview = components["schemas"]["ReferralEmailPreviewResponse"];
+
+export function getReferrals(): Promise<ReferralListView> {
+  return apiFetch<ReferralListView>("/admin/billing/referrals", { method: "GET" });
+}
+
+/** Owner only: approve a referral whose code came only from the website inquiry. */
+export function approveReferral(referralId: string): Promise<ReferralRow> {
+  return apiFetch<ReferralRow>(
+    `/admin/billing/referrals/${encodeURIComponent(referralId)}/approve`,
+    { method: "POST" },
+  );
+}
+
+export function getReferralEmailPreview(): Promise<ReferralEmailPreview> {
+  return apiFetch<ReferralEmailPreview>("/admin/billing/referrals/email-preview", {
+    method: "GET",
+  });
+}
+
 /**
  * The CourtMastr processing markup this academy pays on Stripe-collected
  * payments, with the agreement text and its acceptance (Phase 2 A1).

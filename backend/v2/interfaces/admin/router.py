@@ -48,6 +48,7 @@ from .pricing_routes import router as pricing_router
 from .progress_routes import router as progress_router
 from .progress_settings_routes import router as progress_settings_router
 from .public_page_routes import router as public_page_router
+from .referral_routes import router as referral_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
 from .self_service_policy_routes import router as self_service_policy_router
@@ -89,6 +90,7 @@ router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
 router.include_router(billing_rules_router)
 router.include_router(family_offers_router)
+router.include_router(referral_router)
 router.include_router(payment_methods_router)
 router.include_router(platform_fee_router)
 router.include_router(pricing_router)

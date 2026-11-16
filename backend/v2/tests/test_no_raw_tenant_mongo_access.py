@@ -142,6 +142,9 @@ TENANT_OWNED_COLLECTIONS = {
     # FCM device tokens (migration 0215, mobile M2). Token is unique across
     # academies; register re-stamps academy_id from the request scope.
     "push_devices",
+    # Referral programme (migration 0238, L9 C2): codes and referrals.
+    "referral_codes",
+    "referrals",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

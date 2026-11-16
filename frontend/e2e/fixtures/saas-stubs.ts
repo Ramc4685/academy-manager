@@ -139,6 +139,18 @@ export async function stubParentProfile(
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, body);
   });
+  await stubParentReferral(page);
+}
+
+/** The profile page's referral card (L9 C2); off unless a spec says otherwise. */
+export async function stubParentReferral(
+  page: Page,
+  body: Record<string, unknown> = { enabled: false, referral_code: null, rewards_earned: 0 }
+): Promise<void> {
+  await page.route("**/api/v2/parent/referral", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, body);
+  });
 }
 
 /**
@@ -166,8 +178,9 @@ export async function stubNurtureSequence(page: Page): Promise<void> {
 }
 
 /**
- * Settings > Billing rules renders the Family offers card; a catch-all `{}`
- * for its read leaves it without `sibling_discount` / `referral_program`.
+ * Settings > Billing rules renders the Family offers and Referrals cards; a
+ * catch-all `{}` for the offers read leaves it without `sibling_discount` /
+ * `referral_program`.
  */
 export async function stubFamilyOffers(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/billing/family-offers", (route) => {
@@ -176,6 +189,15 @@ export async function stubFamilyOffers(page: Page): Promise<void> {
       sibling_discount: { enabled: false },
       referral_program: { enabled: false },
     });
+  });
+  // The Referrals card under it (L9 C2).
+  await page.route("**/api/v2/admin/billing/referrals", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { referrals: [] });
+  });
+  await page.route("**/api/v2/admin/billing/referrals/email-preview", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { emails: [] });
   });
 }
 
