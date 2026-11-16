@@ -866,17 +866,16 @@ async def test_a_partial_generation_needs_a_retry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_invoice_emails_need_a_retry() -> None:
+async def test_a_crashed_email_pass_needs_a_retry_but_single_failed_emails_do_not() -> None:
+    # A failed email is already recorded as delivery_failed and re-sent by the next
+    # run's send pass; retrying for it hourly could re-send an autopay notice.
     async def _some_failed(period: str) -> dict[str, int]:
         return {"emailed": 1, "email_failed": 2}
 
     async def _send_down(period: str) -> dict[str, int]:
         raise RuntimeError("resend is down")
 
-    assert (
-        _monthly_generation_retry_reason(await _one_run(_ok, _some_failed))
-        == "invoice_emails_failed=2"
-    )
+    assert _monthly_generation_retry_reason(await _one_run(_ok, _some_failed)) is None
     assert (
         _monthly_generation_retry_reason(await _one_run(_ok, _send_down))
         == "invoice_email_pass_failed=1"

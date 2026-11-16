@@ -1,9 +1,11 @@
 """A failed monthly invoice run retries without duplicating anything (G:jobs_data_infra:2).
 
 The job now fails the academy's local-day marker when generation failed, was
-partial, or emails failed, so the scheduler re-runs it on the next hourly tick.
-That is only safe if a re-run neither mints a second invoice nor re-emails a
-parent who already got one: proven here on a real mongod with the production
+partial, or the email pass itself raised, so the scheduler re-runs it on the next
+hourly tick. A single failed email does not: SendInvoice records delivery_failed
+and returns, and the next run's send pass picks that invoice up again. Both are
+only safe if a re-run neither mints a second invoice nor re-emails a parent who
+already got one: proven here on a real mongod with the production
 indexes, the real generation path and the real undelivered-invoice query.
 """
 
@@ -54,14 +56,15 @@ async def test_retried_runs_create_one_invoice_and_send_one_email(real_db, acad)
         return await repo.generate_monthly_payments(period)
 
     async def _send_one(invoice_id: str) -> None:
+        # Mirrors SendInvoice: an email error is recorded, never raised.
         send_calls.append(invoice_id)
-        if len(send_calls) == 1:
-            raise RuntimeError("resend is down")
-        # What SendInvoice records on a successful send.
+        outcome = "delivery_failed" if len(send_calls) == 1 else "sent"
         await real_db["invoices"].update_one(
-            {"academy_id": acad, "invoice_id": invoice_id}, {"$set": {"delivery_status": "sent"}}
+            {"academy_id": acad, "invoice_id": invoice_id},
+            {"$set": {"delivery_status": outcome}},
         )
-        delivered.append(invoice_id)
+        if outcome == "sent":
+            delivered.append(invoice_id)
 
     async def _send_invoices(period: str):
         return await SendGeneratedInvoices(ledger=ledger, send=_send_one).execute(period)
@@ -81,7 +84,7 @@ async def test_retried_runs_create_one_invoice_and_send_one_email(real_db, acad)
         return _monthly_generation_retry_reason(totals)
 
     assert await _tick(3) == "generation_failed=1"
-    assert await _tick(4) == "invoice_emails_failed=1"
+    assert await _tick(4) is None  # the email failed, recorded as delivery_failed
     assert await _tick(5) is None
     assert await _tick(6) is None
 

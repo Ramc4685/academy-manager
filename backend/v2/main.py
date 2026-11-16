@@ -2630,9 +2630,10 @@ async def _run_monthly_invoice_generation(
     exact-day match meant a single failed 03:00 run (Mongo blip, lease
     handover, crash) silently skipped the whole month, recoverable only by an
     admin. Now a later run retries until one completes: the next hourly tick
-    the same day (the job wrapper fails the academy's local-day marker on any
-    failure counted here, see ``_monthly_generation_retry_reason``), else the
-    next day.
+    the same day (the job wrapper fails the academy's local-day marker when
+    generation failed, was partial or the email pass raised, see
+    ``_monthly_generation_retry_reason``), else the next day. A single failed
+    email is left at delivery_failed for the next day's send pass.
 
     Two periods are considered each tick: the current one, and the immediately
     prior one when it is unrecorded *and* the academy has generation history
@@ -2854,7 +2855,9 @@ def _monthly_generation_retry_reason(totals: dict[str, int]) -> str | None:
         for key in (
             "generation_failed",
             "partial_run_count",
-            "invoice_emails_failed",
+            # Not invoice_emails_failed: SendInvoice records those as delivery_failed
+            # and the next run's send pass re-sends them; an hourly retry could
+            # re-send an autopay notice whose save hit a version conflict.
             "invoice_email_pass_failed",
         )
         if totals.get(key, 0)

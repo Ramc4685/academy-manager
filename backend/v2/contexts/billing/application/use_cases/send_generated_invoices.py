@@ -14,7 +14,7 @@ Design notes:
   re-email anyone who already received their invoice.
 * **Failures retry on the next tick for free.** A send that fails leaves the
   invoice at ``delivery_failed``, which the same query still selects on the
-  next run (the scheduler retries a failed run hourly, then daily).
+  next run (the next day's run; only a crashed pass retries hourly).
 * **Autopay enrollments get a pre-charge notice, not a pay link.** Their
   invoice gets charged by the dunning/autopay worker; emailing "here is your
   bill, pay here" alongside an automatic charge invites a double payment.
