@@ -2914,7 +2914,7 @@ class HandleWebhookEvent:
 
     async def _academy_today(self, academy_id: str) -> date:
         """Today on the academy's wall clock (UTC when no zone is known)."""
-        now = self._now()
+        now: datetime = self._now()
         if self._academy_timezone is None:
             return now.date()
         zone = await resolve_reporting_timezone(self._academy_timezone, academy_id)
