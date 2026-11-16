@@ -1,6 +1,6 @@
 # family-combined-billing
 
-PR: TBD
+PR: #1184
 
 ## What changed
 A family with several children on autopay is now charged once, not once per child. When the dunning worker claims one family's rung, it also claims that parent's other rungs due at the same time and charges their total as one PaymentIntent. The parent gets one payment, one receipt naming every child, and, if the charge fails, one notice for the summed balance. A single due invoice, or an off-cycle invoice, is charged on its own exactly as before.
