@@ -520,6 +520,15 @@ def test_coach_engagement_stats_repo_ignores_not_started_placement_rows() -> Non
     )
 
 
+class _PlacementAudit:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def record_placed(self, **row: object) -> bool:
+        self.rows.append(row)
+        return True
+
+
 class _FakeCertificateAudit:
     """Mirrors MongoCertificateAuditLog: one row per certificate, True only when new."""
 
@@ -570,6 +579,7 @@ def env():
     rec_repo = _FakeRecommendationRepo()
     cert_repo = _FakeCertificateRepo()
     cert_audit = _FakeCertificateAudit()
+    placement_audit = _PlacementAudit()
     enrollment_lookup = _FakeEnrollmentLookup()
 
     student_progress = SimpleNamespace(
@@ -579,6 +589,7 @@ def env():
             skill_lookup=skill_lookup,
             recommendations=rec_repo,
             enrollment_lookup=enrollment_lookup,
+            audit=placement_audit,
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_repo,
@@ -685,6 +696,7 @@ def env():
         rec_repo=rec_repo,
         cert_repo=cert_repo,
         cert_audit=cert_audit,
+        placement_audit=placement_audit,
         enrollment_lookup=enrollment_lookup,
         program_id=program.program_id,
         level1=level1,
@@ -1314,20 +1326,8 @@ def test_pathway_dashboard_route_is_not_found_for_coach() -> None:
     assert client.get("/api/v2/admin/pathway/dashboard").status_code == 404
 
 
-class _AuditSink:
-    def __init__(self) -> None:
-        self.rows: list[dict] = []
-
-    def __getitem__(self, _name: str) -> _AuditSink:
-        return self
-
-    async def insert_one(self, doc: dict) -> None:
-        self.rows.append(doc)
-
-
 def test_bulk_placement_places_credits_and_audits_each_student(env):
-    sink = _AuditSink()
-    env.client.app.state.db = sink
+    sink = env.placement_audit
     credited = env.level1_skills[0].skill_id
 
     response = env.client.post(
@@ -1346,8 +1346,8 @@ def test_bulk_placement_places_credits_and_audits_each_student(env):
         ("st-bulk-1", "placed"),
         ("st-bulk-2", "placed"),
     ]
-    assert [row["entity_id"] for row in sink.rows] == ["st-bulk-1", "st-bulk-2"]
-    assert sink.rows[0]["after"]["credited_skill_ids"] == [credited]
+    assert [row["student_id"] for row in sink.rows] == ["st-bulk-1", "st-bulk-2"]
+    assert sink.rows[0]["credited_skill_ids"] == [credited]
 
 
 def test_bulk_placement_refuses_a_credit_from_another_level_per_student(env):

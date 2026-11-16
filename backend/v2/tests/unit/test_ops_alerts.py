@@ -222,6 +222,32 @@ async def test_dispatcher_loop_survives_a_raising_sentry(
     assert calls["n"] >= 3
 
 
+@pytest.mark.asyncio
+async def test_dispatcher_loop_failure_log_obeys_the_throttle(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A 1s loop failing 12 times logs the traceback twice (1st, 10th), not 12."""
+    from backend.v2.shared.events import dispatcher as dispatcher_module
+
+    monkeypatch.setattr(dispatcher_module, "capture_exception", lambda exc=None: None)
+    disp = dispatcher_module.EventDispatcher(object(), poll_interval_seconds=0)  # type: ignore[arg-type]
+    calls = {"n": 0}
+
+    async def _claim() -> None:
+        calls["n"] += 1
+        if calls["n"] >= 12:
+            disp._stop.set()
+        raise RuntimeError("mongo is down")
+
+    monkeypatch.setattr(disp, "_claim_next_event", _claim)
+
+    with caplog.at_level(logging.WARNING, logger=dispatcher_module.log.name):
+        await disp._run_loop()
+
+    failures = [r for r in caplog.records if "loop iteration failed" in r.getMessage()]
+    assert len(failures) == 2
+
+
 # --- digest -----------------------------------------------------------------
 
 
@@ -1049,3 +1075,25 @@ def test_sentry_cron_jobs_setting_parses_a_comma_separated_list(
 
     monkeypatch.setenv("V2_SENTRY_CRON_JOBS", "")
     assert Settings().sentry_cron_jobs == ()
+
+
+def test_scheduler_job_errors_reach_sentry_once_not_twice() -> None:
+    """Sentry's logging integration already turns ``log.exception`` into an event,
+    so a handler that also calls ``capture_exception`` reports the error twice
+    (the coach and parent digest jobs did)."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[2] / "main.py"
+    doubled = []
+    for handler in ast.walk(ast.parse(source.read_text())):
+        if not isinstance(handler, ast.ExceptHandler):
+            continue
+        called = {
+            node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            for node in ast.walk(handler)
+            if isinstance(node, ast.Call)
+        }
+        if {"exception", "capture_exception"} <= called:
+            doubled.append(handler.lineno)
+    assert doubled == []

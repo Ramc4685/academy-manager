@@ -412,17 +412,17 @@ async def test_the_decision_is_frozen_across_orphan_recovery_after_a_sibling_dro
 
 
 async def test_the_family_charge_key_is_unchanged_across_a_retry(real_db, acad) -> None:
-    """The family autopay key is a digest of the member invoice ids plus the summed
-    balance (``charge_invoice_via_autopay``); a re-run after the family or the
-    setting changed must not move either."""
+    """The family autopay key is a digest of the member invoice ids
+    (``charge_invoice_via_autopay``), and the summed balance is what it charges;
+    a re-run after the family or the setting changed must not move either."""
     await _family(real_db, acad)
     await _offer(real_db)
 
-    async def _key() -> str:
+    async def _key() -> tuple[str, int]:
         members = [await _invoice(real_db, acad, eid) for eid in ("enr-a", "enr-b")]
         rungs = "|".join(sorted(f"{m['invoice_id']}:" for m in members))
         digest = hashlib.sha256(rungs.encode()).hexdigest()[:32]
-        return f"autopay-family:{digest}:{sum(m['balance_due_cents'] for m in members)}"
+        return f"autopay-family:{digest}", sum(m["balance_due_cents"] for m in members)
 
     await _repo(real_db).generate_monthly_payments(PERIOD)
     first = await _key()
@@ -433,7 +433,7 @@ async def test_the_family_charge_key_is_unchanged_across_a_retry(real_db, acad) 
     await _repo(real_db).generate_monthly_payments(PERIOD)
 
     assert await _key() == first
-    assert first.endswith(":19200")
+    assert first[1] == 19_200
 
 
 async def test_a_concurrent_decision_is_reread_not_duplicated(real_db, acad) -> None:

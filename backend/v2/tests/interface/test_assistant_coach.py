@@ -25,6 +25,7 @@ from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.shared.http.persona import is_assistant_only, is_coach_supervisor
 from backend.v2.shared.tenancy.context import set_academy_id
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 from backend.v2.tests.interface.conftest import (
     _assistant_coach_claims,
     _build_use_cases,
@@ -321,7 +322,7 @@ class _FakeOutbox:
         pass
 
 
-class _FakeIdempotencyStore:
+class _FakeIdempotencyStore(ClaimableStore):
     async def get(self, key: str):
         return None
 

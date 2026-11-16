@@ -1,3 +1,3 @@
-from .decorator import IdempotencyStore, idempotent
+from .decorator import IdempotencyStore, IdempotentRequestInFlight, idempotent
 
-__all__ = ["IdempotencyStore", "idempotent"]
+__all__ = ["IdempotencyStore", "IdempotentRequestInFlight", "idempotent"]

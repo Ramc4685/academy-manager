@@ -145,6 +145,9 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_repo 
 from backend.v2.contexts.student_progress.infrastructure.mongo_level_progress_repo import (
     MongoStudentLevelProgressRepository as MongoLevelProgressRepository,
 )
+from backend.v2.contexts.student_progress.infrastructure.mongo_placement_audit import (
+    MongoPlacementAuditLog,
+)
 from backend.v2.contexts.student_progress.infrastructure.mongo_recommendation_repo import (
     MongoLevelUpRecommendationRepository as MongoRecommendationRepository,
 )
@@ -409,6 +412,7 @@ def compose_student_progress(
             recommendations=recommendation_repo,
             enrollment_lookup=enrollment_lookup,
             outbox=outbox,
+            audit=MongoPlacementAuditLog(db),
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_progress_repo,

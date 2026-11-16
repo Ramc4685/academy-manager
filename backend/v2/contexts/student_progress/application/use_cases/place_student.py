@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from backend.v2.contexts.student_progress.application.ports import (
     EnrollmentStatusLookup,
     LevelUpRecommendationRepository,
+    PlacementAuditLog,
     SkillLookup,
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
@@ -104,7 +105,9 @@ class PlaceStudentInLevel:
         recommendations: LevelUpRecommendationRepository,
         enrollment_lookup: EnrollmentStatusLookup,
         outbox: Outbox | None = None,
+        audit: PlacementAuditLog | None = None,
     ) -> None:
+        self._audit = audit
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._skill_lookup = skill_lookup
@@ -154,6 +157,7 @@ class PlaceStudentInLevel:
                 now=now,
             )
             await self._credit(cmd, now)
+            await self._record_audit(cmd, active.progress_id)
             return active
         if active is not None:
             await self._withdraw_pending_level_up(cmd, now)
@@ -201,7 +205,22 @@ class PlaceStudentInLevel:
                 )
             )
 
+        # Last, so the row only exists for a placement that happened; a retry
+        # after a failed write lands on the same row (deterministic id).
+        await self._record_audit(cmd, progress.progress_id)
         return progress
+
+    async def _record_audit(self, cmd: PlaceStudentInLevelCommand, progress_id: str) -> None:
+        if self._audit is not None:
+            await self._audit.record_placed(
+                student_id=cmd.student_id,
+                program_id=cmd.program_id,
+                level_id=cmd.level_id,
+                progress_id=progress_id,
+                placed_by=cmd.placed_by,
+                reason=cmd.reason,
+                credited_skill_ids=list(cmd.credited_skill_ids),
+            )
 
     async def _withdraw_pending_level_up(
         self, cmd: PlaceStudentInLevelCommand, now: datetime

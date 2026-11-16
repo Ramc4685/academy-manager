@@ -170,6 +170,30 @@ describe("syncNow", () => {
     }
   });
 
+  it("retries a 409 request_in_flight instead of parking it in the tray", async () => {
+    vi.useFakeTimers();
+    try {
+      await queueMark({ ...base, student_id: "st1", status: "present" });
+      apiFetch
+        .mockRejectedValueOnce(
+          Object.assign(new Error("this request is already being processed"), {
+            status: 409,
+            code: "request_in_flight",
+          }),
+        )
+        .mockResolvedValueOnce({});
+
+      const run = syncNow();
+      await vi.runAllTimersAsync();
+      await run;
+
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+      expect(store.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("still trays a real domain rejection", async () => {
     await queueMark({ ...base, student_id: "st1", status: "present" });
     apiFetch.mockRejectedValue(

@@ -80,6 +80,7 @@ from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 # --- in-memory fakes ---
 
@@ -336,7 +337,7 @@ class FakeOutbox:
         self.appended.append(event)
 
 
-class FakeIdempotencyStore:
+class FakeIdempotencyStore(ClaimableStore):
     def __init__(self) -> None:
         self.data: dict = {}
 
@@ -1126,7 +1127,7 @@ class _AdminFakeOutbox:
 
 
 @dataclass
-class _AdminFakeIdempotencyStore:
+class _AdminFakeIdempotencyStore(ClaimableStore):
     data: dict[str, Any] = field(default_factory=dict)
 
     async def get(self, key):
