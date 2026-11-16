@@ -143,6 +143,11 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
     query: [["child", "LOCAL_AUTH_PARENT_CERT_STUDENT_ID"]],
     expectTestId: "level-certificate",
   },
+  // A link a parent shared (L5B); a revoked or unknown token is the 404 page.
+  "/c/[token]": {
+    replacements: [["[token]", "LOCAL_AUTH_CERT_SHARE_TOKEN"]],
+    expectTestId: "shared-certificate",
+  },
   "/coach/sessions/[id]": {
     replacements: [["[id]", "LOCAL_AUTH_COACH_SESSION_ID"]],
     requiresCoachSessionDate: true,
@@ -315,6 +320,7 @@ function withSeededCoachDate(route: string, href: string): DynamicRouteResolutio
 }
 
 async function signInForRole(page: Page, role: ManifestRole) {
+  if (role === "public") return;
   if (role === "admin") {
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD, /\/admin/);
     return;

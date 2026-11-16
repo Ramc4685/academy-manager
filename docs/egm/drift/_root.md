@@ -1,3 +1,4 @@
 ## README.md
 
-- [wording] README line 173 (`scripts/        Smoke tests, importers, ops utilities`) lists "importers", but `scripts/` has no data importer. It holds smoke, CI, ops, prod-repair, seed, backfill and audit scripts, for example `scripts/dev/seed_badminton_pathway.py:1` and `scripts/dev/backfill_student_pathway_placements.py:1`. The sales claim at README line 134 ("data import from your existing spreadsheets and CRM") likewise has no importer in the tree.
+- [wording] README lines 83-84 ("`academy-next` Cloudflare Worker owns `academy.courtmastr.com/*` directly through a Worker Route") list one route. `frontend/wrangler.jsonc:18-26` declares two routes, the second being the wildcard `*.courtmastr.com/*`, which the README does not mention.
+- [wording] README lines 121-123 ("production email requires `APP_ENV=production`, a verified Resend sender, and an explicit enable flag"). `backend/v2/contexts/communications/infrastructure/resend_send_port.py:14` also enables the real sender when `APP_ENV=staging`. The flag is named `EMAIL_DELIVERY_ENABLED` (`stub_send_port.py:6`) and the README does not name it.

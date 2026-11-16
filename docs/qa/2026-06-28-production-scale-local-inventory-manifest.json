@@ -104,6 +104,46 @@
       ]
     },
     {
+      "route": "/c/[token]",
+      "role": "public",
+      "source": "frontend/app/c/[token]/page.tsx",
+      "workflows": [
+        "Open a shared certificate link",
+        "Revoked or unknown link"
+      ],
+      "controls": {
+        "buttons": [
+          "Try again"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "default",
+        "mobile",
+        "shared certificate shown",
+        "revoked, unshared or unknown link not found (404)",
+        "backend unavailable",
+        "always noindex"
+      ],
+      "risk_edges": [
+        "Certificate shown on another academy's host",
+        "Surname, parent contact or internal ids on the public page",
+        "Revoked link still shows the certificate",
+        "Token walking without a rate limit"
+      ],
+      "acceptance": [
+        "A link a parent shared renders the certificate on that academy's host with first name or initial, level, certificate number and issue date only",
+        "A revoked, unshared or unknown token, or a token opened on another academy's host, gets the same 404",
+        "Workflow evidence: \"Open a shared certificate link\" completes for the public route /c/[token] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Revoked or unknown link\" completes for the public route /c/[token] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Certificate shown on another academy's host\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Surname, parent contact or internal ids on the public page\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Revoked link still shows the certificate\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Token walking without a rate limit\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/admin",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/page.tsx",

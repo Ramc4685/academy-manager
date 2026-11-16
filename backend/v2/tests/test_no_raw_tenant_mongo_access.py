@@ -93,6 +93,8 @@ TENANT_OWNED_COLLECTIONS = {
     "test_attempts",
     "level_up_recommendations",
     "skill_certificates",
+    # L5B milestone records, one per student per milestone (migration 0241)
+    "student_milestones",
     "coach_skill_notes",
     # curriculum (migration 0124) — added by #881
     "lesson_cards",

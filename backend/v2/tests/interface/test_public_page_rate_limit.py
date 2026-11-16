@@ -48,3 +48,37 @@ def test_limit_is_keyed_to_the_get_read_only() -> None:
     headers = {"fly-client-ip": "203.0.113.9"}
     for _ in range(130):
         assert client.post(URL, headers=headers).status_code == 200
+
+
+# --- L5B: the certificate share page shares ONE budget across every token ------
+
+CERT_PREFIX = "/api/v2/public/certificates/"
+
+
+def _cert_app(clock: list[float]) -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(InMemoryRateLimitMiddleware, clock=lambda: clock[0])
+
+    @app.get(CERT_PREFIX + "{token}")
+    async def _cert(token: str) -> dict[str, str]:
+        return {"ok": token}
+
+    return app
+
+
+def test_certificate_share_reads_share_one_bucket_across_tokens() -> None:
+    clock = [1000.0]
+    client = TestClient(_cert_app(clock))
+    headers = {"fly-client-ip": "203.0.113.20"}
+    # A client walking tokens: a different token every request, one budget.
+    for n in range(60):
+        assert client.get(f"{CERT_PREFIX}tok{n:020d}", headers=headers).status_code == 200
+    blocked = client.get(f"{CERT_PREFIX}tok-fresh-0000000000000", headers=headers)
+    assert blocked.status_code == 429
+    assert int(blocked.headers["Retry-After"]) >= 1
+    assert (
+        client.get(f"{CERT_PREFIX}tok0", headers={"fly-client-ip": "203.0.113.21"}).status_code
+        == 200
+    )
+    clock[0] += 61
+    assert client.get(f"{CERT_PREFIX}tok0", headers=headers).status_code == 200

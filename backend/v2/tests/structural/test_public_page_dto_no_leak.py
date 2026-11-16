@@ -409,3 +409,67 @@ def test_render_settings_reach_the_public_page_as_two_plain_fields() -> None:
     assert "PublicAcademyPageDto.page.seats_left_threshold" in paths
     # Contact on the page is the support email only (owner decision 10).
     assert not [p for p in paths if "phone" in p.lower()]
+
+
+# --- L5B: the parent-shared certificate page ----------------------------------------
+
+
+def test_certificate_share_dto_is_the_minimum() -> None:
+    from backend.v2.interfaces.public.dtos import PublicCertificateDto
+
+    assert PublicCertificateDto in PUBLIC_RESPONSE_MODELS
+    assert set(PublicCertificateDto.model_fields) == {
+        "academy",
+        "recipient_name",
+        "level_name",
+        "level_number",
+        "level_color",
+        "cert_number",
+        "issued_on",
+    }
+
+
+def test_shared_certificate_never_carries_family_or_internal_values() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["public-cert-leak"]
+    asyncio.run(seed(db))
+    token = "tok_" + "Z" * 20
+    cert = {
+        "academy_id": ACADEMY,
+        "cert_id": "cert-secret-77",
+        "student_id": SECRETS["student_id"],
+        "program_id": SECRETS["program_id"],
+        "level_id": "level-secret-77",
+        "cert_number": "RIV-C-0042",
+        "student_name": "Casey Hiddensurname",
+        "level_name": "Shuttle Starter",
+        "program_name": "SECRET-PROGRAM-NAME",
+        "completed_at": datetime(2026, 11, 2, tzinfo=UTC),
+        "issued_by": SECRETS["coach_id"],
+        "issued_at": datetime(2026, 11, 2, tzinfo=UTC),
+        "status": "issued",
+        "skill_names": ["SECRET-SKILL"],
+        "level_number": 1,
+        "level_color": "#2563EB",
+        "share_token": token,
+        "parent_id": SECRETS["parent_id"],
+        "parent_email": SECRETS["parent_email"],
+    }
+    asyncio.run(db["skill_certificates"].insert_one(cert))
+    response = TestClient(build_app(db)).get(
+        f"/api/v2/public/certificates/{token}", headers={"host": RIVERSIDE_HOST}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["recipient_name"] == "Casey"
+    raw = response.text
+    for private in (
+        "Hiddensurname",
+        "cert-secret-77",
+        "level-secret-77",
+        "SECRET-PROGRAM-NAME",
+        "SECRET-SKILL",
+        token,
+        SECRETS["contact_email"],  # not even the support email: branding only
+        *(v for k, v in SECRETS.items() if k != "academy_id"),
+    ):
+        assert private not in raw, f"certificate share leaked {private!r}"

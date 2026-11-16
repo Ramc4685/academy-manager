@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -65,6 +67,9 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
 from backend.v2.contexts.student_progress.application.use_cases.auto_approve_level_ups import (
     AutoApproveLevelUps,
 )
+from backend.v2.contexts.student_progress.application.use_cases.certificate_share import (
+    SetCertificateShare,
+)
 from backend.v2.contexts.student_progress.application.use_cases.curriculum_change_checks import (
     CurriculumChangeChecks,
 )
@@ -111,6 +116,11 @@ from backend.v2.contexts.student_progress.application.use_cases.mark_skill_maste
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevel,
 )
+from backend.v2.contexts.student_progress.application.use_cases.progress_milestones import (
+    GetProgressSettings,
+    RecordReachedMilestones,
+    UpdateProgressSettings,
+)
 from backend.v2.contexts.student_progress.application.use_cases.recommend_level_up import (
     RecommendLevelUp,
 )
@@ -145,8 +155,14 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_repo 
 from backend.v2.contexts.student_progress.infrastructure.mongo_level_progress_repo import (
     MongoStudentLevelProgressRepository as MongoLevelProgressRepository,
 )
+from backend.v2.contexts.student_progress.infrastructure.mongo_milestone_repo import (
+    MongoStudentMilestoneRepository,
+)
 from backend.v2.contexts.student_progress.infrastructure.mongo_placement_audit import (
     MongoPlacementAuditLog,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_progress_settings_repo import (
+    MongoProgressSettingsRepository,
 )
 from backend.v2.contexts.student_progress.infrastructure.mongo_recommendation_repo import (
     MongoLevelUpRecommendationRepository as MongoRecommendationRepository,
@@ -157,9 +173,11 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
     MongoTestAttemptRepository,
 )
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 # ---------------------------------------------------------------------------
 # SeedBadmintonPathway callable wrapper
@@ -301,6 +319,14 @@ class StudentProgressComposition:
     auto_approve_level_ups: AutoApproveLevelUps
     get_pathway_dashboard: GetPathwayDashboard
     curriculum_change_checks: CurriculumChangeChecks
+    # L5B PR2: parent share links, progress settings, milestone records.
+    set_certificate_share: SetCertificateShare
+    get_progress_settings: GetProgressSettings
+    update_progress_settings: UpdateProgressSettings
+    record_milestones: RecordReachedMilestones
+    #: ``(academy_id, token) -> https://<slug>.<apex>/c/<token>``: the academy's
+    #: own host, never the product host (where ``/c/`` is a 404).
+    certificate_share_url: Callable[[str, str], Awaitable[str]]
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +395,8 @@ def compose_student_progress(
     test_attempt_repo = MongoTestAttemptRepository(db)
     recommendation_repo = MongoRecommendationRepository(db)
     certificate_repo = MongoCertificateRepository(db)
+    progress_audit = MongoCertificateAuditLog(db)
+    progress_settings = MongoProgressSettingsRepository(db)
     skill_lookup = CurriculumSkillLookup(
         skill_repo=MongoSkillRepository(db),
         level_repo=MongoLevelRepository(db),
@@ -459,9 +487,7 @@ def compose_student_progress(
         get_certificate_detail=GetCertificateDetail(
             certificates=certificate_repo, skill_lookup=skill_lookup
         ),
-        revoke_certificate=RevokeCertificate(
-            certificates=certificate_repo, audit=MongoCertificateAuditLog(db)
-        ),
+        revoke_certificate=RevokeCertificate(certificates=certificate_repo, audit=progress_audit),
         get_skill_board=GetSkillBoard(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
@@ -524,4 +550,38 @@ def compose_student_progress(
             recommendations=recommendation_repo,
             recommend_level_up=recommend_level_up,
         ),
+        set_certificate_share=SetCertificateShare(
+            certificates=certificate_repo, audit=progress_audit
+        ),
+        get_progress_settings=GetProgressSettings(settings=progress_settings),
+        update_progress_settings=UpdateProgressSettings(
+            settings=progress_settings, audit=progress_audit
+        ),
+        record_milestones=compose_record_milestones(db),
+        certificate_share_url=_certificate_share_url(db),
+    )
+
+
+def _certificate_share_url(
+    db: AsyncIOMotorDatabase[Any],
+) -> Callable[[str, str], Awaitable[str]]:
+    frontend_url = get_settings().frontend_url
+
+    async def share_url(academy_id: str, token: str) -> str:
+        doc = await db["academies"].find_one({"academy_id": academy_id}, {"slug": 1})
+        base = academy_frontend_url(
+            frontend_url=frontend_url, academy_slug=str((doc or {}).get("slug") or "")
+        )
+        return f"{base}/c/{quote(token, safe='')}"
+
+    return share_url
+
+
+def compose_record_milestones(db: AsyncIOMotorDatabase[Any]) -> RecordReachedMilestones:
+    """Shared by the parent journey and the evening wins email."""
+    return RecordReachedMilestones(
+        settings=MongoProgressSettingsRepository(db),
+        skill_progress=MongoSkillProgressRepository(db),
+        certificates=MongoCertificateRepository(db),
+        milestones=MongoStudentMilestoneRepository(db),
     )

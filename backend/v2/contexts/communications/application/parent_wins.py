@@ -52,6 +52,15 @@ class LevelUp:
 
 
 @dataclass(frozen=True, slots=True)
+class MilestoneWin:
+    """A celebration milestone the academy configured, reached in this window (L5B)."""
+
+    #: "skills_passed" | "levels_completed"
+    kind: str
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
 class ChildWins:
     first_name: str
     progress_url: str
@@ -60,6 +69,8 @@ class ChildWins:
     #: A coach-approved AI paragraph (B4). Non-empty replaces the templated
     #: skill sentences; the coach quotes and the button stay.
     narrative: str = ""
+    #: Empty unless the academy switched milestones on in Settings > Curriculum.
+    milestones: tuple[MilestoneWin, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +116,13 @@ def _skill_line(first_name: str, wins: SkillWins) -> str:
     return f"{first_name} mastered {_join(wins.skill_names)} today. {tail}"
 
 
+def _milestone_line(first_name: str, milestone: MilestoneWin) -> str:
+    noun = "skill" if milestone.kind == "skills_passed" else "level"
+    verb = "mastered" if milestone.kind == "skills_passed" else "completed"
+    plural = noun if milestone.count == 1 else f"{noun}s"
+    return f"Milestone: {first_name} has now {verb} {milestone.count} {plural}!"
+
+
 def _quote(note: str) -> str:
     return (
         '<p style="margin:0 0 12px;padding:10px 12px;border-radius:10px;'
@@ -115,7 +133,11 @@ def _quote(note: str) -> str:
 
 def _child_block(child: ChildWins, accent: str) -> str:
     esc = html.escape
-    parts: list[str] = []
+    parts: list[str] = [
+        f'<p style="margin:0 0 12px;font-size:16px;font-weight:700;">'
+        f"{esc(_milestone_line(child.first_name, m))}</p>"
+        for m in child.milestones
+    ]
     for up in child.level_ups:
         parts.append(
             f'<p style="margin:0 0 4px;font-size:18px;font-weight:700;">'

@@ -8,7 +8,11 @@ vi.mock("@/lib/use-native-app", () => ({ useIsNativeApp: () => shell.native }));
 import { certificateAccent } from "@/components/progress/level-certificate";
 import type { CertificateDetail } from "@/lib/api/curriculum";
 
-import { CertificateScreen, shareCertificate } from "./certificate-screen";
+import {
+  CertificateScreen,
+  PublicCertificateLink,
+  shareCertificate,
+} from "./certificate-screen";
 
 function detail(overrides: Partial<CertificateDetail> = {}): CertificateDetail {
   return {
@@ -144,9 +148,65 @@ describe("shareCertificate", () => {
     expect(print).not.toHaveBeenCalled();
   });
 
+  it("shares the public link instead of the private page once the parent shared it", async () => {
+    vi.stubGlobal("window", {
+      location: { href: "https://academy.courtmastr.com/parent/progress/certificates/c1" },
+    });
+    const share = vi.fn().mockResolvedValue(undefined);
+    await shareCertificate(
+      { ...detail(), share_url: "https://riverside.courtmastr.com/c/tok_ABCDEFGHIJKLMNOP" },
+      "Test Academy",
+      { share },
+      vi.fn(),
+    );
+    expect(share.mock.calls[0][0].url).toBe(
+      "https://riverside.courtmastr.com/c/tok_ABCDEFGHIJKLMNOP",
+    );
+  });
+
   it("falls back to print without a share sheet", async () => {
     const print = vi.fn();
     await shareCertificate(detail(), "Test Academy", {} as Pick<Navigator, "share">, print);
     expect(print).toHaveBeenCalledOnce();
+  });
+});
+
+describe("PublicCertificateLink (L5B)", () => {
+  const noop = () => undefined;
+
+  it("offers to create a link when the certificate is not shared", () => {
+    const html = renderToStaticMarkup(
+      createElement(PublicCertificateLink, {
+        shareUrl: null,
+        pending: false,
+        error: null,
+        onCreate: noop,
+        onStop: noop,
+      }),
+    );
+    expect(html).toContain("certificate-public-create");
+    expect(html).not.toContain("certificate-public-url");
+  });
+
+  it("shows the server-built link, never one derived from the page's own host", () => {
+    // A parent signed in on the product host (where /c/ is a 404) still gets
+    // the academy-host link the server built.
+    vi.stubGlobal("window", { location: { origin: "https://academy.courtmastr.com" } });
+    try {
+      const html = renderToStaticMarkup(
+        createElement(PublicCertificateLink, {
+          shareUrl: "https://riverside.courtmastr.com/c/tok_ABCDEFGHIJKLMNOP",
+          pending: false,
+          error: null,
+          onCreate: noop,
+          onStop: noop,
+        }),
+      );
+      expect(html).toContain("https://riverside.courtmastr.com/c/tok_ABCDEFGHIJKLMNOP");
+      expect(html).not.toContain("academy.courtmastr.com");
+      expect(html).toContain("certificate-public-stop");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

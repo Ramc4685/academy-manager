@@ -180,6 +180,17 @@ export async function stubFamilyOffers(page: Page): Promise<void> {
 }
 
 /**
+ * Settings > Curriculum renders the Milestones card (L5B): off and empty, as a
+ * new academy starts.
+ */
+export async function stubProgressSettings(page: Page): Promise<void> {
+  await page.route("**/api/v2/admin/curriculum/progress-settings", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { milestones_enabled: false, milestones: [], share_name: "first_name" });
+  });
+}
+
+/**
  * The parent waivers page and the admin waivers page both render an AI video
  * consent lane; unstubbed, their reads 502 and fail clean-console specs.
  */
