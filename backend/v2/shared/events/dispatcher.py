@@ -134,12 +134,18 @@ class EventDispatcher:
                 consecutive_failures = 0
             except Exception as exc:  # pragma: no cover - defensive top-level guard
                 consecutive_failures += 1
-                log.exception("Dispatcher loop iteration failed")
                 # Issue #428: without this the loop guard was the end of the
                 # line — the dispatcher kept polling and nothing left the box.
                 # Throttled, because the loop polls once a second: a sustained
-                # Mongo outage would otherwise emit ~86k events a day.
+                # Mongo outage would otherwise emit ~86k events a day. The log
+                # line is throttled too, and a warning: Sentry's logging
+                # integration turns every ERROR record into an event of its own.
                 if should_report_failure(consecutive_failures):
+                    log.warning(
+                        "Dispatcher loop iteration failed (%d in a row)",
+                        consecutive_failures,
+                        exc_info=True,
+                    )
                     try:
                         capture_exception(exc)
                     except Exception:
