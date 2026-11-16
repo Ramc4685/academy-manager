@@ -13,6 +13,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:101-102 says the release record publishes only when every changed component deployed; `publish-release` gates only on smoke succeeding on `main` (`production.yml:1126-1129`).
 - [wording] README:116-117 says email verification is checked on every authenticated request; only the per-provider rule in `token_claims.py:19-36` was confirmed.
 - [wording] README:139 gives a `SECURITY DISCLOSURE` subject line; `SECURITY.md` has no matching contact.
+- [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
 ## `backend/v2/README.md`: 25 items, from `drift/backend__v2.md`

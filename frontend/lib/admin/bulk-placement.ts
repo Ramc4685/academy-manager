@@ -9,6 +9,12 @@ const REFUSAL_COPY: Record<string, string> = {
   "StudentProgress.LevelNotConfigured": "that level is retired or not in this program",
 };
 
+/** The selected students still on screen; a filter change can hide some. */
+export function visibleSelection(selected: string[], visibleIds: string[]): string[] {
+  const visible = new Set(visibleIds);
+  return selected.filter((id) => visible.has(id));
+}
+
 /** One line for the owner: how many moved, and why any did not. */
 export function summarizePlacement(results: BulkPlacementResult[]): string {
   const placed = results.filter((r) => r.outcome === "placed").length;

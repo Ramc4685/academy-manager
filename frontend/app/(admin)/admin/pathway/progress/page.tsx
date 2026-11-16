@@ -15,7 +15,7 @@ import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progres
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { BulkPlacementModal } from "@/components/admin/curriculum/bulk-placement-modal";
-import { MAX_BULK_PLACEMENT } from "@/lib/admin/bulk-placement";
+import { MAX_BULK_PLACEMENT, visibleSelection } from "@/lib/admin/bulk-placement";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -79,6 +79,8 @@ export default function AdminPathwayProgressPage() {
   }
 
   const progressRows = rows ?? [];
+  const visibleIds = progressRows.map((row) => row.student_id);
+  const placeable = visibleSelection(selected, visibleIds);
 
   return (
     <section data-testid="admin-pathway-progress" className="space-y-6">
@@ -118,7 +120,11 @@ export default function AdminPathwayProgressPage() {
             <span className="mb-1 block text-xs font-medium text-neutral-600">Next action</span>
             <select
               value={nextAction}
-              onChange={(event) => setNextAction(event.target.value as ProgressNextAction | "")}
+              onChange={(event) => {
+                setNextAction(event.target.value as ProgressNextAction | "");
+                // A selection from the old view must not reach a bulk placement.
+                setSelected([]);
+              }}
               className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             >
               <option value="">All actions</option>
@@ -146,12 +152,12 @@ export default function AdminPathwayProgressPage() {
           <div className="flex flex-wrap items-center gap-3">
             <Button
               size="sm"
-              disabled={selected.length === 0 || selected.length > MAX_BULK_PLACEMENT}
+              disabled={placeable.length === 0 || placeable.length > MAX_BULK_PLACEMENT}
               onClick={() => setPlacing(true)}
             >
-              Place selected ({selected.length})
+              Place selected ({placeable.length})
             </Button>
-            {selected.length > MAX_BULK_PLACEMENT && (
+            {placeable.length > MAX_BULK_PLACEMENT && (
               <span className="text-xs text-red-700">
                 Pick at most {MAX_BULK_PLACEMENT} students at a time.
               </span>
@@ -163,6 +169,7 @@ export default function AdminPathwayProgressPage() {
             open={placing}
             programId={selectedProgramId}
             studentIds={selected}
+            visibleIds={visibleIds}
             onClose={() => setPlacing(false)}
             onPlaced={() => {
               setSelected([]);

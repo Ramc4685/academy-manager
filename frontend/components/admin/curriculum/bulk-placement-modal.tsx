@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { getFullPathway, placeStudentsInBulk } from "@/lib/api/curriculum";
-import { summarizePlacement } from "@/lib/admin/bulk-placement";
+import { summarizePlacement, visibleSelection } from "@/lib/admin/bulk-placement";
 import { Button } from "@/components/ds/button";
 import { Modal } from "@/components/ds/modal";
 
@@ -16,16 +16,20 @@ import { Modal } from "@/components/ds/modal";
 export function BulkPlacementModal({
   open,
   programId,
-  studentIds,
+  studentIds: selectedIds,
+  visibleIds,
   onClose,
   onPlaced,
 }: {
   open: boolean;
   programId: string;
   studentIds: string[];
+  /** Rows on screen: a hidden (filtered-out) student is never placed. */
+  visibleIds: string[];
   onClose: () => void;
   onPlaced: () => void;
 }) {
+  const studentIds = visibleSelection(selectedIds, visibleIds);
   const [levelId, setLevelId] = useState("");
   const [credited, setCredited] = useState<string[]>([]);
   const [notifyParents, setNotifyParents] = useState(false);
@@ -75,7 +79,7 @@ export function BulkPlacementModal({
           {!place.isSuccess && (
             <Button
               size="sm"
-              disabled={!levelId || place.isPending}
+              disabled={!levelId || studentIds.length === 0 || place.isPending}
               onClick={() => place.mutate()}
             >
               {place.isPending ? "Placing..." : "Place"}
