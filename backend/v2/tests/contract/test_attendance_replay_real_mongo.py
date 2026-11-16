@@ -45,6 +45,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo 
 from backend.v2.shared.events.outbox import MongoOutbox
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 ACADEMY = "acad-replay"
 COACH = "coach-replay"
@@ -91,7 +92,7 @@ def _deps(db: Any, idempotency: Any) -> dict[str, Any]:
     }
 
 
-class _LostRecords:
+class _LostRecords(ClaimableStore):
     """An idempotency store whose writes never land (put failed after commit)."""
 
     async def get(self, key: str) -> dict[str, Any] | None:
@@ -99,6 +100,9 @@ class _LostRecords:
 
     async def put(self, key: str, value: dict[str, Any]) -> None:
         return None
+
+    async def claim(self, key: str) -> object | None:
+        return "lost"
 
 
 def _bulk(mutation_id: str, *students: str) -> BulkMarkAttendanceCommand:

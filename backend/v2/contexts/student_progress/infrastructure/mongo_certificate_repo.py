@@ -102,6 +102,28 @@ class MongoSkillCertificateRepository(TenantScopedRepository):
         )
         return bool(result.modified_count)
 
+    async def get_issued_by_share_token(self, token: str) -> SkillCertificate | None:
+        # Served by certs_share_token_per_academy_uq (0234): academy first, then the token.
+        if not token:
+            return None
+        doc = await self._find_one({"share_token": token} | _NOT_REVOKED)
+        return self._to_domain(doc) if doc else None
+
+    async def set_share_token(self, student_id: str, cert_id: str, token: str) -> bool:
+        result = await self._update_one(
+            {"student_id": student_id, "cert_id": cert_id, "share_token": {"$exists": False}}
+            | _NOT_REVOKED,
+            {"$set": {"share_token": token}},
+        )
+        return bool(result.modified_count)
+
+    async def clear_share_token(self, student_id: str, cert_id: str) -> bool:
+        result = await self._update_one(
+            {"student_id": student_id, "cert_id": cert_id, "share_token": {"$exists": True}},
+            {"$unset": {"share_token": ""}},
+        )
+        return bool(result.modified_count)
+
     async def anonymise_student(self, student_id: str, *, student_name: str) -> None:
         """Account deletion: the child's name and revoke reason leave every certificate, and no link survives."""
         await self.collection.update_many(

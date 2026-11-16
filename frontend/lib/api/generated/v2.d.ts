@@ -1257,6 +1257,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/curriculum/progress-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Progress Settings */
+        get: operations["get_progress_settings_api_v2_admin_curriculum_progress_settings_get"];
+        /** Update Progress Settings */
+        put: operations["update_progress_settings_api_v2_admin_curriculum_progress_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/dashboard/attention": {
         parameters: {
             query?: never;
@@ -6512,6 +6530,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/students/{student_id}/certificates/{cert_id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Share Certificate
+         * @description Turn on a public link for the child's certificate (idempotent).
+         */
+        post: operations["share_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_post"];
+        /**
+         * Unshare Certificate
+         * @description Turn the public link off; the old link stops working at once (idempotent).
+         */
+        delete: operations["unshare_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/students/{student_id}/practice-resources": {
         parameters: {
             query?: never;
@@ -7409,6 +7451,23 @@ export interface paths {
         };
         /** Get Public Academy Page */
         get: operations["get_public_academy_page_api_v2_public_academy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/public/certificates/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Shared Certificate */
+        get: operations["get_shared_certificate_api_v2_public_certificates__token__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -15231,6 +15290,31 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** MilestoneInput */
+        MilestoneInput: {
+            /** Count */
+            count: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skills_passed" | "levels_completed";
+        };
+        /** MilestoneView */
+        MilestoneView: {
+            /** Count */
+            count: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skills_passed" | "levels_completed";
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+        };
         /** ModifyUserRoleRequest */
         ModifyUserRoleRequest: {
             /**
@@ -17175,6 +17259,18 @@ export interface components {
              */
             visibility: "private" | "shared";
         };
+        /** ProgressSettingsView */
+        ProgressSettingsView: {
+            /** Milestones */
+            milestones: components["schemas"]["MilestoneView"][];
+            /** Milestones Enabled */
+            milestones_enabled: boolean;
+            /**
+             * Share Name
+             * @enum {string}
+             */
+            share_name: "first_name" | "initial";
+        };
         /** PublicAcademyDto */
         PublicAcademyDto: {
             /** Brand Color */
@@ -17269,6 +17365,33 @@ export interface components {
             logo_url?: string | null;
             /** Name */
             name: string;
+        };
+        /**
+         * PublicCertificateDto
+         * @description A certificate a parent chose to share (L5B, ``/c/<token>``).
+         *
+         *     The minimum only: the child's first name or initial (the academy's
+         *     choice), the level as it was when issued, the certificate number and
+         *     issue date, and the academy's branding. No surname, no parent, no email,
+         *     no ids, no skills list and no program.
+         */
+        PublicCertificateDto: {
+            academy: components["schemas"]["PublicBrandDto"];
+            /** Cert Number */
+            cert_number: string;
+            /**
+             * Issued On
+             * Format: date
+             */
+            issued_on: string;
+            /** Level Color */
+            level_color?: string | null;
+            /** Level Name */
+            level_name: string;
+            /** Level Number */
+            level_number?: number | null;
+            /** Recipient Name */
+            recipient_name: string;
         };
         /** PublicClassDto */
         PublicClassDto: {
@@ -19655,6 +19778,18 @@ export interface components {
             public_description?: string | null;
             /** Sort Order */
             sort_order?: number | null;
+        };
+        /** UpdateProgressSettingsBody */
+        UpdateProgressSettingsBody: {
+            /** Milestones */
+            milestones?: components["schemas"]["MilestoneInput"][];
+            /** Milestones Enabled */
+            milestones_enabled: boolean;
+            /**
+             * Share Name
+             * @enum {string}
+             */
+            share_name: "first_name" | "initial";
         };
         /**
          * UpdatePublicPageSettingsRequest
@@ -22316,6 +22451,59 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_progress_settings_api_v2_admin_curriculum_progress_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressSettingsView"];
+                };
+            };
+        };
+    };
+    update_progress_settings_api_v2_admin_curriculum_progress_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProgressSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressSettingsView"];
                 };
             };
             /** @description Validation Error */
@@ -32536,6 +32724,70 @@ export interface operations {
             };
         };
     };
+    share_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                cert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unshare_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                cert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_practice_resources_api_v2_parent_students__student_id__practice_resources_get: {
         parameters: {
             query?: never;
@@ -34439,6 +34691,44 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_shared_certificate_api_v2_public_certificates__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicCertificateDto"];
+                };
+            };
+            /** @description No shared certificate for this link on this host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

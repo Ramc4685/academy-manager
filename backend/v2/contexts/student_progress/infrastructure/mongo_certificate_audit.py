@@ -1,4 +1,4 @@
-"""The ``certificate.revoked`` audit row, written once per certificate."""
+"""Student-progress audit rows: ``certificate.revoked`` and the L5B share and settings changes."""
 
 from __future__ import annotations
 
@@ -27,6 +27,37 @@ class MongoCertificateAuditLog(TenantScopedRepository):
                     "before": {"status": "issued"},
                     "after": {"status": "revoked", "student_id": cert.student_id},
                     "created_at": cert.revoked_at or datetime.now(UTC),
+                }
+            },
+            upsert=True,
+        )
+        return result.upserted_id is not None
+
+    async def record(
+        self,
+        *,
+        audit_id: str,
+        action: str,
+        actor_id: str,
+        entity_type: str,
+        entity_id: str,
+        before: dict[str, object],
+        after: dict[str, object],
+        at: datetime,
+    ) -> bool:
+        """One row per ``audit_id``: share links and progress settings changes (L5B)."""
+        result = await self._update_one(
+            {"audit_id": audit_id},
+            {
+                "$setOnInsert": {
+                    "actor_id": actor_id,
+                    "action": action,
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "changed_keys": sorted(k for k in after if before.get(k) != after.get(k)),
+                    "before": before,
+                    "after": after,
+                    "created_at": at,
                 }
             },
             upsert=True,

@@ -221,11 +221,32 @@ class PublicTrialFormRequest(BaseModel):
     utm_campaign: str | None = None
 
 
+class PublicCertificateDto(BaseModel):
+    """A certificate a parent chose to share (L5B, ``/c/<token>``).
+
+    The minimum only: the child's first name or initial (the academy's
+    choice), the level as it was when issued, the certificate number and
+    issue date, and the academy's branding. No surname, no parent, no email,
+    no ids, no skills list and no program.
+    """
+
+    academy: PublicBrandDto
+    recipient_name: str
+    level_name: str
+    #: From the issue-time snapshot; null on certificates issued before it existed.
+    level_number: int | None = None
+    level_color: str | None = None
+    cert_number: str
+    #: The academy-local date it was issued.
+    issued_on: date
+
+
 #: Every model the public persona can serialise, for the no-leak test.
 PUBLIC_RESPONSE_MODELS: tuple[type[BaseModel], ...] = (
     PublicAcademyPageDto,
     PublicAcademyNotPublishedDto,
     PublicTrialRequestAckDto,
+    PublicCertificateDto,
 )
 
 #: Every request body the public persona accepts, for the no-leak test's

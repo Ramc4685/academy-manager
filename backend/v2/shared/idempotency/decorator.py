@@ -21,7 +21,16 @@ from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+from backend.v2.shared.http.errors import DomainError
+
 _T = TypeVar("_T")
+
+
+class IdempotentRequestInFlight(DomainError):
+    """The same key is being executed right now by another request."""
+
+    code = "request_in_flight"
+    status_code = 409
 
 
 class IdempotencyStore(Protocol):
@@ -33,6 +42,14 @@ class IdempotencyStore(Protocol):
 
     async def get(self, key: str) -> dict[str, Any] | None: ...
     async def put(self, key: str, value: dict[str, Any]) -> None: ...
+
+    async def claim(self, key: str) -> object | None:
+        """Atomically take ``key``: a token for the one caller that got it, else None."""
+        ...
+
+    async def release(self, key: str, token: object) -> None:
+        """Give back the claim ``token`` holds, so a retry can run (the call raised)."""
+        ...
 
 
 def _serialize(value: Any) -> dict[str, Any]:
@@ -79,17 +96,42 @@ def idempotent(
                     f"@idempotent requires `self.{store_attr}` to be an IdempotencyStore"
                 )
             key = key_from(self, *args, **kwargs)
+            # Insert-or-find on a claim key, so two concurrent first calls cannot
+            # both run: a read-then-write let both through before either stored.
+            claim_key = f"{key}:claim"
             existing = await store.get(key)
+            token = None
+            if existing is None:
+                token = await store.claim(claim_key)
+                if token is None:
+                    existing = await store.get(key)
+                    if existing is None:
+                        raise IdempotentRequestInFlight("this request is already being processed")
             if existing is not None:
                 return _deserialize(existing["value"], result_type)
-            result = await fn(self, *args, **kwargs)
-            await store.put(
-                key,
-                {
-                    "value": _serialize(result),
-                    "stored_at": datetime.now(UTC).isoformat(),
-                },
-            )
+            try:
+                result = await fn(self, *args, **kwargs)
+            except BaseException:
+                await store.release(claim_key, token)
+                raise
+            try:
+                await store.put(
+                    key,
+                    {
+                        "value": _serialize(result),
+                        "stored_at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            except BaseException:
+                # A result is already stored (a duplicate-key insert after a stale
+                # takeover, or our own write landed): replay it, as every retry will.
+                stored = await store.get(key)
+                if stored is not None:
+                    replayed: _T = _deserialize(stored["value"], result_type)
+                    return replayed
+                # The work committed but its record did not: free the key so a retry re-runs.
+                await store.release(claim_key, token)
+                raise
             return result
 
         return wrapper

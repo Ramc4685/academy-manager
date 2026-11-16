@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ProgramEditor } from "@/components/admin/curriculum/program-editor";
 import { ProgramList } from "@/components/admin/curriculum/program-list";
+import { MilestonesCard } from "@/components/admin/settings/milestones-card";
 
 /**
  * Settings -> Curriculum (Settings overhaul Phase 3 PR 11): the Pathway
@@ -29,7 +30,10 @@ export function CurriculumPanel() {
       {programId ? (
         <ProgramEditor programId={programId} onBack={() => go(null)} />
       ) : (
-        <ProgramList onOpenProgram={(id) => go(id)} />
+        <>
+          <ProgramList onOpenProgram={(id) => go(id)} />
+          <MilestonesCard />
+        </>
       )}
     </section>
   );

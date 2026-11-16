@@ -72,6 +72,13 @@ _PER_HOST_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
     ("POST", "/api/v2/public/trial-requests"): (100, 600),
 }
 
+# Anonymous GETs whose last path segment is a secret (L5B certificate share
+# links): one (limit, window) and ONE bucket per client for the whole prefix,
+# so a client walking tokens shares a single budget instead of one per token.
+_PREFIX_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
+    ("GET", "/api/v2/public/certificates/"): (60, 60),
+}
+
 _PROXY_AUTH_HEADER = "x-cm-proxy-auth"
 
 # Authenticated parent endpoints where every accepted request creates a real
@@ -161,7 +168,7 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
 
         now = self._clock()
         self._evict_expired(now)
-        path = request.url.path
+        path = self._prefix_for(request) or request.url.path
         retry_after = self._hit((self._client_key(request), path), limit, window_seconds, now)
         if retry_after is None:
             host_limit = _PER_HOST_LIMITS.get((request.method.upper(), path))
@@ -199,7 +206,18 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
             return None
         return max(1, ceil(window_seconds - elapsed))
 
+    @staticmethod
+    def _prefix_for(request: Request) -> str | None:
+        method = request.method.upper()
+        for prefix_method, prefix in _PREFIX_LIMITS:
+            if method == prefix_method and request.url.path.startswith(prefix):
+                return prefix
+        return None
+
     def _limit_for(self, request: Request) -> tuple[int, int] | None:
+        prefix = self._prefix_for(request)
+        if prefix is not None:
+            return _PREFIX_LIMITS[(request.method.upper(), prefix)]
         method_path = (request.method.upper(), request.url.path)
         override = _PATH_LIMIT_OVERRIDES.get(method_path)
         if override is not None:

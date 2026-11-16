@@ -661,13 +661,19 @@ class StripeGateway(Protocol):
         """Set the Customer default PM used by off-session autopay charges."""
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+        self,
+        *,
+        academy_id: str,
+        limit: int = 100,
+        stripe_account: str | None = None,
+        parent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Find recent app-owned PaymentIntents (succeeded or ACH `processing`).
 
         When ``stripe_account`` is set (Slice I), the search is scoped to that
         connected account rather than the platform account — money routed
         through a connected account is otherwise invisible to this search.
+        ``parent_id`` narrows it to one parent's PaymentIntents.
         """
 
     async def list_charges_for_customer(

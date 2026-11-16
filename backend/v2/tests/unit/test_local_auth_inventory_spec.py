@@ -127,6 +127,7 @@ def test_dynamic_route_env_contract_matches_exporter_names() -> None:
         "LOCAL_AUTH_CERT_STUDENT_ID",
         "LOCAL_AUTH_PARENT_CERT_ID",
         "LOCAL_AUTH_PARENT_CERT_STUDENT_ID",
+        "LOCAL_AUTH_CERT_SHARE_TOKEN",
     }
 
     for env_name in required_env_names:

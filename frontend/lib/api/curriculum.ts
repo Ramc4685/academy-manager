@@ -232,6 +232,8 @@ export interface SkillCertificate {
   revoke_reason?: string | null;
   /** The level colour when it was issued; null on older certificates. */
   level_color?: string | null;
+  /** Set while the parent shares a public link (`/c/<token>`); null when not shared. */
+  share_token?: string | null;
 }
 
 /** One certificate plus what the printable certificate shows (read from the curriculum). */
@@ -244,6 +246,8 @@ export interface CertificateDetail {
   next_level: { level_id: string; name: string; number: number } | null;
   /** The program's whole level ladder, in order, with each level's colour. */
   levels: { name: string; color: string | null }[];
+  /** Parent reads: the public link on the academy's own host, built by the server; null when not shared. */
+  share_url?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -868,6 +872,62 @@ export function getParentStudentCertificates(
     `/parent/students/${encodeURIComponent(studentId)}/certificates`,
     { method: "GET" },
   ).then((d) => d.certificates);
+}
+
+export interface CertificateShareState {
+  share_token: string | null;
+  /** `https://<academy host>/c/<token>`: never the product host, where `/c/` is a 404. */
+  share_url: string | null;
+}
+
+/** Create (idempotent) the public link for the parent's own child's certificate. */
+export function shareParentCertificate(
+  studentId: string,
+  certId: string,
+): Promise<CertificateShareState> {
+  return apiFetch(
+    `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/share`,
+    { method: "POST" },
+  );
+}
+
+/** Turn the public link off; the old link 404s from the next load. */
+export function unshareParentCertificate(
+  studentId: string,
+  certId: string,
+): Promise<CertificateShareState> {
+  return apiFetch(
+    `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/share`,
+    { method: "DELETE" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin — progress settings (milestones + share-page name rule)
+// ---------------------------------------------------------------------------
+
+export type MilestoneKind = "skills_passed" | "levels_completed";
+export type ShareNameRule = "first_name" | "initial";
+
+export interface ProgressSettings {
+  milestones_enabled: boolean;
+  milestones: { kind: MilestoneKind; count: number; since?: string }[];
+  share_name: ShareNameRule;
+}
+
+export function getProgressSettings(): Promise<ProgressSettings> {
+  return apiFetch<ProgressSettings>("/admin/curriculum/progress-settings", { method: "GET" });
+}
+
+export function updateProgressSettings(body: {
+  milestones_enabled: boolean;
+  milestones: { kind: MilestoneKind; count: number }[];
+  share_name: ShareNameRule;
+}): Promise<ProgressSettings> {
+  return apiFetch<ProgressSettings>("/admin/curriculum/progress-settings", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }
 
 // ---------------------------------------------------------------------------

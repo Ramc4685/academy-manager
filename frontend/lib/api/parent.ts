@@ -203,6 +203,12 @@ export interface ParentProgressNote {
 }
 
 /** GET /parent/students/{id}/progress-journey — the "how far along" view. */
+export interface ParentJourneyMilestone {
+  kind: "skills_passed" | "levels_completed";
+  count: number;
+  reached_at: string;
+}
+
 export interface ParentProgressJourney {
   student_id: string;
   program_id: string;
@@ -239,6 +245,8 @@ export interface ParentProgressJourney {
     /** The coach's optional one-line note to the parent on this win. */
     coach_note?: string | null;
   }[];
+  /** Milestones reached (academy setting, Settings > Curriculum); empty when off. */
+  milestones?: ParentJourneyMilestone[];
   focus_skill_id: string | null;
   focus_skill_name: string | null;
   /** Finished the last level: every level is done and current_level is null. */

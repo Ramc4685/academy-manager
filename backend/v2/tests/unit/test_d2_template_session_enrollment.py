@@ -11,6 +11,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
     MarkAttendanceCommand,
 )
 from backend.v2.contexts.coaching.domain.errors import StudentNotEnrolled
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 
 def test_occurrence_details_has_template_session_id():
@@ -109,7 +110,7 @@ class _FakeOutbox:
         pass
 
 
-class _FakeIdempotency:
+class _FakeIdempotency(ClaimableStore):
     def __init__(self):
         self._store = {}
 

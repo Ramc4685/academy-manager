@@ -135,7 +135,9 @@ class _FakeCharge:
         self.raises = raises
         self.calls: list[tuple[str, str | None]] = []
 
-    async def execute(self, invoice_id: str, retry_scope: str | None = None):
+    async def execute(
+        self, invoice_id: str, retry_scope: str | None = None, check_existing: bool = False
+    ):
         self.calls.append((invoice_id, retry_scope))
         if self.raises is not None:
             raise self.raises
@@ -646,7 +648,9 @@ class _FailFirstCharge(_FakeCharge):
         super().__init__(success=True)
         self.failing_invoice_id = failing_invoice_id
 
-    async def execute(self, invoice_id: str, retry_scope: str | None = None):
+    async def execute(
+        self, invoice_id: str, retry_scope: str | None = None, check_existing: bool = False
+    ):
         if invoice_id == self.failing_invoice_id:
             self.calls.append((invoice_id, retry_scope))
             raise ValueError("no_saved_payment_method: parent has no saved Stripe card")

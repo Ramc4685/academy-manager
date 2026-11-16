@@ -24,7 +24,7 @@ const BLANK: NurtureSequenceView = {
   merge_fields: ["academy_name", "class", "seat_band", "booking_link"],
 };
 
-function html(view: NurtureSequenceView) {
+function html(view: NurtureSequenceView | Record<string, never>) {
   const client = new QueryClient();
   client.setQueryData(queryKeys.admin.nurtureSequence(), view);
   return renderToStaticMarkup(
@@ -53,5 +53,11 @@ describe("NurtureSequenceCard (Phase 3 C1)", () => {
     });
     expect(out).toMatch(/data-testid="nurture-enabled"[^>]*checked/);
     expect(out).toContain('value="Still thinking about {{class}}?"');
+  });
+
+  it("shows the load error instead of crashing on an empty {} response", () => {
+    const out = html({});
+    expect(out).toContain("Could not load the follow-up emails.");
+    expect(out).not.toContain('data-testid="nurture-save"');
   });
 });
