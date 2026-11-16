@@ -95,8 +95,10 @@ def find_unnumbered_note(added_files: list[str], base_ref: str) -> Path | None:
     """
     for name in sorted(added_files):
         path = REPO_ROOT / name
+        # Flat folder only: publish_release.changed_note_paths rejects nested
+        # notes, which would fail the post-deploy release step.
         if not (
-            name.startswith("docs/release-notes/")
+            Path(name).parent == Path("docs/release-notes")
             and name.endswith(".md")
             and path.is_file()
             and not exists_on_base(base_ref, name)

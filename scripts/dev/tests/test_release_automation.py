@@ -125,6 +125,16 @@ Revert the merge commit.
         note = self.note_in_repo("#999")
         self.assertEqual(self.run_main(["backend/v2/main.py", note]), 1)
 
+    def test_placeholder_note_in_subfolder_does_not_count(self) -> None:
+        nested = release_notes_check.NOTES_DIR / "nested-test-dir"
+        nested.mkdir(exist_ok=True)
+        self.addCleanup(nested.rmdir)
+        path = nested / "note.md"
+        path.write_text(self.COMPLETE_NOTE.format(pr="TBD"), encoding="utf-8")
+        self.addCleanup(path.unlink, missing_ok=True)
+        note = str(path.relative_to(release_notes_check.REPO_ROOT))
+        self.assertEqual(self.run_main(["backend/v2/main.py", note]), 1)
+
     def test_placeholder_note_already_on_base_does_not_count(self) -> None:
         note = self.note_in_repo("TBD")
         with patch.object(release_notes_check, "exists_on_base", return_value=True):
