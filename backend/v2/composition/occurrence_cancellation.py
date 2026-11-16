@@ -119,7 +119,8 @@ def compose_occurrence_billing_sync(db: Any) -> OccurrenceBillingSyncAdapter:
 def compose_cancel_session_occurrence(
     db: Any, *, notifier: Any | None = None
 ) -> CancelSessionOccurrence:
-    """The admin "cancel this date" use case, fully wired."""
+    """The admin "cancel this date" use case, fully wired. main.py attaches the
+    L9 guest notifier (``app.state.trial_emails``) after this runs."""
     return CancelSessionOccurrence(
         occurrences=MongoSessionOccurrenceRepository(db),
         sessions=MongoSessionRepository(db),

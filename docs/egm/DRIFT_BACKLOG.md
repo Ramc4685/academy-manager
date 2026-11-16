@@ -74,3 +74,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] "When generated types are reintroduced": they already are.
 - [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.
 - [undocumented] `password-reset.ts` (from #1180) is not in the README's wrapper list.
+
+## `backend/v2/contexts/crm/README.md`: 2 items, from `drift/backend__v2__contexts__crm.md`
+- [undocumented] `SubmitWebsiteInquiry` / `WebsiteInquiryResult` / `RepeatInquiryWriter` missing from the Layout table.
+- [undocumented] `clean_attribution`, `ATTRIBUTION_FIELDS`, `MAX_ATTRIBUTION_LEN`, `REPEAT_INQUIRY_AFTER` constants not named in the README (the record table covers the rules).

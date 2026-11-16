@@ -81,6 +81,16 @@ export interface CoachSession {
    */
   status?: "scheduled" | "cancelled" | "completed";
   cancellation_reason?: string | null;
+  /** L9: families with no account who booked a free trial on the public page. */
+  trial_guests?: CoachTrialGuest[];
+}
+
+/** The coach sees the parent's name and the player's age only. */
+export interface CoachTrialGuest {
+  trial_request_id: string;
+  name: string;
+  age?: string | null;
+  trial_outcome?: TrialOutcome | null;
 }
 
 export interface CoachTodayResponse {

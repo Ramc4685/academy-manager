@@ -482,6 +482,7 @@ async def test_approve_makeup_request_expired_window_over_real_makeup_repo(db, a
         enrollments=_ReviewFakeEnrollments(),
         sessions=_ReviewFakeSessions(),
         occurrence_roster=_ReviewFakeRoster(),
+        guests=MongoTrialRequestRepository(db),
     )
 
     with pytest.raises(MakeupWindowExpired):
@@ -533,6 +534,7 @@ async def test_approve_makeup_request_open_window_over_real_repos(db, acad) -> N
         enrollments=enrollments,
         sessions=_ReviewFakeSessions([_review_session("session-target")]),
         occurrence_roster=roster,
+        guests=MongoTrialRequestRepository(db),
     )
 
     updated = await use_case.execute(

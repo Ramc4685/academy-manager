@@ -13748,6 +13748,14 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "trial_guests": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachTrialGuest"
+            },
+            "title": "Trial Guests",
+            "type": "array"
           }
         },
         "required": [
@@ -13919,6 +13927,51 @@
           "sessions"
         ],
         "title": "CoachTodayResponse",
+        "type": "object"
+      },
+      "CoachTrialGuest": {
+        "description": "L9: a family with no account who booked a free trial on the public page.\nThe coach sees the parent's name and the player's age only.",
+        "properties": {
+          "age": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "trial_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "came",
+                  "no_show"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Outcome"
+          },
+          "trial_request_id": {
+            "title": "Trial Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trial_request_id",
+          "name"
+        ],
+        "title": "CoachTrialGuest",
         "type": "object"
       },
       "CoachTrialOutcomeBody": {
@@ -23922,6 +23975,13 @@
             "title": "First Name",
             "type": "string"
           },
+          "heard_from": {
+            "default": "",
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]*$",
+            "title": "Heard From",
+            "type": "string"
+          },
           "last_name": {
             "default": "",
             "title": "Last Name",
@@ -27196,6 +27256,14 @@
             "title": "Title",
             "type": "string"
           },
+          "trial_dates": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PublicTrialDateDto"
+            },
+            "title": "Trial Dates",
+            "type": "array"
+          },
           "venue_address": {
             "anyOf": [
               {
@@ -27450,6 +27518,11 @@
             "title": "Seats Left Threshold",
             "type": "integer"
           },
+          "self_book_trials": {
+            "default": false,
+            "title": "Self Book Trials",
+            "type": "boolean"
+          },
           "show_availability": {
             "title": "Show Availability",
             "type": "boolean"
@@ -27466,6 +27539,11 @@
             ],
             "title": "Theme",
             "type": "string"
+          },
+          "trial_guest_cap": {
+            "default": 2,
+            "title": "Trial Guest Cap",
+            "type": "integer"
           },
           "trials_open": {
             "title": "Trials Open",
@@ -27582,6 +27660,26 @@
           "band"
         ],
         "title": "PublicSeatsDto",
+        "type": "object"
+      },
+      "PublicTrialDateDto": {
+        "description": "One date a family can book a free trial on (L9; only while the academy\nhas self-booked trials on). ``slot_key`` is an opaque digest, never the\noccurrence id; send it back with the trial form to book that date.",
+        "properties": {
+          "slot_key": {
+            "title": "Slot Key",
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot_key",
+          "starts_at"
+        ],
+        "title": "PublicTrialDateDto",
         "type": "object"
       },
       "PublicTrialRequestAckDto": {
@@ -32000,6 +32098,17 @@
             ],
             "title": "Assigned Occurrence Start At"
           },
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -32038,6 +32147,28 @@
               }
             ],
             "title": "Denial Reason"
+          },
+          "guest_age": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guest Age"
+          },
+          "guest_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guest Name"
           },
           "linked_application_id": {
             "anyOf": [
@@ -33845,6 +33976,17 @@
             ],
             "title": "Seats Left Threshold"
           },
+          "self_book_trials": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Self Book Trials"
+          },
           "show_availability": {
             "anyOf": [
               {
@@ -33882,6 +34024,19 @@
               }
             ],
             "title": "Theme"
+          },
+          "trial_guest_cap": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Guest Cap"
           },
           "trials_open": {
             "anyOf": [
@@ -44709,6 +44864,42 @@
         ]
       }
     },
+    "/api/v2/admin/self-service/trials/{request_id}/cancel-booking": {
+      "post": {
+        "description": "L9: staff cancel one approved website guest booking. It goes back to\nthe pending queue and the family gets the date-cancelled email.",
+        "operationId": "cancel_guest_trial_booking_api_v2_admin_self_service_trials__request_id__cancel_booking_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Guest Trial Booking",
+        "tags": [
+          "admin.self-service-requests"
+        ]
+      }
+    },
     "/api/v2/admin/self-service/trials/{request_id}/deny": {
       "post": {
         "operationId": "deny_trial_request_api_v2_admin_self_service_trials__request_id__deny_post",
@@ -55430,7 +55621,7 @@
             "description": "No published academy page on this host."
           },
           "409": {
-            "description": "Trials are switched off (Public.TrialsClosed)."
+            "description": "Trials are switched off (Public.TrialsClosed), or the chosen trial date is no longer open (Public.SlotUnavailable)."
           },
           "413": {
             "description": "Request body too large."

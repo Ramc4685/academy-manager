@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
 import { safeHttpsUrl } from "@/lib/public-page/format";
 import {
   EMPTY_TRIAL_FORM,
+  HEARD_FROM_OPTIONS,
   TRIAL_FIELD_LABEL,
   TRIAL_FIELD_ORDER,
   TRIAL_LIMITS,
@@ -15,10 +16,14 @@ import {
   type TrialFieldErrors,
   type TrialFormValues,
   type TrialSubmitResult,
+  utmFromSearch,
 } from "@/lib/public-page/trial-request";
 
 import { CheckIcon } from "./icons";
 import styles from "./public-page.module.css";
+import { TurnstileWidget } from "./TurnstileWidget";
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
 type Phase =
   | { kind: "editing" }
@@ -49,6 +54,7 @@ export function TrialRequestForm({
   privacyNoticeUrl,
   variant,
   submit = submitTrialRequest,
+  turnstileSiteKey = TURNSTILE_SITE_KEY,
 }: {
   academyName: string;
   classOptions: TrialClassOption[];
@@ -56,6 +62,7 @@ export function TrialRequestForm({
   /** "trial" (open classes), "waitlist" (all full) or "notify" (none listed). */
   variant: "trial" | "waitlist" | "notify";
   submit?: (values: TrialFormValues) => Promise<TrialSubmitResult>;
+  turnstileSiteKey?: string;
 }) {
   const uid = useId();
   const id = (field: string) => `trial-${field}-${uid.replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -64,6 +71,7 @@ export function TrialRequestForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "editing" });
   const [summaryTick, setSummaryTick] = useState(0);
+  const [turnstileRound, setTurnstileRound] = useState(0);
   const summaryRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef<HTMLDivElement>(null);
 
@@ -75,9 +83,32 @@ export function TrialRequestForm({
     if (phase.kind === "received" || phase.kind === "closed") doneRef.current?.focus();
   }, [phase.kind]);
 
+  // A6-5 / A6-10: preselect a class from ?class= or a "Try a class free" tap,
+  // and keep any utm_* tags from the landing URL (no cookies).
+  useEffect(() => {
+    const known = new Set(classOptions.map((option) => option.value));
+    const fromUrl = new URLSearchParams(window.location.search).get("class") ?? "";
+    setValues((current) => ({
+      ...current,
+      utm: utmFromSearch(window.location.search),
+      class_id: !current.class_id && known.has(fromUrl) ? fromUrl : current.class_id,
+    }));
+    function onClick(event: MouseEvent) {
+      const link = (event.target as Element | null)?.closest?.("a[data-public-class-id]");
+      const picked = link?.getAttribute("data-public-class-id") ?? "";
+      if (!link?.getAttribute("href")?.startsWith("#") || !known.has(picked)) return;
+      setValues((current) =>
+        current.class_id === picked ? current : { ...current, class_id: picked, slot_key: "" },
+      );
+    }
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [classOptions]);
+
   const privacyHref = safeHttpsUrl(privacyNoticeUrl) ?? "/privacy";
-  const submitLabel =
-    variant === "notify"
+  const submitLabel = values.slot_key
+    ? "Book my free trial"
+    : variant === "notify"
       ? "Tell me when classes open"
       : variant === "waitlist"
         ? "Join the waitlist"
@@ -86,6 +117,10 @@ export function TrialRequestForm({
   function set<K extends keyof TrialFormValues>(key: K, value: TrialFormValues[K]) {
     setValues((current) => ({ ...current, [key]: value }));
   }
+
+  const onTurnstileToken = useCallback((token: string) => {
+    setValues((current) => ({ ...current, turnstile_token: token }));
+  }, []);
 
   function showErrors(next: TrialFieldErrors, message: string | null) {
     setErrors(next);
@@ -101,8 +136,17 @@ export function TrialRequestForm({
       showErrors(local, null);
       return;
     }
+    if (values.slot_key && turnstileSiteKey && !values.turnstile_token) {
+      showErrors({ turnstile_token: "Please complete the security check." }, null);
+      return;
+    }
     setPhase({ kind: "sending" });
     const result = await submit(values);
+    if (result.kind !== "received" && values.turnstile_token) {
+      // Turnstile tokens are single-use: a retry needs a fresh widget and token.
+      setValues((current) => ({ ...current, turnstile_token: "" }));
+      setTurnstileRound((round) => round + 1);
+    }
     switch (result.kind) {
       case "received":
         setErrors({});
@@ -144,10 +188,12 @@ export function TrialRequestForm({
         <CheckIcon />
         <h3>Thanks, your request is with {academyName}</h3>
         <p>
-          {variant === "notify"
-            ? "They will email you when the timetable is published."
-            : "They will reply by email within one working day to arrange a date."}{" "}
-          Nothing is booked or charged yet.
+          {values.slot_key
+            ? `If that date is confirmed you'll get an email with the details shortly; otherwise ${academyName} will reply within one working day.`
+            : variant === "notify"
+              ? "They will email you when the timetable is published."
+              : "They will reply by email within one working day to arrange a date."}{" "}
+          {values.slot_key ? "Nothing is charged." : "Nothing is booked or charged yet."}
         </p>
         <a className={`${styles.btn} ${styles.btnLine}`} href="#classes">
           Back to classes
@@ -185,6 +231,7 @@ export function TrialRequestForm({
     const listed = TRIAL_FIELD_ORDER.filter((field) => errors[field]);
     const hasSummary = listed.length > 0 || formError !== null;
     const sending = phase.kind === "sending";
+    const dates = classOptions.find((option) => option.value === values.class_id)?.dates ?? [];
 
     function describedBy(field: TrialField, hint?: boolean): string | undefined {
       const ids = [hint ? id(`${field}-hint`) : null, errors[field] ? id(`${field}-error`) : null];
@@ -325,7 +372,9 @@ export function TrialRequestForm({
               aria-invalid={errors.class_id ? true : undefined}
               aria-describedby={describedBy("class_id")}
               value={values.class_id}
-              onChange={(e) => set("class_id", e.target.value)}
+              onChange={(e) =>
+                setValues((current) => ({ ...current, class_id: e.target.value, slot_key: "" }))
+              }
             >
               <option value="">Not sure, please suggest one</option>
               {classOptions.map((option) => (
@@ -336,6 +385,31 @@ export function TrialRequestForm({
             </select>
             {errorText("class_id")}
           </div>
+        ) : null}
+
+        {dates.length > 0 ? (
+          <fieldset
+            className={styles.field}
+            aria-describedby={errors.slot_key ? id("slot_key-error") : undefined}
+          >
+            <legend id={id("slot_key")} tabIndex={-1}>
+              Trial date <span className={styles.optional}>(optional)</span>
+            </legend>
+            {[{ value: "", label: "No date yet, please suggest one" }, ...dates].map((date) => (
+              <div className={styles.check} key={date.value || "none"}>
+                <input
+                  id={id(`slot-${date.value || "none"}`)}
+                  type="radio"
+                  name="slot_key"
+                  value={date.value}
+                  checked={values.slot_key === date.value}
+                  onChange={() => set("slot_key", date.value)}
+                />
+                <label htmlFor={id(`slot-${date.value || "none"}`)}>{date.label}</label>
+              </div>
+            ))}
+            {errorText("slot_key")}
+          </fieldset>
         ) : null}
 
         <div className={styles.field}>
@@ -356,6 +430,25 @@ export function TrialRequestForm({
             read and answer messages faster; a person reviews every reply before it is sent.
           </p>
           {errorText("message")}
+        </div>
+
+        <div className={styles.field}>
+          <label htmlFor={id("heard_from")}>
+            How did you hear about us? <span className={styles.optional}>(optional)</span>
+          </label>
+          <select
+            id={id("heard_from")}
+            name="heard_from"
+            value={values.heard_from}
+            onChange={(e) => set("heard_from", e.target.value)}
+          >
+            <option value="">Choose one</option>
+            {HEARD_FROM_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className={styles.honeypot} aria-hidden="true">
@@ -402,6 +495,17 @@ export function TrialRequestForm({
             <span className={styles.optional}>(optional)</span>
           </label>
         </div>
+
+        {values.slot_key && turnstileSiteKey ? (
+          <div className={styles.field} id={id("turnstile_token")} tabIndex={-1}>
+            <TurnstileWidget
+              key={turnstileRound}
+              siteKey={turnstileSiteKey}
+              onToken={onTurnstileToken}
+            />
+            {errorText("turnstile_token")}
+          </div>
+        ) : null}
 
         <button
           type="submit"

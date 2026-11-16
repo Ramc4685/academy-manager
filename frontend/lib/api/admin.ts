@@ -3635,6 +3635,10 @@ export interface TrialRequestAdminRow {
   outcome?: "came" | "no_show" | null;
   outcome_by?: string | null;
   outcome_at?: string | null;
+  /** L9: a website guest's trial (no account): CRM contact, parent name and player age. */
+  contact_id?: string | null;
+  guest_name?: string | null;
+  guest_age?: string | null;
 }
 
 export interface TrialRequestsAdminResponse {
@@ -3743,6 +3747,14 @@ export function denyTrial(
   return apiFetch<TrialRequestAdminRow>(
     `/admin/self-service/trials/${encodeURIComponent(requestId)}/deny`,
     { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** L9: cancel one approved website guest booking; it returns to pending. */
+export function cancelGuestTrialBooking(requestId: string): Promise<void> {
+  return apiFetch<void>(
+    `/admin/self-service/trials/${encodeURIComponent(requestId)}/cancel-booking`,
+    { method: "POST" },
   );
 }
 
@@ -4359,6 +4371,10 @@ export interface AdminPublicPageSettingsView {
   theme: "floodlit" | "daylight" | "showcase";
   /** "Only N seats left" shows at or below this many seats (0 hides it, max 20). */
   seats_left_threshold: number;
+  /** L9: families may book a trial date themselves. Optional for older fixtures. */
+  self_book_trials?: boolean;
+  /** L9: website guests per class date (1 to 5). */
+  trial_guest_cap?: number;
   /** `https://<host>/` of the academy's own domain; null when none is on record. Read-only. */
   public_url: string | null;
 }

@@ -41,6 +41,9 @@ class ParentProfile(BaseModel):
     last_name: str = ""
     email: EmailStr | None = None
     phone: str = ""
+    #: L9 A6-10: "How did you hear about us?" (optional). The same short plain
+    #: token rule as CRM attribution: <= 80 chars of [A-Za-z0-9_.-].
+    heard_from: str = Field(default="", max_length=80, pattern=r"^[A-Za-z0-9_.-]*$")
 
 
 class ChildProfile(BaseModel):

@@ -3,6 +3,10 @@
 Applications (registration), waiver templates, waiver signatures, and the
 per-child AI/video consent.
 
+The registration parent step's `ParentProfile.heard_from` (L9 A6-10) is an
+optional "how did you hear about us" token: at most 80 characters of
+`[A-Za-z0-9_.-]`, validated at the boundary, stored on the application.
+
 ## Per-child AI/video consent (AI strategy Phase 3, slice E1)
 
 Stored and unused: no model, no upload, no clip handling.

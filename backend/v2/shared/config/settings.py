@@ -182,6 +182,14 @@ class Settings(BaseSettings):
             "key would be worse than not verifying at all (cf. issue #547)."
         ),
     )
+    turnstile_secret_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Cloudflare Turnstile secret (V2_TURNSTILE_SECRET_KEY) for public self-booked "
+            "trials (L9). Set => a booking without a valid token is refused (fail closed). "
+            "Unset => the check is skipped (dev, CI)."
+        ),
+    )
     sender_email: str | None = Field(default=None)
     email_delivery_enabled: bool = Field(
         default=False,

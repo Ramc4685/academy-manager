@@ -104,7 +104,7 @@ def _is_stripe_session_path(method: str, path: str) -> bool:
     )
 
 
-def _request_host(request: Request) -> str:
+def request_host(request: Request) -> str:
     """The host the tenant resolver reads, lower-cased, port and trailing dot dropped."""
     raw = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
     host = raw.split(",")[0].strip().lower()
@@ -167,7 +167,7 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
             host_limit = _PER_HOST_LIMITS.get((request.method.upper(), path))
             if host_limit is not None:
                 retry_after = self._hit(
-                    ("host:" + _request_host(request), path), host_limit[0], host_limit[1], now
+                    ("host:" + request_host(request), path), host_limit[0], host_limit[1], now
                 )
         self._evict_over_capacity()
         if retry_after is None:

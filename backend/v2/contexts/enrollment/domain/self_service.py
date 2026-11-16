@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.v2.shared.http.errors import DomainError
 
@@ -119,6 +119,14 @@ class TrialRequestNotPending(DomainError):
     already been decided (or otherwise isn't pending)."""
 
     code = "Enrollment.TrialRequestNotPending"
+    status_code = 409
+
+
+class TrialBookingNotCancellable(DomainError):
+    """Raised when staff cancel a trial booking that is not an approved
+    website guest booking (L9)."""
+
+    code = "Enrollment.TrialBookingNotCancellable"
     status_code = 409
 
 
@@ -301,6 +309,10 @@ TrialRequestStatus = Literal["pending", "approved", "denied", "completed", "conv
 TrialOutcome = Literal["came", "no_show"]
 
 
+#: Which limit refused a website guest booking (L9).
+GuestBookingRefusal = Literal["full", "mailbox_limit", "academy_ceiling"]
+
+
 class TrialRequest(BaseModel):
     """A parent-submitted request to try a session before enrolling (R3).
 
@@ -323,7 +335,9 @@ class TrialRequest(BaseModel):
 
     request_id: str
     academy_id: str
-    parent_user_id: str
+    #: The signed-in parent who asked. None for a website guest booking,
+    #: which carries ``contact_id`` instead (exactly one of the two is set).
+    parent_user_id: str | None = None
     student_ref: Literal["prospective", "existing_student"]
     student_id: str | None = None
     prospective_child_name: str | None = None
@@ -343,3 +357,31 @@ class TrialRequest(BaseModel):
     outcome: TrialOutcome | None = None
     outcome_by: str | None = None
     outcome_at: datetime | None = None
+    #: Website guest booking (L9 A6-1): the CRM contact who booked a dated
+    #: trial from the public page, with no account and no Student row.
+    contact_id: str | None = None
+    #: 1-based seat number among the guests on ``assigned_occurrence_id``.
+    #: Unique per (academy, occurrence) while set (migration 0236), so two
+    #: concurrent bookings of the last seat cannot both land. Cleared when the
+    #: date is cancelled, freeing the seat.
+    guest_slot: int | None = None
+    #: What the coach roster shows for a guest: the parent's name and the
+    #: player's age as typed. Copied at booking so the roster never reads CRM.
+    guest_name: str | None = None
+    guest_age: str | None = None
+    #: Booking caps as unique claims (migration 0236), so concurrent bookings
+    #: cannot overrun them. ``guest_mailbox``: the booker's canonical inbox; one
+    #: self-booking per inbox per class, ever. ``guest_day_claim``:
+    #: ``"YYYY-MM-DD#n"``, one of the academy's daily guest numbers (UTC day).
+    #: Internal: never shown.
+    guest_mailbox: str | None = None
+    guest_day_claim: str | None = None
+    #: When the guest's booked date starts: a booking counts toward the
+    #: per-academy inbox limit only until then. Internal: never shown.
+    guest_starts_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _one_requester(self) -> TrialRequest:
+        if (self.parent_user_id is None) == (self.contact_id is None):
+            raise ValueError("a trial request has exactly one of parent_user_id or contact_id")
+        return self

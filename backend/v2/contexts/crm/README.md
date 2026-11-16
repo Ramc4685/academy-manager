@@ -59,6 +59,10 @@ Collection `crm_contacts`, one document per inquiry.
 | `created_by` | str or null | CRM only | Staff user id. Always null for `website` (anonymous). |
 | `dedupe_key` | str (64 hex) or absent | CreateContact | Idempotency key, see below. Set only for `website` rows; absent on staff quick-add rows. |
 | `created_at`, `updated_at` | UTC datetime (ms) | CreateContact | |
+| `attribution` | `ContactAttribution` or null | CreateContact (website) | First touch: `{heard_from, utm_source, utm_medium, utm_campaign, referral_code}`, each a plain token of at most 80 `[A-Za-z0-9_.-]` (`clean_attribution`; anything else is dropped). A repeat keeps the one on file. |
+| `owner_alert_due_at` | UTC datetime or absent | CreateContact, `bump_repeat` | The owners still have to hear about this website lead. Cleared by `mark_owner_alerted`; the `resend_due_owner_alerts` sweep re-sends what is still due (A6-11). |
+| `owner_alert_sent_at` | UTC datetime or absent | `mark_owner_alerted` | When an owner alert last landed. |
+| `repeat_messages` | list of `{at, text}`, at most 5 | `bump_repeat` | Notes sent with repeat website inquiries, newest last, each <= 1000. **Unverified**: anyone can type this family's details into the public form, so they never overwrite `message` and the owner alert labels them as unverified. |
 
 `converted_parent_id` and `linked_family_id` are written by `MarkLeadEnrolled`
 (`application/use_cases/lead_conversion.py`) when a registration is approved:
@@ -125,6 +129,12 @@ Semantics:
   the same class for the same child age a week later) in the same academy:
   **no second row.** `CreateContact` returns the existing row with
   `created=False`. It does not raise and does not update the existing row.
+  Exception (L9 A6-4): a **website** repeat more than `REPEAT_INQUIRY_AFTER`
+  (24 hours) after the row last changed is bumped by
+  `SubmitWebsiteInquiry` (`bump_repeat`, one CAS on `updated_at`): the new
+  note is pushed onto `repeat_messages` (the original `message` is never
+  rewritten), a lead moves up to trial (never down), and the owner alert is
+  re-armed (`alert_owner=True`). A double tap inside the day changes nothing.
 - A different class, child age, child name, email or phone is a new
   lead (a second child is a second row).
 - The same inquiry in another academy is a separate row; dedupe is per
@@ -234,9 +244,15 @@ takes the academy from the host only, refuses with the unknown-host 404 while
 the page is unpublished, answers `409 Public.TrialsClosed` when trials are
 switched off, resolves the optional class from its opaque `public_id` against
 the academy's **published** classes only, and returns one acknowledgement body
-for new, repeated and honeypot submissions. `created` is used only after the
-response, to email the academy's owners once per new row, and to send the
-family its acknowledgement (below).
+for new, repeated and honeypot submissions. After the response,
+`WebsiteInquiryResult.alert_owner` (a new row, or a repeat after a day)
+emails the academy's owners, and `created` sends the family its
+acknowledgement (below). A website row is created with `owner_alert_due_at`;
+a landed owner email clears it and stamps `owner_alert_sent_at`
+(`mark_owner_alerted`), and the daily `resend_due_owner_alerts` job re-sends
+any still due after 15 minutes (`list_owner_alerts_due`, A6-11). The form's
+heard-from and utm values are kept on `attribution` only when they are short
+plain tokens (`clean_attribution`: at most 80 of `[A-Za-z0-9_.-]`).
 
 ## Emailing a prospect (AI strategy Phase 1 #2)
 

@@ -36,8 +36,10 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
+from zoneinfo import ZoneInfo
 
 from backend.v2.composition.prospect_email import ProspectEmailer, academy_brand
+from backend.v2.composition.trial_nudges import _when
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     EmailSendPort,
@@ -65,8 +67,16 @@ from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo impo
 from backend.v2.contexts.enrollment.application.use_cases.public_class_choice import (
     ResolvePublicClassChoice,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    BookTrialGuest,
+    ListBookableTrialDates,
+)
+from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
 )
 from backend.v2.contexts.identity.application.public_academy_profile import (
     GetPublicAcademyProfile,
@@ -77,7 +87,10 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
 from backend.v2.shared.comms.email_theme import EmailBrand, shell
 from backend.v2.shared.comms.mailbox import canonical_mailbox
 from backend.v2.shared.comms.sender_identity import resolve_sender
+from backend.v2.shared.http.turnstile import TurnstileVerifier
 from backend.v2.shared.tenancy.context import tenant_scope
+from backend.v2.shared.time import ensure_utc
+from backend.v2.shared.time.academy_timezone import academy_clock_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +105,18 @@ _RECIPIENT_ROLE: Final[AudienceRole] = "owner"
 #: sender name into a spam cannon. Far above a real academy's inquiry rate.
 _ACK_ACADEMY_HOURLY_CAP: Final = 20
 
+#: A6-11 sweep: owner alerts still due after the grace (the background task
+#: had its chance) and no older than the lookback (stale leads stay quiet).
+_ALERT_SWEEP_GRACE: Final = timedelta(minutes=15)
+_ALERT_SWEEP_LOOKBACK: Final = timedelta(days=3)
+
+
+def _local_when(start: datetime | None, doc: dict[str, Any]) -> str | None:
+    if start is None:
+        return None
+    zone = ZoneInfo(academy_clock_timezone(doc.get("timezone")))
+    return _when(ensure_utc(start).astimezone(zone))
+
 
 class AcademyLookup(Protocol):
     async def find_by_id(self, academy_id: str) -> dict[str, Any] | None: ...
@@ -101,6 +126,20 @@ class AcknowledgementClaims(Protocol):
     async def try_claim_acknowledgement(self, contact_id: str, *, at: datetime) -> bool: ...
 
     async def release_acknowledgement(self, contact_id: str) -> None: ...
+
+    async def mark_owner_alerted(self, contact_id: str, *, at: datetime) -> None: ...
+
+    async def list_owner_alerts_due(
+        self, *, due_from: datetime, due_before: datetime
+    ) -> list[CrmContact]: ...
+
+
+class GuestBookingEmails(Protocol):
+    async def guest_booked(self, trial: TrialRequest) -> None: ...
+
+    async def alert_details(
+        self, contact: CrmContact, doc: dict[str, Any]
+    ) -> tuple[str | None, str | None]: ...
 
 
 class InboxAcknowledgementClaims(Protocol):
@@ -125,20 +164,34 @@ def render_trial_request_alert(
     brand: EmailBrand,
     contact: CrmContact,
     class_title: str | None,
+    booked_for: str | None = None,
+    repeat: bool = False,
 ) -> tuple[str, str]:
     """Subject and themed HTML body for the academy's new-lead email.
+
+    ``booked_for``: the family booked that date themselves (L9 A6-1).
+    ``repeat``: a family already on file asked again after a day (A6-4).
 
     Every value is caller-supplied text from an anonymous form, so each one is
     HTML-escaped and none is ever placed in a link or an attribute.
     """
     is_trial = contact.pipeline_status == "trial"
-    kind = "trial request" if is_trial else "inquiry"
-    subject = f"New {kind} from {contact.name}"
+    kind = "trial booking" if booked_for else ("trial request" if is_trial else "inquiry")
+    subject = f"{contact.name} asked again: {kind}" if repeat else f"New {kind} from {contact.name}"
     message_html = (
         '<p style="margin:16px 0 4px;font-weight:600;">Their message</p>'
         '<p style="margin:0;white-space:pre-wrap;">'
         f"{html.escape(contact.message)}</p>"
         if contact.message
+        else ""
+    )
+    latest = contact.repeat_messages[-1].text if repeat and contact.repeat_messages else None
+    repeat_html = (
+        '<p style="margin:16px 0 4px;font-weight:600;">New note</p>'
+        '<p style="margin:0 0 4px;font-size:13px;color:#b45309;">'
+        "Unverified: sent from the public form with this family's details</p>"
+        f'<p style="margin:0;white-space:pre-wrap;">{html.escape(latest)}</p>'
+        if latest
         else ""
     )
     marketing = "Yes" if contact.consent.marketing else "No"
@@ -158,12 +211,19 @@ def render_trial_request_alert(
             _row("Phone", contact.phone_digits),
             _row("Player's age", contact.child_age),
             _row("Class", class_title or ("Not sure yet" if is_trial else None)),
+            _row("Booked for", booked_for) if booked_for else "",
             _row("News and offers", marketing),
             "</table>",
             message_html,
+            repeat_html,
             '<p style="margin:18px 0 0;font-size:13px;color:#64748b;">'
-            "They agreed to be contacted about this request. Nothing is booked or "
-            "charged until you confirm a date with them.</p>",
+            + (
+                "They booked this free trial date themselves and were sent a "
+                "confirmation. Nothing is charged.</p>"
+                if booked_for
+                else "They agreed to be contacted about this request. Nothing is booked "
+                "or charged until you confirm a date with them.</p>"
+            ),
         ]
     )
     return subject, shell(brand=brand, inner_html=inner)
@@ -175,16 +235,18 @@ def render_inquiry_acknowledgement(
     contact: CrmContact,
     class_title: str | None,
     can_reply: bool,
+    asked_trial: bool = False,
 ) -> tuple[str, str]:
     """Subject and inner HTML of the family's acknowledgement.
 
-    Trial (a seat is there): the academy will confirm a date. Lead: the
+    Trial (a seat is there, or ``asked_trial``: they picked a date a booking
+    limit did not let through): the academy will confirm a date. Lead: the
     chosen class is full (waitlist) or nothing is open yet (we will tell you).
     Nothing the submitter typed appears in it: the form takes any address
     unverified, so the greeting carries no name a stranger could be made to
     read. The class title and academy name are the academy's own, escaped.
     """
-    is_trial = contact.pipeline_status == "trial"
+    is_trial = contact.pipeline_status == "trial" or asked_trial
     safe_academy = html.escape(academy_name)
     safe_class = html.escape(class_title) if class_title else None
     if is_trial:
@@ -239,7 +301,9 @@ class TrialRequestOwnerEmail:
         contacts: AcknowledgementClaims,
         inboxes: InboxAcknowledgementClaims,
         prospects: ProspectEmailer,
+        bookings: GuestBookingEmails,
     ) -> None:
+        self._bookings = bookings
         self._academies = academies
         self._audiences = audiences
         self._sender = sender
@@ -254,32 +318,117 @@ class TrialRequestOwnerEmail:
         contact: CrmContact | None,
         created: bool,
         class_title: str | None,
+        alert_owner: bool = False,
+        booking: TrialRequest | None = None,
+        booked_start: datetime | None = None,
+        date_requested: bool = False,
     ) -> None:
-        """Background task body. Never raises; a no-op unless ``created``.
+        """Background task body. Never raises.
 
-        Called for every accepted submission so the response path is uniform;
-        a repeat (``created=False``) or a honeypot hit (``contact=None``) ends
-        here without a read or a send.
+        ``date_requested``: the family picked a date that was not booked (a
+        limit refused it); their acknowledgement reads as a trial request.
+
+        Called for every accepted submission so the response path is uniform.
+        The owners hear about a new contact, a repeat after a day
+        (``alert_owner``) and every self-booking; the family gets the booking
+        confirmation for a booking, else one acknowledgement for a new contact.
+        A double tap or a honeypot hit (``contact=None``) ends here.
         """
-        if contact is None or not created:
+        if contact is None or not (created or alert_owner or booking is not None):
             return
         try:
             with tenant_scope(academy_id):
-                await self._send_all(contact, class_title)
+                await self._send_all(
+                    contact,
+                    class_title,
+                    created=created,
+                    alert_owner=alert_owner,
+                    booking=booking,
+                    booked_start=booked_start,
+                    date_requested=date_requested,
+                )
         except Exception:
             logger.exception(
                 "public.trial_request_alert_failed",
                 extra={"contact_id": contact.contact_id},
             )
 
-    async def _send_all(self, contact: CrmContact, class_title: str | None) -> None:
+    async def send_due_alerts(self, *, academy_id: str) -> int:
+        """A6-11: re-send owner alerts that never went out (the background task
+        died or every send failed). Tenant-scoped; returns how many landed."""
+        now = datetime.now(UTC)
+        sent = 0
+        with tenant_scope(academy_id):
+            due = await self._contacts.list_owner_alerts_due(
+                due_from=now - _ALERT_SWEEP_LOOKBACK, due_before=now - _ALERT_SWEEP_GRACE
+            )
+            doc = await self._academies.find_by_id(academy_id) or {}
+            for contact in due:
+                class_title, booked_for = await self._bookings.alert_details(contact, doc)
+                # A repeat re-armed the alert after the row was created.
+                repeat = (contact.owner_alert_due_at or contact.created_at) > contact.created_at
+                if await self._alert_owners(
+                    contact, doc, class_title=class_title, repeat=repeat, booked_for=booked_for
+                ):
+                    sent += 1
+        return sent
+
+    async def _send_all(
+        self,
+        contact: CrmContact,
+        class_title: str | None,
+        *,
+        created: bool,
+        alert_owner: bool,
+        booking: TrialRequest | None,
+        booked_start: datetime | None,
+        date_requested: bool,
+    ) -> None:
         doc = await self._academies.find_by_id(contact.academy_id) or {}
-        brand = academy_brand(doc)
-        subject, body = render_trial_request_alert(
-            brand=brand, contact=contact, class_title=class_title
+        await self._alert_owners(
+            contact,
+            doc,
+            class_title=class_title,
+            repeat=alert_owner and not created,
+            booked_for=_local_when(booked_start, doc) if booking is not None else None,
         )
+        # The owner alert is the message that must land, so it went first;
+        # whatever the family email raises is logged by notify() after it.
+        if booking is not None:
+            await self._bookings.guest_booked(booking)
+            return
+        if not created:
+            return
+        # Replies go only to the academy's configured reply-to: an owner's
+        # own address is never shown to an anonymous submitter.
         identity = resolve_sender(doc)
-        sender_name = identity.sender_name
+        await self._acknowledge(
+            contact,
+            doc,
+            academy_brand(doc).academy_name,
+            class_title,
+            identity.reply_to,
+            asked_trial=date_requested,
+        )
+
+    async def _alert_owners(
+        self,
+        contact: CrmContact,
+        doc: dict[str, Any],
+        *,
+        class_title: str | None,
+        repeat: bool,
+        booked_for: str | None = None,
+    ) -> bool:
+        subject, body = render_trial_request_alert(
+            brand=academy_brand(doc),
+            contact=contact,
+            class_title=class_title,
+            booked_for=booked_for,
+            repeat=repeat,
+        )
+        sender_name = resolve_sender(doc).sender_name
+        landed = False
         for recipient in await self._recipients(doc):
             outcome = await self._sender.send(
                 recipient=recipient,
@@ -293,16 +442,15 @@ class TrialRequestOwnerEmail:
                 category=EmailCategory.TRANSACTIONAL,
                 sender_name=sender_name,
             )
+            landed = landed or outcome.ok
             if not outcome.ok and not outcome.suppressed:
                 logger.warning(
                     "public.trial_request_alert_send_failed",
                     extra={"contact_id": contact.contact_id, "reason": outcome.failed_reason},
                 )
-        # The owner alert is the message that must land, so it went first;
-        # whatever the acknowledgement raises is logged by notify() after it.
-        # Replies go only to the academy's configured reply-to: an owner's
-        # own address is never shown to an anonymous submitter.
-        await self._acknowledge(contact, doc, brand.academy_name, class_title, identity.reply_to)
+        if landed:
+            await self._contacts.mark_owner_alerted(contact.contact_id, at=datetime.now(UTC))
+        return landed
 
     async def _acknowledge(
         self,
@@ -311,6 +459,8 @@ class TrialRequestOwnerEmail:
         academy_name: str,
         class_title: str | None,
         reply_to: str | None,
+        *,
+        asked_trial: bool = False,
     ) -> None:
         mailbox = canonical_mailbox(contact.email)
         if not contact.consent.contact_about_request or not mailbox:
@@ -347,6 +497,7 @@ class TrialRequestOwnerEmail:
                 contact=contact,
                 class_title=class_title,
                 can_reply=reply_to is not None,
+                asked_trial=asked_trial,
             )
             outcome = await self._prospects.send(
                 contact=contact,
@@ -401,30 +552,52 @@ class TrialRequestOwnerEmail:
         ]
 
 
+class TrialContacts(Protocol):
+    async def promote_lead_to_trial(self, contact_id: str) -> CrmContact | None: ...
+
+
 @dataclass(frozen=True)
 class PublicTrialRequests:
     get_academy_profile: GetPublicAcademyProfile
     resolve_class_choice: ResolvePublicClassChoice
     submit_inquiry: SubmitWebsiteInquiry
     notifier: TrialRequestOwnerEmail
+    #: L9 self-booking (only while ``public_page.self_book_trials`` is on).
+    list_trial_dates: ListBookableTrialDates
+    book_trial: BookTrialGuest
+    contacts: TrialContacts
+    turnstile: TurnstileVerifier
 
 
-def compose_public_trial_requests(db: Any, settings: Any) -> PublicTrialRequests:
+def compose_public_trial_requests(
+    db: Any, settings: Any, *, trial_emails: GuestBookingEmails
+) -> PublicTrialRequests:
     """``_build_email_sender`` is the one construction site that hands dev and
     CI the stub port and production the gated Resend one."""
     from backend.v2.composition.digests import (
         _build_email_sender,
         compose_unsubscribe_link_builder,
     )
+    from backend.v2.composition.public_page_read import compose_list_bookable_trial_dates
 
     academies = MongoAcademyRepository(db)
     contacts = MongoCrmContactRepository(db)
     sender = _build_email_sender(settings, db)
+    secret = settings.turnstile_secret_key
     return PublicTrialRequests(
         get_academy_profile=GetPublicAcademyProfile(academies),
         resolve_class_choice=ResolvePublicClassChoice(MongoSessionRepository(db)),
-        submit_inquiry=SubmitWebsiteInquiry(CreateContact(contacts)),
+        submit_inquiry=SubmitWebsiteInquiry(CreateContact(contacts), contacts),
+        list_trial_dates=compose_list_bookable_trial_dates(db),
+        book_trial=BookTrialGuest(trials=MongoTrialRequestRepository(db)),
+        contacts=contacts,
+        # Production refuses every booking until the secret is set; dev and CI skip.
+        turnstile=TurnstileVerifier(
+            secret.get_secret_value() if secret else None,
+            required=settings.env == "prod",
+        ),
         notifier=TrialRequestOwnerEmail(
+            bookings=trial_emails,
             academies=academies,
             audiences=MongoAudienceResolver(db=db),
             sender=sender,

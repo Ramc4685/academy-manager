@@ -229,8 +229,17 @@ def _student(student_id: str = "student-1", parent_id: str = "parent-1", full_na
     )
 
 
+class _FakeGuestSeats:
+    def __init__(self, counts: dict[str, int] | None = None) -> None:
+        self.counts = counts or {}
+
+    async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]:
+        return {oid: self.counts[oid] for oid in occurrence_ids if oid in self.counts}
+
+
 def _build_approve(
     *,
+    guests: _FakeGuestSeats | None = None,
     makeups: _FakeMakeups | None = None,
     occurrences: _FakeOccurrences | None = None,
     enrollments: _FakeEnrollments | None = None,
@@ -251,6 +260,7 @@ def _build_approve(
         enrollments=enrollments,
         sessions=sessions,
         occurrence_roster=occurrence_roster,
+        guests=guests or _FakeGuestSeats(),
         clock=clock,
     )
     return use_case, makeups, occurrence_roster
@@ -856,3 +866,19 @@ async def test_repo_transition_from_pending_returns_none_for_unknown_request() -
         result = await repo.transition_from_pending("req-missing", {"status": "approved"})
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_approve_makeup_request_counts_website_guests_against_capacity() -> None:
+    # One seat; a website guest booked on the target date already holds it.
+    session = _session(capacity=1)
+    use_case, _, _ = _build_approve(
+        sessions=_FakeSessions([session]), guests=_FakeGuestSeats({"occ-target": 1})
+    )
+
+    with pytest.raises(OccurrenceFull):
+        await use_case.execute(
+            ApproveMakeupRequestCommand(
+                request_id="req-1", actor_id="admin-1", target_occurrence_id="occ-target"
+            )
+        )

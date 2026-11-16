@@ -93,8 +93,12 @@ class SendTrialReminders:
         if not await self._switch.is_enabled(academy_id):
             return 0
         tomorrow = local_now.date() + timedelta(days=1)
+        # Website guests (no account) are not reminded here: this path mails
+        # the parent user. shortcut: guest reminders belong to L9 PR B.
         trials = [
-            t for t in await self._trials.list_by_status("approved") if t.assigned_occurrence_id
+            t
+            for t in await self._trials.list_by_status("approved")
+            if t.assigned_occurrence_id and t.parent_user_id
         ]
         occurrences = {
             o.occurrence_id: o
@@ -147,6 +151,7 @@ class SendTrialNoShowFollowUps:
                 trial.outcome != "no_show"
                 or trial.linked_application_id
                 or trial.outcome_at is None
+                or trial.parent_user_id is None  # website guest: L9 PR B
             ):
                 continue
             marked_at = ensure_utc(trial.outcome_at)
@@ -171,6 +176,7 @@ class SendTrialNoShowFollowUps:
         """A later trial request by the same parent that was not denied: the
         family already rebooked (or came, or registered), so no nudge."""
         created = ensure_utc(trial.created_at)
+        assert trial.parent_user_id is not None  # guests are filtered out above
         return any(
             other.request_id != trial.request_id
             and other.status != "denied"

@@ -37,6 +37,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     OccurrenceFull,
     OccurrenceRosterEntry,
     ParentActionDisabled,
+    TrialBookingNotCancellable,
     TrialRequest,
     TrialRequestNotFound,
     TrialRequestNotPending,
@@ -189,6 +190,14 @@ class AdminTrialRequestRepository(Protocol):
         self, request_id: str, updates: dict[str, object]
     ) -> TrialRequest | None: ...
 
+    async def approve_guest(
+        self, request_id: str, updates: dict[str, object], *, max_slot: int
+    ) -> TrialRequest | None: ...
+
+    async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]: ...
+
+    async def cancel_guest_booking(self, request_id: str) -> TrialRequest | None: ...
+
 
 class AdminTrialOccurrenceQuery(Protocol):
     async def get_many(self, occurrence_ids: list[str]) -> list[SessionOccurrence]: ...
@@ -230,6 +239,11 @@ class TrialRequestAdminView(BaseModel):
     outcome: str | None = None
     outcome_by: str | None = None
     outcome_at: datetime | None = None
+    # L9: a website guest booking (no account): the CRM contact, and the
+    # parent name and player age the roster shows.
+    contact_id: str | None = None
+    guest_name: str | None = None
+    guest_age: str | None = None
 
 
 class ListTrialRequestsForAdmin:
@@ -373,8 +387,14 @@ class ApproveTrialRequest:
 
         active_count = len(await self._enrollments.active_for_session(occurrence.session_id))
         roster_count = len(await self._occurrence_roster.list_for_occurrence(cmd.occurrence_id))
+        # Website guests hold a seat on their date with no roster entry (L9).
+        guests = (await self._trials.guest_counts_for_occurrences([cmd.occurrence_id])).get(
+            cmd.occurrence_id, 0
+        )
         remaining = open_slots(
-            capacity=session.capacity, active_count=active_count, roster_count=roster_count
+            capacity=session.capacity,
+            active_count=active_count,
+            roster_count=roster_count + guests,
         )
         if remaining <= 0:
             raise OccurrenceFull(
@@ -385,15 +405,21 @@ class ApproveTrialRequest:
         # concurrent approve/deny call for this SAME request can win the
         # pending -> approved transition, so a double-submit loses cleanly
         # instead of racing past the capacity check and over-filling it.
-        updated = await self._trials.transition_from_pending(
-            request.request_id,
-            {
-                "status": "approved",
-                "assigned_occurrence_id": cmd.occurrence_id,
-                "decided_by": cmd.actor_id,
-                "decided_at": now,
-            },
-        )
+        updates: dict[str, object] = {
+            "status": "approved",
+            "assigned_occurrence_id": cmd.occurrence_id,
+            "decided_by": cmd.actor_id,
+            "decided_at": now,
+        }
+        if request.contact_id is not None:
+            # A guest re-approved onto a new date takes a seat number there.
+            updated = await self._trials.approve_guest(
+                request.request_id,
+                {**updates, "guest_starts_at": occurrence.start_at},
+                max_slot=guests + remaining,
+            )
+        else:
+            updated = await self._trials.transition_from_pending(request.request_id, updates)
         if updated is None:
             raise TrialRequestNotPending(
                 "only pending trial requests can be approved", request_id=cmd.request_id
@@ -458,6 +484,26 @@ class DenyTrialRequest:
                 "only pending trial requests can be denied", request_id=cmd.request_id
             )
         return updated
+
+
+class CancelGuestTrialBooking:
+    """Staff cancel one approved website guest booking (L9). Every self-booking
+    starts approved, so Deny cannot reach it; this puts it back to
+    ``pending`` with its claims released, like a cancelled date does. Returns
+    the booking as it was, so the caller can tell the family which date."""
+
+    def __init__(self, *, trials: AdminTrialRequestRepository) -> None:
+        self._trials = trials
+
+    async def execute(self, request_id: str) -> TrialRequest:
+        booking = await self._trials.cancel_guest_booking(request_id)
+        if booking is None:
+            if await self._trials.get(request_id) is None:
+                raise TrialRequestNotFound("trial request not found", request_id=request_id)
+            raise TrialBookingNotCancellable(
+                "only an approved guest booking can be cancelled", request_id=request_id
+            )
+        return booking
 
 
 # ============================================================================

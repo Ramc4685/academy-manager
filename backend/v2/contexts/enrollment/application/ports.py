@@ -15,6 +15,7 @@ from backend.v2.contexts.enrollment.domain.models import (
     Student,
 )
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 
 
 class SessionQuery(Protocol):
@@ -424,9 +425,18 @@ class MakeupReopener(Protocol):
 
 class TrialReopener(Protocol):
     """Put approved trials assigned to a cancelled date back to pending
-    (issue #671). Returns the student ids so the families can be told."""
+    (issue #671). Returns the reopened requests so the families can be told."""
 
-    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[str]: ...
+    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[TrialRequest]: ...
+
+
+class TrialGuestCancellationNotifier(Protocol):
+    """Tells website guests (no account, no Student row) that their trial
+    date was called off (L9 A6-1). Best effort; never raises."""
+
+    async def trial_date_cancelled(
+        self, *, trials: list[TrialRequest], start_at: datetime, reason: str
+    ) -> None: ...
 
 
 class MakeupPolicyLookup(Protocol):

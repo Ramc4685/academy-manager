@@ -149,6 +149,8 @@ class TrialNudgeEmailAdapter:
         self._frontend_url = frontend_url
 
     async def trial_reminder(self, *, trial: TrialRequest, local_start: datetime) -> SendResult:
+        # The use cases skip website guests (no parent account) before this.
+        assert trial.parent_user_id is not None
         doc = await self._academy_doc()
         child = await self._child_name(trial)
         title, location = await self._session(trial.requested_session_id)
@@ -174,6 +176,8 @@ class TrialNudgeEmailAdapter:
         )
 
     async def trial_no_show(self, *, trial: TrialRequest) -> SendResult:
+        # The use cases skip website guests (no parent account) before this.
+        assert trial.parent_user_id is not None
         doc = await self._academy_doc()
         child = await self._child_name(trial)
         title, _location = await self._session(trial.requested_session_id)

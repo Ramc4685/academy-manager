@@ -76,7 +76,7 @@ async def test_trials_assigned_to_the_cancelled_date_are_reopened(db) -> None:
                 "academy_id": ACADEMY,
                 "request_id": "tr-1",
                 "parent_user_id": "par-1",
-                "student_ref": "existing",
+                "student_ref": "existing_student",
                 "student_id": "st-trial",
                 "requested_session_id": "sess-1",
                 "preferred_start": "2026-09-01",
@@ -91,7 +91,7 @@ async def test_trials_assigned_to_the_cancelled_date_are_reopened(db) -> None:
                 "academy_id": ACADEMY,
                 "request_id": "tr-2",
                 "parent_user_id": "par-2",
-                "student_ref": "existing",
+                "student_ref": "existing_student",
                 "student_id": "st-other",
                 "requested_session_id": "sess-1",
                 "preferred_start": "2026-09-01",
@@ -103,9 +103,11 @@ async def test_trials_assigned_to_the_cancelled_date_are_reopened(db) -> None:
         ]
     )
     with tenant_scope(ACADEMY):
-        student_ids = await MongoTrialRequestRepository(db).reopen_for_assigned_occurrence("occ-1")
+        reopened_trials = await MongoTrialRequestRepository(db).reopen_for_assigned_occurrence(
+            "occ-1"
+        )
 
-    assert student_ids == ["st-trial"]
+    assert [t.student_id for t in reopened_trials] == ["st-trial"]
     reopened = await db["trial_requests"].find_one({"request_id": "tr-1"})
     assert reopened["status"] == "pending"
     assert reopened["assigned_occurrence_id"] is None
@@ -121,7 +123,7 @@ async def test_another_academy_cannot_reopen_these_rows(db) -> None:
             "academy_id": ACADEMY,
             "request_id": "tr-1",
             "parent_user_id": "par-1",
-            "student_ref": "existing",
+            "student_ref": "existing_student",
             "student_id": "st-trial",
             "requested_session_id": "sess-1",
             "preferred_start": "2026-09-01",

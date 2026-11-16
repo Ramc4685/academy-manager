@@ -930,6 +930,35 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             ))}
           </ul>
         )}
+        {(session.trial_guests ?? []).length > 0 ? (
+          <div className="mt-4" data-testid="trial-guests">
+            <h3 className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+              Trial guests (booked on the website)
+            </h3>
+            <ul className="mt-2 space-y-2">
+              {(session.trial_guests ?? []).map((guest) => (
+                <li
+                  key={guest.trial_request_id}
+                  className="rounded-md border p-3"
+                  style={{ borderColor: "var(--rally-line)" }}
+                  data-testid={`trial-guest-${guest.trial_request_id}`}
+                >
+                  <p className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
+                    {guest.name}
+                    {guest.age ? (
+                      <span style={{ color: "var(--rally-muted)" }}> · player age {guest.age}</span>
+                    ) : null}
+                  </p>
+                  <TrialOutcomeControl
+                    requestId={guest.trial_request_id}
+                    studentName={`${guest.name}'s player`}
+                    outcome={guest.trial_outcome}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
 
       {/*

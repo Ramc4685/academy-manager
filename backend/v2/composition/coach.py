@@ -92,6 +92,9 @@ from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences
     ListCoachOccurrencesForDate,
     ListCoachUpcomingOccurrences,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    ListTrialGuests,
+)
 from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
@@ -193,6 +196,8 @@ class CoachComposition:
     # Occurrence-scoped roster (expected-absence flags + one-time makeup/
     # trial entries) for /coach/today.
     get_occurrence_roster: GetOccurrenceRoster | None = None
+    # L9: website guests booked on a date, for /coach/today.
+    list_trial_guests: ListTrialGuests | None = None
     # Messages inbox (UIM13)
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
@@ -553,6 +558,7 @@ def compose_coach(
         ),
         get_roster=get_roster,
         get_occurrence_roster=get_occurrence_roster,
+        list_trial_guests=ListTrialGuests(trials=MongoTrialRequestRepository(db)),
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),

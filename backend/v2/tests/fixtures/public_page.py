@@ -15,11 +15,16 @@ from typing import Any
 from fastapi import FastAPI, Request
 
 from backend.v2.composition.prospect_email import ProspectEmailer, compose_unsubscribe_prospect
-from backend.v2.composition.public_page_read import compose_public_page_read
+from backend.v2.composition.public_page_read import (
+    compose_list_bookable_trial_dates,
+    compose_public_page_read,
+)
 from backend.v2.composition.public_trial_requests import (
     PublicTrialRequests,
     TrialRequestOwnerEmail,
 )
+from backend.v2.composition.trial_emails import TrialEmails
+from backend.v2.composition.trial_nudges import MongoTrialNudgeSendRepository
 from backend.v2.contexts.communications.application.unsubscribe_token import (
     UnsubscribeLinkBuilder,
 )
@@ -50,8 +55,20 @@ from backend.v2.contexts.crm.infrastructure.mongo_inquiry_ack_throttle_repo impo
 from backend.v2.contexts.enrollment.application.use_cases.public_class_choice import (
     ResolvePublicClassChoice,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    BookTrialGuest,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
+    MongoStudentRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
 )
 from backend.v2.contexts.identity.application.public_academy_profile import (
     GetPublicAcademyProfile,
@@ -59,10 +76,15 @@ from backend.v2.contexts.identity.application.public_academy_profile import (
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.interfaces.public.router import router as public_router
 from backend.v2.interfaces.unsubscribe_routes import router as unsubscribe_router
 from backend.v2.shared.auth.middleware import TenancyMiddleware
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.shared.http.turnstile import TurnstileVerifier
 
 ACADEMY = "acad-riverside"
 OTHER = "acad-lakeside"
@@ -315,21 +337,41 @@ def compose_trial_requests_for_test(db: Any, stub: StubEmailSendPort) -> PublicT
     sender = GatedEmailSendPort(
         inner=stub, prospects=ProspectOptOutGate(MongoProspectOptOutRepository(db))
     )
+    prospects = ProspectEmailer(
+        sender=sender,
+        unsubscribe_links=UnsubscribeLinkBuilder(
+            frontend_url=FRONTEND_URL, secret=UNSUBSCRIBE_SECRET
+        ),
+    )
     return PublicTrialRequests(
         get_academy_profile=GetPublicAcademyProfile(academies),
         resolve_class_choice=ResolvePublicClassChoice(MongoSessionRepository(db)),
-        submit_inquiry=SubmitWebsiteInquiry(CreateContact(contacts)),
+        submit_inquiry=SubmitWebsiteInquiry(CreateContact(contacts), contacts),
+        list_trial_dates=compose_list_bookable_trial_dates(db),
+        book_trial=BookTrialGuest(trials=MongoTrialRequestRepository(db)),
+        contacts=contacts,
+        turnstile=TurnstileVerifier(None),
         notifier=TrialRequestOwnerEmail(
+            bookings=TrialEmails(
+                contacts=contacts,
+                occurrences=MongoSessionOccurrenceRepository(db),
+                trials=MongoTrialRequestRepository(db),
+                prospects=prospects,
+                send_repo=MongoTrialNudgeSendRepository(db),
+                audiences=MongoAudienceResolver(db=db),
+                memberships=MongoMembershipRepository(db),
+                users=MongoUserRepository(db),
+                academies=academies,
+                students=MongoStudentRepository(db),
+                sessions=MongoSessionRepository(db),
+                sender=sender,
+                frontend_url=FRONTEND_URL,
+            ),
             academies=academies,
             audiences=MongoAudienceResolver(db=db),
             sender=sender,
             contacts=contacts,
             inboxes=MongoInquiryAckThrottleRepository(db),
-            prospects=ProspectEmailer(
-                sender=sender,
-                unsubscribe_links=UnsubscribeLinkBuilder(
-                    frontend_url=FRONTEND_URL, secret=UNSUBSCRIBE_SECRET
-                ),
-            ),
+            prospects=prospects,
         ),
     )

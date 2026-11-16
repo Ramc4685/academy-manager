@@ -34,6 +34,8 @@ PublicPageTheme = Literal["floodlit", "daylight", "showcase"]
 #: At or below this many seats left a class shows "only N seats left". Equal
 #: to the enrollment catalog's ``FEW_SEATS_THRESHOLD`` (pinned by a test), so
 #: an academy that never touches the setting reads exactly as before.
+DEFAULT_TRIAL_GUEST_CAP: Final = 2
+MAX_TRIAL_GUEST_CAP: Final = 5
 DEFAULT_SEATS_LEFT_THRESHOLD: Final = 3
 MAX_SEATS_LEFT_THRESHOLD: Final = 20
 
@@ -134,6 +136,13 @@ class PublicPageSettings(BaseModel):
     show_availability: bool = True
     price_period_default: PricePeriodDefault = "month"
     trials_open: bool = True
+    #: L9 A6-1: families pick a dated trial on the public page and are booked
+    #: at once (up to ``trial_guest_cap`` guests per class date). Off until
+    #: the owner has set up Turnstile and approved the emails.
+    self_book_trials: bool = False
+    trial_guest_cap: int = Field(
+        default=DEFAULT_TRIAL_GUEST_CAP, ge=1, le=MAX_TRIAL_GUEST_CAP, strict=True
+    )
     privacy_notice_url: str | None = None
     theme: PublicPageTheme = "floodlit"
     #: 0 never shows "only N seats left"; 1..20 shows it at or below N.

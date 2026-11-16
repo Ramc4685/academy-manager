@@ -959,6 +959,7 @@ def compose_parent(
         enrollments=enrollments_query,
         occurrence_roster=occurrence_roster_repo,
         policies=self_service_policies_repo,
+        guests=trial_requests_repo,
     )
 
     class _TrialsOpenGate:

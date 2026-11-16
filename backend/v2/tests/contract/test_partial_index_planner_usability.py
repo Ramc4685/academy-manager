@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -188,6 +189,32 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
         "trial_requests",
         {"academy_id": "acad_0", "parent_user_id": "p-1"},
         {"academy_id_1_parent_user_id_1_created_at_-1"},
+    ),
+    # L9 self-booked trials (migration 0236): seated guests per date and the
+    # contact and per-mailbox lookups.
+    (
+        "trial_requests",
+        {
+            "academy_id": "acad_0",
+            "assigned_occurrence_id": {"$in": ["occ-1", "occ-2"]},
+            "guest_slot": {"$gte": 1},
+        },
+        {"trial_requests_guest_slot_unique"},
+    ),
+    (
+        "trial_requests",
+        {"academy_id": "acad_0", "contact_id": {"$eq": "c-1", "$gt": ""}},
+        {"trial_requests_contact"},
+    ),
+    (
+        "trial_requests",
+        {
+            "academy_id": "acad_0",
+            "guest_mailbox": {"$eq": "jamie@example.test", "$gt": ""},
+            "status": "approved",
+            "guest_starts_at": {"$gt": datetime(2026, 1, 1, tzinfo=UTC)},
+        },
+        {"trial_requests_guest_mailbox_class_unique"},
     ),
 ]
 

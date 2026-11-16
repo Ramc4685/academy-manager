@@ -46,6 +46,14 @@ def _contact(**overrides: Any) -> CrmContact:
     return CrmContact(**fields)
 
 
+class _NoBookings:
+    async def guest_booked(self, trial: Any) -> None:
+        return None
+
+    async def alert_details(self, contact: Any, doc: Any) -> tuple[None, None]:
+        return None, None
+
+
 class _Academies:
     def __init__(self, doc: dict[str, Any] | None) -> None:
         self.doc = doc
@@ -107,6 +115,7 @@ def _adapter(
         sender=sender,
         contacts=_AlreadyAcknowledged(),
         inboxes=_AlreadyAcknowledged(),
+        bookings=_NoBookings(),
         prospects=ProspectEmailer(sender=sender, unsubscribe_links=UnsubscribeLinkBuilder()),
     )
     return adapter, sender, audiences, academies
