@@ -16,6 +16,17 @@ export function loginPathForError(err: unknown): string {
   return reason ? `/login?error=${encodeURIComponent(reason)}` : "/login";
 }
 
+/**
+ * A verified email with no account here is a self-registered parent whose
+ * sign-up started in another browser or device (the localStorage hand-off from
+ * /register is missing), or a new family that pressed Google on Sign in.
+ * `/register/parent` is safe to call for them: it requires a verified email
+ * and only grants the parent role.
+ */
+export function shouldSelfRegister(err: unknown, emailVerified: boolean): boolean {
+  return emailVerified && loginErrorCode(err) === "Identity.UserNotFound";
+}
+
 function loginErrorCode(err: unknown): string | null {
   if (typeof err !== "object" || err === null) return null;
   const apiErr = err as Partial<ApiError>;

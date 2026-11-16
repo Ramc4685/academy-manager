@@ -13,7 +13,8 @@ import {
   clearPersonaHintCookie,
   setPersonaHintCookie,
 } from "@/lib/auth/persona-hint-cookie";
-import { loginPathForError } from "@/lib/auth/login-error";
+import { loginPathForError, shouldSelfRegister } from "@/lib/auth/login-error";
+import { registerPublicParent } from "@/lib/api/registration";
 import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
 
@@ -51,7 +52,16 @@ export default function PostLoginPage() {
             const returnTo = sanitizeReturnPath(readReturnToParam());
             replaceLocation(router, returnTo ?? homeForRoles(currentUser.roles));
           })
-          .catch((err: unknown) => {
+          .catch(async (err: unknown) => {
+            if (shouldSelfRegister(err, user.emailVerified)) {
+              try {
+                await registerPublicParent();
+                replaceLocation(router, "/parent/onboarding");
+                return;
+              } catch (registerErr: unknown) {
+                err = registerErr;
+              }
+            }
             if (isAuthRejection(err)) {
               // 401/403: the backend rejected this session — treat as a real
               // auth failure and bounce to /login with the reason code.

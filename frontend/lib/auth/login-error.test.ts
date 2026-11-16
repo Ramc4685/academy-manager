@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { loginErrorMessage, loginPathForError } from "./login-error";
+import { loginErrorMessage, loginPathForError, shouldSelfRegister } from "./login-error";
 
 function apiError(
   status: number,
@@ -50,5 +50,25 @@ describe("loginErrorMessage", () => {
 
   it("renders nothing when there is no error param", () => {
     expect(loginErrorMessage(null)).toBeNull();
+  });
+});
+
+describe("shouldSelfRegister", () => {
+  const notFound = apiError(401, "Auth.NotAuthenticated", { reason: "Identity.UserNotFound" });
+
+  it("registers a verified parent whose sign-up began in another browser", () => {
+    expect(shouldSelfRegister(notFound, true)).toBe(true);
+  });
+
+  it("never registers an unverified email", () => {
+    expect(shouldSelfRegister(notFound, false)).toBe(false);
+  });
+
+  it("leaves other failures (e.g. no membership here) to the login page", () => {
+    const noMembership = apiError(401, "Auth.NotAuthenticated", {
+      reason: "Identity.MembershipNotFound",
+    });
+    expect(shouldSelfRegister(noMembership, true)).toBe(false);
+    expect(shouldSelfRegister(new Error("Failed to fetch"), true)).toBe(false);
   });
 });
