@@ -75,7 +75,7 @@ class MongoReferralRepository(TenantScopedRepository):
             {"referred_parent_id": referral.referred_parent_id, "status": "needs_review"},
             {"$set": doc},
         )
-        return result.modified_count == 1
+        return bool(result.modified_count == 1)
 
     async def approve(self, referral_id: str, *, actor_id: str, now: datetime) -> bool:
         result = await self._update_one(
@@ -89,7 +89,7 @@ class MongoReferralRepository(TenantScopedRepository):
                 }
             },
         )
-        return result.modified_count == 1
+        return bool(result.modified_count == 1)
 
     async def get(self, referral_id: str) -> Referral | None:
         doc = await self._find_one({"referral_id": referral_id})
