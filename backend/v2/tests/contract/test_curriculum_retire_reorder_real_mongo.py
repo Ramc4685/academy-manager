@@ -34,6 +34,9 @@ from backend.v2.contexts.student_progress.application.use_cases.curriculum_chang
 from backend.v2.contexts.student_progress.application.use_cases.recommend_level_up import (
     RecommendLevelUp,
 )
+from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
+    ReviewLevelUpCommand,
+)
 from backend.v2.shared.tenancy.context import tenant_scope
 from backend.v2.tests.contract.test_curriculum_placement_real_mongo import (
     ACADEMY,
@@ -96,35 +99,93 @@ async def test_create_skill_refuses_a_level_from_another_program(real_db: Any) -
             )
 
 
+def _checks(w: dict[str, Any]) -> CurriculumChangeChecks:
+    return CurriculumChangeChecks(
+        level_progress=w["level_progress"],
+        skill_progress=w["skill_progress"],
+        skill_lookup=w["lookup"],
+        recommendations=w["recs"],
+        recommend_level_up=RecommendLevelUp(
+            level_progress=w["level_progress"],
+            skill_progress=w["skill_progress"],
+            recommendations=w["recs"],
+            skill_lookup=w["lookup"],
+            enrollment_lookup=_Live(),
+        ),
+    )
+
+
+async def _retire(db: Any, w: dict[str, Any], skill_id: str) -> int:
+    """What the admin route does: read who is held back, retire, recheck them."""
+    checks = _checks(w)
+    held_back = await checks.held_back_by(skill_id)
+    skill = await UpdateSkill(skills=MongoSkillRepository(db)).execute(
+        UpdateSkillCommand(skill_id=skill_id, is_active=False, updated_by="owner")
+    )
+    return await checks.recheck_students(skill.level_id, held_back, "owner")
+
+
 async def test_retiring_the_skill_holding_a_student_back_queues_the_level_up(
     real_db: Any,
 ) -> None:
     await _seed_curriculum(real_db)
     with tenant_scope(ACADEMY):
         w = _wire(real_db)
-        checks = CurriculumChangeChecks(
-            level_progress=w["level_progress"],
-            recommendations=w["recs"],
-            recommend_level_up=RecommendLevelUp(
-                level_progress=w["level_progress"],
-                skill_progress=w["skill_progress"],
-                recommendations=w["recs"],
-                skill_lookup=w["lookup"],
-                enrollment_lookup=_Live(),
-            ),
-        )
         await w["place"].execute(_place("L1"))
         await _pass(w, "s1")
-        on_level = await checks.active_student_ids("L1")
-        assert await checks.recheck_level("L1", "owner") == 0  # s2 still open
-        await UpdateSkill(skills=MongoSkillRepository(real_db)).execute(
-            UpdateSkillCommand(skill_id="s2", is_active=False, updated_by="owner")
-        )
-        queued = await checks.recheck_level("L1", "owner")
-        pending = await checks.has_pending_level_ups("prog")
+        on_level = await _checks(w).active_student_ids("L1")
+        queued = await _retire(real_db, w, "s2")
+        pending = await _checks(w).has_pending_level_ups("prog")
 
     assert on_level == ["kid"]
     assert queued == 1 and pending is True
+
+
+async def test_retiring_a_skill_never_requeues_a_rejected_level_up(real_db: Any) -> None:
+    """The kid passed the skill being retired; the owner already said no."""
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await _pass(w, "s1")
+        await _pass(w, "s2")
+        await _rec(w, status="REJECTED")
+        queued = await _retire(real_db, w, "s2")
+        pending = await _checks(w).has_pending_level_ups("prog")
+
+    assert queued == 0 and pending is False
+
+
+async def test_retiring_an_optional_skill_queues_nobody(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    await real_db["skills"].update_one({"skill_id": "s2"}, {"$set": {"is_required": False}})
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await _pass(w, "s1")
+        await _rec(w, status="REJECTED")
+        queued = await _retire(real_db, w, "s2")
+
+    assert queued == 0
+
+
+async def test_retiring_a_skill_twice_queues_nobody_the_second_time(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await _pass(w, "s1")
+        first = await _retire(real_db, w, "s2")
+        rec = await w["recs"].get_active_for_student("kid", "prog")
+        assert rec is not None
+        await w["review"].execute(
+            ReviewLevelUpCommand(rec_id=rec.rec_id, action="reject", reviewed_by="owner")
+        )
+        second = await _retire(real_db, w, "s2")
+        pending = await _checks(w).has_pending_level_ups("prog")
+
+    assert (first, second) == (1, 0)
+    assert pending is False
 
 
 async def test_new_levels_and_skills_number_past_retired_rows(real_db: Any) -> None:
@@ -175,6 +236,8 @@ async def test_a_level_a_pending_level_up_targets_counts_as_in_use(real_db: Any)
         w = _wire(real_db)
         checks = CurriculumChangeChecks(
             level_progress=w["level_progress"],
+            skill_progress=w["skill_progress"],
+            skill_lookup=w["lookup"],
             recommendations=w["recs"],
             recommend_level_up=None,  # type: ignore[arg-type]
         )

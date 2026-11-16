@@ -22,6 +22,7 @@ from backend.v2.contexts.student_progress.application.errors import (
     PassNeedsLeadCoach,
     SkillAlreadyPassed,
     SkillNotOnCurrentLevel,
+    StudentNotFound,
 )
 from backend.v2.contexts.student_progress.application.use_cases.auto_approve_level_ups import (
     AutoApproveLevelUps,
@@ -73,6 +74,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo
     MongoTestAttemptRepository,
 )
 from backend.v2.shared.tenancy.context import tenant_scope
+from backend.v2.tests.fixtures.certificate_fakes import SequentialCertNumbers
 
 pytestmark = pytest.mark.asyncio
 
@@ -135,8 +137,16 @@ async def _seed_curriculum(db: Any) -> None:
 
 
 class _Live:
+    """Every student attends; only ``unknown`` ids are missing from the academy."""
+
+    def __init__(self, unknown: frozenset[str] = frozenset()) -> None:
+        self.unknown = unknown
+
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
         return True
+
+    async def student_exists(self, student_id: str) -> bool:
+        return student_id not in self.unknown
 
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         return set(student_ids)
@@ -159,6 +169,7 @@ def _wire(db: Any) -> dict[str, Any]:
             skill_progress=skill_progress,
             skill_lookup=lookup,
             recommendations=recs,
+            enrollment_lookup=_Live(),
         ),
         "record": RecordTestAttempt(
             level_progress=level_progress,
@@ -171,6 +182,7 @@ def _wire(db: Any) -> dict[str, Any]:
             level_progress=level_progress,
             skill_progress=skill_progress,
             certificates=MongoSkillCertificateRepository(db),
+            cert_numbers=SequentialCertNumbers(),
             skill_lookup=lookup,
             enrollment_lookup=_Live(),
         ),
@@ -718,7 +730,6 @@ async def test_approval_refuses_a_retired_target_and_leaves_the_rec_pending(
                     student_name="Kid",
                     level_name="One",
                     program_name="Prog",
-                    level_sequence=1,
                 )
             )
         rec = await w["recs"].get("rec-1")
@@ -824,3 +835,60 @@ async def test_auto_approve_hands_a_level_up_into_a_retired_level_to_the_owner(
 
     assert (result.approved, result.needs_owner, result.skipped) == (0, 1, 0)
     assert rec is not None and rec.status == "RECOMMENDED"
+
+
+async def test_a_first_status_write_never_overwrites_a_pass_that_landed_first(
+    real_db: Any,
+) -> None:
+    """No row at read time; a pass inserts one before the status write (F1)."""
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await real_db["student_skill_progress"].delete_one({"student_id": "kid", "skill_id": "s1"})
+        repo = w["skill_progress"]
+        read = repo.get
+
+        async def read_then_tap(student_id: str, skill_id: str) -> Any:
+            row = await read(student_id, skill_id)
+            repo.get = read
+            await _pass(w, skill_id)
+            return row
+
+        repo.get = read_then_tap
+        status = UpdateSkillStatus(
+            level_progress=w["level_progress"], skill_progress=repo, skill_lookup=w["lookup"]
+        )
+        with pytest.raises(SkillAlreadyPassed):
+            await status.execute(
+                UpdateSkillStatusCommand(
+                    student_id="kid",
+                    skill_id="s1",
+                    program_id="prog",
+                    new_status="PRACTICING",
+                    updated_by="coach",
+                )
+            )
+        row = await repo.get("kid", "s1")
+
+    assert row is not None and row.status == "PASSED"
+    assert await real_db["student_skill_progress"].count_documents({"skill_id": "s1"}) == 1
+
+
+async def test_placement_refuses_a_student_the_academy_does_not_have(real_db: Any) -> None:
+    """F3: an unknown id (or another academy's) gets no level rows at all."""
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        place = PlaceStudentInLevel(
+            level_progress=w["level_progress"],
+            skill_progress=w["skill_progress"],
+            skill_lookup=w["lookup"],
+            recommendations=w["recs"],
+            enrollment_lookup=_Live(unknown=frozenset({"kid"})),
+        )
+        with pytest.raises(StudentNotFound):
+            await place.execute(_place("L1"))
+
+    assert await real_db["student_level_progress"].count_documents({}) == 0
+    assert await real_db["student_skill_progress"].count_documents({}) == 0

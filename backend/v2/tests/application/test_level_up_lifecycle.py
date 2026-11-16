@@ -42,6 +42,7 @@ from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     StudentLevelProgress,
 )
+from backend.v2.tests.fixtures.certificate_fakes import SequentialCertNumbers
 
 _NOW = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
 # Mirrors the Mongo repo's status filters (issue #548): a claimed row is
@@ -64,6 +65,9 @@ class _EnrollmentLookup:
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
         self.single_calls.append(student_id)
         return student_id in self.live
+
+    async def student_exists(self, student_id: str) -> bool:
+        return True
 
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         self.batch_calls.append(list(student_ids))
@@ -253,6 +257,9 @@ class _SkillLookup:
     async def get_next_level(self, program_id, current_sequence):
         return None
 
+    async def list_levels_for_program(self, program_id):
+        return []
+
 
 def _rec(rec_id: str, student_id: str, *, program_id: str = "prog-1") -> LevelUpRecommendation:
     return LevelUpRecommendation(
@@ -274,6 +281,7 @@ def _review(recs: _RecRepo, lookup: _EnrollmentLookup) -> ReviewLevelUpRecommend
         level_progress=_LevelProgressRepo(),
         skill_progress=_SkillProgressRepo(),
         certificates=_CertRepo(),
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=lookup,
     )
@@ -353,6 +361,7 @@ async def test_approve_refuses_a_withdrawn_student_before_any_write() -> None:
         level_progress=level_progress,
         skill_progress=_SkillProgressRepo(),
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=lookup,
     )
@@ -415,6 +424,9 @@ async def test_approved_recommendation_does_not_block_next_level_up() -> None:
         async def list_skills_for_level(self, level_id):
             return [SimpleNamespace(skill_id=self._required_skill[level_id], is_required=True)]
 
+        async def list_levels_for_program(self, program_id):
+            return []
+
         async def get_next_level(self, program_id, current_sequence):
             for level_id, seq in self._levels.items():
                 if seq == current_sequence + 1:
@@ -464,6 +476,7 @@ async def test_approved_recommendation_does_not_block_next_level_up() -> None:
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=_CertRepo(),
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=skill_lookup,
         enrollment_lookup=lookup,
     )
@@ -530,6 +543,7 @@ async def test_interleaved_approve_and_reject_never_certifies_a_rejected_student
         "level_progress": level_progress,
         "skill_progress": _SkillProgressRepo(),
         "certificates": certs,
+        "cert_numbers": SequentialCertNumbers(),
         "skill_lookup": _SkillLookup(),
         "enrollment_lookup": _EnrollmentLookup(live={"st-live"}),
     }

@@ -99,6 +99,13 @@ class UpdateSkillStatus:
                 last_updated_at=now,
                 last_updated_by=cmd.updated_by,
             )
+            # Insert-only: a row that appeared after our read (a pass landing
+            # first) is never overwritten; fall through to the conditional write.
+            if await self._skill_progress.insert_if_missing(updated):
+                persisted = updated
+            else:
+                await self._set_unless_passed(cmd, now, updated.introduced_at)
+                persisted = await self._skill_progress.get(cmd.student_id, cmd.skill_id) or updated
         else:
             updated = existing.model_copy(
                 update={
@@ -110,20 +117,10 @@ class UpdateSkillStatus:
                 }
             )
             # Conditional write: a tap that passed the skill after our read wins.
-            if not await self._skill_progress.set_status_unless_passed(
-                cmd.student_id,
-                cmd.skill_id,
-                cmd.new_status,
-                at=now,
-                by=cmd.updated_by,
-                introduced_at=None if existing.introduced_at else updated.introduced_at,
-            ):
-                raise SkillAlreadyPassed(
-                    "skill was passed meanwhile; use needs_review to flag regression",
-                    student_id=cmd.student_id,
-                    skill_id=cmd.skill_id,
-                )
-        persisted = await self._skill_progress.upsert(updated) if existing is None else updated
+            await self._set_unless_passed(
+                cmd, now, None if existing.introduced_at else updated.introduced_at
+            )
+            persisted = updated
 
         if self._outbox is not None:
             await self._outbox.append(
@@ -142,3 +139,20 @@ class UpdateSkillStatus:
             )
 
         return persisted
+
+    async def _set_unless_passed(
+        self, cmd: UpdateSkillStatusCommand, now: datetime, introduced_at: datetime | None
+    ) -> None:
+        if not await self._skill_progress.set_status_unless_passed(
+            cmd.student_id,
+            cmd.skill_id,
+            cmd.new_status,
+            at=now,
+            by=cmd.updated_by,
+            introduced_at=introduced_at,
+        ):
+            raise SkillAlreadyPassed(
+                "skill was passed meanwhile; use needs_review to flag regression",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
+            )

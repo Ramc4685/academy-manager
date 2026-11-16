@@ -5,7 +5,7 @@ from __future__ import annotations
 from backend.v2.contexts.student_progress.domain.logic import (
     calculate_skill_pass,
     check_level_completion,
-    generate_cert_number,
+    format_cert_number,
 )
 
 
@@ -64,33 +64,11 @@ def test_check_level_completion_extra_passed():
     assert check_level_completion(["s1"], {"s1", "s2", "s3"}) is True
 
 
-def test_generate_cert_number_format():
-    cert = generate_cert_number("acad123", "stud456", 3, 1717613400000)
-    # should be a non-empty string
-    assert isinstance(cert, str)
-    assert len(cert) > 0
+def test_format_cert_number_uses_the_academy_prefix():
+    assert format_cert_number("BLNO", 42) == "BLNO-C-0042"
+    assert format_cert_number("BLNO", 12345) == "BLNO-C-12345"
 
 
-def test_generate_cert_number_contains_level():
-    cert = generate_cert_number("acad123", "stud456", 3, 1717613400000)
-    assert "L3" in cert
-
-
-def test_generate_cert_number_contains_academy_prefix():
-    cert = generate_cert_number("acad123", "stud456", 3, 1717613400000)
-    # first 3 chars of academy_id uppercased
-    assert "ACA" in cert
-
-
-def test_generate_cert_number_contains_student_suffix():
-    cert = generate_cert_number("acad123", "stud456", 3, 1717613400000)
-    # last 4 chars of student_id uppercased
-    assert "D456" in cert
-
-
-def test_generate_cert_number_different_levels():
-    cert1 = generate_cert_number("acad123", "stud456", 1, 1717613400000)
-    cert2 = generate_cert_number("acad123", "stud456", 6, 1717613400000)
-    assert cert1 != cert2
-    assert "L1" in cert1
-    assert "L6" in cert2
+def test_format_cert_number_without_a_prefix_borrows_none():
+    assert format_cert_number(None, 7) == "C-0007"
+    assert format_cert_number("", 7) == "C-0007"

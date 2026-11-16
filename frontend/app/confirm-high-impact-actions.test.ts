@@ -70,6 +70,11 @@ const SURFACES: Array<{ name: string; file: string }> = [
   { name: "requests pauses", file: "components/admin/requests/PausesTab.tsx" },
   { name: "admissions level-ups", file: "components/admin/admissions/LevelUpsTab.tsx" },
   { name: "user detail", file: "app/(admin)/admin/users/[userId]/page.tsx" },
+  {
+    name: "certificate revoke",
+    file: "app/(admin)/admin/students/[studentId]/progress/certificates/[certId]/page.tsx",
+  },
+  { name: "curriculum retire", file: "components/admin/curriculum/program-editor.tsx" },
 ];
 
 describe("high-impact admin actions confirm first (#838)", () => {

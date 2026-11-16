@@ -294,6 +294,8 @@ async def update_skill(
     if use_cases.curriculum is None:
         raise HTTPException(status_code=503, detail="Curriculum service not configured")
     checks = _progress_checks(use_cases) if body.is_active is False else None
+    # Read before the retire: afterwards the skill no longer looks required.
+    held_back = await checks.held_back_by(skill_id) if checks is not None else []
     try:
         skill = await use_cases.curriculum.update_skill.execute(
             UpdateSkillCommand(
@@ -316,7 +318,9 @@ async def update_skill(
         # The retired skill no longer counts: students it held back move on.
         return skill.model_dump() | {
             "active_students": len(await checks.active_student_ids(skill.level_id)),
-            "level_ups_queued": await checks.recheck_level(skill.level_id, claims.user_id),
+            "level_ups_queued": await checks.recheck_students(
+                skill.level_id, held_back, claims.user_id
+            ),
         }
     return skill.model_dump()
 

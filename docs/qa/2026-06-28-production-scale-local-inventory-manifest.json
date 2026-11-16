@@ -724,7 +724,8 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/pathway/[programId]/page.tsx",
       "workflows": [
-        "Edit levels/skills/criteria"
+        "Edit levels/skills/criteria",
+        "Retire or reorder levels and skills"
       ],
       "controls": {
         "buttons": [
@@ -732,7 +733,13 @@
           "Add skill",
           "Save",
           "Delete",
-          "Cancel level form"
+          "Cancel level form",
+          "Retire level",
+          "Retire skill",
+          "Move level up",
+          "Move level down",
+          "Move skill up",
+          "Move skill down"
         ],
         "inputs": [
           "Level name",
@@ -742,7 +749,9 @@
         "modals": [
           "Level form",
           "Skill form",
-          "Delete confirmation"
+          "Delete confirmation",
+          "Retire level confirmation",
+          "Retire skill confirmation"
         ]
       },
       "states": [
@@ -1940,23 +1949,33 @@
       "source": "frontend/app/(admin)/admin/students/[studentId]/progress/certificates/[certId]/page.tsx",
       "workflows": [
         "View level certificate",
-        "Print certificate"
+        "Print certificate",
+        "Revoke certificate with a reason"
       ],
       "controls": {
         "buttons": [
           "Back to progress",
-          "Print or save as PDF"
+          "Print or save as PDF",
+          "Revoke",
+          "Revoke certificate"
         ],
-        "inputs": [],
-        "modals": []
+        "inputs": [
+          "Reason"
+        ],
+        "modals": [
+          "Revoke certificate"
+        ]
       },
       "states": [
         "loading",
         "not found",
-        "error"
+        "error",
+        "validation",
+        "revoked"
       ],
       "risk_edges": [
         "Certificate id from another student",
+        "Revoking an already revoked certificate (409)",
         "Print layout spills onto a second page"
       ],
       "acceptance": [

@@ -18,6 +18,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
     MongoEnrollmentRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
+    MongoStudentRepository,
+)
 from backend.v2.contexts.student_progress.application.use_cases.expire_level_up_recommendations import (
     ExpireLevelUpRecommendations,
 )
@@ -29,22 +32,28 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_recommendation_re
 class EnrollmentStatusAdapter:
     """``EnrollmentStatusLookup`` over the tenant-scoped enrollment repository.
 
-    Both reads are scoped by the request/event tenant inside the repository;
+    Every read is scoped by the request/event tenant inside the repository;
     nothing is captured at composition time.
     """
 
-    def __init__(self, enrollments: MongoEnrollmentRepository) -> None:
+    def __init__(
+        self, enrollments: MongoEnrollmentRepository, students: MongoStudentRepository
+    ) -> None:
         self._enrollments = enrollments
+        self._students = students
 
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
         return bool(await self._enrollments.active_or_paused_for_student(student_id))
+
+    async def student_exists(self, student_id: str) -> bool:
+        return await self._students.exists(student_id)
 
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         return await self._enrollments.student_ids_with_active_or_paused_enrollment(student_ids)
 
 
 def enrollment_status_lookup(db: AsyncIOMotorDatabase[Any]) -> EnrollmentStatusAdapter:
-    return EnrollmentStatusAdapter(MongoEnrollmentRepository(db))
+    return EnrollmentStatusAdapter(MongoEnrollmentRepository(db), MongoStudentRepository(db))
 
 
 def compose_expire_level_up_recommendations(
